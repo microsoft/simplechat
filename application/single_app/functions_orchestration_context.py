@@ -27,7 +27,7 @@ a document, an agent, a model, a prompt -- narrows the plan rather than suggesti
 A user who picked a document and then watched the planner search their whole workspace
 would rightly conclude the control did nothing.
 
-Version: 0.261.139
+Version: 0.261.140
 """
 
 import hashlib
@@ -37,7 +37,7 @@ import math
 from copy import deepcopy
 from datetime import datetime, timezone
 
-from functions_appinsights import log_event
+from functions_appinsights import log_event, workflow_log_context
 from functions_action_catalog import build_action_planner_projection
 from functions_message_block_revisions import resolve_block_sources_in_content
 from functions_message_masking import remove_masked_content
@@ -875,6 +875,118 @@ class CatalogResolutionError(RuntimeError):
         super().__init__(message)
         self.message = message
         self.code = code
+
+
+def enrich_planner_candidates(candidates, user_id, *, conversation_id, seeds=None):
+    """Use authorized source metadata, never display labels, to describe source kinds."""
+    seeds = seeds or {}
+    selected = set(seeds.get('document_ids') or [])
+    if not candidates and not selected:
+        return []
+
+    # These readers depend on initialized storage and belong at the request boundary.
+    from azure.core.exceptions import AzureError
+    from content_screening.contracts import ScreeningError, SourceAuthorityUnverifiedError
+    from functions_mixed_source_orchestration import SOURCE_KINDS, SOURCE_MANIFEST_MAX_SOURCES
+    from functions_orchestration_source_access import resolve_orchestration_source_manifest
+
+    identifiers = list(dict.fromkeys(candidate['document_id'] for candidate in candidates))
+    required = [identifier for identifier in identifiers if identifier in selected]
+    batches = [
+        required[start:start + SOURCE_MANIFEST_MAX_SOURCES]
+        for start in range(0, len(required), SOURCE_MANIFEST_MAX_SOURCES)
+    ]
+    batches.extend([identifier] for identifier in identifiers if identifier not in selected)
+    manifest = []
+    resolved_ids = []
+    inaccessible_optional = 0
+    try:
+        for batch in batches:
+            try:
+                sources = resolve_orchestration_source_manifest(
+                    batch, user_id, conversation_id=conversation_id,
+                    doc_scope=seeds.get('doc_scope') or 'all',
+                    active_group_ids=seeds.get('active_group_ids') or None,
+                    active_public_workspace_ids=seeds.get('active_public_workspace_ids') or None,
+                )
+            except (PermissionError, LookupError) as exc:
+                if isinstance(exc, LookupError) and type(exc) is not LookupError:
+                    raise SourceAuthorityUnverifiedError() from exc
+                if selected.intersection(batch):
+                    raise
+                inaccessible_optional += len(batch)
+                continue
+            manifest.extend(sources)
+            resolved_ids.extend(batch)
+        if (
+            len(manifest) != len(resolved_ids)
+            or any(
+                not isinstance(source, dict)
+                or source.get('document_id') not in resolved_ids
+                or source.get('source_kind') not in SOURCE_KINDS
+                or not isinstance(source.get('authorization_status'), str)
+                for source in manifest
+            )
+            or len({source['document_id'] for source in manifest}) != len(resolved_ids)
+        ):
+            raise ValueError('Source metadata did not match the requested documents.')
+    except (PermissionError, LookupError) as exc:
+        log_event(
+            '[ORCHESTRATION_CONTEXT] Current document access could not be confirmed.',
+            level=logging.WARNING, extra={
+                **workflow_log_context(conversation_id=conversation_id),
+                'stage': 'source_metadata', 'error_type': type(exc).__name__,
+                'reason': 'selected_source_unavailable',
+            },
+        )
+        raise CatalogResolutionError(
+            'A document could not be opened. Review your document selection.',
+            code='selected_source_unavailable',
+        ) from exc
+    except (AzureError, ScreeningError, ValueError, TypeError, ConnectionError, TimeoutError) as exc:
+        log_event(
+            '[ORCHESTRATION_CONTEXT] Current document metadata could not be loaded.',
+            level=logging.WARNING, extra={
+                **workflow_log_context(conversation_id=conversation_id),
+                'stage': 'source_metadata', 'error_type': type(exc).__name__,
+            },
+        )
+        raise CatalogResolutionError(
+            'The selected document metadata could not be loaded. Please retry.',
+            code='source_metadata_unavailable',
+        ) from exc
+    if inaccessible_optional:
+        log_event(
+            '[ORCHESTRATION_CONTEXT] Inaccessible discovery candidates were not offered to the planner.',
+            level=logging.INFO, extra={
+                **workflow_log_context(conversation_id=conversation_id),
+                'stage': 'source_metadata', 'unavailable_count': inaccessible_optional,
+            },
+        )
+    available = {
+        source['document_id']: source for source in manifest
+        if source.get('authorization_status') == 'authorized'
+    }
+    if selected - set(available):
+        log_event(
+            '[ORCHESTRATION_CONTEXT] A selected document is no longer available.',
+            level=logging.WARNING, extra={
+                **workflow_log_context(conversation_id=conversation_id),
+                'stage': 'source_metadata', 'unavailable_count': len(selected - set(available)),
+            },
+        )
+        raise CatalogResolutionError(
+            'A selected document could not be opened. Review your document selection.',
+            code='selected_source_unavailable',
+        )
+    return [
+        {
+            **candidate,
+            'file_name': _text(available[candidate['document_id']].get('file_name'), 500),
+            'source_kind': available[candidate['document_id']].get('source_kind'),
+        }
+        for candidate in candidates if candidate['document_id'] in available
+    ]
 
 
 def resolve_agent_catalog(user_id, seeds=None, settings=None, user_groups=None):

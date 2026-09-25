@@ -1,7 +1,7 @@
 # functions_orchestration_deliverables.py
 """What the user asked to receive, and whether the plan can actually deliver each part.
 
-Version: 0.261.138
+Version: 0.261.140
 Implemented in: 0.261.138
 
 The planner lists its plan's deliverables first: the answer, files, images, charts, and
@@ -104,10 +104,11 @@ ASSET_IMAGE_PATTERN = re.compile(r'!\[([^\]\n]{0,300})\]\(asset:([A-Za-z0-9][A-Z
 class DeliverableError(ValueError):
     """A deliverables declaration the server cannot accept; the message is planner-facing."""
 
-    def __init__(self, message, code='deliverables_invalid'):
+    def __init__(self, message, code='deliverables_invalid', *, rule=None):
         super().__init__(message)
         self.message = message
         self.code = code
+        self.rule = rule
 
 
 # --------------------------------------------------------------------------------------
@@ -337,45 +338,58 @@ def _parse_deliverables(raw):
     if raw is None:
         return []
     if type(raw) is not list:
-        raise DeliverableError('"deliverables" must be a list of deliverable objects.')
+        raise DeliverableError(
+            '"deliverables" must be a list of deliverable objects.', rule='deliverables_not_list',
+        )
     # The server-added answer of a plan that declared nothing is derived again, unless the
     # planner kept it beside real deliverables; then it is an ordinary declared answer.
     declared = any(type(entry) is dict and entry.get('implicit') is not True for entry in raw)
     parsed, seen = [], set()
     for entry in raw:
         if type(entry) is not dict:
-            raise DeliverableError('Each deliverable must be an object.')
+            raise DeliverableError('Each deliverable must be an object.', rule='deliverable_not_object')
         if entry.get('implicit') is True and not declared:
             continue
         unknown = set(entry) - _FIELDS - _SERVER_FIELDS
         if unknown:
             raise DeliverableError(
                 'A deliverable has unsupported fields. Use only id, kind, format, requested, '
-                'quantity, description, status, and unavailable_reason.'
+                'quantity, description, status, and unavailable_reason.',
+                rule='unsupported_deliverable_field',
             )
         try:
             identifier = output_name(entry.get('id'))
         except ResultContractError as exc:
             raise DeliverableError(
-                'Each deliverable needs an id of letters, digits, "_" or "-", starting with a letter.'
+                'Each deliverable needs an id of letters, digits, "_" or "-", starting with a letter.',
+                rule='invalid_deliverable_id',
             ) from exc
         if identifier in seen:
-            raise DeliverableError(f'Deliverable id "{identifier}" is used more than once.')
+            raise DeliverableError(
+                f'Deliverable id "{identifier}" is used more than once.', rule='duplicate_deliverable_id',
+            )
         seen.add(identifier)
         kind = entry.get('kind')
         if kind not in DELIVERABLE_KINDS:
             raise DeliverableError(
-                f'Deliverable "{identifier}" needs kind answer, file, image, chart, or diagram.'
+                f'Deliverable "{identifier}" needs kind answer, file, image, chart, or diagram.',
+                rule='invalid_deliverable_kind',
             )
         requested = entry.get('requested')
         if requested not in (REQUESTED_EXPLICIT, REQUESTED_SUGGESTED):
-            raise DeliverableError(f'Deliverable "{identifier}" needs requested explicit or suggested.')
+            raise DeliverableError(
+                f'Deliverable "{identifier}" needs requested explicit or suggested.', rule='invalid_requested_value',
+            )
         status = entry.get('status')
         if status not in (STATUS_PLANNED, STATUS_UNAVAILABLE):
-            raise DeliverableError(f'Deliverable "{identifier}" needs status planned or unavailable.')
+            raise DeliverableError(
+                f'Deliverable "{identifier}" needs status planned or unavailable.', rule='invalid_deliverable_status',
+            )
         description = entry.get('description')
         if type(description) is not str or not description.strip():
-            raise DeliverableError(f'Deliverable "{identifier}" needs a short description.')
+            raise DeliverableError(
+                f'Deliverable "{identifier}" needs a short description.', rule='missing_description',
+            )
         deliverable = {
             'id': identifier, 'kind': kind, 'requested': requested, 'status': status,
             'description': description.strip()[:MAX_DESCRIPTION_LENGTH].rstrip(),
@@ -383,10 +397,14 @@ def _parse_deliverables(raw):
         if kind == KIND_FILE:
             value = entry.get('format')
             if type(value) is not str or not value.strip() or len(value) > MAX_FORMAT_LENGTH:
-                raise DeliverableError(f'File deliverable "{identifier}" needs its file format id.')
+                raise DeliverableError(
+                    f'File deliverable "{identifier}" needs its file format id.', rule='invalid_file_format',
+                )
             deliverable['format'] = canonical_file_format(value)
         elif entry.get('format') not in (None, ''):
-            raise DeliverableError(f'Only file deliverables declare a format; remove it from "{identifier}".')
+            raise DeliverableError(
+                f'Only file deliverables declare a format; remove it from "{identifier}".', rule='non_file_format',
+            )
         if 'quantity' in entry and entry['quantity'] is not None:
             quantity = entry['quantity']
             if (
@@ -395,7 +413,7 @@ def _parse_deliverables(raw):
             ):
                 raise DeliverableError(
                     f'quantity counts files or images from 1 to {MAX_DELIVERABLE_QUANTITY}; '
-                    f'fix or remove it on "{identifier}".'
+                    f'fix or remove it on "{identifier}".', rule='invalid_quantity',
                 )
             deliverable['quantity'] = quantity
         reason = entry.get('unavailable_reason')
@@ -403,15 +421,20 @@ def _parse_deliverables(raw):
             if reason not in UNAVAILABLE_REASONS:
                 raise DeliverableError(
                     f'Unavailable deliverable "{identifier}" needs an unavailable_reason from '
-                    'capability_availability.deliverables.unavailable_reasons.'
+                    'capability_availability.deliverables.unavailable_reasons.', rule='invalid_unavailable_reason',
                 )
             deliverable['unavailable_reason'] = reason
             deliverable['unavailable_message'] = UNAVAILABLE_REASONS[reason]
         elif reason not in (None, ''):
-            raise DeliverableError(f'Planned deliverable "{identifier}" cannot have an unavailable_reason.')
+            raise DeliverableError(
+                f'Planned deliverable "{identifier}" cannot have an unavailable_reason.',
+                rule='unexpected_unavailable_reason',
+            )
         parsed.append(deliverable)
     if len(parsed) > MAX_DELIVERABLES:
-        raise DeliverableError(f'A plan can declare at most {MAX_DELIVERABLES} deliverables.')
+        raise DeliverableError(
+            f'A plan can declare at most {MAX_DELIVERABLES} deliverables.', rule='deliverable_limit',
+        )
     return parsed
 
 
@@ -459,24 +482,27 @@ def _check_producer(step, deliverable, final_step):
     if kind == KIND_FILE:
         if capability != CAPABILITY_RENDER_FILE:
             raise DeliverableError(
-                f'Step "{step_id}" cannot deliver {_label(deliverable)}: only a render_file step creates a file.'
+                f'Step "{step_id}" cannot deliver {_label(deliverable)}: only a render_file step creates a file.',
+                rule='file_producer_mismatch',
             )
         if step['arguments'].get('output_format') != deliverable['format']:
             raise DeliverableError(
                 f'Step "{step_id}" renders {step["arguments"].get("output_format")}, but '
-                f'{_label(deliverable)} is {deliverable["format"]}. The output_format must match.'
+                f'{_label(deliverable)} is {deliverable["format"]}. The output_format must match.',
+                rule='file_format_mismatch',
             )
     elif kind == KIND_IMAGE and deliverable['requested'] == REQUESTED_EXPLICIT:
         if capability != CAPABILITY_GENERATE_IMAGE:
             raise DeliverableError(
                 f'Step "{step_id}" cannot deliver {_label(deliverable)}: explicitly requested images '
-                'come only from generate_image steps.'
+                'come only from generate_image steps.', rule='image_producer_mismatch',
             )
     elif kind == KIND_IMAGE:
         if capability != CAPABILITY_COMPOSE or not _markdown_outputs(step):
             raise DeliverableError(
                 f'Step "{step_id}" cannot deliver suggested {_label(deliverable)}: suggested images are '
-                'image proposal cards in a compose step with a markdown-v1 output.'
+                'image proposal cards in a compose step with a markdown-v1 output.',
+                rule='suggested_image_producer_mismatch',
             )
     elif kind == KIND_CHART:
         if capability == CAPABILITY_ACTION_INVOKE:
@@ -484,19 +510,20 @@ def _check_producer(step, deliverable, final_step):
         if capability != CAPABILITY_COMPOSE or not _markdown_outputs(step):
             raise DeliverableError(
                 f'Step "{step_id}" cannot deliver {_label(deliverable)}: charts come from a compose step '
-                'with a markdown-v1 output, or from action_invoke charting its rows.'
+                'with a markdown-v1 output, or from action_invoke charting its rows.',
+                rule='chart_producer_mismatch',
             )
     elif kind == KIND_DIAGRAM:
         if capability != CAPABILITY_COMPOSE or not _markdown_outputs(step):
             raise DeliverableError(
                 f'Step "{step_id}" cannot deliver {_label(deliverable)}: diagrams come from a compose '
-                'step with a markdown-v1 output.'
+                'step with a markdown-v1 output.', rule='diagram_producer_mismatch',
             )
     elif kind == KIND_ANSWER:
         if capability not in _ANSWER_PRODUCERS or step_id != final_step:
             raise DeliverableError(
                 f'Step "{step_id}" cannot deliver {_label(deliverable)}: the answer comes from the '
-                'step final_response selects.'
+                'step final_response selects.', rule='answer_producer_mismatch',
             )
 
 
@@ -632,20 +659,26 @@ def compile_deliverables(
         step.pop('deliverable_context', None)
         values = step.get('delivers', [])
         if type(values) is not list or any(type(value) is not str for value in values):
-            raise DeliverableError(f'Step "{step["step_id"]}" delivers must be a list of deliverable ids.')
+            raise DeliverableError(
+                f'Step "{step["step_id"]}" delivers must be a list of deliverable ids.', rule='invalid_delivers',
+            )
         if len(set(values)) != len(values):
-            raise DeliverableError(f'Step "{step["step_id"]}" lists a deliverable more than once.')
+            raise DeliverableError(
+                f'Step "{step["step_id"]}" lists a deliverable more than once.', rule='duplicate_step_deliverable',
+            )
         step['delivers'] = list(values)
     if not deliverables:
         if strict and image_selected:
             raise DeliverableError(
-                'The user selected the Image control: declare at least one explicit image deliverable.'
+                'The user selected the Image control: declare at least one explicit image deliverable.',
+                rule='missing_selected_image',
             )
         for step in steps:
             step['delivers'] = [value for value in step['delivers'] if value != IMPLICIT_ANSWER_ID]
             if step['delivers']:
                 raise DeliverableError(
-                    f'Step "{step["step_id"]}" delivers an undeclared deliverable. Declare it in "deliverables".'
+                    f'Step "{step["step_id"]}" delivers an undeclared deliverable. Declare it in "deliverables".',
+                    rule='undeclared_step_deliverable',
                 )
             step.pop('delivers')
         return [implicit_answer_deliverable()]
@@ -654,7 +687,8 @@ def compile_deliverables(
         unknown = [value for value in step['delivers'] if value not in lookup]
         if unknown:
             raise DeliverableError(
-                f'Step "{step["step_id"]}" delivers "{unknown[0]}", which is not a declared deliverable.'
+                f'Step "{step["step_id"]}" delivers "{unknown[0]}", which is not a declared deliverable.',
+                rule='undeclared_step_deliverable',
             )
     _link_unambiguous(deliverables, steps, final_step)
     delivering = {deliverable['id']: [] for deliverable in deliverables}
@@ -663,7 +697,8 @@ def compile_deliverables(
             deliverable = lookup[identifier]
             if deliverable['status'] == STATUS_UNAVAILABLE:
                 raise DeliverableError(
-                    f'Step "{step["step_id"]}" delivers {_label(deliverable)}, which is marked unavailable.'
+                    f'Step "{step["step_id"]}" delivers {_label(deliverable)}, which is marked unavailable.',
+                    rule='unavailable_deliverable_produced',
                 )
             _check_producer(step, deliverable, final_step)
             delivering[identifier].append(step)
@@ -672,12 +707,14 @@ def compile_deliverables(
             if step['capability_id'] == CAPABILITY_RENDER_FILE:
                 raise DeliverableError(
                     f'render_file step "{step["step_id"]}" creates a file that no deliverable declares. '
-                    'Declare the file as an explicit or suggested file deliverable and list it in delivers.'
+                    'Declare the file as an explicit or suggested file deliverable and list it in delivers.',
+                    rule='undeclared_file_output',
                 )
             if step['capability_id'] == CAPABILITY_GENERATE_IMAGE:
                 raise DeliverableError(
                     f'generate_image step "{step["step_id"]}" makes an image that no deliverable declares. '
-                    'Declare it as an explicit image deliverable and list it in delivers.'
+                    'Declare it as an explicit image deliverable and list it in delivers.',
+                    rule='undeclared_image_output',
                 )
     planned_images = sum(
         1 for step in steps if step['capability_id'] == CAPABILITY_GENERATE_IMAGE and step.get('enabled', True)
@@ -689,7 +726,7 @@ def compile_deliverables(
             if verdict is not None:
                 raise DeliverableError(
                     f'{_sentence_label(deliverable)} cannot be produced here: {verdict}. Mark it '
-                    f'unavailable with unavailable_reason "{verdict}".'
+                    f'unavailable with unavailable_reason "{verdict}".', rule='planned_deliverable_unavailable',
                 )
             if deliverable['kind'] == KIND_ANSWER and final_is_existing and not producers:
                 continue
@@ -698,13 +735,13 @@ def compile_deliverables(
             if not producers and deliverable['kind'] == KIND_ANSWER:
                 raise DeliverableError(
                     f'The planned {_label(deliverable)} needs final_response to select the prepared '
-                    'answer text of the step that writes it.'
+                    'answer text of the step that writes it.', rule='missing_final_response',
                 )
             if not producers:
                 raise DeliverableError(
                     f'No step delivers the planned {_label(deliverable)}. Add a step that can produce '
                     'it and list the deliverable in that step\'s delivers, or mark it unavailable with '
-                    'the reason capability_availability.deliverables gives.'
+                    'the reason capability_availability.deliverables gives.', rule='missing_deliverable_producer',
                 )
             quantity = deliverable.get('quantity')
             counted = deliverable['kind'] == KIND_FILE or (
@@ -714,25 +751,26 @@ def compile_deliverables(
                 raise DeliverableError(
                     f'{_sentence_label(deliverable)} asks for {quantity} but only {len(producers)} '
                     'steps deliver it. Plan one step per item, or split the deliverable and mark the '
-                    'remainder unavailable with its reason.'
+                    'remainder unavailable with its reason.', rule='insufficient_producers',
                 )
         elif strict:
             if verdict is None:
                 raise DeliverableError(
                     f'The server can produce {_label(deliverable)}. Plan it with a capable step '
-                    'instead of marking it unavailable.'
+                    'instead of marking it unavailable.', rule='available_deliverable_declined',
                 )
             if verdict != deliverable['unavailable_reason']:
                 raise DeliverableError(
                     f'{_sentence_label(deliverable)} is unavailable because of "{verdict}", not '
-                    f'"{deliverable["unavailable_reason"]}".'
+                    f'"{deliverable["unavailable_reason"]}".', rule='unavailable_reason_mismatch',
                 )
     if strict and image_selected and not any(
         deliverable['kind'] == KIND_IMAGE and deliverable['requested'] == REQUESTED_EXPLICIT
         for deliverable in deliverables
     ):
         raise DeliverableError(
-            'The user selected the Image control: declare at least one explicit image deliverable.'
+            'The user selected the Image control: declare at least one explicit image deliverable.',
+            rule='missing_selected_image',
         )
     if strict:
         options = ((availability.get(KIND_IMAGE) or {}).get('explicit') or {}).get('options') or {}
@@ -744,7 +782,8 @@ def compile_deliverables(
                 if value and value not in (options.get(plural) or ()):
                     raise DeliverableError(
                         f'Step "{step["step_id"]}" sets {name} "{value}", which the configured image '
-                        f'model does not support. Use one of {options.get(plural) or []} or omit it.'
+                        f'model does not support. Use one of {options.get(plural) or []} or omit it.',
+                        rule='unsupported_image_option',
                     )
     for step in steps:
         if step['delivers'] and step['capability_id'] in (CAPABILITY_COMPOSE, CAPABILITY_ACTION_INVOKE):

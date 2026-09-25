@@ -14,6 +14,9 @@ one place rather than drifting between copies.
 Only the seams that keep a pure-logic module from importing are stubbed. A test
 that needs real behaviour from one of these dependencies should not be using
 this helper.
+
+Version: 0.261.140
+Workflow diagnostic import surface updated in: 0.261.140
 """
 
 import importlib
@@ -40,6 +43,7 @@ def _build_stub_modules():
 
     appinsights = types.ModuleType("functions_appinsights")
     appinsights.log_event = lambda *args, **kwargs: None
+    appinsights.workflow_log_context = lambda **kwargs: {}
     # Several modules import this alongside log_event. Without it the import fails, and a
     # caller that lazily imports such a module reads that failure as the capability being
     # unavailable -- which is correct behaviour but makes the module untestable here.

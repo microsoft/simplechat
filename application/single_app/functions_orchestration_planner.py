@@ -25,7 +25,7 @@ error, not evidence that the task can be answered without gathering information.
 Every plan uses the Gather / Reason / Render contract. There is one planner prompt,
 ``PLANNER_SYSTEM_PROMPT``, and one validator.
 
-Version: 0.261.139
+Version: 0.261.140
 """
 
 import json
@@ -37,7 +37,7 @@ from azure.core.exceptions import AzureError
 from azure.identity import DefaultAzureCredential, get_bearer_token_provider
 
 from config import cognitive_services_scope
-from functions_appinsights import log_event
+from functions_appinsights import log_event, workflow_log_context
 from functions_orchestration_context import conversation_reference_messages, resolve_elicitation_candidates
 from functions_orchestration_deliverables import build_deliverable_availability
 from functions_orchestration_events import build_model_reasoning_metadata
@@ -56,6 +56,7 @@ from functions_orchestration_schema import (
     normalize_elicitation,
     normalize_plan,
     plan_document_ids,
+    validate_plan_document_source_kinds,
     validate_plan_requirements,
     plan_contract_version,
 )
@@ -66,12 +67,19 @@ from functions_orchestration_visuals import (
 
 PLANNER_MAX_TOKENS = 4000
 PLANNER_TEMPERATURE = 0.1
-# A dependency plan the server rejects for what it would deliver gets one correction round.
+# Known declaration and source-binding failures share one correction round.
 PLAN_REPAIR_ATTEMPTS = 1
-REPAIRABLE_PLAN_CODES = frozenset({'deliverables_invalid'})
+REPAIRABLE_PLAN_CODES = frozenset({'deliverables_invalid', 'source_kind_invalid', 'source_binding_required'})
 DELIVERABLES_FAILURE_MESSAGE = (
     'The plan could not account for everything you asked to receive. Please retry, or '
     'rephrase what you would like delivered.'
+)
+SOURCE_KIND_FAILURE_MESSAGE = (
+    'The plan could not use the selected document types. Please retry, or clarify '
+    'the comparison you need.'
+)
+SOURCE_BINDING_FAILURE_MESSAGE = (
+    'The plan could not bind the selected documents. Please retry your request.'
 )
 RESOLUTION_MAX_TOKENS = 1200
 RESOLUTION_MAX_ATTEMPTS = 2
@@ -242,7 +250,10 @@ disabled producers, unsupported kinds, unknown output names, and cycles are erro
 Do not put raw result references, producer identity, storage handles, callbacks, or file
 permissions in a plan.
 
-Fixed producers expose their declared result_outputs. compose must explicitly declare one
+Fixed producers expose their declared result_outputs. For a fixed producer, omit outputs
+to use those defaults, or declare every required name/kind pair from result_outputs, even
+if a later step will not consume all of them. You may also declare offered optional outputs.
+compose must explicitly declare one
 or more supported named outputs. records-v1 requires columns:[{"name":"field",
 "value_type":"string","nullable":false}] in exact order. structured-v1 can specify a
 self-contained inline JSON schema or one offered profile. Only explicitly accepted partial
@@ -259,6 +270,8 @@ Do not bind a later data consumer or final_response to a Render step.
 final_response optionally selects exactly one prepared text/Markdown result to publish.
 Without it, the server reports actual delivery/work status deterministically. It is not
 necessary to generate extra prose for a file-only or structured-only request.
+Omit final_response, or use null, when no text result is selected. An empty object is not
+a binding, and a structured result or a Render step cannot be selected as the chat answer.
 
 Agents and actions. Agents are preconfigured assistants with their own tools and knowledge,
 listed under "agents" with each name and purpose. To use one, add agent_invoke and set
@@ -276,14 +289,21 @@ retrieves is part of that knowledge step.
 
 Grounding must use named authorized inputs, not incidental notes from an earlier task.
 Only name a document ID that appears in candidate_documents or that the user selected; never
-invent one. If the user already selected documents, plan around those documents. Search
+invent one. If the user already selected documents, plan around those documents.
+Use each candidate's server-resolved source_kind, not its display label, to choose compatible
+work. Never send tabular source IDs to document_analyze or document_compare: those steps
+do not admit native tabular inputs. For mixed narrative/tabular comparisons, prepare each
+source with compatible offered capabilities and compose their named results. A document
+search can support an overview, but not substitute for exact native tabular work. Search
 results are bounded excerpts, not full-source coverage. Searching documents is much cheaper
 than analysing them: analyse only when the question needs whole-document coverage. Selected
 known documents can go straight to Analyze without a redundant search. When the right
 documents depend on a search that has not run yet, bind document_analyze's "sources" input
 to that search's "sources" output; when they are already known -- selected by the user or
 listed in candidate_documents -- name them directly, so the user can review them before the
-run. External discovery does not gain permission to send private findings to an integration
+run. In document_analyze, set arguments.document_ids to those exact IDs; naming a file in
+analysis_prompt is not a binding. If sources are not yet known, inputs.sources must instead
+bind an offered source-set output. External discovery does not gain permission to send private findings to an integration
 merely by declaring a dependency.
 
 Research depth. Prefer the least costly plan that adequately meets the request's evidence
@@ -352,13 +372,24 @@ styles, decide which visuals you plan and how, unless the current message explic
 otherwise.
 
 Deliverables. List "deliverables" before the steps: everything the user asked to receive
-(requested "explicit") and anything you add yourself (requested "suggested"). Each one is
-{"id","kind","format","requested","quantity","description","status","unavailable_reason"}.
-kind is answer, file, image, chart, or diagram. A file is a downloadable file that a render_file
-step creates, and format is its file format id from capability_availability.deliverables (csv,
-xlsx, docx, pdf, pptx, json, md, ...). CSV, Markdown, or document text written into the chat
-answer is not a file. quantity counts files or images when the request implies a number, such as
-3 for "an image of each of the first three presidents". Every step that produces a deliverable
+(requested "explicit") and anything you add yourself (requested "suggested"). Every object
+requires id, kind, requested, description, and status. kind is answer, file, image, chart,
+or diagram. Other fields depend on that kind; do not fill every possible field:
+- answer, chart, and diagram: omit BOTH format and quantity, even for one Markdown answer.
+- file: format is required and must be a file format id from
+  capability_availability.deliverables (csv, xlsx, docx, pdf, pptx, json, md, ...).
+  quantity is optional and counts files, not records, rows, pages, or answers.
+- image: quantity is optional and counts images; omit format.
+Only status "unavailable" includes unavailable_reason, using the server's exact reason.
+A valid answer declaration is {"id":"answer","kind":"answer","requested":"explicit",
+"description":"The requested answer","status":"planned"}.
+A valid CSV file declaration is {"id":"csv_file","kind":"file","format":"csv",
+"requested":"explicit","description":"The requested CSV file","status":"planned"}.
+Named result kinds such as markdown-v1 and records-v1 belong in step outputs, not in a
+deliverable's format. A file is a downloadable file a render_file step creates; CSV,
+Markdown, or document text written into the chat answer is not a file.
+For "an image of each of the first three presidents", the image quantity is 3.
+Every step that produces a deliverable
 lists its id in "delivers": render_file delivers a file and its output_format must equal the
 deliverable's format; generate_image delivers an explicit image, one step per image; compose
 delivers the answer (the step final_response selects), charts, diagrams, and suggested images;
@@ -794,6 +825,9 @@ def plan_repair_message(error):
     """The planner-facing correction request after the server rejected a plan's deliverables."""
     return (
         f'The server rejected that plan: {error}\n'
+        'The server reports the first validation failure. Recheck every deliverable\'s '
+        'kind-specific fields, source-type compatibility, all required outputs, and answer bindings, not just the '
+        'first field reported above.\n'
         'Return the complete corrected plan as one JSON object for the same request. Keep every '
         'deliverable the user asked for. When one cannot be produced, mark it unavailable with the '
         'exact unavailable_reason capability_availability.deliverables gives, instead of dropping '
@@ -886,15 +920,18 @@ def plan_request(
     ]
     actions = context.get('actions') or []
 
-    def _failure(reason, error=None, *, stage=None, message=None):
+    correlation = workflow_log_context(conversation_id=conversation_id, turn_id=turn_id)
+
+    def _failure(reason, error=None, *, stage=None, message=None, attempt=None):
         log_event(
             '[ORCHESTRATION_PLANNER] The request could not be planned.',
             level=logging.WARNING, extra={
-                'reason': reason, 'stage': stage,
-                'conversation_id': conversation_id, 'turn_id': turn_id, 'revision': revision,
+                **correlation, 'reason': reason, 'stage': stage, 'revision': revision,
+                'attempt': attempt,
                 'error_type': type(error).__name__ if error is not None else None,
                 'response_failure': error.reason if isinstance(error, PlannerResponseError) else None,
                 'validation_code': getattr(error, 'code', None) if isinstance(error, PlanValidationError) else None,
+                'validation_rule': getattr(error, 'rule', None) if isinstance(error, PlanValidationError) else None,
             },
         )
         raise PlannerError(
@@ -908,6 +945,7 @@ def plan_request(
     log_event(
         '[ORCHESTRATION_PLANNER] Resolved capability availability and positive selections.',
         extra={
+            **correlation,
             'stage': 'capability_resolution',
             **{f'available_{value}': True for value in available_ids},
             **{f'available_{value}': False for value in unavailable},
@@ -1061,6 +1099,11 @@ def plan_request(
                 # A revision may drop images the user no longer wants; it is flagged below.
                 image_selected=image_selected and edit_context is None,
             )
+            validate_plan_document_source_kinds(plan, {
+                candidate['document_id']: candidate['source_kind']
+                for candidate in context.get('candidate_documents') or []
+                if isinstance(candidate, dict) and candidate.get('source_kind')
+            })
         except PlanValidationError as exc:
             repairable = exc.code in REPAIRABLE_PLAN_CODES
             if repairable and attempt <= PLAN_REPAIR_ATTEMPTS:
@@ -1069,8 +1112,9 @@ def plan_request(
                 log_event(
                     '[ORCHESTRATION_PLANNER] Asking the planner to correct a rejected plan.',
                     level=logging.INFO, extra={
-                        'reason': exc.code, 'attempt': attempt,
-                        'conversation_id': conversation_id, 'turn_id': turn_id, 'revision': revision,
+                        **correlation, 'reason': exc.code, 'attempt': attempt, 'revision': revision,
+                        'stage': 'plan_normalization', 'validation_code': exc.code,
+                        'validation_rule': exc.rule,
                     },
                 )
                 messages = [
@@ -1081,7 +1125,12 @@ def plan_request(
                 continue
             return _failure(
                 'invalid_plan_or_missing_requirement', exc, stage='plan_normalization',
-                message=DELIVERABLES_FAILURE_MESSAGE if repairable else None,
+                message={
+                    'deliverables_invalid': DELIVERABLES_FAILURE_MESSAGE,
+                    'source_kind_invalid': SOURCE_KIND_FAILURE_MESSAGE,
+                    'source_binding_required': SOURCE_BINDING_FAILURE_MESSAGE,
+                }.get(exc.code),
+                attempt=attempt,
             )
         break
     try:

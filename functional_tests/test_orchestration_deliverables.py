@@ -1,9 +1,10 @@
 # test_orchestration_deliverables.py
 """The deliverables contract and planned image generation in Gather / Reason / Render plans.
 
-Version: 0.261.139
+Version: 0.261.140
 Implemented in: 0.261.138
 Single orchestration contract updated in: 0.261.139
+Planner kind-specific fields and absent answer bindings updated in: 0.261.140
 
 Uses the initialized headless harness (real bootstrap, planner, schema, executor, result
 store, chat image persistence, rendering service and Office renderers) with the planning
@@ -545,6 +546,90 @@ def test_an_invalid_deliverables_plan_gets_exactly_one_repair_call(harness):
         _plan_request(harness, [_csv_plan(render_format="xlsx"), _csv_plan(render_format="xlsx")])
     assert failure.value.reason == "invalid_plan_or_missing_requirement"
     assert failure.value.message == harness.planner.DELIVERABLES_FAILURE_MESSAGE
+
+
+@pytest.mark.parametrize("comparison", [False, True])
+def test_answer_declaration_fields_match_the_prompt_and_single_repair(harness, comparison):
+    raw = {
+        "kind": "plan",
+        "deliverables": [_deliverable("answer", "answer", "The requested answer")],
+        "steps": [{**compose_step("draft"), "delivers": ["answer"]}],
+        "final_response": input_binding("draft"),
+    }
+    if comparison:
+        harness.settings["document_action_capabilities"] = {
+            "comparison": {"enabled": True, "chat_max_documents": 2},
+        }
+        raw["steps"].insert(0, {
+            "step_id": "compare", "capability_id": "document_compare",
+            "arguments": {
+                "comparison_prompt": "Compare the two selected documents.",
+                "left_document_id": "left", "right_document_ids": ["right"],
+            },
+        })
+        raw["steps"][-1]["inputs"] = {
+            "comparison": {"binding": input_binding("compare", "comparison"), "allow_partial": False},
+        }
+        raw["steps"][-1]["arguments"]["knowledge_basis"] = "sources"
+    rejected = deepcopy(raw)
+    rejected["deliverables"][0].update(format="markdown-v1", quantity=1)
+    format_only_repair = deepcopy(rejected)
+    format_only_repair["deliverables"][0].pop("format")
+    available = ["compose", "document_compare"]
+    with pytest.raises(harness.schema.PlanValidationError) as first:
+        _normalize(harness, rejected, available=available)
+    with pytest.raises(harness.schema.PlanValidationError) as second:
+        _normalize(harness, format_only_repair, available=available)
+    assert first.value.rule == "non_file_format"
+    assert second.value.rule == "invalid_quantity"
+
+    kind, plan = _plan_request(harness, [rejected, raw])
+    assert kind == "plan" and len(harness.model_calls) == 2
+    assert plan["deliverables"] == raw["deliverables"]
+    prompt = harness.model_calls[0]["messages"][0]["content"]
+    repair = harness.model_calls[1]["messages"][-1]["content"]
+    assert "answer, chart, and diagram: omit BOTH format and quantity" in prompt
+    assert "quantity is optional and counts files, not records, rows, pages, or answers" in prompt
+    assert "Recheck every deliverable's kind-specific fields" in repair
+    assert "not just the first field reported above" in repair
+    if comparison:
+        selected = harness.schema.plan_document_ids(plan)
+        assert set(selected) == {"left", "right"}
+        assert plan["steps"][-1]["depends_on"] == ["compare"]
+
+
+def test_null_final_response_is_canonical_absence_for_file_only_work(harness):
+    raw = {**_csv_plan(), "final_response": None}
+    original = deepcopy(raw)
+    kind, plan = _plan_request(harness, [raw])
+    assert kind == "plan" and len(harness.model_calls) == 1
+    assert "final_response" not in plan
+    assert plan["deliverables"][0]["kind"] == "file"
+    assert [step["capability_id"] for step in plan["steps"]] == ["compose", "render_file"]
+    revalidated = harness.schema.validate_plan(
+        {**plan, "final_response": None}, settings=harness.settings,
+        available_capability_ids=AVAILABLE,
+    )
+    assert "final_response" not in revalidated
+    assert raw == original
+
+
+@pytest.mark.parametrize("invalid", [False, 0, "", [], {}])
+def test_only_null_is_absent_and_malformed_final_bindings_still_fail(harness, invalid):
+    with pytest.raises(harness.schema.PlanValidationError):
+        _normalize(harness, {**_csv_plan(), "final_response": invalid})
+
+
+def test_null_final_response_cannot_drop_a_declared_answer(harness):
+    raw = {
+        "deliverables": [_deliverable("answer", "answer", "The required answer")],
+        "steps": [{**compose_step(), "delivers": ["answer"]}],
+        "final_response": None,
+    }
+    with pytest.raises(harness.schema.PlanValidationError) as failure:
+        _normalize(harness, raw)
+    assert failure.value.code == "deliverables_invalid"
+    assert failure.value.rule == "answer_producer_mismatch"
 
 
 def test_the_image_control_asks_the_planner_for_explicit_images(harness, monkeypatch):

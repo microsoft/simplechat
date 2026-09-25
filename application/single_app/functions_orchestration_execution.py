@@ -1,7 +1,7 @@
 # functions_orchestration_execution.py
 """Headless preparation and guarded publication for saved orchestration attempts.
 
-Version: 0.261.139
+Version: 0.261.140
 Implemented in: 0.261.127
 
 Every saved attempt uses the Gather / Reason / Render contract; a run from the removed
@@ -100,7 +100,7 @@ from content_screening.access import (
     assert_current_request_sources_available, guard_model_callable, strict_source_authority,
 )
 from content_screening.contracts import DocumentHeldError, ScreeningError
-from functions_appinsights import log_event
+from functions_appinsights import log_event, workflow_log_context
 from functions_orchestration_adapters import resolve_context_source_manifest
 from functions_orchestration_checkpoints import CheckpointError, fingerprint, orchestration_answer_message_id
 from functions_orchestration_context import (
@@ -251,11 +251,20 @@ def _failure(error):
     return build_failure("execution_interrupted")
 
 
-def _log_failure(message, record, error):
+def _log_failure(message, record, error, *, stage="execution"):
+    response_type = type(record).__name__
+    record = record if isinstance(record, dict) else {}
     log_event(
         f"[ORCHESTRATION_RUNS] {message}",
         level=logging.WARNING,
-        extra={"run_id": record.get("id"), "error_type": type(error).__name__},
+        extra={
+            **workflow_log_context(
+                run_id=record.get("id"), conversation_id=record.get("conversation_id"),
+                turn_id=record.get("turn_id"),
+            ),
+            "stage": stage, "response_type": response_type,
+            "error_type": type(error).__name__, "execution_code": _failure(error)["code"],
+        },
     )
 
 
@@ -490,6 +499,7 @@ class HarnessExecution:
         self._saved_model_metadata = {}
         self._saved_reasoning = {}
         self._execution_lock = threading.Lock()
+        self._preparation_stage = "claim_validation"
 
     @property
     def service(self):
@@ -563,10 +573,12 @@ class HarnessExecution:
     def _initialize(self, settings, identity_context, execution_identity):
         # Bootstrap and recovery import config as the initialized application owner.
         # They must never run merely because a scheduler imports this module.
+        self._preparation_stage = "bootstrap"
         import functions_orchestration_bootstrap as bootstrap
         from functions_document_analysis_checkpoints import analysis_checkpoints_for_orchestration
 
         self._bootstrap = bootstrap
+        self._preparation_stage = "settings"
         self.settings = deepcopy(bootstrap.get_settings() if settings is None else settings)
         if type(self.settings) is not dict or not self.settings.get("enable_chat_orchestration"):
             raise HarnessExecutionError("context_unavailable")
@@ -580,9 +592,11 @@ class HarnessExecution:
             raise HarnessExecutionError("model_routing_changed")
         user_id, conversation_id = self.record["user_id"], self.record["conversation_id"]
         seeds = self.record.get("seeds") or {}
+        self._preparation_stage = "context"
         snapshot = self._revalidate_context()
         answers = self.record.get("answered_questions") or []
         validate_clarification_answers(answers)
+        self._preparation_stage = "identity"
         current_identity = capture_execution_identity(user_id, conversation_id)
         principal = execution_identity or current_identity
         if (
@@ -614,6 +628,7 @@ class HarnessExecution:
             raise HarnessExecutionError("context_unavailable")
         identity["user_roles"] = list(identity.get("user_roles") or [])
         identity["user_email"] = current_identity.email
+        self._preparation_stage = "catalogs"
         agents = resolve_agent_catalog(
             user_id, seeds=seeds, settings=self.settings,
             user_groups=seeds.get("active_group_ids") or None,
@@ -630,9 +645,11 @@ class HarnessExecution:
                 answers,
             ),
         ]))[:8]
+        self._preparation_stage = "services"
         self.services = bootstrap.build_orchestration_services(
             user_id, conversation_id, settings=self.settings,
         )
+        self._preparation_stage = "result_binding"
         try:
             current = self.lease.read()
             if any(
@@ -647,6 +664,7 @@ class HarnessExecution:
         except Exception as exc:
             self._raise_delivery_infrastructure_failure(exc, storage_required=True)
             raise
+        self._preparation_stage = "capabilities"
         request_context = build_capability_request_context(
             user_id, identity, user_message, agents, actions, allowed_user_urls=allowed_urls,
             **self.services.capability_request_bindings(),
@@ -664,6 +682,7 @@ class HarnessExecution:
             raise HarnessExecutionError("context_unavailable")
         self._required_capabilities = required
         self._capability_context = request_context
+        self._preparation_stage = "memory"
         memory = load_orchestration_memory(
             user_id, self._validate_memory(),
             build_elicitation_user_request(self.record.get("resolved_message") or user_message, answers),
@@ -676,6 +695,7 @@ class HarnessExecution:
                 current_settings, user_id=user_id, seeds=step_seeds, identity_context=identity,
             )
 
+        self._preparation_stage = "model_binding"
         try:
             if auto_routing:
                 # Reauthorize every approved binding before any step, never rerouting one.
@@ -699,6 +719,7 @@ class HarnessExecution:
         planner_client.chat.completions.create = strict_source_authority()(
             guard_model_callable(planner_client.chat.completions.create, (), user_id),
         )
+        self._preparation_stage = "context_binding"
         self.context = RunContext(
             run_id=self.record["id"], plan_id=self.record["plan"].get("plan_id"),
             conversation_id=conversation_id, user_id=user_id,
@@ -776,6 +797,7 @@ class HarnessExecution:
             self.context.capture_external_source_configuration, self.lease,
         )
         assert_current_request_sources_available(user_id)
+        self._preparation_stage = "prepared"
 
     def _initialize_delivery_resources(self, settings, services):
         # Publication uses initialized owners without model or checkpoint setup.
@@ -1422,7 +1444,10 @@ class HarnessExecution:
         return list(self._frames)
 
     def _preparation_error(self, error):
-        _log_failure("Headless execution preparation failed.", self.record, error)
+        _log_failure(
+            "Headless execution preparation failed.", self.record, error,
+            stage=self._preparation_stage,
+        )
         try:
             # A partially bound context has not restored durable producer state.
             self.context = None
@@ -1515,7 +1540,9 @@ class HarnessExecution:
 def _claimed_harness_execution(record, lease, *, delivery_only=False, checkpoint_factory=None):
     if type(record) is not dict or is_legacy_plan(record.get("plan")):
         # A plan from the removed legacy contract is never executed or published.
-        raise HarnessExecutionError(LEGACY_PLAN_CODE if type(record) is dict else "context_unavailable")
+        error = HarnessExecutionError(LEGACY_PLAN_CODE if type(record) is dict else "context_unavailable")
+        _log_failure("Execution claim could not be admitted.", record, error, stage="claim_validation")
+        raise error
     try:
         plan_contract_version(record["plan"])
     except PlanValidationError as exc:
@@ -1556,11 +1583,13 @@ def _claimed_harness_execution(record, lease, *, delivery_only=False, checkpoint
         )
         accepted = True
         if lease.thread is None:
+            execution._preparation_stage = "lease_start"
             lease.start()
         return execution
     except Exception as exc:
         if accepted and not delivery_only:
             raise execution._preparation_error(exc) from exc
+        _log_failure("Execution claim could not be read.", record, exc, stage="claim_read")
         execution.close()
         execution._raise_delivery_infrastructure_failure(exc)
         raise HarnessExecutionError(_failure(exc)["code"]) from exc

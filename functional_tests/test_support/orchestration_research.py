@@ -2,7 +2,7 @@
 """
 Offline source loading and synthetic inputs for research-planner evaluation.
 
-Version: 0.261.139
+Version: 0.261.140
 Implemented in: 0.261.099
 Single orchestration contract updated in: 0.261.139
 
@@ -165,6 +165,9 @@ def _definitions(filename, seed=None, names=None):
             "assign_step_models": lambda *_args, **_kwargs: None,
             "authorized_routing_candidates": lambda *_args, **_kwargs: [],
             "ModelCatalogError": RuntimeError,
+            "workflow_log_context": _definitions(
+                "functions_appinsights.py", names={"workflow_log_context"},
+            )["workflow_log_context"],
             **(seed or {}),
         }
     path = APP_ROOT / filename

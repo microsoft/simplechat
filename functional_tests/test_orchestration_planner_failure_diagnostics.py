@@ -1,7 +1,7 @@
 # test_orchestration_planner_failure_diagnostics.py
 """
 Functional regressions for planner selection constraints and safe diagnostics.
-Version: 0.261.139
+Version: 0.261.140
 Implemented in: 0.261.115
 Single orchestration contract updated in: 0.261.139
 
@@ -10,6 +10,7 @@ responses. Tests distinguish missing selected work from malformed/provider outpu
 without accepting empty plans, switching models, or logging provider secrets.
 """
 
+import hashlib
 import json
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -95,8 +96,9 @@ def test_three_pinned_documents_allow_analyze_but_explicit_search_stays_required
     diagnostic = failure_log(fixture)
     assert diagnostic["reason"] == "invalid_plan_or_missing_requirement"
     assert diagnostic["stage"] == "selected_requirements"
-    assert diagnostic["conversation_id"] == "three-document-chat"
-    assert diagnostic["turn_id"] == "three-document-turn"
+    assert diagnostic["conversation_id_hash"] == hashlib.sha256(b"three-document-chat").hexdigest()
+    assert diagnostic["turn_id_hash"] == hashlib.sha256(b"three-document-turn").hexdigest()
+    assert "conversation_id" not in diagnostic and "turn_id" not in diagnostic
 
 
 @pytest.mark.parametrize("reply,reason", [

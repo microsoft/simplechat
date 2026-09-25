@@ -24,7 +24,7 @@ A saved run from the removed legacy plan contract is never opened, run, retried,
 restored or continued. Every by-id route answers it with HTTP 409 and the one stable
 ``LEGACY_PLAN_MESSAGE``, and conversation run listings omit it.
 
-Version: 0.261.139
+Version: 0.261.140
 """
 
 import hashlib
@@ -45,7 +45,7 @@ from flask import Response, g, has_request_context, jsonify, request, session, s
 
 from config import cosmos_conversations_container, cosmos_messages_container
 from content_screening.contracts import DocumentHeldError, ScreeningError
-from functions_appinsights import log_event
+from functions_appinsights import log_event, workflow_log_context
 from functions_chat_content_checks import (
     CHECK_METADATA, check_chat_content, orchestration_input_text,
     should_withhold_chat_event, strip_private_chat_checks,
@@ -77,6 +77,7 @@ from functions_orchestration_context import (
     build_elicitation_user_request,
     build_planner_context,
     build_run_ledger,
+    enrich_planner_candidates,
     collect_answered_questions,
     merge_elicitation_context,
     normalize_elicitation_answer,
@@ -320,7 +321,10 @@ def _stream_execution(execution, *, run_id, conversation_id, settings=None):
             except Exception as exc:
                 log_event(
                     '[ORCHESTRATION_RUNS] Headless execution could not return its saved outcome.',
-                    level=logging.ERROR, extra={'run_id': run_id, 'error_type': type(exc).__name__},
+                    level=logging.ERROR, extra={
+                        **workflow_log_context(run_id=run_id, conversation_id=conversation_id),
+                        'stage': 'execution_stream', 'error_type': type(exc).__name__,
+                    },
                 )
                 emit(build_error_event(
                     'The execution status could not be confirmed. Reload the run to check its saved state.',
@@ -332,7 +336,10 @@ def _stream_execution(execution, *, run_id, conversation_id, settings=None):
                 except Exception as exc:
                     log_event(
                         '[ORCHESTRATION_RUNS] Headless execution resources could not be closed.',
-                        level=logging.ERROR, extra={'run_id': run_id, 'error_type': type(exc).__name__},
+                        level=logging.ERROR, extra={
+                            **workflow_log_context(run_id=run_id, conversation_id=conversation_id),
+                            'stage': 'execution_close', 'error_type': type(exc).__name__,
+                        },
                     )
                 finally:
                     emit(finished)
@@ -390,7 +397,11 @@ def _prepare_execution_stream(record, data, user_id, settings, snapshot, identit
         log_event(
             '[ORCHESTRATION_RUNS] Execution preparation did not produce an executable run.',
             level=logging.WARNING, extra={
-                'run_id': run_id, 'code': exc.code, 'durable_status': exc.durable_status,
+                **workflow_log_context(
+                    run_id=run_id, conversation_id=conversation_id, turn_id=record.get('turn_id'),
+                ),
+                'stage': 'execution_prepare', 'execution_code': exc.code,
+                'durable_status': exc.durable_status, 'error_type': type(exc).__name__,
             },
         )
         if exc.durable_status is not None and exc.final_frames:
@@ -408,11 +419,17 @@ def _prepare_execution_stream(record, data, user_id, settings, snapshot, identit
         except (CheckpointError, RecoveryError, ConversationContextError, PermissionError, AzureError) as close_error:
             log_event(
                 '[ORCHESTRATION_RUNS] Execution preparation lease is no longer writable.',
-                level=logging.WARNING, extra={'run_id': run_id, 'error_type': type(close_error).__name__},
+                level=logging.WARNING, extra={
+                    **workflow_log_context(run_id=run_id, conversation_id=conversation_id),
+                    'stage': 'execution_close', 'error_type': type(close_error).__name__,
+                },
             )
         log_event(
             '[ORCHESTRATION_RUNS] This execution could not be prepared.',
-            level=logging.ERROR, extra={'run_id': run_id, 'error_type': type(exc).__name__},
+            level=logging.ERROR, extra={
+                **workflow_log_context(run_id=run_id, conversation_id=conversation_id),
+                'stage': 'execution_prepare', 'error_type': type(exc).__name__,
+            },
         )
         return jsonify({
             'error': 'Execution could not start. Reload the run to check its saved status.',
@@ -1888,6 +1905,9 @@ def register_route_backend_orchestration(bp):
                         effective_request, user_id, seeds=seeds,
                         conversation_id=resolved_conversation_id, settings=settings,
                     )
+                candidates = enrich_planner_candidates(
+                    candidates, user_id, conversation_id=resolved_conversation_id, seeds=seeds,
+                )
                 ledger = _load_ledger(resolved_conversation_id, user_id, settings)
                 signals = build_conversation_signals(
                     snapshot['messages'], message, truncated=snapshot['truncated'],
@@ -2435,11 +2455,21 @@ def register_route_backend_orchestration(bp):
             log_event(
                 '[ORCHESTRATION_RUNS] Current output status could not be loaded.',
                 level=logging.ERROR,
-                extra={'conversation_id': conversation_id, 'error_type': type(exc).__name__},
+                extra={
+                    **workflow_log_context(conversation_id=conversation_id),
+                    'stage': 'run_list', 'error_type': type(exc).__name__,
+                    'output_code': exc.code if isinstance(exc, (OutputError, OutputStorageError)) else None,
+                },
             )
             return jsonify({'error': 'Current file status is unavailable.', 'code': 'output_status_unavailable'}), 503
         except Exception as exc:
-            log_event(f"[ORCHESTRATION] Could not list runs: {exc}", level=logging.ERROR)
+            log_event(
+                '[ORCHESTRATION] Could not list runs.', level=logging.ERROR, extra={
+                    **workflow_log_context(conversation_id=conversation_id),
+                    'stage': 'run_list', 'error_type': type(exc).__name__,
+                    'output_code': exc.code if isinstance(exc, OutputUnavailableError) else None,
+                },
+            )
             return jsonify({'error': 'The run history could not be loaded.'}), 500
 
         # Both paths go through a projection, so no caller can reach a raw record. The
@@ -2472,8 +2502,12 @@ def register_route_backend_orchestration(bp):
                 run_id, user_id, conversation_id=conversation_id or None, strict=True,
             )
         except Exception as exc:
-            log_event(f"[ORCHESTRATION] Could not read run {run_id}: {exc}",
-                      level=logging.ERROR)
+            log_event(
+                '[ORCHESTRATION] Could not read a saved run.', level=logging.ERROR, extra={
+                    **workflow_log_context(run_id=run_id, conversation_id=conversation_id),
+                    'stage': 'run_read', 'error_type': type(exc).__name__,
+                },
+            )
             return jsonify({'error': 'The run could not be loaded.'}), 500
 
         if not record:
@@ -2487,7 +2521,15 @@ def register_route_backend_orchestration(bp):
                 record, lambda: _authorize_context_conversation(record['conversation_id'], user_id),
             )
             public = _run_detail_row(record)
-        except (ConversationContextError, PermissionError):
+        except (ConversationContextError, PermissionError) as exc:
+            log_event(
+                '[ORCHESTRATION_RUNS] Current access did not permit a saved run projection.',
+                level=logging.WARNING, extra={
+                    **workflow_log_context(run_id=run_id, conversation_id=record['conversation_id']),
+                    'stage': 'run_detail', 'error_type': type(exc).__name__,
+                    'output_code': exc.code if isinstance(exc, OutputUnavailableError) else None,
+                },
+            )
             return jsonify({'error': 'Run not found.'}), 404
         except CheckpointError:
             return jsonify({'error': 'Saved progress could not be verified.', 'code': 'recovery_unavailable'}), 503
@@ -2497,7 +2539,11 @@ def register_route_backend_orchestration(bp):
         ) as exc:
             log_event(
                 '[ORCHESTRATION_RUNS] Current output status could not be loaded.',
-                level=logging.ERROR, extra={'run_id': run_id, 'error_type': type(exc).__name__},
+                level=logging.ERROR, extra={
+                    **workflow_log_context(run_id=run_id, conversation_id=record['conversation_id']),
+                    'stage': 'run_detail', 'error_type': type(exc).__name__,
+                    'output_code': exc.code if isinstance(exc, (OutputError, OutputStorageError)) else None,
+                },
             )
             return jsonify({'error': 'Current file status is unavailable.', 'code': 'output_status_unavailable'}), 503
         return jsonify({'run': public}), 200
@@ -2538,7 +2584,12 @@ def register_route_backend_orchestration(bp):
         except ConversationContextError:
             return jsonify({'error': 'Run not found.'}), 404
         except Exception as exc:
-            log_event(f"[ORCHESTRATION] Could not list run steps: {exc}", level=logging.ERROR)
+            log_event(
+                '[ORCHESTRATION] Could not list run steps.', level=logging.ERROR, extra={
+                    **workflow_log_context(run_id=run_id, conversation_id=conversation_id),
+                    'stage': 'run_steps', 'error_type': type(exc).__name__,
+                },
+            )
             return jsonify({'error': 'The run steps could not be loaded.'}), 500
 
         return jsonify({'run_id': run_id, 'steps': steps}), 200
