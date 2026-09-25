@@ -365,7 +365,7 @@ def test_a_deep_link_into_an_unavailable_section_lands_gracefully(public_directo
     """`/public/<id>/agents` shows the workspace's graceful empty state, never a crash or a leak."""
     ui, page = public_directory_ui, public_directory_ui.page
     ui.open(f"/public/{MEMBER_WORKSPACE}/agents")
-    expect(page.get_by_role("heading", name="Public workspaces", exact=True)).to_be_visible()
+    expect(page.get_by_role("heading", name="Public Workspaces", exact=True)).to_be_visible()
     # A public workspace never offers agents: the section leaves the public registry (R5), so a deep
     # link to it lands on the shell's graceful "Section not found" empty state rather than a crash.
     expect(page.get_by_text("Section not found", exact=False)).to_be_visible()

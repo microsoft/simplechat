@@ -979,6 +979,29 @@ export interface OrchestrationBootstrap {
     capabilities: OrchestrationCapability[];
 }
 
+/**
+ * End-user Public Workspace label forms, resolved server-side by
+ * `get_public_workspace_label_context` and shipped inside sanitized bootstrap `settings`.
+ * The five string forms mirror the classic `getPublicWorkspaceLabel` selector so an admin's
+ * custom display name renders identically in both interfaces.
+ */
+export interface PublicWorkspaceLabels {
+    /** Title-case label, e.g. "Public Workspace". Used for headings and proper references. */
+    singular: string;
+    /** Title-case plural, e.g. "Public Workspaces". */
+    plural: string;
+    /** Mid-sentence singular, e.g. "public workspace". */
+    lower_singular: string;
+    /** Mid-sentence plural, e.g. "public workspaces". */
+    lower_plural: string;
+    /** Short nav label, e.g. "Public". */
+    short: string;
+    /** Whether an admin configured a custom display name. */
+    is_custom: boolean;
+    /** The admin field's max length, for the settings form. */
+    max_length: number;
+}
+
 export interface BootstrapPayload {
     version: string;
     user: {

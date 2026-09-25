@@ -31,6 +31,7 @@ import {
 } from '../lib/publicVisibility';
 import { useBootstrapStore } from '../stores/bootstrapStore';
 import { useUserSetting, useUserSettingsStore } from '../stores/userSettingsStore';
+import { usePublicWorkspaceLabels } from '../lib/publicWorkspaceLabels';
 
 const VIEWS: { id: PublicDirectoryView; label: string }[] = [
     { id: 'all', label: 'All' },
@@ -54,6 +55,7 @@ function readPageNumber(value: string | null): number {
 export function PublicDirectoryPage() {
     const bootstrap = useBootstrapStore((state) => state.data);
     const enabled = Boolean(bootstrap?.features?.enable_public_workspaces);
+    const labels = usePublicWorkspaceLabels();
     const navigate = useNavigate();
     const adapter = PUBLIC_DIRECTORY;
     const [searchParams, setSearchParams] = useSearchParams();
@@ -145,27 +147,27 @@ export function PublicDirectoryPage() {
     const totalPages = Math.max(1, Math.ceil(totalCount / DIRECTORY_PAGE_SIZE));
 
     const emptyDescription = useMemo(() => {
-        if (urlSearch) return 'No public workspaces match your search.';
-        if (view === 'mine') return 'You do not manage any public workspace yet.';
-        return 'No public workspaces have been published yet.';
-    }, [urlSearch, view]);
+        if (urlSearch) return `No ${labels.lower_plural} match your search.`;
+        if (view === 'mine') return `You do not manage any ${labels.lower_singular} yet.`;
+        return `No ${labels.lower_plural} have been published yet.`;
+    }, [urlSearch, view, labels]);
 
     if (!enabled) {
         return (
             <div className="flex h-full flex-col">
                 <PageHeader title="Public directory" leading={<Globe size={20} className="text-accent" />} />
                 <div className="p-4">
-                    <EmptyState icon={<Globe size={28} />} title="Public workspaces are not enabled"
-                        description="Your administrator has not enabled public workspaces for this deployment." />
+                    <EmptyState icon={<Globe size={28} />} title={`${labels.plural} are not enabled`}
+                        description={`Your administrator has not enabled ${labels.lower_plural} for this deployment.`} />
                 </div>
             </div>
         );
     }
 
     const header = (
-        <PageHeader title="Public directory" description="Browse public workspaces and choose which appear in chat"
+        <PageHeader title="Public directory" description={`Browse ${labels.lower_plural} and choose which appear in chat`}
             leading={<Globe size={20} className="text-accent" />}
-            actions={<GlassButton size="sm" onClick={() => navigate('/public')}><ArrowLeft size={14} />Public workspaces</GlassButton>} />
+            actions={<GlassButton size="sm" onClick={() => navigate('/public')}><ArrowLeft size={14} />{labels.plural}</GlassButton>} />
     );
 
     return (
@@ -181,7 +183,7 @@ export function PublicDirectoryPage() {
                         </button>
                     ))}
                 </div>
-                <SectionSearch value={searchInput} onChange={setSearchInput} placeholder="Search public workspaces by name or description" />
+                <SectionSearch value={searchInput} onChange={setSearchInput} placeholder={`Search ${labels.lower_plural} by name or description`} />
                 {searchError ? <p role="alert" className="text-xs text-danger">{searchError}</p> : null}
             </div>
             <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4">
@@ -198,16 +200,16 @@ export function PublicDirectoryPage() {
                     {notice ? <p role="status" className="rounded-xl border border-edge bg-surface-1 px-3 py-2 text-sm text-text-2">{notice}</p> : null}
                     {!customVisibility && !loading && !error && workspaces.length > 0 ? (
                         <p className="rounded-xl border border-edge bg-surface-1 px-3 py-2 text-xs text-text-3">
-                            Every public workspace appears in chat by default. Hiding one starts a custom list, and only the workspaces left visible will appear.
+                            Every {labels.lower_singular} appears in chat by default. Hiding one starts a custom list, and only the workspaces left visible will appear.
                         </p>
                     ) : null}
                     {loading ? (
                         <div role="status" className="space-y-2">
-                            <p className="flex items-center gap-2 text-sm text-text-2"><Loader2 size={16} className="animate-spin" />Loading public workspaces...</p>
+                            <p className="flex items-center gap-2 text-sm text-text-2"><Loader2 size={16} className="animate-spin" />Loading {labels.lower_plural}...</p>
                             <Skeleton className="h-16 w-full" /><Skeleton className="h-16 w-full" /><Skeleton className="h-16 w-full" />
                         </div>
                     ) : !error && workspaces.length === 0 ? (
-                        <EmptyState icon={<Globe size={28} />} title="No public workspaces to show" description={emptyDescription} />
+                        <EmptyState icon={<Globe size={28} />} title={`No ${labels.lower_plural} to show`} description={emptyDescription} />
                     ) : !error ? (
                         <>
                             <p role="status" className="text-xs text-text-3">

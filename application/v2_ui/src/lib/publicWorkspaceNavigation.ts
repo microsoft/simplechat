@@ -9,6 +9,7 @@ import {
     PUBLIC_WORKSPACE_SECTION_IDS, requireWorkspaceId, workspaceBasePath,
     type GroupWorkspaceSectionId, type PublicWorkspaceContext, type PublicWorkspaceSectionId,
 } from './workspaceContext';
+import { getPublicWorkspaceLabels } from './publicWorkspaceLabels';
 import { GROUP_ROLE_LABELS } from './groupWorkspaceNavigation';
 
 export const PUBLIC_SECTION_BLURBS: Record<GroupWorkspaceSectionId, string> = {
@@ -49,7 +50,7 @@ export function readPublicDocumentTarget(search: string): { id: string | null; e
     if (!values.length) return { id: null, error: null };
     if (params.has('public_workspace_id') || params.has('workspace_id')
         || params.has('group_id') || params.has('group_ids')) {
-        return { id: null, error: 'This document link contains conflicting workspace arguments. Use the public workspace named in its path.' };
+        return { id: null, error: `This document link contains conflicting workspace arguments. Use the ${getPublicWorkspaceLabels().lower_singular} named in its path.` };
     }
     if (values.length !== 1) return { id: null, error: 'This document link has more than one target. Open a link to one document.' };
     try {

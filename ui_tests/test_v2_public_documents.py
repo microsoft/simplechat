@@ -259,7 +259,7 @@ def test_late_scope_reads(public_documents_ui, suffix, action):
             ui.page.get_by_role("button", name="Details for Research brief", exact=True).click()
         else:
             ui.page.get_by_role("button", name="Version history", exact=True).click()
-    ui.page.get_by_role("combobox", name="Public workspace", exact=True).select_option("pub-b")
+    ui.page.get_by_role("combobox", name="Public Workspace", exact=True).select_option("pub-b")
     expect(ui.page).to_have_url(f"{ORIGIN}/v2/public/pub-b/documents")
     expect(ui.page.get_by_role("button", name="Details for Read-only brief", exact=True)).to_be_visible()
     assert ui.pending_responses
@@ -361,7 +361,7 @@ def test_disabled_feature_hides_surface(public_documents_ui):
     ui = public_documents_ui
     ui.public_enabled = False
     ui.open("/public")
-    expect(ui.page.get_by_text("Public workspaces are not enabled", exact=True)).to_be_visible()
+    expect(ui.page.get_by_text("Public Workspaces are not enabled", exact=True)).to_be_visible()
     assert not list_requests(ui)
     assert not [entry for entry in ui.requests if entry.path.startswith("/api/v2/workspaces/public/")]
 
@@ -369,7 +369,7 @@ def test_disabled_feature_hides_surface(public_documents_ui):
 def test_selection_sets_active_and_navigates(public_documents_ui):
     ui = public_documents_ui
     open_documents(ui)
-    ui.page.get_by_role("combobox", name="Public workspace", exact=True).select_option("pub-b")
+    ui.page.get_by_role("combobox", name="Public Workspace", exact=True).select_option("pub-b")
     expect(ui.page).to_have_url(f"{ORIGIN}/v2/public/pub-b/documents")
     expect(ui.page.get_by_role("button", name="Details for Read-only brief", exact=True)).to_be_visible()
     active = [entry for entry in ui.writes if entry.path == "/api/public_workspaces/setActive"]
@@ -383,7 +383,7 @@ def test_refused_set_active_leaves_surface_functional(public_documents_ui):
     # in the path, so the surface stays fully functional even when the courtesy write fails.
     ui.set_active_failures.add("pub-b")
     open_documents(ui)
-    ui.page.get_by_role("combobox", name="Public workspace", exact=True).select_option("pub-b")
+    ui.page.get_by_role("combobox", name="Public Workspace", exact=True).select_option("pub-b")
     expect(ui.page).to_have_url(f"{ORIGIN}/v2/public/pub-b/documents")
     expect(ui.page.get_by_role("button", name="Details for Read-only brief", exact=True)).to_be_visible()
     expect(explorer(ui)).to_have_attribute("aria-busy", "false")
@@ -921,7 +921,7 @@ def test_refused_set_active_leaves_a_public_operation_working(public_management_
     # the immutable workspace path rather than the courtesy active selection.
     ui.set_active_failures.add("pub-b")
     open_management(ui, "pub-a")
-    ui.page.get_by_role("combobox", name="Public workspace", exact=True).select_option("pub-b")
+    ui.page.get_by_role("combobox", name="Public Workspace", exact=True).select_option("pub-b")
     expect(ui.page).to_have_url(f"{ORIGIN}/v2/public/pub-b/documents")
     expect(details_button(ui, "same-document", "pub-b")).to_be_visible()
     attempted = [entry for entry in ui.writes if entry.path == "/api/public_workspaces/setActive"]
@@ -1232,7 +1232,7 @@ def test_refused_set_active_leaves_a_publication_decision_working(public_collabo
     # immutable workspace path rather than the courtesy active selection.
     ui.set_active_failures.add("pub-b")
     open_management(ui, "pub-a")
-    ui.page.get_by_role("combobox", name="Public workspace", exact=True).select_option("pub-b")
+    ui.page.get_by_role("combobox", name="Public Workspace", exact=True).select_option("pub-b")
     expect(ui.page).to_have_url(f"{ORIGIN}/v2/public/pub-b/documents")
     expect(details_button(ui, "same-document", "pub-b")).to_be_visible()
     attempted = [entry for entry in ui.writes if entry.path == "/api/public_workspaces/setActive"]
