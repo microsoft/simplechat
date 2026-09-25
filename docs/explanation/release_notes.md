@@ -2,6 +2,22 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.171)**
+
+#### New Features
+
+*   **Choose What A Group File Source Syncs, In V2**
+    *   The V2 group file source editor now sets the four remaining classic options: the folders and files to sync under the root (picked with Browse or typed), fixed tags for every synced file (with the group's existing tags as suggestions), how folders become tags, and what happens to the SimpleChat copy when a source file is deleted.
+    *   Editing a source keeps all four unless you change them, and a conflict reload merges them like the other fields.
+    *   (Ref: `FileSourceEditorDialog.tsx`, `lib/fileSourceFields.ts`, [V2 Group File Sources](features/V2_GROUP_FILE_SOURCES.md))
+
+#### Bug Fixes
+
+*   **Browsing A Group File Source Works For SMB Sources**
+    *   V2 Browse sent the source's root as the folder to list, which the server resolves under the root, so every SMB source answered an error. Choosing an entry also overwrote the root.
+    *   Browse now starts at the root, opens folders by their path under it, and never changes the root.
+    *   (Ref: `FileSourceEditorDialog.tsx`, [File Source Browse Path Fix](fixes/FILE_SOURCE_BROWSE_PATH_FIX.md))
+
 ### **(v0.261.170)**
 
 #### Bug Fixes

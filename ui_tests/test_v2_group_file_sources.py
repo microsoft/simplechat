@@ -1,9 +1,10 @@
 # test_v2_group_file_sources.py
 """
 Production-SPA coverage for the native scope-aware V2 group file sources section.
-Version: 0.261.157
+Version: 0.261.171
 Implemented in: 0.261.147
 Credential identifiers kept on edit: 0.261.156
+Selected paths, fixed tags, folder tags, remote delete policy and root-relative browse: 0.261.171
 
 Exercises the real file sources section and its editor dialog against closed synthetic
 HTTP. The fixture serves only the immutable `/api/groups/<id>/file-sources` family and
@@ -20,6 +21,14 @@ verbatim; a bound group identity names itself on the row and in the editor picke
 a member's manager-only section is unavailable with no group read at all. One node
 check pins the personal adapter's transport byte-identical and the group seam never
 reaching a personal URL.
+
+The editor also sets the four classic File Sync fields: the folders and files to sync,
+chosen by browsing from the source root or typed and normalized as the server stores
+them; the fixed tags, with the group's existing tags offered from the explicit-group
+tag read; the folder tag mode; and the remote delete policy. An edit saves all four back
+untouched, a conflict reload adopts another manager's change to them, a path leaving
+the root is refused before it is sent, and a typed path or tag left unadded blocks the
+save instead of vanishing. Browse paths are relative to the root, never the root itself.
 """
 
 import re
@@ -617,7 +626,7 @@ def test_test_connection_and_browse_run_against_the_draft(group_file_sources_ui)
         lambda response: response.request.method == "POST"
         and urlsplit(response.url).path == f"/api/groups/group-a/file-sources/{EDITABLE_SOURCE_ID}/browse"
     ):
-        page.get_by_role("dialog").get_by_role("button").filter(has_text="Browse").click()
+        page.get_by_role("button", name="Browse the source", exact=True).click()
     expect(page.get_by_text(re.compile("budget.xlsx"))).to_be_visible()
     assert_no_personal_reads(ui)
 
@@ -641,7 +650,9 @@ def test_failed_test_connection_shows_the_server_message_verbatim(group_file_sou
 
 
 def test_browse_opens_a_folder_by_type(group_file_sources_ui):
-    """Clicking a browsed folder browses into it; the entry is a folder by `type`, not `is_dir`."""
+    """Browse starts at the source root and opens a folder by sending back its path, which the engine
+    returns relative to the root; an entry is a folder by `type`, not `is_dir`. Browsing never
+    changes the root itself."""
     ui, page = group_file_sources_ui, group_file_sources_ui.page
     open_manager(ui)
     open_editor_for(ui, EDITABLE_NAME)
@@ -649,19 +660,34 @@ def test_browse_opens_a_folder_by_type(group_file_sources_ui):
         lambda response: response.request.method == "POST"
         and urlsplit(response.url).path == f"/api/groups/group-a/file-sources/{EDITABLE_SOURCE_ID}/browse"
     ) as first:
-        page.get_by_role("dialog").get_by_role("button").filter(has_text="Browse").click()
-    first_path = (first.value.request.post_data_json or {}).get("browse_path")
-    # The folder is labelled as a folder and the file as a file, from the real `type` field.
+        page.get_by_role("button", name="Browse the source", exact=True).click()
+    # The first browse lists the root itself: the browse path is relative to it, so it is empty,
+    # never the root's own network path (which the server would resolve under the root and fail).
+    assert (first.value.request.post_data_json or {}).get("browse_path") == ""
+    assert first.value.ok
+    expect(page.get_by_text("Browsing the source root", exact=True)).to_be_visible()
+    # The folder is labelled as a folder and opens; the file is labelled as a file, from the real
+    # `type` field.
     expect(page.get_by_role("button", name=re.compile(r"^Folder: reports"))).to_be_visible()
-    expect(page.get_by_role("button", name=re.compile(r"^File: budget.xlsx"))).to_be_visible()
-    # Opening the folder browses into its path, which the engine returns as a child of the current path.
+    expect(page.get_by_text("File: budget.xlsx", exact=True)).to_be_visible()
     with page.expect_response(
         lambda response: response.request.method == "POST"
         and urlsplit(response.url).path == f"/api/groups/group-a/file-sources/{EDITABLE_SOURCE_ID}/browse"
-        and (response.request.post_data_json or {}).get("browse_path") == f"{first_path}/reports"
-    ):
+        and (response.request.post_data_json or {}).get("browse_path") == "reports"
+    ) as opened:
         page.get_by_role("button", name=re.compile(r"^Folder: reports")).click()
-    expect(page.get_by_text(re.compile(r"Browsing .*reports/reports"))).to_be_visible()
+    assert opened.value.ok
+    expect(page.get_by_text("Browsing reports", exact=True)).to_be_visible()
+    expect(page.get_by_role("button", name=re.compile(r"^Folder: 2024"))).to_be_visible()
+    expect(page.get_by_text("File: summary.pdf", exact=True)).to_be_visible()
+    with page.expect_response(
+        lambda response: response.request.method == "POST"
+        and urlsplit(response.url).path == f"/api/groups/group-a/file-sources/{EDITABLE_SOURCE_ID}/browse"
+        and (response.request.post_data_json or {}).get("browse_path") == ""
+    ):
+        page.get_by_role("button", name="Up one folder", exact=True).click()
+    expect(page.get_by_text("Browsing the source root", exact=True)).to_be_visible()
+    expect(page.get_by_label("Network path", exact=True)).to_have_value("\\\\files.example.test\\reports")
     assert_no_personal_reads(ui)
 
 
@@ -674,9 +700,8 @@ def test_ignore_then_restore_tracks_the_returned_item(group_file_sources_ui):
         lambda response: response.request.method == "POST"
         and urlsplit(response.url).path == f"/api/groups/group-a/file-sources/{EDITABLE_SOURCE_ID}/browse"
     ):
-        page.get_by_role("dialog").get_by_role("button").filter(has_text="Browse").click()
-    file_entry = page.get_by_role("listitem").filter(
-        has=page.get_by_role("button", name=re.compile(r"^File: budget.xlsx")))
+        page.get_by_role("button", name="Browse the source", exact=True).click()
+    file_entry = page.get_by_role("listitem").filter(has_text="File: budget.xlsx")
     # Browse cannot report ignore state, so every entry defaults to "Ignore".
     ignore_button = file_entry.get_by_role("button", name="Ignore", exact=True)
     expect(ignore_button).to_be_visible()
@@ -697,6 +722,270 @@ def test_ignore_then_restore_tracks_the_returned_item(group_file_sources_ui):
         restore_button.click()
     expect(file_entry.get_by_role("button", name="Ignore", exact=True)).to_be_visible()
     assert_no_personal_reads(ui)
+
+
+SELECTION_SOURCE_ID, SELECTION_NAME = "group-a-selection-source", "Contracts share with a selection"
+PATH_INVALID_MESSAGE = (
+    "A path can\u2019t have an empty, \u201c.\u201d or \u201c..\u201d folder name. "
+    "Enter a folder or file under the source root."
+)
+
+
+def seed_selection_source(ui):
+    """A source whose four sync fields are all set away from their defaults."""
+    ui._seed_file_sources("group-a", [*ui.native_file_sources["group-a"], group_file_source(
+        "group-a", SELECTION_SOURCE_ID, SELECTION_NAME, source_type="smb", secret_stored=True,
+        username="svc-contracts", connection={
+            "unc_path": "\\\\files.example.test\\contracts",
+            "selected_paths": ["reports/2024", "budget.xlsx"],
+        },
+        filters={"fixed_tags": ["finance", "quarterly"], "folder_tag_mode": "none"},
+        remote_delete_policy="hard_delete",
+    )])
+
+
+def sync_field_values(record_or_body):
+    connection = record_or_body.get("connection") or {}
+    filters = record_or_body.get("filters") or {}
+    return {
+        "selected_paths": connection.get("selected_paths"),
+        "fixed_tags": filters.get("fixed_tags"),
+        "folder_tag_mode": filters.get("folder_tag_mode"),
+        "remote_delete_policy": record_or_body.get("remote_delete_policy"),
+    }
+
+
+def save_changes(ui, source_id):
+    page = ui.page
+    with page.expect_response(
+        lambda response: response.request.method == "PATCH"
+        and urlsplit(response.url).path == f"/api/groups/group-a/file-sources/{source_id}"
+    ) as response:
+        page.get_by_role("button", name="Save changes", exact=True).click()
+    assert response.value.ok, response.value.text()
+    return last_write(ui, f"/api/groups/group-a/file-sources/{source_id}", "PATCH")
+
+
+def test_an_edit_saves_the_stored_selection_tags_and_choices_untouched(group_file_sources_ui):
+    """The editor shows the stored selection, fixed tags, folder tags and delete policy, and a save
+    that only renames the source sends every one of them back unchanged."""
+    ui, page = group_file_sources_ui, group_file_sources_ui.page
+    seed_selection_source(ui)
+    stored = sync_field_values(ui.record_file_source("group-a", SELECTION_SOURCE_ID))
+    open_manager(ui)
+    open_editor_for(ui, SELECTION_NAME)
+    selection = page.get_by_role("list", name="Selected folders and files")
+    expect(selection.get_by_role("listitem")).to_have_text(["reports/2024", "budget.xlsx"])
+    expect(page.get_by_role("list", name="Fixed tags").get_by_role("listitem")).to_have_text(["finance", "quarterly"])
+    expect(page.get_by_label("Folder tags", exact=True)).to_have_value("none")
+    expect(page.get_by_label("When a source file is deleted", exact=True)).to_have_value("hard_delete")
+    expect(page.get_by_text(
+        "The next sync deletes the document from this group when its source file is deleted.", exact=True,
+    )).to_be_visible()
+    write = rename_and_save(ui, SELECTION_SOURCE_ID, SELECTION_NAME, opened=True)
+    assert sync_field_values(write.body) == stored
+    assert write.body["connection"]["unc_path"] == "\\\\files.example.test\\contracts"
+    assert sync_field_values(ui.record_file_source("group-a", SELECTION_SOURCE_ID)) == stored
+
+
+def test_browsing_selects_folders_and_files_to_sync(group_file_sources_ui):
+    """Browse selects folders and files under the root; the selection is saved relative to the root
+    and the root itself is never changed."""
+    ui, page = group_file_sources_ui, group_file_sources_ui.page
+    open_manager(ui)
+    open_editor_for(ui, EDITABLE_NAME)
+    expect(page.get_by_text("Syncing everything under the source root.", exact=True)).to_be_visible()
+    page.get_by_role("button", name="Browse the source", exact=True).click()
+    select_budget = page.get_by_role("button", name="Select budget.xlsx", exact=True)
+    expect(select_budget).to_have_attribute("aria-pressed", "false")
+    select_budget.click()
+    expect(select_budget).to_have_attribute("aria-pressed", "true")
+    expect(select_budget).to_have_text("Selected")
+    page.get_by_role("button", name=re.compile(r"^Folder: reports")).click()
+    page.get_by_role("button", name="Select reports/2024", exact=True).click()
+    selection = page.get_by_role("list", name="Selected folders and files")
+    expect(selection.get_by_role("listitem")).to_have_text(["budget.xlsx", "reports/2024"])
+    # Deselecting from the list is the same as deselecting from the browse, which it updates.
+    page.get_by_role("button", name="Stop syncing budget.xlsx", exact=True).click()
+    expect(selection.get_by_role("listitem")).to_have_text(["reports/2024"])
+    page.get_by_role("button", name="Up one folder", exact=True).click()
+    expect(page.get_by_role("button", name="Select budget.xlsx", exact=True)).to_have_attribute("aria-pressed", "false")
+    write = save_changes(ui, EDITABLE_SOURCE_ID)
+    assert write.body["connection"] == {
+        "unc_path": "\\\\files.example.test\\reports", "selected_paths": ["reports/2024"],
+    }
+    stored = ui.record_file_source("group-a", EDITABLE_SOURCE_ID)
+    assert stored["connection"]["selected_paths"] == ["reports/2024"]
+    assert stored["connection"]["unc_path"] == "\\\\files.example.test\\reports"
+    assert_no_personal_reads(ui)
+
+
+def test_a_typed_path_is_normalized_and_one_leaving_the_root_is_refused(group_file_sources_ui):
+    """A typed path is added as the server stores it and once, ignoring case; a path leaving the root
+    is refused with a reason before anything is sent; and a typed path left unadded blocks the save
+    rather than being silently dropped."""
+    ui, page = group_file_sources_ui, group_file_sources_ui.page
+    open_manager(ui)
+    open_editor_for(ui, EDITABLE_NAME)
+    path_input = page.get_by_label("Add a folder or file", exact=True)
+    path_input.fill("Reports\\2024\\")
+    path_input.press("Enter")
+    selection = page.get_by_role("list", name="Selected folders and files")
+    expect(selection.get_by_role("listitem")).to_have_text(["Reports/2024"])
+    path_input.fill(" reports/2024 ")
+    page.get_by_role("button", name="Add path", exact=True).click()
+    expect(selection.get_by_role("listitem")).to_have_text(["Reports/2024"])
+    path_input.fill("reports/../secrets")
+    page.get_by_role("button", name="Add path", exact=True).click()
+    expect(page.get_by_role("alert").filter(has_text=PATH_INVALID_MESSAGE)).to_be_visible()
+    expect(path_input).to_have_value("reports/../secrets")
+    expect(selection.get_by_role("listitem")).to_have_text(["Reports/2024"])
+    page.get_by_role("button", name="Save changes", exact=True).click()
+    expect(page.get_by_text("Add the path you typed, or clear it, before saving.", exact=True)).to_be_visible()
+    assert not [entry for entry in ui.writes if entry.method == "PATCH"], "An unadded path must block the save."
+    path_input.fill("")
+    write = save_changes(ui, EDITABLE_SOURCE_ID)
+    assert write.body["connection"]["selected_paths"] == ["Reports/2024"]
+    assert ui.record_file_source("group-a", EDITABLE_SOURCE_ID)["connection"]["selected_paths"] == ["Reports/2024"]
+
+
+def test_fixed_tags_folder_tags_and_delete_policy_are_saved_as_shown(group_file_sources_ui):
+    """Fixed tags show as the server stores them, the group's existing tags are offered most used
+    first, and the folder tag and delete choices are saved exactly as chosen."""
+    ui, page = group_file_sources_ui, group_file_sources_ui.page
+    open_manager(ui)
+    open_editor_for(ui, EDITABLE_NAME)
+    expect(page.get_by_text("No fixed tags.", exact=True)).to_be_visible()
+    offered = page.get_by_role("button", name=re.compile(r"^Add the existing tag "))
+    expect(offered).to_have_text(["+ quarterly", "+ finance", "+ legal"])
+    tag_input = page.get_by_label("Add a fixed tag", exact=True)
+    tag_input.fill("Q1 Reports")
+    expect(page.get_by_text("Saved as \u201cq1-reports\u201d.", exact=True)).to_be_visible()
+    tag_input.press("Enter")
+    page.get_by_role("button", name="Add the existing tag legal", exact=True).click()
+    tags = page.get_by_role("list", name="Fixed tags").get_by_role("listitem")
+    expect(tags).to_have_text(["q1-reports", "legal"])
+    expect(offered).to_have_text(["+ quarterly", "+ finance"])
+    tag_input.fill("fin")
+    expect(offered).to_have_text(["+ finance"])
+    tag_input.fill("!!")
+    page.get_by_role("button", name="Add tag", exact=True).click()
+    expect(page.get_by_role("alert").filter(has_text="A tag needs at least one letter or number.")).to_be_visible()
+    tag_input.fill("")
+    page.get_by_role("button", name="Remove the fixed tag q1-reports", exact=True).click()
+    expect(tags).to_have_text(["legal"])
+    page.get_by_label("Folder tags", exact=True).select_option("full_path")
+    expect(page.get_by_text(
+        "A file in Reports/2024 also gets the tags \u201creports\u201d and \u201c2024\u201d.", exact=True,
+    )).to_be_visible()
+    page.get_by_label("When a source file is deleted", exact=True).select_option("hard_delete")
+    write = save_changes(ui, EDITABLE_SOURCE_ID)
+    assert sync_field_values(write.body) == {
+        "selected_paths": [], "fixed_tags": ["legal"], "folder_tag_mode": "full_path",
+        "remote_delete_policy": "hard_delete",
+    }
+    assert sync_field_values(ui.record_file_source("group-a", EDITABLE_SOURCE_ID)) == sync_field_values(write.body)
+    tag_reads = [entry for entry in ui.requests if entry.path == "/api/group_documents/tags"]
+    assert tag_reads and all(entry.query == {"group_id": ["group-a"]} for entry in tag_reads), (
+        "The existing tags must come from the explicit-group tag read, never the active group."
+    )
+    assert_no_personal_reads(ui)
+
+
+def test_existing_tag_suggestions_are_optional(group_file_sources_ui):
+    """A failed read of the group's tags costs only the suggestions: the editor opens, says so, and a
+    typed tag is still saved."""
+    ui, page = group_file_sources_ui, group_file_sources_ui.page
+    ui.group_document_tag_read_failures.add("group-a")
+    open_manager(ui)
+    open_editor_for(ui, EDITABLE_NAME)
+    expect(page.get_by_text(
+        "This group\u2019s existing tags couldn\u2019t be loaded. You can still type a tag.", exact=True,
+    )).to_be_visible()
+    expect(page.get_by_role("button", name=re.compile(r"^Add the existing tag "))).to_have_count(0)
+    page.get_by_label("Add a fixed tag", exact=True).fill("legal")
+    page.get_by_role("button", name="Add tag", exact=True).click()
+    write = save_changes(ui, EDITABLE_SOURCE_ID)
+    assert write.body["filters"]["fixed_tags"] == ["legal"]
+
+
+def test_config_conflict_reload_adopts_a_concurrent_fixed_tag_change(group_file_sources_ui):
+    """A conflict reload adopts another manager's change to the fixed tags and folder tags the user
+    left alone, and keeps the user's own edit."""
+    ui, page = group_file_sources_ui, group_file_sources_ui.page
+    open_manager(ui)
+    open_editor_for(ui, EDITABLE_NAME)
+    record = ui.record_file_source("group-a", EDITABLE_SOURCE_ID)
+    record["filters"]["fixed_tags"] = ["legal"]
+    record["filters"]["folder_tag_mode"] = "parent"
+    ui.touch_file_source("group-a", EDITABLE_SOURCE_ID)
+    page.get_by_label("Name", exact=True).fill("Quarterly reports share, tags reloaded")
+    with page.expect_response(
+        lambda response: response.request.method == "PATCH"
+        and urlsplit(response.url).path == f"/api/groups/group-a/file-sources/{EDITABLE_SOURCE_ID}"
+    ) as conflict:
+        page.get_by_role("button", name="Save changes", exact=True).click()
+    assert conflict.value.status == 409
+    page.get_by_role("button", name="Reload", exact=True).click()
+    expect(page.get_by_text(REBASE_NOTICE, exact=True)).to_be_visible()
+    expect(page.get_by_role("list", name="Fixed tags").get_by_role("listitem")).to_have_text(["legal"])
+    expect(page.get_by_label("Folder tags", exact=True)).to_have_value("parent")
+    write = save_changes(ui, EDITABLE_SOURCE_ID)
+    assert write.body["filters"]["fixed_tags"] == ["legal"]
+    assert write.body["name"] == "Quarterly reports share, tags reloaded"
+
+
+def test_search_filters_sources_by_name_and_path(group_file_sources_ui):
+    """The search narrows the loaded list by name or remote path without another read, says when
+    nothing matches, and restores the list when cleared."""
+    ui, page = group_file_sources_ui, group_file_sources_ui.page
+    open_manager(ui)
+    for name in (EDITABLE_NAME, WITHHELD_NAME, IDENTITY_NAME):
+        expect(row(ui, name)).to_be_visible()
+    reads_before = len(sources_get(ui))
+    search = page.get_by_placeholder("Search file sources")
+    search.fill("archive")
+    expect(row(ui, WITHHELD_NAME)).to_be_visible()
+    expect(row(ui, EDITABLE_NAME)).to_have_count(0)
+    expect(row(ui, IDENTITY_NAME)).to_have_count(0)
+    # A path matches too: the identity source's share is \\files.example.test\shared.
+    search.fill("\\shared")
+    expect(row(ui, IDENTITY_NAME)).to_be_visible()
+    expect(row(ui, EDITABLE_NAME)).to_have_count(0)
+    search.fill("no such source")
+    expect(page.get_by_text("No sources match your search", exact=True)).to_be_visible()
+    search.fill("")
+    for name in (EDITABLE_NAME, WITHHELD_NAME, IDENTITY_NAME):
+        expect(row(ui, name)).to_be_visible()
+    assert len(sources_get(ui)) == reads_before, "Searching filters the loaded list; it never re-reads."
+
+
+def assert_dialog_fits(page):
+    """Nothing in the open dialog scrolls sideways or reaches past the viewport."""
+    assert page.get_by_role("dialog").evaluate("""dialog => {
+        const viewport = window.innerWidth;
+        return [...dialog.querySelectorAll('*')].every((node) => {
+            const box = node.getBoundingClientRect();
+            const style = getComputedStyle(node);
+            const scrollsSideways = ['auto', 'scroll'].includes(style.overflowX) && node.scrollWidth > node.clientWidth + 1;
+            return !scrollsSideways && (box.width === 0 || (box.left >= -1 && box.right <= viewport + 1));
+        });
+    }"""), "The file source editor overflows horizontally."
+
+
+@pytest.mark.parametrize("theme,width,height", LAYOUTS)
+def test_editor_sync_fields_fit_desktop_and_mobile(group_file_sources_ui, theme, width, height):
+    """The selection, the browse listing, the fixed tags and both choices fit both breakpoints."""
+    ui, page = group_file_sources_ui, group_file_sources_ui.page
+    seed_selection_source(ui)
+    open_sources(ui, theme=theme, width=width, height=height)
+    open_editor_for(ui, SELECTION_NAME)
+    page.get_by_role("button", name="Browse the source", exact=True).click()
+    expect(page.get_by_text("Browsing the source root", exact=True)).to_be_visible()
+    page.get_by_label("Add a fixed tag", exact=True).fill("A very long tag name that the server shortens")
+    page.get_by_role("dialog").get_by_text("Tags and deletions", exact=True).scroll_into_view_if_needed()
+    assert_dialog_fits(page)
+    ui.assert_no_overflow()
 
 
 def test_locked_group_manager_gets_a_read_only_section(group_file_sources_ui):

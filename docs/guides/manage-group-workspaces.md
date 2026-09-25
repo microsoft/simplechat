@@ -212,6 +212,10 @@ sources.
   them too. If only part of a delete succeeds, the section says what was
   removed.
 - Each source can show its recent runs.
+- From version **0.261.171**, the editor also chooses which folders and files to
+  sync (with **Browse**), the fixed tags every synced file gets, how folders
+  become tags, and what happens to the SimpleChat copy when a source file is
+  deleted.
 
 ### Use group tools and manage the workspace
 

@@ -1,7 +1,7 @@
 # group_workspace.py
 """
 Closed HTTP fixtures for the real V2 group workspace shell.
-Version: 0.261.170
+Version: 0.261.171
 Implemented in: 0.261.127
 Members section in the group context (M7B): 0.261.155
 File source credential identifiers modelled as `_prepare_auth_payload` stores them: 0.261.156
@@ -10,6 +10,8 @@ Settings, Activity and Statistics sections in the group context (M7C): 0.261.161
 Group agent responses held to the real routes, route by route: 0.261.161
 Group action responses held to the real routes, route by route: 0.261.161
 Identity credential identifiers modelled as `_prepare_auth_payload` stores them: 0.261.170
+File source sync fields folded and normalized by the server's own rules, and browse paths
+resolved relative to the source root: 0.261.171
 
 The shell fixture also serves the immutable native `/api/groups/<group_id>/actions[...]`,
 `/agents[...]`, `/identities[...]` and `/model-endpoints[...]` families -- plus the group
@@ -29,11 +31,13 @@ import ast
 import base64
 import copy
 import hashlib
+import json
 import re
 from datetime import date, datetime, timedelta, timezone
 from email import policy as email_policy
 from email.parser import BytesParser
 from pathlib import Path
+from typing import Any, Dict, List, Optional
 from urllib.parse import quote, unquote, urlsplit
 
 import pytest
@@ -103,6 +107,46 @@ def _app_constant(file_name, name):
             except (ValueError, SyntaxError):
                 pass
     raise LookupError(f"{file_name} defines no literal {name}")
+
+
+def _app_functions(file_name, names, namespace):
+    """Execute the named, pure function definitions of an application module into ``namespace``.
+
+    Some server rules are functions rather than literals -- the File Sync list, path and tag
+    normalizers, for instance. Their real definitions are compiled here, alone, from the module's own
+    source, so the fixture applies exactly the server's rule without importing a module whose import
+    would reach Cosmos. A missing definition fails loudly rather than leaving a stale copy in place.
+    """
+    tree = ast.parse((APP_ROOT / file_name).read_text(encoding="utf-8"))
+    selected = [
+        node for node in tree.body
+        if isinstance(node, ast.FunctionDef) and node.name in names
+    ]
+    missing = set(names) - {node.name for node in selected}
+    if missing:
+        raise LookupError(f"{file_name} no longer defines {sorted(missing)}")
+    exec(compile(ast.Module(body=selected, type_ignores=[]), file_name, "exec"), namespace)
+    return namespace
+
+
+def _file_sync_rules():
+    """The real File Sync normalizers the native source write applies, for the fixture's model."""
+    namespace = {"re": re, "json": json, "Any": Any, "Dict": Dict, "List": List, "Optional": Optional}
+    _app_functions("functions_documents.py", {"normalize_tag", "validate_tags"}, namespace)
+    _app_functions("functions_file_sync.py", {
+        "parse_file_sync_list", "_normalize_text", "_normalize_selected_path", "_normalize_selected_paths",
+        "_normalize_patterns", "_normalize_extensions", "_safe_tag_from_text", "_normalize_tags",
+    }, namespace)
+    return namespace
+
+
+FILE_SYNC_RULES = _file_sync_rules()
+FILE_SYNC_FOLDER_TAG_MODES = _app_constant("functions_file_sync.py", "FILE_SYNC_FOLDER_TAG_MODES")
+FILE_SYNC_REMOTE_DELETE_POLICIES = _app_constant("functions_file_sync.py", "FILE_SYNC_REMOTE_DELETE_POLICIES")
+# The config default `file_sync_default_remote_delete_policy`, which the admin page always saves.
+FILE_SYNC_DEFAULT_REMOTE_DELETE_POLICY = _app_constant(
+    "functions_file_sync.py", "FILE_SYNC_DEFAULTS",
+)["file_sync_default_remote_delete_policy"]
 
 
 SECTION_GROUPS = {
@@ -579,6 +623,22 @@ FILE_SOURCE_AUTH_TYPES = {
 }
 
 FILE_SOURCE_GENERIC_ERROR = "The file source details are not valid."
+# The real error mapping's answers (group_file_source_error_response): a ValueError from validation --
+# a selected path leaving the source root, say -- is a generic 400, and an unmapped failure such as a
+# browse of a folder that is not there is a generic 500. The parity test pins both.
+FILE_SOURCE_INVALID_REQUEST_ERROR = (
+    "The File Sync request could not be completed. Verify the source configuration and try again."
+)
+FILE_SOURCE_UNEXPECTED_ERROR = "An unexpected error occurred while processing the File Sync request."
+# What a browse finds under a source root. Every browse path, like every entry path, is relative to
+# the configured root, exactly as `browse_file_sync_source_path` resolves it, so a client that sent
+# the root itself (or anything not under it) as the browse path gets the server's failure, not a
+# listing.
+FILE_SOURCE_BROWSE_TREE = {
+    "": (("reports", "folder"), ("budget.xlsx", "file")),
+    "reports": (("2024", "folder"), ("summary.pdf", "file")),
+    "reports/2024": (("q1.pdf", "file"),),
+}
 FILE_SOURCE_CONFLICT_ERROR = "This file source was modified. Reload and try again."
 # A delete refused while a run is active: the delete-specific reviewed message.
 FILE_SOURCE_BUSY_ERROR = "Wait for the running sync to finish, then delete the source."
@@ -603,7 +663,8 @@ def group_file_source(group_id, identifier, name, *, source_type="smb", enabled=
                       username="", domain="", client_identity="", tenant_id="",
                       managed_identity_client_id="", schedule_enabled=False,
                       interval_minutes=60, actions=FILE_SOURCE_ITEM_ACTIONS,
-                      last_run_status="completed", last_run_at="2024-01-02T00:00:00+00:00"):
+                      last_run_status="completed", last_run_at="2024-01-02T00:00:00+00:00",
+                      remote_delete_policy="ignore"):
     """One group file source as the native projector returns it, before config_revision and masking.
 
     The stored credential is a boolean plus a placeholder, never a plaintext secret, so a blank
@@ -611,10 +672,13 @@ def group_file_source(group_id, identifier, name, *, source_type="smb", enabled=
     display name the list row shows; inline auth stores the fields the sanitized credentials expose.
     A service principal keeps its client ID in `identity` and its tenant in `tenant_id`; a managed
     identity keeps its client ID in `managed_identity_client_id`, as `_prepare_auth_payload` stores them.
+    Every stored connection carries its `selected_paths` beside its root fields, as
+    `_normalize_connection_payload` stores it for every type.
     """
     conn = dict(connection or {})
     for key in FILE_SOURCE_CONNECTION_KEYS.get(source_type, ()):  # ensure every key is present
         conn.setdefault(key, "")
+    conn.setdefault("selected_paths", [])
     if source_type == "smb" and not conn.get("unc_path"):
         conn["unc_path"] = "\\\\files.example.test\\reports"
     resolved_filters = {
@@ -637,7 +701,7 @@ def group_file_source(group_id, identifier, name, *, source_type="smb", enabled=
             "interval_minutes": interval_minutes,
             "next_run_at": None,
         },
-        "remote_delete_policy": "ignore",
+        "remote_delete_policy": remote_delete_policy,
         "identity_id": identity_id or "",
         "last_run_status": last_run_status,
         "last_run_at": last_run_at,
@@ -1191,6 +1255,12 @@ class GroupWorkspaceFixture(WorkspaceAuthoringFixture):
         self.file_source_forced_write_conflict = None
         self.file_source_list_item_defect = None
         self.file_source_type_visibility = {"smb": True, "azure_files": True, "azure_blob": True}
+        # The explicit-group tag read (`/api/group_documents/tags?group_id=`) answers each group's
+        # seeded tags, the `{name, count, color}` rows the real route aggregates, so the file source
+        # editor can offer them as fixed tags. A group in `group_document_tag_read_failures` answers
+        # the read with a 500, so a test can prove the suggestions are optional.
+        self.group_document_tags = {}
+        self.group_document_tag_read_failures = set()
         # M7C native group settings state. Each group carries the settings VALUES the read projects
         # (profile, logo, downloads and retention), and a per-(group, section) revision marker the
         # client round-trips as `revision`; a write that names a stale marker is refused with
@@ -1509,7 +1579,12 @@ class GroupWorkspaceFixture(WorkspaceAuthoringFixture):
             assert len(entry.query.get("group_id", [])) == 1
             assert entry.query["group_id"][0] in self.groups
             assert "group_ids" not in entry.query
-            self._json(route, {"tags": []} if path.endswith("/tags") else {
+            group_id = entry.query["group_id"][0]
+            if path.endswith("/tags") and group_id in self.group_document_tag_read_failures:
+                self._json(route, {"error": "Failed to load tags."}, 500)
+                return
+            self._json(route, {"tags": copy.deepcopy(self.group_document_tags.get(group_id, []))}
+                       if path.endswith("/tags") else {
                 "total": 0, "untagged": 0, "processing": 0, "errors": 0,
                 "recent": 0, "shared_with_me": 0, "by_tag": {}, "by_classification": {},
             })
@@ -3040,8 +3115,9 @@ class GroupWorkspaceFixture(WorkspaceAuthoringFixture):
             secret_stored = bool(prior["_secret"])
         else:
             secret_stored = False
-        connection = body.get("connection")
-        filters = body.get("filters")
+        connection = self._file_source_connection(source_type, body.get("connection"), prior)
+        filters = self._file_source_filters(body.get("filters"), prior)
+        remote_delete_policy = self._file_source_remote_delete_policy(body, prior)
         schedule = body.get("schedule") if isinstance(body.get("schedule"), dict) else {}
         identity_name = ""
         if identity_id:
@@ -3068,8 +3144,8 @@ class GroupWorkspaceFixture(WorkspaceAuthoringFixture):
             source_type=source_type,
             enabled=bool(body["enabled"]) if "enabled" in body else (prior["enabled"] if prior else True),
             recursive=bool(body["recursive"]) if "recursive" in body else (prior["recursive"] if prior else True),
-            connection=connection if isinstance(connection, dict) else (prior["connection"] if prior else None),
-            filters=filters if isinstance(filters, dict) else (prior["filters"] if prior else None),
+            connection=connection,
+            filters=filters,
             identity_id=identity_id,
             identity_name=identity_name,
             auth_type=auth_type,
@@ -3084,10 +3160,60 @@ class GroupWorkspaceFixture(WorkspaceAuthoringFixture):
             actions=list(prior["source_actions"]) if prior else list(FILE_SOURCE_ITEM_ACTIONS),
             last_run_status=prior["last_run_status"] if prior else None,
             last_run_at=prior["last_run_at"] if prior else None,
+            remote_delete_policy=remote_delete_policy,
         )
         record["created_at"] = prior["created_at"] if prior else now
         record["updated_at"] = now
         return record
+
+    @staticmethod
+    def _file_source_connection(source_type, incoming, prior):
+        """The stored connection, folded key by key as `_normalize_connection_payload` folds it: a key
+        the write leaves out keeps the stored value, so a save that sends only the root fields keeps
+        the selected paths, and the selected paths are normalized by the server's own rule (a path
+        leaving the source root raises, which the route answers with its generic 400)."""
+        incoming = incoming if isinstance(incoming, dict) else {}
+        existing = prior["connection"] if prior else {}
+        connection = {
+            key: incoming.get(key, existing.get(key, ""))
+            for key in FILE_SOURCE_CONNECTION_KEYS.get(source_type, ())
+        }
+        connection["selected_paths"] = FILE_SYNC_RULES["_normalize_selected_paths"](
+            incoming.get("selected_paths", existing.get("selected_paths", [])),
+        )
+        return connection
+
+    @staticmethod
+    def _file_source_filters(incoming, prior):
+        """The stored filters, folded key by key as `_normalize_source_payload` folds them, each value
+        normalized by the server's own rule: a missing key keeps the stored value, fixed tags are made
+        safe and deduplicated, and an unrecognised folder tag mode is stored as `parent`."""
+        incoming = incoming if isinstance(incoming, dict) else {}
+        existing = prior["filters"] if prior else {}
+        rules = FILE_SYNC_RULES
+        folder_tag_mode = rules["_normalize_text"](
+            incoming.get("folder_tag_mode", existing.get("folder_tag_mode", "parent")), 50,
+        ).lower()
+        return {
+            "include_patterns": rules["_normalize_patterns"](
+                incoming.get("include_patterns", existing.get("include_patterns", []))),
+            "exclude_patterns": rules["_normalize_patterns"](
+                incoming.get("exclude_patterns", existing.get("exclude_patterns", []))),
+            "allowed_extensions": rules["_normalize_extensions"](
+                incoming.get("allowed_extensions", existing.get("allowed_extensions", []))),
+            "fixed_tags": rules["_normalize_tags"](incoming.get("fixed_tags", existing.get("fixed_tags", []))),
+            "folder_tag_mode": folder_tag_mode if folder_tag_mode in FILE_SYNC_FOLDER_TAG_MODES else "parent",
+        }
+
+    @staticmethod
+    def _file_source_remote_delete_policy(body, prior):
+        """The stored remote delete policy: the write's, else the stored one, else the configured
+        default, lowered, and `ignore` for anything unrecognised."""
+        default = prior.get("remote_delete_policy", FILE_SYNC_DEFAULT_REMOTE_DELETE_POLICY) if prior else (
+            FILE_SYNC_DEFAULT_REMOTE_DELETE_POLICY
+        )
+        policy = FILE_SYNC_RULES["_normalize_text"](body.get("remote_delete_policy", default), 50).lower()
+        return policy if policy in FILE_SYNC_REMOTE_DELETE_POLICIES else "ignore"
 
     def _file_sources(self, route, entry):
         parts = entry.path.split("/")
@@ -3178,7 +3304,11 @@ class GroupWorkspaceFixture(WorkspaceAuthoringFixture):
             return
         self.created_file_source_counter += 1
         identifier = f"group-source-created-{self.created_file_source_counter}"
-        record = self._file_source_from_write(group_id, identifier, body, prior=None)
+        try:
+            record = self._file_source_from_write(group_id, identifier, body, prior=None)
+        except ValueError:
+            self._json(route, {"error": FILE_SOURCE_INVALID_REQUEST_ERROR}, 400)
+            return
         self.native_file_sources.setdefault(group_id, []).insert(0, record)
         self.native_file_source_revisions[(group_id, identifier)] = 1
         self.file_source_runs[(group_id, identifier)] = []
@@ -3206,7 +3336,11 @@ class GroupWorkspaceFixture(WorkspaceAuthoringFixture):
         if body["expected_config_revision"] != self._file_source_config_revision(group_id, identifier):
             self._json(route, {"error": FILE_SOURCE_CONFLICT_ERROR, "error_code": "config_conflict"}, 409)
             return
-        updated = self._file_source_from_write(group_id, identifier, body, prior=record)
+        try:
+            updated = self._file_source_from_write(group_id, identifier, body, prior=record)
+        except ValueError:
+            self._json(route, {"error": FILE_SOURCE_INVALID_REQUEST_ERROR}, 400)
+            return
         index = next(i for i, row in enumerate(self.native_file_sources[group_id]) if row["id"] == identifier)
         self.native_file_sources[group_id][index] = updated
         self.native_file_source_revisions[(group_id, identifier)] += 1
@@ -3283,7 +3417,7 @@ class GroupWorkspaceFixture(WorkspaceAuthoringFixture):
         if action == "test-connection":
             self._file_source_test_response(route, body)
         else:
-            self._json(route, self._browse_payload(body.get("browse_path", "")))
+            self._file_source_browse_response(route, body, str(body.get("source_type") or "smb"))
 
     def _file_source_test_response(self, route, body):
         """A connection test result. A scripted failure is an HTTP 400 with a message shown verbatim,
@@ -3316,19 +3450,34 @@ class GroupWorkspaceFixture(WorkspaceAuthoringFixture):
         if action == "test-connection":
             self._file_source_test_response(route, body)
         else:
-            self._json(route, self._browse_payload(body.get("browse_path", "")))
+            self._file_source_browse_response(route, body, record["source_type"])
 
-    def _browse_payload(self, browse_path):
-        """A browse result in the real engine shape: each entry carries `type` ("folder" or "file"),
-        never `is_dir`, and no ignore state, since browse cannot report one."""
-        base = str(browse_path or "")
-        prefix = f"{base}/" if base else ""
-        return {"browse": {"path": base, "source_type": "smb", "entries": [
-            {"name": "reports", "path": f"{prefix}reports", "type": "folder", "size": 0,
-             "modified_at": "2024-01-02T00:00:00+00:00"},
-            {"name": "budget.xlsx", "path": f"{prefix}budget.xlsx", "type": "file", "size": 20480,
-             "modified_at": "2024-01-02T00:00:00+00:00"},
-        ]}}
+    def _file_source_browse_response(self, route, body, source_type):
+        """A browse in the real engine shape. The browse path is normalized by the server's own rule
+        and resolved relative to the source root: an entry's `path` is relative to the root too, a
+        folder opens by sending its path back, and a path outside the modelled tree -- the root's own
+        UNC path, say -- fails as the real browse of a missing folder does. Each entry carries `type`
+        ("folder" or "file"), never `is_dir`, and no ignore state, since browse cannot report one."""
+        try:
+            browse_path = FILE_SYNC_RULES["_normalize_selected_path"](body.get("browse_path") or body.get("path") or "")
+        except ValueError:
+            self._json(route, {"error": FILE_SOURCE_INVALID_REQUEST_ERROR}, 400)
+            return
+        children = FILE_SOURCE_BROWSE_TREE.get(browse_path)
+        if children is None:
+            self._json(route, {"error": FILE_SOURCE_UNEXPECTED_ERROR}, 500)
+            return
+        prefix = f"{browse_path}/" if browse_path else ""
+        self._json(route, {"browse": {
+            "success": True,
+            "path": browse_path,
+            "source_type": source_type,
+            "entries": [
+                {"name": name, "path": f"{prefix}{name}", "type": kind,
+                 "size": 0 if kind == "folder" else 20480, "modified_at": "2024-01-02T00:00:00+00:00"}
+                for name, kind in children
+            ],
+        }})
 
     def _file_source_ignore(self, route, entry, group_id, identifier):
         # Ignore requires the workspace `edit` operation and the row's own `edit` action.
