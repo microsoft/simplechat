@@ -78,6 +78,7 @@ from functions_m365_transport import M365ProviderError, normalize_m365_transport
 from functions_orchestration_registry import (
     build_capability_client_projection,
     capabilities_for_contract,
+    effective_capability_ids,
 )
 from functions_ai_notice import (
     normalize_ai_notice_frequency,
@@ -1095,8 +1096,10 @@ def register_route_frontend_admin_settings(bp):
                 inbound_mcp_easy_auth_script=build_inbound_mcp_easy_auth_script(inbound_mcp_easy_auth_script_context),
                 is_vision_capable_model=is_vision_capable_model,
                 orchestration_capabilities=orchestration_capabilities,
+                # A saved list may still name a retired capability; show its replacement
+                # selected so saving the form keeps it.
                 orchestration_selected_capabilities=(
-                    settings.get('chat_orchestration_enabled_capabilities')
+                    effective_capability_ids(settings.get('chat_orchestration_enabled_capabilities'))
                     or [capability['id'] for capability in orchestration_capabilities]
                 ),
                 inbound_mcp_tools=get_inbound_mcp_tool_registry(),

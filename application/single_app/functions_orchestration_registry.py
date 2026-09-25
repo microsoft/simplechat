@@ -51,6 +51,23 @@ ROLE_GATHER = 'gather'
 ROLE_REASON = 'reason'
 ROLE_RENDER = 'render'
 
+# Capability ids a saved allowlist may still name, and the capability that replaced each.
+# The removed answering step was kept in every narrowed list, and Prepare content now writes
+# the answer. The stored list is read through this map rather than rewritten, because a
+# saved run's execution binding hashes the settings it ran under.
+RETIRED_CAPABILITY_ALIASES = {'respond': 'compose'}
+
+
+def effective_capability_ids(values):
+    """A saved allowlist with each retired capability id read as its replacement.
+
+    Anything other than a list of strings is returned unchanged, so a malformed list still
+    fails closed wherever it is validated.
+    """
+    if type(values) is not list or any(type(value) is not str for value in values):
+        return values
+    return list(dict.fromkeys(RETIRED_CAPABILITY_ALIASES.get(value, value) for value in values))
+
 # Document action vocabulary, duplicated as literals rather than imported.
 #
 # `functions_document_actions` reaches `functions_document_analysis` and `functions_search`,
@@ -1087,7 +1104,9 @@ def _allowed_ids(settings, allowed_ids):
             raise CapabilityResolutionError('The orchestration capability configuration is invalid.')
         if not values:
             continue
-        identifiers = {value.strip() for value in values}
+        identifiers = {
+            RETIRED_CAPABILITY_ALIASES.get(value.strip(), value.strip()) for value in values
+        }
         narrowed = identifiers if narrowed is None else narrowed & identifiers
     return narrowed
 

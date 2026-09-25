@@ -4,8 +4,9 @@
 Version: 0.261.139
 Implemented in: 0.261.127
 Single orchestration contract updated in: 0.261.139
-A capability list saved before Gather / Reason / Render became the only contract never
-silently opts into composition or file publication at the registry.
+A capability list saved before Gather / Reason / Render became the only contract keeps
+its answering ability, because a stored `respond` reads as `compose`, and never silently
+opts into file publication. The stored list itself is never rewritten.
 The real registry/compiler/executor and initialized rendering service are exercised;
 only external I/O is isolated.
 """
@@ -43,8 +44,9 @@ def _ids(registry, settings=None, *, allowed_ids=None, service=None, unavailable
 @pytest.mark.parametrize('saved, caller, expected', [
     (None, None, {'document_search', 'compose'}),
     ([], None, {'document_search', 'compose'}),
-    (['document_search', 'respond'], None, {'document_search'}),
-    (['respond'], None, set()),
+    (['document_search', 'respond'], None, {'document_search', 'compose'}),
+    (['respond'], None, {'compose'}),
+    (['respond'], ['document_search'], set()),
     (['compose'], None, {'compose'}),
     (['compose'], ['document_search'], set()),
     (['compose', 'document_search'], ['document_search'], {'document_search'}),
@@ -64,14 +66,25 @@ def test_saved_and_caller_allowlists_intersect_without_implicit_permissions(runt
 
 
 def test_full_saved_legacy_list_is_not_an_opt_in_to_new_capabilities(runtime):
-    # The registry grants exactly what a list names. Only the settings loader maps the
-    # retired answer capability to compose; nothing maps a saved list to render_file.
+    # The removed answering step reads as Prepare content, which now writes the answer.
+    # Nothing maps a saved list to render_file, and the saved list is not rewritten.
+    settings = {CAPABILITIES_KEY: list(LEGACY_SAVED_IDS)}
     unavailable = {}
-    result = _ids(runtime.registry, {CAPABILITIES_KEY: LEGACY_SAVED_IDS}, unavailable=unavailable)
-    assert result == {'document_search'}
-    assert unavailable['compose'] == 'not_enabled_for_orchestration'
+    result = _ids(runtime.registry, settings, unavailable=unavailable)
+    assert result == {'document_search', 'compose'}
     assert unavailable['render_file'] == 'not_enabled_for_orchestration'
+    assert settings == {CAPABILITIES_KEY: LEGACY_SAVED_IDS}
     assert 'respond' not in runtime.registry.all_capability_ids()
+
+
+def test_a_saved_answering_step_is_read_as_prepare_content_without_rewriting(runtime):
+    registry = runtime.registry
+    saved = ['document_search', 'respond', 'compose']
+    assert registry.effective_capability_ids(saved) == ['document_search', 'compose']
+    assert saved == ['document_search', 'respond', 'compose']
+    assert registry.effective_capability_ids([]) == []
+    for malformed in ('respond', None, ('respond',), ['respond', 42]):
+        assert registry.effective_capability_ids(malformed) is malformed
 
 
 @pytest.mark.parametrize('source', ['saved', 'caller'])
@@ -98,7 +111,7 @@ def test_saved_restriction_is_applied_before_disabled_runtime_bindings(runtime, 
     monkeypatch.setattr(runtime.registry, '_request_gate_passes', forbidden)
     unavailable = {}
     result = _ids(
-        runtime.registry, {CAPABILITIES_KEY: ['respond']},
+        runtime.registry, {CAPABILITIES_KEY: ['document_analyze']},
         allowed_ids=['compose', 'render_file'], unavailable=unavailable,
     )
     assert result == set()
@@ -128,7 +141,8 @@ def test_real_render_service_does_not_override_legacy_or_caller_restrictions(lif
         registry, {CAPABILITIES_KEY: ['compose']},
         allowed_ids=['compose', 'render_file'], service=lifecycle.service,
     )
-    assert legacy == {'document_search'}
+    # A saved legacy list answers through Prepare content but never gains file creation.
+    assert legacy == {'document_search', 'compose'}
     assert explicit == {'compose', 'render_file'}
     assert narrowed == broadened == {'compose'}
     assert lifecycle.render_calls == [] and lifecycle.blobs.uploads == 0
@@ -147,7 +161,7 @@ def test_explicit_render_permission_still_requires_initialized_service(runtime, 
 
 def test_execution_rechecks_saved_compose_permission_before_any_model_call(runtime):
     case = runtime.make([compose()], ['Do not generate this answer.'], final_response=binding('draft'))
-    case.settings[CAPABILITIES_KEY] = ['document_search', 'respond']
+    case.settings[CAPABILITIES_KEY] = ['document_search']
     with pytest.raises(runtime.schema.PlanValidationError):
         execute(runtime, case)
     assert case.model.calls == []
@@ -212,7 +226,9 @@ def test_narrowing_never_adds_an_implicit_answer_capability(runtime):
     default = registry.resolve_available_capability_ids(settings)
     narrowed = registry.resolve_available_capability_ids(settings, allowed_ids=['document_search'])
     assert default == narrowed == ['document_search']
+    # A saved list naming the removed answering step reads as Prepare content, and gains
+    # nothing else.
     retired = registry.resolve_available_capability_ids(
         {'enable_user_workspace': True, CAPABILITIES_KEY: ['respond']},
     )
-    assert retired == []
+    assert retired == ['compose']

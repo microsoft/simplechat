@@ -15,8 +15,8 @@ from test_orchestration_dependency_runtime import runtime
 from test_support.orchestration_revisions import AtomicMemoryContainer
 
 
-@pytest.fixture
-def waiting(durable):
+def start_waiting(durable):
+    """Run the fixture plan until its first step waits, under the case's current settings."""
     record = durable.recovery._replace(durable.record, {'approval': {'state': 'approved'}})
 
     def producer(step, context, **kwargs):
@@ -36,6 +36,11 @@ def waiting(durable):
     assert result['status'] == 'waiting'
     durable.waiting_result = result
     return durable
+
+
+@pytest.fixture
+def waiting(durable):
+    return start_waiting(durable)
 
 
 def claim(waiting, *, submission='refresh-1', messages=None):

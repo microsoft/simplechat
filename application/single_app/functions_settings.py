@@ -255,38 +255,28 @@ def normalize_public_workspace_display_settings(settings):
     return changed
 
 
-# Switches that no longer exist. A stored value is removed on load so it is neither
-# echoed to the browser nor part of a saved run's settings fingerprint.
+# Switches that no longer exist. A stored value is removed on load so it is not echoed to
+# the browser. Earlier releases already left it out of a saved run's settings fingerprint,
+# so removing it does not change that fingerprint.
 RETIRED_SETTING_KEYS = (
     # Gather / Reason / Render became the only chat orchestration plan contract.
     "enable_chat_orchestration_harness",
 )
-# Capability ids a saved orchestration allowlist may still name, and what replaced them.
-# The old answering step was always added to a narrowed list; Prepare content now
-# writes the answer, so a narrowed list keeps the ability to answer.
-RETIRED_ORCHESTRATION_CAPABILITIES = {"respond": "compose"}
 
 
 def normalize_retired_orchestration_settings(settings):
-    """Drop retired settings in-place and rename retired capability ids.
+    """Drop retired settings in-place.
 
-    Returns whether anything changed, so a load can persist the migration.
+    A saved capability allowlist is left exactly as stored: the orchestration registry reads
+    a retired capability id as its replacement, and rewriting the list would change the
+    settings fingerprint that saved runs are bound to. Returns whether anything changed.
     """
     if not isinstance(settings, dict):
         return False
     removed = [key for key in RETIRED_SETTING_KEYS if key in settings]
     for key in removed:
         settings.pop(key, None)
-    changed = bool(removed)
-    capabilities = settings.get("chat_orchestration_enabled_capabilities")
-    if isinstance(capabilities, list) and any(
-        value in RETIRED_ORCHESTRATION_CAPABILITIES for value in capabilities
-    ):
-        settings["chat_orchestration_enabled_capabilities"] = list(dict.fromkeys(
-            RETIRED_ORCHESTRATION_CAPABILITIES.get(value, value) for value in capabilities
-        ))
-        changed = True
-    return changed
+    return bool(removed)
 
 
 def attach_public_workspace_label_context(settings):

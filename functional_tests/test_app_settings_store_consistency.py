@@ -302,7 +302,7 @@ def load_update_settings(store):
         "update_settings", "coerce_multi_model_endpoint_enablement",
         "validate_content_screening_settings", "normalize_retired_orchestration_settings",
     }
-    retired_constants = {"RETIRED_SETTING_KEYS", "RETIRED_ORCHESTRATION_CAPABILITIES"}
+    retired_constants = {"RETIRED_SETTING_KEYS"}
     namespace = {
         "copy": copy, "logging": logging,
         "contextmanager": contextmanager,

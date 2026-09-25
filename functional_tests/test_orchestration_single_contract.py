@@ -112,25 +112,61 @@ def test_settings_defaults_no_longer_offer_the_toggle(modules):
     assert source.count("normalize_retired_orchestration_settings(") == 3
 
 
-def test_a_stored_toggle_and_answer_capability_are_retired_on_load(modules):
+def test_a_stored_toggle_is_dropped_and_a_saved_allowlist_is_left_as_stored(modules):
     settings = importlib.import_module("functions_settings")
     stored = {
         TOGGLE: True, "enable_chat_orchestration": True,
         "chat_orchestration_enabled_capabilities": ["document_search", "respond", "compose"],
     }
-    assert settings.normalize_retired_orchestration_settings(stored) is True
+    changed = settings.normalize_retired_orchestration_settings(stored)
+    assert changed is True
     assert TOGGLE not in stored
-    assert stored["chat_orchestration_enabled_capabilities"] == ["document_search", "compose"]
-    # Idempotent: a migrated document is not rewritten again.
-    assert settings.normalize_retired_orchestration_settings(stored) is False
-    narrowed = {"chat_orchestration_enabled_capabilities": ["web_search", "respond"]}
-    settings.normalize_retired_orchestration_settings(narrowed)
-    # The old answering step was always kept in a narrowed list; Prepare content replaces it.
-    assert narrowed["chat_orchestration_enabled_capabilities"] == ["web_search", "compose"]
+    # Saved runs are bound to the settings they ran under, so the list is never rewritten;
+    # the registry reads a stored `respond` as `compose` instead.
+    assert stored["chat_orchestration_enabled_capabilities"] == ["document_search", "respond", "compose"]
+    changed_again = settings.normalize_retired_orchestration_settings(stored)
+    assert changed_again is False
+    assert not hasattr(settings, "RETIRED_ORCHESTRATION_CAPABILITIES")
     untouched = {"chat_orchestration_enabled_capabilities": []}
-    assert settings.normalize_retired_orchestration_settings(untouched) is False and untouched[
-        "chat_orchestration_enabled_capabilities"
-    ] == []
+    untouched_changed = settings.normalize_retired_orchestration_settings(untouched)
+    assert untouched_changed is False
+    assert untouched == {"chat_orchestration_enabled_capabilities": []}
+
+
+def _v2_admin_settings_helper(registry):
+    """The real V2 admin settings preparation helper, with its redaction inputs isolated."""
+    import ast
+
+    tree = ast.parse((APP / "route_backend_v2.py").read_text(encoding="utf-8"))
+    helper = next(
+        node for node in ast.walk(tree)
+        if isinstance(node, ast.FunctionDef) and node.name == "_redact_admin_settings_for_v2"
+    )
+    namespace = {
+        "redact_admin_settings_secrets_for_api": deepcopy,
+        "get_secret_storage_paths": list,
+        "read_nested_setting": lambda settings, path: None,
+        "write_nested_setting": lambda settings, path, value: None,
+        "SECRET_REDACTED_VALUE": "REDACTED",
+        "sanitize_model_endpoints_for_frontend": lambda endpoints: endpoints,
+        "effective_capability_ids": registry.effective_capability_ids,
+    }
+    exec(compile(ast.Module(body=[helper], type_ignores=[]), "route_backend_v2.py", "exec"), namespace)
+    return namespace["_redact_admin_settings_for_v2"]
+
+
+def test_both_admin_pages_show_a_saved_answering_step_as_prepare_content(modules):
+    registry = importlib.import_module("functions_orchestration_registry")
+    prepare = _v2_admin_settings_helper(registry)
+    stored = {"chat_orchestration_enabled_capabilities": ["web_search", "respond"], "enable_chat_orchestration": True}
+    shown = prepare(stored)
+    assert shown["chat_orchestration_enabled_capabilities"] == ["web_search", "compose"]
+    assert stored["chat_orchestration_enabled_capabilities"] == ["web_search", "respond"]
+    # The PATCH echo carries only submitted keys, so a missing list is never added.
+    echo = prepare({"enable_chat_orchestration": False})
+    assert echo == {"enable_chat_orchestration": False}
+    admin_route = (APP / "route_frontend_admin_settings.py").read_text(encoding="utf-8")
+    assert "effective_capability_ids(settings.get('chat_orchestration_enabled_capabilities'))" in admin_route
 
 
 def test_admin_fields_offer_no_toggle_and_no_answering_step(modules):

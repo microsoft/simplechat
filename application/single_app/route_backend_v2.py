@@ -60,6 +60,7 @@ from functions_branding_images import (
 )
 from functions_orchestration_registry import (
     build_capability_client_projection,
+    effective_capability_ids,
     resolve_available_capabilities,
 )
 from functions_branding_urls import (
@@ -1244,6 +1245,12 @@ def register_route_backend_v2_admin(bp):
         if "model_endpoints" in redacted:
             redacted["model_endpoints"] = sanitize_model_endpoints_for_frontend(
                 redacted.get("model_endpoints")
+            )
+        # A saved capability list may still name a retired capability. The checkbox set
+        # shows its replacement selected, so editing the list keeps it.
+        if "chat_orchestration_enabled_capabilities" in redacted:
+            redacted["chat_orchestration_enabled_capabilities"] = effective_capability_ids(
+                redacted["chat_orchestration_enabled_capabilities"]
             )
         return redacted
 
