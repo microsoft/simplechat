@@ -17,7 +17,7 @@ section or hint only one side has fails. That covers every field the V2 client r
 - `role`, `status`, `can_manage_workspace` and the envelope (`schema_version`, `enabled`);
 - every section: `enabled`, `can_manage`, `reason` and `group`;
 - `document_permissions` and `document_queries`;
-- both hints: `document_management` and `document_collaboration`.
+- the hints: `document_management`, `document_collaboration` and `membership_management`.
 
 The workspace metadata (`workspace`, `scope` and `viewer_id`) may differ in value but not in keys.
 
@@ -80,6 +80,7 @@ METADATA_FIELDS = frozenset({"viewer_id", "scope", "workspace"})
 CLIENT_READ_FIELDS = (
     "schema_version", "enabled", "role", "status", "can_manage_workspace", "sections",
     "document_permissions", "document_queries", "document_management", "document_collaboration",
+    "membership_management",
 )
 WORKSPACE_ID = "pub-a"
 WORKSPACE_NAME = "Research library"
@@ -215,6 +216,41 @@ def test_the_reason_constants_are_the_servers_texts(public):
 def test_an_unrecognized_status_is_reported_as_unknown_by_both():
     assert fixture_context("Owner", "archived") == fixture_context("Owner", "unknown")
     assert fixture_context("Owner", "archived")["status"] == "unknown"
+
+
+# The membership hint and Members section the native context adds (M10A). These are the exact
+# operations functions_public_membership_policy.public_membership_operations grants, pinned against
+# the real builder so the fixture, the server and the policy cannot drift apart. A reader gets no
+# operations; adds and role changes need a status that takes members; the owner alone transfers.
+MEMBERSHIP_HINT = {
+    ("Owner", "active"): ["add_member", "review_requests", "change_role", "remove_member", "transfer_ownership"],
+    ("Admin", "active"): ["add_member", "review_requests", "change_role", "remove_member"],
+    ("Admin", "upload_disabled"): ["add_member", "review_requests", "change_role", "remove_member"],
+    ("Admin", "locked"): ["review_requests", "remove_member"],
+    ("Owner", "inactive"): ["review_requests", "remove_member", "transfer_ownership"],
+    ("DocumentManager", "active"): [],
+    ("User", "active"): [],
+}
+
+
+@pytest.mark.parametrize("role,status", list(MEMBERSHIP_HINT))
+def test_the_membership_hint_is_the_policy(public, role, status):
+    real = real_context(public, role, status)
+    assert real["membership_management"] == {"schema_version": 1, "operations": MEMBERSHIP_HINT[(role, status)]}
+    assert real["membership_management"] == fixture_context(role, status)["membership_management"]
+
+
+@pytest.mark.parametrize("status", STATUSES)
+@pytest.mark.parametrize("role", list(ROLE_USERS))
+def test_the_members_section_opens_in_every_viewable_status(public, role, status):
+    """Members is a manage-group section every member may open when the workspace is viewable; its
+    can_manage is navigation only, set for a manager of an active workspace, like the server's."""
+    members = real_context(public, role, status)["sections"]["members"]
+    viewable = status in ("active", "locked", "upload_disabled")
+    assert members["group"] == "manage"
+    assert members["enabled"] is viewable
+    assert members["can_manage"] is bool(viewable and status == "active" and role in ("Owner", "Admin"))
+    assert members == fixture_context(role, status)["sections"]["members"]
 
 
 def test_the_fixture_context_is_a_fresh_copy_each_time():

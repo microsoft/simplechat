@@ -7,6 +7,7 @@ Every context carries the server's document_management hint, as build_public_wor
 sends it: 0.261.167
 Every context is the real builder's, held to it by
 functional_tests/test_public_context_fixture_parity.py: 0.261.168
+The context carries the native membership hint and its Members manage section: 0.261.177
 
 The public surface mirrors the group shell. Only its documents section is open, and a manager role
 can be granted document management and the generated-artifact review. It never advertises native
@@ -37,10 +38,16 @@ PUBLIC_DOCUMENT_OPERATIONS = (
 )
 # functions_public_document_policy.PUBLIC_DOCUMENT_COLLABORATION_OPERATIONS, in the server's order.
 PUBLIC_DOCUMENT_COLLABORATION_OPERATIONS = ("inspect", "approve_artifact", "reject_artifact", "cancel_artifact")
+# functions_public_membership_policy.PUBLIC_MEMBERSHIP_OPERATIONS, in the server's order.
+PUBLIC_MEMBERSHIP_OPERATIONS = ("add_member", "review_requests", "change_role", "remove_member", "transfer_ownership")
+# The statuses that let members be added or promoted (functions_public_membership_policy).
+PUBLIC_MEMBER_ADD_STATUSES = ("active", "upload_disabled")
 SECTION_GROUPS = {
     "documents": "knowledge", "tags": "knowledge", "sync": "knowledge", "prompts": "knowledge",
     "identities": "connections",
 }
+# Members joins the content sections in the shared "manage" group (M10A).
+PUBLIC_MANAGE_SECTION_GROUP = "manage"
 # The texts build_public_workspace_context sends: a section public workspaces don't offer, and why a
 # workspace's status closes every section (check_public_workspace_status_allows_operation's "view").
 PUBLIC_SECTION_UNAVAILABLE_REASON = "This section is not available for public workspaces yet."
@@ -88,6 +95,24 @@ def public_document_collaboration(role, status):
     }
 
 
+def public_membership_management(role, status):
+    """`public_membership_operations` for the modelled deployment (public workspaces on). A manager
+    reviews requests and removes members in any status, and adds or changes roles only while the
+    workspace takes members; the owner also transfers ownership. A reader gets nothing. Only the
+    Owner and Admins manage membership -- a DocumentManager is a member, not a manager, here."""
+    operations = set()
+    if role in ("Owner", "Admin"):
+        operations.update({"review_requests", "remove_member"})
+        if status in PUBLIC_MEMBER_ADD_STATUSES:
+            operations.update({"add_member", "change_role"})
+    if role == "Owner":
+        operations.add("transfer_ownership")
+    return {
+        "schema_version": 1,
+        "operations": [operation for operation in PUBLIC_MEMBERSHIP_OPERATIONS if operation in operations],
+    }
+
+
 def public_context(identifier, name, *, status="active", role="User", viewer=OWNER_ID):
     """`build_public_workspace_context` for the modelled deployment: public workspaces, metadata
     extraction and the administrator's public downloads on."""
@@ -105,6 +130,13 @@ def public_context(identifier, name, *, status="active", role="User", viewer=OWN
             "can_manage": bool(enabled and status == "active" and manager and section == "documents"),
             "reason": None if enabled else status_reason or PUBLIC_SECTION_UNAVAILABLE_REASON,
         }
+    # Members (M10A) opens in any viewable status; its can_manage is navigation only, gated on an
+    # active workspace and a manager role like the server's section(True, manager).
+    sections["members"] = {
+        "group": PUBLIC_MANAGE_SECTION_GROUP, "enabled": readable,
+        "can_manage": bool(readable and status == "active" and role in ("Owner", "Admin")),
+        "reason": None if readable else status_reason,
+    }
     return {
         "schema_version": 1, "enabled": True, "viewer_id": viewer,
         "scope": {"kind": "public", "id": identifier},
@@ -131,6 +163,7 @@ def public_context(identifier, name, *, status="active", role="User", viewer=OWN
         },
         "document_management": public_document_management(role, status),
         "document_collaboration": public_document_collaboration(role, status),
+        "membership_management": public_membership_management(role, status),
     }
 
 
