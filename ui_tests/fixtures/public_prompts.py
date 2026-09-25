@@ -64,6 +64,9 @@ class PublicPromptsFixture(PublicWorkspaceFixture):
         self.created_counter = 0
         self.prompts = {}
         self.deleted_prompt_conflicts = set()
+        # Workspaces the chat composer catalog never carries, so a "Use in chat" link to one of
+        # them misses the catalog and exercises R4a's scoped resolver fallback.
+        self.hidden_from_chat_catalog = set()
         # pub-a: a manager workspace. weekly-status is fully editable; the withheld prompt keeps an
         # empty inline `prompt_actions` while the workspace still advertises the operations, so its
         # edit and delete affordances must stay hidden beside the editable control.
@@ -86,6 +89,19 @@ class PublicPromptsFixture(PublicWorkspaceFixture):
             public_prompt(
                 "pub-b", "reading-guide", "Reading guide",
                 content="Explain how to browse this workspace's published knowledge.",
+                actions=(),
+            ),
+        ]
+        # pub-hidden: a readable workspace kept out of the chat composer catalog (its owner hid it
+        # from chat). A public "Use in chat" link still names it, so R4a's scoped resolver fetches
+        # the one prompt by id and workspace -- reauthorized by role and status, never through the
+        # visibility-filtered catalog -- and attaches it without writing catalog or visibility state.
+        self.hidden_from_chat_catalog.add("pub-hidden")
+        self.set_prompt_policy("pub-hidden", name="Field notes", role="User", status="active")
+        self.prompts["pub-hidden"] = [
+            public_prompt(
+                "pub-hidden", "field-guide", "Field guide",
+                content="Explain how to record careful observations during fieldwork.",
                 actions=(),
             ),
         ]
@@ -118,6 +134,8 @@ class PublicPromptsFixture(PublicWorkspaceFixture):
         """Public prompts as the chat composer catalog carries them, with explicit scope."""
         catalog = []
         for workspace_id, rows in self.prompts.items():
+            if workspace_id in self.hidden_from_chat_catalog:
+                continue
             scope_name = self.workspaces[workspace_id]["workspace"]["name"]
             for row in rows:
                 catalog.append({

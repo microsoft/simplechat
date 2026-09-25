@@ -10,7 +10,8 @@ writes, so a public scope that leaked into personal reads would fail. Public pro
 no per-user favourite and no Shared place: a manager writes with conditional etags, an
 ordinary reader gets a read-only workbench, and an inline `prompt_actions` gate hides edit
 and delete per prompt exactly as the server dictates. The chat-link resolution the "Use in
-chat" affordance feeds is covered by the composer suite in the following slice.
+chat" affordance feeds -- including R4a's scoped resolver fallback for a workspace hidden
+from the chat catalog -- is exercised here against the real composer at `/chat`.
 """
 
 import os
@@ -293,3 +294,61 @@ def test_conflict_refresh_reports_deleted_prompt_without_resaving(public_prompts
     expect(ui.page.get_by_text(REBASE_DELETED_NOTICE, exact=True)).to_be_visible()
     assert [entry for entry in ui.writes if entry.method == "PATCH" and entry.path == "/api/public-workspaces/pub-a/prompts/weekly-status"]
     assert not any(row["id"] == "weekly-status" for row in ui.prompts["pub-a"])
+
+
+def remove_button(ui, name):
+    return ui.page.get_by_role("button", name=f"Remove {name}", exact=True)
+
+
+def test_public_prompt_link_resolves_from_the_chat_catalog(public_prompts_ui):
+    """A public link whose workspace is in the chat catalog resolves there, without a single fetch."""
+    ui = public_prompts_ui
+    ui.open("/chat?prompt=weekly-status&prompt_scope=public&prompt_scope_id=pub-a")
+    expect(remove_button(ui, "Weekly status")).to_be_visible()
+    expect(ui.page.get_by_text("Research library", exact=True)).to_be_visible()
+    # The catalog already carried this prompt, so the scoped resolver never fell back to a fetch.
+    assert not any(
+        entry.path == "/api/public-workspaces/pub-a/prompts/weekly-status"
+        for entry in ui.requests
+    )
+
+
+def test_legacy_public_prompt_link_still_resolves_by_id(public_prompts_ui):
+    """A scope-less `?prompt=<id>` link keeps resolving by id from the catalog, exactly as before."""
+    ui = public_prompts_ui
+    ui.open("/chat?prompt=weekly-status")
+    expect(remove_button(ui, "Weekly status")).to_be_visible()
+    assert not any(
+        entry.method == "GET" and entry.path.endswith("/prompts/weekly-status")
+        for entry in ui.requests
+    )
+
+
+def test_hidden_workspace_link_fetches_the_prompt_and_attaches_it(public_prompts_ui):
+    """R4a: a link to a workspace hidden from the chat catalog resolves by fetching the one prompt."""
+    ui = public_prompts_ui
+    ui.open("/chat?prompt=field-guide&prompt_scope=public&prompt_scope_id=pub-hidden")
+    expect(remove_button(ui, "Field guide")).to_be_visible()
+    # The workspace is absent from the catalog, so the resolver fetched the single prompt by id and
+    # workspace rather than reading the visibility-filtered catalog.
+    single_reads = [
+        entry for entry in ui.requests
+        if entry.method == "GET"
+        and entry.path == "/api/public-workspaces/pub-hidden/prompts/field-guide"
+    ]
+    assert len(single_reads) == 1
+    # The fallback writes nothing: no prompt write, no visibility change, and no catalog refresh that
+    # could add the hidden workspace to the composer's prompt list.
+    assert not any(entry.method != "GET" and "/prompts" in entry.path for entry in ui.requests)
+    assert not any("visib" in entry.path.lower() for entry in ui.requests)
+    assert len([entry for entry in ui.requests if entry.path == "/api/v2/bootstrap"]) == 1
+
+
+def test_stale_public_prompt_link_reports_it_is_unavailable(public_prompts_ui):
+    """R4a: a scoped public link whose prompt no longer exists fails closed with the shared toast."""
+    ui = public_prompts_ui
+    ui.open("/chat?prompt=does-not-exist&prompt_scope=public&prompt_scope_id=pub-a")
+    expect(
+        ui.page.get_by_text("That prompt is no longer available.", exact=True)
+    ).to_be_visible()
+    expect(ui.page.get_by_role("button", name=re.compile(r"^Remove "))).to_have_count(0)

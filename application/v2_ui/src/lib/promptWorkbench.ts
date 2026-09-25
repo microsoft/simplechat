@@ -311,3 +311,21 @@ export function createPublicPromptWorkbench(
         },
     };
 }
+
+/**
+ * The chat handoff's scoped resolver fallback (M9C R4a). A public "Use in chat" link names its
+ * workspace and prompt explicitly, so a prompt whose workspace is hidden from the chat catalog can
+ * still be resolved when the composer misses it in the catalog. It reads the single prompt by id and
+ * workspace from the immutable public route, which reauthorizes by role and status server-side and
+ * never consults the visibility map, and it validates the returned scope exactly as the list reader
+ * does, so a response that does not identify the requested workspace raises rather than attaches. It
+ * writes nothing -- no catalog entry, no visibility map, no store -- leaving that to the caller,
+ * which attaches the content to the draft and nothing else.
+ */
+export async function resolvePublicPromptForChat(
+    workspaceId: string, promptId: string, signal?: AbortSignal,
+): Promise<WorkspacePrompt> {
+    const fetched = await api.get<WorkspacePrompt>(publicPromptsUrl(workspaceId, promptId), signal);
+    assertPublicPromptScope(fetched, workspaceId, promptId);
+    return fetched;
+}
