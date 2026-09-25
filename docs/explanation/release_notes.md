@@ -2,6 +2,15 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.170)**
+
+#### Bug Fixes
+
+*   **Editing A Workspace Identity Keeps Its Managed Identity Client ID**
+    *   Editing a workspace identity that signs in with a user-assigned managed identity erased its client ID, in the classic editor and the V2 group editor, so it silently fell back to the default managed identity. Only identities whose client ID was set through the API were affected, since neither editor can set it.
+    *   The identity details now carry the client ID and a service principal's tenant, both non-secret, and both editors send the client ID back unchanged. The classic editor serves personal, group and public workspaces and the admin global identities, so all of them are fixed.
+    *   (Ref: `functions_workspace_identities.py`, `lib/identityFields.ts`, `workspace-identities.js`, [Identity Credential Round Trip Fix](fixes/IDENTITY_CREDENTIAL_ROUND_TRIP_FIX.md))
+
 ### **(v0.261.169)**
 
 #### Bug Fixes

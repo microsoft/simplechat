@@ -37,7 +37,9 @@ offers it (`sections.identities.enabled`).
 The editor offers the same capabilities, uses and authentication types as the
 classic workspace, and sends only the fields the server accepts. Stored secrets
 are never shown. A stored password or secret appears as kept, and a new value
-replaces it.
+replaces it. From version **0.261.170**, a managed identity's client ID that was
+set through the API is kept when the identity is edited. The editor doesn't show
+or set it.
 
 When a save is refused:
 

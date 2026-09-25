@@ -61,11 +61,16 @@ audit fields. It also carries `credentials`:
 
 ```json
 {"auth_type": "...", "username": "", "domain": "", "identity": "",
+ "tenant_id": "", "managed_identity_client_id": "",
  "password_stored": true, "secret_stored": false,
  "password": "Stored_In_KeyVault", "secret": ""}
 ```
 
 Stored secrets are never returned; a stored value appears as the placeholder.
+From version **0.261.170**, `credentials` also carries the two non-secret
+identifiers, a service principal's `tenant_id` and a managed identity's
+`managed_identity_client_id`, so an editor can send them back unchanged. See
+the [Identity Credential Round Trip Fix](../fixes/IDENTITY_CREDENTIAL_ROUND_TRIP_FIX.md).
 The routes add three things:
 
 - `etag`, for conditional writes;

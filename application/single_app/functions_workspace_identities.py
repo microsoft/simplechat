@@ -417,6 +417,8 @@ def sanitize_workspace_identity(identity: Dict[str, Any]) -> Dict[str, Any]:
         "username": auth.get("username", ""),
         "domain": auth.get("domain", ""),
         "identity": auth.get("identity", ""),
+        "tenant_id": auth.get("tenant_id", ""),
+        "managed_identity_client_id": auth.get("managed_identity_client_id", ""),
         "password_stored": password_stored,
         "secret_stored": secret_stored,
         "password": ui_trigger_word if password_stored else "",

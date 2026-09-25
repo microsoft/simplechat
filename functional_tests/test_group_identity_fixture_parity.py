@@ -1,8 +1,9 @@
 # test_group_identity_fixture_parity.py
 """
 Per-route shape parity between the M5A group identity UI fixture and the real routes.
-Version: 0.261.157
+Version: 0.261.170
 Implemented in: 0.261.157
+Credentials block compared, including the non-secret identifiers: 0.261.170
 
 The V2 group Identities section and the group action editor's reusable-identity picker mock the
 network with the closed HTTP fixture ``ui_tests/fixtures/group_identities.py`` (its dispatch lives
@@ -63,8 +64,11 @@ IDENTITY_ITEM_UI_KEYS = {
 }
 # The credential fields `readCredentials`/`draftFromIdentity` read. A key the server omits would open
 # blank and be sent back blank, clearing the stored value; a key the fixture invents would hide that.
+# The non-secret identifiers `tenant_id` and `managed_identity_client_id` are read on edit and sent
+# back, so a managed identity's user-assigned client ID and a service principal's tenant survive.
 CREDENTIALS_UI_KEYS = {
-    "auth_type", "username", "domain", "identity", "password_stored", "secret_stored",
+    "auth_type", "username", "domain", "identity", "tenant_id", "managed_identity_client_id",
+    "password_stored", "secret_stored",
 }
 # The reference fields `identityReferences` reads to name what still uses an identity on a refused
 # delete.

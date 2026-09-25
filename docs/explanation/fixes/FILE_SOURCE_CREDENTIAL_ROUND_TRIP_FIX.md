@@ -83,11 +83,10 @@ and never sends the key.
   - any source whose managed identity client ID was set through the API, and
     later edited in either editor.
 - **Repair:** open the source, enter the tenant ID again, and save.
-- **Related, not changed:** workspace identities show neither identifier either
-  (`sanitize_workspace_identity`). Both identity editors also send the client
-  ID empty for a managed identity. Neither identity editor sends a tenant, so
-  identity tenants are kept. The managed identity case is recorded as a
-  follow-up.
+- **Related, fixed later:** workspace identities showed neither identifier
+  either (`sanitize_workspace_identity`), and both identity editors sent the
+  client ID empty for a managed identity. Fixed in version 0.261.170; see the
+  [Identity Credential Round Trip Fix](IDENTITY_CREDENTIAL_ROUND_TRIP_FIX.md).
 
 ## Validation
 

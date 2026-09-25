@@ -605,6 +605,13 @@ function initializeWorkspaceIdentityRoot(root) {
                     identity: selectedAuthType === 'client_secret' ? clientIdField.input.value.trim() : '',
                     client_id: selectedAuthType === 'client_secret' ? clientIdField.input.value.trim() : '',
                 };
+                if (selectedAuthType === 'managed_identity') {
+                    // No visible field carries a managed identity's user-assigned client ID, so send
+                    // the stored one back. The normalizer reads managed_identity_client_id ahead of
+                    // the blank client_id above, so an edit that never touched it keeps the stored
+                    // user-assigned identity rather than clearing it to the system-assigned one.
+                    credentialsPayload.managed_identity_client_id = credentials.managed_identity_client_id || '';
+                }
                 if (selectedAuthType === 'username_password') {
                     credentialsPayload.password = secretField.input.value;
                 } else {
