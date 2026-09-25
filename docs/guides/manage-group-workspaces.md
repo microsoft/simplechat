@@ -220,6 +220,9 @@ sources.
 ### Use group tools and manage the workspace
 
 Use **Workflows** for the native workflow editor and run history. From version
+**0.261.178**, every member of an active group can run and cancel its
+workflows, as in classic; creating, editing and deleting them stays with the
+roles allowed to manage group workflows. From version
 **0.261.141**, workflow managers can also set a group workflow to run when File
 Sync finds changes, or to sync first before each run. From **0.261.144**,
 workflow alerts are set up in the same editor; see [Create a workflow]({{ '/guides/create-a-workflow/' | relative_url }}).

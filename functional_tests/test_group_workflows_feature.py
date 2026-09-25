@@ -2,9 +2,10 @@
 #!/usr/bin/env python3
 """
 Functional test for group workflows.
-Version: 0.241.201
+Version: 0.261.178
 Implemented in: 0.241.179
 Updated in: 0.241.201
+Member roles defined in the pure workflow policy module: 0.261.178
 
 This test ensures that group workflow storage, settings, routes, scheduler,
 runtime wiring, activity deep links, and workspace UI contracts are present.
@@ -36,6 +37,7 @@ def test_group_workflow_feature_contracts():
     config = _read("application/single_app/config.py")
     settings = _read("application/single_app/functions_settings.py")
     group_workflows = _read("application/single_app/functions_group_workflows.py")
+    group_workflow_policy = _read("application/single_app/functions_group_workflow_policy.py")
     workflow_routes = _read("application/single_app/route_backend_workflows.py")
     workflow_runner = _read("application/single_app/functions_workflow_runner.py")
     background_tasks = _read("application/single_app/background_tasks.py")
@@ -55,7 +57,8 @@ def test_group_workflow_feature_contracts():
         _assert_contains(settings, "'require_group_assignment_for_group_workflows': False", "group workflow assignment default"),
         _assert_contains(settings, "def is_group_workflows_enabled_for_group", "group assignment helper"),
         _assert_contains(settings, "def get_group_workflow_management_roles", "group workflow management role helper"),
-        _assert_contains(group_workflows, 'GROUP_WORKFLOW_MEMBER_ROLES = ("Owner", "Admin", "DocumentManager", "User")', "member runtime roles"),
+        _assert_contains(group_workflow_policy, 'GROUP_WORKFLOW_MEMBER_ROLES = ("Owner", "Admin", "DocumentManager", "User")', "member runtime roles"),
+        _assert_contains(group_workflows, "from functions_group_workflow_policy import GROUP_WORKFLOW_MEMBER_ROLES", "member runtime roles from the policy module"),
         _assert_contains(group_workflows, "def get_group_workflow_agent_options", "group agent picker helper"),
         _assert_contains(group_workflows, "is_file_sync_enabled_for_group", "group File Sync gate"),
         _assert_contains(group_workflows, "scope_type != FILE_SYNC_SCOPE_GROUP or scope_id != group_id", "group-only File Sync sources"),

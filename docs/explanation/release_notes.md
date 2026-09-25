@@ -2,6 +2,15 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.178)**
+
+#### User Interface Enhancements
+
+*   **Group Members Can Run Group Workflows In V2**
+    *   Classic, and the server, let every group member run and cancel a group workflow, but V2 offered **Run** and **Cancel** only to workflow managers. Every member of an active group now gets them; creating, editing and deleting stay with the workflow manager roles.
+    *   The workspace context publishes each member's workflow operations from the same policy the routes use, so V2 never offers an action the server would refuse.
+    *   (Ref: `functions_group_workflow_policy.py`, `functions_workspace_context.py`, `WorkflowsSection.tsx`, [V2 Group Workflows](features/V2_GROUP_WORKFLOWS.md))
+
 ### **(v0.261.177)**
 
 #### New Features

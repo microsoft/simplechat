@@ -156,6 +156,16 @@ export interface GroupWorkspaceContext extends WorkspaceAvailability {
         operations: string[];
     };
     /**
+     * The group workflow hint. Present as `{schema_version: 1, operations: [...]}`: `run` and `cancel`
+     * for every member the workflow run and cancel routes accept, and `create`, `edit` and `delete` for
+     * the workflow management roles, in an active group only. The Workflows section offers each control
+     * from it; absent (an older server), the section keeps its management-only gate.
+     */
+    workflow_management?: {
+        schema_version: number;
+        operations: string[];
+    };
+    /**
      * The group settings management hint (M7C). Present as `{schema_version: 1, operations: [...],
      * reasons: {...}}`, gating the profile, logo, downloads, retention edits and the activity,
      * statistics and file-count reads. `operations` are the ops the viewer may perform; `reasons`

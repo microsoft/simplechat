@@ -45,6 +45,7 @@ from functions_group_file_source_policy import (
     group_file_source_management_operations,
     group_file_sources_available,
 )
+from functions_group_workflow_policy import group_workflow_management_operations
 from functions_group_membership_policy import GROUP_MEMBERSHIP_MANAGER_ROLES
 from functions_group_settings_policy import (
     GROUP_MANAGER_REQUIRED,
@@ -337,6 +338,16 @@ def build_group_workspace_context(user_id, group_id, settings, *, user_info=None
             "schema_version": 1,
             "operations": group_file_source_management_operations(
                 role, group, settings, available=file_sources_available,
+            ),
+        },
+        # The workflow operations the V2 section offers, from the roles the /api/group/workflows
+        # routes check: run and cancel for every member (GROUP_WORKFLOW_MEMBER_ROLES), create,
+        # edit and delete for the workflow management roles. Active groups only, as the section's
+        # controls have always been; the routes themselves check no status.
+        "workflow_management": {
+            "schema_version": 1,
+            "operations": group_workflow_management_operations(
+                role, group, available=bool(view_allowed and workflows_enabled), manager=automation_manager,
             ),
         },
         # The decision the native group settings routes enforce and their settings read

@@ -2,7 +2,7 @@
 #!/usr/bin/env python3
 """
 Functional test for the group workflow File Sync source list and its explicit group scope.
-Version: 0.261.149
+Version: 0.261.178
 Implemented in: 0.261.141
 
 This test ensures that ``GET /api/group/workflows/file-sync-sources`` resolves its group the
@@ -38,6 +38,7 @@ GROUP_FILE = APP_ROOT / "functions_group.py"
 SETTINGS_FILE = APP_ROOT / "functions_settings.py"
 FILE_SYNC_FILE = APP_ROOT / "functions_file_sync.py"
 GROUP_WORKFLOWS_FILE = APP_ROOT / "functions_group_workflows.py"
+GROUP_WORKFLOW_POLICY_FILE = APP_ROOT / "functions_group_workflow_policy.py"
 ASSIGNMENT_IDS_FILE = APP_ROOT / "functions_group_assignment_ids.py"
 SOURCES_PATH = "/api/group/workflows/file-sync-sources"
 
@@ -95,7 +96,7 @@ def _load_pure_module(name, source_file):
 
 
 FILE_SYNC_MANAGER_ROLES = _module_constant(FILE_SYNC_FILE, "FILE_SYNC_MANAGER_ROLES")
-GROUP_WORKFLOW_MEMBER_ROLES = _module_constant(GROUP_WORKFLOWS_FILE, "GROUP_WORKFLOW_MEMBER_ROLES")
+GROUP_WORKFLOW_MEMBER_ROLES = _module_constant(GROUP_WORKFLOW_POLICY_FILE, "GROUP_WORKFLOW_MEMBER_ROLES")
 
 
 def _group(group_id, *, owner, admins=(), managers=(), users=()):
