@@ -1,20 +1,21 @@
 # test_group_picker_fixture_parity.py
 """
 Per-route shape parity between the M8 group picker UI fixture and the real classic routes.
-Version: 0.261.162
+Version: 0.261.165
 Implemented in: 0.261.161
 
 The M8 group journeys reach every group through the workspace picker: J1 activates a group and
 reconciles an activation made in another tab, and J2 pages and searches the picker's group list.
-The journeys mock the network with the composite `ui_tests/fixtures/group_journeys.py`, which answers
-the picker's two routes -- `GET /api/groups` (the paged, searchable list) and
-`PATCH /api/groups/setActive` (the activation write). A fixture whose response shape drifts from the
-server would let a passing browser journey hide a real regression, so this test pins the fixture's
-response keys and codes against the real `route_backend_groups` picker routes, driven by the isolated
+Every group suite mocks the network with the shared base fixture `ui_tests/fixtures/group_workspace.py`,
+and the journeys with the composite `ui_tests/fixtures/group_journeys.py`, which inherits the base's
+answers to the picker's two routes -- `GET /api/groups` (the paged, searchable list) and
+`PATCH /api/groups/setActive` (the activation write). A fixture whose response drifts from the
+server would let a passing browser test hide a real regression, so this test pins both fixtures'
+responses against the real `route_backend_groups` picker routes, driven by the isolated
 backend harness the classic group functional tests use (`test_support/group_directory_harness.py`,
 running the real policy, group and settings modules against an etag-enforcing fake Cosmos).
 
-It asserts, for every picker call:
+It asserts, for every picker call and both fixtures:
 
 * the fixture never invents a top-level or row key the server does not return
   (`fixture keys <= server keys`);
@@ -23,7 +24,8 @@ It asserts, for every picker call:
 * the requested `page_size` is honoured and the total is never capped, so a store of more than a
   thousand groups still reports the full count (the ">1000 groups not capped" contract check);
 * `setActive`'s success and its 400 (missing id), 404 (unknown group) and 403 (not a member)
-  refusals match by status and by the presence or absence of a machine-readable `error_code`.
+  refusals match by status, by text, and by the presence or absence of a machine-readable
+  `error_code`.
 
 The fixture handlers are the production browser-test code, exercised through the same `_dispatch`
 entry the Playwright route handler calls, with a tiny fake page and route.
@@ -41,7 +43,7 @@ for candidate in (ROOT, ROOT / "ui_tests", ROOT / "ui_tests" / "fixtures"):
 
 from ui_tests.fixtures.workspace_authoring import ApiRequest, ORIGIN
 from ui_tests.fixtures.group_journeys import GroupJourneyFixture
-from ui_tests.fixtures.group_workspace import group_context
+from ui_tests.fixtures.group_workspace import GroupWorkspaceFixture, group_context
 
 from test_support.group_directory_harness import group_directory_environment
 
@@ -98,13 +100,24 @@ class _FakeRoute:
         self.headers = kwargs.get("headers") or {}
 
 
-def new_fixture():
-    """The composite the journeys ride, with an empty group store for the test to fill."""
-    fixture = GroupJourneyFixture(_FakePage())
+def _make_fixture(fixture_class):
+    """A picker fixture of `fixture_class` with an empty group store for the test to fill."""
+    fixture = fixture_class(_FakePage())
     fixture.groups = {}
     fixture.denied_groups = set()
     fixture.active_group = None
     return fixture
+
+
+# Both fixtures answer the picker's two routes: the shared base every group suite rides, and the
+# journeys composite, which inherits the base's handlers. Each case runs against both.
+PICKER_FIXTURES = {"base": GroupWorkspaceFixture, "journeys": GroupJourneyFixture}
+
+
+@pytest.fixture(params=sorted(PICKER_FIXTURES))
+def new_fixture(request):
+    """A factory for the picker fixture under test, parametrized over the base and the composite."""
+    return lambda: _make_fixture(PICKER_FIXTURES[request.param])
 
 
 def seed_fixture_groups(fixture, specs, *, denied=(), active=None):
@@ -179,7 +192,7 @@ def assert_error_code_parity(scenario, fixture_payload, real_payload):
 # Listing: envelope and row shape.
 # --------------------------------------------------------------------------
 
-def test_list_envelope_and_row_shape_parity(env):
+def test_list_envelope_and_row_shape_parity(env, new_fixture):
     """The picker list envelope and every row carry the keys the picker reads, and no invented ones."""
     env.seed_group("group-a", "Group A", members=(CALLER,))
     env.seed_group("group-b", "Group B", members=(CALLER,))
@@ -208,7 +221,7 @@ def test_list_envelope_and_row_shape_parity(env):
 # Listing: page size honoured and total never capped.
 # --------------------------------------------------------------------------
 
-def test_list_page_size_and_no_cap_parity(env):
+def test_list_page_size_and_no_cap_parity(env, new_fixture):
     """A store of more than a thousand groups is paged at the requested size with the full count."""
     total = 1001
     for index in range(total):
@@ -252,7 +265,7 @@ def test_list_page_size_and_no_cap_parity(env):
 # Listing: search.
 # --------------------------------------------------------------------------
 
-def test_list_search_shape_parity(env):
+def test_list_search_shape_parity(env, new_fixture):
     """A picker search returns the same envelope and, for a name-only term, the same single match."""
     env.seed_group("group-alpha", "Alpha Team", members=(CALLER,))
     env.seed_group("group-beta", "Beta Team", members=(CALLER,))
@@ -282,7 +295,7 @@ def _search(fixture, env, term):
     return [row["id"] for row in payload["groups"]], [row["id"] for row in real.get_json()["groups"]]
 
 
-def test_list_search_ignores_case_and_matches_descriptions_like_the_server(env):
+def test_list_search_ignores_case_and_matches_descriptions_like_the_server(env, new_fixture):
     """The fixture's search must model the server exactly: casefolded, over the name or the description.
 
     From 0.261.162 the server searches through `functions_group.search_groups` with
@@ -327,7 +340,7 @@ def test_list_search_ignores_case_and_matches_descriptions_like_the_server(env):
 # setActive: success and refusals.
 # --------------------------------------------------------------------------
 
-def test_set_active_success_parity(env):
+def test_set_active_success_parity(env, new_fixture):
     """Activating a reachable group is a 200 carrying `message` on both sides."""
     env.seed_group("group-ok", "Group OK", members=(CALLER,))
     real = env.call("PATCH", SET_ACTIVE_PATH, body={"groupId": "group-ok"})
@@ -339,10 +352,11 @@ def test_set_active_success_parity(env):
     assert (status, real.status_code) == (200, 200)
     real_payload = real.get_json()
     assert "message" in payload and "message" in real_payload
+    assert payload["message"] == real_payload["message"]
     assert_error_code_parity("set-active-success", payload, real_payload)
 
 
-def test_set_active_missing_group_id_parity(env):
+def test_set_active_missing_group_id_parity(env, new_fixture):
     """A missing groupId is a 400 carrying `error` and no `error_code` on both sides."""
     real = env.call("PATCH", SET_ACTIVE_PATH, body={})
 
@@ -352,10 +366,11 @@ def test_set_active_missing_group_id_parity(env):
     assert (status, real.status_code) == (400, 400)
     real_payload = real.get_json()
     assert "error" in payload and "error" in real_payload
+    assert payload["error"] == real_payload["error"]
     assert_error_code_parity("set-active-missing", payload, real_payload)
 
 
-def test_set_active_unknown_group_parity(env):
+def test_set_active_unknown_group_parity(env, new_fixture):
     """An unknown group is a 404 carrying `error` and no `error_code` on both sides."""
     real = env.call("PATCH", SET_ACTIVE_PATH, body={"groupId": "ghost-group"})
 
@@ -365,10 +380,11 @@ def test_set_active_unknown_group_parity(env):
     assert (status, real.status_code) == (404, 404)
     real_payload = real.get_json()
     assert "error" in payload and "error" in real_payload
+    assert payload["error"] == real_payload["error"]
     assert_error_code_parity("set-active-unknown", payload, real_payload)
 
 
-def test_set_active_forbidden_parity(env):
+def test_set_active_forbidden_parity(env, new_fixture):
     """Activating a group the caller cannot reach is a 403 carrying `error` on both sides."""
     # The caller is not among this group's owner, admins, managers or members.
     env.seed_group("group-foreign", "Foreign Group", owner="owner-1", members=())
@@ -383,6 +399,7 @@ def test_set_active_forbidden_parity(env):
     assert (status, real.status_code) == (403, 403)
     real_payload = real.get_json()
     assert "error" in payload and "error" in real_payload
+    assert payload["error"] == real_payload["error"]
     assert_error_code_parity("set-active-forbidden", payload, real_payload)
 
 

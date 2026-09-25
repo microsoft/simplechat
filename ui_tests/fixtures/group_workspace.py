@@ -1097,6 +1097,20 @@ def group_context(identifier, name, *, role="Owner", status="active", viewer=OWN
     }
 
 
+def group_search_matches(workspace, term):
+    """`functions_group.search_groups`' filter: the term in the name or the description, ignoring case.
+
+    Cosmos' `LOWER` of a missing or non-string value is undefined, so that field never matches. An
+    empty term matches every group, because the route then lists them all.
+    """
+    if not term:
+        return True
+    return any(
+        isinstance(value, str) and term in value.lower()
+        for value in (workspace.get("name"), workspace.get("description"))
+    )
+
+
 class GroupWorkspaceFixture(WorkspaceAuthoringFixture):
     def __init__(self, page):
         super().__init__(page)
@@ -1427,7 +1441,11 @@ class GroupWorkspaceFixture(WorkspaceAuthoringFixture):
             self._json(route, {"error": "Template submission is not allowed for this group."}, 403)
             return
         if path == "/api/groups" and method == "GET":
-            term = entry.query.get("search", [""])[0].lower()
+            # `route_backend_groups` GET /api/groups: the route strips the term and
+            # `functions_group.search_groups` lowercases it and matches it in the name or the
+            # description; the route then pages the natural (insertion) order with
+            # `total_count = len(all_matching)`. An empty term lists every group the caller is in.
+            term = entry.query.get("search", [""])[0].strip().lower()
             page = int(entry.query.get("page", ["1"])[0])
             size = int(entry.query.get("page_size", ["25"])[0])
             groups = [
@@ -1437,8 +1455,7 @@ class GroupWorkspaceFixture(WorkspaceAuthoringFixture):
                     "isActive": group_id == self.active_group, "status": context["status"],
                 }
                 for group_id, context in self.groups.items()
-                if group_id not in self.denied_groups
-                and term in f'{context["workspace"]["name"]} {context["workspace"]["description"]}'.lower()
+                if group_id not in self.denied_groups and group_search_matches(context["workspace"], term)
             ]
             self._json(route, {"groups": groups[(page - 1) * size:page * size], "page": page, "page_size": size, "total_count": len(groups)})
         elif path.startswith("/api/v2/workspaces/group/") and method == "GET":
@@ -1452,12 +1469,18 @@ class GroupWorkspaceFixture(WorkspaceAuthoringFixture):
                 payload["viewer_id"] = self.viewer_id
                 self._json(route, payload)
         elif path == "/api/groups/setActive" and method == "PATCH":
-            group_id = entry.body["groupId"]
-            if group_id in self.denied_groups or group_id not in self.groups:
-                self._json(route, {"error": "Unavailable group."}, 403)
+            # `route_backend_groups` api_set_active_group: a missing id is a 400, an unknown group
+            # a 404, a group the caller isn't a member of a 403, and a member's group a 200.
+            group_id = (entry.body or {}).get("groupId")
+            if not group_id:
+                self._json(route, {"error": "Missing groupId"}, 400)
+            elif group_id not in self.groups:
+                self._json(route, {"error": "Group not found"}, 404)
+            elif group_id in self.denied_groups:
+                self._json(route, {"error": "You are not a member of this group"}, 403)
             else:
                 self.active_group = group_id
-                self._json(route, {"message": "Active group saved."})
+                self._json(route, {"message": f"Active group set to {group_id}"})
         elif path == "/api/plugins/agent-targets" and entry.query.get("scope") == ["group"]:
             group_id = entry.query["group_id"][0]
             self._json(route, {
