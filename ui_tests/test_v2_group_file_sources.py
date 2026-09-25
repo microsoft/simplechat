@@ -1,10 +1,11 @@
 # test_v2_group_file_sources.py
 """
 Production-SPA coverage for the native scope-aware V2 group file sources section.
-Version: 0.261.171
+Version: 0.261.172
 Implemented in: 0.261.147
 Credential identifiers kept on edit: 0.261.156
 Selected paths, fixed tags, folder tags, remote delete policy and root-relative browse: 0.261.171
+Ignore and restore by each browsed file's canonical remote path: 0.261.172
 
 Exercises the real file sources section and its editor dialog against closed synthetic
 HTTP. The fixture serves only the immutable `/api/groups/<id>/file-sources` family and
@@ -28,7 +29,9 @@ them; the fixed tags, with the group's existing tags offered from the explicit-g
 tag read; the folder tag mode; and the remote delete policy. An edit saves all four back
 untouched, a conflict reload adopts another manager's change to them, a path leaving
 the root is refused before it is sent, and a typed path or tag left unadded blocks the
-save instead of vanishing. Browse paths are relative to the root, never the root itself.
+save instead of vanishing. Browse paths are relative to the root, never the root itself,
+and Ignore and Restore send each browsed file's canonical remote path, the one the sync
+engine keys the file's item by; folders offer no Ignore.
 """
 
 import re
@@ -692,8 +695,12 @@ def test_browse_opens_a_folder_by_type(group_file_sources_ui):
 
 
 def test_ignore_then_restore_tracks_the_returned_item(group_file_sources_ui):
-    """Ignoring a browsed path flips its control from the item's `ignored` flag, and restore flips back."""
+    """Ignoring a browsed file sends the canonical remote path browse gave it -- the path the engine
+    keys the file's item by, never the root-relative path -- flips its control from the item's
+    `ignored` flag, and restore flips back. A folder offers no Ignore: the engine keeps items only
+    for files."""
     ui, page = group_file_sources_ui, group_file_sources_ui.page
+    engine_path = "\\\\files.example.test\\reports\\budget.xlsx"
     open_manager(ui)
     open_editor_for(ui, EDITABLE_NAME)
     with page.expect_response(
@@ -702,25 +709,31 @@ def test_ignore_then_restore_tracks_the_returned_item(group_file_sources_ui):
     ):
         page.get_by_role("button", name="Browse the source", exact=True).click()
     file_entry = page.get_by_role("listitem").filter(has_text="File: budget.xlsx")
-    # Browse cannot report ignore state, so every entry defaults to "Ignore".
-    ignore_button = file_entry.get_by_role("button", name="Ignore", exact=True)
-    expect(ignore_button).to_be_visible()
+    folder_entry = page.get_by_role("listitem").filter(has=page.get_by_role("button", name=re.compile(r"^Folder: reports")))
+    expect(folder_entry.get_by_role("button", name=re.compile(r"^(Ignore|Restore) "))).to_have_count(0)
+    # Browse cannot report ignore state, so every file defaults to "Ignore".
+    ignore_button = file_entry.get_by_role("button", name="Ignore budget.xlsx", exact=True)
+    expect(ignore_button).to_have_text("Ignore")
     with page.expect_response(
         lambda response: response.request.method == "POST"
         and urlsplit(response.url).path == f"/api/groups/group-a/file-sources/{EDITABLE_SOURCE_ID}/ignore-path"
         and (response.request.post_data_json or {}).get("ignored") is True
-    ):
+    ) as ignored:
         ignore_button.click()
+    assert ignored.value.request.post_data_json["remote_path"] == engine_path
+    assert ui.file_source_item("group-a", EDITABLE_SOURCE_ID, engine_path)["ignored"] is True
     # The returned item's `ignored: true` flips the control to Restore without a re-browse.
-    restore_button = file_entry.get_by_role("button", name="Restore", exact=True)
-    expect(restore_button).to_be_visible()
+    restore_button = file_entry.get_by_role("button", name="Restore budget.xlsx", exact=True)
+    expect(restore_button).to_have_text("Restore")
     with page.expect_response(
         lambda response: response.request.method == "POST"
         and urlsplit(response.url).path == f"/api/groups/group-a/file-sources/{EDITABLE_SOURCE_ID}/ignore-path"
         and (response.request.post_data_json or {}).get("ignored") is False
-    ):
+    ) as restored:
         restore_button.click()
-    expect(file_entry.get_by_role("button", name="Ignore", exact=True)).to_be_visible()
+    assert restored.value.request.post_data_json["remote_path"] == engine_path
+    expect(file_entry.get_by_role("button", name="Ignore budget.xlsx", exact=True)).to_be_visible()
+    assert ui.file_source_item("group-a", EDITABLE_SOURCE_ID, engine_path)["ignored"] is False
     assert_no_personal_reads(ui)
 
 

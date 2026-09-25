@@ -1,9 +1,10 @@
 # group_file_source_harness.py
 """Shared, isolated harness for the native group file source endpoint tests (M5B).
 
-Version: 0.261.171
+Version: 0.261.172
 Implemented in: 0.261.147
 Real tag validator (fixed tags deduplicated as the server does): 0.261.171
+Real Azure endpoint validator (Azure Blob sources can be saved): 0.261.172
 
 Extracted verbatim from ``test_group_file_source_apis.py`` so the API suite and the
 per-route fixture shape parity test (``test_group_file_source_fixture_parity.py``)
@@ -376,11 +377,14 @@ def environment(monkeypatch):
             find_public_workspace_by_id=Mock(return_value=None),
             get_user_role_in_public_workspace=Mock(return_value=None),
         ))
-        scoped.setitem(sys.modules, "functions_azure_endpoint_validation", module_stub(
-            "functions_azure_endpoint_validation",
-            AZURE_STORAGE_ENDPOINT_SUFFIXES=("core.windows.net",),
-            azure_storage_endpoint_suffix_for_hostname=Mock(return_value="core.windows.net"),
-        ))
+        # The real endpoint validator: it is pure, and a stub returning the wrong shape (a string for
+        # its (account, suffix) pair) made every Azure Blob source fail to save in this harness.
+        endpoint_spec = importlib.util.spec_from_file_location(
+            "functions_azure_endpoint_validation", APP_ROOT / "functions_azure_endpoint_validation.py",
+        )
+        endpoint_validation = importlib.util.module_from_spec(endpoint_spec)
+        scoped.setitem(sys.modules, "functions_azure_endpoint_validation", endpoint_validation)
+        endpoint_spec.loader.exec_module(endpoint_validation)
         scoped.setitem(sys.modules, "utils_cache", module_stub(
             "utils_cache",
             invalidate_group_search_cache=Mock(),

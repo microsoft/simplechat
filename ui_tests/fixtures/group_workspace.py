@@ -1,7 +1,7 @@
 # group_workspace.py
 """
 Closed HTTP fixtures for the real V2 group workspace shell.
-Version: 0.261.171
+Version: 0.261.172
 Implemented in: 0.261.127
 Members section in the group context (M7B): 0.261.155
 File source credential identifiers modelled as `_prepare_auth_payload` stores them: 0.261.156
@@ -12,6 +12,8 @@ Group action responses held to the real routes, route by route: 0.261.161
 Identity credential identifiers modelled as `_prepare_auth_payload` stores them: 0.261.170
 File source sync fields folded and normalized by the server's own rules, and browse paths
 resolved relative to the source root: 0.261.171
+Browsed files carry the engine's canonical remote path, and ignore items are keyed as the server
+keys them: 0.261.172
 
 The shell fixture also serves the immutable native `/api/groups/<group_id>/actions[...]`,
 `/agents[...]`, `/identities[...]` and `/model-endpoints[...]` families -- plus the group
@@ -131,11 +133,19 @@ def _app_functions(file_name, names, namespace):
 
 def _file_sync_rules():
     """The real File Sync normalizers the native source write applies, for the fixture's model."""
-    namespace = {"re": re, "json": json, "Any": Any, "Dict": Dict, "List": List, "Optional": Optional}
+    namespace = {
+        "re": re, "json": json, "hashlib": hashlib, "quote": quote,
+        "Any": Any, "Dict": Dict, "List": List, "Optional": Optional,
+    }
     _app_functions("functions_documents.py", {"normalize_tag", "validate_tags"}, namespace)
     _app_functions("functions_file_sync.py", {
         "parse_file_sync_list", "_normalize_text", "_normalize_selected_path", "_normalize_selected_paths",
         "_normalize_patterns", "_normalize_extensions", "_safe_tag_from_text", "_normalize_tags",
+        # The engine's canonical remote path per source type, and the ignore route's item key.
+        "_normalize_unc_path", "_join_smb_path", "_resolve_selected_smb_path",
+        "_build_azure_files_url", "_join_azure_file_path", "_join_selected_azure_file_path",
+        "_build_azure_blob_url", "_join_azure_blob_path",
+        "_normalize_remote_path", "_item_id_for_path",
     }, namespace)
     return namespace
 
@@ -1255,6 +1265,9 @@ class GroupWorkspaceFixture(WorkspaceAuthoringFixture):
         self.file_source_forced_write_conflict = None
         self.file_source_list_item_defect = None
         self.file_source_type_visibility = {"smb": True, "azure_files": True, "azure_blob": True}
+        # The File Sync items the ignore route writes, keyed as the engine keys them: (group, item id),
+        # the item id being `_item_id_for_path` over the normalized remote path.
+        self.file_source_items = {}
         # The explicit-group tag read (`/api/group_documents/tags?group_id=`) answers each group's
         # seeded tags, the `{name, count, color}` rows the real route aggregates, so the file source
         # editor can offer them as fixed tags. A group in `group_document_tag_read_failures` answers
@@ -3450,14 +3463,38 @@ class GroupWorkspaceFixture(WorkspaceAuthoringFixture):
         if action == "test-connection":
             self._file_source_test_response(route, body)
         else:
-            self._file_source_browse_response(route, body, record["source_type"])
+            self._file_source_browse_response(route, body, record["source_type"], record["connection"])
 
-    def _file_source_browse_response(self, route, body, source_type):
+    @staticmethod
+    def _file_source_remote_path(source_type, connection, directory, name):
+        """A browsed file's canonical remote path, built with the engine's own helpers exactly as its
+        listers build the `remote_path` they key the file's item by: the UNC path for SMB, the file
+        URL for Azure Files, the blob URL for Azure Blob."""
+        rules = FILE_SYNC_RULES
+        connection = connection if isinstance(connection, dict) else {}
+        if source_type == "azure_files":
+            directory_path = rules["_join_selected_azure_file_path"](connection.get("directory_path", ""), directory)
+            return rules["_build_azure_files_url"](
+                connection.get("account_url", ""), connection.get("share_name", ""),
+                rules["_join_azure_file_path"](directory_path, name),
+            )
+        if source_type == "azure_blob":
+            full_path = rules["_join_azure_blob_path"](connection.get("blob_prefix", ""), directory)
+            return rules["_build_azure_blob_url"](
+                connection.get("account_url", ""), connection.get("container_name", ""),
+                rules["_join_azure_blob_path"](full_path, name),
+            )
+        root = rules["_normalize_unc_path"](connection.get("unc_path", ""))
+        return rules["_join_smb_path"](rules["_resolve_selected_smb_path"](root, directory), name)
+
+    def _file_source_browse_response(self, route, body, source_type, connection=None):
         """A browse in the real engine shape. The browse path is normalized by the server's own rule
         and resolved relative to the source root: an entry's `path` is relative to the root too, a
         folder opens by sending its path back, and a path outside the modelled tree -- the root's own
         UNC path, say -- fails as the real browse of a missing folder does. Each entry carries `type`
-        ("folder" or "file"), never `is_dir`, and no ignore state, since browse cannot report one."""
+        ("folder" or "file"), never `is_dir`, and no ignore state, since browse cannot report one;
+        each file carries its canonical `remote_path`, the path the engine keys its item by, which
+        is what an ignore must send."""
         try:
             browse_path = FILE_SYNC_RULES["_normalize_selected_path"](body.get("browse_path") or body.get("path") or "")
         except ValueError:
@@ -3467,16 +3504,34 @@ class GroupWorkspaceFixture(WorkspaceAuthoringFixture):
         if children is None:
             self._json(route, {"error": FILE_SOURCE_UNEXPECTED_ERROR}, 500)
             return
+        # An unsaved browse runs against the draft's connection; a saved one against the stored one,
+        # overlaid key by key with the draft's, as `_build_connection_test_source` folds them.
+        root_connection = {
+            **(connection if isinstance(connection, dict) else {}),
+            **(body.get("connection") if isinstance(body.get("connection"), dict) else {}),
+        }
         prefix = f"{browse_path}/" if browse_path else ""
+        entries = []
+        try:
+            for name, kind in children:
+                browse_entry = {
+                    "name": name, "path": f"{prefix}{name}", "type": kind,
+                    "size": 0 if kind == "folder" else 20480, "modified_at": "2024-01-02T00:00:00+00:00",
+                }
+                if kind == "file":
+                    browse_entry["remote_path"] = self._file_source_remote_path(
+                        source_type, root_connection, browse_path, name,
+                    )
+                entries.append(browse_entry)
+        except ValueError:
+            # A root the server's normalizer refuses (no UNC path, say) fails the browse with its 400.
+            self._json(route, {"error": FILE_SOURCE_INVALID_REQUEST_ERROR}, 400)
+            return
         self._json(route, {"browse": {
             "success": True,
             "path": browse_path,
             "source_type": source_type,
-            "entries": [
-                {"name": name, "path": f"{prefix}{name}", "type": kind,
-                 "size": 0 if kind == "folder" else 20480, "modified_at": "2024-01-02T00:00:00+00:00"}
-                for name, kind in children
-            ],
+            "entries": entries,
         }})
 
     def _file_source_ignore(self, route, entry, group_id, identifier):
@@ -3488,23 +3543,42 @@ class GroupWorkspaceFixture(WorkspaceAuthoringFixture):
             self._json(route, {"error": "Editing this file source is not available."}, 403)
             return
         body = entry.body if isinstance(entry.body, dict) else {}
-        remote_path = str(body.get("remote_path") or "")
-        ignored = bool(body.get("ignored"))
-        # The File Sync item record the ignore route returns under `item`, whose `ignored` flag is the
-        # authoritative per-path state the editor tracks.
-        self._json(route, {"item": {
-            "id": f"{identifier}-item-{abs(hash(remote_path)) % 10000}",
+        rules = FILE_SYNC_RULES
+        # Normalized and keyed exactly as `set_file_sync_path_ignored` does it, so the item a test reads
+        # back is the one the engine would check for that path.
+        remote_path = rules["_normalize_remote_path"](body.get("remote_path"))
+        if not remote_path:
+            self._json(route, {"error": FILE_SOURCE_INVALID_REQUEST_ERROR}, 400)
+            return
+        ignored = bool(body.get("ignored", True))
+        item_id = rules["_item_id_for_path"](identifier, remote_path)
+        now = datetime.now(timezone.utc).isoformat()
+        stored = self.file_source_items.get((group_id, item_id)) or {
+            "id": item_id,
             "type": "file_sync_item",
             "source_id": identifier,
             "scope_type": "group",
             "group_id": group_id,
             "remote_path": remote_path,
-            "status": "active",
+            "status": "ignored" if ignored else "pending",
+            "created_at": now,
+        }
+        stored = {
+            **stored,
             "ignored": ignored,
+            "status": "ignored" if ignored else stored.get("status", "pending"),
             "updated_by": OWNER_ID,
-            "updated_at": "2024-01-02T00:00:00+00:00",
-            "created_at": "2024-01-01T00:00:00+00:00",
-        }})
+            "updated_at": now,
+        }
+        self.file_source_items[(group_id, item_id)] = stored
+        # The File Sync item record the ignore route returns under `item`, whose `ignored` flag is the
+        # authoritative per-path state the editor tracks.
+        self._json(route, {"item": copy.deepcopy(stored)})
+
+    def file_source_item(self, group_id, source_id, remote_path):
+        """The stored File Sync item for a remote path, looked up by the key the engine uses."""
+        rules = FILE_SYNC_RULES
+        return self.file_source_items.get((group_id, rules["_item_id_for_path"](source_id, remote_path)))
 
     # --- Native group agent serving, shared with GroupAgentsFixture -----------------------------
 

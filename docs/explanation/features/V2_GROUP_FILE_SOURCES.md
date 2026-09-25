@@ -91,10 +91,14 @@ the root. Before version 0.261.171 it sent the root itself as the folder to
 list, which the server resolves under the root, so every SMB source answered
 an error; see the [file source browse path fix](../fixes/FILE_SOURCE_BROWSE_PATH_FIX.md).
 
-When browsing a saved source, **Ignore** skips a path on the next run, and
-**Restore** includes it again. Browse doesn't report which paths are ignored, so
-the dialog shows the state the server returned for each path you change during
-the session.
+When browsing a saved source, **Ignore** skips a file on the next run, and
+**Restore** includes it again. From version **0.261.172** they're offered on files
+only, and they send the file's full remote path, which the server gives each
+browsed file. Before that, they sent the path under the root, which never matched
+the file the sync engine tracks, so an ignore had no effect; see the
+[file source browse ignore fix](../fixes/FILE_SOURCE_BROWSE_IGNORE_FIX.md).
+Browse doesn't report which paths are ignored, so the dialog shows the state the
+server returned for each file you change during the session.
 
 ### Saving
 
@@ -139,12 +143,6 @@ When a delete is refused, the section says what actually happened:
   [conflict rebase fix](../fixes/GROUP_EDITOR_CONFLICT_REBASE_FIX.md).
 - **Personal file sources are unchanged.** My Workspace keeps its existing list
   and run history, without the native editor.
-- **An ignore set from Browse doesn't take effect yet.** Browse gives each
-  entry's path under the root, but the sync engine identifies files by their
-  full remote path, so the ignore never matches a synced file. The fix, the
-  server supplying each entry's full path for Ignore and Restore, is in
-  progress. `test_group_file_source_sync_fields.py` pins it as a strict
-  expected failure.
 
 ## Testing and validation
 

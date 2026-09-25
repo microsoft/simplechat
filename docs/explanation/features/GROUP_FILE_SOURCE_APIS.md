@@ -231,7 +231,9 @@ one document was deleted.
 - **Runs** returns the run history. A provider error message is replaced by the
   public run message.
 - **Ignore path** takes `{"remote_path": "...", "ignored": true|false}`, and needs
-  the `edit` operation.
+  the `edit` operation. `remote_path` must be the file's full remote path, the
+  one the sync engine keys the file's item by. From version **0.261.172**, browse
+  gives every file entry that value (see below).
 
 ### Test and browse
 
@@ -242,6 +244,14 @@ in an `active` group.
 - An unsaved one refuses hidden source types, and resolves identities only in
   this group.
 - So nobody below a manager can pair a destination with a stored credential.
+
+Browse entries carry `name`, `path` (relative to the source's root, as
+`browse_path` is), `type`, `size` and `modified_at`. From version
+**0.261.172**, every **file** entry also carries `remote_path`: its canonical
+remote path, built with the same helper the engine's lister uses for each
+source type (SMB, Azure Files, Azure Blob and OneDrive). So ignoring a browsed
+file by its `remote_path` reaches the item the engine checks before syncing
+it. Folders carry none, because the engine keeps items only for files.
 
 ## Editor options
 

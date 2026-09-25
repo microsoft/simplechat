@@ -1,10 +1,11 @@
 # test_group_file_source_fixture_parity.py
 """
 Per-route shape parity between the M5B group file source UI fixture and the real routes.
-Version: 0.261.171
+Version: 0.261.172
 Implemented in: 0.261.147
 Credentials block compared: 0.261.156
 Sync fields and browse paths compared by value: 0.261.171
+Browsed files' canonical remote paths and the items an ignore keys: 0.261.172
 
 M5B contract Section 11, F6. The V2 group file sources browser suite mocks the network with the
 closed HTTP fixture `ui_tests/fixtures/group_file_sources.py`, so a fixture whose response shape
@@ -80,6 +81,8 @@ SOURCE_CONNECTION_UI_KEYS = {"unc_path", "selected_paths"}
 FILTERS_UI_KEYS = {"include_patterns", "exclude_patterns", "allowed_extensions", "fixed_tags", "folder_tag_mode"}
 RUN_ITEM_UI_KEYS = {"id", "run_id", "source_id", "status", "trigger", "started_at", "completed_at", "counts"}
 ENTRY_UI_KEYS = {"name", "path", "type"}
+# A file entry also carries the canonical path the engine keys its item by, which Ignore sends.
+FILE_ENTRY_UI_KEYS = ENTRY_UI_KEYS | {"remote_path"}
 IGNORE_ITEM_UI_KEYS = {"id", "remote_path", "status", "ignored"}
 CONNECTION_UI_KEYS = {"success", "entries_checked", "files_seen", "folders_seen"}
 OPTIONS_UI_KEYS = {"source_types", "eligible_identity_ids", "schedule", "limits", "recursive_allowed"}
@@ -703,7 +706,7 @@ def test_saved_browse_shape_parity(environment, monkeypatch):
     assert_nested_parity("browse folder entry", folder, real_folder, ENTRY_UI_KEYS)
     file_entry = next(e for e in payload["browse"]["entries"] if e["type"] == "file")
     real_file = next(e for e in real_payload["browse"]["entries"] if e["type"] == "file")
-    assert_nested_parity("browse file entry", file_entry, real_file, ENTRY_UI_KEYS)
+    assert_nested_parity("browse file entry", file_entry, real_file, FILE_ENTRY_UI_KEYS)
 
 
 def test_unsaved_browse_shape_parity(environment, monkeypatch):
@@ -722,6 +725,9 @@ def test_unsaved_browse_shape_parity(environment, monkeypatch):
     entry = payload["browse"]["entries"][0]
     real_entry = real_payload["browse"]["entries"][0]
     assert_nested_parity("unsaved browse entry", entry, real_entry, ENTRY_UI_KEYS)
+    file_entry = next(e for e in payload["browse"]["entries"] if e["type"] == "file")
+    real_file = next(e for e in real_payload["browse"]["entries"] if e["type"] == "file")
+    assert_nested_parity("unsaved browse file entry", file_entry, real_file, FILE_ENTRY_UI_KEYS)
 
 
 # --------------------------------------------------------------------------
@@ -881,17 +887,25 @@ class _TreeSmbClient:
         return [_FakeDirEntry(name, kind == "folder") for name, kind in children]
 
 
-def browse_entries(payload):
-    return [
-        {key: entry[key] for key in ("name", "path", "type")}
-        for entry in payload["browse"]["entries"]
-    ]
+def browse_entries(payload, root):
+    """Each entry's name, path and type, and -- for a file -- its `remote_path` relative to the side's
+    own root, so two sides with different roots can be compared on the rule that builds it."""
+    entries = []
+    for entry in payload["browse"]["entries"]:
+        compared = {key: entry[key] for key in ("name", "path", "type")}
+        if "remote_path" in entry:
+            prefix = root.rstrip("\\") + "\\"
+            assert entry["remote_path"].startswith(prefix), f"{entry['remote_path']!r} is not under {root!r}"
+            compared["remote_path_under_root"] = entry["remote_path"][len(prefix):]
+        entries.append(compared)
+    return entries
 
 
 @pytest.mark.parametrize("browse_path", ["", "reports", "reports/2024", "/reports/", "reports\\2024"])
 def test_browse_lists_the_same_items_under_the_root(environment, monkeypatch, browse_path):
     """A browse path is relative to the root on both sides: each lists the same children, with
-    entry paths relative to the root that open their folder when sent back."""
+    entry paths relative to the root that open their folder when sent back, and each file's
+    canonical remote path built by the same rule under its own root."""
     source = create_source(environment)
     monkeypatch.setattr(environment.filesync, "_register_smb_session", lambda _source: _TreeSmbClient())
     as_user(environment, "owner")
@@ -901,7 +915,37 @@ def test_browse_lists_the_same_items_under_the_root(environment, monkeypatch, br
     assert (status, real.status_code) == (200, 200), real.get_json()
     real_payload = real.get_json()
     assert payload["browse"]["path"] == real_payload["browse"]["path"]
-    assert browse_entries(payload) == browse_entries(real_payload)
+    assert browse_entries(payload, FIXTURE_UNC_PATH) == browse_entries(real_payload, UNC_PATH)
+    files = [entry for entry in browse_entries(payload, FIXTURE_UNC_PATH) if entry["type"] == "file"]
+    assert files and all("remote_path_under_root" in entry for entry in files)
+
+
+def test_ignoring_a_browsed_file_keys_the_same_item_on_both_sides(environment, monkeypatch):
+    """Ignoring the `remote_path` browse gave a file answers the same item on both sides: normalized
+    the same way and keyed by `_item_id_for_path` over it, the key the engine reads."""
+    source = create_source(environment)
+    monkeypatch.setattr(environment.filesync, "_register_smb_session", lambda _source: _TreeSmbClient())
+    as_user(environment, "owner")
+    fixture = new_fixture()
+    real_browse = environment.client.post(f"{real_item_path(source['id'])}/browse", json={"browse_path": ""})
+    _, fixture_browse = drive_fixture(fixture, "POST", f"{fixture_item_path()}/browse", body={"browse_path": ""})
+    real_file = next(e for e in real_browse.get_json()["browse"]["entries"] if e["name"] == "budget.xlsx")
+    fixture_file = next(e for e in fixture_browse["browse"]["entries"] if e["name"] == "budget.xlsx")
+    for ignored in (True, False):
+        real = environment.client.post(
+            f"{real_item_path(source['id'])}/ignore-path",
+            json={"remote_path": real_file["remote_path"], "ignored": ignored},
+        )
+        status, payload = drive_fixture(fixture, "POST", f"{fixture_item_path()}/ignore-path",
+                                        body={"remote_path": fixture_file["remote_path"], "ignored": ignored})
+        assert (status, real.status_code) == (200, 200)
+        real_item, fixture_item = real.get_json()["item"], payload["item"]
+        assert_nested_parity("ignored item", fixture_item, real_item, IGNORE_ITEM_UI_KEYS)
+        item_id = environment.filesync._item_id_for_path
+        assert real_item["id"] == item_id(source["id"], real_file["remote_path"])
+        assert fixture_item["id"] == item_id(EDITABLE_SOURCE_ID, fixture_file["remote_path"])
+        assert (fixture_item["ignored"], fixture_item["status"]) == (real_item["ignored"], real_item["status"])
+        assert fixture.file_source_item(GROUP, EDITABLE_SOURCE_ID, fixture_file["remote_path"])["ignored"] is ignored
 
 
 @pytest.mark.parametrize("browse_path,expected_status", [

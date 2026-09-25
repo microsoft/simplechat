@@ -11,7 +11,9 @@
 // confirm a connection before committing it. Browse lists what is under the configured root, as the
 // server resolves every browse path relative to it: a folder opens, and any folder or file can be
 // selected so the source syncs only the selection, as in the classic editor. Browsing never changes
-// the root itself. Browsing a saved source can also ignore a remote path.
+// the root itself. Browsing a saved source can also ignore a file, by the canonical remote path the
+// server gives each browsed file -- the path the engine keys the file's item by -- so the engine
+// skips it on the next run. Folders offer no Ignore: the engine keeps items only for files.
 //
 // The fixed tags, folder tags and remote delete policy are shown with the values the server will
 // store, so a manager sees how synced files will be tagged and what happens to them when their source
@@ -274,18 +276,24 @@ export function FileSourceEditorDialog({
             .slice(0, TAG_SUGGESTION_LIMIT);
     }, [tagSuggestions, draft.fixedTags, tagInput, typedTag]);
 
+    /** A browsed file's canonical remote path, or '' for a folder or an entry the server sent without one. */
+    const ignorablePath = (entry: FileSourceBrowseEntry): string =>
+        typeof entry.remote_path === 'string' ? entry.remote_path.trim() : '';
+
     const toggleIgnore = async (entry: FileSourceBrowseEntry) => {
-        if (!onIgnore) {
+        const remotePath = ignorablePath(entry);
+        if (!onIgnore || !remotePath) {
             return;
         }
-        const path = String(entry.path ?? entry.name ?? '');
-        const next = !ignoredPaths[path];
+        const next = !ignoredPaths[remotePath];
         setIgnoreError(null);
         try {
-            // The server's returned item is authoritative; browse can't reflect the change, so the
-            // per-path map is updated from the response rather than by re-browsing.
-            const applied = await onIgnore(path, next);
-            setIgnoredPaths((current) => ({ ...current, [path]: applied }));
+            // Ignore by the path the engine keys the file's item by, which only the server can build:
+            // the root-relative `path` would store an item the engine never reads. The returned item
+            // is authoritative; browse can't reflect the change, so the per-path map is updated from
+            // the response rather than by re-browsing.
+            const applied = await onIgnore(remotePath, next);
+            setIgnoredPaths((current) => ({ ...current, [remotePath]: applied }));
         } catch (cause) {
             setIgnoreError(cause instanceof Error ? cause.message : 'Could not update the ignore list.');
         }
@@ -637,7 +645,8 @@ export function FileSourceEditorDialog({
                                         const entryPath = String(entry.path ?? entry.name ?? index);
                                         const entryName = String(entry.name ?? entry.path ?? 'item');
                                         const isFolder = entry.type === 'folder';
-                                        const isIgnored = Boolean(ignoredPaths[entryPath]);
+                                        const remotePath = ignorablePath(entry);
+                                        const isIgnored = Boolean(remotePath && ignoredPaths[remotePath]);
                                         const selected = isPathSelected(draft.selectedPaths, entryPath);
                                         return (
                                             <li
@@ -672,9 +681,10 @@ export function FileSourceEditorDialog({
                                                 >
                                                     {selected ? 'Selected' : 'Select'}
                                                 </button>
-                                                {onIgnore ? (
+                                                {onIgnore && remotePath ? (
                                                     <button
                                                         type="button"
+                                                        aria-label={`${isIgnored ? 'Restore' : 'Ignore'} ${entryPath}`}
                                                         onClick={() => void toggleIgnore(entry)}
                                                         className="shrink-0 text-xs text-text-3 hover:text-text-1"
                                                     >

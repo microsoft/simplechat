@@ -2,6 +2,15 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.172)**
+
+#### Bug Fixes
+
+*   **Ignoring A Browsed File Takes Effect**
+    *   In the V2 group file source editor, **Ignore** sent the file's path under the source's root, but the sync engine tracks each file by its full remote path, so the ignore never matched and the file kept syncing. Folders were also offered Ignore, which the engine can't honour.
+    *   Browse now gives every file its full remote path, built the way the engine builds it for SMB, Azure Files, Azure Blob and OneDrive. **Ignore** and **Restore** send it, and appear on files only.
+    *   (Ref: `functions_file_sync.py`, `FileSourceEditorDialog.tsx`, [File Source Browse Ignore Fix](fixes/FILE_SOURCE_BROWSE_IGNORE_FIX.md))
+
 ### **(v0.261.171)**
 
 #### New Features
