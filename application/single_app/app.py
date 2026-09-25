@@ -107,6 +107,7 @@ from route_backend_public_document_reads import register_route_backend_public_do
 from route_backend_public_document_management import register_route_backend_public_document_management
 from route_backend_public_document_collaboration import register_route_backend_public_document_collaboration
 from route_backend_public_prompts import *
+from route_backend_public_prompts_scoped import register_route_backend_public_prompts_scoped
 from route_backend_file_sync import register_route_backend_file_sync
 from route_backend_workspace_identities import register_route_backend_workspace_identities
 from route_backend_user_agreement import register_route_backend_user_agreement
@@ -1547,6 +1548,9 @@ register_route_blueprint('backend_public_document_collaboration', register_route
 
 # ------------------- API Public Prompts Routes ----------
 register_route_blueprint('backend_public_prompts', register_route_backend_public_prompts, user_required_blueprint)
+
+# ------------------- API Public Prompts Routes (immutable-target) ---
+register_route_blueprint('backend_public_prompts_scoped', register_route_backend_public_prompts_scoped, user_required_blueprint)
 
 # ------------------- API File Sync Routes ---------------
 register_route_blueprint('backend_file_sync', register_route_backend_file_sync, login_required_blueprint)
