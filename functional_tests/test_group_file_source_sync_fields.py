@@ -2,8 +2,9 @@
 # test_group_file_source_sync_fields.py
 """
 Functional test for the four classic File Sync fields in the V2 group file source editor.
-Version: 0.261.171
+Version: 0.261.172
 Implemented in: 0.261.171
+Browsed files carry the engine's canonical remote path, and Ignore sends it: 0.261.172
 
 The classic editor sets four fields the V2 editor never showed: the folders and files to sync under
 the source root (`connection.selected_paths`), the tags every synced file gets (`filters.fixed_tags`),
@@ -21,9 +22,12 @@ own esbuild and run under node -- against the real native group file source rout
 - a source stored without the fields, or with an unrecognised choice, opens with the value any save
   will store.
 
-It also records one product finding, as a strict xfail with a positive control: V2's Ignore sends a
-browse entry's root-relative path, but the engine keys items by the absolute remote path, so the
-ignore never applies.
+It also pins the ignore fix. V2's Ignore used to send a browse entry's root-relative path, while the
+engine keys each item by the file's canonical remote path, so the ignore never applied. Browse now
+gives every file its canonical `remote_path`, built as the engine builds it -- checked against the
+engine's own listing of the same tree for SMB, Azure Files, Azure Blob and OneDrive, the four
+implemented source types -- and ignoring by it marks the item the engine reads. The ignore route
+itself is unchanged.
 """
 
 import json
@@ -264,45 +268,249 @@ def test_a_missing_or_unrecognised_choice_opens_as_any_save_stores_it(environmen
     assert omitted["remote_delete_policy"] == expected["remote_delete_policy"]
 
 
-@pytest.mark.xfail(strict=True, reason=(
-    "Product finding (M5B, 0.261.171): the V2 editor ignores a browsed file by the entry's path, "
-    "which browse returns relative to the source root, but the sync engine keys each item by the "
-    "file's absolute remote path (_item_id_for_path over remote_file['remote_path']), so the ignore "
-    "is stored on an item the engine never reads and the file keeps syncing."
-))
-def test_ignoring_a_browsed_file_reaches_the_item_the_engine_syncs(environment):
-    """Ignoring a file the way V2 does -- with the path browse returned -- marks the item the engine
-    checks before syncing that file."""
-    created = create_source(environment)
-    as_user(environment, "owner")
-    browsed_path = "reports/budget.xlsx"  # a browse entry's `path`, relative to the root
-    response = environment.client.post(
-        f"{LIST_PATH}/{created['id']}/ignore-path", json={"remote_path": browsed_path, "ignored": True},
-    )
-    assert response.status_code == 200, response.get_data(as_text=True)
-    # The SMB engine lists this file with its absolute remote path under the root, and skips it only
-    # when the item keyed by that path is ignored.
-    engine_path = f"{UNC_PATH}\\reports\\budget.xlsx"
-    item = environment.items_container.get(
-        created["id"], environment.filesync._item_id_for_path(created["id"], engine_path),
-    )
-    assert item is not None and item.get("ignored") is True
+# --------------------------------------------------------------------------
+# Ignore by the canonical remote path browse gives each file (0.261.172).
+# --------------------------------------------------------------------------
+
+# One small tree, served to every source type's engine lister and browse through fakes, keyed by the
+# path relative to the source root. Each value lists a folder's children as (name, kind).
+BROWSE_TREE = {
+    "": (("reports", "folder"), ("budget.xlsx", "file")),
+    "reports": (("2024", "folder"), ("summary.pdf", "file")),
+    "reports/2024": (("q1.pdf", "file"),),
+}
 
 
-def test_ignoring_the_engine_path_marks_the_item_the_engine_syncs(environment):
-    """The positive control for the finding above: ignoring the file's absolute remote path marks the
-    very item the engine reads, so the lookup the finding relies on is sound."""
-    created = create_source(environment)
+def tree_children(relative):
+    children = BROWSE_TREE.get(relative.strip("/"))
+    if children is None:
+        raise FileNotFoundError(relative)
+    return children
+
+
+class _Stat:
+    st_size = 20480
+    st_mtime = 1704153600
+
+
+class _SmbEntry:
+    def __init__(self, name, kind):
+        self.name, self._kind = name, kind
+
+    def is_dir(self):
+        return self._kind == "folder"
+
+    def is_file(self):
+        return self._kind == "file"
+
+    def stat(self):
+        return _Stat()
+
+
+class _TreeSmbClient:
+    """An SMB session over BROWSE_TREE under the harness root, for browse and the engine alike."""
+
+    def scandir(self, path):
+        root = UNC_PATH.rstrip("\\")
+        if path.lower() == root.lower():
+            relative = ""
+        elif path.lower().startswith(root.lower() + "\\"):
+            relative = path[len(root) + 1:].replace("\\", "/")
+        else:
+            raise FileNotFoundError(path)
+        return [_SmbEntry(name, kind) for name, kind in tree_children(relative)]
+
+
+class _TreeShareClient:
+    """An Azure Files share over BROWSE_TREE under the source's root directory."""
+
+    def __init__(self, root_directory):
+        self.root = root_directory.strip("/")
+
+    def _relative(self, directory_name):
+        directory = (directory_name or "").strip("/")
+        if directory == self.root:
+            return ""
+        if not directory.startswith(self.root + "/"):
+            raise FileNotFoundError(directory)
+        return directory[len(self.root) + 1:]
+
+    def list_directories_and_files(self, directory_name=None):
+        return [
+            {"name": name, "is_directory": kind == "folder", "size": 20480}
+            for name, kind in tree_children(self._relative(directory_name))
+        ]
+
+    def get_file_client(self, file_path):
+        return type("FileClient", (), {"get_file_properties": lambda _self: {"size": 20480}})()
+
+
+class _TreeBlobPrefix:
+    def __init__(self, name):
+        self.name = name
+
+
+class _TreeContainerClient:
+    """An Azure Blob container over BROWSE_TREE under the source's blob prefix."""
+
+    def __init__(self, prefix):
+        self.prefix = prefix.strip("/")
+
+    def _blob_names(self, relative=""):
+        names = []
+        for name, kind in tree_children(relative):
+            child = f"{relative}/{name}".strip("/")
+            names.extend(self._blob_names(child) if kind == "folder" else [f"{self.prefix}/{child}"])
+        return names
+
+    def walk_blobs(self, name_starts_with=None, delimiter=None):
+        relative = (name_starts_with or "")[len(self.prefix):].strip("/")
+        return [
+            _TreeBlobPrefix(f"{self.prefix}/{relative}/{name}/".replace("//", "/")) if kind == "folder"
+            else {"name": f"{self.prefix}/{relative}/{name}".replace("//", "/"), "size": 20480}
+            for name, kind in tree_children(relative)
+        ]
+
+    def list_blobs(self, name_starts_with=None):
+        return [{"name": name, "size": 20480} for name in self._blob_names() if name.startswith(name_starts_with or "")]
+
+
+def azure_files_source(env):
+    return create_source(env, {
+        "name": "Quarterly Azure Files", "source_type": "azure_files",
+        "connection": {"account_url": "https://contoso.file.core.windows.net", "share_name": "reports",
+                       "directory_path": "quarterly"},
+        "credentials": {"auth_type": "managed_identity", "managed_identity_client_id": ""},
+    })
+
+
+def azure_blob_source(env):
+    return create_source(env, {
+        "name": "Team blob container", "source_type": "azure_blob",
+        "connection": {"account_url": "https://contoso.blob.core.windows.net", "container_name": "finance",
+                       "blob_prefix": "team"},
+        "credentials": {"auth_type": "managed_identity", "managed_identity_client_id": ""},
+    })
+
+
+def serve_tree(environment, monkeypatch, source_type):
+    """Create a source of the type and point both browse and the engine at the same tree."""
+    filesync = environment.filesync
+    if source_type == "azure_files":
+        created = azure_files_source(environment)
+        monkeypatch.setattr(filesync, "_get_azure_files_share_client", lambda _source: _TreeShareClient("quarterly"))
+    elif source_type == "azure_blob":
+        created = azure_blob_source(environment)
+        monkeypatch.setattr(filesync, "_get_azure_blob_container_client", lambda _source: _TreeContainerClient("team"))
+    else:
+        created = create_source(environment)
+        monkeypatch.setattr(filesync, "_register_smb_session", lambda _source: _TreeSmbClient())
+    return created
+
+
+def browsed_entries(environment, source_id):
+    """Every entry browse lists, over every folder of the tree, keyed by its root-relative path."""
+    entries = {}
+    for folder in BROWSE_TREE:
+        response = environment.client.post(f"{LIST_PATH}/{source_id}/browse", json={"browse_path": folder})
+        assert response.status_code == 200, response.get_data(as_text=True)
+        for entry in response.get_json()["browse"]["entries"]:
+            entries[entry["path"]] = entry
+    return entries
+
+
+def engine_remote_paths(environment, source_id):
+    """What the sync engine itself lists for the stored source: root-relative path -> remote_path."""
+    filesync = environment.filesync
+    stored = environment.sources_container.get(GROUP, source_id)
+    return {
+        str(remote_file["relative_path"]).replace("\\", "/"): remote_file["remote_path"]
+        for remote_file in filesync._list_remote_files(stored, filesync.get_file_sync_config())
+    }
+
+
+@pytest.mark.parametrize("source_type", ["smb", "azure_files", "azure_blob"])
+def test_every_browsed_file_carries_the_path_the_engine_keys_it_by(environment, monkeypatch, source_type):
+    """Over the same tree, each browsed file's `remote_path` is the one the engine lists for that file,
+    so it names the same item; folders carry none, since the engine keeps items only for files."""
+    created = serve_tree(environment, monkeypatch, source_type)
     as_user(environment, "owner")
-    engine_path = f"{UNC_PATH}\\reports\\budget.xlsx"
+    entries = browsed_entries(environment, created["id"])
+    engine = engine_remote_paths(environment, created["id"])
+    files = {path: entry for path, entry in entries.items() if entry["type"] == "file"}
+    assert sorted(files) == sorted(engine) == ["budget.xlsx", "reports/2024/q1.pdf", "reports/summary.pdf"]
+    item_id = environment.filesync._item_id_for_path
+    for path, entry in files.items():
+        assert entry["remote_path"] == engine[path], f"{source_type} {path}: browse and the engine disagree"
+        assert item_id(created["id"], entry["remote_path"]) == item_id(created["id"], engine[path])
+    assert all("remote_path" not in entry for entry in entries.values() if entry["type"] == "folder")
+
+
+def test_a_browsed_onedrive_file_carries_the_engine_remote_path(environment, monkeypatch):
+    """OneDrive (personal only) browses the same Graph items the engine lists, and gives each file the
+    engine's own `onedrive://` path; a folder carries none."""
+    filesync = environment.filesync
+    folder = {"id": "folder-1", "name": "reports", "folder": {"childCount": 1},
+              "parentReference": {"driveId": "drive-1", "path": "/drive/root:"}}
+    root_file = {"id": "file-1", "name": "budget.xlsx", "file": {"mimeType": "application/vnd.ms-excel"}, "size": 20480,
+                 "parentReference": {"driveId": "drive-1", "path": "/drive/root:"}}
+    nested_file = {"id": "file-2", "name": "summary.pdf", "file": {"mimeType": "application/pdf"}, "size": 20480,
+                   "parentReference": {"driveId": "drive-1", "path": "/drive/root:/reports"}}
+
+    def children(_source, item_id=None, selected_path="", max_items=1000):
+        return [nested_file] if item_id == "folder-1" or selected_path == "reports" else [folder, root_file]
+
+    monkeypatch.setattr(filesync, "_iter_onedrive_children", children)
+    source = {"id": "onedrive-source", "source_type": "onedrive", "recursive": True,
+              "connection": {"selected_paths": []}}
+    browsed = filesync._browse_onedrive_path(source, "") + filesync._browse_onedrive_path(source, "reports")
+    engine = {item["relative_path"]: item["remote_path"]
+              for item in filesync._list_onedrive_files(source, filesync.get_file_sync_config())}
+    files = {entry["path"]: entry["remote_path"] for entry in browsed if entry["type"] == "file"}
+    assert files == engine == {"budget.xlsx": "onedrive://drive-1/file-1", "reports/summary.pdf": "onedrive://drive-1/file-2"}
+    assert all("remote_path" not in entry for entry in browsed if entry["type"] == "folder")
+
+
+def test_ignoring_a_browsed_file_reaches_the_item_the_engine_syncs(environment, monkeypatch):
+    """Ignoring a file the way V2 does -- by the `remote_path` browse gave it -- marks the very item the
+    engine checks before syncing that file (flipped from the 0.261.171 strict xfail)."""
+    created = serve_tree(environment, monkeypatch, "smb")
+    as_user(environment, "owner")
+    browsed = browsed_entries(environment, created["id"])["budget.xlsx"]
     response = environment.client.post(
-        f"{LIST_PATH}/{created['id']}/ignore-path", json={"remote_path": engine_path, "ignored": True},
+        f"{LIST_PATH}/{created['id']}/ignore-path",
+        json={"remote_path": browsed["remote_path"], "ignored": True},
     )
     assert response.status_code == 200, response.get_data(as_text=True)
-    item = environment.items_container.get(
-        created["id"], environment.filesync._item_id_for_path(created["id"], engine_path),
-    )
+    # The engine's own lookup: its listing's remote_path for the file, keyed into its existing items.
+    filesync = environment.filesync
+    stored = environment.sources_container.get(GROUP, created["id"])
+    existing = filesync._load_existing_items(stored)
+    engine_path = engine_remote_paths(environment, created["id"])["budget.xlsx"]
+    item = existing.get(filesync._item_id_for_path(created["id"], engine_path))
     assert item is not None and item.get("ignored") is True
+    restored = environment.client.post(
+        f"{LIST_PATH}/{created['id']}/ignore-path",
+        json={"remote_path": browsed["remote_path"], "ignored": False},
+    )
+    assert restored.status_code == 200 and restored.get_json()["item"]["ignored"] is False
+    existing = filesync._load_existing_items(stored)
+    assert existing[filesync._item_id_for_path(created["id"], engine_path)]["ignored"] is False
+
+
+def test_a_root_relative_path_still_reaches_no_engine_item(environment, monkeypatch):
+    """The route itself is unchanged: it stores the path it is given, so ignoring by the root-relative
+    `path` still marks an item the engine never reads. That is why the editor sends `remote_path`."""
+    created = serve_tree(environment, monkeypatch, "smb")
+    as_user(environment, "owner")
+    response = environment.client.post(
+        f"{LIST_PATH}/{created['id']}/ignore-path", json={"remote_path": "budget.xlsx", "ignored": True},
+    )
+    assert response.status_code == 200, response.get_data(as_text=True)
+    filesync = environment.filesync
+    stored = environment.sources_container.get(GROUP, created["id"])
+    engine_path = engine_remote_paths(environment, created["id"])["budget.xlsx"]
+    assert filesync._item_id_for_path(created["id"], engine_path) not in filesync._load_existing_items(stored)
 
 
 if __name__ == "__main__":
