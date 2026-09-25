@@ -104,8 +104,25 @@ def test_the_hint_identifies_the_directory(env):
     env.seed_workspace("w-1", "Shared")
     env.as_user("reader-1")
     payload = env.directory().get_json()
-    assert payload["public_directory"] == {"schema_version": 1}
+    assert payload["public_directory"] == {"schema_version": 1, "can_create": True}
     assert payload["page"] == 1 and payload["page_size"] == 20 and payload["total_count"] == 1
+
+
+def test_the_create_hint_follows_the_creation_role_requirement(env):
+    """``can_create`` mirrors the classic ``POST /api/public_workspaces`` gate, per M10A."""
+    env.settings["require_member_of_create_public_workspace"] = True
+    env.seed_workspace("w-1", "Shared")
+
+    env.as_user("reader-1", roles=["User"])
+    assert env.directory().get_json()["public_directory"]["can_create"] is False
+
+    env.as_user("reader-1", roles=["User", "CreatePublicWorkspaces"])
+    assert env.directory().get_json()["public_directory"]["can_create"] is True
+
+    env.settings["enable_public_workspaces"] = False
+    denied = env.directory()
+    assert denied.status_code == 400
+    assert denied.get_json() == {"error": "Enable Public Workspaces is disabled."}
 
 
 def test_a_row_carries_the_reviewed_values(env):

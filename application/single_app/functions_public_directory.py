@@ -45,20 +45,23 @@ stable, data-free message with an ``error_code``.
 import logging
 import re
 
-from flask import jsonify, request
+from flask import jsonify, request, session
 from werkzeug.exceptions import HTTPException
 
 from config import cosmos_public_workspaces_container
 from functions_appinsights import log_event
+from functions_public_directory_policy import (
+    PUBLIC_DIRECTORY_HINTS_SCHEMA_VERSION,
+    build_public_directory_hints,
+)
 from functions_public_workspaces import get_user_role_in_public_workspace
+from functions_settings import get_settings
 from functions_workspace_branding import (
     DEFAULT_WORKSPACE_HERO_COLOR,
     get_workspace_logo_metadata,
     normalize_workspace_hero_color,
 )
 
-
-PUBLIC_DIRECTORY_HINTS_SCHEMA_VERSION = 1
 
 PUBLIC_DIRECTORY_VIEWS = ("all", "mine")
 PUBLIC_DIRECTORY_QUERY_PARAMETERS = ("search", "view", "page", "page_size")
@@ -273,9 +276,19 @@ def _in_view(row, view):
     return True
 
 
-def build_public_directory_hints():
-    """Return the ``public_directory`` envelope hint the directory response carries."""
-    return {"schema_version": PUBLIC_DIRECTORY_HINTS_SCHEMA_VERSION}
+
+
+
+def current_session_roles():
+    """The signed-in user's app roles for this request, or ``None`` when unavailable.
+
+    The roles gate the directory's Create hint through the creation policy; they never
+    change what workspaces the directory lists.
+    """
+    user = session.get("user")
+    if isinstance(user, dict):
+        return user.get("roles")
+    return None
 
 
 def list_public_directory(user_id, *, view, search, page, page_size):
@@ -299,7 +312,7 @@ def list_public_directory(user_id, *, view, search, page, page_size):
         "page": page,
         "page_size": page_size,
         "total_count": len(rows),
-        "public_directory": build_public_directory_hints(),
+        "public_directory": build_public_directory_hints(get_settings(), current_session_roles()),
     }, 200
 
 

@@ -15,11 +15,13 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { ArrowLeft, Globe, Loader2 } from 'lucide-react';
+import { ArrowLeft, Globe, Loader2, Plus } from 'lucide-react';
 import { PageHeader } from '../components/layout/PageHeader';
 import { EmptyState, GlassButton, Skeleton } from '../components/ui/primitives';
 import { SectionSearch } from '../components/workspace/primitives';
 import { PublicDirectoryList } from '../components/workspace/PublicDirectoryList';
+import { CreatePublicWorkspaceDialog } from '../components/workspace/CreatePublicWorkspaceDialog';
+import { ApiError } from '../lib/apiClient';
 import {
     DIRECTORY_PAGE_SIZE, DIRECTORY_MAX_PAGE, DIRECTORY_SEARCH_MAX_LENGTH, PUBLIC_DIRECTORY,
     codePointLength,
@@ -75,6 +77,9 @@ export function PublicDirectoryPage() {
     const [error, setError] = useState('');
     const [notice, setNotice] = useState('');
     const [retry, setRetry] = useState(0);
+    const [createOpen, setCreateOpen] = useState(false);
+    const [creating, setCreating] = useState(false);
+    const [createError, setCreateError] = useState('');
 
     const reload = useCallback(() => setRetry((value) => value + 1), []);
 
@@ -142,9 +147,36 @@ export function PublicDirectoryPage() {
         setNotice(next ? 'This workspace will appear in public chat.' : 'This workspace is hidden from public chat.');
     }, []);
 
+    const submitCreate = useCallback(async (name: string, description: string) => {
+        setCreating(true);
+        setCreateError('');
+        try {
+            const created = await adapter.create(name, description);
+            navigate(adapter.openPath(created.id));
+        } catch (cause: unknown) {
+            // The classic route's refusals carry no error_code and its 400 exception path can echo an
+            // internal message, so the reader is shown a safe, status-derived sentence rather than the
+            // raw body. A 403 or a feature-off 400 can only mean the create hint went stale, so the
+            // directory is re-read to hide the control if it is no longer allowed.
+            const status = cause instanceof ApiError ? cause.status : 0;
+            if (status === 403) {
+                setCreateError(`You do not have permission to create a ${labels.lower_singular}.`);
+            } else {
+                setCreateError(`The ${labels.lower_singular} could not be created. Please retry.`);
+            }
+            if (status === 403 || status === 400) reload();
+        } finally {
+            setCreating(false);
+        }
+    }, [adapter, navigate, reload, labels]);
+
+    const openCreate = useCallback(() => { setCreateError(''); setCreateOpen(true); }, []);
+    const closeCreate = useCallback(() => { setCreateError(''); setCreateOpen(false); }, []);
+
     const workspaces = result?.workspaces ?? [];
     const totalCount = result?.totalCount ?? 0;
     const totalPages = Math.max(1, Math.ceil(totalCount / DIRECTORY_PAGE_SIZE));
+    const canCreate = Boolean(result?.hints?.canCreate);
 
     const emptyDescription = useMemo(() => {
         if (urlSearch) return `No ${labels.lower_plural} match your search.`;
@@ -167,7 +199,18 @@ export function PublicDirectoryPage() {
     const header = (
         <PageHeader title="Public directory" description={`Browse ${labels.lower_plural} and choose which appear in chat`}
             leading={<Globe size={20} className="text-accent" />}
-            actions={<GlassButton size="sm" onClick={() => navigate('/public')}><ArrowLeft size={14} />{labels.plural}</GlassButton>} />
+            actions={(
+                <>
+                    <GlassButton size="sm" onClick={() => navigate('/public')}><ArrowLeft size={14} />{labels.plural}</GlassButton>
+                    {canCreate ? (
+                        <GlassButton size="sm" variant="primary" aria-label={`Create ${labels.lower_singular}`} onClick={openCreate}>
+                            <Plus size={14} />
+                            <span className="hidden sm:inline">Create {labels.lower_singular}</span>
+                            <span className="sm:hidden">Create</span>
+                        </GlassButton>
+                    ) : null}
+                </>
+            )} />
     );
 
     return (
@@ -209,7 +252,10 @@ export function PublicDirectoryPage() {
                             <Skeleton className="h-16 w-full" /><Skeleton className="h-16 w-full" /><Skeleton className="h-16 w-full" />
                         </div>
                     ) : !error && workspaces.length === 0 ? (
-                        <EmptyState icon={<Globe size={28} />} title={`No ${labels.lower_plural} to show`} description={emptyDescription} />
+                        <EmptyState icon={<Globe size={28} />} title={`No ${labels.lower_plural} to show`} description={emptyDescription}
+                            action={canCreate && !urlSearch
+                                ? <GlassButton size="sm" variant="primary" onClick={openCreate}><Plus size={14} />Create {labels.lower_singular}</GlassButton>
+                                : undefined} />
                     ) : !error ? (
                         <>
                             <p role="status" className="text-xs text-text-3">
@@ -233,6 +279,11 @@ export function PublicDirectoryPage() {
                     ) : null}
                 </div>
             </div>
+            {createOpen ? (
+                <CreatePublicWorkspaceDialog submitting={creating} serverError={createError}
+                    singular={labels.singular} lowerSingular={labels.lower_singular}
+                    onSubmit={(name, description) => void submitCreate(name, description)} onClose={closeCreate} />
+            ) : null}
         </div>
     );
 }

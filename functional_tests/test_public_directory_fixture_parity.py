@@ -45,7 +45,7 @@ ROW_KEYS = {
     "logoVersion", "userRole", "membership", "status",
 }
 LIST_KEYS = {"workspaces", "page", "page_size", "total_count", "public_directory"}
-HINT_KEYS = {"schema_version"}
+HINT_KEYS = {"schema_version", "can_create"}
 ERROR_KEYS = {"error", "error_code"}
 
 
