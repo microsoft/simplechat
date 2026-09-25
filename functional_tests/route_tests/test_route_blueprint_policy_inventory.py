@@ -2,7 +2,7 @@
 #!/usr/bin/env python3
 """
 Functional test for route blueprint policy inventory.
-Version: 0.261.177
+Version: 0.261.179
 Implemented in: 0.242.069
 Plan editor policy coverage: 0.261.102
 Selected-group context policy coverage: 0.261.126
@@ -73,6 +73,7 @@ REGISTERED_BLUEPRINT_POLICIES = {
     "backend_public_document_reads": ("login_required", "user_required"),
     "backend_public_document_management": ("login_required", "user_required"),
     "backend_public_document_collaboration": ("login_required", "user_required"),
+    "backend_public_membership": ("login_required", "user_required"),
     "backend_public_prompts": ("login_required", "user_required"),
     "backend_public_prompts_scoped": ("login_required", "user_required"),
     "backend_public_workspaces": ("login_required", "user_required"),
@@ -253,6 +254,14 @@ SENSITIVE_ROUTE_POLICIES = {
     ("route_backend_public_document_collaboration.py", "api_scoped_public_document_approve_artifact"): ("login_required", "user_required", "enabled_required"),
     ("route_backend_public_document_collaboration.py", "api_scoped_public_document_reject_artifact"): ("login_required", "user_required", "enabled_required"),
     ("route_backend_public_document_collaboration.py", "api_scoped_public_document_cancel_artifact"): ("login_required", "user_required", "enabled_required"),
+    ("route_backend_public_membership.py", "api_public_membership_list"): ("login_required", "user_required", "enabled_required"),
+    ("route_backend_public_membership.py", "api_public_membership_add"): ("login_required", "user_required", "enabled_required"),
+    ("route_backend_public_membership.py", "api_public_membership_role"): ("login_required", "user_required", "enabled_required"),
+    ("route_backend_public_membership.py", "api_public_membership_remove"): ("login_required", "user_required", "enabled_required"),
+    ("route_backend_public_membership.py", "api_public_membership_requests"): ("login_required", "user_required", "enabled_required"),
+    ("route_backend_public_membership.py", "api_public_membership_request_approve"): ("login_required", "user_required", "enabled_required"),
+    ("route_backend_public_membership.py", "api_public_membership_request_reject"): ("login_required", "user_required", "enabled_required"),
+    ("route_backend_public_membership.py", "api_public_membership_owner"): ("login_required", "user_required", "enabled_required"),
     ("route_backend_workflows.py", "get_user_workflow_flow"): ("login_required", "user_required", "workflow_user_required"),
     ("route_backend_workflows.py", "get_group_workflow_flow"): ("login_required", "user_required"),
     ("route_backend_workflows.py", "get_user_workflow_run_flow"): ("login_required", "user_required", "workflow_user_required"),

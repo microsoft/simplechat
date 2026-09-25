@@ -269,6 +269,13 @@ managed by an active manager, and the context carries `prompt_management`
 (`create`, `edit` and `delete` for a manager in an active workspace). See
 [V2 Public Prompts](V2_PUBLIC_PROMPTS.md).
 
+From version **0.261.179**, the public context lists a `members` section in its
+**Manage** group, managed by the Owner and Admins, and carries
+`membership_management`, the membership operations the caller may perform.
+The group context has no equivalent top-level field; the group Members section
+reads its operations from the member list. See
+[V2 Public Members](V2_PUBLIC_MEMBERS.md).
+
 `ui_tests/test_v2_personal_document_scope.py` provides the personal-document
 integration baseline added in version **0.261.128**. It checks that an unrelated
 active group does not retarget personal reads, search/tag filters, action

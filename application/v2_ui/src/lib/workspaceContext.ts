@@ -32,9 +32,17 @@ export const PUBLIC_WORKSPACE_SECTION_IDS = [
     'documents', 'tags', 'sync', 'prompts', 'identities',
 ] as const;
 
+/**
+ * The public-workspace management sections, reported in the context's `manage` group. Kept apart
+ * from PUBLIC_WORKSPACE_SECTION_IDS, exactly like the group's manage list, so a change to either
+ * a content section or a manage section cannot silently move the other. M10A adds `members`.
+ */
+export const PUBLIC_MANAGE_SECTION_IDS = ['members'] as const;
+
 export type GroupWorkspaceSectionId = typeof GROUP_WORKSPACE_SECTION_IDS[number];
 export type GroupManageSectionId = typeof GROUP_MANAGE_SECTION_IDS[number];
 export type PublicWorkspaceSectionId = typeof PUBLIC_WORKSPACE_SECTION_IDS[number];
+export type PublicManageSectionId = typeof PUBLIC_MANAGE_SECTION_IDS[number];
 export type GroupWorkspaceRole = 'Owner' | 'Admin' | 'DocumentManager' | 'User';
 export type GroupWorkspaceStatus = 'active' | 'locked' | 'upload_disabled' | 'inactive' | 'unknown';
 
@@ -201,7 +209,14 @@ export interface PublicWorkspaceContext extends WorkspaceAvailability {
     role: GroupWorkspaceRole;
     status: GroupWorkspaceStatus;
     can_manage_workspace: boolean;
-    sections: Record<PublicWorkspaceSectionId, WorkspaceSectionAccess>;
+    /**
+     * The content sections, plus the public `manage` sections (M10A `members`). A manage section
+     * the server does not report is unavailable, never assumed; when reported it must be a valid
+     * section in the `manage` group. Its `can_manage` is navigation only: every membership control
+     * is gated by the member list's own hints.
+     */
+    sections: Record<PublicWorkspaceSectionId, WorkspaceSectionAccess>
+        & Partial<Record<PublicManageSectionId, WorkspaceSectionAccess>>;
     document_permissions: {
         can_view: boolean;
         can_chat: boolean;
@@ -229,6 +244,17 @@ export interface PublicWorkspaceContext extends WorkspaceAvailability {
      * status exactly like document_management. Absence means "read-only", never an empty grant.
      */
     prompt_management?: {
+        schema_version: number;
+        operations: string[];
+    };
+    /**
+     * The public membership hint (M10A). Present as `{schema_version: 1, operations: [...]}`: the
+     * operations an Owner or Admin may run (add_member, review_requests, change_role,
+     * remove_member, transfer_ownership), or an empty set for a reader who cannot manage members.
+     * The Members section reads its per-control gating from the member list's own hints; this is
+     * the navigation-level signal that mirrors the manage `members` section's `can_manage`.
+     */
+    membership_management?: {
         schema_version: number;
         operations: string[];
     };
@@ -329,7 +355,12 @@ export function isPublicWorkspaceContext(
     workspaceId: string,
 ): value is PublicWorkspaceContext {
     return matchesWorkspaceContextShape(value, viewerId, workspaceId, 'public',
-        `/api/public_workspaces/${encodeWorkspaceId(workspaceId)}/logo?v=`, PUBLIC_WORKSPACE_SECTION_IDS);
+        `/api/public_workspaces/${encodeWorkspaceId(workspaceId)}/logo?v=`, PUBLIC_WORKSPACE_SECTION_IDS)
+        && isRecord(value) && isRecord(value.sections)
+        && PUBLIC_MANAGE_SECTION_IDS.every((sectionId) => {
+            const sections = value.sections as Record<string, unknown>;
+            return sections[sectionId] === undefined || isSectionAccess(sections[sectionId], ['manage']);
+        });
 }
 
 export async function fetchGroupWorkspaceContext(

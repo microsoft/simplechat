@@ -1,7 +1,7 @@
 # test_public_directory_fixture_parity.py
 """
 Per-route shape parity between the M9A public directory UI fixture and the real route.
-Version: 0.261.175
+Version: 0.261.179
 Implemented in: 0.261.175
 
 The V2 public directory browser suite mocks the network with the closed HTTP fixture
@@ -45,7 +45,7 @@ ROW_KEYS = {
     "logoVersion", "userRole", "membership", "status",
 }
 LIST_KEYS = {"workspaces", "page", "page_size", "total_count", "public_directory"}
-HINT_KEYS = {"schema_version"}
+HINT_KEYS = {"schema_version", "can_create"}
 ERROR_KEYS = {"error", "error_code"}
 
 

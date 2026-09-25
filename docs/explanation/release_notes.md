@@ -2,6 +2,22 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.179)**
+
+#### New Features
+
+*   **Manage Public Workspace Members In V2**
+    *   A public workspace's Owner and Admins now manage its Admins and DocumentManagers in V2, in a **Members** section under **Manage**. They can add members, change roles, remove members, and decide DocumentManager requests, and the Owner can transfer ownership. It's the group Members section, with public rules.
+    *   New routes name the workspace in the path, `/api/public-workspaces/<id>/membership/...`, write conditionally, and record adds, role changes and removals in the activity log.
+    *   The V2 public directory offers **Create** to people allowed to create public workspaces.
+    *   (Ref: `route_backend_public_membership.py`, `functions_public_membership_policy.py`, `MembersSection.tsx`, `PublicMembersSection.tsx`, `functions_public_directory_policy.py`, [V2 Public Members](features/V2_PUBLIC_MEMBERS.md), [Public Membership APIs](features/PUBLIC_MEMBERSHIP_APIS.md))
+
+#### Breaking Changes
+
+*   **DocumentManagers No Longer See Members' Emails In V2**
+    *   Classic shows every member's email to every member. In V2's public Members section, the Owner and Admins see emails and a DocumentManager sees names and roles only. The server withholds the emails (decision 18). The classic page is unchanged.
+    *   **Migration**: none.
+
 ### **(v0.261.178)**
 
 #### User Interface Enhancements
