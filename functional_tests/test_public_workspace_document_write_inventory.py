@@ -76,16 +76,9 @@ ALLOWED_DYNAMIC_MODULES = {
     ),
 }
 # The ratchet: the unconditional public workspace writers this slice moves onto the
-# guard, seeded here and emptied commit by commit.
-PENDING_RAW_WRITES = Counter({
-    ("route_backend_control_center.py", "enhance_public_workspace_with_activity", "upsert_item"): 1,
-    ("route_backend_control_center.py", "api_update_public_workspace_status", "upsert_item"): 1,
-    ("route_backend_control_center.py", "api_bulk_public_workspace_action", "upsert_item"): 1,
-    ("route_backend_control_center.py", "api_admin_add_workspace_member", "upsert_item"): 1,
-    ("route_backend_control_center.py", "api_admin_add_workspace_member_single", "upsert_item"): 1,
-    ("route_backend_control_center.py", "_execute_take_workspace_ownership", "upsert_item"): 1,
-    ("route_backend_control_center.py", "_execute_transfer_workspace_ownership", "upsert_item"): 1,
-})
+# guard, seeded here and emptied commit by commit. Now empty: every public workspace
+# writer goes through the guard or the reviewed allowlist.
+PENDING_RAW_WRITES = Counter()
 
 _FUNCTIONS = (ast.FunctionDef, ast.AsyncFunctionDef)
 
