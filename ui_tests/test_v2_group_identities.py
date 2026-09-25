@@ -1,8 +1,9 @@
 # test_v2_group_identities.py
 """
 Production-SPA coverage for the native scope-aware V2 group identities section.
-Version: 0.261.157
+Version: 0.261.169
 Implemented in: 0.261.139
+Managed identity client ID kept on edit: 0.261.169
 
 Exercises the real identities section and its editor dialog against closed synthetic
 HTTP. The fixture serves only the immutable `/api/groups/<id>/identities` family and
@@ -27,7 +28,7 @@ import pytest
 from playwright.sync_api import expect
 
 from ui_tests.fixtures.workspace_authoring import ORIGIN  # noqa: F401
-from ui_tests.fixtures.group_workspace import GROUP_CONNECTIONS_ROLE_REASON
+from ui_tests.fixtures.group_workspace import GROUP_CONNECTIONS_ROLE_REASON, group_identity
 from ui_tests.fixtures.group_identities import (  # noqa: F401
     GroupIdentitiesFixture, group_identities_ui,
     EDITABLE_IDENTITY_ID, WITHHELD_IDENTITY_ID, FILE_SYNC_IDENTITY_ID,
@@ -214,6 +215,36 @@ def test_edit_preserves_the_stored_secret(group_identities_ui):
     # A blank secret means "keep the stored value"; it rides as an empty string, never a placeholder.
     assert write.body["credentials"]["secret"] == ""
     assert ui.record_identity("group-a", EDITABLE_IDENTITY_ID)["_secret"] is True
+
+
+MI_IDENTITY_ID = "group-a-managed-identity"
+MI_IDENTITY_NAME = "Managed identity credential"
+MI_CLIENT = "99999999-8888-7777-6666-555555555555"
+
+
+def test_editing_a_managed_identity_keeps_its_client_id(group_identities_ui):
+    """A managed identity's user-assigned client ID has no visible field, but a rename sends the
+    stored one back so the server does not clear it to the system-assigned identity."""
+    ui, page = group_identities_ui, group_identities_ui.page
+    ui._seed_identities("group-a", [*ui.native_identities["group-a"], group_identity(
+        "group-a", MI_IDENTITY_ID, MI_IDENTITY_NAME, usage=("action",),
+        auth_type="managed_identity", secret_stored=False, managed_identity_client_id=MI_CLIENT,
+    )])
+    open_manager(ui)
+    row(ui, MI_IDENTITY_NAME).get_by_role("button", name=f"Edit {MI_IDENTITY_NAME}", exact=True).click()
+    name = page.get_by_label("Name", exact=True)
+    expect(name).to_have_value(MI_IDENTITY_NAME)
+    name.fill(f"{MI_IDENTITY_NAME} (2024)")
+    with page.expect_response(
+        lambda response: response.request.method == "PATCH"
+        and urlsplit(response.url).path == f"/api/groups/group-a/identities/{MI_IDENTITY_ID}"
+    ) as response:
+        page.get_by_role("button", name="Save changes", exact=True).click()
+    assert response.value.ok
+    write = last_write(ui, f"/api/groups/group-a/identities/{MI_IDENTITY_ID}", "PATCH")
+    assert write.body["credentials"]["auth_type"] == "managed_identity"
+    assert write.body["credentials"]["managed_identity_client_id"] == MI_CLIENT
+    assert ui.record_identity("group-a", MI_IDENTITY_ID)["_mi_client_id"] == MI_CLIENT
 
 
 def test_group_manager_deletes_an_identity(group_identities_ui):

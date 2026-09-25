@@ -1,7 +1,7 @@
 # group_workspace.py
 """
 Closed HTTP fixtures for the real V2 group workspace shell.
-Version: 0.261.165
+Version: 0.261.169
 Implemented in: 0.261.127
 Members section in the group context (M7B): 0.261.155
 File source credential identifiers modelled as `_prepare_auth_payload` stores them: 0.261.156
@@ -9,6 +9,7 @@ Group context held to the server's builder, field by field: 0.261.157
 Settings, Activity and Statistics sections in the group context (M7C): 0.261.161
 Group agent responses held to the real routes, route by route: 0.261.161
 Group action responses held to the real routes, route by route: 0.261.161
+Identity credential identifiers modelled as `_prepare_auth_payload` stores them: 0.261.169
 
 The shell fixture also serves the immutable native `/api/groups/<group_id>/actions[...]`,
 `/agents[...]`, `/identities[...]` and `/model-endpoints[...]` families -- plus the group
@@ -398,12 +399,16 @@ def identity_management(role, status):
 
 def group_identity(group_id, identifier, name, *, usage=("action",), auth_type="api_key",
                    secret_stored=True, actions=IDENTITY_ACTIONS, username="", domain="",
-                   client_identity="", provider=None, source_types=None, description=None,
+                   client_identity="", tenant_id="", managed_identity_client_id="",
+                   provider=None, source_types=None, description=None,
                    metadata=None):
     """One group identity as the native projector returns it, before etag and masking are applied.
 
     The stored credential is modelled as a boolean plus a placeholder, never a plaintext secret, so a
-    blank secret on save keeps it (`_secret` stays set) and a fresh value replaces it.
+    blank secret on save keeps it (`_secret` stays set) and a fresh value replaces it. A service
+    principal keeps its client ID in `client_identity` and its tenant in `tenant_id`; a managed
+    identity keeps its user-assigned client ID in `managed_identity_client_id`, exactly as
+    `_prepare_auth_payload` stores them.
     """
     sources = list(source_types) if source_types is not None else [provider or "action"]
     resolved_provider = provider or sources[0]
@@ -429,6 +434,8 @@ def group_identity(group_id, identifier, name, *, usage=("action",), auth_type="
         "_username": username,
         "_domain": domain,
         "_client_identity": client_identity,
+        "_tenant_id": tenant_id,
+        "_mi_client_id": managed_identity_client_id,
         "_secret": bool(secret_stored),
     }
 
@@ -444,6 +451,8 @@ def _identity_credentials(record):
         "username": record.get("_username", ""),
         "domain": record.get("_domain", ""),
         "identity": record.get("_client_identity", ""),
+        "tenant_id": record.get("_tenant_id", ""),
+        "managed_identity_client_id": record.get("_mi_client_id", ""),
         "password_stored": stored and uses_password,
         "secret_stored": stored and not uses_password,
         "password": placeholder if uses_password else "",
@@ -2330,6 +2339,21 @@ class GroupWorkspaceFixture(WorkspaceAuthoringFixture):
         usage = body.get("usage_contexts")
         sources = body.get("supported_source_types")
         metadata = body.get("metadata")
+        # Mirror `_prepare_auth_payload`: a service principal keeps its tenant, and a managed identity
+        # keeps its user-assigned client ID, only when the write omits the key. A present-but-empty
+        # value clears it, exactly the erase the round-trip fix prevents. The managed identity id is
+        # read from managed_identity_client_id first, then client_id, like the normalizer.
+        if auth_type == "client_secret":
+            tenant_id = str(credentials.get("tenant_id", prior.get("_tenant_id", "") if prior else "") or "")
+        else:
+            tenant_id = prior.get("_tenant_id", "") if prior else ""
+        if auth_type == "managed_identity":
+            managed_identity_client_id = str(credentials.get(
+                "managed_identity_client_id",
+                credentials.get("client_id", prior.get("_mi_client_id", "") if prior else ""),
+            ) or "")
+        else:
+            managed_identity_client_id = prior.get("_mi_client_id", "") if prior else ""
         now = datetime.now(timezone.utc).isoformat()
         return {
             "id": identifier,
@@ -2353,6 +2377,8 @@ class GroupWorkspaceFixture(WorkspaceAuthoringFixture):
             "_username": str(credentials.get("username", prior["_username"] if prior else "")),
             "_domain": str(credentials.get("domain", prior["_domain"] if prior else "")),
             "_client_identity": str(credentials.get("identity", prior["_client_identity"] if prior else "")),
+            "_tenant_id": tenant_id,
+            "_mi_client_id": managed_identity_client_id,
             "_secret": secret_stored,
         }
 

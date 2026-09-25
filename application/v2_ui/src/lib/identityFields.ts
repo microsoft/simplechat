@@ -32,6 +32,7 @@ export const IDENTITY_REBASE_FIELDS: RebaseField[] = [
     { path: 'credentials.username', label: 'Username' },
     { path: 'credentials.domain', label: 'Domain' },
     { path: 'credentials.clientId', label: 'Client ID' },
+    { path: 'credentials.managedIdentityClientId', label: 'Managed identity client ID' },
     { path: 'secretStored', label: 'Stored secret' },
     { path: 'credentials.secret', label: 'Secret', secret: true },
 ];
@@ -163,6 +164,12 @@ export interface IdentityCredentialsDraft {
     username: string;
     domain: string;
     clientId: string;
+    /**
+     * A managed identity's user-assigned client ID. It has no visible field in this editor, so it is
+     * carried through unchanged: read from the projection and sent back for a managed_identity save so
+     * an API-set user-assigned identity is not silently cleared to the system-assigned one on edit.
+     */
+    managedIdentityClientId: string;
     /** Blank means "keep the stored value" on an edit; a value replaces it. */
     secret: string;
 }
@@ -183,7 +190,7 @@ export function emptyIdentityDraft(): IdentityDraft {
         name: '',
         description: '',
         capabilities: ['action'],
-        credentials: { authType: 'api_key', username: '', domain: '', clientId: '', secret: '' },
+        credentials: { authType: 'api_key', username: '', domain: '', clientId: '', managedIdentityClientId: '', secret: '' },
         secretStored: false,
     };
 }
@@ -217,6 +224,7 @@ export function draftFromIdentity(identity: WorkspaceIdentity): IdentityDraft {
             username: String(credentials.username ?? ''),
             domain: String(credentials.domain ?? ''),
             clientId: String(credentials.identity ?? ''),
+            managedIdentityClientId: String(credentials.managed_identity_client_id ?? ''),
             secret: '',
         },
         secretStored,
@@ -233,6 +241,12 @@ function buildCredentialsWrite(credentials: IdentityCredentialsDraft): Record<st
         identity: clientId,
         client_id: clientId,
     };
+    if (credentials.authType === 'managed_identity') {
+        // No visible field carries it, so round-trip the stored user-assigned client ID. The
+        // normalizer reads managed_identity_client_id ahead of the blank client_id above, so a save
+        // that never touched it keeps it rather than falling back to the system-assigned identity.
+        write.managed_identity_client_id = credentials.managedIdentityClientId.trim();
+    }
     if (credentials.authType === 'username_password') {
         write.password = credentials.secret;
     } else {
