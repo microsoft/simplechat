@@ -13,6 +13,82 @@ from functions_workspace_branding import (
     normalize_workspace_hero_color,
 )
 
+
+# How many times a conditional public-workspace write re-reads and re-applies its
+# change after losing a race to another writer before it reports a conflict.
+PUBLIC_DOCUMENT_WRITE_ATTEMPTS = 3
+
+
+class PublicWorkspaceDocumentWriteConflict(RuntimeError):
+    """The public workspace document kept changing while a write was being applied to it."""
+
+
+# Every public route answers PublicWorkspaceDocumentWriteConflict the same way: 409
+# with this code and this reviewed sentence. Other modules import these rather than
+# copy them.
+PUBLIC_WORKSPACE_WRITE_CONFLICT_CODE = "public_workspace_write_conflict"
+PUBLIC_WORKSPACE_WRITE_CONFLICT_MESSAGE = "The public workspace changed while your request was being saved. Try again."
+
+
+def _stored_public_workspace_fields(document):
+    """A public workspace document without the Cosmos system properties (``_etag``, ``_ts``, ...)."""
+    return {key: value for key, value in (document or {}).items() if not key.startswith("_")}
+
+
+def update_public_workspace_document_with_etag_guard(ws_id, apply_changes, *, cache_reason, attempts=PUBLIC_DOCUMENT_WRITE_ATTEMPTS):
+    """Apply one change to the stored public workspace document and write it back conditionally.
+
+    The public workspace document also carries membership, status and every other
+    workspace-scoped setting, so a writer that changes one part of it must never
+    restore the rest from an outdated copy. ``apply_changes`` receives a private copy
+    of the document just read and returns the document to write; the replace is
+    conditional on that read's ``_etag`` (``IfNotModified``). When another writer lands
+    in between, the document is read again and ``apply_changes`` is re-applied to the
+    newer copy, up to ``attempts`` writes, after which
+    ``PublicWorkspaceDocumentWriteConflict`` is raised. Because it can run more than
+    once, ``apply_changes`` must derive its result only from the copy it is given;
+    raising from it abandons the write with nothing stored.
+
+    A workspace that is missing at read time or at replace time is never recreated: the
+    function returns ``None`` and writes nothing. When a re-read finds exactly the body
+    this call sent, the earlier replace committed and only its response was lost (a
+    transport retry of a committed write fails its own precondition), so that is
+    reported as the committed write rather than as a conflict.
+
+    A committed write returns the stored document and bumps the global chat bootstrap
+    cache with ``cache_reason``. ``cache_reason`` is required, and ``None`` is the
+    explicit choice for a change no bootstrap payload reads, such as a join request,
+    which commits without a bump.
+    """
+    attempted = None
+    for attempt in range(attempts + 1):
+        try:
+            current = cosmos_public_workspaces_container.read_item(item=ws_id, partition_key=ws_id)
+        except exceptions.CosmosResourceNotFoundError:
+            return None
+        if attempted is not None and _stored_public_workspace_fields(current) == _stored_public_workspace_fields(attempted):
+            if cache_reason is not None:
+                bump_chat_bootstrap_global_cache_version(reason=cache_reason)
+            return current
+        if attempt == attempts:
+            break
+        attempted = apply_changes(copy.deepcopy(current))
+        try:
+            written = cosmos_public_workspaces_container.replace_item(
+                item=ws_id,
+                body=attempted,
+                etag=current.get("_etag"),
+                match_condition=MatchConditions.IfNotModified,
+            )
+        except exceptions.CosmosResourceNotFoundError:
+            return None
+        except exceptions.CosmosAccessConditionFailedError:
+            continue
+        if cache_reason is not None:
+            bump_chat_bootstrap_global_cache_version(reason=cache_reason)
+        return written
+    raise PublicWorkspaceDocumentWriteConflict("The public workspace document kept changing while it was being saved.")
+
 def create_public_workspace(name: str, description: str) -> dict:
     """
     Creates a new public workspace. The creator becomes the Owner by default.
