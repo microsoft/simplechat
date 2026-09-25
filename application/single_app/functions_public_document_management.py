@@ -67,6 +67,10 @@ PUBLIC_DOCUMENT_DELETE_OPTIONS = frozenset({
     "delete_mode", "conversation_linked_delete_confirmed", "file_sync_delete_action",
 })
 MAX_PUBLIC_DOCUMENT_BATCH = 1000
+# A tag vocabulary write that finds the workspace changed answers this, whether its etag
+# pre-check caught the change or its conditional patch lost to it.
+PUBLIC_TAG_VOCABULARY_CONFLICT_MESSAGE = "The workspace's tags or permissions changed. Refresh and retry."
+PUBLIC_TAG_VOCABULARY_CONFLICT_CODE = "vocabulary_conflict"
 
 
 class PublicDocumentOperationError(PublicDocumentReadError):
@@ -183,10 +187,16 @@ def _tag_pointer(tag):
     return f"/tag_definitions/{tag.replace('~', '~0').replace('/', '~1')}"
 
 
+def _vocabulary_conflict():
+    return PublicDocumentOperationError(
+        PUBLIC_TAG_VOCABULARY_CONFLICT_MESSAGE, 409, details={"error_code": PUBLIC_TAG_VOCABULARY_CONFLICT_CODE},
+    )
+
+
 def _patch_tag_definitions(user_id, workspace_id, workspace, changes, removals=()):
     current, _role, _settings = require_public_document_management_context(user_id, workspace_id, "manage_tags")
     if not workspace.get("_etag") or current.get("_etag") != workspace["_etag"]:
-        raise PublicDocumentOperationError("The workspace's tags or permissions changed. Refresh and retry.", 409)
+        raise _vocabulary_conflict()
     definitions = workspace.get("tag_definitions")
     if definitions is not None and not isinstance(definitions, dict):
         raise PublicDocumentOperationError("The workspace's tag definitions are unavailable.", 409)
@@ -202,10 +212,17 @@ def _patch_tag_definitions(user_id, workspace_id, workspace, changes, removals=(
         )
     if not operations:
         return current
-    return cosmos_public_workspaces_container.patch_item(
-        item=workspace_id, partition_key=workspace_id, patch_operations=operations,
-        filter_predicate=f"FROM c WHERE c._etag = {json.dumps(workspace['_etag'])}",
-    )
+    try:
+        return cosmos_public_workspaces_container.patch_item(
+            item=workspace_id, partition_key=workspace_id, patch_operations=operations,
+            filter_predicate=f"FROM c WHERE c._etag = {json.dumps(workspace['_etag'])}",
+        )
+    except Exception as error:
+        # A workspace write that landed after the pre-check fails the etag predicate: Cosmos
+        # answers 412 and stores nothing, which is the conflict the pre-check reports.
+        if getattr(error, "status_code", None) == 412:
+            raise _vocabulary_conflict() from error
+        raise
 
 
 def _new_tag_definition(tag_name, color=None):
@@ -251,6 +268,11 @@ def update_public_document_metadata(
 ):
     validate_public_document_id(document_id)
     document = authorize_public_document_operation(user_id, workspace_id, document_id, operation)
+    if "tags" in changes and ensure_definitions:
+        # A definition no document uses yet is valid (a created tag is one), so the vocabulary is
+        # written first: a conflict leaves the document untouched, and a document write that fails
+        # afterwards leaves at most an unused definition.
+        _ensure_document_tag_definitions(user_id, workspace_id, changes["tags"])
     guard = partial(
         authorize_public_document_operation, user_id, workspace_id, document_id, operation,
         expected_version=document.get("version"),
@@ -261,8 +283,6 @@ def update_public_document_metadata(
     )
     if not isinstance(saved, dict) or saved.get("id") != document_id or saved.get("public_workspace_id") != workspace_id:
         raise DocumentMutationPropagationError("The scoped document update could not be confirmed.")
-    if "tags" in changes and ensure_definitions:
-        _ensure_document_tag_definitions(user_id, workspace_id, changes["tags"])
     invalidate_public_workspace_search_cache(workspace_id)
     log_document_metadata_update_transaction(
         user_id=user_id, document_id=document_id, workspace_type="public", public_workspace_id=workspace_id,
@@ -293,6 +313,10 @@ def tag_public_documents(user_id, workspace_id, payload):
         if not valid:
             raise PublicDocumentOperationError(message, 400)
     require_public_document_management_context(user_id, workspace_id, "tag_documents")
+    if action != "remove_tags":
+        # One vocabulary write for the batch's new tags, before any document: a conflict refuses
+        # the whole batch with no document written.
+        _ensure_document_tag_definitions(user_id, workspace_id, tags)
     result = {"success": [], "errors": []}
     for document_id in document_ids:
         try:
@@ -306,6 +330,7 @@ def tag_public_documents(user_id, workspace_id, payload):
                 updated_tags = tags
             update_public_document_metadata(
                 user_id, workspace_id, document_id, {"tags": updated_tags}, operation="tag_documents",
+                ensure_definitions=False,
             )
             result["success"].append({"document_id": document_id, "tags": updated_tags})
         except Exception as error:

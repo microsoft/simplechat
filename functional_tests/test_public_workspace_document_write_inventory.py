@@ -78,10 +78,6 @@ ALLOWED_DYNAMIC_MODULES = {
 # The ratchet: the unconditional public workspace writers this slice moves onto the
 # guard, seeded here and emptied commit by commit.
 PENDING_RAW_WRITES = Counter({
-    ("route_backend_public_documents.py", "api_create_public_workspace_tag", "upsert_item"): 1,
-    ("route_backend_public_documents.py", "api_update_public_workspace_tag", "upsert_item"): 2,
-    ("route_backend_public_documents.py", "api_delete_public_workspace_tag", "upsert_item"): 1,
-    ("functions_documents.py", "get_or_create_tag_definition", "upsert_item"): 1,
     ("route_backend_control_center.py", "enhance_public_workspace_with_activity", "upsert_item"): 1,
     ("route_backend_control_center.py", "api_update_public_workspace_status", "upsert_item"): 1,
     ("route_backend_control_center.py", "api_bulk_public_workspace_action", "upsert_item"): 1,

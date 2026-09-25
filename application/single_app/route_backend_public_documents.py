@@ -81,6 +81,54 @@ def _require_active_public_workspace_response(user_id, allowed_roles=PUBLIC_WORK
 
     return active_ws, ws_doc, role, None
 
+
+PUBLIC_TAG_PERMISSION_MESSAGE = 'You do not have permission to manage tags'
+
+
+class _PublicTagAnswer(Exception):
+    """Ends a guarded tag change without writing: with ``answer`` (payload, status), or none to carry on."""
+
+    def __init__(self, answer=None):
+        super().__init__("The public workspace tag change was answered without a write.")
+        self.answer = answer
+
+
+def _save_public_tag_definitions(workspace_id, user_id, change):
+    """Apply ``change`` to the tag definitions on the workspace's current copy.
+
+    The caller's tag role is checked again on that copy, so a role removed meanwhile
+    refuses the change, and everything else on the workspace (membership, status, the
+    other definitions) comes from that copy too. ``change`` edits the definitions in
+    place and returns whether it changed anything; nothing is written when it didn't.
+    It can raise ``_PublicTagAnswer`` to refuse. Returns an error response, or ``None``
+    to carry on. No chat bootstrap payload reads tag definitions, so nothing is bumped.
+    """
+    def apply_change(fresh):
+        if get_user_role_in_public_workspace(fresh, user_id) not in PUBLIC_WORKSPACE_MANAGER_ROLES:
+            raise _PublicTagAnswer(({'error': PUBLIC_TAG_PERMISSION_MESSAGE}, 403))
+        definitions = fresh.get('tag_definitions') or {}
+        if not change(definitions):
+            raise _PublicTagAnswer()
+        fresh['tag_definitions'] = definitions
+        return fresh
+
+    try:
+        saved = update_public_workspace_document_with_etag_guard(workspace_id, apply_change, cache_reason=None)
+    except _PublicTagAnswer as answered:
+        if answered.answer is None:
+            return None
+        payload, status = answered.answer
+        return jsonify(payload), status
+    except PublicWorkspaceDocumentWriteConflict:
+        return jsonify({
+            'error': PUBLIC_WORKSPACE_WRITE_CONFLICT_MESSAGE,
+            'error_code': PUBLIC_WORKSPACE_WRITE_CONFLICT_CODE,
+        }), 409
+    if saved is None:
+        return jsonify({'error': 'Active public workspace not found'}), 404
+    return None
+
+
 def register_route_backend_public_documents(bp):
     """
     Provides backend routes for public-workspace–scoped document management
@@ -1341,17 +1389,22 @@ def register_route_backend_public_documents(bp):
             if not is_valid_color:
                 return jsonify({'error': color_error}), 400
 
-            tag_defs = ws_doc.get('tag_definitions', {})
+            created_at = datetime.now(timezone.utc).isoformat()
 
-            if normalized_tag in tag_defs:
-                return jsonify({'error': 'Tag already exists'}), 409
+            # Decided on the workspace's current copy, so a tag created meanwhile is
+            # refused rather than replaced, and nothing else is restored from an older copy.
+            def add_definition(definitions):
+                if normalized_tag in definitions:
+                    raise _PublicTagAnswer(({'error': 'Tag already exists'}, 409))
+                definitions[normalized_tag] = {
+                    'color': normalized_color,
+                    'created_at': created_at
+                }
+                return True
 
-            tag_defs[normalized_tag] = {
-                'color': normalized_color,
-                'created_at': datetime.now(timezone.utc).isoformat()
-            }
-            ws_doc['tag_definitions'] = tag_defs
-            cosmos_public_workspaces_container.upsert_item(ws_doc)
+            error_response = _save_public_tag_definitions(active_ws, user_id, add_definition)
+            if error_response:
+                return error_response
 
             return jsonify({
                 'message': f'Tag "{normalized_tag}" created successfully',
@@ -1532,6 +1585,21 @@ def register_route_backend_public_documents(bp):
 
                 normalized_new_tag = normalized_new[0]
 
+                # The definition moves first, on the workspace's current copy: a refusal
+                # there (the caller's tag role removed meanwhile, the workspace deleted,
+                # or one that kept changing) leaves every document untouched. A definition
+                # that has already moved is left alone, so repeating the request after a
+                # document failed finishes the documents that still carry the old name.
+                def rename_definition(definitions):
+                    if normalized_old_tag not in definitions:
+                        return False
+                    definitions[normalized_new_tag] = definitions.pop(normalized_old_tag)
+                    return True
+
+                error_response = _save_public_tag_definitions(active_ws, user_id, rename_definition)
+                if error_response:
+                    return error_response
+
                 query = "SELECT * FROM c WHERE c.public_workspace_id = @ws_id"
                 parameters = [{"name": "@ws_id", "value": active_ws}]
                 documents = list(cosmos_public_documents_container.query_items(
@@ -1566,13 +1634,6 @@ def register_route_backend_public_documents(bp):
 
                         updated_count += 1
 
-                tag_defs = ws_doc.get('tag_definitions', {})
-                if normalized_old_tag in tag_defs:
-                    old_def = tag_defs.pop(normalized_old_tag)
-                    tag_defs[normalized_new_tag] = old_def
-                ws_doc['tag_definitions'] = tag_defs
-                cosmos_public_workspaces_container.upsert_item(ws_doc)
-
                 invalidate_public_workspace_search_cache(active_ws)
 
                 return jsonify({
@@ -1581,23 +1642,27 @@ def register_route_backend_public_documents(bp):
                 }), 200
 
             if new_color:
+                from datetime import datetime, timezone
+
                 is_valid_color, color_error, normalized_color = validate_tag_color(new_color, normalized_old_tag)
                 if not is_valid_color:
                     return jsonify({'error': color_error}), 400
 
-                tag_defs = ws_doc.get('tag_definitions', {})
+                created_at = datetime.now(timezone.utc).isoformat()
 
-                if normalized_old_tag in tag_defs:
-                    tag_defs[normalized_old_tag]['color'] = normalized_color
-                else:
-                    from datetime import datetime, timezone
-                    tag_defs[normalized_old_tag] = {
-                        'color': normalized_color,
-                        'created_at': datetime.now(timezone.utc).isoformat()
-                    }
+                def recolor_definition(definitions):
+                    if normalized_old_tag in definitions:
+                        definitions[normalized_old_tag]['color'] = normalized_color
+                    else:
+                        definitions[normalized_old_tag] = {
+                            'color': normalized_color,
+                            'created_at': created_at
+                        }
+                    return True
 
-                ws_doc['tag_definitions'] = tag_defs
-                cosmos_public_workspaces_container.upsert_item(ws_doc)
+                error_response = _save_public_tag_definitions(active_ws, user_id, recolor_definition)
+                if error_response:
+                    return error_response
 
                 return jsonify({
                     'message': f'Tag color updated for "{normalized_old_tag}"',
@@ -1637,6 +1702,20 @@ def register_route_backend_public_documents(bp):
         try:
             normalized_tag = normalize_tag(tag_name)
 
+            # The definition goes first, on the workspace's current copy: a refusal there
+            # leaves every document untouched. A definition already removed is left alone,
+            # so repeating the request after a document failed finishes the documents that
+            # still carry the tag.
+            def remove_definition(definitions):
+                if normalized_tag not in definitions:
+                    return False
+                definitions.pop(normalized_tag)
+                return True
+
+            error_response = _save_public_tag_definitions(active_ws, user_id, remove_definition)
+            if error_response:
+                return error_response
+
             query = "SELECT * FROM c WHERE c.public_workspace_id = @ws_id"
             parameters = [{"name": "@ws_id", "value": active_ws}]
             documents = list(cosmos_public_documents_container.query_items(
@@ -1669,12 +1748,6 @@ def register_route_backend_public_documents(bp):
                         pass
 
                     updated_count += 1
-
-            tag_defs = ws_doc.get('tag_definitions', {})
-            if normalized_tag in tag_defs:
-                tag_defs.pop(normalized_tag)
-                ws_doc['tag_definitions'] = tag_defs
-                cosmos_public_workspaces_container.upsert_item(ws_doc)
 
             if updated_count > 0:
                 invalidate_public_workspace_search_cache(active_ws)

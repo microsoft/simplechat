@@ -71,6 +71,13 @@ def delete_result(*document_ids, errors=(), **revision_details):
     }
 
 
+# A tag vocabulary write that finds the workspace changed answers this, whether its etag pre-check
+# caught the change or its conditional patch lost to it (PUBLIC_TAG_VOCABULARY_CONFLICT_MESSAGE and
+# _CODE in functions_public_document_management).
+VOCABULARY_CONFLICT_MESSAGE = "The workspace's tags or permissions changed. Refresh and retry."
+VOCABULARY_CONFLICT_CODE = "vocabulary_conflict"
+
+
 def tag_result(*, tag=None, success=(), errors=(), retained=False):
     result = {
         "message": "Tag vocabulary update results.",
@@ -84,11 +91,26 @@ def tag_result(*, tag=None, success=(), errors=(), retained=False):
 
 
 def tag_vocabulary_conflict(public_workspace_id="pub-a"):
+    """The vocabulary's own entry in a re-tag receipt, when removing the old name finds the
+    workspace changed."""
     return {
         "stage": "vocabulary", "public_workspace_id": public_workspace_id,
-        "error": "tag_vocabulary_conflict",
-        "message": "The public workspace tag vocabulary changed during propagation. Review the refreshed tags and retry.",
+        "error": VOCABULARY_CONFLICT_CODE,
+        "message": VOCABULARY_CONFLICT_MESSAGE,
     }
+
+
+def tag_vocabulary_refusal(public_workspace_id="pub-a", document_id=None):
+    """The 409 a tag vocabulary write sends when it finds the workspace changed: from a tag create,
+    recolour or rename, from a bulk tagging batch, or, naming the document, from a metadata save."""
+    refusal = {
+        "error": VOCABULARY_CONFLICT_MESSAGE,
+        "error_code": VOCABULARY_CONFLICT_CODE,
+        "public_workspace_id": public_workspace_id,
+    }
+    if document_id is not None:
+        refusal["document_id"] = document_id
+    return refusal
 
 
 # The 500 a metadata write returns when the document saved but its projections did not, verbatim

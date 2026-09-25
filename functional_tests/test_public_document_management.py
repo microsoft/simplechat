@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """
 Functional tests for immutable-target public workspace document management.
-Version: 0.261.133
+Version: 0.261.174
 Implemented in: 0.261.133
+Guarded tag vocabulary (R5.8): the lost patch answers one coded conflict: 0.261.174
 
 The real public management/access/policy modules and the scoped management route
 family run in the isolated Flask app built by the M3A read fixture. The workspace
@@ -16,6 +17,7 @@ from copy import deepcopy
 from io import BytesIO
 import json
 import sys
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock
 
@@ -33,6 +35,20 @@ from test_public_document_read_apis import (  # noqa: F401  (environment is a fi
 )
 from test_support.agent_delegation import module_stub
 from test_support.versioning import assert_app_version_at_least
+
+# The V2 public Documents explorer mocks the network with the closed fixture below; the R5.8
+# behaviour tests compare the real refusals and stage entries against it so the two can't drift.
+for _candidate in (
+    Path(__file__).resolve().parents[1],
+    Path(__file__).resolve().parents[1] / "ui_tests",
+    Path(__file__).resolve().parents[1] / "ui_tests" / "fixtures",
+):
+    if str(_candidate) not in sys.path:
+        sys.path.insert(0, str(_candidate))
+from ui_tests.fixtures.public_document_management import (  # noqa: E402
+    tag_vocabulary_conflict as fixture_tag_vocabulary_conflict,
+    tag_vocabulary_refusal as fixture_tag_vocabulary_refusal,
+)
 
 
 ROOT = "/api/public-workspaces/public-a/documents"
@@ -60,6 +76,7 @@ class MutablePublicContainer(PublicReadOnlyContainer):
     def __init__(self, records=None):
         super().__init__(records)
         self.writes = []
+        self.attempts = []
         self.before_write = None
         self.serial = 0
 
@@ -68,6 +85,7 @@ class MutablePublicContainer(PublicReadOnlyContainer):
         self.records[item] = {**deepcopy(self.records[item]), **changes, "_etag": f"etag-{item}-{self.serial}"}
 
     def _before(self, operation, item, body=None):
+        self.attempts.append((operation, item, deepcopy(body)))
         if self.before_write:
             self.before_write(operation, item, body)
         if self.failure:
@@ -301,6 +319,7 @@ def invoke(env, operation):
         "reprocess": lambda: env.client.post(f"{ROOT}/reprocess_extraction", json={"document_ids": ["document-a"], "extraction_mode": "read"}),
         "create_tag": lambda: env.client.post(f"{ROOT}/tags", json={"tag_name": "new-tag", "color": "#abc"}),
         "rename_tag": lambda: env.client.patch(f"{ROOT}/tags/reference", json={"new_name": "renamed"}),
+        "recolour_tag": lambda: env.client.patch(f"{ROOT}/tags/reference", json={"color": "#123456"}),
         "delete_tag": lambda: env.client.delete(f"{ROOT}/tags/reference"),
         "tag_documents": lambda: env.client.post(f"{ROOT}/bulk-tag", json={"document_ids": ["document-a"], "action": "add_tags", "tags": ["new-tag"]}),
     }
@@ -309,7 +328,7 @@ def invoke(env, operation):
 
 OPERATIONS = tuple(sorted({
     "upload", "edit_metadata", "delete", "bulk_delete", "download", "batch_download",
-    "extract_metadata", "reprocess", "create_tag", "rename_tag", "delete_tag", "tag_documents",
+    "extract_metadata", "reprocess", "create_tag", "rename_tag", "recolour_tag", "delete_tag", "tag_documents",
 }))
 
 
@@ -585,4 +604,122 @@ def test_queued_jobs_capture_target_and_revalidate(management):
     with pytest.raises(Exception):
         worker(**args)
     processor.assert_not_called()
-    env.user_settings.assert_not_called()
+    env.user_settings.assert_not_called()
+
+
+# --------------------------------------------------------------------------- #
+# R5.8: a public tag vocabulary write that finds the workspace changed answers one
+# coded conflict -- whether its etag pre-check caught the change or its conditional
+# patch lost to it -- and the refusal and its stage entry are compared whole against
+# the closed UI fixture so the browser suite can't hide a drift.
+# --------------------------------------------------------------------------- #
+
+def lose_the_vocabulary_patch(env, *, removing=False):
+    """A workspace write lands between the vocabulary pre-check and the conditional patch it guards.
+
+    With ``removing``, only the cleanup patch that removes an old name loses; any patch before it
+    lands.
+    """
+    def concurrent_workspace_write(operation, item, body):
+        if operation == "patch" and (not removing or any(entry["op"] == "remove" for entry in body)):
+            env.workspace_container.before_write = None
+            env.workspace_container.change(item, description="raced")
+
+    env.workspace_container.before_write = concurrent_workspace_write
+
+
+def test_the_ui_fixture_carries_the_servers_coded_conflict(management):
+    env = management
+    message = env.management.PUBLIC_TAG_VOCABULARY_CONFLICT_MESSAGE
+    code = env.management.PUBLIC_TAG_VOCABULARY_CONFLICT_CODE
+    assert fixture_tag_vocabulary_refusal(public_workspace_id="public-a") == {
+        "error": message, "error_code": code, "public_workspace_id": "public-a",
+    }
+    assert fixture_tag_vocabulary_refusal(public_workspace_id="public-a", document_id="document-a") == {
+        "error": message, "error_code": code, "public_workspace_id": "public-a", "document_id": "document-a",
+    }
+    assert fixture_tag_vocabulary_conflict(public_workspace_id="public-a") == {
+        "stage": "vocabulary", "public_workspace_id": "public-a", "error": code, "message": message,
+    }
+
+
+@pytest.mark.parametrize("check", ["pre_check", "lost_patch"])
+def test_either_public_vocabulary_check_raises_the_one_coded_conflict_and_writes_nothing(management, check):
+    env = management
+    message = env.management.PUBLIC_TAG_VOCABULARY_CONFLICT_MESSAGE
+    code = env.management.PUBLIC_TAG_VOCABULARY_CONFLICT_CODE
+    snapshot = deepcopy(env.workspaces["public-a"])
+    if check == "pre_check":
+        env.workspace_container.change("public-a", description="raced")
+    else:
+        lose_the_vocabulary_patch(env)
+    with pytest.raises(env.management.PublicDocumentOperationError) as failure:
+        env.management._patch_tag_definitions("owner", "public-a", snapshot, {"new-tag": {"color": "#abcdef"}})
+    assert failure.value.code == 409
+    assert failure.value.payload == {"error": message, "error_code": code}
+    assert [attempt[0] for attempt in env.workspace_container.attempts] == ([] if check == "pre_check" else ["patch"])
+    assert env.workspace_container.writes == []
+    assert env.workspaces["public-a"]["tag_definitions"] == snapshot["tag_definitions"]
+    assert env.workspaces["public-a"]["description"] == "raced"
+
+
+@pytest.mark.parametrize("operation", ["create_tag", "recolour_tag", "rename_tag"])
+def test_a_lost_public_vocabulary_patch_answers_the_coded_conflict_and_writes_nothing(management, operation):
+    env = management
+    env.source.records["document-a"]["tags"] = ["reference"]
+    definitions = deepcopy(env.workspaces["public-a"]["tag_definitions"])
+    documents = deepcopy(env.source.records)
+    lose_the_vocabulary_patch(env)
+    response = invoke(env, operation)
+    assert response.status_code == 409, response.get_data(as_text=True)
+    assert response.get_json() == fixture_tag_vocabulary_refusal(public_workspace_id="public-a")
+    assert "PRIVATE-PROVIDER" not in response.get_data(as_text=True)
+    assert [attempt[0] for attempt in env.workspace_container.attempts] == ["patch"]
+    assert env.workspace_container.writes == []
+    assert env.workspaces["public-a"]["tag_definitions"] == definitions
+    assert env.source.writes == [] and env.source.records == documents
+
+
+@pytest.mark.parametrize("operation", ["rename_tag", "delete_tag"])
+def test_a_lost_public_vocabulary_cleanup_keeps_the_old_name_and_reports_the_coded_conflict(management, operation):
+    env = management
+    env.source.records["document-a"]["tags"] = ["reference"]
+    lose_the_vocabulary_patch(env, removing=True)
+    response = invoke(env, operation)
+    body = response.get_json()
+    assert response.status_code == 207, body
+    assert body["vocabulary_retained"] is True
+    expected_tags = ["renamed"] if operation == "rename_tag" else []
+    assert body["success"], body
+    assert all(entry["tags"] == expected_tags for entry in body["success"])
+    assert any(entry["document_id"] == "document-a" for entry in body["success"])
+    assert body["documents_updated"] == len(body["success"])
+    assert body["errors"] == [fixture_tag_vocabulary_conflict(public_workspace_id="public-a")]
+    assert "PRIVATE-PROVIDER" not in response.get_data(as_text=True)
+    assert "reference" in env.workspaces["public-a"]["tag_definitions"]
+
+
+def test_a_lost_public_vocabulary_patch_refuses_the_metadata_save_and_writes_no_document(management):
+    env = management
+    before = deepcopy(env.source.records["document-a"])
+    lose_the_vocabulary_patch(env)
+    response = env.client.patch(f"{ROOT}/document-a", json={"title": "Refused title", "tags": ["brand-new"]})
+    assert response.status_code == 409, response.get_data(as_text=True)
+    assert response.get_json() == fixture_tag_vocabulary_refusal(
+        public_workspace_id="public-a", document_id="document-a",
+    )
+    assert env.source.writes == [] and env.source.records["document-a"] == before
+    assert "brand-new" not in (env.workspaces["public-a"].get("tag_definitions") or {})
+
+
+def test_a_lost_public_vocabulary_patch_refuses_the_whole_tagging_batch_and_writes_no_document(management):
+    env = management
+    before = deepcopy(env.source.records)
+    lose_the_vocabulary_patch(env)
+    response = env.client.post(f"{ROOT}/bulk-tag", json={
+        "document_ids": ["document-a", "document-b"], "action": "add_tags", "tags": ["new-tag"],
+    })
+    assert response.status_code == 409, response.get_data(as_text=True)
+    assert response.get_json() == fixture_tag_vocabulary_refusal(public_workspace_id="public-a")
+    assert [attempt[0] for attempt in env.workspace_container.attempts] == ["patch"]
+    assert env.source.writes == [] and env.source.records == before
