@@ -2,6 +2,16 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.169)**
+
+#### Bug Fixes
+
+*   **Sharing And Publication Decisions Stay Bound To Their Workspace**
+    *   The V2 document collaboration adapters built their requests for the workspace they were created for, but checked the server's receipt against the caller's scope as it was when the receipt arrived. A caller that changed its scope object in between would see a confirmed decision rejected as unconfirmed.
+    *   Each adapter now keeps one frozen copy of its scope for the request, the receipt check and the public review's workspace name. The V2 Documents sections already created a new scope for each workspace, so nothing changes for users today.
+    *   Found by the full comparison of the React V2 base branch's tests against this branch, which also aligned three tests that had gone stale on this branch.
+    *   (Ref: `lib/documentCollaboration.ts`, `test_v2_group_document_collaboration.mjs`, [Document Collaboration Bound Scope Fix](fixes/DOCUMENT_COLLABORATION_BOUND_SCOPE_FIX.md))
+
 ### **(v0.261.168)**
 
 #### Bug Fixes

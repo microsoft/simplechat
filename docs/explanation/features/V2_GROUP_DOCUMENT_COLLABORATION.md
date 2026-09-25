@@ -126,7 +126,12 @@ stale `etag` keeps the entered target and requires an explicit refresh before
 the retry, rather than resolving the conflict silently.
 
 Sharing captures the scope at the moment of the decision, so changing the
-active group while a share is in flight does not redirect it. A partial share
+active group while a share is in flight does not redirect it. From version
+**0.261.169**, each collaboration adapter, group and public, keeps one frozen
+copy of the scope it was created for. Its request paths, its receipt check and
+the public review's workspace name all read that copy, so a caller changing its
+own scope object afterwards can't make a confirmed decision look unconfirmed.
+A partial share
 preserves its notice without replaying notifications, and an owner repairing a
 partially applied unshare does not disturb a newly created grant. Losing and
 regaining focus pauses decisions without discarding recipient input, and a

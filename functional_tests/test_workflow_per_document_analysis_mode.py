@@ -2,7 +2,7 @@
 #!/usr/bin/env python3
 """
 Functional test for workflow per-document analysis mode.
-Version: 0.261.109
+Version: 0.261.169
 Implemented in: 0.241.182
 
 This test ensures Analyze workflows can persist the Run each document separately
@@ -180,7 +180,8 @@ def test_workflow_per_document_ui_and_new_tab_contracts():
     assert 'element.target = conversationUrl ? "_blank" : "";' in workflow_js
     assert "const targetWindow = window.open('about:blank', '_blank');" in notifications_js
     assert "targetWindow.opener = null;" in notifications_js
-    assert 'targetWindow.location.href = target.link_url;' in notifications_js
+    assert 'navigation = resolveNotificationNavigationTarget(target);' in notifications_js
+    assert 'targetWindow.location.href = navigation.href;' in notifications_js
 
 
 def run_tests():

@@ -229,6 +229,9 @@ export function createDocumentCollaboration(
 ): DocumentCollaborationAdapter {
     if (scope.kind !== 'group') throw new Error('Group collaboration requires an explicit group.');
     const groupId = requireWorkspaceId(scope.id);
+    // The adapter keeps the scope it was created for. Paths and receipt checks both use this frozen
+    // copy, so a caller that later changes its own scope object can't split them apart.
+    const boundScope = Object.freeze({ ...scope, id: groupId });
     const supported = advertisedDocumentCollaboration(capability);
     const documentPath = (id: string) =>
         `/api/groups/${encodeURIComponent(groupId)}/documents/${encodeURIComponent(requireWorkspaceId(id))}`;
@@ -262,7 +265,7 @@ export function createDocumentCollaboration(
         if (!allows(operation, document, state)) throw new Error('This collaboration action is not currently permitted for this group and document.');
     };
     return {
-        scope: { ...scope, id: groupId }, supported, allows,
+        scope: boundScope, supported, allows,
         read: async (document, signal) => {
             requireAllowed('inspect', document);
             const id = documentId(document);
@@ -334,7 +337,7 @@ export function createDocumentCollaboration(
                 method: operation === 'unshare' || operation === 'remove_share' ? 'DELETE' : 'POST',
                 body: { expected_etag: state.etag, ...(operation === 'share' ? { target_group_id: targetGroupId } : {}) },
             });
-            const confirmed = parseCollaborationReceipt(response.data, response.status, scope, id, operation, targetGroupId);
+            const confirmed = parseCollaborationReceipt(response.data, response.status, boundScope, id, operation, targetGroupId);
             if (operation === 'share' && state.recipients.some((recipient) =>
                 recipient.id === targetGroupId && recipient.approval_status === 'approved') && confirmed.state !== 'approved') {
                 throw new Error('The receipt would reset an existing approval. Refresh sharing state before continuing.');
@@ -386,6 +389,8 @@ export function createPublicDocumentCollaboration(
 ): DocumentCollaborationAdapter {
     if (scope.kind !== 'public') throw new Error('Public collaboration requires an explicit public workspace.');
     const workspaceId = requireWorkspaceId(scope.id);
+    // As for groups: one frozen copy of the scope for the paths, the receipt check and the name.
+    const boundScope = Object.freeze({ ...scope, id: workspaceId });
     const supported = advertisedDocumentCollaboration(capability);
     const documentPath = (id: string) =>
         `/api/public-workspaces/${encodeURIComponent(workspaceId)}/documents/${encodeURIComponent(requireWorkspaceId(id))}`;
@@ -410,13 +415,13 @@ export function createPublicDocumentCollaboration(
         if (!allows(operation, document, state)) throw new Error('This publication action is not currently permitted for this workspace and document.');
     };
     return {
-        scope: { ...scope, id: workspaceId }, supported, allows,
+        scope: boundScope, supported, allows,
         read: async (document, signal) => {
             requireAllowed('inspect', document);
             const id = documentId(document);
             const response = await requestWithStatus<unknown>(`${documentPath(id)}/publication`, { signal });
             if (response.status !== 200) throw new Error('Publication details are not available. Refresh or use classic review.');
-            return parsePublicPublicationState(response.data, workspaceId, id, scope.name);
+            return parsePublicPublicationState(response.data, workspaceId, id, boundScope.name);
         },
         readRepair: async () => {
             throw new Error('Public workspaces have no access-removal cleanup to repair.');
@@ -439,7 +444,7 @@ export function createPublicDocumentCollaboration(
             const response = await requestWithStatus<unknown>(paths[operation]!, {
                 method: 'POST', body: { expected_etag: state.etag },
             });
-            return parseCollaborationReceipt(response.data, response.status, scope, id, operation);
+            return parseCollaborationReceipt(response.data, response.status, boundScope, id, operation);
         },
     };
 }

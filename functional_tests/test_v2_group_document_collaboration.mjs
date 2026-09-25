@@ -1,5 +1,5 @@
 // test_v2_group_document_collaboration.mjs
-// Version: 0.261.130
+// Version: 0.261.169
 // Implemented in: 0.261.130
 // Executes scoped collaboration, receipt, repair and notification-link boundaries.
 
@@ -10,7 +10,7 @@ import './test_support/tsResolve.mjs';
 
 const {
     DOCUMENT_COLLABORATION_OPERATIONS, advertisedDocumentCollaboration,
-    createDocumentCollaboration, parseDocumentCollaborationState, parseCollaborationReceipt,
+    createDocumentCollaboration, createPublicDocumentCollaboration, parseDocumentCollaborationState, parseCollaborationReceipt,
     collaborationFailure,
 } = await import('../application/v2_ui/src/lib/documentCollaboration.ts');
 const { documentSelectionReason } = await import('../application/v2_ui/src/lib/documentReadAdapter.ts');
@@ -20,6 +20,8 @@ const { groupWorkspaceDocumentPath, readGroupDocumentTarget } = await import('..
 const originalFetch = globalThis.fetch;
 const scope = { kind: 'group', id: 'group-a', name: 'Research' };
 const capability = { schema_version: 1, operations: [...DOCUMENT_COLLABORATION_OPERATIONS] };
+// A receipt the parser refuses must be refused for what's wrong with the receipt, never for a bad scope.
+const RECEIPT_REFUSAL = /did not confirm this exact|incomplete or ambiguous|invalid repair details/;
 const adapter = createDocumentCollaboration(scope, capability);
 let calls = [];
 let handler;
@@ -188,6 +190,7 @@ try {
         const source = { kind: 'group', id: 'group-a', name: 'Original group' };
         const bound = createDocumentCollaboration(source, capability);
         source.id = 'changed-active-group';
+        assert.throws(() => { bound.scope.id = 'retargeted'; }, TypeError);
         const doc = document();
         const own = await bound.read(doc);
         const controller = new AbortController();
@@ -211,6 +214,29 @@ try {
             assert.equal(call.body.expected_etag, own.etag);
             assert.deepEqual(Object.keys(call.body).sort(), call.path.endsWith('/share') ? ['expected_etag', 'target_group_id'] : ['expected_etag']);
         }
+    });
+    await run('public decisions stay bound to the workspace the adapter was created for', async () => {
+        const source = { kind: 'public', id: 'pub-a', name: 'Original workspace' };
+        const bound = createPublicDocumentCollaboration(source, capability);
+        source.id = 'changed-public-workspace';
+        source.name = 'Renamed later';
+        const results = { approve: ['approve_artifact', 'approved', 'queued', 202], reject: ['reject_artifact', 'rejected', 'applied', 200], cancel: ['cancel_artifact', 'cancelled', 'applied', 200] };
+        handler = (call) => {
+            if (call.path.endsWith('/publication')) return json({
+                schema_version: 1, public_workspace_id: 'pub-a', document_id: 'doc-1', document_version: 3,
+                etag: '"public-etag-1"', publication: publication({ is_requester: true, actions: ['approve_artifact', 'reject_artifact', 'cancel_artifact'] }),
+            });
+            const [action, result, status, code] = results[call.path.split('/').at(-1)];
+            return json({ schema_version: 1, public_workspace_id: 'pub-a', document_id: 'doc-1', action, status, state: result, errors: [] }, code);
+        };
+        const doc = document({ group_id: undefined, public_workspace_id: 'pub-a' });
+        const review = await bound.read(doc);
+        assert.equal(review.owner_group.name, 'Original workspace');
+        for (const action of ['approve_artifact', 'reject_artifact', 'cancel_artifact']) await bound.mutate(doc, review, action);
+        assert.ok(calls.every((call) => call.path.startsWith('/api/public-workspaces/pub-a/documents/doc-1/')));
+        assert.equal(calls.filter((call) => call.method === 'POST').length, 3);
+        assert.equal(bound.scope.id, 'pub-a');
+        assert.throws(() => { bound.scope.id = 'retargeted'; }, TypeError);
     });
     await run('self targets, recipient overrides and forged document/state pairs never issue a request', async () => {
         const own = parseDocumentCollaborationState(state(), 'group-a', 'doc-1');
@@ -240,8 +266,8 @@ try {
             [{ ...good, status: 'queued' }, 202], [{ ...good, status: 'partial' }, 207],
             [good, 201], [{ ...good, errors: [{ stage: 'notice', code: 'failed', message: 'Failed' }] }, 200],
             [{ ...good, state: 'owner' }, 200],
-        ]) assert.throws(() => parseCollaborationReceipt(value, status, 'group-a', 'doc-1', 'share', 'recipient'));
-        assert.throws(() => parseCollaborationReceipt(receipt('approve_share', 'approved', { target_group_id: 'recipient' }), 200, 'group-a', 'doc-1', 'approve_share'));
+        ]) assert.throws(() => parseCollaborationReceipt(value, status, scope, 'doc-1', 'share', 'recipient'), RECEIPT_REFUSAL);
+        assert.throws(() => parseCollaborationReceipt(receipt('approve_share', 'approved', { target_group_id: 'recipient' }), 200, scope, 'doc-1', 'approve_share'), /did not confirm this exact/);
     });
     await run('partial stage errors remain partial without automatic replay', async () => {
         const own = parseDocumentCollaborationState(state(), 'group-a', 'doc-1');
@@ -259,7 +285,7 @@ try {
         const prior = parseCollaborationReceipt(receipt('unshare', 'removed', {
             target_group_id: 'recipient', status: 'partial',
             errors: [{ stage: 'cache', code: 'cleanup_failed', message: 'Access is removed; cache cleanup remains.' }],
-        }), 207, 'group-a', 'doc-1', 'unshare', 'recipient');
+        }), 207, scope, 'doc-1', 'unshare', 'recipient');
         const refreshed = parseDocumentCollaborationState(state({
             etag: '"fresh-owner-state"', recipients: [], actions: ['inspect', 'share', 'unshare'],
         }), 'group-a', 'doc-1');
@@ -292,9 +318,9 @@ try {
         assert.match(documentSelectionReason(pending, scope), /approval/);
         const failed = parseCollaborationReceipt(receipt('approve_artifact', 'approval_failed', {
             status: 'partial', errors: [{ stage: 'queue', code: 'handoff_failed', message: 'Approval is recorded; processing needs reconciliation.' }],
-        }), 207, 'group-a', 'doc-1', 'approve_artifact');
+        }), 207, scope, 'doc-1', 'approve_artifact');
         assert.equal(failed.state, 'approval_failed');
-        assert.throws(() => parseCollaborationReceipt(receipt('approve_artifact', 'approval_failed'), 200, 'group-a', 'doc-1', 'approve_artifact'));
+        assert.throws(() => parseCollaborationReceipt(receipt('approve_artifact', 'approval_failed'), 200, scope, 'doc-1', 'approve_artifact'), /incomplete or ambiguous/);
     });
     await run('repair-only removed/denied state never fabricates an ordinary document grant', async () => {
         const raw = incomingState({ relationship: 'removed', actions: ['inspect', 'remove_share'] });

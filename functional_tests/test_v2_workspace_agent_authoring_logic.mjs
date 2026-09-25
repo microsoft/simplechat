@@ -1,5 +1,5 @@
 // test_v2_workspace_agent_authoring_logic.mjs
-// Version: 0.261.105
+// Version: 0.261.169
 // Implemented in: 0.261.096
 // Executes native agent draft, model, action, knowledge, template, and command behavior.
 
@@ -314,7 +314,7 @@ await check('knowledge toggles retain unavailable document/source references and
     assert.ok(selectedKnowledgeSources(readAgentKnowledge(next)).includes('public:unavailable-public'));
     assert.equal(readAgentKnowledge(next).future_option.keep, false);
     assert.deepEqual(readAgentKnowledge(next).allowed_user_workspace_actions, []);
-    assert.throws(() => toggleAgentKnowledgeSource(next, { scope: 'group', id: 'group', label: 'Group' }, true), /only authorized personal and public/);
+    assert.throws(() => toggleAgentKnowledgeSource(next, { scope: 'group', id: 'group', label: 'Group' }, true), /can assign only its authorized knowledge sources/);
     assert.deepEqual(readAgentKnowledge(updateAgentKnowledge(next, { enabled: false })).document_ids, ['explicit', 'unavailable-document']);
 });
 await check('legacy knowledge aliases display and cannot resurrect explicitly removed references', () => {
