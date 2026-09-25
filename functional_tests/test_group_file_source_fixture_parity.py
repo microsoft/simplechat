@@ -1,9 +1,10 @@
 # test_group_file_source_fixture_parity.py
 """
 Per-route shape parity between the M5B group file source UI fixture and the real routes.
-Version: 0.261.156
+Version: 0.261.171
 Implemented in: 0.261.147
 Credentials block compared: 0.261.156
+Sync fields and browse paths compared by value: 0.261.171
 
 M5B contract Section 11, F6. The V2 group file sources browser suite mocks the network with the
 closed HTTP fixture `ui_tests/fixtures/group_file_sources.py`, so a fixture whose response shape
@@ -27,6 +28,14 @@ The fixture handlers are the production browser-test code, exercised here throug
 `_dispatch` entry the Playwright route handler calls, with a tiny fake page and route that only
 capture the fulfilled status and JSON. The real connection test and browse run genuinely against a
 fake SMB session, so their top-level and entry shapes are the engine's own, never hand-written.
+
+Keys alone can't catch a fixture that stores a different value, so the four sync fields the editor
+edits -- the selected paths, fixed tags, folder tag mode and remote delete policy -- are also compared
+by value: the same write, set, left out, or carrying a value the server rewrites, must leave both
+sides holding the same values, and a path leaving the root must be refused the same way. Browse is
+compared by path too: over the fixture's own tree, served to the real engine through the fake SMB
+session, every browse path resolves relative to the source root on both sides, and the root's own
+path or a missing folder fails with the same status and message.
 """
 
 import sys
@@ -44,6 +53,7 @@ from ui_tests.fixtures.group_file_sources import (
     GroupFileSourcesFixture,
     EDITABLE_SOURCE_ID,
 )
+from ui_tests.fixtures.group_workspace import FILE_SOURCE_BROWSE_TREE
 
 from test_support.group_file_source_harness import (  # noqa: F401  (environment is a pytest fixture)
     LIST_PATH,
@@ -63,8 +73,11 @@ GROUP = "group-a"
 # fewer keys than the server (a subset is fine), but it must never drop one the editor relies on.
 SOURCE_ITEM_UI_KEYS = {
     "id", "name", "source_type", "enabled", "recursive", "connection", "filters",
-    "schedule", "identity_id", "config_revision", "source_actions",
+    "schedule", "identity_id", "config_revision", "source_actions", "remote_delete_policy",
 }
+# The nested keys the editor reads for an SMB source (the only type the parity fixtures seed).
+SOURCE_CONNECTION_UI_KEYS = {"unc_path", "selected_paths"}
+FILTERS_UI_KEYS = {"include_patterns", "exclude_patterns", "allowed_extensions", "fixed_tags", "folder_tag_mode"}
 RUN_ITEM_UI_KEYS = {"id", "run_id", "source_id", "status", "trigger", "started_at", "completed_at", "counts"}
 ENTRY_UI_KEYS = {"name", "path", "type"}
 IGNORE_ITEM_UI_KEYS = {"id", "remote_path", "status", "ignored"}
@@ -234,6 +247,14 @@ def test_list_shape_parity(environment):
         "list item credentials", payload["file_sources"][0]["credentials"],
         real_payload["file_sources"][0]["credentials"], CREDENTIALS_UI_KEYS,
     )
+    assert_nested_parity(
+        "list item connection", payload["file_sources"][0]["connection"],
+        real_payload["file_sources"][0]["connection"], SOURCE_CONNECTION_UI_KEYS,
+    )
+    assert_nested_parity(
+        "list item filters", payload["file_sources"][0]["filters"],
+        real_payload["file_sources"][0]["filters"], FILTERS_UI_KEYS,
+    )
 
 
 def test_read_shape_parity(environment):
@@ -251,6 +272,14 @@ def test_read_shape_parity(environment):
     assert_nested_parity(
         "read item credentials", payload["file_source"]["credentials"],
         real_payload["file_source"]["credentials"], CREDENTIALS_UI_KEYS,
+    )
+    assert_nested_parity(
+        "read item connection", payload["file_source"]["connection"],
+        real_payload["file_source"]["connection"], SOURCE_CONNECTION_UI_KEYS,
+    )
+    assert_nested_parity(
+        "read item filters", payload["file_source"]["filters"],
+        real_payload["file_source"]["filters"], FILTERS_UI_KEYS,
     )
 
 
@@ -732,6 +761,169 @@ def test_options_shape_parity(environment):
     real_payload = real.get_json()
     assert_no_invented_keys("options", payload, real_payload)
     assert_shared_keys("options", payload, real_payload, OPTIONS_UI_KEYS)
+
+
+# --------------------------------------------------------------------------
+# The four sync fields, by value: set, left out, and rewritten by the server.
+# --------------------------------------------------------------------------
+
+FIXTURE_UNC_PATH = "\\\\files.example.test\\reports"
+SETTING_WRITE = {
+    "selected_paths": ["Reports\\2024\\", "reports/2024", "Budget.xlsx", " Archive "],
+    "filters": {"fixed_tags": ["Q1 Reports", "q1-reports", "Legal/Contracts", "!!"], "folder_tag_mode": " FULL_PATH "},
+    "remote_delete_policy": "Hard_Delete",
+}
+SCENARIO_WRITES = {
+    # Sets all four, each in a form the server normalizes.
+    "set": dict(SETTING_WRITE),
+    # Leaves all four out: both sides must keep what the first write stored.
+    "omitted": {"filters": {"include_patterns": ["*.pdf"]}},
+    # Values the server doesn't recognise: both sides must store its fallbacks.
+    "unrecognised": {"filters": {"folder_tag_mode": "sideways"}, "remote_delete_policy": "shred"},
+    # Clears the selection and the tags explicitly.
+    "cleared": {"selected_paths": [], "filters": {"fixed_tags": []}},
+}
+
+
+def write_body(scenario_write, unc_path, revision):
+    body = {"expected_config_revision": revision}
+    if "selected_paths" in scenario_write:
+        body["connection"] = {"unc_path": unc_path, "selected_paths": list(scenario_write["selected_paths"])}
+    if "filters" in scenario_write:
+        body["filters"] = dict(scenario_write["filters"])
+    if "remote_delete_policy" in scenario_write:
+        body["remote_delete_policy"] = scenario_write["remote_delete_policy"]
+    return body
+
+
+def sync_values(item):
+    return {
+        "selected_paths": item["connection"].get("selected_paths"),
+        "fixed_tags": item["filters"].get("fixed_tags"),
+        "folder_tag_mode": item["filters"].get("folder_tag_mode"),
+        "include_patterns": item["filters"].get("include_patterns"),
+        "remote_delete_policy": item.get("remote_delete_policy"),
+    }
+
+
+def real_patch(environment, source_id, scenario_write):
+    revision = environment.client.get(real_item_path(source_id)).get_json()["file_source"]["config_revision"]
+    return environment.client.patch(real_item_path(source_id), json=write_body(scenario_write, UNC_PATH, revision))
+
+
+def fixture_patch(fixture, scenario_write):
+    revision = fixture._file_source_config_revision(GROUP, EDITABLE_SOURCE_ID)
+    return drive_fixture(fixture, "PATCH", fixture_item_path(),
+                         body=write_body(scenario_write, FIXTURE_UNC_PATH, revision))
+
+
+@pytest.mark.parametrize("scenario", sorted(SCENARIO_WRITES))
+def test_sync_fields_store_the_same_values(environment, scenario):
+    """After the same writes, both sides hold the same selected paths, tags, folder tag mode and
+    remote delete policy -- set, left out, rewritten, or cleared."""
+    source = create_source(environment)
+    as_user(environment, "owner")
+    fixture = new_fixture()
+    writes = [SETTING_WRITE] if scenario == "set" else [SETTING_WRITE, SCENARIO_WRITES[scenario]]
+    for step, scenario_write in enumerate(writes):
+        real = real_patch(environment, source["id"], scenario_write)
+        status, payload = fixture_patch(fixture, scenario_write)
+        assert (status, real.status_code) == (200, 200), f"{scenario} step {step}: {payload} / {real.get_json()}"
+        real_values = sync_values(real.get_json()["file_source"])
+        fixture_values = sync_values(payload["file_source"])
+        assert fixture_values == real_values, (
+            f"{scenario} step {step}: the fixture stores {fixture_values}, the server {real_values}"
+        )
+    # The stored record behind the fixture's response agrees too, not just the projection.
+    assert sync_values(fixture.record_file_source(GROUP, EDITABLE_SOURCE_ID)) == real_values
+
+
+def test_a_new_source_stores_the_same_defaults(environment):
+    """A create that sets none of the four stores the server's defaults on both sides."""
+    as_user(environment, "owner")
+    real = environment.client.post(LIST_PATH, json=smb_payload())
+    status, payload = drive_fixture(new_fixture(), "POST", LIST_PATH, body=smb_payload())
+    assert (status, real.status_code) == (201, 201)
+    assert sync_values(payload["file_source"]) == sync_values(real.get_json()["file_source"])
+
+
+def test_a_path_leaving_the_root_is_refused_the_same_way(environment):
+    """A selected path with a `..` folder fails the whole write with the same 400 on both sides."""
+    source = create_source(environment)
+    as_user(environment, "owner")
+    refused = {"selected_paths": ["reports/../secrets"]}
+    real = real_patch(environment, source["id"], refused)
+    status, payload = fixture_patch(new_fixture(), refused)
+    assert (status, real.status_code) == (400, 400)
+    assert payload == real.get_json()
+    assert_error_code("selected path refusal", payload, real.get_json(), None)
+
+
+# --------------------------------------------------------------------------
+# Browse paths: relative to the source root on both sides.
+# --------------------------------------------------------------------------
+
+class _TreeSmbClient:
+    """A fake SMB session over the fixture's own browse tree, so both sides list the same items and
+    only their path semantics are compared."""
+
+    def scandir(self, path):
+        root = UNC_PATH.rstrip("\\")
+        if path.lower() == root.lower():
+            relative = ""
+        elif path.lower().startswith(root.lower() + "\\"):
+            relative = path[len(root) + 1:].replace("\\", "/")
+        else:
+            raise FileNotFoundError(path)
+        children = FILE_SOURCE_BROWSE_TREE.get(relative)
+        if children is None:
+            raise FileNotFoundError(path)
+        return [_FakeDirEntry(name, kind == "folder") for name, kind in children]
+
+
+def browse_entries(payload):
+    return [
+        {key: entry[key] for key in ("name", "path", "type")}
+        for entry in payload["browse"]["entries"]
+    ]
+
+
+@pytest.mark.parametrize("browse_path", ["", "reports", "reports/2024", "/reports/", "reports\\2024"])
+def test_browse_lists_the_same_items_under_the_root(environment, monkeypatch, browse_path):
+    """A browse path is relative to the root on both sides: each lists the same children, with
+    entry paths relative to the root that open their folder when sent back."""
+    source = create_source(environment)
+    monkeypatch.setattr(environment.filesync, "_register_smb_session", lambda _source: _TreeSmbClient())
+    as_user(environment, "owner")
+    real = environment.client.post(f"{real_item_path(source['id'])}/browse", json={"browse_path": browse_path})
+    status, payload = drive_fixture(new_fixture(), "POST", f"{fixture_item_path()}/browse",
+                                    body={"browse_path": browse_path})
+    assert (status, real.status_code) == (200, 200), real.get_json()
+    real_payload = real.get_json()
+    assert payload["browse"]["path"] == real_payload["browse"]["path"]
+    assert browse_entries(payload) == browse_entries(real_payload)
+
+
+@pytest.mark.parametrize("browse_path,expected_status", [
+    (UNC_PATH, 500),            # the root's own path, which V2 once sent: resolved under the root
+    ("missing", 500),
+    ("reports/2025", 500),
+    ("../x", 400),
+    ("reports/../x", 400),
+])
+def test_browse_refuses_a_path_not_under_the_root_the_same_way(environment, monkeypatch, browse_path, expected_status):
+    """The root's own path, a missing folder and a path leaving the root fail with the same status and
+    message on both sides, so a client that browses the wrong path fails in the browser suite."""
+    source = create_source(environment)
+    monkeypatch.setattr(environment.filesync, "_register_smb_session", lambda _source: _TreeSmbClient())
+    as_user(environment, "owner")
+    real = environment.client.post(f"{real_item_path(source['id'])}/browse", json={"browse_path": browse_path})
+    # The fixture's root is its own share; its UNC path is just as foreign to the tree.
+    fixture_path = FIXTURE_UNC_PATH if browse_path == UNC_PATH else browse_path
+    status, payload = drive_fixture(new_fixture(), "POST", f"{fixture_item_path()}/browse",
+                                    body={"browse_path": fixture_path})
+    assert (status, real.status_code) == (expected_status, expected_status), real.get_json()
+    assert payload == real.get_json()
 
 
 if __name__ == "__main__":

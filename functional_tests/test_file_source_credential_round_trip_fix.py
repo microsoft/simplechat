@@ -2,7 +2,7 @@
 # test_file_source_credential_round_trip_fix.py
 """
 Functional test for the file source credential round trip fix.
-Version: 0.261.156
+Version: 0.261.171
 Implemented in: 0.261.156
 
 The V2 group file source editor opens a saved source from its sanitized projection and saves
@@ -25,8 +25,9 @@ through ``test_support/group_file_source_harness.py``. It pins:
   the identity's client ID.
 
 The V2 bodies below are a port of ``draftFromSource`` followed by ``buildFileSourceWrite`` in
-``application/v2_ui/src/lib/fileSourceFields.ts``. ``ui_tests/test_v2_group_file_sources.py``
-pins that the real editor sends them.
+``application/v2_ui/src/lib/fileSourceFields.ts``, including the four sync fields it sends from
+0.261.171 (``test_group_file_source_sync_fields.py`` runs the real code for those).
+``ui_tests/test_v2_group_file_sources.py`` pins that the real editor sends them.
 """
 
 import sys
@@ -117,13 +118,17 @@ def v2_write(source, **changes):
             "account_url": connection["account_url"],
             "share_name": connection["share_name"],
             "directory_path": connection["directory_path"],
+            "selected_paths": list(connection.get("selected_paths", [])),
         },
         "filters": {
             "include_patterns": list(filters.get("include_patterns", [])),
             "exclude_patterns": list(filters.get("exclude_patterns", [])),
             "allowed_extensions": list(filters.get("allowed_extensions", [])),
+            "fixed_tags": list(filters.get("fixed_tags", [])),
+            "folder_tag_mode": filters.get("folder_tag_mode") or "parent",
         },
         "schedule": {"enabled": bool(schedule.get("enabled")), "interval_minutes": schedule.get("interval_minutes") or 60},
+        "remote_delete_policy": source.get("remote_delete_policy") or "ignore",
         "identity_id": "",
         "credentials": inline,
     }

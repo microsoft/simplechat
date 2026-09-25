@@ -1,8 +1,9 @@
 # group_file_sources.py
 """
 Closed M5B group file source HTTP fixtures for the real production V2 SPA.
-Version: 0.261.147
+Version: 0.261.171
 Implemented in: 0.261.147
+Existing group tags seeded for the fixed-tag suggestions: 0.261.171
 
 The fixture serves the immutable `/api/groups/<group_id>/file-sources[...]` family
 and the `/api/groups/<group_id>/file-source-options` route, and injects the
@@ -83,6 +84,13 @@ class GroupFileSourcesFixture(GroupWorkspaceFixture):
         # models the member role; the seeded row is never served, which is exactly the unavailable
         # path the section must take rather than reading a personal file source.
         self.set_file_source_policy("group-b", role="User", status="active")
+        # group-a's existing document tags, most used first once sorted, which the editor offers as
+        # fixed tags through the explicit-group tag read.
+        self.group_document_tags["group-a"] = [
+            {"name": "finance", "count": 4, "color": "#2563eb"},
+            {"name": "legal", "count": 2, "color": "#16a34a"},
+            {"name": "quarterly", "count": 7, "color": "#9333ea"},
+        ]
 
 
 @pytest.fixture

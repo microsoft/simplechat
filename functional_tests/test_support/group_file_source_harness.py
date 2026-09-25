@@ -1,8 +1,9 @@
 # group_file_source_harness.py
 """Shared, isolated harness for the native group file source endpoint tests (M5B).
 
-Version: 0.261.147
+Version: 0.261.171
 Implemented in: 0.261.147
+Real tag validator (fixed tags deduplicated as the server does): 0.261.171
 
 Extracted verbatim from ``test_group_file_source_apis.py`` so the API suite and the
 per-route fixture shape parity test (``test_group_file_source_fixture_parity.py``)
@@ -356,6 +357,9 @@ def environment(monkeypatch):
         ))
 
         # --- functions_file_sync leaf-dependency seams -------------------
+        # The real tag validator, so fixed tags are deduplicated and checked as the server does them.
+        documents_namespace = {"re": __import__("re")}
+        execute_functions("functions_documents.py", {"normalize_tag", "validate_tags"}, documents_namespace)
         scoped.setitem(sys.modules, "functions_documents", module_stub(
             "functions_documents",
             allowed_file=Mock(return_value=True),
@@ -365,7 +369,7 @@ def environment(monkeypatch):
             get_or_create_tag_definition=Mock(),
             process_document_upload_background=Mock(),
             update_document=Mock(),
-            validate_tags=Mock(side_effect=lambda tags, *a, **k: (True, "", list(tags or []))),
+            validate_tags=documents_namespace["validate_tags"],
         ))
         scoped.setitem(sys.modules, "functions_public_workspaces", module_stub(
             "functions_public_workspaces",

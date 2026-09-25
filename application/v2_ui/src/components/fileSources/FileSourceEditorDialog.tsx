@@ -8,11 +8,17 @@
 // secret field opens blank and a blank secret on save keeps the stored value.
 //
 // Test connection and Browse run against the draft as it stands, without saving, so a manager can
-// confirm a connection before committing it. Browsing a saved source can also ignore a remote path,
-// which the engine then skips on the next run.
+// confirm a connection before committing it. Browse lists what is under the configured root, as the
+// server resolves every browse path relative to it: a folder opens, and any folder or file can be
+// selected so the source syncs only the selection, as in the classic editor. Browsing never changes
+// the root itself. Browsing a saved source can also ignore a remote path.
+//
+// The fixed tags, folder tags and remote delete policy are shown with the values the server will
+// store, so a manager sees how synced files will be tagged and what happens to them when their source
+// file is deleted, and an edit that changes something else saves them back untouched.
 
-import { useEffect, useMemo, useRef, useState } from 'react';
-import { FolderOpen, Loader2, PlugZap } from 'lucide-react';
+import { useEffect, useId, useMemo, useRef, useState, type KeyboardEvent } from 'react';
+import { ArrowUp, FolderOpen, Loader2, PlugZap, X } from 'lucide-react';
 import { Modal } from '../ui/Modal';
 import { GlassButton } from '../ui/primitives';
 import {
@@ -21,10 +27,17 @@ import {
     authUsesSecret,
     authUsesUsername,
     connectionDescriptor,
-    draftBrowseRoot,
     eligibleIdentities,
+    isPathSelected,
+    normalizeFixedTag,
+    parentBrowsePath,
     secretFieldLabel,
     visibleSourceTypes,
+    withFixedTag,
+    withSelectedPath,
+    withoutSelectedPath,
+    FOLDER_TAG_MODES,
+    REMOTE_DELETE_POLICIES,
     type FileSourceDraft,
 } from '../../lib/fileSourceFields';
 import type {
@@ -51,10 +64,28 @@ function connectionSummary(result: FileSourceConnectionResult): string {
     return `Connected. Checked ${checked} ${checked === 1 ? 'entry' : 'entries'}: ${folders} ${folders === 1 ? 'folder' : 'folders'}, ${files} ${files === 1 ? 'file' : 'files'}.`;
 }
 
+/** What each folder tag mode adds, from `_derive_tags_for_remote_file`, with a worked example. */
+const FOLDER_TAG_HINTS: Record<string, string> = {
+    none: 'Files get only the fixed tags.',
+    parent: 'A file in Reports/2024 also gets the tag \u201c2024\u201d.',
+    full_path: 'A file in Reports/2024 also gets the tags \u201creports\u201d and \u201c2024\u201d.',
+};
+
+/** What each remote delete policy does to a synced document when its source file is deleted. */
+const REMOTE_DELETE_HINTS: Record<string, string> = {
+    ignore: 'The document stays in this group when its source file is deleted.',
+    hard_delete: 'The next sync deletes the document from this group when its source file is deleted.',
+};
+
+/** At most this many existing tags are offered at once, filtered by what has been typed. */
+const TAG_SUGGESTION_LIMIT = 12;
+
 export function FileSourceEditorDialog({
     draft,
     options,
     identities,
+    tagSuggestions = [],
+    tagSuggestionsFailed = false,
     saving,
     error,
     onChange,
@@ -68,6 +99,10 @@ export function FileSourceEditorDialog({
     draft: FileSourceDraft;
     options: FileSourceOptions | null;
     identities: WorkspaceIdentity[];
+    /** The workspace's existing tag names, most used first, offered as fixed tags. */
+    tagSuggestions?: string[];
+    /** The existing tags could not be read, so none are offered; a tag can still be typed. */
+    tagSuggestionsFailed?: boolean;
     saving: boolean;
     error: string | null;
     onChange: (next: FileSourceDraft) => void;
@@ -85,9 +120,17 @@ export function FileSourceEditorDialog({
     onIgnore?: (remotePath: string, ignored: boolean) => Promise<boolean>;
 }) {
     const nameRef = useRef<HTMLInputElement>(null);
+    const folderTagsId = useId();
+    const deletePolicyId = useId();
     const [confirmingDiscard, setConfirmingDiscard] = useState(false);
     const [original] = useState(() => JSON.stringify(draft));
-    const dirty = JSON.stringify(draft) !== original;
+    // A path or tag typed but not yet added is unsaved work too: closing asks before discarding it,
+    // and saving asks for it to be added or cleared rather than silently dropping it.
+    const [pathInput, setPathInput] = useState('');
+    const [pathError, setPathError] = useState<string | null>(null);
+    const [tagInput, setTagInput] = useState('');
+    const [tagError, setTagError] = useState<string | null>(null);
+    const dirty = JSON.stringify(draft) !== original || pathInput.trim() !== '' || tagInput.trim() !== '';
 
     const [testing, setTesting] = useState(false);
     const [testResult, setTestResult] = useState<FileSourceConnectionResult | null>(null);
@@ -125,12 +168,30 @@ export function FileSourceEditorDialog({
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [authTypes]);
 
+    // A listing belongs to the source type it was browsed with; another type has another root.
+    useEffect(() => {
+        setBrowseResult(null);
+        setBrowseError(null);
+    }, [draft.sourceType]);
+
     const requestClose = () => {
         if (dirty && !confirmingDiscard) {
             setConfirmingDiscard(true);
             return;
         }
         onCancel();
+    };
+
+    const requestSave = () => {
+        if (pathInput.trim()) {
+            setPathError('Add the path you typed, or clear it, before saving.');
+            return;
+        }
+        if (tagInput.trim()) {
+            setTagError('Add the tag you typed, or clear it, before saving.');
+            return;
+        }
+        onSave();
     };
 
     const setConnection = (patch: Partial<FileSourceDraft['connection']>) =>
@@ -164,16 +225,54 @@ export function FileSourceEditorDialog({
         }
     };
 
-    const chooseEntry = (entry: FileSourceBrowseEntry) => {
-        const path = String(entry.path ?? entry.name ?? '');
-        const field = descriptor.fields.find((candidate) => candidate.browseRoot);
-        if (field) {
-            setConnection({ [field.key]: path } as Partial<FileSourceDraft['connection']>);
+    const toggleSelected = (path: string) => {
+        if (isPathSelected(draft.selectedPaths, path)) {
+            onChange({ ...draft, selectedPaths: withoutSelectedPath(draft.selectedPaths, path) });
+            return;
         }
-        if (entry.type === 'folder') {
-            void runBrowse(path);
+        const result = withSelectedPath(draft.selectedPaths, path);
+        if ('paths' in result) {
+            onChange({ ...draft, selectedPaths: result.paths });
         }
     };
+
+    const addTypedPath = () => {
+        const result = withSelectedPath(draft.selectedPaths, pathInput);
+        if ('error' in result) {
+            setPathError(result.error);
+            return;
+        }
+        setPathError(null);
+        setPathInput('');
+        onChange({ ...draft, selectedPaths: result.paths });
+    };
+
+    const addTag = (value: string) => {
+        const result = withFixedTag(draft.fixedTags, value);
+        if ('error' in result) {
+            setTagError(result.error);
+            return;
+        }
+        setTagError(null);
+        setTagInput('');
+        onChange({ ...draft, fixedTags: result.tags });
+    };
+
+    const onEnter = (action: () => void) => (event: KeyboardEvent<HTMLInputElement>) => {
+        if (event.key === 'Enter') {
+            event.preventDefault();
+            action();
+        }
+    };
+
+    const typedTag = normalizeFixedTag(tagInput);
+    const suggestions = useMemo(() => {
+        const needle = tagInput.trim().toLowerCase();
+        return tagSuggestions
+            .filter((name) => !draft.fixedTags.includes(normalizeFixedTag(name)))
+            .filter((name) => !needle || name.toLowerCase().includes(needle) || (typedTag !== '' && name.includes(typedTag)))
+            .slice(0, TAG_SUGGESTION_LIMIT);
+    }, [tagSuggestions, draft.fixedTags, tagInput, typedTag]);
 
     const toggleIgnore = async (entry: FileSourceBrowseEntry) => {
         if (!onIgnore) {
@@ -222,7 +321,7 @@ export function FileSourceEditorDialog({
                                 Reload
                             </GlassButton>
                         ) : null}
-                        <GlassButton variant="primary" size="sm" onClick={onSave} disabled={!canSave || saving}>
+                        <GlassButton variant="primary" size="sm" onClick={requestSave} disabled={!canSave || saving}>
                             {saving ? 'Saving' : draft.id ? 'Save changes' : 'Create source'}
                         </GlassButton>
                     </>
@@ -266,20 +365,7 @@ export function FileSourceEditorDialog({
                     <legend className="text-xs font-medium text-text-2">Connection</legend>
                     {descriptor.fields.map((field) => (
                         <label key={String(field.key)} className="block">
-                            <span className="mb-1 flex items-center justify-between text-xs font-medium text-text-2">
-                                <span>{field.label}</span>
-                                {field.browseRoot ? (
-                                    <button
-                                        type="button"
-                                        onClick={() => void runBrowse(draftBrowseRoot(draft))}
-                                        disabled={browsing}
-                                        className="inline-flex items-center gap-1 text-accent hover:underline disabled:opacity-50"
-                                    >
-                                        {browsing ? <Loader2 size={12} className="animate-spin" /> : <FolderOpen size={12} />}
-                                        Browse
-                                    </button>
-                                ) : null}
-                            </span>
+                            <span className="mb-1 block text-xs font-medium text-text-2">{field.label}</span>
                             <input
                                 type="text"
                                 value={draft.connection[field.key]}
@@ -291,51 +377,6 @@ export function FileSourceEditorDialog({
                             />
                         </label>
                     ))}
-
-                    {browseError ? <p className="text-xs text-danger">{browseError}</p> : null}
-                    {ignoreError ? <p className="text-xs text-danger">{ignoreError}</p> : null}
-                    {browseResult ? (
-                        <div className="rounded-lg border border-edge bg-surface-1 p-2">
-                            <p className="mb-1 text-xs text-text-3">
-                                {browseResult.path ? `Browsing ${browseResult.path}` : 'Browsing root'}
-                            </p>
-                            {browseResult.entries.length === 0 ? (
-                                <p className="text-xs text-text-3">No items here.</p>
-                            ) : (
-                                <ul className="max-h-40 space-y-0.5 overflow-y-auto text-sm">
-                                    {browseResult.entries.map((entry, index) => {
-                                        const entryPath = String(entry.path ?? entry.name ?? index);
-                                        const isFolder = entry.type === 'folder';
-                                        const isIgnored = Boolean(ignoredPaths[entryPath]);
-                                        return (
-                                            <li
-                                                key={entryPath}
-                                                className="flex items-center justify-between gap-2"
-                                            >
-                                                <button
-                                                    type="button"
-                                                    onClick={() => chooseEntry(entry)}
-                                                    className="flex-1 truncate text-left text-text-1 hover:text-accent"
-                                                >
-                                                    {isFolder ? 'Folder: ' : 'File: '}
-                                                    {String(entry.name ?? entry.path ?? 'item')}
-                                                </button>
-                                                {onIgnore ? (
-                                                    <button
-                                                        type="button"
-                                                        onClick={() => void toggleIgnore(entry)}
-                                                        className="text-xs text-text-3 hover:text-text-1"
-                                                    >
-                                                        {isIgnored ? 'Restore' : 'Ignore'}
-                                                    </button>
-                                                ) : null}
-                                            </li>
-                                        );
-                                    })}
-                                </ul>
-                            )}
-                        </div>
-                    ) : null}
                 </fieldset>
 
                 <fieldset className="space-y-3">
@@ -502,6 +543,154 @@ export function FileSourceEditorDialog({
                 </fieldset>
 
                 <fieldset className="space-y-3">
+                    <legend className="text-xs font-medium text-text-2">What to sync</legend>
+                    <p className="text-xs text-text-3">
+                        Choose folders and files to sync only those. Leave the list empty to sync everything under the
+                        source root.
+                    </p>
+                    {draft.selectedPaths.length === 0 ? (
+                        <p className="text-sm text-text-2">Syncing everything under the source root.</p>
+                    ) : (
+                        <div className="space-y-1.5">
+                            <ul aria-label="Selected folders and files" className="space-y-1">
+                                {draft.selectedPaths.map((path) => (
+                                    <li
+                                        key={path}
+                                        className="flex items-center justify-between gap-2 rounded-lg border border-edge bg-surface-1 px-2.5 py-1"
+                                    >
+                                        <span className="min-w-0 truncate font-mono text-xs text-text-1" title={path}>
+                                            {path}
+                                        </span>
+                                        <button
+                                            type="button"
+                                            aria-label={`Stop syncing ${path}`}
+                                            title="Remove from the selection"
+                                            onClick={() => onChange({ ...draft, selectedPaths: withoutSelectedPath(draft.selectedPaths, path) })}
+                                            className="shrink-0 rounded p-1 text-text-3 hover:bg-surface-2 hover:text-danger"
+                                        >
+                                            <X size={13} />
+                                        </button>
+                                    </li>
+                                ))}
+                            </ul>
+                            <button
+                                type="button"
+                                onClick={() => onChange({ ...draft, selectedPaths: [] })}
+                                className="text-xs text-accent hover:underline"
+                            >
+                                Sync everything under the root instead
+                            </button>
+                        </div>
+                    )}
+
+                    <div className="flex flex-wrap items-end gap-2">
+                        <label className="block min-w-0 flex-1 basis-56">
+                            <span className="mb-1 block text-xs font-medium text-text-2">Add a folder or file</span>
+                            <input
+                                type="text"
+                                value={pathInput}
+                                onChange={(event) => {
+                                    setPathInput(event.target.value);
+                                    setPathError(null);
+                                }}
+                                onKeyDown={onEnter(addTypedPath)}
+                                placeholder="Reports/2024 or Reports/summary.pdf"
+                                aria-invalid={pathError ? true : undefined}
+                                className={FIELD_CLASS}
+                            />
+                        </label>
+                        <GlassButton size="sm" onClick={addTypedPath} disabled={!pathInput.trim()}>
+                            Add path
+                        </GlassButton>
+                        <GlassButton size="sm" onClick={() => void runBrowse('')} disabled={browsing}>
+                            {browsing ? <Loader2 size={14} className="animate-spin" /> : <FolderOpen size={14} />}
+                            Browse the source
+                        </GlassButton>
+                    </div>
+                    {pathError ? <p role="alert" className="text-xs text-danger">{pathError}</p> : null}
+
+                    {browseError ? <p role="alert" className="text-xs text-danger">{browseError}</p> : null}
+                    {ignoreError ? <p role="alert" className="text-xs text-danger">{ignoreError}</p> : null}
+                    {browseResult ? (
+                        <div className="rounded-lg border border-edge bg-surface-1 p-2">
+                            <div className="mb-1 flex items-center justify-between gap-2">
+                                <p className="min-w-0 truncate text-xs text-text-3">
+                                    {browseResult.path ? `Browsing ${browseResult.path}` : 'Browsing the source root'}
+                                </p>
+                                {browseResult.path ? (
+                                    <button
+                                        type="button"
+                                        onClick={() => void runBrowse(parentBrowsePath(browseResult.path))}
+                                        disabled={browsing}
+                                        className="inline-flex shrink-0 items-center gap-1 text-xs text-accent hover:underline disabled:opacity-50"
+                                    >
+                                        <ArrowUp size={12} />
+                                        Up one folder
+                                    </button>
+                                ) : null}
+                            </div>
+                            {browseResult.entries.length === 0 ? (
+                                <p className="text-xs text-text-3">No items here.</p>
+                            ) : (
+                                <ul className="max-h-48 space-y-0.5 overflow-y-auto text-sm">
+                                    {browseResult.entries.map((entry, index) => {
+                                        const entryPath = String(entry.path ?? entry.name ?? index);
+                                        const entryName = String(entry.name ?? entry.path ?? 'item');
+                                        const isFolder = entry.type === 'folder';
+                                        const isIgnored = Boolean(ignoredPaths[entryPath]);
+                                        const selected = isPathSelected(draft.selectedPaths, entryPath);
+                                        return (
+                                            <li
+                                                key={entryPath}
+                                                className="flex items-center justify-between gap-2"
+                                            >
+                                                {isFolder ? (
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => void runBrowse(entryPath)}
+                                                        disabled={browsing}
+                                                        title={`Open ${entryPath}`}
+                                                        className="min-w-0 flex-1 truncate text-left text-text-1 hover:text-accent"
+                                                    >
+                                                        Folder: {entryName}
+                                                    </button>
+                                                ) : (
+                                                    <span className="min-w-0 flex-1 truncate text-text-1" title={entryPath}>
+                                                        File: {entryName}
+                                                    </span>
+                                                )}
+                                                <button
+                                                    type="button"
+                                                    aria-pressed={selected}
+                                                    aria-label={`Select ${entryPath}`}
+                                                    onClick={() => toggleSelected(entryPath)}
+                                                    className={
+                                                        selected
+                                                            ? 'shrink-0 text-xs font-medium text-accent hover:underline'
+                                                            : 'shrink-0 text-xs text-text-3 hover:text-text-1'
+                                                    }
+                                                >
+                                                    {selected ? 'Selected' : 'Select'}
+                                                </button>
+                                                {onIgnore ? (
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => void toggleIgnore(entry)}
+                                                        className="shrink-0 text-xs text-text-3 hover:text-text-1"
+                                                    >
+                                                        {isIgnored ? 'Restore' : 'Ignore'}
+                                                    </button>
+                                                ) : null}
+                                            </li>
+                                        );
+                                    })}
+                                </ul>
+                            )}
+                        </div>
+                    ) : null}
+                </fieldset>
+
+                <fieldset className="space-y-3">
                     <legend className="text-xs font-medium text-text-2">Schedule and scope</legend>
                     <div className="flex flex-wrap items-center gap-4">
                         <label className="flex items-center gap-2 text-sm text-text-1">
@@ -582,6 +771,128 @@ export function FileSourceEditorDialog({
                             className={FIELD_CLASS}
                         />
                     </label>
+                </fieldset>
+
+                <fieldset className="space-y-3">
+                    <legend className="text-xs font-medium text-text-2">Tags and deletions</legend>
+                    <div className="space-y-2">
+                        <div>
+                            <p className="text-xs font-medium text-text-2">Fixed tags</p>
+                            <p className="text-xs text-text-3">Every file this source brings in gets these tags.</p>
+                        </div>
+                        {draft.fixedTags.length === 0 ? (
+                            <p className="text-sm text-text-2">No fixed tags.</p>
+                        ) : (
+                            <ul aria-label="Fixed tags" className="flex flex-wrap gap-1.5">
+                                {draft.fixedTags.map((tag) => (
+                                    <li
+                                        key={tag}
+                                        className="inline-flex items-center gap-1 rounded-full border border-edge bg-surface-1 py-0.5 pl-2.5 pr-1 text-xs text-text-1"
+                                    >
+                                        {tag}
+                                        <button
+                                            type="button"
+                                            aria-label={`Remove the fixed tag ${tag}`}
+                                            onClick={() => onChange({ ...draft, fixedTags: draft.fixedTags.filter((current) => current !== tag) })}
+                                            className="rounded-full p-0.5 text-text-3 hover:bg-surface-2 hover:text-danger"
+                                        >
+                                            <X size={12} />
+                                        </button>
+                                    </li>
+                                ))}
+                            </ul>
+                        )}
+                        <div className="flex flex-wrap items-end gap-2">
+                            <label className="block min-w-0 flex-1 basis-48 sm:max-w-xs">
+                                <span className="mb-1 block text-xs font-medium text-text-2">Add a fixed tag</span>
+                                <input
+                                    type="text"
+                                    value={tagInput}
+                                    onChange={(event) => {
+                                        setTagInput(event.target.value);
+                                        setTagError(null);
+                                    }}
+                                    onKeyDown={onEnter(() => addTag(tagInput))}
+                                    placeholder="finance"
+                                    aria-invalid={tagError ? true : undefined}
+                                    className={FIELD_CLASS}
+                                />
+                            </label>
+                            <GlassButton size="sm" onClick={() => addTag(tagInput)} disabled={!tagInput.trim()}>
+                                Add tag
+                            </GlassButton>
+                        </div>
+                        {tagError ? (
+                            <p role="alert" className="text-xs text-danger">{tagError}</p>
+                        ) : typedTag && typedTag !== tagInput.trim() ? (
+                            <p className="text-xs text-text-3">Saved as “{typedTag}”.</p>
+                        ) : null}
+                        {suggestions.length > 0 ? (
+                            <div className="flex flex-wrap items-center gap-1.5">
+                                <span className="text-xs text-text-3">This group’s tags:</span>
+                                {suggestions.map((name) => (
+                                    <button
+                                        key={name}
+                                        type="button"
+                                        aria-label={`Add the existing tag ${name}`}
+                                        onClick={() => addTag(name)}
+                                        className="rounded-full border border-dashed border-edge px-2 py-0.5 text-xs text-text-2 hover:border-accent hover:text-accent"
+                                    >
+                                        + {name}
+                                    </button>
+                                ))}
+                            </div>
+                        ) : null}
+                        {tagSuggestionsFailed ? (
+                            <p className="text-xs text-text-3">
+                                This group’s existing tags couldn’t be loaded. You can still type a tag.
+                            </p>
+                        ) : null}
+                    </div>
+                    <div className="grid gap-3 sm:grid-cols-2">
+                        <div>
+                            <label htmlFor={folderTagsId} className="mb-1 block text-xs font-medium text-text-2">
+                                Folder tags
+                            </label>
+                            <select
+                                id={folderTagsId}
+                                value={draft.folderTagMode}
+                                onChange={(event) => onChange({ ...draft, folderTagMode: event.target.value })}
+                                aria-describedby={`${folderTagsId}-hint`}
+                                className={FIELD_CLASS}
+                            >
+                                {FOLDER_TAG_MODES.map((mode) => (
+                                    <option key={mode.value} value={mode.value}>
+                                        {mode.label}
+                                    </option>
+                                ))}
+                            </select>
+                            <p id={`${folderTagsId}-hint`} className="mt-1 text-xs text-text-3">
+                                {FOLDER_TAG_HINTS[draft.folderTagMode]}
+                            </p>
+                        </div>
+                        <div>
+                            <label htmlFor={deletePolicyId} className="mb-1 block text-xs font-medium text-text-2">
+                                When a source file is deleted
+                            </label>
+                            <select
+                                id={deletePolicyId}
+                                value={draft.remoteDeletePolicy}
+                                onChange={(event) => onChange({ ...draft, remoteDeletePolicy: event.target.value })}
+                                aria-describedby={`${deletePolicyId}-hint`}
+                                className={FIELD_CLASS}
+                            >
+                                {REMOTE_DELETE_POLICIES.map((policy) => (
+                                    <option key={policy.value} value={policy.value}>
+                                        {policy.label}
+                                    </option>
+                                ))}
+                            </select>
+                            <p id={`${deletePolicyId}-hint`} className="mt-1 text-xs text-text-3">
+                                {REMOTE_DELETE_HINTS[draft.remoteDeletePolicy]}
+                            </p>
+                        </div>
+                    </div>
                 </fieldset>
             </div>
         </Modal>

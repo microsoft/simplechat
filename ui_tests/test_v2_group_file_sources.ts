@@ -1,8 +1,9 @@
 // test_v2_group_file_sources.ts
 //
 // Runtime pin for the scope seam in fileSourceWorkbench.ts.
-// Version: 0.261.147
+// Version: 0.261.171
 // Implemented in: 0.261.147
+// Tag suggestions read by explicit group: 0.261.171
 //
 // The browser suite proves the group editor, gating, conflict and delete behaviour against a
 // mocked backend. It cannot prove the one property the contract calls the floor: that the personal
@@ -71,12 +72,13 @@ async function testPersonalTransportIsUnchanged(): Promise<void> {
         body: { delete_associated_files: true },
     }], 'The personal delete must send the documents choice on the shipped personal URL, unchanged.');
 
-    // Options and identities are group-only concepts, so the personal path answers them inertly and
-    // never issues a request for them.
+    // Options, identities and tag suggestions are group-only concepts, so the personal path answers
+    // them inertly and never issues a request for them.
     stub({});
     assert.equal(await adapter.options(), null, 'Personal scope has no options endpoint.');
     assert.deepEqual(await adapter.identities(), [], 'Personal scope has no identities endpoint.');
-    assert.equal(calls.length, 0, 'Personal options and identities must issue no request.');
+    assert.deepEqual(await adapter.tags(), [], 'Personal scope offers no tag suggestions.');
+    assert.equal(calls.length, 0, 'Personal options, identities and tags must issue no request.');
 
     // The writes the section only ever offered in the classic workspace stay refused here, so the
     // group affordances can never be driven against a personal scope.
@@ -119,6 +121,14 @@ async function testGroupTransportNeverTouchesPersonal(): Promise<void> {
     }
     assert.ok(calls.every((call) => call.path.startsWith(GROUP_PREFIX)),
         'Every group operation stays under the group route prefix.');
+
+    // The fixed-tag suggestions come from the explicit-group tag read the Documents and Tags sections
+    // use, named by group id, never from the active group or a personal tag read, and most used first.
+    stub({ tags: [{ name: 'legal', count: 2 }, { name: 'quarterly', count: 7 }, { name: 'finance', count: 7 }] });
+    assert.deepEqual(await adapter.tags(), ['finance', 'quarterly', 'legal'],
+        'Tag suggestions are ordered most used first, then by name.');
+    assert.deepEqual(calls, [{ method: 'GET', path: '/api/group_documents/tags?group_id=group-a' }],
+        'The group tag suggestions must name the group explicitly.');
 }
 
 async function main(): Promise<void> {
