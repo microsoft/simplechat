@@ -17,6 +17,12 @@
 // The CSV import reads the classic manage page's format, with its rules and messages
 // (manage_group.js, handleCsvFileSelect), so a file that works there works here. Each row is
 // then added one at a time through the native route.
+//
+// `createPublicMembershipClient` sits beside the group client and talks to the M10A public
+// family, /api/public-workspaces/<w>/membership/..., reusing the same strict readers. Public
+// has no `leave` (a member cannot remove themselves) so its delete answer carries no `left`,
+// and its assignable roles are Admin and DocumentManager only (removal stands in for a demotion
+// to User). The single Members section is driven by whichever client and labels it is given.
 
 import { api, ApiError, requestWithStatus } from './apiClient';
 import { codePointLength } from './groupDirectory';
@@ -106,6 +112,7 @@ export class MembershipResponseError extends Error {
 const LIST_INVALID = 'The member list could not be read. Please retry.';
 const REQUESTS_INVALID = 'The requests to join could not be read. Please retry.';
 const WRITE_INVALID = 'The group returned an unexpected answer, so the members were reloaded. Check the change before trying again.';
+const PUBLIC_WRITE_INVALID = 'The public workspace returned an unexpected answer, so the members were reloaded. Check the change before trying again.';
 const SEARCH_INVALID = 'The directory search returned an unexpected answer. Try again.';
 
 export function isGroupMemberRole(value: unknown): value is GroupMemberRole {
@@ -137,6 +144,13 @@ function readMemberRow(value: unknown): GroupMember | null {
 export function readGroupMember(value: unknown): GroupMember {
     const member = readMemberRow(value);
     if (!member) throw new MembershipResponseError(WRITE_INVALID);
+    return member;
+}
+
+/** A member row returned by a public workspace write, refused with the public-flavoured text. */
+export function readPublicMember(value: unknown): GroupMember {
+    const member = readMemberRow(value);
+    if (!member) throw new MembershipResponseError(PUBLIC_WRITE_INVALID);
     return member;
 }
 
@@ -211,7 +225,10 @@ export function membershipErrorMessage(error: unknown, fallback: string): string
  */
 export function isTerminalMembershipError(error: unknown): boolean {
     const code = membershipErrorCode(error);
-    if (code && ['membership_permission', 'not_a_member', 'group_not_found', 'group_status_unavailable', 'owner_only'].includes(code)) {
+    if (code && [
+        'membership_permission', 'not_a_member', 'group_not_found', 'group_status_unavailable',
+        'workspace_not_found', 'public_status_unavailable', 'owner_only',
+    ].includes(code)) {
         return true;
     }
     return error instanceof ApiError && error.status === 401;
@@ -221,7 +238,7 @@ export function isTerminalMembershipError(error: unknown): boolean {
 export function isAccessChangedError(error: unknown): boolean {
     const code = membershipErrorCode(error);
     return code === 'membership_permission' || code === 'not_a_member' || code === 'owner_only'
-        || code === 'group_not_found';
+        || code === 'group_not_found' || code === 'workspace_not_found';
 }
 
 export function memberDisplayName(member: { displayName: string; email: string; userId: string }): string {
@@ -236,6 +253,21 @@ export const ASSIGNABLE_ROLE_OPTIONS: { value: AssignableMemberRole; label: stri
 
 export function isAssignableMemberRole(value: unknown): value is AssignableMemberRole {
     return typeof value === 'string' && (ASSIGNABLE_MEMBER_ROLES as readonly string[]).includes(value);
+}
+
+/**
+ * The roles a public workspace member can be given. There is no `User` option: the owner and
+ * admins demote a member by removing them, and the directory join flow re-adds a plain member.
+ */
+export const PUBLIC_ASSIGNABLE_MEMBER_ROLES = ['Admin', 'DocumentManager'] as const;
+
+export const PUBLIC_ASSIGNABLE_ROLE_OPTIONS: { value: AssignableMemberRole; label: string }[] = [
+    { value: 'DocumentManager', label: groupRoleLabel('DocumentManager') },
+    { value: 'Admin', label: groupRoleLabel('Admin') },
+];
+
+export function isPublicAssignableMemberRole(value: unknown): value is AssignableMemberRole {
+    return typeof value === 'string' && (PUBLIC_ASSIGNABLE_MEMBER_ROLES as readonly string[]).includes(value);
 }
 
 const MEMBER_TEXT_CONTROL_CHARACTERS = /[\u0000-\u001f\u007f-\u009f]/;
@@ -323,6 +355,59 @@ export function createGroupMembershipClient(groupId: string): GroupMembershipCli
             if (!isRecord(data) || typeof data.changed !== 'boolean') throw new MembershipResponseError(WRITE_INVALID);
             const owner = readGroupMember(data.owner);
             if (owner.userId !== userId || owner.role !== 'Owner') throw new MembershipResponseError(WRITE_INVALID);
+            return { owner, changed: data.changed };
+        },
+    };
+}
+
+export function createPublicMembershipClient(workspaceId: string): GroupMembershipClient {
+    const base = `/api/public-workspaces/${pathSegment(workspaceId)}/membership`;
+    const memberPath = (userId: string) => `${base}/members/${pathSegment(userId)}`;
+    const requestPath = (userId: string, decision: 'approve' | 'reject') => `${base}/requests/${pathSegment(userId)}/${decision}`;
+    return {
+        list: async (query, signal) => readMemberListPage(
+            await api.get<unknown>(`${base}/members?${memberListParams(query)}`, signal),
+        ),
+        requests: async (signal) => readJoinRequests(await api.get<unknown>(`${base}/requests`, signal)),
+        add: async (member) => {
+            const { data } = await requestWithStatus<unknown>(`${base}/members`, {
+                method: 'POST',
+                body: { userId: member.userId, displayName: member.displayName, email: member.email, role: member.role },
+            });
+            if (!isRecord(data)) throw new MembershipResponseError(PUBLIC_WRITE_INVALID);
+            return readPublicMember(data.member);
+        },
+        changeRole: async (userId, role) => {
+            const { data } = await requestWithStatus<unknown>(memberPath(userId), { method: 'PATCH', body: { role } });
+            if (!isRecord(data) || typeof data.changed !== 'boolean') throw new MembershipResponseError(PUBLIC_WRITE_INVALID);
+            const member = readPublicMember(data.member);
+            if (member.userId !== userId) throw new MembershipResponseError(PUBLIC_WRITE_INVALID);
+            return { member, changed: data.changed };
+        },
+        // Public has no `leave`, so the delete answer carries no `left`; a fixed `false` keeps the
+        // shared client shape without inventing a field the server never sends.
+        remove: async (userId) => {
+            const { data } = await requestWithStatus<unknown>(memberPath(userId), { method: 'DELETE' });
+            if (!isRecord(data) || data.userId !== userId) throw new MembershipResponseError(PUBLIC_WRITE_INVALID);
+            return { userId, left: false };
+        },
+        approve: async (userId) => {
+            const { data } = await requestWithStatus<unknown>(requestPath(userId, 'approve'), { method: 'POST' });
+            if (!isRecord(data) || typeof data.already_member !== 'boolean') throw new MembershipResponseError(PUBLIC_WRITE_INVALID);
+            const member = readPublicMember(data.member);
+            if (member.userId !== userId) throw new MembershipResponseError(PUBLIC_WRITE_INVALID);
+            return { member, alreadyMember: data.already_member };
+        },
+        reject: async (userId) => {
+            const { data } = await requestWithStatus<unknown>(requestPath(userId, 'reject'), { method: 'POST' });
+            if (!isRecord(data) || data.userId !== userId) throw new MembershipResponseError(PUBLIC_WRITE_INVALID);
+            return { userId };
+        },
+        transfer: async (userId) => {
+            const { data } = await requestWithStatus<unknown>(`${base}/owner`, { method: 'PUT', body: { userId } });
+            if (!isRecord(data) || typeof data.changed !== 'boolean') throw new MembershipResponseError(PUBLIC_WRITE_INVALID);
+            const owner = readPublicMember(data.owner);
+            if (owner.userId !== userId || owner.role !== 'Owner') throw new MembershipResponseError(PUBLIC_WRITE_INVALID);
             return { owner, changed: data.changed };
         },
     };
