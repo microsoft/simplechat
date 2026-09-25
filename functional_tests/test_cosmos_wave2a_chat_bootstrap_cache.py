@@ -2,7 +2,7 @@
 #!/usr/bin/env python3
 """
 Functional test for Cosmos Wave 2A chat bootstrap cache.
-Version: 0.261.173
+Version: 0.261.176
 Implemented in: 0.250.006
 Settings write invalidation scoped in: 0.250.037
 Guarded group membership writers: 0.261.151
@@ -244,11 +244,11 @@ def test_phase3_low_churn_invalidation_hooks_are_wired():
         "route_backend_control_center.py": [
             "cache_reason=\"group_status_updated\"",
             "cache_reason=\"group_member_added\"",
-            "bump_chat_bootstrap_global_cache_version(reason=\"public_workspace_status_updated\")",
-            "bump_chat_bootstrap_global_cache_version(reason=\"public_workspace_bulk_status_updated\")",
-            "bump_chat_bootstrap_global_cache_version(reason=\"public_workspace_member_added\")",
+            "cache_reason=\"public_workspace_status_updated\"",
+            "cache_reason=\"public_workspace_bulk_status_updated\"",
+            "cache_reason=\"public_workspace_member_added\"",
             "cache_reason=\"group_ownership_transferred\"",
-            "bump_chat_bootstrap_global_cache_version(reason=\"public_workspace_ownership_transferred\")",
+            "cache_reason=\"public_workspace_ownership_transferred\"",
         ],
     }
 
