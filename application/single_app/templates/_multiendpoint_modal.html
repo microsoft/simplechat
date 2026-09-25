@@ -1,8 +1,8 @@
 <!-- Model Endpoint Modal -->
-<div class="modal fade" id="modelEndpointModal" tabindex="-1" aria-labelledby="modelEndpointModalLabel" aria-hidden="true" data-bwignore="true" data-1p-ignore="true" data-lpignore="true" autocomplete="off">
+<div class="modal fade" id="modelEndpointModal" tabindex="-1" aria-labelledby="modelEndpointModalLabel" aria-hidden="true" data-bwignore="true" data-1p-ignore="true" data-lpignore="true" autocomplete="off" data-model-library="{{ model_endpoint_library | default([]) | tojson | forceescape }}">
     <div class="modal-dialog modal-xl modal-dialog-scrollable">
         <div class="modal-content">
-            <div class="modal-header">
+            <div class="modal-header flex-wrap gap-2">
                 <h5 class="modal-title" id="modelEndpointModalLabel">Model Endpoint</h5>
                 <div class="d-flex align-items-center gap-2">
                     <button type="button" class="btn btn-sm btn-outline-secondary" data-bs-toggle="collapse" data-bs-target="#model-endpoint-inline-guidance" aria-expanded="false" aria-controls="model-endpoint-inline-guidance" data-testid="model-endpoint-inline-guidance-toggle">
@@ -13,6 +13,7 @@
             </div>
             <div class="modal-body">
                 <input type="hidden" id="model-endpoint-id" />
+                <div id="model-endpoint-routing-error" class="alert alert-danger d-none" role="alert" tabindex="-1"></div>
 
                 <div class="collapse" id="model-endpoint-inline-guidance">
                     <div class="alert alert-info mb-3" role="region" aria-label="Model endpoint setup guidance">
@@ -48,7 +49,8 @@
                     <div class="col-md-6 d-none" id="model-endpoint-api-type-group">
                         <label for="model-endpoint-api-type" class="form-label">API Type</label>
                         <select class="form-select" id="model-endpoint-api-type"
-                            data-api-types="{{ model_endpoint_api_types | tojson | forceescape }}">
+                            data-api-types="{{ model_endpoint_api_types | tojson | forceescape }}"
+                            data-routing-api-types="{{ model_endpoint_routing_api_types | default(model_endpoint_api_types) | tojson | forceescape }}">
                             {% for api_type in model_endpoint_api_types %}
                             <option value="{{ api_type.value }}">{{ api_type.label }}</option>
                             {% endfor %}

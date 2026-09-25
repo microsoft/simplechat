@@ -51,6 +51,21 @@ from functions_model_endpoint_validation import (
     ModelEndpointValidationError,
     resolve_custom_model_endpoint_addresses,
 )
+from functions_model_endpoint_urls import (
+    CUSTOM_OPENAI_OPERATION_SUFFIXES,
+    CUSTOM_OPENAI_VERSION_SEGMENT_PATTERN,
+    _endpoint_path_names_a_version,
+    endpoint_uses_openai_style_protocol,
+    get_endpoint_origin,
+    get_endpoint_path,
+    infer_model_endpoint_protocol,
+    is_anthropic_model,
+    normalize_endpoint_text,
+    normalize_anthropic_messages_url,
+    normalize_custom_openai_base_url,
+    normalize_openai_style_base_url,
+    resolve_custom_openai_base_url,
+)
 
 
 MODEL_ENDPOINT_PROTOCOL_AZURE_OPENAI = "azure_openai"
@@ -114,209 +129,6 @@ class ModelEndpointBehavior:
     @property
     def response_length_parameter(self) -> str:
         return "max_completion_tokens" if self.is_openai_reasoning_model else "max_tokens"
-
-
-def normalize_endpoint_text(endpoint: Any) -> str:
-    """Return a trimmed endpoint URL without a trailing slash."""
-    return str(endpoint or "").strip().rstrip("/")
-
-
-def get_endpoint_path(endpoint: Any) -> str:
-    """Return the lower-case parsed path for an endpoint string."""
-    endpoint_value = normalize_endpoint_text(endpoint)
-    if not endpoint_value:
-        return ""
-    try:
-        return urlparse(endpoint_value).path.lower()
-    except ValueError:
-        return endpoint_value.lower()
-
-
-def get_endpoint_origin(endpoint: Any) -> str:
-    """Return scheme and host for an endpoint URL."""
-    endpoint_value = normalize_endpoint_text(endpoint)
-    parsed_url = urlparse(endpoint_value)
-    if not parsed_url.scheme or not parsed_url.netloc:
-        return endpoint_value
-    return f"{parsed_url.scheme}://{parsed_url.netloc}"
-
-
-def is_anthropic_model(deployment_name: Any) -> bool:
-    """Return whether a deployment should use the Anthropic messages protocol."""
-    normalized_name = str(deployment_name or "").strip().lower()
-    return any(marker in normalized_name for marker in ANTHROPIC_MODEL_MARKERS)
-
-
-def endpoint_uses_openai_style_protocol(endpoint: Any) -> bool:
-    """Return whether the endpoint is already an OpenAI-compatible Foundry URL."""
-    endpoint_value = normalize_endpoint_text(endpoint).lower()
-    endpoint_path = get_endpoint_path(endpoint_value)
-    return (
-        "/openai/v1" in endpoint_path
-        or "/api/projects/" in endpoint_path
-        or "services.ai.azure.com" in endpoint_value
-    )
-
-
-def infer_model_endpoint_protocol(
-    provider: Any,
-    endpoint: Any,
-    deployment_name: Any = "",
-    api_type: Any = "",
-) -> str:
-    """Infer the runtime protocol from provider, endpoint path, and deployment name."""
-    normalized_provider = str(provider or "aoai").strip().lower()
-    if normalized_provider == MODEL_ENDPOINT_PROVIDER_CUSTOM:
-        registered_provider = get_model_endpoint_provider(
-            normalize_model_endpoint_api_type(normalized_provider, api_type)
-        )
-        if registered_provider is None:
-            raise ValueError("Custom model endpoints require a supported API type.")
-        return registered_provider.protocol
-
-    endpoint_path = get_endpoint_path(endpoint)
-
-    if normalized_provider in ("anthropic", "claude"):
-        return MODEL_ENDPOINT_PROTOCOL_ANTHROPIC
-
-    if "/anthropic/" in endpoint_path or is_anthropic_model(deployment_name):
-        return MODEL_ENDPOINT_PROTOCOL_ANTHROPIC
-
-    if normalized_provider in ("aifoundry", "new_foundry") and endpoint_uses_openai_style_protocol(endpoint):
-        return MODEL_ENDPOINT_PROTOCOL_OPENAI_STYLE
-
-    return MODEL_ENDPOINT_PROTOCOL_AZURE_OPENAI
-
-
-def normalize_openai_style_base_url(raw_endpoint: Any) -> str:
-    """Normalize Foundry OpenAI-compatible endpoints to a base URL."""
-    endpoint = normalize_endpoint_text(raw_endpoint)
-    if not endpoint:
-        raise ValueError("A Foundry endpoint is required for OpenAI-compatible inference.")
-
-    lowered_endpoint = endpoint.lower()
-    for suffix in ("/chat/completions", "/responses", "/models"):
-        suffix_index = lowered_endpoint.find(suffix)
-        if suffix_index >= 0:
-            endpoint = endpoint[:suffix_index]
-            lowered_endpoint = endpoint.lower()
-            break
-
-    openai_v1_index = lowered_endpoint.find("/openai/v1")
-    if openai_v1_index >= 0:
-        return endpoint[: openai_v1_index + len("/openai/v1")].rstrip("/") + "/"
-
-    openai_index = lowered_endpoint.find("/openai")
-    if openai_index >= 0:
-        return endpoint[:openai_index].rstrip("/") + "/openai/v1/"
-
-    return endpoint.rstrip("/") + "/openai/v1/"
-
-
-CUSTOM_OPENAI_OPERATION_SUFFIXES = ("/chat/completions", "/responses", "/models")
-# The optional suffix must start with a letter. Allowing it to start with a digit
-# would make it ambiguous with the preceding \d+, which backtracks quadratically
-# on a long run of digits.
-CUSTOM_OPENAI_VERSION_SEGMENT_PATTERN = re.compile(
-    r"^v\d+(?:[a-z][a-z0-9]*)?$",
-    re.IGNORECASE,
-)
-
-
-def _endpoint_path_names_a_version(endpoint: str) -> bool:
-    """Return whether the endpoint's last path segment is already a version."""
-    try:
-        path = urlparse(endpoint).path
-    except ValueError:
-        return False
-    segments = [segment for segment in path.split("/") if segment]
-    if not segments:
-        return False
-    return bool(CUSTOM_OPENAI_VERSION_SEGMENT_PATTERN.fullmatch(segments[-1]))
-
-
-def normalize_custom_openai_base_url(raw_endpoint: Any) -> str:
-    """Normalize a Custom OpenAI-compatible endpoint to its base URL.
-
-    "/v1" is appended only when the configured URL does not already say where the
-    API lives. It is not appended when the last path segment is already a version
-    such as "v1", "v2", or "v1beta", and it is not appended when the administrator
-    pasted a full operation URL, because that URL states the base exactly.
-    """
-    endpoint = normalize_endpoint_text(raw_endpoint)
-    if not endpoint:
-        raise ValueError("A Custom endpoint is required for OpenAI-compatible inference.")
-
-    lowered_endpoint = endpoint.lower()
-    for suffix in CUSTOM_OPENAI_OPERATION_SUFFIXES:
-        if lowered_endpoint.endswith(suffix):
-            # A full operation URL states the base exactly, so trust it as given.
-            return endpoint[: -len(suffix)].rstrip("/") + "/"
-
-    if _endpoint_path_names_a_version(endpoint):
-        return endpoint.rstrip("/") + "/"
-    return endpoint.rstrip("/") + "/v1/"
-
-
-def resolve_custom_openai_base_url(
-    raw_endpoint: Any,
-    api_type: Any = "",
-    url_mode: Any = "",
-) -> str:
-    """Resolve a Custom endpoint base URL using the provider's URL policy.
-
-    Appending "/v1" is correct for OpenAI and OpenAI-compatible gateways, but wrong
-    for surfaces that already carry their own version segment. Google Gemini's
-    compatible base ends in "/v1beta/openai/", and appending "/v1" to it produces a
-    404, so that provider declares the as-given policy instead.
-
-    An administrator can also force the as-given policy for any API type by setting
-    the endpoint's url_mode to "exact", which covers gateways that mount the
-    OpenAI surface at a path SimpleChat cannot infer.
-    """
-    provider = get_model_endpoint_provider(api_type)
-    url_policy = provider.url_policy if provider else URL_POLICY_APPEND_V1_IF_MISSING
-    if str(url_mode or "").strip().lower() == CUSTOM_ENDPOINT_URL_MODE_EXACT:
-        url_policy = URL_POLICY_AS_GIVEN
-
-    if url_policy == URL_POLICY_AS_GIVEN:
-        endpoint = normalize_endpoint_text(raw_endpoint)
-        if not endpoint:
-            raise ValueError("A Custom endpoint is required for OpenAI-compatible inference.")
-        return endpoint.rstrip("/") + "/"
-
-    return normalize_custom_openai_base_url(raw_endpoint)
-
-
-def normalize_anthropic_messages_url(
-    raw_endpoint: Any,
-    *,
-    direct_custom: bool = False,
-) -> str:
-    """Normalize a Foundry endpoint to the Anthropic messages URL."""
-    endpoint = normalize_endpoint_text(raw_endpoint)
-    if not endpoint:
-        raise ValueError("An endpoint is required for Anthropic inference.")
-
-    lowered_endpoint = endpoint.lower()
-    if direct_custom:
-        if lowered_endpoint.endswith("/v1/messages"):
-            return endpoint
-        if lowered_endpoint.endswith("/v1"):
-            return endpoint.rstrip("/") + "/messages"
-        if lowered_endpoint.endswith("/messages"):
-            return endpoint
-        return endpoint.rstrip("/") + "/v1/messages"
-
-    messages_index = lowered_endpoint.find("/anthropic/v1/messages")
-    if messages_index >= 0:
-        return endpoint[: messages_index + len("/anthropic/v1/messages")]
-
-    anthropic_index = lowered_endpoint.find("/anthropic/v1")
-    if anthropic_index >= 0:
-        return endpoint[: anthropic_index + len("/anthropic/v1")].rstrip("/") + "/messages"
-
-    return get_endpoint_origin(endpoint).rstrip("/") + "/anthropic/v1/messages"
 
 
 def resolve_openai_style_request_api_version(raw_api_version: Any) -> str:

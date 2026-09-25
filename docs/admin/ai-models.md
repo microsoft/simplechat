@@ -5,7 +5,7 @@ description: "AI Models configures chat, embedding, image generation, APIM, mult
 section: "Administration"
 audience: admin
 admin_tab: ai-models
-version: "0.261.035"
+version: "0.261.043"
 ---
 
 
@@ -34,6 +34,41 @@ Model endpoints are production dependencies for every generated answer, embeddin
 ### Model Endpoints {#multi-endpoint-configuration}
 
 The Model Endpoints section belongs to the Model Endpoints tab. Use it with the adjacent settings in this group so related rollout, access, and operational choices stay aligned.
+
+### Per-model routing preview
+
+Implemented in version: **0.261.042**, tracked in
+`application/single_app/config.py`.
+
+New endpoints use per-model routing so one gateway can host different API
+contracts and paths. This release supports configuration and route preview only:
+new endpoints stay disabled, and their live **Test Connection** and activation
+are unavailable until runtime integration. Existing legacy endpoints are not
+migrated and retain their previous behavior.
+
+| Control | Purpose |
+| --- | --- |
+| Model Library | Associates the row with a published catalogue ID. A new Custom row can take a visible protocol suggestion; an existing explicit choice is preserved. This does not grant gateway capabilities. |
+| API Type | On Custom rows, selects Azure deployments, Azure/Foundry Chat Completions, generic Chat Completions, Messages, or Gemini compatibility independently of the model vendor. |
+| URL Handling | Auto applies that API's route convention. Exact API base preserves the composed base and appends only the operation, not an arbitrary full request URL. |
+| API Path | Inserts a relative path immediately after the origin and before the endpoint's existing path. Available on non-Custom rows too. |
+| API Version / Anthropic Version | Supplies the selected Custom API's applicable protocol version, separately from the published model version. |
+| Preview Route | Displays the server-computed POST URL without resolving credentials or contacting the provider. |
+
+For example, an endpoint `https://gateway.example/shared/v1`, an API Path of
+`team-a`, and Messages in Auto mode preview as
+`https://gateway.example/team-a/shared/v1/messages`. Paths must not contain an
+origin, query, fragment, or traversal segments. Preview is structural validation,
+not proof of authentication, availability, or network policy approval.
+
+Persist multi-endpoint and applicable personal/group enablement before previewing.
+Configure two rows, compare their previews against the gateway contract, then
+save/reopen to verify independent routing. Invalid or duplicate routes block the
+save; changing the form while validation runs requires saving again. Global
+**Save Endpoint** updates the form until the main settings save. Personal/group
+editors use their existing scoped save APIs and role restrictions. Do not enable
+schema-v2 records manually or migrate production endpoints for this editor-only
+release. See the [identity and scope requirements]({{ '/guides/model-endpoint-identity-setup/' | relative_url }}).
 
 ### Verified model capacity
 
@@ -88,7 +123,7 @@ The Chat Model section belongs to the Model Endpoints tab. Use it with the adjac
 
 | Setting | What it does | Default | Notes |
 | --- | --- | --- | --- |
-| Enable multi-endpoint model management | Provides the endpoint or route SimpleChat uses for this service. | Off | `enable_multi_model_endpoints`; capability toggle |
+| Enable multi-endpoint model management | Provides the endpoint or route SimpleChat uses for this service. | On for new instances; existing settings remain unchanged | `enable_multi_model_endpoints`; capability toggle |
 | Search Agents | Defines behavior for the related admin workflow; verify the affected feature after saving. | N/A (runtime control) | Runtime UI control |
 | Filter | Defines behavior for the related admin workflow; verify the affected feature after saving. | N/A (runtime control) | Runtime UI control |
 | Enable header | Provides the endpoint or route SimpleChat uses for this service. | Off | `model_endpoint_identity_header_enabled` |

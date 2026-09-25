@@ -2,6 +2,34 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.043)**
+
+#### New Features
+
+*   **Multi-Endpoint Model Management Defaults On for New Instances**
+    *   New app settings documents enable `enable_multi_model_endpoints` by default, making multi-endpoint configuration available in new deployments without changing existing installations.
+    *   Existing saved values remain intact, and older settings documents that lack the flag retain the historical disabled behavior.
+    *   (Ref: `functions_settings.py`, `config.py`, `docs/admin/ai-models.md`, [#1518](https://github.com/microsoft/simplechat/issues/1518))
+
+### **(v0.261.041)**
+
+#### New Features
+
+*   **Per-Model Endpoint Routing Foundation (Phase 1)**
+    *   Added the explicit backend routing contract for mixed Custom model protocols, origin-first API paths, model-local versions, and separate Azure deployment and Azure/Foundry Chat Completions policies.
+    *   Added conservative dry-run migration and guarded rollback helpers, secret-free scoped routing contexts, current-policy validation, and route-aware cache identity. Existing endpoint readers and protected transports retain their behavior.
+    *   All 21 guarded baseline scripts pass. Editors and actual model-chat/helper dispatch are not yet wired to the new contract; no saved endpoint migration, agent integration, GenAI.mil integration, or live validation is included in this phase.
+    *   (Ref: [Custom Endpoints Per-Model Routing Spec](features/CUSTOM_ENDPOINTS_PER_MODEL_ROUTING_SPEC.md), `functions_model_endpoint_urls.py`, `functions_model_endpoint_runtime.py`, `functions_settings.py`, [issue #1518](https://github.com/microsoft/simplechat/issues/1518), [tracking PR #1514](https://github.com/microsoft/simplechat/pull/1514))
+
+### **(v0.261.040)**
+
+#### Bug Fixes
+
+*   **Model Endpoint Regression Baseline Repairs**
+    *   Restored summary-routing tests by supplying their real identity-header dependency and corrected the payload-builder assertion to check current Foundry validation within the intended function.
+    *   All 21 guarded baseline scripts pass. These are test repairs only; the planned per-model routing feature is not enabled by this version.
+    *   (Ref: [Model Endpoint Baseline Test Fix](fixes/MODEL_ENDPOINT_BASELINE_TEST_FIX.md), [tracking PR #1514](https://github.com/microsoft/simplechat/pull/1514))
+
 ### **(v0.261.030)**
 
 #### Bug Fixes

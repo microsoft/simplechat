@@ -19,6 +19,11 @@ from functions_model_endpoint_types import (
     get_model_endpoint_api_type,
     resolve_model_endpoint_request_model,
 )
+from functions_model_endpoint_urls import (
+    normalize_model_endpoint_routing,
+    resolve_model_endpoint_route,
+    routing_schema_version,
+)
 
 
 CUSTOM_ENDPOINT_MAX_URL_LENGTH = 2048
@@ -278,6 +283,24 @@ def _validate_version(value: Any, field_label: str) -> str:
     return normalized_value
 
 
+def validate_model_endpoint_routing(endpoint, settings=None, *, require_resolvable=False):
+    """Revalidate each explicit route against the existing outbound policy."""
+    try:
+        normalized = normalize_model_endpoint_routing(endpoint)
+        routes = [resolve_model_endpoint_route(normalized, model) for model in normalized["models"]]
+    except (ValueError, KeyError, TypeError) as exc:
+        raise ModelEndpointValidationError("Invalid explicit model routing configuration.") from exc
+    policy = settings or {}
+    for route in routes:
+        validate_custom_model_endpoint_url(
+            route["api_base"],
+            allow_private=policy.get("allow_private_custom_model_endpoints") is True,
+            allow_insecure=policy.get("allow_insecure_custom_model_endpoints") is True,
+            require_resolvable=require_resolvable,
+        )
+    return routes
+
+
 def validate_custom_model_endpoint(
     endpoint: Any,
     settings: Dict[str, Any] | None = None,
@@ -287,6 +310,8 @@ def validate_custom_model_endpoint(
     """Validate a normalized Custom endpoint record."""
     if not isinstance(endpoint, dict):
         raise ModelEndpointValidationError("Custom endpoint configuration is invalid.")
+    explicit_routing = routing_schema_version(endpoint) == 2
+    routes = validate_model_endpoint_routing(endpoint, settings) if explicit_routing else []
     if str(endpoint.get("provider") or "").strip().lower() != MODEL_ENDPOINT_PROVIDER_CUSTOM:
         return
 
@@ -294,10 +319,12 @@ def validate_custom_model_endpoint(
     if not endpoint_name:
         raise ModelEndpointValidationError("Custom endpoint name is required.")
 
-    api_type = get_model_endpoint_api_type(endpoint)
-    if not api_type:
+    api_type = "" if explicit_routing else get_model_endpoint_api_type(endpoint)
+    if not explicit_routing and not api_type:
         raise ModelEndpointValidationError("Custom endpoint API type is not supported.")
     registered_provider = get_model_endpoint_provider(api_type)
+    if registered_provider is not None and registered_provider.routing_schema_version > 1 and not explicit_routing:
+        raise ModelEndpointValidationError("This API type requires explicit model routing.")
 
     auth = endpoint.get("auth") if isinstance(endpoint.get("auth"), dict) else {}
     auth_type = normalize_custom_endpoint_auth_type(auth.get("type"))
@@ -367,10 +394,10 @@ def validate_custom_model_endpoint(
         raise ModelEndpointValidationError(
             "Custom endpoints require at least one manually configured model."
         )
-    for model in models:
+    for index, model in enumerate(models):
         if not isinstance(model, dict):
             raise ModelEndpointValidationError("Custom endpoint model configuration is invalid.")
-        request_model = resolve_model_endpoint_request_model(endpoint, model)
+        request_model = resolve_model_endpoint_request_model(endpoint, model, use_model_routing=explicit_routing)
         if not request_model:
             model_field = (
                 "Model Name"
@@ -380,7 +407,7 @@ def validate_custom_model_endpoint(
             raise ModelEndpointValidationError(
                 f"Custom endpoint models require {model_field}."
             )
-        normalized_model_name = request_model.casefold()
+        normalized_model_name = (request_model, routes[index]["operation_url"]) if explicit_routing else request_model.casefold()
         if normalized_model_name in seen_model_names:
             raise ModelEndpointValidationError(
                 "Custom endpoint model names must be unique."

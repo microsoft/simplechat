@@ -6,7 +6,7 @@ menubar: docs_menu
 accent: teal
 eyebrow: "Admin How-To"
 description: "Assign managed identity or service principal access for Azure OpenAI, Foundry (classic), and New Foundry model endpoints in the multi-endpoint modal."
-version: "0.261.035"
+version: "0.261.042"
 keywords:
   - model endpoints
   - multi endpoint
@@ -38,8 +38,16 @@ redirect_from:
 
 Use this guide when admins need to configure the shared **Model Endpoint** modal for Azure OpenAI, Foundry (classic), or New Foundry without depending on legacy single-endpoint settings.
 
-Documented for version **0.261.035**. Model capacity overrides implemented in
+Documented for version **0.261.042**. Model capacity overrides implemented in
 version: **0.261.035**, tracked by `application/single_app/config.py`.
+
+Per-model editors implemented in version: **0.261.042** are configuration-only.
+New schema-v2 endpoints stay disabled, and live connection tests are unavailable
+until runtime integration. The inference and discovery guidance below describes
+existing legacy endpoints; it does not enable new schema-v2 dispatch. For new
+global, personal, and group rows, follow the
+[per-model preview workflow]({{ '/admin/ai-models/#per-model-routing-preview' | relative_url }})
+and keep production legacy configurations unchanged.
 
 The multi-endpoint UI also includes a **Setup Guide** button beside endpoint actions and inside the Model Endpoint modal. Use that in-product guidance for quick RBAC reminders, and use this page when you need the full setup sequence.
 

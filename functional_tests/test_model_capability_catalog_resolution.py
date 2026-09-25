@@ -1,8 +1,10 @@
 # test_model_capability_catalog_resolution.py
 """
 Functional tests for the catalog-backed model capability resolver and schema.
-Version: 0.261.035
+Version: 0.261.042
 Implemented in: 0.261.035
+
+Chat model library projections added in: 0.261.042
 
 The qualitative resolver first shipped in 0.261.014. These tests preserve its
 override, family-isolation, prefix, and fallback behavior while validating the
@@ -96,6 +98,29 @@ class TestModelCapabilityCatalog(unittest.TestCase):
             if family not in model_ids:
                 matched = capabilities.find_model_catalog_record(family)
                 self.assertIsNone(matched, f"Bare family {family!r} matched a model.")
+
+    def test_editor_library_is_isolated_and_registry_backed(self):
+        document = capabilities.load_model_capability_catalog()
+        self.assertIsInstance(document, dict)
+        original = json.dumps(document, sort_keys=True)
+        records = capabilities.get_model_capability_catalog_records()
+        records[0]["capabilities"]["processesImages"] = "mutated"
+        self.assertEqual(json.dumps(document, sort_keys=True), original)
+        options = capabilities.get_model_endpoint_library_options()
+        self.assertTrue(options)
+        for option in options:
+            descriptor = capabilities.get_model_endpoint_provider(option["api_type"])
+            self.assertIsNotNone(descriptor)
+            self.assertEqual(option["url_mode"], "auto")
+            self.assertEqual(option["catalogSchemaVersion"], 3)
+            self.assertTrue(option["sourceIds"])
+            self.assertNotIn("capabilities", option)
+            self.assertNotIn("api_path", option)
+            record = next(record for record in document["models"] if record["id"] == option["id"])
+            self.assertTrue(record["capabilities"]["processesText"])
+            self.assertTrue(record["capabilities"]["generatesText"])
+        options[0]["sourceIds"].clear()
+        self.assertEqual(json.dumps(document, sort_keys=True), original)
 
     def test_longest_prefix_wins(self):
         """Legacy capability matching still accepts exact deployment suffixes."""

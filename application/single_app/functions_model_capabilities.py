@@ -11,12 +11,14 @@ Only stdlib imports are used here on purpose. This module sits below the setting
 logging, and route layers, so pulling those in would risk import cycles.
 """
 
+from copy import deepcopy
 import json
 import os
 import re
 import threading
 from collections.abc import Mapping
 from dataclasses import dataclass, replace
+from functions_model_endpoint_providers import get_model_endpoint_provider
 
 
 MODEL_IDENTIFIER_SEPARATOR_PATTERN = re.compile(r"[\s_.]+")
@@ -104,9 +106,40 @@ def load_model_capability_catalog():
 
 
 def get_model_capability_catalog_records():
-    """Return every model record defined by the catalog."""
+    """Return isolated model records without changing the document loader contract."""
     catalog = load_model_capability_catalog()
-    return [record for record in catalog.get("models") or [] if isinstance(record, dict)]
+    return deepcopy([record for record in catalog.get("models") or [] if isinstance(record, dict)])
+
+
+def get_model_endpoint_library_options():
+    """Project chat identity and visible routing suggestions, never permissions."""
+    catalog = load_model_capability_catalog()
+    profiles = catalog.get("editorRoutingProfiles", {})
+    options = []
+    for record in get_model_capability_catalog_records():
+        capabilities = record.get("capabilities", {})
+        if (
+            capabilities.get("processesText") is not True
+            or capabilities.get("generatesText") is not True
+            or capabilities.get("generatesImages") is True
+            or record.get("tokenLimitsApplicability") != "text"
+        ):
+            continue
+        profile = profiles.get(record.get("provider"), profiles.get("default", {}))
+        descriptor = get_model_endpoint_provider(profile.get("api_type"))
+        if descriptor is None or profile.get("url_mode") not in ("auto", "exact"):
+            continue
+        options.append({
+            "id": record["id"],
+            "displayName": record["displayName"],
+            "publisher": record["provider"],
+            "lifecycle": record["lifecycle"],
+            "api_type": descriptor.api_type,
+            "url_mode": profile["url_mode"],
+            "catalogSchemaVersion": catalog["schemaVersion"],
+            "sourceIds": record["sourceIds"],
+        })
+    return options
 
 
 def _get_record_field(record, field_name):
@@ -241,8 +274,45 @@ def _heuristic_is_reasoning_model(model):
     return False
 
 
-def resolve_model_capability(capability_name, model=None, endpoint=None, default=None):
+def _explicit_routing_capabilities(model, endpoint):
+    descriptor = get_model_endpoint_provider(_get_record_field(model, "api_type"))
+    if descriptor is None:
+        raise ValueError("Unsupported model API type.")
+    gateway = _read_declared_capabilities(endpoint)
+    selected = _read_declared_capabilities(model)
+    capabilities = dict.fromkeys(CAPABILITY_FIELD_NAMES, False)
+    for name, supported in {
+        "processesText": True,
+        "generatesText": True,
+        CAPABILITY_SUPPORTS_STREAMING: descriptor.supports_streaming,
+    }.items():
+        capabilities[name] = supported and gateway.get(name, True) and selected.get(name, True)
+    for name, supported in {
+        CAPABILITY_TOOL_CALLING: descriptor.supports_tools,
+        CAPABILITY_PROCESSES_IMAGES: True,
+        CAPABILITY_STRUCTURED_OUTPUT: descriptor.protocol != "anthropic",
+    }.items():
+        capabilities[name] = supported and gateway.get(name) is True and selected.get(name) is True
+    return capabilities
+
+
+def _uses_explicit_model_routing(endpoint, use_model_routing):
+    version = _get_record_field(endpoint, "routing_schema_version")
+    if version is None and not isinstance(endpoint, dict):
+        return False
+    if isinstance(endpoint, dict) and "routing_schema_version" not in endpoint:
+        return False
+    if type(version) is not int or version not in (1, 2):
+        raise ValueError("Unsupported model routing schema version.")
+    if version == 2 and not use_model_routing:
+        raise ValueError("This consumer does not support explicit model routing.")
+    return version == 2
+
+
+def resolve_model_capability(capability_name, model=None, endpoint=None, default=None, *, use_model_routing=False):
     """Resolve one capability through the override, catalog, then heuristic chain."""
+    if _uses_explicit_model_routing(endpoint, use_model_routing):
+        return _explicit_routing_capabilities(model, endpoint).get(capability_name, False)
     declared_model_capabilities = _read_declared_capabilities(model)
     if capability_name in declared_model_capabilities:
         return declared_model_capabilities[capability_name]
@@ -265,10 +335,10 @@ def resolve_model_capability(capability_name, model=None, endpoint=None, default
     return default
 
 
-def resolve_model_capabilities(model=None, endpoint=None):
+def resolve_model_capabilities(model=None, endpoint=None, *, use_model_routing=False):
     """Return every known capability for a model as a name to boolean-or-None map."""
     return {
-        capability_name: resolve_model_capability(capability_name, model, endpoint)
+        capability_name: resolve_model_capability(capability_name, model, endpoint, use_model_routing=use_model_routing)
         for capability_name in CAPABILITY_FIELD_NAMES
     }
 

@@ -1,8 +1,9 @@
 # test_app_settings_store_consistency.py
 """
 Regression tests for shared settings and conditional writes.
-Version: 0.261.027
+Version: 0.261.043
 Implemented in: 0.261.025
+Multi-endpoint new-instance default coverage added in: 0.261.043
 
 Independent store objects represent workers. Fake services exercise ETag conflicts,
 interrupted publication and lease expiry without network access or wall-clock sleeps.
@@ -26,6 +27,7 @@ from azure.cosmos.exceptions import (
     CosmosResourceNotFoundError,
 )
 from redis.exceptions import ConnectionError as RedisConnectionError
+from test_support.versioning import assert_app_version_at_least
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -411,6 +413,33 @@ def test_real_get_settings_creates_defaults_without_overwriting_winner(world):
     created = getter()
     assert created is not None
     assert world.cosmos.document["id"] == "app_settings"
+
+
+def test_new_instance_defaults_multi_endpoint_management_to_enabled(world):
+    world.cosmos.document = None
+    created = load_get_settings(AppSettingsStore(world.cosmos))()
+    assert created is not None
+    assert created["enable_multi_model_endpoints"] is True
+    assert world.cosmos.document["enable_multi_model_endpoints"] is True
+
+
+def test_existing_instance_missing_multi_endpoint_setting_stays_disabled(world):
+    existing_settings = load_get_settings(world.a)()
+    assert existing_settings is not None
+    assert existing_settings["enable_multi_model_endpoints"] is False
+    assert world.cosmos.document["enable_multi_model_endpoints"] is False
+
+
+def test_existing_multi_endpoint_opt_out_is_preserved(world):
+    world.cosmos.document["enable_multi_model_endpoints"] = False
+    existing_settings = load_get_settings(world.a)()
+    assert existing_settings is not None
+    assert existing_settings["enable_multi_model_endpoints"] is False
+    assert world.cosmos.document["enable_multi_model_endpoints"] is False
+
+
+def test_multi_endpoint_new_instance_default_version():
+    assert_app_version_at_least("0.261.043")
 
 
 def test_missing_shared_document_can_be_initialized_without_an_abandoned_marker(world):

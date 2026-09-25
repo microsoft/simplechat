@@ -14,6 +14,21 @@
       "type": "integer",
       "const": 3
     },
+    "editorRoutingProfiles": {
+      "type": "object",
+      "description": "Visible suggestions for new model rows only; saved explicit choices win. API types are validated against the shared provider registry, not a second protocol list.",
+      "required": ["default"],
+      "propertyNames": {"enum": ["default", "openai", "anthropic", "google", "xai", "meta", "microsoft"]},
+      "additionalProperties": {
+        "type": "object",
+        "required": ["api_type", "url_mode"],
+        "properties": {
+          "api_type": {"$ref": "#/$defs/nonemptyString"},
+          "url_mode": {"enum": ["auto", "exact"]}
+        },
+        "additionalProperties": false
+      }
+    },
     "lastUpdated": {
       "$ref": "#/$defs/verificationDate"
     },

@@ -2,8 +2,8 @@
 #!/usr/bin/env python3
 """
 Functional test for model endpoint protocol inference.
-Version: 0.250.109
-Implemented in: 0.241.179; updated in 0.250.109
+Version: 0.261.041
+Implemented in: 0.241.179; schema-v2 resolver in 0.261.041
 
 This test ensures that Foundry model endpoint runtime calls infer Claude as
 Anthropic messages, OpenAI-compatible Foundry endpoints as /openai/v1, and
@@ -14,6 +14,9 @@ payloads without using the Azure OpenAI connector.
 """
 
 import sys
+import copy
+import importlib
+import json
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -225,15 +228,175 @@ def test_model_endpoint_protocol_inference():
     print("✅ Model endpoint protocol inference verified.")
 
 
-if __name__ == "__main__":
-    success = True
+def _routing_fixture(api_type="openai", path="", mode="auto", base="https://gateway.example"):
+    return {
+        "id": "gateway", "name": "Gateway", "provider": "custom",
+        "routing_schema_version": 2, "enabled": True,
+        "connection": {"endpoint": base},
+        "auth": {"type": "api_key", "api_key": "test-secret", "api_key_header": "Ocp-Apim-Subscription-Key", "api_key_prefix": ""},
+        "models": [{
+            "id": "model", "api_type": api_type, "api_path": path, "url_mode": mode,
+            "modelName": "claude-on-openai", "deploymentName": "D", "enabled": True,
+            "api_version": "2025-01-01-preview", "anthropic_version": "2023-06-01",
+        }],
+    }
+
+
+def _expect_routing_error(operation, *args, **kwargs):
     try:
-        test_model_endpoint_protocol_inference()
-    except Exception as exc:
-        print(f"❌ Test failed: {exc}")
-        import traceback
+        operation(*args, **kwargs)
+    except ValueError:
+        return
+    raise AssertionError("Invalid routing input was accepted.")
 
-        traceback.print_exc()
-        success = False
 
-    raise SystemExit(0 if success else 1)
+def test_schema_v2_url_matrix():
+    routing = importlib.import_module("functions_model_endpoint_urls")
+    cases = [
+        ("openai", "aoai-global-team", "auto", "", "/aoai-global-team/v1/chat/completions"),
+        ("openai", "aoai-global-team/v1", "auto", "", "/aoai-global-team/v1/chat/completions"),
+        ("openai", "aoai-global-team/openai/v1", "auto", "", "/aoai-global-team/openai/v1/chat/completions"),
+        ("openai", "aoai-global-team", "exact", "", "/aoai-global-team/chat/completions"),
+        ("azure_openai_v1", "team", "auto", "", "/team/openai/v1/chat/completions"),
+        ("azure_openai_v1", "team/openai/v1", "auto", "", "/team/openai/v1/chat/completions"),
+        ("azure_openai_v1", "team/v1", "auto", "", "/team/v1/openai/v1/chat/completions"),
+        ("azure_openai_v1", "team", "exact", "", "/team/chat/completions"),
+        ("azure_openai_v1", "team", "auto", "/openai/v1", "/team/openai/v1/chat/completions"),
+        ("azure_openai_v1", "team", "auto", "/openai", "/team/openai/v1/chat/completions"),
+        ("anthropic", "aoai-global-team", "auto", "", "/aoai-global-team/v1/messages"),
+        ("anthropic", "aoai-global-team/v2", "auto", "", "/aoai-global-team/v2/messages"),
+        ("anthropic", "aoai-global-team/anthropic/v1", "auto", "", "/aoai-global-team/anthropic/v1/messages"),
+        ("anthropic", "team", "exact", "", "/team/messages"),
+        ("azure_openai", "aoai-global-team", "auto", "", "/aoai-global-team/openai/deployments/D/chat/completions?api-version=2025-01-01-preview"),
+        ("azure_openai", "aoai-global-team/v1", "auto", "", "/aoai-global-team/v1/openai/deployments/D/chat/completions?api-version=2025-01-01-preview"),
+        ("azure_openai", "team/openai/deployments/D", "exact", "", "/team/openai/deployments/D/chat/completions?api-version=2025-01-01-preview"),
+        ("azure_openai", "team", "auto", "/openai", "/team/openai/deployments/D/chat/completions?api-version=2025-01-01-preview"),
+        ("openai", "team", "auto", "/openai/v1", "/team/openai/v1/chat/completions"),
+        ("openai", " /team/sub/ ", "auto", "/shared", "/team/sub/shared/v1/chat/completions"),
+        ("openai", "models/team", "auto", "/shared/models-prefix", "/models/team/shared/models-prefix/v1/chat/completions"),
+        ("openai", "team", "auto", "/team", "/team/team/v1/chat/completions"),
+        ("gemini", "team", "auto", "/v1beta/openai", "/team/v1beta/openai/chat/completions"),
+    ]
+    for api_type, suffix, mode, endpoint_path, expected in cases:
+        endpoint = _routing_fixture(api_type, suffix, mode, "https://gateway.example" + endpoint_path)
+        original = copy.deepcopy(endpoint)
+        route = routing.resolve_model_endpoint_route(endpoint, endpoint["models"][0])
+        assert_equal(route["operation_url"], "https://gateway.example" + expected, str((api_type, suffix, mode)))
+        assert endpoint == original
+        assert "test-secret" not in json.dumps(route)
+        assert route["credential_policy"]["header"] == "Ocp-Apim-Subscription-Key"
+        assert route["credential_policy"]["prefix"] == ""
+        if api_type == "azure_openai_v1":
+            assert route["protocol"] == "openai_style"
+            assert route["request_model"] == "claude-on-openai"
+            assert route["api_version"] == ""
+    endpoint = _routing_fixture("azure_openai", "team", "auto", "https://gateway.example:8443/openai")
+    endpoint["models"][0]["deploymentName"] = "my deployment"
+    route = routing.resolve_model_endpoint_route(endpoint, endpoint["models"][0])
+    assert ":8443/team/openai/deployments/my%20deployment/" in route["operation_url"]
+
+
+def test_schema_v2_rejects_unsafe_and_deferred_routes():
+    routing = importlib.import_module("functions_model_endpoint_urls")
+    bad_paths = [
+        "//evil.example", "https://evil.example", "team?key=value", "team#fragment",
+        "team\\next", "team//next", "../team", "team/./next", "team/../next",
+        "team/%2e%2e", "team/%2fnext", "team/%5cnext", "team/%252e%252e",
+        "team/%252f", "team/%", "team/%zz", "team/%00", "team\x00", "team\n",
+        "team\t", "user@host", "team;parameter", "team///", "///team",
+    ]
+    for suffix in bad_paths:
+        endpoint = _routing_fixture(path=suffix)
+        _expect_routing_error(routing.resolve_model_endpoint_route, endpoint, endpoint["models"][0])
+    for base in ("https://user:secret@gateway.example", "https://gateway.example/?secret=1", "https://gateway.example/#part", "https://gateway.example/a//b", "https://gateway.example/%252f", "https://gateway.example/../x", "https://gateway.example\\evil", "ftp://gateway.example"):
+        endpoint = _routing_fixture(base=base)
+        _expect_routing_error(routing.resolve_model_endpoint_route, endpoint, endpoint["models"][0])
+    for field, value in (("api_type", "responses"), ("api_type", "custom_call"), ("api_type", ""), ("url_mode", "inherit"), ("url_mode", ""), ("modelName", "")):
+        endpoint = _routing_fixture()
+        endpoint["models"][0][field] = value
+        _expect_routing_error(routing.resolve_model_endpoint_route, endpoint, endpoint["models"][0])
+    for api_type, path, mode in (("azure_openai", "team/openai/v1", "auto"), ("azure_openai", "team", "exact"), ("azure_openai", "team/openai/deployments/other", "exact"), ("azure_openai_v1", "team/openai/deployments/D", "auto"), ("openai", "team/chat/completions", "exact"), ("anthropic", "team/messages", "exact")):
+        endpoint = _routing_fixture(api_type, path, mode)
+        _expect_routing_error(routing.resolve_model_endpoint_route, endpoint, endpoint["models"][0])
+    for path in ("team/openai/deployments/D/extra/other", "team/openai/deployments/D/openai/deployments/D"):
+        endpoint = _routing_fixture("azure_openai", path)
+        _expect_routing_error(routing.resolve_model_endpoint_route, endpoint, endpoint["models"][0])
+    for field in ("request_template", "url_template", "custom_call", "response_id"):
+        endpoint = _routing_fixture()
+        endpoint["models"][0][field] = "not-supported"
+        _expect_routing_error(routing.resolve_model_endpoint_route, endpoint, endpoint["models"][0])
+    for identifier in ("../other", "a/b", "a?b", "a%2fb", "a\\b", "a#b", "a\r\nHost: evil"):
+        endpoint = _routing_fixture("azure_openai")
+        endpoint["models"][0]["deploymentName"] = identifier
+        _expect_routing_error(routing.resolve_model_endpoint_route, endpoint, endpoint["models"][0])
+
+
+def test_schema_v2_versions_capabilities_and_cache_identity():
+    routing = importlib.import_module("functions_model_endpoint_urls")
+    endpoint = _routing_fixture("anthropic")
+    model = endpoint["models"][0]
+    model["modelName"] = "gpt-on-messages"
+    endpoint["capabilities"] = {"toolCalling": False, "processesImages": True, "structuredOutput": True}
+    model["capabilities"] = {"toolCalling": True, "processesImages": True, "structuredOutput": True}
+    route = routing.resolve_model_endpoint_route(endpoint, model)
+    assert route["request_model"] == "gpt-on-messages"
+    assert route["capabilities"]["toolCalling"] is False
+    assert route["capabilities"]["processesImages"] is True
+    assert route["capabilities"]["structuredOutput"] is False
+    capabilities = importlib.import_module("functions_model_capabilities")
+    effective = capabilities.resolve_model_capabilities(model, endpoint, use_model_routing=True)
+    assert effective == route["capabilities"]
+    _expect_routing_error(capabilities.resolve_model_capabilities, model, endpoint)
+    key = routing.model_endpoint_route_cache_key(route, scope_type="group", scope_id="one", configuration_revision="r1")
+    for changed_scope, revision in (("two", "r1"), ("one", "r2")):
+        changed_key = routing.model_endpoint_route_cache_key(route, scope_type="group", scope_id=changed_scope, configuration_revision=revision)
+        assert changed_key != key
+    model["api_path"] = "different"
+    changed_route = routing.resolve_model_endpoint_route(endpoint, model)
+    changed_key = routing.model_endpoint_route_cache_key(changed_route, scope_type="group", scope_id="one", configuration_revision="r1")
+    assert changed_key != key
+    assert "test-secret" not in key
+    endpoint = _routing_fixture("azure_openai")
+    endpoint["api_type"] = "azure_openai"
+    endpoint["connection"]["api_version"] = "2024-01-01"
+    route = routing.resolve_model_endpoint_route(endpoint, endpoint["models"][0])
+    assert route["api_version"] == "2025-01-01-preview"
+    del endpoint["models"][0]["api_version"]
+    route = routing.resolve_model_endpoint_route(endpoint, endpoint["models"][0])
+    assert route["api_version"] == "2024-01-01"
+    endpoint["api_type"] = "openai"
+    _expect_routing_error(routing.resolve_model_endpoint_route, endpoint, endpoint["models"][0])
+
+
+def test_non_custom_explicit_routing_preserves_provider_contract():
+    routing = importlib.import_module("functions_model_endpoint_urls")
+    cases = (
+        ("aoai", "https://gateway.example/shared", "gpt-model", "/team/shared/openai/deployments/gpt-model/chat/completions?api-version=2024-01-01"),
+        ("aoai", "https://gateway.example/shared", "claude-model", "/team/shared/v1/messages"),
+        ("new_foundry", "https://resource.services.ai.azure.com/api/projects/project", "gpt-model", "/team/api/projects/project/openai/v1/chat/completions"),
+        ("new_foundry", "https://resource.services.ai.azure.com/api/projects/project", "claude-model", "/team/anthropic/v1/messages"),
+    )
+    for provider, base, deployment, expected in cases:
+        endpoint = _routing_fixture(base=base)
+        endpoint["provider"] = provider
+        endpoint["connection"]["api_version"] = "2024-01-01"
+        endpoint["models"] = [{"id": "selected", "deploymentName": deployment, "api_path": "team"}]
+        route = routing.resolve_model_endpoint_route(endpoint, endpoint["models"][0])
+        origin = base.split("/", 3)[:3]
+        assert route["operation_url"] == "/".join(origin) + expected
+        normalized = routing.normalize_model_endpoint_routing(endpoint)
+        repeated = routing.resolve_model_endpoint_route(normalized, normalized["models"][0])
+        assert repeated == route
+
+
+if __name__ == "__main__":
+    results = []
+    for test in (test_model_endpoint_protocol_inference, test_schema_v2_url_matrix, test_schema_v2_rejects_unsafe_and_deferred_routes, test_schema_v2_versions_capabilities_and_cache_identity, test_non_custom_explicit_routing_preserves_provider_contract):
+        try:
+            test()
+            print(f"PASS: {test.__name__}")
+            results.append(True)
+        except Exception as exc:
+            print(f"FAIL: {test.__name__}: {exc}")
+            results.append(False)
+    raise SystemExit(0 if all(results) else 1)

@@ -2,8 +2,8 @@
 #!/usr/bin/env python3
 """
 Functional test for the Custom model endpoint provider.
-Version: 0.250.172
-Implemented in: 0.250.172
+Version: 0.261.041
+Implemented in: 0.250.172; explicit scoped routing in 0.261.041
 
 This test validates canonical model identifiers, API-type precedence, Custom
 endpoint URL safety, direct Anthropic request behavior, normalization, secret
@@ -11,6 +11,7 @@ sanitization, and the admin/workspace UI contract without network traffic.
 """
 
 import asyncio
+import copy
 import importlib
 import re
 import socket
@@ -125,6 +126,71 @@ def load_model_endpoint_runtime_module():
     sys.modules.pop("functions_model_endpoint_runtime", None)
     module = importlib.import_module("functions_model_endpoint_runtime")
     return module, original_modules
+
+
+def test_authorized_routing_context_uses_fresh_scoped_records():
+    runtime, originals = load_model_endpoint_runtime_module()
+    try:
+        endpoint = build_custom_endpoint("openai", {"modelName": "actual-model"})
+        endpoint["routing_schema_version"] = 2
+        endpoint["models"][0].update({"api_type": "openai", "url_mode": "auto", "api_path": "team"})
+        settings = {"enable_multi_model_endpoints": True, "allow_group_custom_endpoints": True, "allow_user_custom_endpoints": True}
+        context = {
+            "routing_schema_version": 2, "scope_type": "group", "scope_id": "group-one",
+            "endpoint_id": endpoint["id"], "model_id": "stable-model-id",
+            "endpoint": "https://attacker.example", "request_model": "tampered", "auth": {"api_key": "tampered"},
+        }
+        events = []
+        def authorize(scope_type, scope_id):
+            events.append(("authorize", scope_type, scope_id))
+            return True
+        def load(scope_type, scope_id, endpoint_id):
+            events.append(("load", scope_type, scope_id, endpoint_id))
+            return copy.deepcopy(endpoint), "revision-one"
+        with patch("functions_model_endpoint_validation.socket.getaddrinfo", return_value=PUBLIC_ADDRESS_INFO):
+            resolved = runtime.resolve_authorized_model_endpoint_route(context, authorize_scope=authorize, load_endpoint=load, settings=settings)
+        assert events[0][0] == "authorize" and events[1][0] == "load"
+        assert resolved["route"]["request_model"] == "actual-model"
+        assert resolved["route"]["operation_url"] == "https://models.example.com/team/v1/chat/completions"
+        assert "test-key" not in str(resolved) and "tampered" not in str(resolved)
+        for scope in ("global", "user", "group"):
+            scoped = {**context, "scope_type": scope}
+            with patch("functions_model_endpoint_validation.socket.getaddrinfo", return_value=PUBLIC_ADDRESS_INFO):
+                refreshed = runtime.resolve_authorized_model_endpoint_route(scoped, authorize_scope=authorize, load_endpoint=load, settings=settings)
+            assert refreshed["context"]["scope_type"] == scope
+        before = len(events)
+        try:
+            runtime.resolve_authorized_model_endpoint_route(context, authorize_scope=lambda *args: False, load_endpoint=load, settings=settings)
+        except PermissionError:
+            pass
+        else:
+            raise AssertionError("Revoked group access was accepted.")
+        assert len(events) == before
+        for change in ("missing-model", "disabled-model", "disabled-endpoint", "missing-endpoint", "wrong-endpoint"):
+            saved = copy.deepcopy(endpoint)
+            if change == "missing-model":
+                saved["models"][0]["id"] = "other-id"
+            elif change == "disabled-model":
+                saved["models"][0]["enabled"] = False
+            elif change == "disabled-endpoint":
+                saved["enabled"] = False
+            elif change == "wrong-endpoint":
+                saved["id"] = "other-endpoint"
+            else:
+                saved = None
+            with patch("functions_model_endpoint_validation.socket.getaddrinfo", return_value=PUBLIC_ADDRESS_INFO):
+                try:
+                    runtime.resolve_authorized_model_endpoint_route(context, authorize_scope=authorize, load_endpoint=lambda *args: (saved, "r2"), settings=settings)
+                except ValueError:
+                    continue
+            raise AssertionError(f"Accepted {change} without a stable-ID match.")
+        endpoint["models"][0]["api_path"] = "updated"
+        with patch("functions_model_endpoint_validation.socket.getaddrinfo", return_value=PUBLIC_ADDRESS_INFO):
+            refreshed = runtime.resolve_authorized_model_endpoint_route(context, authorize_scope=authorize, load_endpoint=load, settings=settings)
+        assert "/updated/v1/" in refreshed["route"]["operation_url"]
+        assert refreshed["cache_key"] != resolved["cache_key"]
+    finally:
+        _restore_modules(originals)
 
 
 def test_request_model_resolution_and_protocol_precedence():
@@ -753,6 +819,7 @@ def test_custom_endpoint_ui_contract():
 def run_tests():
     """Run all Custom endpoint functional checks."""
     tests = [
+        test_authorized_routing_context_uses_fresh_scoped_records,
         test_request_model_resolution_and_protocol_precedence,
         test_custom_endpoint_url_policy,
         test_custom_endpoint_configuration_validation,

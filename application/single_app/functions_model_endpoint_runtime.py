@@ -22,7 +22,12 @@ from functions_model_endpoint_types import (
     get_model_endpoint_api_type,
     resolve_model_endpoint_request_model,
 )
-from functions_model_endpoint_validation import validate_custom_model_endpoint_url
+from functions_model_endpoint_validation import validate_custom_model_endpoint_url, validate_model_endpoint_routing
+from functions_model_endpoint_urls import (
+    build_model_endpoint_routing_context,
+    model_endpoint_route_cache_key,
+    routing_schema_version,
+)
 from functions_settings import resolve_model_endpoint_foundry_scope
 from model_endpoint_clients import (
     MODEL_ENDPOINT_PROTOCOL_ANTHROPIC,
@@ -297,6 +302,47 @@ def build_model_endpoint_sync_chat_client(
 def _append_model_endpoint_candidate(endpoints, scope, endpoint):
     if isinstance(endpoint, dict):
         endpoints.append({**endpoint, '_endpoint_scope': scope})
+
+
+def resolve_authorized_model_endpoint_route(model_context, *, authorize_scope, load_endpoint, settings):
+    """Resolve a fresh, authorized selection for opt-in non-agent consumers.
+
+Callbacks must be server-owned and bound to the authenticated actor, never to
+identity claims from model_context. authorize_scope must recheck current access
+(including group membership) and return True before load_endpoint reads data.
+The loader returns (saved endpoint, authoritative configuration revision).
+The revision must cover credential, identity-header, transport and routing policy.
+Neither callback should resolve secret values; credentials remain a later step.
+"""
+    if not isinstance(model_context, dict) or routing_schema_version(model_context) != 2:
+        raise ValueError("Explicit model routing context is required.")
+    context = build_model_endpoint_routing_context(**{
+        field: model_context.get(field)
+        for field in ("endpoint_id", "model_id", "scope_type", "scope_id")
+    })
+    scope_type = context["scope_type"]
+    policy = settings or {}
+    allowed = policy.get("enable_multi_model_endpoints") is True
+    if scope_type == "user":
+        allowed = allowed and policy.get("allow_user_custom_endpoints") is True
+    elif scope_type == "group":
+        allowed = allowed and policy.get("allow_group_custom_endpoints") is True
+    if not allowed or authorize_scope(scope_type, context["scope_id"]) is not True:
+        raise PermissionError("Model endpoint access is not permitted.")
+    endpoint, revision = load_endpoint(scope_type, context["scope_id"], context["endpoint_id"])
+    if not isinstance(endpoint, dict) or endpoint.get("id") != context["endpoint_id"] or endpoint.get("enabled", True) is not True:
+        raise ValueError("The selected endpoint is unavailable.")
+    if routing_schema_version(endpoint) != 2:
+        raise ValueError("The selected endpoint no longer uses explicit routing.")
+    matches = [model for model in endpoint.get("models", []) if isinstance(model, dict) and model.get("id") == context["model_id"]]
+    if len(matches) != 1 or matches[0].get("enabled", True) is not True:
+        raise ValueError("The selected model is unavailable.")
+    routes = validate_model_endpoint_routing(endpoint, policy, require_resolvable=True)
+    route = next(route for route in routes if route["model_id"] == context["model_id"])
+    cache_key = model_endpoint_route_cache_key(
+        route, scope_type=scope_type, scope_id=context["scope_id"], configuration_revision=revision,
+    )
+    return {"context": context, "route": route, "cache_key": cache_key}
 
 
 def resolve_model_endpoint_from_context(settings, model_context):

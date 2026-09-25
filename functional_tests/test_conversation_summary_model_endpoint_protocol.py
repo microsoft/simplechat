@@ -2,8 +2,8 @@
 #!/usr/bin/env python3
 """
 Functional test for conversation summary model endpoint protocol routing.
-Version: 0.241.182
-Implemented in: 0.241.182
+Version: 0.261.040
+Implemented in: 0.241.182; identity-header fixture repaired in 0.261.040
 
 This test ensures export summary intros and Chat Details summary generation can
 resolve Claude deployments from configured model endpoints and build the
@@ -22,6 +22,7 @@ ROOT = Path(__file__).resolve().parents[1]
 APP_DIR = ROOT / "application" / "single_app"
 sys.path.insert(0, str(APP_DIR))
 
+from functions_model_endpoint_identity_header import build_model_endpoint_identity_headers
 from model_endpoint_clients import (  # noqa: E402
     MODEL_ENDPOINT_PROTOCOL_ANTHROPIC,
     MODEL_ENDPOINT_PROTOCOL_AZURE_OPENAI,
@@ -107,6 +108,7 @@ def load_summary_helpers():
         "DefaultAzureCredential": object,
         "SecretReturnType": SimpleNamespace(VALUE="value"),
         "build_anthropic_chat_client": build_anthropic_chat_client,
+        "build_model_endpoint_identity_headers": build_model_endpoint_identity_headers,
         "build_openai_style_chat_client": build_openai_style_chat_client,
         "cognitive_services_scope": "https://cognitiveservices.azure.com/.default",
         "debug_print": lambda *args, **kwargs: None,

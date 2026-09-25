@@ -1,8 +1,9 @@
 # test_model_endpoint_normalization_backend.py
 """
 Functional test for backend model endpoint normalization.
-Version: 0.261.035
-Implemented in: 0.239.155; capacity overrides added in 0.261.035
+Version: 0.261.042
+Implemented in: 0.239.155; schema-v2 normalization and migration in 0.261.041
+Editor JSON round-trip coverage added in: 0.261.042
 
 This test ensures model endpoints are normalized with stable IDs and enabled
 flags so frontend consumers receive consistent identifiers. It also verifies
@@ -17,6 +18,7 @@ import sys
 import importlib
 import json
 import types
+from unittest.mock import patch
 
 repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 single_app_root = os.path.join(repo_root, "application", "single_app")
@@ -368,14 +370,209 @@ def test_model_endpoint_capacity_changed_flag_includes_removed_frontend_markers(
         _restore_modules(original_modules)
 
 
+def _mixed_routing_endpoint():
+    endpoint = _endpoint_with_metadata()
+    endpoint["routing_schema_version"] = 2
+    endpoint["api_type"] = "azure_openai"
+    endpoint["connection"]["api_version"] = "2024-01-01"
+    endpoint["auth"]["key_vault_secret_name"] = "gateway-reference"
+    endpoint["auth"]["api_key_header"] = "Ocp-Apim-Subscription-Key"
+    endpoint["auth"]["api_key_prefix"] = ""
+    endpoint["identity_header"] = {"enabled": True}
+    endpoint["models"] = [
+        {"id": "azure", "api_type": "azure_openai", "url_mode": "auto", "api_path": " /azure/team/ ", "deploymentName": "D", "api_version": "2025-01-01-preview"},
+        {"id": "openai", "api_type": "openai", "url_mode": "exact", "modelName": "claude-as-openai"},
+        {"id": "foundry", "api_type": "azure_openai_v1", "url_mode": "auto", "modelName": "azure-model"},
+        {"id": "messages", "api_type": "anthropic", "url_mode": "auto", "modelName": "gpt-as-messages", "anthropic_version": "2023-06-01"},
+    ]
+    return endpoint
+
+
+def _expect_value_error(operation, *args, **kwargs):
+    try:
+        operation(*args, **kwargs)
+    except ValueError:
+        return
+    raise AssertionError("Invalid model configuration was accepted.")
+
+
+def test_mixed_routing_normalization_and_sanitization():
+    settings, originals = _load_functions_settings_module()
+    try:
+        endpoint = _mixed_routing_endpoint()
+        previous = copy.deepcopy(endpoint)
+        normalized, changed = settings.normalize_model_endpoints([endpoint])
+        repeated, changed_again = settings.normalize_model_endpoints(normalized)
+        assert changed and not changed_again
+        assert repeated == normalized and endpoint == previous
+        models = {model["id"]: model for model in normalized[0]["models"]}
+        assert models["azure"]["deploymentName"] == "D"
+        assert models["azure"]["api_version"] == "2025-01-01-preview"
+        assert models["azure"]["api_path"] == "azure/team"
+        assert models["messages"]["modelName"] == "gpt-as-messages"
+        assert models["messages"]["anthropic_version"] == "2023-06-01"
+        assert models["foundry"]["modelName"] == "azure-model"
+        sanitized = settings.sanitize_model_endpoints_for_frontend(normalized)
+        assert sanitized[0]["models"] == normalized[0]["models"]
+        assert "test-only-key" not in json.dumps(sanitized)
+        imported = json.loads(json.dumps(sanitized))
+        restored = settings.merge_model_endpoints_with_existing(imported, normalized)
+        restored, _ = settings.normalize_model_endpoints(restored)
+        assert restored == normalized
+        assert restored[0]["auth"]["key_vault_secret_name"] == "gateway-reference"
+        assert restored[0]["identity_header"] == normalized[0]["identity_header"]
+        assert normalized[0]["auth"] == previous["auth"]
+        merged = settings.merge_model_endpoint_payload(normalized[0], {"auth": {"api_key": "", "api_key_prefix": ""}})
+        assert merged["auth"]["api_key"] == "test-only-key"
+        assert merged["auth"]["api_key_prefix"] == ""
+        _expect_value_error(settings.merge_model_endpoint_payload, normalized[0], {"routing_schema_version": 1})
+        _expect_value_error(settings.merge_model_endpoint_payload, normalized[0], {"models": [{"id": "azure", "deploymentName": "D"}]})
+    finally:
+        _restore_modules(originals)
+
+
+def test_explicit_routing_validation_and_legacy_consumer_boundary():
+    settings, originals = _load_functions_settings_module()
+    try:
+        validation = importlib.import_module("functions_model_endpoint_validation")
+        types_module = importlib.import_module("functions_model_endpoint_types")
+        endpoint = _mixed_routing_endpoint()
+        normalized, _ = settings.normalize_model_endpoints([endpoint])
+        with patch.object(validation, "resolve_custom_model_endpoint_addresses", return_value=("93.184.216.34",)):
+            validation.validate_custom_model_endpoint(normalized[0])
+        selected = normalized[0]["models"][3]
+        result = types_module.resolve_model_endpoint_request_model(normalized[0], selected, use_model_routing=True)
+        assert result == "gpt-as-messages"
+        _expect_value_error(types_module.resolve_model_endpoint_request_model, normalized[0], selected)
+        for field, value in (("api_type", "responses"), ("api_type", ""), ("url_mode", "inherit"), ("url_mode", ""), ("api_path", "../other"), ("request_template", {})):
+            invalid = copy.deepcopy(endpoint)
+            invalid["models"][0][field] = value
+            _expect_value_error(settings.normalize_model_endpoints, [invalid])
+        for marker in (True, "2", 3, None):
+            invalid = copy.deepcopy(endpoint)
+            invalid["routing_schema_version"] = marker
+            _expect_value_error(settings.normalize_model_endpoints, [invalid])
+        invalid = copy.deepcopy(endpoint)
+        invalid["models"][1]["id"] = invalid["models"][0]["id"]
+        _expect_value_error(settings.normalize_model_endpoints, [invalid])
+        blocked = copy.deepcopy(endpoint)
+        blocked["connection"]["endpoint"] = "https://localhost"
+        _expect_value_error(validation.validate_custom_model_endpoint, blocked)
+        legacy = _endpoint_with_metadata()
+        legacy["api_type"] = "azure_openai_v1"
+        _expect_value_error(validation.validate_custom_model_endpoint, legacy)
+    finally:
+        _restore_modules(originals)
+
+
+def test_routing_migration_dry_run_idempotence_and_restore():
+    settings, originals = _load_functions_settings_module()
+    try:
+        for api_type, base, model in (
+            ("openai", "https://gateway.example/v1", {"id": "one", "modelName": "model"}),
+            ("gemini", "https://gateway.example/v1beta/openai", {"id": "one", "modelName": "gemini"}),
+            ("anthropic", "https://gateway.example/v1/messages", {"id": "one", "modelName": "gpt-on-messages"}),
+            ("azure_openai", "https://gateway.example", {"id": "one", "deploymentName": "D"}),
+        ):
+            endpoint = _endpoint_with_metadata()
+            endpoint["api_type"] = api_type
+            endpoint["connection"] = {"endpoint": base, "api_version": "2024-01-01", "url_mode": "exact" if api_type == "anthropic" else "auto"}
+            endpoint["models"] = [model]
+            original = copy.deepcopy(endpoint)
+            plan = settings.plan_model_endpoint_routing_migration(endpoint, excluded_consumers_present=False)
+            assert plan["can_migrate"], plan["issues"]
+            assert endpoint == original
+            assert plan["backup"]["endpoint"] == original
+            candidate = plan["endpoint"]
+            assert candidate["routing_schema_version"] == 2
+            assert candidate["id"] == endpoint["id"]
+            assert candidate["auth"] == endpoint["auth"]
+            assert candidate["models"][0]["id"] == "one"
+            clients = importlib.import_module("model_endpoint_clients")
+            routing = importlib.import_module("functions_model_endpoint_urls")
+            actual_route = routing.resolve_model_endpoint_route(candidate, candidate["models"][0])
+            if api_type == "anthropic":
+                expected_url = clients.normalize_anthropic_messages_url(base, direct_custom=True)
+            elif api_type == "azure_openai":
+                expected_url = base + "/openai/deployments/D/chat/completions?api-version=2024-01-01"
+            else:
+                expected_url = clients.resolve_custom_openai_base_url(base, api_type, "auto") + "chat/completions"
+            assert actual_route["operation_url"] == expected_url
+            again = settings.plan_model_endpoint_routing_migration(candidate, excluded_consumers_present=False)
+            assert again["can_migrate"] and again["endpoint"] == candidate
+            restored = settings.restore_model_endpoint_routing_backup(candidate, plan["backup"])
+            assert restored == original
+            modified = copy.deepcopy(candidate)
+            modified["name"] = "Later owner edit"
+            _expect_value_error(settings.restore_model_endpoint_routing_backup, modified, plan["backup"])
+    finally:
+        _restore_modules(originals)
+
+
+def test_routing_migration_requires_review_for_ambiguous_or_shared_records():
+    settings, originals = _load_functions_settings_module()
+    try:
+        endpoint = _endpoint_with_metadata()
+        unknown = settings.plan_model_endpoint_routing_migration(endpoint)
+        referenced = settings.plan_model_endpoint_routing_migration(endpoint, excluded_consumers_present=True)
+        assert not unknown["can_migrate"] and not referenced["can_migrate"]
+        assert unknown["endpoint"] is None and referenced["endpoint"] is None
+        for path in ("/team", "/team/v1", "/responses"):
+            endpoint["connection"]["endpoint"] = "https://gateway.example" + path
+            plan = settings.plan_model_endpoint_routing_migration(endpoint, excluded_consumers_present=False)
+            assert not plan["can_migrate"] and plan["endpoint"] is None
+        endpoint["api_type"] = "unknown"
+        plan = settings.plan_model_endpoint_routing_migration(endpoint, excluded_consumers_present=False)
+        assert not plan["can_migrate"]
+        for suffix in ("?route=team", "#saved", "?", "#", "\n"):
+            endpoint = _endpoint_with_metadata()
+            endpoint["api_type"] = "anthropic"
+            endpoint["connection"] = {"endpoint": "https://gateway.example/v1/messages" + suffix}
+            original = copy.deepcopy(endpoint)
+            plan = settings.plan_model_endpoint_routing_migration(endpoint, excluded_consumers_present=False)
+            assert not plan["can_migrate"] and plan["endpoint"] is None
+            assert endpoint == original
+        for api_type, field, endpoint_version, model_version in (
+            ("azure_openai", "api_version", "2024-01-01", "2025-01-01"),
+            ("anthropic", "anthropic_version", "2023-06-01", "2024-06-01"),
+        ):
+            endpoint = _endpoint_with_metadata()
+            endpoint["api_type"] = api_type
+            endpoint["connection"] = {"endpoint": "https://gateway.example", field: endpoint_version}
+            endpoint["models"] = [{"id": "one", "modelName": "model", "deploymentName": "D", field: model_version}]
+            plan = settings.plan_model_endpoint_routing_migration(endpoint, excluded_consumers_present=False)
+            assert not plan["can_migrate"] and plan["endpoint"] is None
+    finally:
+        _restore_modules(originals)
+
+
+def test_pure_routing_import_boundary(reverse=False):
+    modules = (
+        "functions_model_endpoint_urls", "functions_model_endpoint_types",
+        "functions_model_capabilities", "functions_model_endpoint_validation",
+    )
+    before = set(sys.modules)
+    for module_name in reversed(modules) if reverse else modules:
+        importlib.import_module(module_name)
+    forbidden = {"config", "functions_settings", "model_endpoint_clients", "functions_model_endpoint_runtime"}
+    unexpected = (set(sys.modules) - before) & forbidden
+    if unexpected:
+        raise AssertionError(f"Pure routing imports crossed the runtime boundary: {sorted(unexpected)}")
+
+
 def run_tests():
     tests = [
+        test_pure_routing_import_boundary,
         test_model_endpoint_normalization_backend,
         test_model_endpoint_capacity_overrides_are_independent_and_idempotent,
         test_model_endpoint_capacity_inheritance_does_not_change_legacy_settings,
         test_model_endpoint_capacity_invalid_values_are_rejected,
         test_model_endpoint_capacity_clear_survives_merge_and_sanitization,
         test_model_endpoint_capacity_changed_flag_includes_removed_frontend_markers,
+        test_mixed_routing_normalization_and_sanitization,
+        test_explicit_routing_validation_and_legacy_consumer_boundary,
+        test_routing_migration_dry_run_idempotence_and_restore,
+        test_routing_migration_requires_review_for_ambiguous_or_shared_records,
     ]
     results = []
 

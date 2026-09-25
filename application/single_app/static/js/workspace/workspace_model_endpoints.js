@@ -3,6 +3,10 @@
 import { showToast } from "../chat/chat-toast.js";
 import { getIconPayload, setIconPayload } from "../agents_common.js";
 import {
+    createModelRoutingEditor, collectModelRouting, previewModelRoute,
+    validateModelRoutes, invalidateModelRoutingPreviews, ModelRoutingValidationError, showModelRoutingError
+} from "../model_routing_editor.js";
+import {
     ModelBudgetValidationError,
     collectModelBudgetOverrides,
     createModelBudgetEditor
@@ -155,7 +159,7 @@ function getCustomApiTypeRegistry() {
     }
     customApiTypeRegistry = {};
     try {
-        const rawRegistry = endpointApiTypeSelect?.dataset?.apiTypes;
+        const rawRegistry = endpointApiTypeSelect?.dataset?.routingApiTypes || endpointApiTypeSelect?.dataset?.apiTypes;
         if (rawRegistry) {
             JSON.parse(rawRegistry).forEach((apiType) => {
                 customApiTypeRegistry[apiType.value] = apiType;
@@ -190,7 +194,7 @@ function customApiTypeVersionField(apiType = getCustomApiType()) {
 }
 
 function getModelRequestName(model) {
-    if (isCustomProvider() && customApiTypeUsesModelName()) {
+    if (isCustomProvider() && customApiTypeUsesModelName(modalEndpoint.routing_schema_version === 2 ? model.api_type : getCustomApiType())) {
         return String(model?.modelName || "").trim();
     }
     return String(model?.deploymentName || model?.deployment || "").trim();
@@ -407,6 +411,11 @@ function renderEndpoints() {
             </td>
         `;
 
+        const toggleButton = row.querySelector('[data-action="toggle"]');
+        if (endpoint.routing_schema_version === 2 && !endpoint.enabled) {
+            toggleButton.disabled = true;
+            toggleButton.title = "Per-model routing is configuration-only until runtime integration is available.";
+        }
         endpointsTbody.appendChild(row);
     });
 }
@@ -421,12 +430,12 @@ function updateAuthVisibility() {
     if (endpointAuthTypeSelect) {
         endpointAuthTypeSelect.disabled = customProvider;
     }
-    setElementVisibility(endpointApiTypeGroup, customProvider);
+    setElementVisibility(endpointApiTypeGroup, customProvider && modalEndpoint.routing_schema_version !== 2);
     // The exact-URL escape hatch only applies to URL-built protocols, not to the
     // Azure resource endpoint, which the SDK consumes as given.
     setElementVisibility(
         endpointUrlModeGroup,
-        customProvider && customApiTypeVersionField(getCustomApiType()) !== "api_version"
+        customProvider && modalEndpoint.routing_schema_version !== 2 && customApiTypeVersionField(getCustomApiType()) !== "api_version"
     );
 
     const apiType = getCustomApiType();
@@ -438,8 +447,8 @@ function updateAuthVisibility() {
     syncVersionCustomVisibility();
     setElementVisibility(endpointProjectGroup, isFoundry && !projectNameFromEndpoint);
     setElementVisibility(endpointProjectApiVersionGroup, isFoundry);
-    setElementVisibility(endpointOpenAiApiVersionGroup, !customProvider || customApiTypeRequiresApiVersion(apiType));
-    setElementVisibility(endpointAnthropicVersionGroup, customProvider && customApiTypeVersionField(apiType) === "anthropic_version");
+    setElementVisibility(endpointOpenAiApiVersionGroup, !customProvider || (modalEndpoint.routing_schema_version !== 2 && customApiTypeRequiresApiVersion(apiType)));
+    setElementVisibility(endpointAnthropicVersionGroup, customProvider && modalEndpoint.routing_schema_version !== 2 && customApiTypeVersionField(apiType) === "anthropic_version");
     setElementVisibility(endpointSubscriptionGroup, !customProvider && provider === "aoai" && !isApiKey);
     setElementVisibility(endpointResourceGroup, !customProvider && provider === "aoai" && !isApiKey);
     setElementVisibility(miTypeGroup, authType === "managed_identity");
@@ -469,7 +478,8 @@ function updateAuthVisibility() {
 }
 
 function resetModal() {
-    modalEndpoint = {};
+    invalidateModelRoutingPreviews(modelsListEl);
+    modalEndpoint = { routing_schema_version: 2 };
     renderEndpointBudgetEditor();
     if (endpointIdInput) endpointIdInput.value = "";
     if (endpointNameInput) endpointNameInput.value = "";
@@ -777,6 +787,7 @@ function findModelEditor(modelId) {
 }
 
 function renderModalModels(models) {
+    invalidateModelRoutingPreviews(modelsListEl);
     if (!modelsListEl) {
         return;
     }
@@ -859,6 +870,10 @@ function renderModalModels(models) {
         testButton.dataset.action = "test-model";
         testButton.dataset.modelId = modelId;
         testButton.textContent = "Test Connection";
+        testButton.disabled = modalEndpoint.routing_schema_version === 2;
+        if (testButton.disabled) {
+            testButton.title = "Live testing for per-model routing is not available yet.";
+        }
         const removeButton = document.createElement("button");
         removeButton.type = "button";
         removeButton.className = "btn btn-sm btn-outline-danger";
@@ -870,6 +885,14 @@ function renderModalModels(models) {
 
         wrapper.appendChild(checkWrapper);
         wrapper.appendChild(fieldsRow);
+        if (modalEndpoint.routing_schema_version === 2) {
+            wrapper.appendChild(createModelRoutingEditor(model, {
+                endpoint: { ...modalEndpoint, provider: endpointProviderSelect.value },
+                registry: getCustomApiTypeRegistry(),
+                requestInput: deploymentCol.querySelector("input"),
+                requestLabel: deploymentCol.querySelector("label")
+            }));
+        }
         wrapper.appendChild(descriptionWrapper);
         wrapper.appendChild(iconWrapper);
         wrapper.appendChild(createModelBudgetEditor(model, {
@@ -904,7 +927,10 @@ function collectModalModels() {
             throw new Error("Response length must be a positive whole number.");
         }
         model.enabled = checkbox ? checkbox.checked : model.enabled;
-        setModelRequestName(model, requestModelInput ? requestModelInput.value : getModelRequestName(model));
+        if (modalEndpoint.routing_schema_version !== 2 || !isCustomProvider()) {
+            setModelRequestName(model, requestModelInput ? requestModelInput.value : getModelRequestName(model));
+        }
+        collectModelRouting(row, model);
         model.displayName = displayInput ? displayInput.value.trim() : model.displayName;
         model.icon = iconEditor ? getIconPayload(iconEditor, MODEL_ICON_CONTROL_CONFIG) : model.icon || {};
         model.description = descriptionInput ? descriptionInput.value.trim() : model.description;
@@ -926,8 +952,10 @@ async function testModelConnection(model) {
         return;
     }
 
-    const testModel = {};
-    setModelRequestName(testModel, requestModel);
+    const testModel = modalEndpoint.routing_schema_version === 2 ? { ...model } : {};
+    if (modalEndpoint.routing_schema_version !== 2) {
+        setModelRequestName(testModel, requestModel);
+    }
     const requestBody = {
         ...payload,
         model: testModel
@@ -1096,6 +1124,11 @@ function buildEndpointPayload() {
             type: "api_key",
             api_key: apiKeyInput?.value.trim() || ""
         };
+        for (const field of ["api_key_header", "api_key_prefix"]) {
+            if (Object.hasOwn(modalEndpoint.auth || {}, field)) {
+                auth[field] = modalEndpoint.auth[field];
+            }
+        }
     }
 
     const hasStoredApiKey = authType === "api_key" && Boolean(existingEndpoint?.has_api_key);
@@ -1128,8 +1161,9 @@ function buildEndpointPayload() {
     } : {};
 
     const connection = { endpoint };
-    const versionField = customProvider ? customApiTypeVersionField(apiType) : "";
-    if (customProvider && endpointUrlModeExactInput?.checked) {
+    const explicitRouting = modalEndpoint.routing_schema_version === 2;
+    const versionField = customProvider && !explicitRouting ? customApiTypeVersionField(apiType) : "";
+    if (customProvider && !explicitRouting && endpointUrlModeExactInput?.checked) {
         connection.url_mode = "exact";
     }
     if (customProvider && versionField === "api_version") {
@@ -1149,8 +1183,9 @@ function buildEndpointPayload() {
 
     return {
         id: endpointId,
+        ...(explicitRouting ? { routing_schema_version: 2 } : {}),
         provider,
-        ...(customProvider ? { api_type: apiType } : {}),
+        ...(customProvider && !explicitRouting ? { api_type: apiType } : {}),
         name,
         connection,
         management,
@@ -1167,6 +1202,8 @@ async function saveEndpoint() {
         }
 
         const models = collectModalModels();
+        saveBtn.disabled = true;
+        await validateModelRoutes(payload, models, modelsTestApi, modelsListEl);
         const endpointId = endpointIdInput?.value || generateId();
         const existingEndpoint = workspaceEndpoints.find((endpoint) => endpoint.id === endpointId);
         const authType = payload.auth?.type || "managed_identity";
@@ -1180,7 +1217,7 @@ async function saveEndpoint() {
             name: payload.name,
             provider: payload.provider,
             ...(payload.api_type ? { api_type: payload.api_type } : {}),
-            enabled: existingEndpoint ? existingEndpoint.enabled !== false : true,
+            enabled: existingEndpoint ? existingEndpoint.enabled !== false : modalEndpoint.routing_schema_version !== 2,
             auth: payload.auth,
             connection: payload.connection,
             management: payload.management,
@@ -1202,10 +1239,16 @@ async function saveEndpoint() {
         showToast("Endpoint saved successfully.", "success");
     } catch (error) {
         workspaceEndpoints = previousEndpoints;
-        if (!(error instanceof ModelBudgetValidationError)) {
+        if (error instanceof ModelRoutingValidationError) {
+            showModelRoutingError(error);
+            return;
+        }
+        if (!(error instanceof ModelBudgetValidationError) && !(error instanceof ModelRoutingValidationError)) {
             console.error("Error saving endpoint", error);
         }
         showToast(error.message || "Failed to save endpoint.", "danger");
+    } finally {
+        saveBtn.disabled = false;
     }
 }
 
@@ -1326,6 +1369,16 @@ function handleModelListClick(event) {
     if (button.dataset.action === "test-model") {
         testModelConnection(model);
     }
+    if (button.dataset.action === "preview-route") {
+        previewModelRoute({
+            id: endpointIdInput.value, provider: endpointProviderSelect.value,
+            connection: {
+                endpoint: endpointUrlInput.value.trim(),
+                openai_api_version: getSelectedVersionValue(endpointOpenAiApiVersionInput, endpointOpenAiApiVersionCustomInput)
+            }
+        }, model, modelsTestApi, button.closest("[data-model-row-id]"))
+            .catch((error) => showToast(error.message, "warning"));
+    }
 }
 
 function escapeHtml(value) {
@@ -1367,6 +1420,9 @@ async function loadEndpoints() {
 }
 
 function initialize() {
+    endpointModalEl?.addEventListener("input", () => invalidateModelRoutingPreviews(modelsListEl));
+    endpointModalEl?.addEventListener("change", () => invalidateModelRoutingPreviews(modelsListEl));
+    endpointModalEl?.addEventListener("hide.bs.modal", () => invalidateModelRoutingPreviews(modelsListEl));
     if (!hasEndpointManagementUi()) {
         return;
     }

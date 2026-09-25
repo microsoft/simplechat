@@ -124,6 +124,7 @@ from route_plugin_logging import bpl as plugin_logging_bp
 from functions_custom_pages import get_custom_pages_nav
 from functions_debug import debug_print
 from functions_model_endpoint_providers import get_model_endpoint_provider_ui_options
+from functions_model_capabilities import get_model_endpoint_library_options
 from functions_terms_of_use import has_terms_of_use_acceptance
 from functions_mcp_server_auth import inbound_mcp_required_blueprint
 
@@ -609,6 +610,8 @@ def inject_settings():
         idle_timeout_minutes=idle_timeout_minutes,
         idle_warning_minutes=idle_warning_minutes,
         model_endpoint_api_types=get_model_endpoint_provider_ui_options(),
+        model_endpoint_routing_api_types=get_model_endpoint_provider_ui_options(routing_schema_version=2),
+        model_endpoint_library=get_model_endpoint_library_options(),
         mcp_ui_enabled=is_mcp_ui_enabled()
     )
 

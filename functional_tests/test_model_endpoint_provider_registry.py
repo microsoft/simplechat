@@ -1,8 +1,10 @@
+# test_model_endpoint_provider_registry.py
 #!/usr/bin/env python3
 """
 Functional test for the Custom model endpoint provider registry.
-Version: 0.261.015
-Implemented in: 0.261.015
+Version: 0.261.042
+Implemented in: 0.261.015; schema-v2 routing contract in 0.261.041
+Protocol-specific editor labels added in: 0.261.042
 
 Custom endpoints previously supported exactly three API types, hard-coded in five
 places: the allowlist, the request-model resolver, the protocol inference
@@ -107,7 +109,17 @@ def test_every_registered_provider_is_reachable():
     """Each registered API type must resolve through the whole pipeline."""
     print("Testing registry completeness...")
     try:
-        ui_values = {option["value"] for option in get_model_endpoint_provider_ui_options()}
+        ui_values = {
+            option["value"] for option in get_model_endpoint_provider_ui_options(routing_schema_version=2)
+        }
+        ui_labels = {
+            option["value"]: option["label"]
+            for option in get_model_endpoint_provider_ui_options(routing_schema_version=2)
+        }
+        assert ui_labels["azure_openai"] == "Azure OpenAI (Deployments)"
+        assert ui_labels["azure_openai_v1"] == "Chat Completions (Azure/Foundry)"
+        assert ui_labels["openai"] == "OpenAI API (Chat Completions)"
+        assert ui_labels["anthropic"] == "Messages (Anthropic-compatible)"
 
         for provider in MODEL_ENDPOINT_PROVIDERS:
             api_type = provider.api_type
@@ -326,8 +338,30 @@ def test_version_bumped():
         return False
 
 
+def test_azure_foundry_schema_v2_descriptor():
+    """The new choice shares an adapter but is not offered by legacy editors."""
+    try:
+        provider = get_model_endpoint_provider("azure_openai_v1")
+        assert provider is not None, "Azure/Foundry Chat Completions must be registered."
+        assert provider.protocol == MODEL_ENDPOINT_PROTOCOL_OPENAI_STYLE
+        assert provider.uses_model_name
+        assert not provider.requires_api_version
+        assert provider.url_policy == "azure_openai_v1"
+        legacy_options = get_model_endpoint_provider_ui_options()
+        explicit_options = get_model_endpoint_provider_ui_options(routing_schema_version=2)
+        assert "azure_openai_v1" not in {option["value"] for option in legacy_options}
+        descriptor = next(option for option in explicit_options if option["value"] == "azure_openai_v1")
+        assert descriptor["protocol"] == "openai_style"
+        assert descriptor["urlPolicy"] == "azure_openai_v1"
+        return True
+    except Exception as exc:
+        print(f"Test failed: {exc}")
+        return False
+
+
 if __name__ == "__main__":
     tests = [
+        test_azure_foundry_schema_v2_descriptor,
         test_original_api_types_are_unchanged,
         test_every_registered_provider_is_reachable,
         test_unregistered_api_type_is_rejected,

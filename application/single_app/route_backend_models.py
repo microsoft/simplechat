@@ -9,6 +9,7 @@ from functions_group import assert_group_role, get_group_model_endpoints, requir
 from functions_keyvault import SecretReturnType, keyvault_model_endpoint_cleanup_helper, keyvault_model_endpoint_delete_helper, keyvault_model_endpoint_get_helper, keyvault_model_endpoint_save_helper
 from functions_model_capabilities import ModelTokenBudgetError
 from functions_model_endpoint_runtime import build_model_endpoint_sync_chat_client
+from functions_model_endpoint_urls import normalize_model_endpoint_routing, resolve_model_endpoint_route
 from functions_model_endpoint_types import (
     DEFAULT_ANTHROPIC_VERSION,
     MODEL_ENDPOINT_PROVIDER_CUSTOM,
@@ -502,9 +503,46 @@ def register_route_backend_models(bp):
                 400,
             )
 
+    def handle_model_routing_preview(data, scope):
+        settings = get_settings()
+        scope_flag = {"user": "allow_user_custom_endpoints", "group": "allow_group_custom_endpoints"}.get(scope)
+        if not settings.get("enable_multi_model_endpoints") or (scope_flag and not settings.get(scope_flag)):
+            return build_safe_error_response("Custom endpoints are disabled for this scope.", 403)
+        user_id = get_current_user_id()
+        try:
+            ensure_governance_access(f"governance_{scope}_endpoints", user_id)
+            endpoint_id = str(data.get("id") or data.get("endpoint_id") or "").strip()
+            if endpoint_id and not resolve_endpoint_by_id(user_id, scope, endpoint_id):
+                return build_safe_error_response("The selected model endpoint could not be found.", 404)
+        except PermissionError:
+            return build_safe_error_response("You do not have access to preview this endpoint.", 403)
+        try:
+            endpoint = normalize_model_endpoint_routing({
+                "id": endpoint_id or "preview",
+                "routing_schema_version": data.get("routing_schema_version"),
+                "provider": data.get("provider"),
+                "connection": data.get("connection"),
+                "models": [data.get("model")],
+            })
+            resolved = resolve_model_endpoint_route(endpoint, endpoint["models"][0])
+        except (ValueError, TypeError):
+            return build_safe_error_response(
+                "Invalid model routing. Check API Type, API Path, URL Handling, model identifier, and version.",
+                400,
+            )
+        fields = ("api_type", "protocol", "request_model", "api_base", "operation_url", "api_version", "anthropic_version")
+        return jsonify({
+            "preview_only": True,
+            "resolved": {"method": "POST", **{field: resolved[field] for field in fields}},
+        }), 200
+
     def handle_test_model_connection(scope="global"):
         try:
             data = request.get_json() or {}
+            if data.get("preview_only") is True:
+                return handle_model_routing_preview(data, scope)
+            if data.get("routing_schema_version") == 2:
+                return build_safe_error_response("Live testing for per-model routing is not available yet. Use Preview Route.", 501)
             data = resolve_request_endpoint_payload(data, scope=scope)
             provider = (data.get("provider") or "aoai").lower()
             connection = data.get("connection") or {}

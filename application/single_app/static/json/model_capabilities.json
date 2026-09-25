@@ -1,6 +1,11 @@
 {
   "$schema": "https://simplechat.local/schemas/model-capabilities.schema.json",
   "schemaVersion": 3,
+  "editorRoutingProfiles": {
+    "default": {"api_type": "openai", "url_mode": "auto"},
+    "anthropic": {"api_type": "anthropic", "url_mode": "auto"},
+    "google": {"api_type": "gemini", "url_mode": "auto"}
+  },
   "lastUpdated": "2026-09-19",
   "description": "SimpleChat model capability and token-capacity catalog. All 75 exact model IDs have explicit, independently evidenced limits or unknown/not-applicable dispositions; root values are publisher-native, with scoped hosting/protocol/version profiles.",
   "capabilityFields": {

@@ -34,6 +34,7 @@ MODEL_ENDPOINT_PROVIDER_CUSTOM = "custom"
 
 MODEL_ENDPOINT_API_TYPE_OPENAI = "openai"
 MODEL_ENDPOINT_API_TYPE_AZURE_OPENAI = "azure_openai"
+MODEL_ENDPOINT_API_TYPE_AZURE_OPENAI_V1 = "azure_openai_v1"
 MODEL_ENDPOINT_API_TYPE_ANTHROPIC = "anthropic"
 MODEL_ENDPOINT_API_TYPE_GEMINI = "gemini"
 
@@ -47,6 +48,7 @@ MODEL_ENDPOINT_PROTOCOL_ANTHROPIC = "anthropic"
 URL_POLICY_APPEND_V1_IF_MISSING = "append_v1_if_missing"
 URL_POLICY_AS_GIVEN = "as_given"
 URL_POLICY_AZURE_DEPLOYMENT = "azure_deployment"
+URL_POLICY_AZURE_OPENAI_V1 = "azure_openai_v1"
 URL_POLICY_ANTHROPIC_MESSAGES = "anthropic_messages"
 
 # An administrator can override the provider's URL policy per endpoint. "auto"
@@ -115,6 +117,7 @@ class ModelEndpointProvider:
         supports_streaming: bool = True,
         supports_tools: bool = True,
         supports_stream_options: bool = False,
+        routing_schema_version: int = 1,
         description: str = "",
     ):
         self.api_type = api_type
@@ -131,6 +134,7 @@ class ModelEndpointProvider:
         self.supports_streaming = supports_streaming
         self.supports_tools = supports_tools
         self.supports_stream_options = supports_stream_options
+        self.routing_schema_version = routing_schema_version
         self.description = description
 
     @property
@@ -151,13 +155,24 @@ class ModelEndpointProvider:
             "defaultApiKeyHeader": self.default_api_key_header,
             "defaultApiKeyPrefix": self.default_api_key_prefix,
             "description": self.description,
+            "protocol": self.protocol,
+            "urlPolicy": self.url_policy,
         }
 
 
 MODEL_ENDPOINT_PROVIDERS: Tuple[ModelEndpointProvider, ...] = (
     ModelEndpointProvider(
+        api_type=MODEL_ENDPOINT_API_TYPE_AZURE_OPENAI_V1,
+        display_name="Chat Completions (Azure/Foundry)",
+        protocol=MODEL_ENDPOINT_PROTOCOL_OPENAI_STYLE,
+        model_identifier=MODEL_IDENTIFIER_MODEL_NAME,
+        url_policy=URL_POLICY_AZURE_OPENAI_V1,
+        routing_schema_version=2,
+        description="Chat Completions with the Azure/Foundry OpenAI v1 URL policy.",
+    ),
+    ModelEndpointProvider(
         api_type=MODEL_ENDPOINT_API_TYPE_OPENAI,
-        display_name="OpenAI API",
+        display_name="OpenAI API (Chat Completions)",
         protocol=MODEL_ENDPOINT_PROTOCOL_OPENAI_STYLE,
         model_identifier=MODEL_IDENTIFIER_MODEL_NAME,
         url_policy=URL_POLICY_APPEND_V1_IF_MISSING,
@@ -171,7 +186,7 @@ MODEL_ENDPOINT_PROVIDERS: Tuple[ModelEndpointProvider, ...] = (
     ),
     ModelEndpointProvider(
         api_type=MODEL_ENDPOINT_API_TYPE_AZURE_OPENAI,
-        display_name="Azure OpenAI API",
+        display_name="Azure OpenAI (Deployments)",
         protocol=MODEL_ENDPOINT_PROTOCOL_AZURE_OPENAI,
         model_identifier=MODEL_IDENTIFIER_DEPLOYMENT_NAME,
         url_policy=URL_POLICY_AZURE_DEPLOYMENT,
@@ -181,7 +196,7 @@ MODEL_ENDPOINT_PROVIDERS: Tuple[ModelEndpointProvider, ...] = (
     ),
     ModelEndpointProvider(
         api_type=MODEL_ENDPOINT_API_TYPE_ANTHROPIC,
-        display_name="Anthropic",
+        display_name="Messages (Anthropic-compatible)",
         protocol=MODEL_ENDPOINT_PROTOCOL_ANTHROPIC,
         model_identifier=MODEL_IDENTIFIER_MODEL_NAME,
         url_policy=URL_POLICY_ANTHROPIC_MESSAGES,
@@ -224,9 +239,12 @@ def get_model_endpoint_provider(api_type: Any) -> ModelEndpointProvider | None:
     return MODEL_ENDPOINT_PROVIDERS_BY_API_TYPE.get(normalize_api_type_value(api_type))
 
 
-def get_model_endpoint_provider_ui_options() -> list:
-    """Return every registered API type as an admin UI descriptor."""
-    return [provider.to_ui_option() for provider in MODEL_ENDPOINT_PROVIDERS]
+def get_model_endpoint_provider_ui_options(*, routing_schema_version: int = 1) -> list:
+    """Return descriptors supported by the requesting editor schema."""
+    return [
+        provider.to_ui_option() for provider in MODEL_ENDPOINT_PROVIDERS
+        if provider.routing_schema_version <= routing_schema_version
+    ]
 
 
 def is_supported_custom_api_type(api_type: Any) -> bool:

@@ -2,7 +2,9 @@
 
 from functools import wraps
 import logging
+import hashlib
 import threading
+from urllib.parse import urlsplit, urlunsplit
 
 from flask import g, has_request_context, jsonify, request, session
 from azure.core import MatchConditions
@@ -40,6 +42,11 @@ from functions_model_endpoint_types import (
     get_model_endpoint_api_type,
     normalize_model_endpoint_api_type,
 )
+from functions_model_endpoint_urls import (
+    normalize_model_endpoint_routing,
+    routing_schema_version,
+)
+from functions_model_endpoint_providers import get_model_endpoint_provider
 from functions_rate_limit import (
     RATE_LIMIT_MESSAGE_DEFAULT,
     build_rate_limit_error_payload,
@@ -1497,7 +1504,7 @@ def get_settings(use_cosmos=False, include_source=False):
             "selected": [],
             "all": []
         },
-        'enable_multi_model_endpoints': False,
+        'enable_multi_model_endpoints': True,
         'model_endpoints': [],
         'model_endpoint_identity_header_enabled': False,
         'model_endpoint_identity_header_name': DEFAULT_MODEL_ENDPOINT_IDENTITY_HEADER_NAME,
@@ -1960,6 +1967,7 @@ def get_settings(use_cosmos=False, include_source=False):
         return settings_payload
 
     def normalize_loaded_settings(settings_item):
+        legacy_multi_endpoint_setting_missing = 'enable_multi_model_endpoints' not in settings_item
         legacy_control_center_schedule = (
             'control_center_auto_refresh_timezone' not in settings_item
         )
@@ -1983,6 +1991,8 @@ def get_settings(use_cosmos=False, include_source=False):
         # Merge default_settings in, to fill in any missing or nested keys
         deep_merge_dicts(default_settings, settings_item)
         merged = settings_item
+        if legacy_multi_endpoint_setting_missing:
+            merged['enable_multi_model_endpoints'] = False
         if legacy_control_center_schedule:
             if legacy_control_center_time == '06:00':
                 merged['control_center_auto_refresh_time'] = '02:00'
@@ -2638,6 +2648,7 @@ def normalize_model_endpoints(endpoints):
         if not isinstance(endpoint, dict):
             continue
         endpoint_copy = json.loads(json.dumps(endpoint))
+        explicit_routing = routing_schema_version(endpoint_copy) == 2
         endpoint_copy.pop("has_api_key", None)
         endpoint_copy.pop("has_client_secret", None)
         for field_name, value in normalize_model_budget_overrides(endpoint_copy).items():
@@ -2649,7 +2660,7 @@ def normalize_model_endpoints(endpoints):
         if endpoint_copy.get("provider") != provider:
             endpoint_copy["provider"] = provider
             changed = True
-        if provider == MODEL_ENDPOINT_PROVIDER_CUSTOM:
+        if provider == MODEL_ENDPOINT_PROVIDER_CUSTOM and not explicit_routing:
             api_type = normalize_model_endpoint_api_type(
                 provider,
                 endpoint_copy.get("api_type"),
@@ -2707,7 +2718,7 @@ def normalize_model_endpoints(endpoints):
 
         models = endpoint_copy.get("models") or []
         normalized_models = []
-        custom_api_type = get_model_endpoint_api_type(endpoint_copy)
+        custom_api_type = "" if explicit_routing else get_model_endpoint_api_type(endpoint_copy)
         for model in models:
             if not isinstance(model, dict):
                 continue
@@ -2716,7 +2727,7 @@ def normalize_model_endpoints(endpoints):
                 if model_copy[field_name] != value:
                     model_copy[field_name] = value
                     changed = True
-            if provider == MODEL_ENDPOINT_PROVIDER_CUSTOM:
+            if provider == MODEL_ENDPOINT_PROVIDER_CUSTOM and not explicit_routing:
                 if custom_api_type == MODEL_ENDPOINT_API_TYPE_AZURE_OPENAI:
                     deployment_name = str(
                         model_copy.get("deploymentName")
@@ -2780,6 +2791,8 @@ def normalize_model_endpoints(endpoints):
             normalized_models.append(model_copy)
 
         endpoint_copy["models"] = normalized_models
+        if explicit_routing:
+            endpoint_copy = normalize_model_endpoint_routing(endpoint_copy)
         normalized.append(endpoint_copy)
 
     return normalized, changed or normalized != endpoints
@@ -2805,6 +2818,9 @@ def merge_model_endpoint_auth(existing_auth, incoming_auth):
 
     merged = dict(existing_auth)
     for key, value in incoming_auth.items():
+        if key in ("api_key_header", "api_key_prefix") and value is not None:
+            merged[key] = value
+            continue
         if value in (None, ""):
             continue
         merged[key] = value
@@ -2818,6 +2834,12 @@ def merge_model_endpoint_payload(existing_endpoint, incoming_endpoint):
     if not isinstance(incoming_endpoint, dict):
         return dict(existing_endpoint)
 
+    if routing_schema_version(existing_endpoint) == 2 and (
+        "routing_schema_version" in incoming_endpoint
+        and routing_schema_version(incoming_endpoint) != 2
+    ):
+        raise ValueError("Explicit model routing cannot be downgraded by an editor save.")
+
     merged = dict(existing_endpoint)
     for key, value in incoming_endpoint.items():
         if key == "auth":
@@ -2829,6 +2851,8 @@ def merge_model_endpoint_payload(existing_endpoint, incoming_endpoint):
     # Null capacity/identity overrides deliberately restore inheritance, unlike
     # blank authentication fields which must retain their stored secrets.
     merged.update(normalize_model_budget_overrides(incoming_endpoint))
+    if routing_schema_version(merged) == 2:
+        normalize_model_endpoint_routing(merged)
     return merged
 
 
@@ -2888,12 +2912,107 @@ def sanitize_model_endpoints_for_frontend(endpoints):
         has_client_secret = bool(auth.get("client_secret"))
         for secret_field in ("api_key", "client_secret", "bearer_token", "access_token", "refresh_token"):
             auth.pop(secret_field, None)
+        if routing_schema_version(endpoint_copy) == 2:
+            auth = {field: auth[field] for field in ("type", "api_key_header", "api_key_prefix") if field in auth}
         endpoint_copy["auth"] = auth
         endpoint_copy["has_api_key"] = has_api_key
         endpoint_copy["has_client_secret"] = has_client_secret
         sanitized.append(endpoint_copy)
 
     return sanitized
+
+def _model_endpoint_routing_fingerprint(endpoint):
+    return hashlib.sha256(json.dumps(endpoint, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()
+
+
+def plan_model_endpoint_routing_migration(endpoint, *, excluded_consumers_present=None):
+    """Plan only; candidates/backups contain secrets and must remain server-side.
+
+An authorized owner must audit excluded consumers and securely export the backup
+before any separate persistence operation. No settings are written by this API.
+"""
+    if not isinstance(endpoint, dict):
+        raise ValueError("Invalid endpoint configuration.")
+    original = copy.deepcopy(endpoint)
+    result = {"can_migrate": False, "issues": [], "endpoint": None, "backup": None}
+    if excluded_consumers_present is not False:
+        result["issues"].append("Excluded consumer references require review; retain legacy routing.")
+        return result
+    try:
+        candidate = copy.deepcopy(endpoint)
+        if routing_schema_version(candidate) == 1:
+            if candidate.get("provider") != "custom":
+                raise ValueError("Non-Custom migration requires owner review of the existing wire contract.")
+            api_type = get_model_endpoint_api_type(candidate)
+            descriptor = get_model_endpoint_provider(api_type)
+            if descriptor is None or descriptor.routing_schema_version > 1:
+                raise ValueError("Legacy API type requires review.")
+            connection = candidate.get("connection") or {}
+            raw_endpoint = connection.get("endpoint") or ""
+            if not isinstance(raw_endpoint, str) or any(character.isspace() or ord(character) < 32 for character in raw_endpoint) or "?" in raw_endpoint or "#" in raw_endpoint:
+                raise ValueError("Legacy URL components require owner review; retain legacy routing.")
+            parsed = urlsplit(raw_endpoint)
+            path = parsed.path.rstrip("/")
+            allowed_paths = {
+                "openai": {"", "/v1", "/openai/v1"},
+                "azure_openai": {""},
+                "anthropic": {"", "/v1", "/v1/messages"},
+                "gemini": {"/v1beta/openai"},
+            }
+            if path not in allowed_paths.get(api_type, set()):
+                raise ValueError("Existing gateway or operation path requires owner review; retain legacy routing.")
+            mode = str(connection.get("url_mode") or "auto").strip().lower()
+            if mode not in ("auto", "exact"):
+                raise ValueError("Legacy URL handling requires owner review.")
+            if api_type == "azure_openai" and mode == "exact":
+                raise ValueError("Legacy deployment Exact behavior requires owner review.")
+            if api_type == "anthropic":
+                path = "/v1"
+                mode = "exact"
+                connection["endpoint"] = urlunsplit((parsed.scheme, parsed.netloc, path, "", ""))
+            candidate["routing_schema_version"] = 2
+            for model in candidate.get("models") or []:
+                if not isinstance(model, dict) or not model.get("id") or not candidate.get("id"):
+                    raise ValueError("Stable endpoint and model IDs are required before migration.")
+                if any(field in model for field in ("api_type", "url_mode", "api_path")):
+                    raise ValueError("Pre-existing model routing fields require owner review.")
+                field = "modelName" if descriptor.uses_model_name else "deploymentName"
+                alias = "name" if descriptor.uses_model_name else "deployment"
+                model[field] = model.get(field) or model.get(alias) or ""
+                model.update({"api_type": api_type, "url_mode": mode, "api_path": ""})
+                if descriptor.version_field:
+                    legacy_version = (
+                        connection.get(descriptor.version_field)
+                        or (connection.get("openai_api_version") if api_type == "azure_openai" else None)
+                        or descriptor.default_version
+                    )
+                    if model.get(descriptor.version_field) not in (None, "", legacy_version):
+                        raise ValueError("Conflicting model version metadata requires owner review; retain legacy routing.")
+                    model[descriptor.version_field] = legacy_version
+        normalized, _ = normalize_model_endpoints([candidate])
+        candidate = normalized[0]
+    except ValueError as exc:
+        result["issues"].append(str(exc))
+        return result
+    result.update({
+        "can_migrate": True,
+        "endpoint": candidate,
+        "backup": {"format_version": 1, "endpoint": original, "migrated_fingerprint": _model_endpoint_routing_fingerprint(candidate)},
+    })
+    return result
+
+
+def restore_model_endpoint_routing_backup(current_endpoint, backup):
+    """Return the original record only if the migrated record has not changed."""
+    if not isinstance(backup, dict) or backup.get("format_version") != 1:
+        raise ValueError("Invalid model endpoint routing backup.")
+    original = backup.get("endpoint")
+    if not isinstance(original, dict) or original.get("id") != current_endpoint.get("id"):
+        raise ValueError("Routing backup does not match the selected endpoint.")
+    if backup.get("migrated_fingerprint") != _model_endpoint_routing_fingerprint(current_endpoint):
+        raise ValueError("Endpoint changed after migration; review before restoring.")
+    return copy.deepcopy(original)
+
 
 def encrypt_key(key):
     cipher_suite = Fernet(app.config['SECRET_KEY'])
