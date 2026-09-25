@@ -1,7 +1,7 @@
 # test_v2_group_classic_handoffs.py
 """
 M8A classic handoff cleanup for the native V2 group workspace.
-Version: 0.261.157
+Version: 0.261.166
 Implemented in: 0.261.153
 
 Every group workspace section is native now, so the V2 group pages must stop sending people to
@@ -75,9 +75,11 @@ def test_actions_off_with_call_agent_on_drops_the_classic_button(group_ui):
     expect(overview.get_by_text("Classic", exact=True)).to_have_count(0)
 
     ui.open("/groups/group-a/actions")
+    # Managing the Call agent tools needs group plugins too, so with them off the intro describes
+    # the tools rather than inviting a choice the read-only manager can't make.
     expect(ui.page.get_by_text(
-        "Group actions are turned off for this group. You can still choose which agents this group "
-        "can call and which local actions may trigger them.",
+        "Group actions are turned off for this group. These are the agents this group can call and "
+        "the local actions that may trigger them.",
         exact=True,
     )).to_be_visible()
     expect(ui.page.get_by_role("button", name=CLASSIC_BUTTON, exact=True)).to_have_count(0)

@@ -202,9 +202,10 @@ export function GroupWorkspacePage() {
     // Native group agents render only when the workspace advertises the Agents section as available
     // (context.sections.agents.enabled), which requires the group agent capability. A read-only
     // member has an available section with an empty agent_management hint, so they still get the
-    // native read-only collection. When the section is unavailable it falls through to Classic. The
-    // agent editor's action candidates and "New action" handoff reuse the group action adapter, or
-    // stay dark when group actions are unavailable -- never falling back to a personal action.
+    // native read-only collection. When the section is unavailable it shows its locked state with the
+    // server's reason. The agent editor's action candidates and "New action" handoff reuse the group
+    // action adapter, or stay dark when group actions are unavailable -- never falling back to a
+    // personal action.
     const nativeAgents = Boolean(ready && section === 'agents' && selected?.enabled && context.sections.agents.enabled);
     const groupAgentAdapter = useMemo(
         () => context?.sections.agents.enabled
@@ -214,8 +215,8 @@ export function GroupWorkspacePage() {
     );
     // Native group identities render only when the workspace advertises the Identities section as
     // available (context.sections.identities.enabled), which requires the caller to be a manager. A
-    // member's section is unavailable and falls through to Classic. Create is gated on the
-    // identity_management hint; edit and delete are gated per row via each identity's
+    // member's section is unavailable and shows its locked state with the server's reason. Create is
+    // gated on the identity_management hint; edit and delete are gated per row via each identity's
     // identity_actions -- never a personal-identity fallback. This section writes in a dialog, so
     // it keeps the personal SectionList layout rather than the full-bleed editor layout, and so it
     // needs no full-bleed flag of its own.
@@ -241,8 +242,8 @@ export function GroupWorkspacePage() {
 
     // Native group file sources render only when the workspace advertises the Sync section as
     // available (context.sections.sync.enabled), which requires the caller to be a manager. A
-    // member's section is unavailable and falls through to Classic. Create is gated on the
-    // file_source_management hint; edit, sync and delete are gated per row via each source's
+    // member's section is unavailable and shows its locked state with the server's reason. Create is
+    // gated on the file_source_management hint; edit, sync and delete are gated per row via each source's
     // source_actions -- never a personal file-sync fallback. Writing happens in a dialog, so it
     // keeps the personal SectionList layout and needs no full-bleed flag of its own.
     const groupFileSourceAdapter = useMemo(
@@ -483,7 +484,9 @@ export function GroupWorkspacePage() {
                                         <div className="min-h-0 flex-1"><ActionsSection agentsEnabled={false} adapter={groupActionAdapter} /></div>
                                         {context.native_delegation?.enabled ? (
                                             <div className="mt-4 max-h-[45%] shrink-0 space-y-3 overflow-y-auto border-t border-edge pt-4">
-                                                <SectionIntro title="Call agent" description="Choose which agents this group can call and which local actions may trigger them." />
+                                                <SectionIntro title="Call agent" description={context.native_delegation.can_manage
+                                                    ? 'Choose which agents this group can call and which local actions may trigger them.'
+                                                    : 'The agents this group can call and the local actions that may trigger them.'} />
                                                 <AgentDelegationManager scope={{ type: 'group', groupId: context.scope.id }}
                                                     allowManage={context.native_delegation.can_manage} interactionDisabled={accessUnconfirmed}
                                                     onDirtyChange={setDirty} onBusyChange={setResourceBusy} />
@@ -492,7 +495,9 @@ export function GroupWorkspacePage() {
                                     </>
                                 ) : section === 'actions' && context.native_delegation?.enabled && !resourceId ? (
                                     <>
-                                        <SectionIntro title="Actions" description="Group actions are turned off for this group. You can still choose which agents this group can call and which local actions may trigger them." />
+                                        <SectionIntro title="Actions" description={context.native_delegation.can_manage
+                                            ? 'Group actions are turned off for this group. You can still choose which agents this group can call and which local actions may trigger them.'
+                                            : 'Group actions are turned off for this group. These are the agents this group can call and the local actions that may trigger them.'} />
                                         <AgentDelegationManager scope={{ type: 'group', groupId: context.scope.id }}
                                             allowManage={context.native_delegation.can_manage} interactionDisabled={accessUnconfirmed}
                                             onDirtyChange={setDirty} onBusyChange={setResourceBusy} />

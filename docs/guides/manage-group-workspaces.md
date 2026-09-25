@@ -149,7 +149,10 @@ into the fields you didn't touch and your edits are kept. A field you both
 changed is named. Identities, endpoints and file sources work the same way. When
 group agents are turned off for your organization, the Agents
 section is not offered. When only group actions are off, **Actions** keeps the
-**Call agent** manager.
+**Call agent** manager. From version **0.261.166** it reads as read-only, and
+offers no choice, when you can't change it: when you don't manage the group's
+automation, when the group isn't active, and for everyone when an administrator
+has turned group actions off.
 
 ### Identities
 

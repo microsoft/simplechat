@@ -18,12 +18,6 @@ export const GROUP_SECTION_BLURBS: Record<GroupWorkspaceSectionId, string> = {
     endpoints: 'Model connections available to this group\'s agents and workflows.',
 };
 
-export function classicGroupSectionLabel(section: string, label: string): string {
-    if (section === 'tags') return 'Documents, then Manage Tags';
-    if (section === 'sync') return 'Sync';
-    return label;
-}
-
 export function isGroupWorkspaceSection(value: string | undefined): value is GroupWorkspaceSectionId {
     return GROUP_WORKSPACE_SECTION_IDS.some((id) => id === value);
 }

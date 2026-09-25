@@ -2,6 +2,14 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.166)**
+
+#### User Interface Enhancements
+
+*   **Call Agent Copy Matches What You Can Do**
+    *   In a group's **Actions** section, the **Call agent** introduction promised a choice even when the manager below it was read-only, as it is for members and when group actions are off. It now describes the agents and triggers instead, and offers the choice only when you can make it.
+    *   (Ref: `GroupWorkspacePage.tsx`, [Group Call Agent Read-Only Copy Fix](fixes/GROUP_CALL_AGENT_READ_ONLY_COPY_FIX.md))
+
 ### **(v0.261.165)**
 
 #### New Features

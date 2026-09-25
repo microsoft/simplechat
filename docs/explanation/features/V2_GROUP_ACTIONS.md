@@ -58,7 +58,11 @@ enabling it. The server checks every request regardless.
 The native collection appears only when the group's Actions section is
 available, `sections.actions.enabled` in the workspace context. A tenant can
 enable group agents without group actions. The group then keeps the Call agent
-manager with a link to the classic workspace, exactly as before this release.
+manager, with no classic link from version 0.261.153. From version
+**0.261.166**, the manager and its introduction are read-only unless the
+workspace context's `native_delegation.can_manage` is true. That needs one of
+the roles allowed to manage group workflows, an active group, and group actions
+turned on.
 
 ## Provided actions
 

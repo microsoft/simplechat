@@ -1,7 +1,7 @@
 # test_v2_group_actions.py
 """
 Production-SPA coverage for the native scope-aware V2 group actions workbench.
-Version: 0.261.153
+Version: 0.261.166
 Implemented in: 0.261.137
 
 Exercises the real action collection, editor and connection-test path against closed
@@ -368,11 +368,31 @@ def test_group_without_the_actions_capability_shows_call_agent(group_actions_ui)
     # The native workbench never mounts, so there is no create control and no group actions read.
     expect(page.get_by_role("button", name="New action", exact=True)).to_have_count(0)
     expect(page.get_by_role("button", name="Open classic group workspace", exact=True)).to_have_count(0)
-    expect(page.get_by_text("Group actions are turned off for this group. You can still choose which agents this group can call and which local actions may trigger them.", exact=True)).to_be_visible()
+    # Managing the Call agent tools needs group plugins too, so the intro describes them without
+    # promising a choice the read-only manager can't make.
+    expect(page.get_by_text("Group actions are turned off for this group. These are the agents this group can call and the local actions that may trigger them.", exact=True)).to_be_visible()
     assert not [entry for entry in ui.requests if entry.path.startswith("/api/groups/group-c/actions")], (
         "The actions route must not be read when the group action capability is off."
     )
 
+
+@pytest.mark.parametrize(("group", "intro"), [
+    ("group-a", "Choose which agents this group can call and which local actions may trigger them."),
+    ("group-b", "The agents this group can call and the local actions that may trigger them."),
+    ("group-c", "Group actions are turned off for this group. These are the agents this group can call "
+                "and the local actions that may trigger them."),
+])
+def test_call_agent_intro_invites_a_choice_only_when_it_can_be_managed(group_actions_ui, group, intro):
+    """The Call agent intro follows `native_delegation.can_manage`.
+
+    group-a's Owner can manage the Call agent tools; group-b's User can only read them; and in
+    group-c, with group plugins off, no one can, since managing them needs group plugins too.
+    """
+    ui, page = group_actions_ui, group_actions_ui.page
+    open_actions(ui, group=group)
+    expect(page.get_by_text(intro, exact=True)).to_be_visible()
+    if group != "group-a":
+        expect(page.get_by_text(re.compile(r"Choose which agents|You can still choose"))).to_have_count(0)
 
 def test_provided_global_action_opens_read_only_from_the_group_route(group_actions_ui):
     """A provided (global) action lists and opens read-only: no edit, delete or connection test."""

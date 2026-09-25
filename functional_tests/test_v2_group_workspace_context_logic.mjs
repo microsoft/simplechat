@@ -1,5 +1,5 @@
 // test_v2_group_workspace_context_logic.mjs
-// Version: 0.261.165
+// Version: 0.261.166
 // Implemented in: 0.261.126
 // Shared shell navigation and revalidation: 0.261.127
 // Members section validation (M7B): 0.261.155
@@ -16,7 +16,7 @@ const { useBootstrapStore } = await import('../application/v2_ui/src/stores/boot
 const { resolveWorkspaceSections } = await import('../application/v2_ui/src/lib/workspaceSections.ts');
 const { useGroupWorkspaceStore, WorkspaceRequestSuperseded } =
     await import('../application/v2_ui/src/stores/groupWorkspaceStore.ts');
-const { groupWorkspaceNavigationAvailability, groupWorkspacePath, classicGroupSectionLabel } =
+const { groupWorkspaceNavigationAvailability, groupWorkspacePath } =
     await import('../application/v2_ui/src/lib/groupWorkspaceNavigation.ts');
 const { GROUP_WORKSPACES } = await import('../application/v2_ui/src/lib/workspaces.ts');
 
@@ -414,8 +414,6 @@ try {
         assert.equal(value.sections.actions.enabled, false);
         assert.equal(groupWorkspacePath('group-b', 'workflows'), '/groups/group-b/workflows');
         assert.equal(groupWorkspacePath('group-b', 'unrecognized'), '/groups/group-b');
-        assert.equal(classicGroupSectionLabel('tags', 'Tags'), 'Documents, then Manage Tags');
-        assert.equal(classicGroupSectionLabel('sync', 'File sources'), 'Sync');
     });
     await run('list requests search server-side and preserve cancellation', async () => {
         handler = () => json({ groups: [{ id: 'group-z', name: 'Billing' }], total_count: 1001, page: 2, page_size: 25 });

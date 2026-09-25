@@ -1,7 +1,7 @@
 # group_workspace.py
 """
 Closed HTTP fixtures for the real V2 group workspace shell.
-Version: 0.261.165
+Version: 0.261.166
 Implemented in: 0.261.127
 Members section in the group context (M7B): 0.261.155
 File source credential identifiers modelled as `_prepare_auth_payload` stores them: 0.261.156
@@ -38,9 +38,9 @@ from urllib.parse import quote, unquote, urlsplit
 import pytest
 
 from ui_tests.fixtures.workspace_authoring import (
-    MISSING, OWNER_ID, SCHEMA_ROOT, SECRET_MASK, SPA_INDEX, EditorSecretError, WorkspaceAuthoringFixture,
-    _editor_candidate, _get_pointer, _schema, _set_pointer, _walk_values, action_record, agent_record,
-    connect_options as connect_options,
+    MISSING, OWNER_ID, SECRET_MASK, SPA_INDEX, EditorSecretError, WorkspaceAuthoringFixture,
+    _editor_candidate, _get_pointer, _set_pointer, _walk_values, action_editor_auth_types, action_record,
+    agent_record, connect_options as connect_options,
     editor_options, personal_scope_leak,
 )
 
@@ -154,21 +154,6 @@ def action_management(role, status):
     if role in WRITER_ROLES and status == "active":
         return {"schema_version": 1, "operations": list(ACTION_OPERATIONS)}
     return {"schema_version": 1, "operations": []}
-
-
-def action_editor_auth_types(action_type):
-    """The auth types `build_action_editor_types` lists for a type, sorted: the type's definition's
-    `allowedAuthTypes` when it lists any, otherwise the shared `AuthType` enum of plugin.schema.json
-    (`get_allowed_auth_types_for_plugin_type`)."""
-    compact = re.sub(r"[^a-z0-9]", "", str(action_type or "").lower())
-    if compact in {"msgraph", "microsoftgraph", "msgraphplugin", "microsoftgraphplugin"}:
-        name = "msgraph"
-    else:
-        name = re.sub(r"[^a-zA-Z0-9_]", "_", str(action_type or "")).lower()
-    allowed = _schema(SCHEMA_ROOT / f"{name}.definition.json").get("allowedAuthTypes")
-    if not (isinstance(allowed, list) and allowed):
-        allowed = _schema(SCHEMA_ROOT / "plugin.schema.json").get("definitions", {}).get("AuthType", {}).get("enum", [])
-    return sorted({str(item) for item in allowed})
 
 
 # The native group agent model, mirrored from the M4C backend so both the shell fixture and the
