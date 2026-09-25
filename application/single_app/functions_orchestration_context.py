@@ -27,7 +27,7 @@ a document, an agent, a model, a prompt -- narrows the plan rather than suggesti
 A user who picked a document and then watched the planner search their whole workspace
 would rightly conclude the control did nothing.
 
-Version: 0.261.132
+Version: 0.261.139
 """
 
 import hashlib
@@ -899,9 +899,11 @@ def resolve_agent_catalog(user_id, seeds=None, settings=None, user_groups=None):
 
     settings = settings or {}
     seeded_agent = seeds.get('agent')
+    # Discovery asks whether agents are permitted at all; planning later checks that the
+    # runtime services an agent step needs are bound for this request.
     available = resolve_available_capability_ids(
         settings, allowed_ids=settings.get('chat_orchestration_enabled_capabilities'),
-        candidate_ids=(CAPABILITY_AGENT_INVOKE,),
+        candidate_ids=(CAPABILITY_AGENT_INVOKE,), include_runtime_bindings=False,
     )
     if CAPABILITY_AGENT_INVOKE not in available:
         return []
@@ -966,7 +968,7 @@ def resolve_action_catalog(user_id, seeds=None, settings=None, user_groups=None)
         return []
     available = resolve_available_capability_ids(
         settings, allowed_ids=settings.get('chat_orchestration_enabled_capabilities'),
-        candidate_ids=(CAPABILITY_ACTION_INVOKE,),
+        candidate_ids=(CAPABILITY_ACTION_INVOKE,), include_runtime_bindings=False,
     )
     if CAPABILITY_ACTION_INVOKE not in available:
         return []
@@ -1427,7 +1429,7 @@ def _selected_prompt(seeds):
 
     Both the name and the wording, because a plan is chosen from what the work involves and
     only the wording says that. Returns ``None`` rather than an empty dict when there is no
-    prompt, so ``triage_request`` can test it the same way it tests the other selections.
+    prompt, so the planner context omits it the same way it omits the other selections.
     """
     prompt = seeds.get('prompt')
     if not isinstance(prompt, dict):

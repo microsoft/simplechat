@@ -1,8 +1,9 @@
 # test_orchestration_internal_analysis.py
 """
 Real v2 adapters -> native Analyze/Compare -> saved readers -> generic result store.
-Version: 0.261.127
+Version: 0.261.139
 Implemented in: 0.261.127
+Single orchestration contract updated in: 0.261.139
 
 Source/model/Cosmos/Blob I/O is offline. Producers, native work-unit checkpoints,
 saved Analyze contracts, complete readers and the M1 facade/store are real.
@@ -526,7 +527,7 @@ def test_native_compute_selection_is_not_routed_to_a_legacy_file_producer(intern
     assert internal.hooks.call_count == 0
 
 
-def test_v1_compare_and_standalone_return_shape_are_unchanged(internal):
+def test_standalone_comparison_return_shape_is_unchanged(internal):
     internal.state['mode'] = 'compare'
     standalone = internal.comparison.run_document_comparison(
         'owner', 'Compare both targets.',
@@ -539,11 +540,6 @@ def test_v1_compare_and_standalone_return_shape_are_unchanged(internal):
         'left_document', 'right_documents', 'comparison_items',
     }
     assert standalone['analysis_reply'].endswith('LAST-REPORT')
-    internal.context.plan_contract_version = 1
-    legacy = compare(internal)
-    assert legacy['status'] == 'completed', legacy
-    assert 'task_result' not in legacy
-    assert len(legacy['evidence']) == 3
 
 
 def test_standalone_markdown_recommendation_only_changes_inside_server_scope(internal):
@@ -583,7 +579,7 @@ def test_real_runtime_retains_and_round_trips_all_available_native_outputs(
     assert internal.hooks.call_count == 0
 
 
-def test_versioned_compose_is_lazy_and_legacy_lookup_stays_unchanged(internal, monkeypatch):
+def test_compose_adapter_is_lazy_and_only_the_single_contract_resolves(internal, monkeypatch):
     original_import = builtins.__import__
     composition_imports = []
 
@@ -594,23 +590,16 @@ def test_versioned_compose_is_lazy_and_legacy_lookup_stays_unchanged(internal, m
 
     monkeypatch.setattr(builtins, '__import__', track_import)
     registry = dict(internal.adapters.ADAPTER_REGISTRY)
-    legacy_compose = internal.adapters.get_adapter('compose')
-    keyword_lookup = internal.adapters.get_adapter(name='compose')
-    unknown = internal.adapters.get_adapter('unknown', contract_version=2)
-    legacy = {name: internal.adapters.get_adapter(name) for name in registry}
-    explicit_legacy = {name: internal.adapters.get_adapter(name=name, contract_version=1) for name in registry}
-    dependency = {
-        name: internal.adapters.get_adapter(name=name, contract_version=2)
-        for name in registry if name != 'respond'
-    }
-    dependency_respond = internal.adapters.get_adapter(name='respond', contract_version=2)
-    assert legacy_compose is keyword_lookup is unknown is None
-    assert legacy == explicit_legacy == registry
-    assert dependency == {name: adapter for name, adapter in registry.items() if name != 'respond'}
-    assert dependency_respond is None
+    default = {name: internal.adapters.get_adapter(name) for name in registry}
+    explicit = {name: internal.adapters.get_adapter(name=name, contract_version=2) for name in registry}
+    earlier = {name: internal.adapters.get_adapter(name=name, contract_version=1) for name in registry}
+    assert default == explicit == registry
+    assert set(earlier.values()) == {None}
+    assert 'respond' not in registry and internal.adapters.get_adapter('respond') is None
+    assert internal.adapters.get_adapter('unknown') is None
     assert not composition_imports
 
-    compose = internal.adapters.get_adapter(name='compose', contract_version=2)
+    compose = internal.adapters.get_adapter(name='compose')
     assert compose is sys.modules['functions_orchestration_composition'].adapter_compose
     assert composition_imports == ['functions_orchestration_composition']
     assert 'compose' not in internal.adapters.ADAPTER_REGISTRY

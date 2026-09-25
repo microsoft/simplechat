@@ -1,13 +1,13 @@
 # functions_orchestration_composition.py
 """Explicit one-call content preparation from named authorized result readers.
 
-Version: 0.261.134
+Version: 0.261.139
 No retrieval, file-format inference, upload, publication, or implicit sibling inputs.
 
-Answer-writing steps also receive what the answer step of earlier orchestration received:
-saved memory, the resolved conversation references, the knowledge basis the planner
-declared, a disclosure of optional inputs that could not be gathered, and guidance for the
-visuals the planner named (charts, Mermaid diagrams, image proposal cards).
+Answer-writing steps receive saved memory, the resolved conversation references, the
+knowledge basis the planner declared, a disclosure of optional inputs that could not be
+gathered, and guidance for the visuals the planner named (charts, Mermaid diagrams, image
+proposal cards).
 """
 
 import json
@@ -19,13 +19,18 @@ from content_screening.contracts import ScreeningError
 from functions_appinsights import log_event
 from functions_mixed_source_orchestration import MixedSourceCancellationError
 from functions_orchestration_context import conversation_reference_messages
+from functions_orchestration_deliverables import (
+    compose_deliverable_guidance, place_deck_images, place_image_tokens,
+)
 from functions_orchestration_memory import OrchestrationMemoryError
 from functions_orchestration_registry import (
-    KNOWLEDGE_BASIS_GENERAL, KNOWLEDGE_BASIS_MIXED, KNOWLEDGE_BASIS_SOURCES,
+    CAPABILITY_GENERATE_IMAGE, KNOWLEDGE_BASIS_GENERAL, KNOWLEDGE_BASIS_MIXED, KNOWLEDGE_BASIS_SOURCES,
     VISUAL_CHART, VISUAL_DIAGRAM, VISUAL_IMAGE_PROPOSAL,
 )
+from functions_generated_export_registry import PREPARED_SLIDE_DECK_VERSION
 from functions_orchestration_result_contracts import (
-    Completeness, Coverage, RecordColumn, ResultContractError, canonical_bytes, validate_record,
+    IMAGE_ASSET_KIND, Completeness, Coverage, RecordColumn, ResultContractError, canonical_bytes,
+    validate_record,
 )
 from functions_orchestration_result_runtime import (
     raise_source_service_failure, read_complete_input, require_result_service, resolve_step_inputs,
@@ -37,7 +42,7 @@ from functions_orchestration_schema import (
 )
 from functions_orchestration_visuals import (
     build_answer_visual_guidance, build_existing_charts_note, collect_run_charts,
-    image_proposals_available, image_requested_by_user, place_chart_blocks,
+    image_proposals_available, place_chart_blocks,
 )
 
 
@@ -77,6 +82,11 @@ MISSING_INPUT_POLICY = (
     'they are listed as unavailable_inputs. Say briefly, once, which information could not be '
     'gathered, and that the affected content comes from general knowledge and was not checked '
     'against it. Do not present unchecked content as sourced.'
+)
+MISSING_IMAGE_POLICY = (
+    'Some requested images could not be generated; they are listed as unavailable_images. Do not '
+    'add placeholders for them or describe them as included. A delivery note after the answer '
+    'reports them.'
 )
 
 
@@ -119,33 +129,39 @@ def _unique_object(pairs):
 def _missing_optional_inputs(step, context):
     """Optional inputs whose producer did not complete, with its application-owned reason."""
     failures = {
-        failure.get('step_id'): safe_failure(failure)['message']
+        failure.get('step_id'): failure
         for failure in getattr(context, 'failures', None) or [] if isinstance(failure, dict)
     }
     task_results = getattr(context, 'task_results', None) or {}
-    return [
-        {
+    missing = []
+    for spec in step_input_specs(step):
+        if not spec.optional or spec.binding.step_id is None or spec.binding.step_id in task_results:
+            continue
+        failure = failures.get(spec.binding.step_id)
+        missing.append({
             'name': spec.name, 'step_id': spec.binding.step_id,
-            'reason': failures.get(spec.binding.step_id) or build_failure('dependency_unavailable')['message'],
-        }
-        for spec in step_input_specs(step)
-        if spec.optional and spec.binding.step_id is not None and spec.binding.step_id not in task_results
-    ]
+            'capability_id': (failure or {}).get('capability_id'),
+            'reason': safe_failure(failure)['message'] if failure else build_failure('dependency_unavailable')['message'],
+        })
+    return missing
 
 
 def _answer_visuals(step, settings, context):
-    """The visual kinds the planner named for this step; never inferred from request keywords."""
+    """The visual kinds the planner named for this step; never inferred from request keywords.
+
+    The composer's Image control no longer forces proposal cards here: it makes the user's
+    images explicit deliverables, which generate_image steps produce. Suggested images reach
+    this step as the image_proposal visual derived from a suggested image deliverable.
+    """
     flags = set(step['arguments'].get('visuals') or ())
     if not any(output['kind'] == 'markdown-v1' for output in step['outputs']):
         # Charts, Mermaid and proposal cards render only in Markdown content.
         return {}
     images = image_proposals_available(settings)
-    image_selected = images and image_requested_by_user(getattr(context, 'original_seeds', None))
     return {
         'explicit_chart': VISUAL_CHART in flags, 'chart': VISUAL_CHART in flags, 'proactive_chart': False,
         'diagram': VISUAL_DIAGRAM in flags,
-        'image': images and (VISUAL_IMAGE_PROPOSAL in flags or image_selected),
-        'image_required': image_selected,
+        'image': images and VISUAL_IMAGE_PROPOSAL in flags,
     }
 
 
@@ -201,19 +217,27 @@ def adapter_compose(step, context, *, settings, user_id, emit=None, cancel_reque
         recheck()
         if sum(reader.reference.size_bytes for reader in readers.values()) > MAX_VALUE_BYTES:
             raise ResultContractError('result_requires_streaming')
+        # Generated images are placed by token; their descriptors are not source material.
+        image_names = [name for name, reader in readers.items() if reader.result_kind == IMAGE_ASSET_KIND]
+        images = []
+        for name in image_names:
+            asset = read_complete_input(readers[name])
+            images.append({'asset_id': asset['asset_id'], 'title': asset['title']})
         inputs = {
             name: {
                 'kind': reader.result_kind, 'completeness': reader.completeness.to_dict(),
                 'columns': [column.to_dict() for column in reader.columns],
                 'value': read_complete_input(reader),
             }
-            for name, reader in readers.items()
+            for name, reader in readers.items() if name not in image_names
         }
         outputs = step['outputs']
         plain_text = len(outputs) == 1 and outputs[0]['kind'] in ('text-v1', 'markdown-v1')
-        missing = _missing_optional_inputs(step, context)
+        unavailable = _missing_optional_inputs(step, context)
+        missing_images = [item for item in unavailable if item['capability_id'] == CAPABILITY_GENERATE_IMAGE]
+        missing = [item for item in unavailable if item not in missing_images]
         basis = step['arguments'].get('knowledge_basis') or (
-            KNOWLEDGE_BASIS_SOURCES if readers or missing else KNOWLEDGE_BASIS_GENERAL
+            KNOWLEDGE_BASIS_SOURCES if inputs or missing else KNOWLEDGE_BASIS_GENERAL
         )
         visuals = _answer_visuals(step, settings, context)
         charts = _input_charts(inputs) if visuals else []
@@ -221,6 +245,7 @@ def adapter_compose(step, context, *, settings, user_id, emit=None, cancel_reque
         memory = _answer_memory(context)
         policy = ' '.join(part for part in (
             COMPOSE_POLICY, KNOWLEDGE_POLICIES[basis], MISSING_INPUT_POLICY if missing else '',
+            MISSING_IMAGE_POLICY if missing_images else '',
             'Return only the prepared text.' if plain_text else (
                 'Return one JSON object with exactly the declared output names as keys and '
                 'their complete values. Follow every declared schema and any matching '
@@ -232,6 +257,11 @@ def adapter_compose(step, context, *, settings, user_id, emit=None, cancel_reque
             getattr(context, 'context_message_ids', None),
         )
         messages = [{'role': 'system', 'content': policy}]
+        # What the user asked to receive frames the work before the visual guidance.
+        messages.extend(
+            {'role': 'system', 'content': guidance}
+            for guidance in compose_deliverable_guidance(step, images)
+        )
         # Visual guidance precedes saved memory, so memory (which it defers to) is read last.
         messages.extend(
             {'role': 'system', 'content': guidance}
@@ -256,6 +286,12 @@ def adapter_compose(step, context, *, settings, user_id, emit=None, cancel_reque
                 **({'unavailable_inputs': [
                     {'name': item['name'], 'reason': item['reason']} for item in missing
                 ]} if missing else {}),
+                **({'images': [
+                    {'token': f"[[image:{image['asset_id']}]]", 'title': image['title']} for image in images
+                ]} if images else {}),
+                **({'unavailable_images': [
+                    {'name': item['name'], 'reason': item['reason']} for item in missing_images
+                ]} if missing_images else {}),
                 **({'existing_charts': build_existing_charts_note(charts)} if charts else {}),
             }, ensure_ascii=False, allow_nan=False, separators=(',', ':')),
         })
@@ -284,6 +320,17 @@ def adapter_compose(step, context, *, settings, user_id, emit=None, cancel_reque
         if charts and len(markdown_names) == 1 and type(values[markdown_names[0]]) is str:
             # Charts drawn from exact rows are placed at their tokens, or appended once.
             values[markdown_names[0]] = place_chart_blocks(values[markdown_names[0]], charts)
+        # Prepared content that is bound to generated images places each one that arrived at
+        # its token, or after the content, with its AI-illustration caption, and may reference
+        # no other image, even when none arrived. Content without image inputs is left to
+        # Render, which resolves nothing else.
+        titles = {image['asset_id']: image['title'] for image in images}
+        for specification in outputs if images or missing_images else ():
+            value = values[specification['name']]
+            if specification['kind'] == 'markdown-v1' and type(value) is str:
+                values[specification['name']] = place_image_tokens(value, titles)
+            elif specification.get('profile') == PREPARED_SLIDE_DECK_VERSION:
+                values[specification['name']] = place_deck_images(value, titles)
         partial = any(reader.completeness.status == 'partial' for reader in readers.values())
         limitations = tuple(dict.fromkeys(
             limitation for reader in readers.values() for limitation in reader.completeness.limitations

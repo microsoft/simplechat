@@ -49,5 +49,5 @@ scheduler, native-adapter and saved-analysis compatibility run passed
 **328 tests in both normal and optimized Python** with external I/O doubled.
 This is local production-boundary coverage, not live tenant validation.
 
-See [the harness contract](../features/ORCHESTRATION_RENDERING_HARNESS.md) and
+See [the harness contract](../features/ORCHESTRATION_GATHER_REASON_RENDER.md) and
 [retained Analyze results](../features/ANALYZE_RESULTS.md).

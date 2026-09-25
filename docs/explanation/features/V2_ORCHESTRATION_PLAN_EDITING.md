@@ -151,7 +151,7 @@ preserved source selections, and the final revised request.
 edit-output contract. Initial planning is strict too: a provider failure or an
 invalid plan no longer becomes a successful direct-answer fallback.
 
-The orchestration UI harness covers the editor and existing narrowing-only Review
+The orchestration UI tests cover the editor and existing narrowing-only Review
 behavior. Model responses are deterministic in these tests; they establish the
 application contract, not that every natural-language request will produce the
 desired plan on its first attempt.

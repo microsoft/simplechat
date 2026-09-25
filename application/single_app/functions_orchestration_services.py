@@ -1,7 +1,7 @@
 # functions_orchestration_services.py
-"""Bind initialized application resources to the retained-result harness.
+"""Bind initialized application resources to the retained-result runtime.
 
-Version: 0.261.134
+Version: 0.261.139
 
 The web and scheduler owners supply storage, current access callbacks and private
 artifact transport. This module never discovers configuration, credentials or
@@ -107,7 +107,7 @@ class OrchestrationServices:
         transport, authorize_execution, max_output_bytes,
         external_source_catalog=None, external_source_authorizer=None,
         external_source_admission=None, external_source_preflight=None, native_bridge_for_step=None,
-        capture_external_source_configuration=None,
+        capture_external_source_configuration=None, image_asset_reader=None,
     ):
         if external_source_preflight is not None and not callable(external_source_preflight):
             raise ResultContractError("result_external_reader_required")
@@ -146,6 +146,7 @@ class OrchestrationServices:
         self.rendering = OrchestrationRenderingService(
             self.outputs, self.results, transport,
             authorize_execution=authorize_execution, max_output_bytes=max_output_bytes,
+            image_asset_reader=image_asset_reader,
         )
 
     @property

@@ -4,21 +4,22 @@ title: "Create files with orchestration"
 description: "Plan several files from the same retained results and recover an individual output."
 section: "Guides"
 audience: user
-version: "0.261.134"
+version: "0.261.139"
 ---
 
 ## Availability
 
-This guide describes contract-v2 Gather / Reason / Render plans for the
-orchestration harness preview, integrated in version **0.261.127**, recorded in
-`application/single_app/config.py`. Retained-result foundations arrived in
-**0.261.125** and the shared renderer in **0.261.126**.
+This guide describes Gather / Reason / Render orchestration plans, which are
+the only plans created when Chat Orchestration is enabled. Retained-result
+foundations arrived in **0.261.125**, the shared renderer in **0.261.126**, and
+the single-contract rollout in **0.261.139**, recorded in
+`application/single_app/config.py`.
 
-An administrator must enable orchestration and its harness preview, and the
-server must admit the supported runtime. This release supplies that runtime;
-both settings remain off by default. Existing saved plans keep their original
-contract. Ordinary chat exports, standalone Analyze/Compare and workflow output
-settings are separate and keep their existing behavior.
+An administrator must enable Chat Orchestration and the capabilities needed for
+the requested output. Ordinary chat exports, standalone Analyze/Compare and
+workflow output settings are separate and keep their existing behavior. Plans
+created by an earlier orchestration version cannot be reopened or rerun; start a
+new request to create files with the current contract.
 
 See [orchestration settings](../admin/orchestration.md) for rollout and permissions.
 
@@ -43,6 +44,48 @@ Such a plan does not need a search task or invented document sources. Likewise,
 selected documents do not require a redundant search when the requested analysis
 can use them directly.
 
+## Check that the plan delivers what you asked for
+
+Since **0.261.138**, a plan lists what you asked to receive before its steps. The
+approval card and the plan panel show it under **You asked for**, with the step that
+produces each item. Use it to confirm the plan will create a real file: a file is
+created only by a Render task, and text or a table in the chat answer is not a file.
+
+If something you asked for cannot be produced here, it stays on the list marked
+**Not available**, with the reason the server reports, for example "This file format
+is not available for this plan." The rest of the plan still runs, and the answer says
+once, in its **Delivery notes**, what was not delivered. A plan is never approved on
+the promise of a file that no task creates.
+
+## Ask for images in a report or deck
+
+Ask for the images in the same request, for example:
+
+> Create a Word file for my report on the first three presidents, with an image of
+> each president.
+
+When image generation is enabled, the plan generates each image you asked for as its
+own task, writes the report with each image where it belongs, and renders the Word
+document with the images embedded. Approving the plan is your consent to generate them;
+in Run automatically mode, your request is. The images also appear inline in the chat
+answer, where you can view and edit them as usual. DOCX, PDF, and PowerPoint files embed
+images; CSV, XLSX, JSON, YAML, XML, Markdown, and text files do not. A file embeds a copy
+of each image in a format and size the document accepts, so a large or WEBP image is
+converted for the file while the chat keeps the original.
+
+Generated images are AI illustrations, captioned as such, not photographs. Web search
+returns text and links only, so a report links authentic sources rather than copying
+their pictures. A plan generates at most four images; when you ask for more, the rest are
+listed as not available. Images the planner only suggests stay approval cards, which
+never appear in a file. An image the plan generated never shows an **Approve** button, so
+it is never paid for twice.
+
+If an image cannot be generated, the report and file are still produced without it, the
+run is reported as incomplete, and the delivery notes say how many images were created.
+Because the attempt already has its file, the conversation recovers it file by file; ask
+again to generate the missing image. If the image service declined the image prompt, ask
+again with a different description.
+
 ## Review the file tasks before running
 
 Use the [plan review and editor](review-and-edit-orchestration-plans.md) to check
@@ -55,8 +98,8 @@ describe purpose rather than three compulsory consecutive stages.
 Check each **Planned file** against your request: its name, format and source
 result should be clear. Several file tasks may use the same named result.
 Retained results and planned files are not download links or proof of completion.
-In the new contract, analysis or composition without an explicit Render task
-does not automatically attach a file.
+Analysis or composition without an explicit Render task does not automatically
+attach a file.
 
 For a table, specify the columns and their order when that matters. Nested data
 cannot be silently flattened into CSV. If the available findings do not already
@@ -146,4 +189,4 @@ its retained results and private output access.
 
 Files are private conversation artifacts by default, not automatically indexed
 workspace documents. Workspace publication, external delivery, workflow
-integration and new image/audio generation are not part of this harness tranche.
+integration and audio generation remain separate capabilities.

@@ -1,8 +1,9 @@
 # test_orchestration_checkpoint_error_mapping.py
 """Functional tests for storage uncertainty versus invalid or denied saved proof.
 
-Version: 0.261.127
+Version: 0.261.139
 Implemented in: 0.261.127
+Single orchestration contract updated in: 0.261.139
 Real checkpoint/recovery/result services are used with isolated Cosmos/Blob faults.
 No failed read can select a different result, replay a producer, or disclose SDK text.
 """
@@ -60,7 +61,7 @@ def _fail_read(monkeypatch, container, item_id, error, *, occurrence=1):
 
 @pytest.mark.parametrize('stage', ['presence', 'lifecycle', 'manifest', 'chunk'])
 @pytest.mark.parametrize('kind', ['cosmos', 'timeout'])
-def test_v2_exact_checkpoint_read_exposes_retryable_storage_uncertainty(retained, monkeypatch, stage, kind):
+def test_exact_checkpoint_read_exposes_retryable_storage_uncertainty(retained, monkeypatch, stage, kind):
     case = retained
     checkpoint_module = case.durable.runtime.checkpoints
     item_id = (
@@ -119,10 +120,10 @@ def test_missing_denied_and_changed_proof_are_not_storage_outages(retained, chan
 
 
 @pytest.mark.parametrize('operation', ['presence', 'load'])
-def test_legacy_checkpoint_storage_failure_retains_original_code(retained, monkeypatch, operation):
+def test_direct_checkpoint_store_storage_failure_is_retryable_uncertainty(retained, monkeypatch, operation):
     case = retained
     module = case.durable.runtime.checkpoints
-    legacy = module.CheckpointStore(
+    store = module.CheckpointStore(
         case.container, run_id='run-1', conversation_id='conversation-1', user_id='owner',
         turn_id='turn-1', authorize=lambda: True,
     )
@@ -131,10 +132,11 @@ def test_legacy_checkpoint_storage_failure_retains_original_code(retained, monke
     _fail_read(monkeypatch, case.container, item_id, error)
     with pytest.raises(module.CheckpointError) as failed:
         if operation == 'presence':
-            legacy.has_manifest('retained')
+            store.has_manifest('retained')
         else:
-            legacy.load('retained')
-    assert failed.value.code == 'checkpoint_unavailable'
+            store.load('retained')
+    # The removed earlier contract reported checkpoint_unavailable here; one code remains.
+    assert failed.value.code == 'checkpoint_storage_unavailable'
     assert failed.value.__cause__ is error
 
 

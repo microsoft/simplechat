@@ -1,10 +1,11 @@
 # test_orchestration_plan_revision_routes.py
 """
 Functional tests for conversational, pre-execution plan revisions.
-Version: 0.261.134
+Version: 0.261.139
 Implemented in: 0.261.102
 Authorized model routing through revisions and clarification: 0.261.103
 Unroutable Auto revisions report model_unavailable: 0.261.134
+Single orchestration contract updated in: 0.261.139
 
 Exercises the real Flask routes, planner, executor, and atomic revision persistence.
 Only model, search, source-access, and Cosmos service boundaries are replaced.
@@ -37,13 +38,28 @@ def revised_plan(task='Compare pricing for the wineries near Grants Pass.', sear
         }
         for index in range(searches)
     ]
+    inputs = {
+        f'findings_{index}': {
+            'binding': {
+                'version': 'orchestration-input-binding-v1',
+                'step_id': step['step_id'], 'output_name': 'prepared', 'existing_result': None,
+            },
+            'allow_partial': False,
+        }
+        for index, step in enumerate(steps)
+    }
     steps.append({
-        'step_id': 'answer', 'capability_id': 'respond', 'title': 'Answer the revised request',
-        'arguments': {}, 'depends_on': [step['step_id'] for step in steps],
+        'step_id': 'answer', 'capability_id': 'compose', 'title': 'Answer the revised request',
+        'arguments': {'instruction': task, 'knowledge_basis': 'sources' if inputs else 'general_knowledge'},
+        'inputs': inputs, 'outputs': [{'name': 'answer', 'kind': 'markdown-v1'}],
     })
     return {
         'kind': 'plan', 'revised_request': task,
         'intent': {'summary': task, 'complexity': 'simple'}, 'steps': steps,
+        'final_response': {
+            'version': 'orchestration-input-binding-v1',
+            'step_id': 'answer', 'output_name': 'answer', 'existing_result': None,
+        },
     }
 
 
@@ -313,7 +329,7 @@ class PlanRevisionRouteTests(unittest.TestCase):
             first, revised_plan('Summarize the already available comparison.', searches=0),
             instruction='Remove the searches and summarize what is already available.',
         )
-        self.assertEqual([step['capability_id'] for step in second['plan']['steps']], ['respond'])
+        self.assertEqual([step['capability_id'] for step in second['plan']['steps']], ['compose'])
         restored, _body = self.revise(second, action='restore', source_run_id=original_id)
         self.assertEqual(len(restored['plan']['steps']), len(editor['plan']['steps']))
         self.assertGreater(restored['plan']['revision'], second['plan']['revision'])
@@ -330,12 +346,14 @@ class PlanRevisionRouteTests(unittest.TestCase):
                          self.runs.read_item(original_id, 'conv1')['user_message'])
 
     def test_review_narrowing_reaches_the_planner(self):
+        self.model.plan_override = revised_plan(searches=2)
+        self.model.plan_override['steps'][-1]['inputs'].pop('findings_1')
         editor = self.open_editor(edits={
-            'disabled_step_ids': ['search'], 'removed_document_ids': {},
+            'disabled_step_ids': ['search_1'], 'removed_document_ids': {},
         })
         updated, _body = self.revise(editor, revised_plan(searches=0))
         supplied = json.loads(self.edit_calls[-1]['messages'][1]['content'])['plan_edit']['current_plan']
-        self.assertFalse(next(step for step in supplied['steps'] if step['step_id'] == 'search')['enabled'])
+        self.assertFalse(next(step for step in supplied['steps'] if step['step_id'] == 'search_1')['enabled'])
         self.assertEqual(updated['edits'], {'disabled_step_ids': [], 'removed_document_ids': {}})
 
     def test_document_removal_is_not_lost_when_editor_opens(self):

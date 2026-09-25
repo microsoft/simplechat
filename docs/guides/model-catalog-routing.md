@@ -22,10 +22,10 @@ and publish usable connections with suitable catalog profiles.
 This is not the **Auto** approval preference: approval controls whether a plan
 runs automatically; model Auto controls which model each step uses.
 
-Since **0.261.134**, Auto also applies to **Gather / Reason / Render** plans, the
-ones that can save files. Each model-backed step, including the step that writes
-the answer, runs on its planned model. Searches, file rendering, and delegated
-agents take no model assignment.
+Auto applies to every orchestration plan, including plans that save files. Since
+**0.261.134**, each model-backed step, including the step that writes the answer,
+runs on its planned model. Searches, file rendering, and delegated agents take no
+model assignment.
 
 ## Select and review
 

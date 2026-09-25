@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 UI test for picking up an unanswered orchestration plan on another device.
-Version: 0.261.099
+Version: 0.261.139
 Implemented in: 0.261.099
 
 A plan that was proposed and never approved is stored as `awaiting_approval`, but until this change
@@ -72,6 +72,7 @@ def _pending_plan(approval_mode="manual", timeout_seconds=0):
         "plan_id": "plan-pending",
         "run_id": RUN_ID,
         "turn_id": TURN_ID,
+        "planner_contract_version": 2,
         "intent": {"summary": PENDING_SUMMARY, "complexity": "simple"},
         "steps": [
             {
@@ -79,13 +80,15 @@ def _pending_plan(approval_mode="manual", timeout_seconds=0):
                 "capability_id": "search_documents",
                 "title": "Search the ledger",
                 "arguments": {"document_ids": ["docA"]},
+                "role": "gather",
                 "estimated_cost": "low",
             },
             {
                 "step_id": "pending-s2",
-                "capability_id": "respond",
+                "capability_id": "compose",
                 "title": "Write the answer",
                 "arguments": {},
+                "role": "reason",
                 "estimated_cost": "low",
             },
         ],

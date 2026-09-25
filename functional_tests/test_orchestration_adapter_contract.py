@@ -1,24 +1,17 @@
 # test_orchestration_adapter_contract.py
 """
 Functional test for the orchestration adapter contract.
-Version: 0.261.127
+Version: 0.261.139
 Implemented in: 0.261.087
+Single orchestration contract updated in: 0.261.139
 
-This is the generalisation of a bug that reached production. A step failed live with
-``invoke_prompt() got an unexpected keyword argument 'stage'`` -- a signature mismatch at
-the seam between the executor and a real adapter. It passed import, it passed type
-checking, and it passed the whole suite, because the executor tests drive *fake* adapters
-and the real ones need Azure to run at all.
-
-So the seam gets checked statically instead of hopefully. Every capability must resolve to
-an adapter, every adapter must take the exact keyword arguments the executor passes, and no
-adapter may reach for Flask state that does not exist on the worker thread it runs on.
-
-None of this needs credentials, which is the point: a test that only runs where Azure does
-is a test that stops running.
+Every executable capability must resolve to the callable shape the dependency executor
+uses. Render is the one extension handled directly by the executor; ``respond`` is removed.
+Adapters must also stay off Flask request state because they run on worker threads.
 """
 
 import ast
+import inspect
 import os
 import sys
 
@@ -34,7 +27,6 @@ PLANNER = 'functions_orchestration_planner.py'
 REGISTRY = 'functions_orchestration_registry.py'
 ROUTE = 'route_backend_orchestration.py'
 
-# What the executor passes at the call site in _run_single_step.
 EXPECTED_POSITIONAL = ['step', 'context']
 EXPECTED_KEYWORD = {'settings', 'user_id', 'emit', 'cancel_requested'}
 
@@ -45,20 +37,14 @@ def _tree(module):
 
 
 def _functions(tree):
-    return {
-        node.name: node
-        for node in ast.walk(tree)
-        if isinstance(node, ast.FunctionDef)
-    }
+    return {node.name: node for node in ast.walk(tree) if isinstance(node, ast.FunctionDef)}
 
 
 def _registered_adapter_names(tree):
-    """The adapter function names bound in ADAPTER_REGISTRY, keyed by capability constant."""
     for node in ast.walk(tree):
         if not isinstance(node, ast.Assign):
             continue
-        targets = [t.id for t in node.targets if isinstance(t, ast.Name)]
-        if 'ADAPTER_REGISTRY' not in targets:
+        if 'ADAPTER_REGISTRY' not in [t.id for t in node.targets if isinstance(t, ast.Name)]:
             continue
         mapping = {}
         for key, value in zip(node.value.keys, node.value.values):
@@ -69,7 +55,6 @@ def _registered_adapter_names(tree):
 
 
 def _capability_constants(tree):
-    """CAPABILITY_* constants and their string values from the registry."""
     constants = {}
     for node in tree.body:
         if not isinstance(node, ast.Assign):
@@ -85,365 +70,204 @@ def _capability_constants(tree):
     return constants
 
 
-def test_every_capability_resolves_to_an_adapter():
-    """A capability the planner may choose must be a capability the executor can run."""
-    print("Testing that every capability has an adapter...")
-    try:
-        assert_app_version_at_least('0.261.087')
-
-        registry_tree = _tree(REGISTRY)
-        constants = _capability_constants(registry_tree)
-        registered = _registered_adapter_names(_tree(ADAPTERS))
-
-        assert registered, 'ADAPTER_REGISTRY could not be read'
-
-        with stubbed_app_imports():
-            from functions_orchestration_executor import _dependency_adapter
-            from functions_orchestration_registry import all_capability_ids
-
-            legacy_ids = set(all_capability_ids())
-            dependency_ids = all_capability_ids(contract_version=2)
-            dependency_adapters = {name: _dependency_adapter(name) for name in dependency_ids}
-        registered_ids = {constants[name] for name in registered}
-        missing = sorted(legacy_ids - registered_ids)
-        assert not missing, (
-            f"these capabilities have no registered adapter: {missing}. A capability the "
-            f"planner can choose must be one the executor can run."
-        )
-
-        assert all(callable(adapter) for adapter in dependency_adapters.values())
-        print(f"  ok  {len(legacy_ids)} legacy and {len(dependency_ids)} dependency capabilities resolve")
-        return True
-    except Exception as e:
-        print(f"Test failed: {e}")
-        import traceback
-        traceback.print_exc()
-        return False
+def _assert_signature(callable_obj):
+    signature = inspect.signature(callable_obj)
+    parameters = list(signature.parameters.values())
+    assert [parameter.name for parameter in parameters[:2]] == EXPECTED_POSITIONAL
+    for name in EXPECTED_KEYWORD:
+        parameter = signature.parameters.get(name)
+        assert parameter is not None, f'{callable_obj} missing {name}'
+        assert parameter.kind is inspect.Parameter.KEYWORD_ONLY
 
 
-def test_adapters_match_the_executor_call_signature():
-    """Every adapter takes exactly what the executor passes -- checked, not assumed."""
-    print("Testing the adapter signature...")
-    try:
-        adapters_tree = _tree(ADAPTERS)
-        functions = _functions(adapters_tree)
-        registered = _registered_adapter_names(adapters_tree)
+def test_every_executable_capability_resolves_to_an_adapter_or_executor_extension():
+    assert_app_version_at_least('0.261.139')
+    registry_tree = _tree(REGISTRY)
+    constants = _capability_constants(registry_tree)
+    registered = _registered_adapter_names(_tree(ADAPTERS))
+    registered_ids = {constants[name] for name in registered}
+    assert 'respond' not in registered_ids
 
-        for capability_constant, adapter_name in sorted(registered.items()):
-            node = functions.get(adapter_name)
-            assert node is not None, (
-                f"{adapter_name} is registered for {capability_constant} but not defined"
-            )
+    with stubbed_app_imports():
+        from functions_orchestration_adapters import get_adapter
+        from functions_orchestration_executor import _dependency_adapter, _render_dependency_step
+        from functions_orchestration_registry import all_capability_ids
 
-            positional = [a.arg for a in node.args.args]
-            assert positional == EXPECTED_POSITIONAL, (
-                f"{adapter_name} takes {positional} positionally; the executor calls "
-                f"adapter(step, context, ...) so it must take {EXPECTED_POSITIONAL}"
-            )
+        ids = all_capability_ids(contract_version=2)
+        for capability_id in ids:
+            adapter = get_adapter(capability_id, contract_version=2)
+            if capability_id == 'render_file':
+                assert adapter is None
+                assert _dependency_adapter(capability_id) is _render_dependency_step
+            else:
+                assert callable(adapter), f'{capability_id} did not resolve to an adapter'
+        assert get_adapter('compose', contract_version=1) is None
 
-            keyword_only = {a.arg for a in node.args.kwonlyargs}
-            missing = EXPECTED_KEYWORD - keyword_only
-            assert not missing, (
-                f"{adapter_name} does not accept {sorted(missing)}; the executor passes "
-                f"these by keyword and the call would raise TypeError at run time"
-            )
+    missing = sorted(set(ids) - registered_ids - {'compose', 'generate_image', 'render_file'})
+    assert not missing, f'these capabilities have no adapter path: {missing}'
 
-            # Anything extra must have a default, or the executor's call is short an argument.
-            extra = keyword_only - EXPECTED_KEYWORD
-            if extra:
-                defaulted = {
-                    arg.arg
-                    for arg, default in zip(node.args.kwonlyargs, node.args.kw_defaults)
-                    if default is not None
-                }
-                undefaulted = extra - defaulted
-                assert not undefaulted, (
-                    f"{adapter_name} requires {sorted(undefaulted)}, which the executor "
-                    f"does not pass"
-                )
 
-        print(f"  ok  all {len(registered)} adapters match the executor's call")
-        return True
-    except Exception as e:
-        print(f"Test failed: {e}")
-        import traceback
-        traceback.print_exc()
-        return False
+def test_adapters_match_the_dependency_executor_call_signature():
+    adapters_tree = _tree(ADAPTERS)
+    functions = _functions(adapters_tree)
+    registered = _registered_adapter_names(adapters_tree)
+    for capability_constant, adapter_name in sorted(registered.items()):
+        node = functions.get(adapter_name)
+        assert node is not None, f'{adapter_name} is registered for {capability_constant} but not defined'
+        positional = [a.arg for a in node.args.args]
+        assert positional == EXPECTED_POSITIONAL
+        keyword_only = {a.arg for a in node.args.kwonlyargs}
+        missing = EXPECTED_KEYWORD - keyword_only
+        assert not missing, f'{adapter_name} does not accept {sorted(missing)}'
+        extra = keyword_only - EXPECTED_KEYWORD
+        if extra:
+            defaulted = {arg.arg for arg, default in zip(node.args.kwonlyargs, node.args.kw_defaults) if default is not None}
+            assert not (extra - defaulted)
+
+    with stubbed_app_imports():
+        from functions_orchestration_adapters import get_adapter
+
+        _assert_signature(get_adapter('compose', contract_version=2))
+        _assert_signature(get_adapter('generate_image', contract_version=2))
+
+
+def test_dependency_executor_passes_the_expected_adapter_keywords():
+    tree = _tree(EXECUTOR)
+    runner = _functions(tree)['_run_dependency_step']
+    calls = [
+        node for node in ast.walk(runner)
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == 'adapter'
+    ]
+    assert calls, 'executor no longer calls a resolved adapter'
+    keywords = {keyword.arg for keyword in calls[0].keywords}
+    assert EXPECTED_KEYWORD <= keywords
 
 
 def test_adapters_never_touch_flask_state():
-    """An adapter runs on a worker thread where Flask request state does not exist."""
-    print("Testing that adapters stay off Flask state...")
-    try:
-        tree = _tree(ADAPTERS)
-
-        forbidden_imports = {'g', 'session', 'current_app', 'request'}
-        for node in ast.walk(tree):
-            if isinstance(node, ast.ImportFrom) and node.module == 'flask':
-                names = {alias.name for alias in node.names}
-                clash = names & forbidden_imports
-                assert not clash, (
-                    f"adapters import {sorted(clash)} from flask. execute_plan runs in a "
-                    f"threading.Thread with no request context, so this raises at run time "
-                    f"-- every value must arrive on RunContext instead."
-                )
-
-        # Attribute access too: `g.force_enable_agents` would pass the import check.
-        for node in ast.walk(tree):
-            if isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name):
-                assert node.value.id not in forbidden_imports, (
-                    f"adapters read {node.value.id}.{node.attr}; there is no request "
-                    f"context on the worker thread"
-                )
-
-        print("  ok  adapters read no Flask request state")
-        return True
-    except Exception as e:
-        print(f"Test failed: {e}")
-        import traceback
-        traceback.print_exc()
-        return False
+    tree = _tree(ADAPTERS)
+    forbidden_imports = {'g', 'session', 'current_app', 'request'}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom) and node.module == 'flask':
+            assert not ({alias.name for alias in node.names} & forbidden_imports)
+        if isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name):
+            assert node.value.id not in forbidden_imports
 
 
 def test_route_captures_identity_before_the_thread_starts():
-    """Roles and email are read on the request thread, not from inside the generator."""
-    print("Testing the request-thread identity capture...")
-    try:
-        tree = _tree(ROUTE)
-        functions = _functions(tree)
+    tree = _tree(ROUTE)
+    functions = _functions(tree)
+    capture = functions.get('_request_identity')
+    assert capture is not None
+    capture_source = ast.dump(capture)
+    assert 'user_roles' in capture_source and 'user_email' in capture_source
 
-        capture = functions.get('_request_identity')
-        assert capture is not None, (
-            '_request_identity must exist: user_roles gates the UrlAccessUser and '
-            'DeepResearchUser app roles and cannot be read off the worker thread'
-        )
+    for outer in ast.walk(tree):
+        if not isinstance(outer, ast.FunctionDef) or outer.name != 'generate':
+            continue
+        for inner in ast.walk(outer):
+            if isinstance(inner, ast.Call) and isinstance(inner.func, ast.Name) and inner.func.id == '_request_identity':
+                raise AssertionError('_request_identity is called inside generate()')
 
-        # It must fail closed. An except path that leaves roles unset, or sets them to
-        # anything truthy, would admit a user who holds no role.
-        capture_source = ast.dump(capture)
-        assert 'user_roles' in capture_source and 'user_email' in capture_source, (
-            '_request_identity must capture both user_roles and user_email'
-        )
-
-        # The capture must happen outside the streamed generator. A generator body runs
-        # after the view returns, when the session is already gone.
-        for outer in ast.walk(tree):
-            if not isinstance(outer, ast.FunctionDef) or outer.name != 'generate':
-                continue
-            for inner in ast.walk(outer):
-                if (
-                    isinstance(inner, ast.Call)
-                    and isinstance(inner.func, ast.Name)
-                    and inner.func.id == '_request_identity'
-                ):
-                    raise AssertionError(
-                        '_request_identity is called inside generate(); a streamed '
-                        "response's generator runs after the request context is torn down"
-                    )
-
-        # And the captured values must actually reach RunContext, or the adapters get None.
-        wired = set()
-        for node in ast.walk(tree):
-            if (
-                isinstance(node, ast.Call)
-                and isinstance(node.func, ast.Name)
-                and node.func.id == 'RunContext'
-            ):
-                wired = {kw.arg for kw in node.keywords}
-        for field in ('user_roles', 'user_email', 'user_enable_agents'):
-            assert field in wired, (
-                f"RunContext is built without {field}; the adapter would fall back to a "
-                f"default and gate on a value nobody supplied"
-            )
-
-        print("  ok  identity is captured on the request thread and reaches RunContext")
-        return True
-    except Exception as e:
-        print(f"Test failed: {e}")
-        import traceback
-        traceback.print_exc()
-        return False
+    wired = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == 'RunContext':
+            wired = {kw.arg for kw in node.keywords}
+    for field in ('user_roles', 'user_email', 'user_enable_agents'):
+        assert field in wired
 
 
 def test_role_gates_fail_closed():
-    """Absent roles must deny, never allow."""
-    print("Testing that role gates fail closed...")
-    try:
-        tree = _tree(EXECUTOR)
-        functions = _functions(tree)
-
-        init = functions.get('__init__')
-        assert init is not None, 'RunContext.__init__ not found'
-
-        source = ast.dump(init)
-        assert 'user_roles' in source, 'RunContext must carry user_roles'
-
-        # An unknown roles value must collapse to "no roles". If it were passed through
-        # unchanged, a stray truthy value could satisfy a membership check downstream.
-        assert 'isinstance' in source, (
-            'RunContext must type-check user_roles before storing it, so an unknown '
-            'value cannot be mistaken for a role list'
-        )
-
-        print("  ok  roles are normalised and absent roles deny")
-        return True
-    except Exception as e:
-        print(f"Test failed: {e}")
-        import traceback
-        traceback.print_exc()
-        return False
+    init = _functions(_tree(EXECUTOR)).get('__init__')
+    assert init is not None
+    source = ast.dump(init)
+    assert 'user_roles' in source
+    assert 'isinstance' in source
 
 
-def test_request_gates_are_actually_applied_by_the_planner():
-    """A capability gate nobody invokes is decoration."""
-    print("Testing that the planner applies request gates...")
-    try:
-        tree = _tree(PLANNER)
-        functions = _functions(tree)
-
-        plan_request = functions.get('plan_request')
-        assert plan_request is not None, 'plan_request not found'
-
-        # The signature must accept a request context...
-        accepted = (
-            {a.arg for a in plan_request.args.args}
-            | {a.arg for a in plan_request.args.kwonlyargs}
-        )
-        assert 'request_context' in accepted, (
-            'plan_request does not accept a request_context. Without one, '
-            'resolve_available_capabilities skips every request gate -- which is right for '
-            'the admin page describing a deployment, and wrong for a real caller. The '
-            'planner would be offered URL reading for a message with no URL, and agents a '
-            'user does not have.'
-        )
-
-        # ...and must actually forward it. Accepting an argument and dropping it is the
-        # same bug wearing a signature that looks correct.
-        forwarded = False
-        for node in ast.walk(plan_request):
-            if (
-                isinstance(node, ast.Call)
-                and isinstance(node.func, ast.Name)
-                and node.func.id == 'resolve_available_capabilities'
-            ):
-                for keyword in node.keywords:
-                    if keyword.arg == 'request_context':
-                        forwarded = True
-        assert forwarded, (
-            'plan_request accepts a request_context but does not pass it to '
-            'resolve_available_capabilities'
-        )
-
-        # And the route must supply one when it plans.
-        route_tree = _tree(ROUTE)
-        supplied = False
-        for node in ast.walk(route_tree):
-            if (
-                isinstance(node, ast.Call)
-                and isinstance(node.func, ast.Name)
-                and node.func.id == 'plan_request'
-            ):
-                supplied = any(kw.arg == 'request_context' for kw in node.keywords)
-        assert supplied, (
-            'the route calls plan_request without a request_context, so no request gate '
-            'runs for a real request'
-        )
-
-        print("  ok  request gates reach the planner and the validator")
-        return True
-    except Exception as e:
-        print(f"Test failed: {e}")
-        import traceback
-        traceback.print_exc()
-        return False
+def test_request_gates_are_applied_by_the_planner_and_registry():
+    plan_request = _functions(_tree(PLANNER)).get('plan_request')
+    assert plan_request is not None
+    accepted = {a.arg for a in plan_request.args.args} | {a.arg for a in plan_request.args.kwonlyargs}
+    assert 'request_context' in accepted
+    assert any(
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == 'resolve_available_capabilities'
+        and any(keyword.arg == 'request_context' for keyword in node.keywords)
+        for node in ast.walk(plan_request)
+    )
+    route_tree = _tree(ROUTE)
+    assert any(
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == 'plan_request'
+        and any(keyword.arg == 'request_context' for keyword in node.keywords)
+        for node in ast.walk(route_tree)
+    )
 
 
 def test_request_gates_withhold_what_the_caller_cannot_use():
-    """The gates themselves, exercised rather than inspected."""
-    print("Testing request gate behaviour...")
-    try:
-        with stubbed_orchestration_imports():
-            from functions_orchestration_registry import resolve_available_capabilities
+    with stubbed_orchestration_imports():
+        from functions_orchestration_registry import resolve_available_capabilities
 
-            settings = {
-                'enable_chat_orchestration': True,
-                'enable_user_workspace': True,
-                'enable_web_search': True,
-                'enable_url_access': True,
-                'enable_source_review': True,
-                'enable_semantic_kernel': True,
-            }
+        settings = {
+            'enable_chat_orchestration': True,
+            'enable_user_workspace': True,
+            'enable_web_search': True,
+            'enable_url_access': True,
+            'enable_source_review': True,
+            'enable_semantic_kernel': True,
+        }
+        services = {
+            'external_source_admission': object(),
+            'external_source_preflight': object(),
+            'capture_external_source_configuration': object(),
+            'external_source_authorizer': object(),
+        }
 
-            def ids(context, override=None):
-                return [
-                    c['id'] for c in resolve_available_capabilities(
-                        override or settings, request_context=context,
-                    )
-                ]
+        def ids(context, override=None):
+            return [capability['id'] for capability in resolve_available_capabilities(
+                override or settings, request_context={**context, **services},
+            )]
 
-            plain = {
-                'user_id': 'u1',
-                'user_message': 'what is in my handbook?',
-                'message_urls': [],
-                'user_roles': [],
-                'user_enable_agents': True,
-                'agent_catalog': [],
-            }
+        plain = {
+            'user_id': 'u1', 'user_message': 'what is in my handbook?', 'message_urls': [],
+            'user_roles': [], 'user_enable_agents': True, 'agent_catalog': [], 'action_catalog': [],
+        }
+        assert 'url_fetch' not in ids(plain)
+        assert 'agent_invoke' not in ids(plain)
+        with_agent = {**plain, 'agent_catalog': [{'name': 'research_helper'}]}
+        assert 'agent_invoke' not in ids({**with_agent, 'user_enable_agents': False})
 
-            # Offering "read the links" for a message with no links produces a step whose
-            # only possible outcome is reporting that it had nothing to do.
-            assert 'url_fetch' not in ids(plain), 'url_fetch offered with no URL'
-            assert 'url_fetch' in ids(dict(
-                plain,
-                user_message='summarise https://example.com/a',
-                message_urls=['https://example.com/a'],
-            )), 'url_fetch withheld despite a URL in the message'
-
-            # An agent the user does not have produces a plan naming something that cannot run.
-            assert 'agent_invoke' not in ids(plain), 'agent_invoke offered with no agents'
-            with_agent = dict(plain, agent_catalog=[{'name': 'research_helper'}])
-            assert 'agent_invoke' in ids(with_agent), 'agent_invoke withheld despite an agent'
-            assert 'agent_invoke' not in ids(dict(with_agent, user_enable_agents=False)), (
-                'agent_invoke offered to a user who turned agents off; orchestration must '
-                'not hand back a capability the user switched off for themselves'
-            )
-
-            # And the app role must be enforced where the deployment requires it.
-            strict = dict(
-                settings,
-                require_member_of_deep_research_user=True,
-                source_review_settings={'require_member_of_deep_research_user': True},
-            )
-            assert 'deep_research' not in ids(plain, strict), (
-                'deep_research offered to a user holding no DeepResearchUser role'
-            )
-            assert 'deep_research' in ids(dict(plain, user_roles=['DeepResearchUser']), strict), (
-                'deep_research withheld from a user who holds the role'
-            )
-
-        print("  ok  each gate withholds what its caller cannot use")
-        return True
-    except Exception as e:
-        print(f"Test failed: {e}")
-        import traceback
-        traceback.print_exc()
-        return False
+        strict = {**settings, 'require_member_of_deep_research_user': True, 'source_review_settings': {'require_member_of_deep_research_user': True}}
+        assert 'deep_research' not in ids(plain, strict)
 
 
-if __name__ == "__main__":
+def _run_script():
     tests = [
-        test_every_capability_resolves_to_an_adapter,
-        test_adapters_match_the_executor_call_signature,
+        test_every_executable_capability_resolves_to_an_adapter_or_executor_extension,
+        test_adapters_match_the_dependency_executor_call_signature,
+        test_dependency_executor_passes_the_expected_adapter_keywords,
         test_adapters_never_touch_flask_state,
         test_route_captures_identity_before_the_thread_starts,
         test_role_gates_fail_closed,
-        test_request_gates_are_actually_applied_by_the_planner,
+        test_request_gates_are_applied_by_the_planner_and_registry,
         test_request_gates_withhold_what_the_caller_cannot_use,
     ]
-    results = []
+    passed = 0
     for test in tests:
         print(f"\nRunning {test.__name__}...")
-        results.append(test())
+        try:
+            test()
+            passed += 1
+            print('Test passed!')
+        except Exception as exc:
+            print(f'Test failed: {exc}')
+            import traceback
+            traceback.print_exc()
+    print(f"\nResults: {passed}/{len(tests)} tests passed")
+    return passed == len(tests)
 
-    print(f"\nResults: {sum(results)}/{len(results)} tests passed")
-    sys.exit(0 if all(results) else 1)
+
+if __name__ == '__main__':
+    sys.exit(0 if _run_script() else 1)

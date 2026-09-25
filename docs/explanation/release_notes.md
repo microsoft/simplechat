@@ -2,6 +2,71 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.139)**
+
+#### Breaking Changes
+
+*   **Gather / Reason / Render Is The Only Orchestration Plan Contract**
+    *   The **Gather / Reason / Render harness (preview)** admin setting (`enable_chat_orchestration_harness`) and its server-side admission check were removed. Every new plan uses Gather / Reason / Render whenever **Enable Chat Orchestration** is on. A stored value of the old setting is dropped when settings load or save.
+    *   The earlier phase-based contract (Knowledge / Reasoning / Output phases and a final **Answer** step) was deleted. A saved capability list that still names its Answer capability (`respond`) is read as **Prepare content** (`compose`). The stored list is not rewritten, so runs saved before the upgrade can still be continued or retried, and nothing adds **Create a file** or **Generate images** to a narrowed list.
+    *   Plans saved by the earlier contract no longer open or rerun. Opening, editing, retrying, running or cancelling one shows "This plan was created by an earlier orchestration version and can't be opened or rerun. Start a new request." Such runs are left out of the conversation's run list and the planner's history of earlier runs; deleting the conversation still removes their saved data.
+    *   Orchestrated agent steps now always run under the acquisition checks that previously applied only to Gather / Reason / Render plans. They admit Azure AI Foundry (classic) agents without local actions, workspace knowledge or web sources; other agents, including local Semantic Kernel agents, are refused with a safe failure instead of running unchecked.
+    *   **Migration**: Start a new request for any conversation whose earlier orchestration plan no longer opens. Administrators who narrowed the capability list and want files or images in plans should select **Create a file** and **Generate images**.
+    *   (Ref: `functions_settings.py`, `functions_orchestration_schema.py`, `functions_orchestration_registry.py`, `route_backend_orchestration.py`, `templates/admin/_panes/chat-orchestration.html`, [Deliverable Planning Fix](fixes/ORCHESTRATION_DELIVERABLE_PLANNING_FIX.md), [Orchestration settings](../admin/orchestration.md))
+
+#### Bug Fixes
+
+*   **One Planner Carries All Of The Planning Guidance**
+    *   The planner's single prompt now includes the earlier prompt's guidance on choosing agents and actions, searching before analyzing and passing the found sources on, choosing between web search and deep research by cost and need, using conversation, saved memory and earlier runs, writing self-contained step tasks, visuals, and when and how to ask clarifying or file questions.
+    *   A plan the planner writes incorrectly is refused instead of being silently repaired, so an approved plan is exactly the work that runs. The step that writes the chat answer cannot be disabled while editing a plan.
+    *   (Ref: `functions_orchestration_planner.py`, `functions_orchestration_plan_revisions.py`, [Chat Orchestration](features/CHAT_ORCHESTRATION.md), [Gather / Reason / Render orchestration](features/ORCHESTRATION_GATHER_REASON_RENDER.md))
+
+#### User Interface Enhancements
+
+*   **Plans Show Only What Runs**
+    *   The plan card, plan panel and run view no longer group steps into Knowledge / Reasoning / Output phases or show an **Always runs** answer step. Steps appear in dependency order with their Gather, Reason or Render role.
+    *   A finished run's steps show their real status, such as **Completed** or **Failed**, instead of **Will run**. Opening a plan saved by the earlier contract shows the message above instead of a spinner.
+    *   A run from the earlier contract that a tab was still following, including one restored after a reload, no longer stays **running** and blocks Stop and retries in its conversation. Its recovery notice shows the message above without offering to check or review it.
+    *   Admin capability help now explains that plans need **Prepare content** to write an answer or a file's content and **Create a file** to deliver files.
+    *   (Ref: `OrchestrationRunView.tsx`, `OrchestrationPlanCard.tsx`, `OrchestrationMapView.tsx`, `OrchestrationRecoveryNotice.tsx`, `orchestrationPlan.ts`, `orchestrationController.ts`, `orchestrationResume.ts`, `orchestrationErrors.ts`, [Review and edit orchestration plans](../guides/review-and-edit-orchestration-plans.md), [Chat controls](../reference/chat-controls.md))
+
+### **(v0.261.138)**
+
+#### New Features
+
+*   **Orchestration Plans Deliver What You Asked For**
+    *   A Gather / Reason / Render plan now lists what you asked to receive before its steps: the answer, each file with its format, images with their count, charts, and diagrams. The server checks the list against what it can actually produce. A file must come from a Render task in the same format, so "create a csv of states and capitals" produces the CSV file itself instead of rows in the chat.
+    *   Something that cannot be produced here stays on the list as unavailable, with the server's own reason, such as "This file format is not available for this plan." The planner cannot promise it in a step title, mention it only in an assumption, or call something unavailable that the server can produce. A plan that breaks these rules gets one correction attempt, then fails with a clear message.
+    *   (Ref: `functions_orchestration_deliverables.py`, `functions_orchestration_planner.py`, `functions_orchestration_schema.py`, [Orchestration Deliverables](features/ORCHESTRATION_DELIVERABLES.md))
+
+*   **Generated Images In Orchestrated Answers And Files**
+    *   Images you ask for, such as "an image of each president", are generated as planned tasks when the plan runs. Approving the plan is the consent, and in Run automatically mode your request is. Each image appears inline in the answer with the usual viewer and editor, is captioned as an AI-generated illustration, and is embedded in DOCX, PDF, and PowerPoint files. A plan generates at most four images.
+    *   A file can embed only images its own content was prepared from, with bytes checked against what was generated. Images the planner only suggests remain approval cards.
+    *   (Ref: `functions_orchestration_images.py`, `functions_orchestration_rendering.py`, `functions_orchestration_bootstrap.py`, `functions_image_generation.py`, [Create files with orchestration](../guides/create-files-with-orchestration.md))
+
+#### Bug Fixes
+
+*   **Missing Files And Images Are Never Reported As Delivered**
+    *   Fixed orchestrated answers that said "I can't attach a .docx", left "[Insert Image here]" placeholders, or reported success without the requested file. The answer step is told when a later task saves its output as a file, so it writes the finished content.
+    *   A run in which a requested image or file was not produced is reported as incomplete. A deterministic **Delivery notes** list after the answer names what was not delivered or is not available, such as "2 of 3 images were generated."
+    *   A missing image makes the run retryable. The retry reuses the images that were generated, generates the missing one, and writes the answer again with every image. A retry is not offered when it could only send again an image prompt the image service declined; ask again with a different description instead. The chat recovers an attempt that already delivered a file one file at a time, so ask again to regenerate a missing image there.
+    *   (Ref: `functions_orchestration_composition.py`, `functions_orchestration_execution.py`, `functions_orchestration_executor.py`, `functions_orchestration_recovery.py`, [Deliverable Planning Fix](fixes/ORCHESTRATION_DELIVERABLE_PLANNING_FIX.md))
+
+*   **A Large Or WEBP Image No Longer Fails The Whole File**
+    *   Fixed a Word, PDF, or PowerPoint file failing because one generated image was over 4 MB, such as a detailed 1536x1024 illustration, or was a WEBP image. The file now embeds a copy the document format accepts, re-encoded and scaled down only as needed, and the chat keeps the original image.
+    *   (Ref: `functions_orchestration_rendering.py`, `functions_orchestration_result_contracts.py`, [Orchestration Deliverables](features/ORCHESTRATION_DELIVERABLES.md))
+
+*   **Generated Images Never Offer A Paid Second Approval**
+    *   Fixed a planned image showing as an **Approve** card, which bought a duplicate image when clicked, until the chat loaded it, and fixed an earlier answer losing its images after a retry. Each answer now lists the images it shows, the chat loads them when the run finishes, and a planned image's card shows the image or says it is loading. Approving one through the API returns the saved image instead of generating another. Conversation exports and the classic chat show the same images.
+    *   (Ref: `functions_orchestration_execution.py`, `functions_orchestration_events.py`, `functions_image_generation.py`, `route_backend_chats.py`, `route_backend_conversation_export.py`, `InlineImageProposal.tsx`, `MessageList.tsx`, `imageProposalSpec.ts`)
+
+#### User Interface Enhancements
+
+*   **You Asked For**
+    *   The plan panel and approval card list what you asked for, each item's state, and the task that produces it. Unavailable items appear in a warning color with their reason. Generate image tasks show their prompt, and the chat loads generated images as soon as the run finishes.
+    *   The Image control's notice now reads "Orchestrate will plan the images you ask for and generate them when the plan runs."
+    *   (Ref: `OrchestrationDeliverables.tsx`, `OrchestrationRunView.tsx`, `OrchestrationPlanCard.tsx`, `orchestrationPlan.ts`, `Composer.tsx`, [Review and edit orchestration plans](../guides/review-and-edit-orchestration-plans.md), [Chat controls](../reference/chat-controls.md))
+
 ### **(v0.261.137)**
 
 #### Bug Fixes

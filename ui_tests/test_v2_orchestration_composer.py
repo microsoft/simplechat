@@ -255,7 +255,7 @@ def test_orchestration_image_control_requests_image_proposals():
         image.click()
         assert image.get_attribute("aria-pressed") == "true"
         status = page.get_by_role("status").filter(
-            has_text="Orchestrate will include image proposals for you to approve.",
+            has_text="Orchestrate will plan the images you ask for and generate them when the plan runs.",
         )
         status.wait_for(state="visible")
         assert page.get_by_title("Deep research", exact=True).is_enabled()

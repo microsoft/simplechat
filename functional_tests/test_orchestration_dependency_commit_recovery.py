@@ -1,8 +1,9 @@
 # test_orchestration_dependency_commit_recovery.py
 """Declared-input receipts close the v2 producer-commit/checkpoint crash window.
 
-Version: 0.261.127
+Version: 0.261.139
 Implemented in: 0.261.127
+Single orchestration contract updated in: 0.261.139
 Uses real facade, storage, checkpoint and recovery APIs with isolated external I/O.
 """
 
@@ -15,7 +16,7 @@ from unittest.mock import patch
 import pytest
 
 from test_orchestration_dependency_recovery import durable
-from test_orchestration_dependency_runtime import compose, execute, runtime, source_input
+from test_orchestration_dependency_runtime import compose, execute, runtime, set_result_contract, source_input
 
 
 @pytest.fixture(params=[False, True], ids=['cosmos', 'blob'])
@@ -149,7 +150,7 @@ def test_receipt_recovery_rejects_corruption_or_changed_identity_without_replay(
     elif change == 'deleted':
         durable.case.fixture.conversation['orchestration_deleted'] = True
     elif change == 'contract':
-        monkeypatch.setitem(durable.runtime.registry._DEPENDENCY_RESULT_CONTRACTS, 'compose', 'compose-v2')
+        set_result_contract(monkeypatch, durable.runtime.registry, 'compose', 'compose-v2')
     else:
         settings['chat_orchestration_step_timeout_seconds'] = 99
     with pytest.raises((durable.runtime.checkpoints.CheckpointError, durable.recovery.RecoveryError)):

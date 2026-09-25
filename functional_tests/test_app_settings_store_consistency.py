@@ -1,8 +1,9 @@
 # test_app_settings_store_consistency.py
 """
 Regression tests for shared settings and conditional writes.
-Version: 0.261.122
+Version: 0.261.139
 Implemented in: 0.261.025
+Retired orchestration settings normalizer loaded in: 0.261.139
 
 Independent store objects represent workers. Fake services exercise ETag conflicts,
 interrupted publication and lease expiry without network access or wall-clock sleeps.
@@ -299,8 +300,9 @@ def load_update_settings(store):
     tree = ast.parse((APP / "functions_settings.py").read_text(encoding="utf-8-sig"))
     names = {
         "update_settings", "coerce_multi_model_endpoint_enablement",
-        "validate_content_screening_settings",
+        "validate_content_screening_settings", "normalize_retired_orchestration_settings",
     }
+    retired_constants = {"RETIRED_SETTING_KEYS"}
     namespace = {
         "copy": copy, "logging": logging,
         "contextmanager": contextmanager,
@@ -318,7 +320,14 @@ def load_update_settings(store):
         "normalize_model_endpoint_identity_header_settings",
     ):
         namespace[name] = lambda settings: None
-    nodes = [node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name in names]
+    nodes = [
+        node for node in tree.body
+        if (isinstance(node, ast.FunctionDef) and node.name in names)
+        or (
+            isinstance(node, ast.Assign)
+            and any(isinstance(target, ast.Name) and target.id in retired_constants for target in node.targets)
+        )
+    ]
     connection_tree = ast.parse((APP / "functions_ai_connections.py").read_text(encoding="utf-8-sig"))
     connection_contract = [
         node for node in connection_tree.body

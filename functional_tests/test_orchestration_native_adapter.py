@@ -1,8 +1,9 @@
 # test_orchestration_native_adapter.py
 """
 Functional tests for server-owned v2 native adapter dispatch.
-Version: 0.261.127
+Version: 0.261.139
 Implemented in: 0.261.127
+Single orchestration contract updated in: 0.261.139
 
 The real adapter delegates to the real native bridge, producer and result store.
 External I/O is doubled; legacy publication paths must never run for v2 work.
@@ -245,16 +246,3 @@ def test_unsupported_native_selection_keeps_safe_failure_diagnostics(adapters, m
         assert runtime.native.jobs.created == 0 and runtime.native.blobs.reads == []
         assert runtime.provider.calls == [] and runtime.native.publications == []
         adapters[1].assert_not_called()
-
-
-def test_v1_tabular_dispatch_does_not_select_the_native_bridge(adapters, monkeypatch):
-    with bridge_runtime(monkeypatch) as runtime:
-        factory = bind_adapter(runtime, columns=["Item_ID", "doubled"], transformation_spec=transformation_spec())
-        runtime.context.plan_contract_version = 1
-        adapters[1].side_effect = None
-        adapters[1].return_value = []
-        result = execute_adapter(adapters, runtime)
-        assert result["status"] == "failed"
-        factory.assert_not_called()
-        assert adapters[1].call_count == 1
-        assert runtime.native.jobs.created == 0 and runtime.native.publications == []

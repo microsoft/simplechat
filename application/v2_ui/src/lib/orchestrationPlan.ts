@@ -19,11 +19,12 @@ import type {
     CostClass,
     Json,
     OrchestrationApproval,
+    OrchestrationDeliverable,
+    OrchestrationDeliverableKind,
     OrchestrationIntent,
     OrchestrationInputBinding,
     OrchestrationNamedInput,
     OrchestrationNamedOutput,
-    OrchestrationPhase,
     OrchestrationPlan,
     OrchestrationPlanAction,
     OrchestrationPlanDocument,
@@ -38,13 +39,6 @@ import type {
     StepStatus,
 } from './orchestration';
 import { normalizeReasoningAdjustments } from './reasoning';
-
-/**
- * The capability id of the answering step, from `TERMINAL_CAPABILITY_ID` in the registry.
- *
- * Legacy plans end with one of these. V2 instead selects prepared content with final_response.
- */
-export const TERMINAL_CAPABILITY_ID = 'respond';
 
 /**
  * The argument keys whose document lists a user may prune, from `apply_plan_edits`.
@@ -159,7 +153,7 @@ export function normalizeModelBinding(raw: unknown): OrchestrationStep['model_bi
     };
 }
 
-export function normalizeStep(raw: unknown, index = 0, contractVersion = 1): OrchestrationStep {
+export function normalizeStep(raw: unknown, index = 0): OrchestrationStep {
     const source = asRecord(raw);
     return {
         model_binding: normalizeModelBinding(source.model_binding),
@@ -173,17 +167,163 @@ export function normalizeStep(raw: unknown, index = 0, contractVersion = 1): Orc
         enabled: asBoolean(source.enabled, true),
         estimated_cost: oneOf(source.estimated_cost, COST_CLASSES, 'medium'),
         status: oneOf(source.status, STEP_STATUSES, 'pending'),
-        // Carried through rather than re-derived from the capability menu. The validator
-        // stamps each step with the phase it ordered the plan by, so this is the value the
-        // run actually used; looking it up again client-side would disagree the moment a
-        // capability is disabled after a plan was made.
-        phase: asString(source.phase) || undefined,
-        ...(contractVersion === 2 ? {
-            role: asString(source.role) || undefined,
-            inputs: normalizeNamedInputs(source.inputs),
-            outputs: normalizeNamedOutputs(source.outputs),
-        } : {}),
+        role: asString(source.role) || undefined,
+        inputs: normalizeNamedInputs(source.inputs),
+        outputs: normalizeNamedOutputs(source.outputs),
+        ...(Array.isArray(source.delivers) ? { delivers: asStringList(source.delivers) } : {}),
     };
+}
+
+const DELIVERABLE_KINDS: readonly OrchestrationDeliverableKind[] = ['answer', 'file', 'image', 'chart', 'diagram'];
+
+/**
+ * The plan's deliverables with safe defaults, or undefined for plans that declared none.
+ *
+ * An entry without an id, a known kind, or a description cannot be shown or matched to a step,
+ * so it is dropped rather than rendered as a blank row.
+ */
+export function normalizeDeliverables(raw: unknown): OrchestrationDeliverable[] | undefined {
+    if (!Array.isArray(raw)) return undefined;
+    const deliverables: OrchestrationDeliverable[] = [];
+    for (const value of raw) {
+        const entry = asRecord(value);
+        const id = asString(entry.id).trim();
+        const description = asString(entry.description).trim();
+        const kind = entry.kind as OrchestrationDeliverableKind;
+        if (!id || !description || !DELIVERABLE_KINDS.includes(kind)) continue;
+        const quantity = entry.quantity;
+        deliverables.push({
+            id,
+            kind,
+            description,
+            requested: entry.requested === 'suggested' ? 'suggested' : 'explicit',
+            status: entry.status === 'unavailable' ? 'unavailable' : 'planned',
+            ...(typeof entry.format === 'string' && entry.format.trim() ? { format: entry.format.trim() } : {}),
+            ...(typeof quantity === 'number' && Number.isInteger(quantity) && quantity > 0 ? { quantity } : {}),
+            ...(typeof entry.unavailable_reason === 'string' ? { unavailable_reason: entry.unavailable_reason } : {}),
+            ...(typeof entry.unavailable_message === 'string' ? { unavailable_message: entry.unavailable_message } : {}),
+            ...(entry.implicit === true ? { implicit: true } : {}),
+        });
+    }
+    return deliverables;
+}
+
+const FILE_FORMAT_LABELS: Record<string, string> = {
+    docx: 'Word document', pdf: 'PDF', pptx: 'PowerPoint deck', xlsx: 'Excel workbook',
+    csv: 'CSV file', md: 'Markdown file', txt: 'Text file', json: 'JSON file',
+    yaml: 'YAML file', xml: 'XML file',
+};
+
+/** "Word document", "3 images", "Chart": what a deliverable is, in the plan panel's words. */
+export function deliverableKindLabel(deliverable: OrchestrationDeliverable): string {
+    switch (deliverable.kind) {
+        case 'file': {
+            const format = deliverable.format ?? '';
+            const label = FILE_FORMAT_LABELS[format] ?? (format ? `${format.toUpperCase()} file` : 'File');
+            return deliverable.quantity && deliverable.quantity > 1 ? `${deliverable.quantity} × ${label}` : label;
+        }
+        case 'image':
+            return deliverable.quantity && deliverable.quantity > 1 ? `${deliverable.quantity} images` : 'Image';
+        case 'chart':
+            return 'Chart';
+        case 'diagram':
+            return 'Diagram';
+        default:
+            return 'Answer';
+    }
+}
+
+export type DeliverableState = 'planned' | 'unavailable' | 'running' | 'delivered' | 'not_delivered' | 'turned_off';
+
+export interface DeliverableRow {
+    deliverable: OrchestrationDeliverable;
+    label: string;
+    state: DeliverableState;
+    stateLabel: string;
+    /** The steps that produce it, by title, in plan order. */
+    steps: string[];
+    /** The server's explanation for an unavailable deliverable. */
+    reason?: string;
+}
+
+const DELIVERABLE_STATE_LABELS: Record<DeliverableState, string> = {
+    planned: 'Planned',
+    unavailable: 'Not available',
+    running: 'In progress',
+    delivered: 'Delivered',
+    not_delivered: 'Not delivered',
+    turned_off: 'Turned off',
+};
+
+/**
+ * Each declared deliverable with the state its producing steps imply.
+ *
+ * `statusOf` reports a step's live or saved status. A deliverable is delivered only when
+ * every step that produces it completed; a step switched off in `edits` or in the plan turns
+ * it off. The server's delivery notes remain the authority after a run; this is the preview.
+ * The implicit answer of plans that declared nothing is left out.
+ */
+export function deliverableRows(
+    plan: OrchestrationPlan,
+    statusOf: (stepId: string) => StepStatus | undefined,
+    edits?: PlanEdits,
+): DeliverableRow[] {
+    const disabled = new Set(edits?.disabled_step_ids ?? []);
+    return (plan.deliverables ?? []).filter((deliverable) => !deliverable.implicit).map((deliverable) => {
+        const producers = plan.steps.filter((step) => step.delivers?.includes(deliverable.id));
+        const enabled = producers.filter((step) => step.enabled && !disabled.has(step.step_id));
+        let state: DeliverableState = 'planned';
+        if (deliverable.status === 'unavailable') {
+            state = 'unavailable';
+        } else if (producers.length > 0 && enabled.length === 0) {
+            state = 'turned_off';
+        } else {
+            const statuses = enabled.map((step) => statusOf(step.step_id) ?? step.status);
+            if (statuses.length > 0 && statuses.every((status) => status === 'completed')) {
+                state = 'delivered';
+            } else if (statuses.some((status) => status === 'failed' || status === 'skipped' || status === 'cancelled')) {
+                state = 'not_delivered';
+            } else if (statuses.some((status) => status === 'running' || status === 'waiting' || status === 'partial')) {
+                state = 'running';
+            }
+        }
+        return {
+            deliverable,
+            label: deliverableKindLabel(deliverable),
+            state,
+            stateLabel: DELIVERABLE_STATE_LABELS[state],
+            steps: producers.map((step) => step.title || step.step_id),
+            ...(deliverable.status === 'unavailable'
+                ? { reason: deliverable.unavailable_message || 'This is not available here.' }
+                : {}),
+        };
+    });
+}
+
+/** Whether an orchestrated answer's metadata lists images that were generated for it. */
+export function hasGeneratedImages(orchestrationMetadata: unknown): boolean {
+    const images = asRecord(orchestrationMetadata).generated_images;
+    return Array.isArray(images) && images.some((image) => typeof asRecord(image).message_id === 'string');
+}
+
+/**
+ * Whether a run's terminal frame reports saved image messages its answer shows.
+ *
+ * The frame lists them at the top level, and the answer's metadata carries the same list;
+ * either is enough for the chat to load the images with the answer.
+ */
+export function doneFrameHasGeneratedImages(event: unknown): boolean {
+    const frame = asRecord(event);
+    return hasGeneratedImages(frame) || hasGeneratedImages(asRecord(frame.metadata).orchestration);
+}
+
+/** Whether a named input binds a generated image rather than gathered information. */
+export function bindsGeneratedImage(plan: OrchestrationPlan, binding: OrchestrationInputBinding | null): boolean {
+    if (!binding?.step_id) return false;
+    const producer = plan.steps.find((step) => step.step_id === binding.step_id);
+    return Boolean(producer?.outputs?.some(
+        (output) => output.name === binding.output_name && output.kind === 'image-asset-v1',
+    ));
 }
 
 function normalizeInputBinding(raw: unknown): OrchestrationInputBinding | null {
@@ -327,11 +467,11 @@ export function normalizePlan(raw: unknown): OrchestrationPlan | null {
         return null;
     }
     const source = raw as Json;
-    const contractVersion = typeof source.planner_contract_version === 'number'
-        ? source.planner_contract_version : 1;
+    if (source.planner_contract_version !== 2) return null;
+    const contractVersion = source.planner_contract_version;
 
     const rawSteps: unknown[] = Array.isArray(source.steps) ? source.steps : [];
-    const steps = rawSteps.map((step, index) => normalizeStep(step, index, contractVersion));
+    const steps = rawSteps.map((step, index) => normalizeStep(step, index));
 
     return {
         plan_id: asString(source.plan_id),
@@ -348,8 +488,8 @@ export function normalizePlan(raw: unknown): OrchestrationPlan | null {
         inputs: source.inputs !== undefined ? normalizeInputs(source.inputs) : undefined,
         steps,
         outputs: Array.isArray(source.outputs) ? (source.outputs as Json[]) : undefined,
-        ...(contractVersion === 2 && source.final_response !== undefined
-            ? { final_response: normalizeInputBinding(source.final_response) } : {}),
+        ...(source.final_response !== undefined ? { final_response: normalizeInputBinding(source.final_response) } : {}),
+        ...(normalizeDeliverables(source.deliverables) ? { deliverables: normalizeDeliverables(source.deliverables) } : {}),
         ...(normalizePlanner(source.planner) ? { planner: normalizePlanner(source.planner) } : {}),
         ...(source.model_routing === 'auto' ? { model_routing: 'auto' as const } : {}),
         approval: normalizeApproval(source.approval),
@@ -485,15 +625,8 @@ export function isDocumentRemoved(
 
 /**
  * Switch a step off.
- *
- * The terminal step is never disableable, so a request to disable it is ignored rather than
- * producing an edit the server will silently drop -- keeping the client's idea of the edit set
- * identical to the one `apply_plan_edits` will honour.
  */
 export function disableStep(edits: PlanEdits, step: OrchestrationStep, plan?: OrchestrationPlan): PlanEdits {
-    if (step.capability_id === TERMINAL_CAPABILITY_ID) {
-        return edits;
-    }
     if (plan && stepDisableExplanation(plan, step.step_id)) return edits;
     if (edits.disabled_step_ids.includes(step.step_id)) {
         return edits;
@@ -585,18 +718,14 @@ export function remainingStepDocumentIds(
  *
  * A faithful client-side twin of `apply_plan_edits`, so the card can show the effect of a
  * narrowing before the run request carries the same edits to the server that will apply them
- * for real. The terminal step is skipped, only the list-valued document fields are pruned, and
- * `approval.edited` is set the moment anything actually changed. The input is never mutated.
+ * for real. Only the list-valued document fields are pruned, and `approval.edited` is set the
+ * moment anything actually changed. The input is never mutated.
  */
 export function applyPlanEdits(plan: OrchestrationPlan, edits: PlanEdits): OrchestrationPlan {
     const disabled = new Set(edits.disabled_step_ids);
     let edited = false;
 
     const steps = plan.steps.map((step) => {
-        if (step.capability_id === TERMINAL_CAPABILITY_ID) {
-            return step;
-        }
-
         let next = step;
 
         if (disabled.has(step.step_id) && next.enabled) {
@@ -651,39 +780,10 @@ export function applyPlanEdits(plan: OrchestrationPlan, edits: PlanEdits): Orche
  * skipped, which leaves a defensible order instead of hanging. The server de-cycles the plan it
  * sends, so this is belt-and-braces for a persisted or hand-built plan.
  */
-export function orderStepsForDisplay(steps: OrchestrationStep[], contractVersion = 1): OrchestrationStep[] {
-    // V2 is already a stable topological order compiled by the server. A second sort could
-    // move independent tasks and misrepresent the actual execution sequence.
-    if (contractVersion === 2) return steps.slice();
-    const byId = new Map(steps.map((step) => [step.step_id, step]));
-    const permanent = new Set<string>();
-    const temporary = new Set<string>();
-    const resolved: OrchestrationStep[] = [];
-
-    const visit = (stepId: string): void => {
-        if (permanent.has(stepId) || temporary.has(stepId)) {
-            return;
-        }
-        const step = byId.get(stepId);
-        if (!step) {
-            return;
-        }
-        temporary.add(stepId);
-        for (const dependency of step.depends_on) {
-            if (byId.has(dependency)) {
-                visit(dependency);
-            }
-        }
-        temporary.delete(stepId);
-        permanent.add(stepId);
-        resolved.push(step);
-    };
-
-    for (const step of steps) {
-        visit(step.step_id);
-    }
-
-    return resolved;
+export function orderStepsForDisplay(steps: OrchestrationStep[]): OrchestrationStep[] {
+    // The server sends a stable topological order. A second sort could move independent tasks
+    // and misrepresent the actual execution sequence.
+    return steps.slice();
 }
 
 const ROLE_LABELS: Record<OrchestrationRole, { label: string; progress: string }> = {
@@ -691,10 +791,6 @@ const ROLE_LABELS: Record<OrchestrationRole, { label: string; progress: string }
     reason: { label: 'Reason', progress: 'Reasoning' },
     render: { label: 'Render', progress: 'Rendering' },
 };
-const LEGACY_PHASE_LABELS: Record<OrchestrationPhase, string> = {
-    knowledge: 'Gathering knowledge', reasoning: 'Reasoning', output: 'Creating',
-};
-
 export function stepRoleLabel(step: OrchestrationStep, progress = false): string | null {
     const role = step.role;
     if (role !== 'gather' && role !== 'reason' && role !== 'render') return null;
@@ -709,37 +805,19 @@ export interface OrchestrationStepGroup {
 
 export function groupStepsForDisplay(
     plan: OrchestrationPlan,
-    capabilities: readonly { id: string; phase?: string }[] = [],
 ): OrchestrationStepGroup[] {
-    const ordered = orderStepsForDisplay(plan.steps, plan.planner_contract_version);
-    if (plan.planner_contract_version === 2) {
-        const groups: OrchestrationStepGroup[] = [];
-        ordered.forEach((step, index) => {
-            const label = stepRoleLabel(step);
-            let group = groups[groups.length - 1];
-            if (!group || group.label !== label) {
-                group = { key: `${step.role ?? 'unclassified'}-${index}`, label, steps: [] };
-                groups.push(group);
-            }
-            group.steps.push({ step, number: index + 1 });
-        });
-        return groups;
-    }
-    const phases = new Map(capabilities.map((capability) => [capability.id, capability.phase]));
-    const buckets = new Map<string, OrchestrationStep[]>();
-    for (const step of ordered) {
-        const phase = step.phase ?? phases.get(step.capability_id) ?? '';
-        const key = Object.hasOwn(LEGACY_PHASE_LABELS, phase) ? phase : '';
-        buckets.set(key, [...(buckets.get(key) ?? []), step]);
-    }
-    let number = 0;
-    return [...Object.entries(LEGACY_PHASE_LABELS), ['', null] as const].flatMap(([key, label]) => {
-        const steps = buckets.get(key);
-        return steps?.length ? [{
-            key: key || 'unclassified', label,
-            steps: steps.map((step) => ({ step, number: ++number })),
-        }] : [];
+    const ordered = orderStepsForDisplay(plan.steps);
+    const groups: OrchestrationStepGroup[] = [];
+    ordered.forEach((step, index) => {
+        const label = stepRoleLabel(step);
+        let group = groups[groups.length - 1];
+        if (!group || group.label !== label) {
+            group = { key: `${step.role ?? 'unclassified'}-${index}`, label, steps: [] };
+            groups.push(group);
+        }
+        group.steps.push({ step, number: index + 1 });
     });
+    return groups;
 }
 
 export function describeInputBinding(
@@ -754,9 +832,8 @@ export function describeInputBinding(
         + (output ? ` (${output.kind})` : '');
 }
 
-/** Even a disabled consumer keeps its bindings under the server's v2 validation contract. */
+/** Even a disabled consumer keeps its bindings under the server's validation contract. */
 export function stepDisableExplanation(plan: OrchestrationPlan, stepId: string): string | null {
-    if (plan.planner_contract_version !== 2) return null;
     const consumers = plan.steps.filter((step) =>
         step.depends_on.includes(stepId)
         || Object.values(step.inputs ?? {}).some((input) => input.binding?.step_id === stepId),
@@ -768,7 +845,6 @@ export function stepDisableExplanation(plan: OrchestrationPlan, stepId: string):
 
 /** Explain broken edges without rewriting them. Kind, scope and source validation stay server-owned. */
 export function planBindingIssues(plan: OrchestrationPlan, edits?: PlanEdits): string[] {
-    if (plan.planner_contract_version !== 2) return [];
     const issues = new Set<string>();
     const disabled = new Set(edits?.disabled_step_ids ?? []);
     const requireProducer = (consumer: string, stepId: string) => {
@@ -808,7 +884,7 @@ export interface PlanSummary {
     run_id: string;
     plan_id: string;
     intent_summary: string;
-    /** Count of steps that will actually run, the terminal answering step included. */
+    /** Count of steps that will actually run. */
     step_count: number;
     /** Distinct capabilities the enabled steps use, in first-seen order. */
     capabilities_used: string[];
@@ -830,7 +906,7 @@ export function enabledSteps(
         if (!step.enabled) {
             return false;
         }
-        if (disabled && step.capability_id !== TERMINAL_CAPABILITY_ID) {
+        if (disabled) {
             return !disabled.has(step.step_id);
         }
         return true;
@@ -887,16 +963,16 @@ export function planRequiresApproval(plan: OrchestrationPlan): boolean {
 /**
  * Whether a run could be started from this plan as edited.
  *
- * Active and terminal attempts cannot run again. Legacy plans retain their terminal answer;
- * v2 plans also require the declared producer edges to survive narrowing. The server still
- * authorizes and validates the saved plan before executing it.
+ * Active and terminal attempts cannot run again. Plans also require the declared producer
+ * edges to survive narrowing. The server still authorizes and validates the saved plan before
+ * executing it.
  */
 export function isPlanRunnable(plan: OrchestrationPlan, edits?: PlanEdits): boolean {
     if (isPlanTerminal(plan) || plan.status === 'running' || plan.status === 'waiting'
-        || ![1, 2].includes(plan.planner_contract_version)) {
+        || plan.planner_contract_version !== 2) {
         return false;
     }
-    if (plan.planner_contract_version === 2 && (!plan.validation.ok || planBindingIssues(plan, edits).length > 0)) {
+    if (!plan.validation.ok || planBindingIssues(plan, edits).length > 0) {
         return false;
     }
     return enabledSteps(plan, edits).length > 0;

@@ -1,8 +1,9 @@
 # test_orchestration_export_catalog_admission.py
-"""Functional tests for server-admitted v2 export format/profile subsets.
+"""Functional tests for server-admitted export format/profile subsets.
 
-Version: 0.261.127
+Version: 0.261.139
 Implemented in: 0.261.127
+Single orchestration contract updated in: 0.261.139
 Real registry, compiler, planner, leases, checkpoints and rendering services are used.
 Application imports are deferred until fixture setup; only provider/storage I/O is isolated.
 """
@@ -411,24 +412,3 @@ def test_answer_only_execution_is_not_blocked_by_an_explicitly_empty_file_catalo
     result = execute(runtime, case)
     assert result['status'] == 'completed' and result['message'] == 'An original answer.'
     assert len(case.model.calls) == 1 and result['artifacts'] == result['outputs'] == []
-
-
-def test_v1_metadata_normalization_and_edits_ignore_the_additive_catalog(runtime):
-    settings = {'enable_user_workspace': True}
-    before = runtime.registry.resolve_available_capabilities(settings)
-    after = runtime.registry.resolve_available_capabilities(settings, export_catalog={'invalid': True})
-    assert before == after
-    raw = {
-        'run_id': 'legacy-run', 'plan_id': 'legacy-plan', 'turn_id': 'legacy-turn',
-        'steps': [{'step_id': 'answer', 'capability_id': 'respond', 'arguments': {}}],
-    }
-    before = runtime.schema.normalize_plan(raw, 'conversation-1', 'owner', settings=settings)
-    after = runtime.schema.normalize_plan(
-        raw, 'conversation-1', 'owner', settings=settings, export_catalog={'invalid': True},
-    )
-    checked = runtime.schema.validate_plan(
-        after, settings=settings, contract_version=1, export_catalog=[],
-    )
-    edited = runtime.schema.apply_plan_edits(checked, {}, contract_version=1, export_catalog=[])
-    assert before == after == edited
-    assert edited['steps'][-1]['capability_id'] == 'respond'

@@ -1,7 +1,7 @@
 # test_v2_orchestration_plan_card.py
 """
 UI test for the V2 chat orchestration plan card: approve, cancel, review, and the timed countdown.
-Version: 0.261.101
+Version: 0.261.139
 Implemented in: 0.261.085
 
 This test drives the REAL OrchestrationPlanCard component (bundled from application/v2_ui/src by
@@ -45,6 +45,7 @@ def _plan(**overrides):
         "plan_id": "plan-1",
         "run_id": "run-1",
         "conversation_id": overrides.pop("conversation_id", "c1"),
+        "planner_contract_version": 2,
         "intent": {"summary": "Summarise the quarterly report", "complexity": "simple"},
         "steps": [
             {
@@ -52,13 +53,15 @@ def _plan(**overrides):
                 "capability_id": "search_documents",
                 "title": "Search the report",
                 "arguments": {"document_ids": ["docA", "docB"]},
+                "role": "gather",
                 "estimated_cost": "low",
             },
             {
                 "step_id": "s2",
-                "capability_id": "respond",
+                "capability_id": "compose",
                 "title": "Write the summary",
                 "arguments": {},
+                "role": "reason",
                 "estimated_cost": "low",
             },
         ],

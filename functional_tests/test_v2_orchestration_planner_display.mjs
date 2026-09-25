@@ -1,5 +1,5 @@
 // test_v2_orchestration_planner_display.mjs
-// Version: 0.261.134
+// Version: 0.261.139
 // Implemented in: 0.261.134
 // Executes the shared plan normalization for the planner descriptor, Auto routing,
 // optional named inputs, and the answer-basis and visual labels the plan panel shows.
@@ -37,11 +37,10 @@ test('the planner descriptor and Auto routing survive normalization', () => {
     );
 });
 
-test('older plans and unknown sources degrade without inventing a planner', () => {
-    const legacy = normalizePlan({ steps: [] });
-    assert.equal(legacy.planner, undefined);
-    assert.equal(legacy.model_routing, undefined);
-    assert.equal(describePlanner(legacy), null);
+test('non-current plans and unknown sources degrade without inventing a planner', () => {
+    assert.equal(normalizePlan({ steps: [] }), null);
+    assert.equal(normalizePlan({ planner_contract_version: 1, steps: [] }), null);
+    assert.equal(describePlanner({ planner: undefined, model_routing: undefined }), null);
     assert.equal(normalizePlanner({ label: '   ' }), undefined);
     assert.deepEqual(normalizePlanner({ label: 'planner-mini', source: 'something-else' }), {
         label: 'planner-mini', source: 'default',

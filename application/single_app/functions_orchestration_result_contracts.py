@@ -1,5 +1,5 @@
 # functions_orchestration_result_contracts.py
-"""Opt-in retained-result contracts, independent of application startup and v1 plans."""
+"""Opt-in retained-result contracts, independent of application startup."""
 
 import hashlib
 import json
@@ -19,9 +19,14 @@ EXTERNAL_SOURCE_VERSION = "orchestration-external-source-v1"
 EXTERNAL_LINEAGE_VERSION = "orchestration-lineage-v2"
 EXTERNAL_SOURCE_TYPES = frozenset({"web", "url", "deep_research", "agent", "action", "fact_memory"})
 MAX_EXTERNAL_SOURCES = 64
+# A generated image kept for the answer and for files. The retained value describes the
+# image; its bytes stay in the conversation's image message and are read only by the
+# server-owned image resolver after checking this digest.
+IMAGE_ASSET_KIND = "image-asset-v1"
+IMAGE_ASSET_VERSION = "orchestration-image-asset-v1"
 RESULT_KINDS = frozenset({
     "records-v1", "text-v1", "markdown-v1", "structured-v1",
-    "evidence-set-v1", "source-set-v1", "comparison-v1",
+    "evidence-set-v1", "source-set-v1", "comparison-v1", IMAGE_ASSET_KIND,
 })
 RESULT_STATES = frozenset({"pending", "partial", "complete", "invalid", "cancelled", "failed", "unavailable"})
 RESULT_ROLES = frozenset({"gather", "reason", "render"})
@@ -344,6 +349,46 @@ def validate_record(record, columns):
             raise ResultContractError("result_schema_invalid")
 
 
+_IMAGE_ASSET_FIELDS = frozenset({
+    "version", "asset_id", "message_id", "title", "alt_text", "prompt", "mime_type",
+    "size_bytes", "content_sha256", "model", "ai_generated",
+})
+_IMAGE_ASSET_MIME_TYPES = frozenset({"image/png", "image/jpeg", "image/webp"})
+_IMAGE_MESSAGE_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.:-]{0,255}\Z")
+# Generation decodes every image and admits only these formats within these bounds, so each
+# retained image can always be re-encoded into the PNG or JPEG rendition a document embeds.
+MAX_IMAGE_ASSET_BYTES = 20 * 1024 * 1024
+MAX_IMAGE_ASSET_PIXELS = 12_000_000
+
+
+def _bounded_text(value, limit, *, required=False):
+    if type(value) is not str or len(value) > limit or (required and not value.strip()):
+        raise ResultContractError("result_image_asset_invalid")
+    try:
+        value.encode("utf-8")
+    except UnicodeError as exc:
+        raise ResultContractError("result_image_asset_invalid") from exc
+
+
+def validate_image_asset_value(value):
+    """The exact descriptor a generate_image step retains; never image bytes or a URL."""
+    if type(value) is not dict or set(value) != _IMAGE_ASSET_FIELDS or value["version"] != IMAGE_ASSET_VERSION:
+        raise ResultContractError("result_image_asset_invalid")
+    output_name(value["asset_id"])
+    if type(value["message_id"]) is not str or _IMAGE_MESSAGE_ID.fullmatch(value["message_id"]) is None:
+        raise ResultContractError("result_image_asset_invalid")
+    _bounded_text(value["title"], 200, required=True)
+    _bounded_text(value["alt_text"], 300, required=True)
+    _bounded_text(value["prompt"], 4000, required=True)
+    _bounded_text(value["model"], 200)
+    if value["mime_type"] not in _IMAGE_ASSET_MIME_TYPES or value["ai_generated"] is not True:
+        raise ResultContractError("result_image_asset_invalid")
+    if type(value["size_bytes"]) is not int or not 0 < value["size_bytes"] <= MAX_IMAGE_ASSET_BYTES:
+        raise ResultContractError("result_image_asset_invalid")
+    digest(value["content_sha256"])
+    return value
+
+
 @dataclass(frozen=True)
 class ResultRef(_Contract):
     producer: ProducerIdentity
@@ -510,7 +555,7 @@ class StepBindings:
 
 
 def validate_input_bindings(steps, *, existing_results=None, max_steps=MAX_BINDING_STEPS):
-    """Return inferred dependencies without modifying, sorting, or repairing a v1 plan.
+    """Return inferred dependencies without modifying, sorting, or repairing a plan.
 
     Input/output specifications and the existing-result alias catalog are supplied
     by the server, not by a model. Resolving an alias still requires current access.

@@ -1,8 +1,9 @@
 # test_orchestration_harness_scheduler.py
 """Bounded scheduler queries, real claims, publication and headless loop integration.
 
-Version: 0.261.127
+Version: 0.261.139
 Implemented in: 0.261.127
+Single orchestration contract updated in: 0.261.139
 Production scheduler/continuation/runner/state machines run with external I/O doubled.
 Owner modules are imported inside fixture-backed tests after offline initialization.
 """
@@ -200,8 +201,7 @@ def test_naive_scheduler_time_is_rejected():
         scheduler.enumerate_due_runs(None, now=datetime(2030, 1, 1))
 
 
-def test_saved_v2_publishes_with_admission_flag_off_without_model_replay(harness):
-    harness.settings["enable_chat_orchestration_harness"] = False
+def test_saved_run_publishes_without_model_replay(harness):
     original, _ = saved_composition(harness)
     services = harness.services()
     with harness.publication_only(services):

@@ -2,8 +2,9 @@
 """
 Functional contracts for balanced orchestration research selection and its opt-in evaluator.
 
-Version: 0.261.122
+Version: 0.261.139
 Implemented in: 0.261.099
+Single orchestration contract updated in: 0.261.139
 
 Runs actual planner, capability projection, request gates and plan normalization with
 controlled completions. Azure-dependent imports are excluded through AST extraction.
@@ -46,8 +47,22 @@ from functional_tests.test_support.versioning import assert_app_version_at_least
 from scripts import evaluate_orchestration_research_planning as evaluation  # noqa: E402
 
 
+def result_binding(step_id, output_name="prepared"):
+    return {
+        "version": "orchestration-input-binding-v1",
+        "step_id": step_id,
+        "output_name": output_name,
+        "existing_result": None,
+    }
+
+
+def result_input(step_id, output_name="prepared", *, partial=False):
+    return {"binding": result_binding(step_id, output_name), "allow_partial": partial}
+
+
 def model_plan(capability=None, rationale="Additional discovery and checked details justify the effort."):
     steps = []
+    inputs = {}
     if capability:
         steps.append({
             "step_id": "gather",
@@ -55,20 +70,33 @@ def model_plan(capability=None, rationale="Additional discovery and checked deta
             "title": "Gather evidence",
             "rationale": rationale,
             "arguments": {"query": "A synthetic public evidence question"},
+            "outputs": [{"name": "prepared", "kind": "structured-v1"}],
             "depends_on": [],
         })
+        inputs = {"evidence": result_input("gather")}
     steps.append({
-        "step_id": "answer",
-        "capability_id": "respond",
-        "title": "Answer",
+        "step_id": "draft",
+        "capability_id": "compose",
+        "title": "Prepare answer",
         "rationale": "Use the available information to address the request.",
-        "arguments": {},
+        "arguments": {
+            "instruction": "Answer the synthetic request.",
+            "knowledge_basis": "sources" if capability else "general_knowledge",
+        },
+        "inputs": inputs,
+        "outputs": [{"name": "answer", "kind": "markdown-v1"}],
         "depends_on": ["gather"] if capability else [],
     })
     return {
+        "planner_contract_version": 2,
         "kind": "plan",
         "intent": {"summary": "Address the synthetic request.", "complexity": "simple", "confidence": 0.8},
+        "deliverables": [{
+            "id": "answer", "kind": "answer", "requested": "explicit",
+            "description": "The answer", "status": "planned",
+        }],
         "steps": steps,
+        "final_response": result_binding("draft", "answer"),
     }
 
 
@@ -170,8 +198,8 @@ class ResearchSelectionContracts(OfflineTestCase):
             set(self.cases["original-playlist"]["acceptable_choices"]),
             {"web_search", "deep_research"},
         )
-        self.assertEqual(self.cases["quick-playlist"]["acceptable_choices"], ["respond"])
-        self.assertEqual(self.cases["long-simple-drafting"]["acceptable_choices"], ["respond"])
+        self.assertEqual(self.cases["quick-playlist"]["acceptable_choices"], ["compose"])
+        self.assertEqual(self.cases["long-simple-drafting"]["acceptable_choices"], ["compose"])
         for case in self.cases.values():
             self.assertTrue(case["evidence_objectives"], case["id"])
             self.assertTrue(case["overuse_risk"], case["id"])
@@ -206,7 +234,7 @@ class ResearchSelectionContracts(OfflineTestCase):
         self.assertEqual(
             snapshot["capabilities"],
             self.runtime.registry["build_planner_capability_projection"](
-                self.runtime.registry["CAPABILITY_REGISTRY"],
+                self.runtime.registry["_build_capabilities"](),
             ),
         )
         self.assertIn("PLANNER_SYSTEM_PROMPT =", snapshot["source_definitions"]["PLANNER_SYSTEM_PROMPT"])
@@ -236,12 +264,12 @@ class ResearchSelectionContracts(OfflineTestCase):
             "I want a nastalgic vibe we were born in early 80s with bluegrass, country and more modern "
             "stuff from the 2000s to fun contemporary stuff playing now."
         ))
-        self.assertEqual(self.runtime.planner["triage_request"](message, {}), "simple")
-        self.assertEqual(
-            self.runtime.planner["triage_request"](self.cases["stable-direct"]["message"], {}),
-            "simple",
+        messages = self.runtime.planner["build_planner_messages"](
+            {"message": message, "capabilities": [], "capability_availability": {}},
         )
-        self.assertEqual(self.runtime.planner["triage_request"]("Thanks!", {}), "simple")
+        self.assertEqual(messages[0]["content"], self.runtime.planner["PLANNER_SYSTEM_PROMPT"])
+        self.assertIn(message, messages[1]["content"])
+        self.assertNotIn("triage_request", self.runtime.planner)
         self.assertNotIn("PLANNING_SIGNAL_PATTERN", self.runtime.planner)
 
     def test_initial_and_replan_share_the_actual_prompt_and_projection(self):
@@ -279,7 +307,7 @@ class ResearchSelectionContracts(OfflineTestCase):
                     rationale = f"Synthetic contract completion chose {capability}; a human must assess quality."
                     kind, document, client = self.plan(case_id, [model_plan(capability, rationale)])
                     self.assertEqual(kind, "plan")
-                    self.assertEqual([step["capability_id"] for step in document["steps"]], [capability, "respond"])
+                    self.assertEqual([step["capability_id"] for step in document["steps"]], [capability, "compose"])
                     self.assertEqual(document["steps"][0]["rationale"], rationale)
                     self.assertNotIn("planner_fallback_reason", document)
                     self.assertEqual(document["validation"]["errors"], [])
@@ -294,8 +322,13 @@ class ResearchSelectionContracts(OfflineTestCase):
                         self.plan(case_id, [model_plan()])
                     self.assertEqual(len(self.last_client.calls), 1)
                     continue
+                if case_id == "research-allowlist-excluded":
+                    with self.assertRaises(self.runtime.planner["PlannerError"]):
+                        self.plan(case_id, [model_plan()])
+                    self.assertEqual(len(self.last_client.calls), 1)
+                    continue
                 _, document, client = self.plan(case_id, [model_plan()])
-                self.assertEqual([step["capability_id"] for step in document["steps"]], ["respond"])
+                self.assertEqual([step["capability_id"] for step in document["steps"]], ["compose"])
                 self.assertEqual(len(client.calls), 1)
 
     def test_prior_evidence_reaches_the_planner_without_redundant_gathering(self):
@@ -303,7 +336,7 @@ class ResearchSelectionContracts(OfflineTestCase):
         payload = json.loads(client.calls[0]["messages"][1]["content"])
         self.assertEqual(payload["earlier_runs"], self.cases["supported-follow-up"]["earlier_runs"])
         self.assertEqual(payload["conversation"]["recent_turns"], self.cases["supported-follow-up"]["prior_messages"])
-        self.assertEqual([step["capability_id"] for step in document["steps"]], ["respond"])
+        self.assertEqual([step["capability_id"] for step in document["steps"]], ["compose"])
 
     def test_feature_role_and_allowlist_gates_apply_to_initial_plans_and_replans(self):
         for case_id in ("research-disabled", "research-role-missing", "research-allowlist-excluded"):
@@ -313,10 +346,10 @@ class ResearchSelectionContracts(OfflineTestCase):
                         self.plan(case_id, [model_plan("deep_research")], replan_hint=hint)
                     client = self.last_client
                     payload = json.JSONDecoder().raw_decode(client.calls[0]["messages"][1]["content"])[0]
-                    self.assertEqual(
-                        [item["id"] for item in payload["capabilities"]],
-                        ["web_search", "respond"],
-                    )
+                    expected = ["web_search"] if case_id == "research-allowlist-excluded" else [
+                        "web_search", "compose",
+                    ]
+                    self.assertEqual([item["id"] for item in payload["capabilities"]], expected)
 
     def test_role_policy_is_actual_fail_closed_claim_normalization(self):
         for roles, allowed in (
@@ -361,9 +394,10 @@ class ResearchSelectionContracts(OfflineTestCase):
         duplicate = copy.deepcopy(raw["steps"][0])
         duplicate["step_id"] = "extra_research"
         raw["steps"].insert(1, duplicate)
-        _, document, _ = self.plan("broad-discovery-checking", [raw])
-        self.assertEqual([step["capability_id"] for step in document["steps"]], ["deep_research", "respond"])
-        self.assertTrue(document["validation"]["repairs"])
+        with self.assertRaises(self.runtime.planner["PlannerError"]):
+            self.plan("broad-discovery-checking", [raw])
+        diagnostic = self.last_client.calls[0]["messages"][1]["content"]
+        self.assertIn("deep_research", diagnostic)
 
     def test_unparseable_completion_cannot_masquerade_as_a_direct_choice(self):
         with self.assertRaises(self.runtime.planner["PlannerError"]):
@@ -383,13 +417,12 @@ class ResearchSelectionContracts(OfflineTestCase):
                 self.plan('stable-direct', [proposal])
             self.assertEqual(len(self.last_client.calls), 1)
 
-    def test_real_model_authored_work_can_still_receive_a_missing_terminal_step(self):
+    def test_real_model_authored_work_without_reasoning_step_is_rejected(self):
         proposal = model_plan('web_search')
         proposal['steps'] = proposal['steps'][:-1]
-        kind, plan, _client = self.plan('focused-current-lookup', [proposal])
-        self.assertEqual(kind, 'plan')
-        self.assertEqual([step['capability_id'] for step in plan['steps']], ['web_search', 'respond'])
-        self.assertTrue(plan['validation']['repairs'])
+        with self.assertRaises(self.runtime.planner['PlannerError']):
+            self.plan('focused-current-lookup', [proposal])
+        self.assertEqual(len(self.last_client.calls), 1)
 
     def test_unselected_web_is_neutral_and_actual_availability_is_authoritative(self):
         _, _, client = self.plan("neutral-web-selection", [model_plan("web_search")])
@@ -419,7 +452,7 @@ class ResearchSelectionContracts(OfflineTestCase):
                 payload = json.loads(client.calls[0]["messages"][1]["content"])
                 self.assertEqual(payload["required_capabilities"], [selected])
                 self.assertEqual(payload["capability_availability"]["available"], [
-                    "web_search", "deep_research", "respond",
+                    "web_search", "deep_research", "compose",
                 ])
                 self.assertEqual(document["steps"][0]["capability_id"], selected)
 
@@ -511,7 +544,12 @@ class EvaluationContracts(OfflineTestCase):
 
     def test_available_document_can_be_used_in_both_paired_variants(self):
         proposal = {
-            "kind": "plan", "intent": {"summary": "Read the supplied visitor guide."},
+            "kind": "plan", "planner_contract_version": 2,
+            "intent": {"summary": "Read the supplied visitor guide."},
+            "deliverables": [{
+                "id": "answer", "kind": "answer", "requested": "explicit",
+                "description": "The answer", "status": "planned",
+            }],
             "steps": [
                 {
                     "step_id": "read", "capability_id": "document_analyze", "title": "Read guide",
@@ -521,10 +559,17 @@ class EvaluationContracts(OfflineTestCase):
                     },
                 },
                 {
-                    "step_id": "answer", "capability_id": "respond", "title": "Answer",
-                    "arguments": {}, "depends_on": ["read"],
+                    "step_id": "draft", "capability_id": "compose", "title": "Answer",
+                    "arguments": {
+                        "instruction": "Summarize the visitor guide.",
+                        "knowledge_basis": "sources",
+                    },
+                    "inputs": {"analysis": result_input("read", "findings")},
+                    "outputs": [{"name": "answer", "kind": "markdown-v1"}],
+                    "depends_on": ["read"],
                 },
             ],
+            "final_response": result_binding("draft", "answer"),
         }
         report = evaluation.run_comparison(
             self.baseline, client=ScriptedClient(proposal, proposal),
@@ -538,7 +583,7 @@ class EvaluationContracts(OfflineTestCase):
             self.assertTrue(result["validation"]["ok"])
             self.assertEqual(
                 [step["capability_id"] for step in result["selected_steps"]],
-                ["document_analyze", "respond"],
+                ["document_analyze", "compose"],
             )
 
     def test_sdk_automatic_retries_and_invalid_budgets_are_rejected_before_calls(self):
@@ -634,18 +679,18 @@ class EvaluationContracts(OfflineTestCase):
         self.assertEqual(report["requests_made"], 1)
         self.assertNotIn("SYNTHETIC_PRIVATE_PROVIDER_DETAIL", json.dumps(report))
 
-    def test_unparseable_reply_and_normalization_repairs_are_reported_honestly(self):
+    def test_unparseable_reply_and_invalid_dependency_plan_are_reported_honestly(self):
         report = self.compare(ScriptedClient("not parseable", model_plan()))
         self.assertEqual(report["status"], "completed_with_planner_failures")
         self.assertEqual(report["results"][0]["fallback_classification"], "unparseable_reply")
         self.assertFalse(report["results"][0]["semantic_review_eligible"])
         raw = model_plan("deep_research")
         raw["steps"].insert(1, {**copy.deepcopy(raw["steps"][0]), "step_id": "duplicate"})
-        repaired = self.compare(ScriptedClient(raw, raw))
-        self.assertEqual(repaired["status"], "completed_with_repairs")
-        self.assertEqual(len(repaired["results"][0]["proposals"][0]["steps"]), 3)
-        self.assertEqual(len(repaired["results"][0]["selected_steps"]), 2)
-        self.assertTrue(repaired["results"][0]["validation"]["repairs"])
+        rejected = self.compare(ScriptedClient(raw, raw))
+        self.assertEqual(rejected["status"], "completed_with_planner_failures")
+        self.assertEqual(rejected["results"][0]["fallback_classification"], "validation_failure")
+        self.assertEqual(len(rejected["results"][0]["proposals"][0]["steps"]), 3)
+        self.assertEqual(rejected["results"][0]["selected_steps"], [])
 
     def test_comparison_uses_each_actual_context_contract_without_executing_snapshot_code(self):
         self.baseline["contexts"]["original-playlist"]["user_selected"]["web_search"] = False

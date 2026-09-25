@@ -1,8 +1,9 @@
 # test_v2_prompt_composer_experience.py
 """
 Focused browser regressions for the approved V2 prompt composer experience.
-Version: 0.261.122
+Version: 0.261.139
 Implemented in: 0.261.096
+Single orchestration contract updated in: 0.261.139
 
 The existing harness bundles the real Composer, MessageList, editors, and stores.
 Only HTTP boundaries are mocked. Canonical messages use the real Python metadata
@@ -238,14 +239,23 @@ class PromptApi:
                 "run_id": "prompt-run",
                 "turn_id": body["turn_id"],
                 "conversation_id": body["conversation_id"],
+                "planner_contract_version": 2,
                 "intent": {"summary": "Use the attached prompt", "complexity": "simple"},
                 "steps": [{
                     "step_id": "answer",
-                    "capability_id": "respond",
+                    "capability_id": "compose",
+                    "role": "reason",
                     "title": "Answer",
-                    "arguments": {},
+                    "arguments": {"instruction": "Use the attached prompt."},
+                    "inputs": {},
+                    "outputs": [{"name": "answer", "kind": "markdown-v1"}],
+                    "depends_on": [],
                     "estimated_cost": "low",
                 }],
+                "final_response": {
+                    "version": "orchestration-input-binding-v1", "step_id": "answer",
+                    "output_name": "answer", "existing_result": None,
+                },
                 "approval": {"mode": "manual", "timeout_seconds": 0, "state": "pending"},
                 "status": "awaiting_approval",
             },

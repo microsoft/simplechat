@@ -1,9 +1,10 @@
 # test_model_catalog_management.py
 """
 Classic and real React V2 catalog workflows on Azure Playwright or local Chromium.
-Version: 0.261.126
+Version: 0.261.139
 Implemented in: 0.261.126
 Orchestrate model picker under Manual controls, Auto by default, since: 0.261.137
+Single orchestration contract updated in: 0.261.139
 
 API fixtures use the real pure profile validator/transform. They do not establish
 tenant authentication, Cosmos availability, or live provider readiness.
@@ -228,9 +229,13 @@ def test_execution_model_attribution_survives_runtime_events(catalog_page):
         const store = H.stores.orchestration.useOrchestrationStore.getState();
         store.setPlan('catalog-conversation', 'catalog-turn', {
             plan_id: 'plan', conversation_id: 'catalog-conversation', turn_id: 'catalog-turn',
+            planner_contract_version: 2,
             intent: { summary: 'Model attribution', complexity: 'simple' },
-            steps: [{ step_id: 'answer', capability_id: 'respond', title: 'Answer',
+            steps: [{ step_id: 'answer', capability_id: 'compose', role: 'reason', title: 'Answer',
+                arguments: { instruction: 'Answer the request.' }, inputs: {},
+                outputs: [{ name: 'answer', kind: 'markdown-v1' }], depends_on: [],
                 model_binding: { label: 'Summary deployment', reason: 'Summarization; standard priority', profile_id: 'gpt-5-nano' } }],
+            final_response: { version: 'orchestration-input-binding-v1', step_id: 'answer', output_name: 'answer', existing_result: null },
             approval: { mode: 'manual', state: 'pending' }
         });
         H.mount('mount-a', 'OrchestrationRunView', { conversationId: 'catalog-conversation', turnId: 'catalog-turn' });

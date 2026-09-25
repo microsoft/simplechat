@@ -1234,7 +1234,7 @@ export function Composer({ initialAgentSelection }: { initialAgentSelection?: st
                 )}
                 {imageProposalsRequested && (
                     <p role="status" className="mb-2 rounded-xl bg-surface-sunken px-3 py-2 text-xs text-text-2">
-                        Orchestrate will include image proposals for you to approve.
+                        Orchestrate will plan the images you ask for and generate them when the plan runs.
                     </p>
                 )}
                 {orchestrating && (

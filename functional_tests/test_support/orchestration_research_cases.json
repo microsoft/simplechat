@@ -27,7 +27,7 @@
     "chat_orchestration_enabled_capabilities": [
       "web_search",
       "deep_research",
-      "respond"
+      "compose"
     ]
   },
   "user_roles": [
@@ -37,7 +37,7 @@
     {
       "id": "stable-direct",
       "message": "Why does the Moon have phases? Explain it in two sentences for a child.",
-      "acceptable_choices": ["respond"],
+      "acceptable_choices": ["compose"],
       "evidence_objectives": ["Explain a stable, well-established concept accurately and simply."],
       "overuse_risk": "External research adds cost without addressing a missing evidence need.",
       "underuse_risk": "A direct answer still needs to be correct; no novel evidence gathering is requested.",
@@ -46,7 +46,7 @@
     {
       "id": "long-simple-drafting",
       "message": "Write a warm invitation to our imaginary neighborhood picnic. Keep it under 200 words, make it friendly to first-time visitors, mention that everyone can bring a favorite snack, and include a gentle reminder to bring a reusable cup. Use a cheerful opening and a short closing. The location and date are placeholders. Give me three possible subject lines and avoid jokes about the weather. This is a creative draft, not an announcement requiring checked facts.",
-      "acceptable_choices": ["respond"],
+      "acceptable_choices": ["compose"],
       "evidence_objectives": ["Follow the supplied creative constraints without inventing factual event details."],
       "overuse_risk": "Length and many stylistic preferences do not independently justify research.",
       "underuse_risk": "No absent external facts need to be resolved before drafting."
@@ -75,7 +75,7 @@
     {
       "id": "quick-playlist",
       "message": "Give me ten quick nostalgic road-trip song ideas with a little bluegrass and country. No sourced research or exact runtimes needed; familiar favorites are fine.",
-      "acceptable_choices": ["respond"],
+      "acceptable_choices": ["compose"],
       "evidence_objectives": ["Brainstorm familiar songs matching the stated mood at modest effort."],
       "overuse_risk": "Turning explicitly lightweight brainstorming into a research project ignores the user's priorities.",
       "underuse_risk": "Do not claim that dates, popularity, or runtimes were externally checked."
@@ -109,7 +109,7 @@
     {
       "id": "supported-follow-up",
       "message": "Using the comparison we already gathered, turn it into a three-sentence summary for our club newsletter. Do not gather anything new.",
-      "acceptable_choices": ["respond"],
+      "acceptable_choices": ["compose"],
       "prior_messages": [
         {
           "id": "synthetic-prior-assistant",
@@ -125,7 +125,7 @@
             "summary": "Compared the supplied fictional activity descriptions: indoor Museum A versus outdoor Park B; both have picnic areas.",
             "steps": [
               {
-                "capability_id": "respond",
+                "capability_id": "compose",
                 "status": "completed"
               }
             ]
@@ -226,7 +226,7 @@
       "message": "Summarize the visitor-access guidance in my Visitor guide PDF, noting accessibility restrictions and any missing details. External research is unnecessary unless the guide leaves a material gap.",
       "settings": {
         "enable_user_workspace": true,
-        "chat_orchestration_enabled_capabilities": ["document_search", "document_analyze", "web_search", "deep_research", "respond"]
+        "chat_orchestration_enabled_capabilities": ["document_search", "document_analyze", "web_search", "deep_research", "compose"]
       },
       "candidate_documents": [
         {"document_id": "synthetic-guide", "file_name": "Visitor guide.pdf", "scope": "personal"}
@@ -241,12 +241,12 @@
       "message": "Improve this visitor notice for clarity: The garden gate is closed for repairs. Please use the entrance beside the library. You may consult an available writing coach if it would add value.",
       "settings": {
         "enable_semantic_kernel": true,
-        "chat_orchestration_enabled_capabilities": ["agent_invoke", "web_search", "deep_research", "respond"]
+        "chat_orchestration_enabled_capabilities": ["agent_invoke", "web_search", "deep_research", "compose"]
       },
       "agents": [
         {"name": "writing-coach", "display_name": "Writing coach", "description": "Reviews short public notices for clarity and accessibility."}
       ],
-      "acceptable_choices": ["agent_invoke", "respond"],
+      "acceptable_choices": ["agent_invoke", "compose"],
       "evidence_objectives": ["Choose between direct rewriting and an authorized specialist based on useful added value."],
       "overuse_risk": "Available agents do not have to be invoked, and rewriting supplied text does not require research.",
       "underuse_risk": "Do not claim that the available specialist is forbidden merely because it was not manually selected."
@@ -264,7 +264,7 @@
         "citations": [],
         "notices": []
       },
-      "acceptable_choices": ["respond"],
+      "acceptable_choices": ["compose"],
       "evidence_objectives": ["Apply the saved unit preference while preserving the latest instruction to retain the optional longer walk."],
       "overuse_risk": "Reformatting a supplied itinerary with available preferences needs no new external research.",
       "underuse_risk": "Ignoring existing scoped preferences or treating them as stronger than the current request loses relevant context."

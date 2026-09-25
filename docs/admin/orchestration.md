@@ -5,7 +5,7 @@ description: "Orchestration lets a user describe what they want and have SimpleC
 section: "Administration"
 audience: admin
 admin_tab: orchestration
-version: "0.261.137"
+version: "0.261.139"
 ---
 
 
@@ -86,54 +86,37 @@ uses Auto (or the default model when Auto cannot be used) regardless of a saved 
 
 | Setting | What it does | Default | Notes |
 | --- | --- | --- | --- |
-| Enable Chat Orchestration | Makes orchestration mode available in the V2 chat composer. | Off | `enable_chat_orchestration` |
-| Gather / Reason / Render harness (preview) | Opts new plans into reusable retained results and explicit file-rendering tasks once the server admits the complete harness path. | Off (`false`) | `enable_chat_orchestration_harness`; requires Enable Chat Orchestration and server rollout readiness. Not a per-format switch. |
+| Enable Chat Orchestration | Makes orchestration mode available in the V2 chat composer. New plans use Gather / Reason / Render whenever this is on. | Off | `enable_chat_orchestration` |
 
-### Preview admission for new plans
+### Single Gather / Reason / Render contract
 
-**Rollout control implemented in version: 0.261.127**, tracked by
+**Single-contract rollout implemented in version: 0.261.139**, tracked by
 `application/single_app/config.py`. Refs
 [microsoft/simplechat#1509](https://github.com/microsoft/simplechat/issues/1509).
 
-Use this opt-in to pilot plans that separate acquiring inputs (**Gather**), preparing
-reusable results (**Reason**), and producing requested files (**Render**). Retained
-results let several representations use the same completed work rather than repeat
-analysis for each file. In an admitted harness plan, only explicit Render tasks create
-downloadable files; retaining evidence, records or a prepared report is not itself an
-export. The roles follow dependencies, not a mandatory three-stage sequence.
+Gather / Reason / Render is now the only plan architecture. New plans separate
+acquiring inputs (**Gather**), preparing reusable results (**Reason**), and
+producing requested files or images (**Render**) whenever **Enable Chat
+Orchestration** is on. There is no separate preview, harness, admission, or
+readiness setting. Stored `enable_chat_orchestration_harness` values are removed
+when settings load or save.
 
-Both settings default to `false`. The server may select **contract v2 for a new plan**
-only when `enable_chat_orchestration` and `enable_chat_orchestration_harness` are true
-**and** its rollout admission is ready. Version **0.261.127** supplies the admitted
-runtime, but does not enable either setting on existing deployments. Saving the
-preview switch never bypasses current capability or source access. Until all
-three conditions hold, enabled orchestration keeps the legacy **contract v1** path.
-When Enable Chat Orchestration is off, new orchestration remains unavailable.
+Retained results let several representations use the same completed work rather
+than repeat analysis for each file. Only explicit Render tasks create
+downloadable files; retaining evidence, records or a prepared report is not
+itself an export. The roles follow dependencies, not a mandatory three-stage
+sequence.
 
-Since **0.261.131**, a request that selected **Auto - choose per step** stayed on
-contract v1 even when the preview was admitted. Since **0.261.134**, the harness
-executor enforces per-step model bindings too, so Auto requests use the harness once
-it is admitted. Each model-backed task, including content preparation, is bound to an
-authorized connected model, and every binding is checked again before the run starts.
-Harness replies, including later model-free file-status updates, pass the same
-[chat output content checks]({{ '/explanation/features/CHAT_CONTENT_CHECKS/' | relative_url }})
-as ordinary chat before they are saved.
-
-This control does not enable individual file formats, grant capability or model access,
-or bypass approval, token, time or step budgets. Keep the existing capability selection
-and limits appropriate for the pilot. Standalone Analyze/Compare, ordinary chat exports,
-and workflows keep their existing behavior.
-
-For rollback, clear **Gather / Reason / Render harness (preview)** to prevent **new v2
-plans**. Previously saved v2 plans, results and outputs keep their recorded contract;
-this setting must not reinterpret, delete or automatically rerun them. Their authorized
-reads and recovery remain governed by their saved version and existing access checks.
-Legacy plans are not migrated by either enabling or disabling the preview.
+Plans created by an earlier orchestration version no longer open or rerun. They
+are omitted from the conversation run list and from the planner's earlier-run
+context. Direct attempts to open, edit, retry, restore, continue, cancel, or read
+catalog information for one return the standard message: "This plan was created
+by an earlier orchestration version and can't be opened or rerun. Start a new
+request." Their saved data is still removed when the conversation is deleted.
 
 The [file creation guide](../guides/create-files-with-orchestration.md) explains
 how to review shared result bindings, choose compatible representations and
-recover one file without repeating completed work. It describes the admitted
-v2 preview, not a change to legacy plans or standalone export settings.
+recover one file without repeating completed work.
 
 ### Retained external-source authorization
 
@@ -146,14 +129,14 @@ external capabilities.
 The read-only Microsoft Graph identity reader uses the existing
 application registration's confidential credentials and requires administrator
 consent for the **application** permission `Directory.Read.All`. This is separate
-from the delegated sign-in scopes. The harness does not request consent, grant
+from the delegated sign-in scopes. Orchestration does not request consent, grant
 permissions, change role assignments, or widen the ordinary login scopes
 automatically. Missing permission must leave affected external results
 unavailable, rather than fall back to old session claims.
 
 This dependency is specific to retained external-source authorization; it is not
 a new Graph permission requirement for document-backed or source-free results,
-the shared file serializers, ordinary chat, or legacy orchestration. Group,
+the shared file serializers, ordinary chat, or plans created by an earlier orchestration version. Group,
 workspace, agent/action governance, and content-screening checks still apply
 independently. See [Retained external source access]({{ '/explanation/features/ORCHESTRATION_EXTERNAL_SOURCE_ACCESS/' | relative_url }})
 for the server callback boundary and the current integration status.
@@ -206,33 +189,38 @@ An empty selection also means all otherwise-enabled capabilities. **Use an actio
 (`action_invoke`) still requires **Enable Action Access**, even with an empty list or
 every capability selected. Selecting the capability alone never opts a deployment in.
 
-Legacy **Answering** remains available. For admitted harness plans, **Prepare
-content** (`compose`) controls reusable drafting and structured content, while
-**Create a file** (`render_file`) controls explicit exports. Neither is implicitly
-granted by a non-empty legacy capability selection. Both admin surfaces preserve
-these selections; an explicitly legacy-only selection does not become permission
-for every newly added capability when saved.
+**Prepare content** (`compose`) controls reusable drafting, structured content,
+and the chat answer selected by `final_response`. **Create a file**
+(`render_file`) controls explicit exports. If a stored nonempty capability list
+still contains the removed `respond` capability, it is read as `compose`, so
+narrowed deployments keep answering. The stored list is not rewritten, because
+runs saved before the upgrade are bound to the settings they ran under; both
+admin pages show **Prepare content** selected, and the next save of the list
+stores `compose`. Nothing adds `render_file` or `generate_image`; include those
+explicitly when restricted plans should create files or requested images.
 
-Selecting either harness capability does not enable the preview, bypass server
-readiness, or grant source/model access. The harness still publishes truthful
-delivery status when composition is not requested, including file-only plans
-that consume already retained results.
+Since **0.261.138**, **Generate images** (`generate_image`) lets a plan generate
+the images a user asks for, one planned task per image and at most four per plan. The
+images appear in the answer and are embedded in DOCX, PDF, and PowerPoint files. It also
+requires **Enable Image Generation** and a configured image model; users gain no image
+access they did not already have. Clearing it keeps requested images out of plans, and
+the plan then lists them as not available with the reason "The capability that produces
+this is not enabled for orchestration." Images a plan only suggests remain approval cards,
+controlled by image generation alone.
+
+Selecting a capability does not grant source/model access or enable another
+feature's prerequisite. Orchestration still publishes truthful delivery status
+when composition is not requested, including file-only plans that consume already
+retained results.
 
 #### How a plan is ordered
 
-Legacy (contract v1) plans assign every capability to one of three phases and move
-through them in order:
-
-| Phase | What happens | Capabilities |
-| --- | --- | --- |
-| Gathering knowledge | Finding out what is true | Document search, document analysis, document comparison, spreadsheet analysis, web search, reading linked pages, deep research, Ask an agent, Use an action |
-| Reasoning | Saying something about it | Answering |
-| Creating | Producing files and other artifacts | Not yet available |
-
-For legacy plans, the order is enforced rather than suggested. A plan cannot go looking
-for something after it has already answered, because the answer would be written without
-the very evidence the later step found. Admitted harness plans instead follow the
-dependencies described under Preview admission for new plans.
+Gather, Reason and Render are roles, not mandatory phase buckets. Named result
+bindings and explicit dependencies decide the order, so a plan may gather,
+reason, gather again, and then reason from the combined results. The answer is
+written by the `compose` step selected by `final_response`; that step cannot be
+disabled in the plan editor. Invalid plans are refused rather than repaired by
+silently reordering phases, dropping documents, or appending an answer step.
 
 #### The more expensive capabilities
 
@@ -318,7 +306,7 @@ Action steps gather findings before the normal answering step. This ordering des
 the plan's intent, not a guarantee that an action cannot change data. Existing operation
 restrictions and confirmation behavior remain intact. The focused loop can make model
 calls and is bounded by the existing `max_auto_invoke_attempts` setting, step/run timeouts
-and cancellation. No output phase or composer action picker is added.
+and cancellation. No composer action picker is added.
 
 ### Charts, diagrams, and images in answers
 
@@ -336,8 +324,8 @@ image proposal cards, without an extra setting:
 
 Users' saved Instruction memories shape these visuals; for example, a saved "no charts"
 instruction stops charts they did not ask for. Since **0.261.134**, Gather/Reason/Render
-harness plans produce these visuals too: the planner names them on the task that
-authors them, and a charted action step works under the harness's invocation capture
+Gather / Reason / Render plans produce these visuals too: the planner names them on the task that
+authors them, and a charted action step works under orchestration invocation capture
 without calling the integration again.
 
 ### Limits {#chat-orchestration-limits-section}
@@ -502,7 +490,7 @@ deletion and archive-and-remove; existing archived messages are unaffected.
 | Symptom | Likely cause | Fix |
 | --- | --- | --- |
 | No orchestration control appears in chat | The setting is off, or the user is in the classic interface. | Confirm Enable Chat Orchestration is on, and that the user is on a V2 chat page. |
-| The preview does not produce new v2 plans | The main orchestration setting is off or server rollout admission is not ready. | Check both settings and deployment readiness. The preview is an opt-in, not a way to bypass server admission. Existing saved plans deliberately keep their original contract. |
+| A saved run says it was created by an earlier orchestration version | The run predates the current plan architecture and is refused rather than interpreted. | Start a new request in the same conversation. Earlier-version runs are omitted from the run list and cannot be rerun. |
 | Plans never mention documents | No workspace capability is enabled, or nothing in the user's documents matched the question. | Confirm at least one workspace type is enabled, and that the user has documents that have finished processing. |
 | Every plan is a single answering step | Capabilities are narrowed to answering only, or the retrieval capabilities are disabled elsewhere. | Review Capabilities on this page, then confirm document search and web search are enabled in their own settings groups. |
 | A plan is smaller than expected | The step cap trimmed it. | Raise Maximum steps in a plan, or ask a narrower question. |

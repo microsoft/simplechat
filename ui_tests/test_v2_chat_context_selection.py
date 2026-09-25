@@ -1,8 +1,9 @@
 # test_v2_chat_context_selection.py
 """
 Browser regressions for V2 context selection and explicitly chosen inline mentions.
-Version: 0.261.115
+Version: 0.261.139
 Implemented in: 0.261.094
+Single orchestration contract updated in: 0.261.139
 Shared editor and prompt dispatch regression coverage added in: 0.261.096
 
 The real Composer, DocumentExplorer, stores, router, and request builders run in the
@@ -121,16 +122,25 @@ class ContextApi:
                             "run_id": "context-run",
                             "turn_id": body["turn_id"],
                             "conversation_id": body["conversation_id"],
+                            "planner_contract_version": 2,
                             "intent": {"summary": "Compare sources", "complexity": "simple"},
                             "steps": [
                                 {
                                     "step_id": "answer",
-                                    "capability_id": "respond",
+                                    "capability_id": "compose",
+                                    "role": "reason",
                                     "title": "Answer",
-                                    "arguments": {},
+                                    "arguments": {"instruction": "Compare the selected sources."},
+                                    "inputs": {},
+                                    "outputs": [{"name": "answer", "kind": "markdown-v1"}],
+                                    "depends_on": [],
                                     "estimated_cost": "low",
                                 },
                             ],
+                            "final_response": {
+                                "version": "orchestration-input-binding-v1", "step_id": "answer",
+                                "output_name": "answer", "existing_result": None,
+                            },
                             "approval": {
                                 "mode": "manual",
                                 "timeout_seconds": 0,

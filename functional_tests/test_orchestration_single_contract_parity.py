@@ -1,8 +1,9 @@
 # test_orchestration_single_contract_parity.py
-"""Gather/Reason/Render parity with the answer features legacy orchestration had.
+"""Gather/Reason/Render parity with the answer features the earlier orchestration had.
 
-Version: 0.261.134
+Version: 0.261.139
 Implemented in: 0.261.134
+Single orchestration contract updated in: 0.261.139
 
 Uses the initialized headless harness (real bootstrap, model resolution, leases,
 checkpoints, retained results and renderer) with offline model replies. Covers:
@@ -126,10 +127,9 @@ def test_dependency_planning_binds_auto_models_and_records_the_planner(harness, 
     assert "When model_routing is auto" in system
     assert "only these steps are model-backed and take a model_task" in system
     assert "Every other step" in system and "takes no model_task" in system
-    # The dependency-step list belongs only to the dependency contract; v1 keeps its own rules.
-    v1_system = harness.planner.build_planner_messages({"model_routing": "auto"}, contract_version=1)[0]["content"]
-    assert "When model_routing is auto" in v1_system
-    assert "only these steps are model-backed" not in v1_system
+    # There is one planner contract; asking for the removed earlier one is refused.
+    with pytest.raises(harness.schema.LegacyPlanError):
+        harness.planner.build_planner_messages({"model_routing": "auto"}, contract_version=1)
     assert "knowledge_basis" in system and "render_file" in system
 
 
@@ -804,7 +804,7 @@ def test_foundry_citation_placeholders_become_numbered_links():
     )
 
 
-def test_legacy_executor_retries_a_transient_read_only_failure_once(monkeypatch):
+def test_executor_retries_a_transient_read_only_failure_once(monkeypatch):
     executor = importlib.import_module("functions_orchestration_executor")
     schema = importlib.import_module("functions_orchestration_schema")
     monkeypatch.setattr(executor, "_TRANSIENT_RETRY_DELAY_SECONDS", 0)
@@ -827,9 +827,10 @@ def test_new_plans_use_the_dependency_contract_under_auto_routing():
     )
     with open(route_source, encoding="utf-8") as handle:
         source = handle.read()
-    body = source.split("def _new_plan_contract_version(settings, seeds):", 1)[1].split("\ndef ", 1)[0]
-    assert "model_routing" not in body
-    assert "get_new_plan_contract_version(" in body
+    # Auto routing never selects a plan contract; every new turn uses the only one.
+    assert "_new_plan_contract_version" not in source
+    assert "get_new_plan_contract_version" not in source
+    assert "'planner_contract_version': DEPENDENCY_PLAN_CONTRACT_VERSION," in source
 
 
 def test_retry_flag_marks_only_read_only_gather_capabilities(harness):

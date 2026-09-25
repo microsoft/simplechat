@@ -1,12 +1,11 @@
 // OrchestrationResultBindings.tsx
 
 import type { OrchestrationPlan, OrchestrationStep } from '../../lib/orchestration';
-import { describeInputBinding } from '../../lib/orchestrationPlan';
+import { bindsGeneratedImage, describeInputBinding } from '../../lib/orchestrationPlan';
 
 export function OrchestrationResultBindings({
     plan, step,
 }: { plan: OrchestrationPlan; step: OrchestrationStep }) {
-    if (plan.planner_contract_version !== 2) return null;
     const inputs = Object.entries(step.inputs ?? {});
     const outputs = step.outputs ?? [];
     const dependencies = step.depends_on.map((id) =>
@@ -30,7 +29,9 @@ export function OrchestrationResultBindings({
                                     {describeInputBinding(plan, input.binding)}.
                                     {' '}{input.allow_partial ? 'Partial results accepted.' : 'Complete results required.'}
                                     {input.optional
-                                        ? ' Optional: if it cannot be gathered, the answer continues from general knowledge and says so.'
+                                        ? bindsGeneratedImage(plan, input.binding)
+                                            ? ' Optional: if this image cannot be generated, the content is written without it and a delivery note says so.'
+                                            : ' Optional: if it cannot be gathered, the answer continues from general knowledge and says so.'
                                         : ''}
                                 </dd>
                             </div>

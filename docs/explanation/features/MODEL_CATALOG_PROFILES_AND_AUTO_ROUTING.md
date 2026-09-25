@@ -2,6 +2,7 @@
 
 Implemented in version: **0.261.126** (`application/single_app/config.py`).
 Updated in version: **0.261.134** (Gather / Reason / Render plans and the general-answering fallback).
+Updated in version: **0.261.139** (Gather / Reason / Render is the only orchestration contract).
 
 ## Overview and dependencies
 
@@ -10,11 +11,12 @@ deployments. Classic and React V2 share an administrator editor for built-in
 profiles, custom profiles, favorites, priority, and connection association.
 Only V2 orchestration adds explicit per-step Auto routing. Regular chat remains
 manual; existing planner overrides and delegated agents retain their own bindings.
-Between **0.261.131** and **0.261.133**, an Auto request stayed on the standard
+Between **0.261.131** and **0.261.133**, an Auto request stayed on the earlier
 orchestration contract, because only its step executor enforced these bindings.
-Since **0.261.134**, the Gather / Reason / Render executor enforces them too: each
-step runs inside its binding's model scope, and an Auto plan with a missing or stale
-binding is refused before any model setup.
+Since **0.261.134**, the Gather / Reason / Render executor enforces them: each step
+runs inside its binding's model scope, and an Auto plan with a missing or stale
+binding is refused before any model setup. Since **0.261.139**, Gather / Reason /
+Render is the only orchestration contract, so every Auto plan is bound this way.
 
 Dependencies are the existing settings store, AI Connections authorization,
 orchestration planner/executor/checkpoints, local Bootstrap assets, and the V2
@@ -84,7 +86,7 @@ step records use the executed binding. Bindings participate in checkpoint plan
 fingerprints and are reauthorized before checkpoint reuse. Preferences never
 reroute saved work; technical edits require a new plan.
 
-On Gather / Reason / Render plans, the planner prompt also lists which steps are
+The planner prompt also lists which steps are
 model-backed (`compose`, `tabular_analyze`, `document_analyze`, `document_compare`,
 `deep_research`, `action_invoke`). The chat answer is credited to the model bound
 to the step that `final_response` names. When the reply reuses an earlier turn's

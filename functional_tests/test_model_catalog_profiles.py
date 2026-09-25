@@ -1,8 +1,9 @@
 # test_model_catalog_profiles.py
 """
 Functional tests for reusable profiles and per-step model routing.
-Version: 0.261.126
+Version: 0.261.139
 Implemented in: 0.261.126
+Single orchestration contract updated in: 0.261.139
 
 Exercises real dependency-light profile/routing modules, without network or storage.
 """
@@ -163,10 +164,10 @@ class RoutingTests(unittest.TestCase):
             candidate("code", {"general": "suitable", "coding": "strong"}),
         ]
         plan = {"steps": [
-            {"capability_id": "document_analyze", "model_task": "summarization"},
-            {"capability_id": "respond", "model_task": "coding"},
-            {"capability_id": "document_search"},
-        ]}
+            {"step_id": "analyze", "capability_id": "document_analyze", "model_task": "summarization"},
+            {"step_id": "answer", "capability_id": "compose", "model_task": "coding"},
+            {"step_id": "search", "capability_id": "document_search"},
+        ], "final_response": {"step_id": "answer", "output_name": "answer"}}
         result = assign_step_models(plan, candidates)
         self.assertEqual(result["steps"][0]["model_binding"]["label"], "summary")
         self.assertEqual(result["steps"][1]["model_binding"]["label"], "code")
@@ -179,7 +180,7 @@ class RoutingTests(unittest.TestCase):
             candidate("favorite", {"coding": "suitable"}, favorite=True, priority="preferred"),
             candidate("specialist", {"coding": "strong"}, priority="lower"),
         ]
-        plan = assign_step_models({"steps": [{"capability_id": "respond", "model_task": "coding"}]}, profiles)
+        plan = assign_step_models({"steps": [{"capability_id": "compose", "model_task": "coding"}]}, profiles)
         self.assertEqual(plan["steps"][0]["model_binding"]["label"], "specialist")
 
     def test_preferences_break_ties_stably(self):
@@ -187,10 +188,10 @@ class RoutingTests(unittest.TestCase):
             candidate("z", {"general": "suitable"}, favorite=True),
             candidate("a", {"general": "suitable"}),
         ]
-        first = assign_step_models({"steps": [{"capability_id": "respond"}]}, rows)
+        first = assign_step_models({"steps": [{"capability_id": "compose"}]}, rows)
         self.assertEqual(first["steps"][0]["model_binding"]["label"], "z")
         rows[1]["profile"]["preferences"]["priority"] = "preferred"
-        second = assign_step_models({"steps": [{"capability_id": "respond"}]}, list(reversed(rows)))
+        second = assign_step_models({"steps": [{"capability_id": "compose"}]}, list(reversed(rows)))
         self.assertEqual(second["steps"][0]["model_binding"]["label"], "a")
 
     def test_incompatibility_and_archival_are_never_bypassed(self):
@@ -208,7 +209,7 @@ class RoutingTests(unittest.TestCase):
             candidate("strong", {"general": "strong"}),
         ]
         plan = assign_step_models({"steps": [
-            {"capability_id": "respond", "model_task": "coding"},
+            {"capability_id": "compose", "model_task": "coding"},
             {"capability_id": "tabular_analyze"},
             {"capability_id": "deep_research"},
         ]}, rows)
@@ -224,17 +225,17 @@ class RoutingTests(unittest.TestCase):
             candidate("generalist", {"general": "strong"}, favorite=True, priority="preferred"),
             candidate("coder", {"coding": "suitable"}, priority="lower"),
         ]
-        plan = assign_step_models({"steps": [{"capability_id": "respond", "model_task": "coding"}]}, rows)
+        plan = assign_step_models({"steps": [{"capability_id": "compose", "model_task": "coding"}]}, rows)
         self.assertEqual(plan["steps"][0]["model_binding"]["label"], "coder")
         self.assertEqual(plan["steps"][0]["model_binding"]["reason"], "Coding; lower priority")
 
     def test_general_fallback_never_chooses_a_model_rated_unsuitable_or_unrated(self):
         with self.assertRaises(ModelCatalogError):
-            assign_step_models({"steps": [{"capability_id": "respond", "model_task": "coding"}]}, [
+            assign_step_models({"steps": [{"capability_id": "compose", "model_task": "coding"}]}, [
                 candidate("refuses-code", {"general": "strong", "coding": "unsuitable"}),
                 candidate("undescribed", {}),
             ])
-        plan = assign_step_models({"steps": [{"capability_id": "respond", "model_task": "coding"}]}, [
+        plan = assign_step_models({"steps": [{"capability_id": "compose", "model_task": "coding"}]}, [
             candidate("refuses-code", {"general": "strong", "coding": "unsuitable"}),
             candidate("plain", {"general": "suitable"}),
         ])
@@ -243,11 +244,11 @@ class RoutingTests(unittest.TestCase):
     def test_general_fallback_keeps_the_task_capability_requirements(self):
         text_only = candidate("text-only", {"general": "strong"})
         with self.assertRaises(ModelCatalogError):
-            assign_step_models({"steps": [{"capability_id": "respond", "model_task": "vision"}]}, [text_only])
+            assign_step_models({"steps": [{"capability_id": "compose", "model_task": "vision"}]}, [text_only])
         sighted = candidate("sighted", {"general": "suitable"}, capabilities={
             "processesText": True, "generatesText": True, "processesImages": True,
         })
-        plan = assign_step_models({"steps": [{"capability_id": "respond", "model_task": "vision"}]}, [text_only, sighted])
+        plan = assign_step_models({"steps": [{"capability_id": "compose", "model_task": "vision"}]}, [text_only, sighted])
         binding = plan["steps"][0]["model_binding"]
         self.assertEqual(binding["label"], "sighted")
         self.assertIn("processesImages", binding["required_capabilities"])
@@ -277,7 +278,10 @@ class RoutingTests(unittest.TestCase):
     def test_group_binding_retains_document_scope_and_reauthorizes_every_step(self):
         row = candidate("group-model", {"general": "suitable"})
         row["scope_id"] = "model-group"
-        plan = assign_step_models({"steps": [{"capability_id": "respond"}]}, [row])
+        plan = assign_step_models({
+            "steps": [{"step_id": "answer", "capability_id": "compose"}],
+            "final_response": {"step_id": "answer", "output_name": "answer"},
+        }, [row])
         selected = answer_selection(plan, {"active_group_ids": ["document-group"]})
         self.assertEqual(selected["active_group_ids"], ["document-group", "model-group"])
         resolver = Mock(side_effect=PermissionError("revoked"))
@@ -295,7 +299,7 @@ class RoutingTests(unittest.TestCase):
         )
         binding = {"selection": {"model_deployment": "deployed"}, "profile_id": profile["id"],
                    "profile_revision": profile["revision"], "required_capabilities": ["generatesText"]}
-        step = {"capability_id": "respond", "model_binding": binding}
+        step = {"capability_id": "compose", "model_binding": binding}
         context = SimpleNamespace(user_id="user", invoke_prompt="original", gpt_model="old", model_context={}, planner_client="old", planner_deployment="old")
         with self.assertRaisesRegex(RuntimeError, "test failure"):
             with step_model_context(step, context, settings=settings, seeds={},

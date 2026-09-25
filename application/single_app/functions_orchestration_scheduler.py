@@ -1,7 +1,7 @@
 # functions_orchestration_scheduler.py
-"""One bounded saved-V2 scheduler tick; no thread, admission gate or client startup.
+"""One bounded scheduler tick over saved runs; no thread, admission gate or client startup.
 
-Version: 0.261.129
+Version: 0.261.139
 The application supplies initialized resources. Results contain private selectors
 and safe processing facts, never model output, credentials or artifact locators.
 Deletion enrollment has its own run budget and consumes only a persisted owner
