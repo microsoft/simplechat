@@ -257,17 +257,24 @@ export function ScreeningWorkspaceControls({
     scope,
     documentIds,
     label = 'Screening scans',
+    disabled = false,
+    compact = false,
 }: {
     scope: ScreeningScope;
     documentIds?: string[];
     label?: string;
+    /** Holds the controls closed while the host cannot confirm the viewer's access. */
+    disabled?: boolean;
+    /** Below the sm breakpoint, show the icon alone; the label stays the button's name and tooltip. */
+    compact?: boolean;
 }) {
     const [open, setOpen] = useState(false);
     return (
         <>
             <GlassButton type="button" size="sm" variant="subtle" onClick={() => setOpen(true)}
-                disabled={!scope.scope_id}>
-                <ShieldCheck size={14} />{label}
+                disabled={disabled || !scope.scope_id}
+                aria-label={compact ? label : undefined} title={compact ? label : undefined}>
+                <ShieldCheck size={14} />{compact ? <span className="hidden sm:inline">{label}</span> : label}
             </GlassButton>
             {open ? (
                 <AdminModal title="Content screening controls" size="lg"

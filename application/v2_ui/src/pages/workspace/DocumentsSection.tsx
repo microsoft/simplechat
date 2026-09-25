@@ -4,6 +4,9 @@
 // Thin on purpose: the explorer owns its own command bar, rail, status bar and internal
 // scrolling, so the only thing left for this section is the sentence explaining where these
 // files can come from.
+//
+// The group section also offers the content screening controls personal documents have, to the
+// members the context's `screening_management` hint names: the screening routes' own authorization.
 
 import { useMemo } from 'react';
 import { ArrowUpRight, FolderSync } from 'lucide-react';
@@ -40,16 +43,26 @@ export function GroupDocumentsSection({
         { kind: 'group', id: context.scope.id, name: context.workspace.name }, context.document_collaboration,
     ), [context.scope.id, context.workspace.name, context.document_collaboration]);
     const canChange = [...operations.supported].some((operation) => operation !== 'download');
+    // The screening routes' own authorization, published with the context, so the controls are
+    // offered to exactly the members the server accepts -- as personal offers them to the owner.
+    const screeningOperations = context.screening_management?.operations;
+    const canManageScreening = Array.isArray(screeningOperations) && screeningOperations.includes('manage');
 
     return (
         <div className="flex h-full min-h-0 flex-col gap-2">
             <div className="shrink-0">
                 <div className="flex flex-wrap items-center justify-between gap-2">
                     <h2 className="text-base font-semibold text-text-1">Documents</h2>
-                    <GlassButton size="sm" disabled={interactionDisabled} onClick={onOpenClassic}
-                        aria-label="Open classic tools for group documents" title="Classic tools, including upgrading legacy documents">
-                        Classic tools<ArrowUpRight size={14} />
-                    </GlassButton>
+                    <div className="flex flex-wrap items-center gap-2">
+                        {canManageScreening ? (
+                            <ScreeningWorkspaceControls scope={{ scope_type: 'group', scope_id: context.scope.id }}
+                                disabled={interactionDisabled} compact />
+                        ) : null}
+                        <GlassButton size="sm" disabled={interactionDisabled} onClick={onOpenClassic}
+                            aria-label="Open classic tools for group documents" title="Classic tools, including upgrading legacy documents">
+                            Classic tools<ArrowUpRight size={14} />
+                        </GlassButton>
+                    </div>
                 </div>
                 <p className="mt-0.5 text-sm text-text-3">{canChange
                     ? 'Manage group files. Each action follows current document permissions.'

@@ -1,9 +1,10 @@
 # test_v2_group_identities.py
 """
 Production-SPA coverage for the native scope-aware V2 group identities section.
-Version: 0.261.170
+Version: 0.261.173
 Implemented in: 0.261.139
 Managed identity client ID kept on edit: 0.261.170
+Search by name and sign-in: 0.261.173
 
 Exercises the real identities section and its editor dialog against closed synthetic
 HTTP. The fixture serves only the immutable `/api/groups/<id>/identities` family and
@@ -147,6 +148,33 @@ def test_inline_identity_actions_gate_edit_and_delete(group_identities_ui):
     withheld = row(ui, WITHHELD_NAME)
     expect(withheld.get_by_role("button", name=f"Edit {WITHHELD_NAME}", exact=True)).to_have_count(0)
     expect(withheld.get_by_role("button", name=f"Delete {WITHHELD_NAME}", exact=True)).to_have_count(0)
+
+
+def test_search_narrows_identities_by_name_and_sign_in(group_identities_ui):
+    """The search matches an identity's name or the sign-in its row shows (`CORP\\svc-archive`),
+    ignoring case; a term matching nothing says so, and clearing it restores every identity. It
+    filters the loaded list, so it never re-reads the group route."""
+    ui = group_identities_ui
+    open_manager(ui)
+    names = (EDITABLE_NAME, WITHHELD_NAME, FILE_SYNC_NAME, IN_USE_NAME)
+    for name in names:
+        expect(row(ui, name)).to_be_visible()
+    reads = len(identities_get(ui))
+    search = ui.page.get_by_role("searchbox", name="Search identities", exact=True)
+    for term, match in (("REPORTING", EDITABLE_NAME), ("corp\\svc", FILE_SYNC_NAME)):
+        search.fill(term)
+        expect(row(ui, match)).to_be_visible()
+        for name in names:
+            if name != match:
+                expect(row(ui, name)).to_have_count(0)
+    search.fill("no such credential")
+    expect(ui.page.get_by_text("No identities match your search", exact=True)).to_be_visible()
+    for name in names:
+        expect(row(ui, name)).to_have_count(0)
+    search.fill("")
+    for name in names:
+        expect(row(ui, name)).to_be_visible()
+    assert len(identities_get(ui)) == reads
 
 
 def test_group_manager_creates_an_identity(group_identities_ui):

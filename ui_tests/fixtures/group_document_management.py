@@ -1,12 +1,13 @@
 # group_document_management.py
 """
 Closed M2B group document management responses for the real production V2 SPA.
-Version: 0.261.168
+Version: 0.261.173
 Implemented in: 0.261.129
 Every receipt builder, an Owner's rows and the tag list are the real management routes', held to
 them by functional_tests/test_group_document_fixture_parity.py.
 A tag vocabulary conflict refusal carries its code (`tag_vocabulary_refusal`): 0.261.167
 The refusal also answers a bulk tagging batch and, naming the document, a metadata save: 0.261.168
+The group-scoped content screening routes, modelled in group_screening.py: 0.261.173
 
 Reuse M2A reads, local production assets, request recording, response gates and
 Azure Playwright connection options. Every management request must consume an
@@ -28,6 +29,7 @@ from ui_tests.fixtures.group_documents import (
     GROUP_DOCUMENTS_DENIED_ERROR, GROUP_DOCUMENTS_STATUS_ERROR, GroupDocumentsFixture, document, restricted,
     restricted_status,
 )
+from ui_tests.fixtures.group_screening import SCREENING_PREFIX, GroupScreeningModel
 from ui_tests.fixtures.group_workspace import connect_options, group_context  # noqa: F401
 from ui_tests.fixtures.workspace_authoring import ORIGIN, WorkspaceAuthoringFixture
 
@@ -260,11 +262,13 @@ class OperationReply:
     versions: dict = field(default_factory=dict)
 
 
-class GroupDocumentManagementFixture(GroupDocumentsFixture):
+class GroupDocumentManagementFixture(GroupScreeningModel, GroupDocumentsFixture):
     """A small, explicitly scripted HTTP boundary, not a second document app."""
 
     def __init__(self, page):
         super().__init__(page)
+        # The group-scoped screening routes the section's screening controls call (group_screening.py).
+        self._init_group_screening()
         self.planned_operations = []
         self.completed_operations = []
         self.multipart_uploads = []
@@ -504,6 +508,9 @@ class GroupDocumentManagementFixture(GroupDocumentsFixture):
             self.vocabulary[reply.group_id] = copy.deepcopy(reply.vocabulary)
 
     def _dispatch(self, route, entry):
+        if entry.path.startswith(SCREENING_PREFIX):
+            self._serve_screening(route, entry)
+            return
         if re.fullmatch(r"/api/groups/[^/]+/documents/.+", entry.path):
             self._validate_operation(entry)
             assert self.planned_operations, f"Unplanned document operation: {entry}"
@@ -573,6 +580,8 @@ class GroupDocumentManagementFixture(GroupDocumentsFixture):
             assert not entry.path.startswith("/api/documents"), f"Personal document traffic: {entry}"
             if re.fullmatch(r"/api/groups/[^/]+/documents/.+", entry.path):
                 self._validate_operation(entry)
+            elif entry.path.startswith(SCREENING_PREFIX):
+                self._validate_screening_request(entry)
             elif entry.path.startswith("/api/group_documents"):
                 assert entry.method == "GET", f"Legacy group document mutation: {entry}"
                 assert len(entry.query.get("group_id", [])) == 1 and "group_ids" not in entry.query, entry
