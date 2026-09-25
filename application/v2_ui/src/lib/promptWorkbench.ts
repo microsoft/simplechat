@@ -2,18 +2,19 @@
 // Scope-aware prompt reads and writes for the workbench.
 //
 // The workbench shipped personal-only: it called the /api/prompts functions in workspaceApi.ts
-// directly. This module is the seam that lets the same component serve a group workspace without
-// forking it, the way documentOperations.ts became scope-aware in M9B. A PromptScope selects
-// which URLs are used, whether favourites exist, and which per-operation gates apply. The
+// directly. This module is the seam that lets the same component serve a group or public workspace
+// without forking it, the way documentOperations.ts became scope-aware in M9B. A PromptScope
+// selects which URLs are used, whether favourites exist, and which per-operation gates apply. The
 // personal adapter is a thin pass-through so its behaviour stays byte-identical in effect: same
 // URLs, same favourites, same flows.
 //
-// The group path never falls back to personal behaviour. An absent or unrecognised
+// The group and public paths never fall back to personal behaviour. An absent or unrecognised
 // prompt_management hint yields an empty operation set, which leaves every write gate refusing --
-// a missing server hint must not become a silent authorization bypass on the client. Group
-// scope also carries a conditional write: PATCH and DELETE send expected_etag in the JSON body
+// a missing server hint must not become a silent authorization bypass on the client. Both shared
+// scopes carry a conditional write: PATCH and DELETE send expected_etag in the JSON body
 // (the transport this programme's collaboration DELETEs already use), and a 409 becomes a
-// PromptConflictError the workbench turns into "your draft is kept, refresh and retry".
+// PromptConflictError the workbench turns into "your draft is kept, refresh and retry". The public
+// scope differs only in its immutable-target URL family and its per-prompt scope proof (public_id).
 
 import { ApiError, api, requestWithStatus } from './apiClient';
 import { isRecord } from './workspaceAuthoring';
@@ -29,7 +30,8 @@ import type { WorkspacePrompt } from './types';
 
 export type PromptScope =
     | { kind: 'personal' }
-    | { kind: 'group'; id: string; name: string };
+    | { kind: 'group'; id: string; name: string }
+    | { kind: 'public'; id: string; name: string };
 
 export const PROMPT_OPERATIONS = ['create', 'edit', 'delete'] as const;
 export type PromptOperation = typeof PROMPT_OPERATIONS[number];
@@ -78,12 +80,13 @@ export function advertisedPromptOperations(value: unknown): ReadonlySet<PromptOp
 /**
  * Whether an operation is allowed in a scope.
  *
- * Personal scope allows everything, exactly as the section did before it was scoped. Group scope
- * requires the workspace-level `prompt_management` hint to offer the operation, and edit/delete
- * additionally require the specific prompt to belong to this group and to carry the operation in
- * its own `prompt_actions`. Create is workspace-level with no per-prompt subject; duplicate
- * creates too, so it is gated on create. There is deliberately no fallback that enables an
- * action when the hint is empty or absent.
+ * Personal scope allows everything, exactly as the section did before it was scoped. Group and
+ * public scope require the workspace-level `prompt_management` hint to offer the operation, and
+ * edit/delete additionally require the specific prompt to belong to this workspace (by `group_id`
+ * for group scope, `public_id` for public scope) and to carry the operation in its own
+ * `prompt_actions`. Create is workspace-level with no per-prompt subject; duplicate creates too,
+ * so it is gated on create. There is deliberately no fallback that enables an action when the hint
+ * is empty or absent.
  */
 export function promptOperationAllowed(
     scope: PromptScope,
@@ -100,7 +103,11 @@ export function promptOperationAllowed(
     if (operation === 'create') {
         return true;
     }
-    if (!prompt || prompt.group_id !== scope.id) {
+    if (!prompt) {
+        return false;
+    }
+    const owningId = scope.kind === 'public' ? prompt.public_id : prompt.group_id;
+    if (owningId !== scope.id) {
         return false;
     }
     return Array.isArray(prompt.prompt_actions) && prompt.prompt_actions.includes(operation);
@@ -230,6 +237,75 @@ export function createGroupPromptWorkbench(
                 throw new Error('Deleting this prompt is not available.');
             }
             await conditionalGroupWrite('DELETE', groupPromptsUrl(groupId, prompt.id), {
+                expected_etag: requiredEtag(prompt),
+            });
+        },
+    };
+}
+
+function publicPromptsUrl(workspaceId: string, promptId?: string, params?: URLSearchParams): string {
+    const base = `/api/public-workspaces/${encodeURIComponent(requireWorkspaceId(workspaceId))}/prompts`;
+    const path = promptId ? `${base}/${encodeURIComponent(requireWorkspaceId(promptId))}` : base;
+    const query = params?.toString();
+    return query ? `${path}?${query}` : path;
+}
+
+/** Prove a returned prompt belongs to the requested public workspace, as the public reader does. */
+function assertPublicPromptScope(prompt: WorkspacePrompt, workspaceId: string, id?: string): void {
+    if (!prompt || typeof prompt.id !== 'string' || !prompt.id
+        || (id !== undefined && prompt.id !== id)
+        || prompt.public_id !== workspaceId) {
+        throw new Error('The prompt response does not match this workspace. Refresh and try again.');
+    }
+}
+
+export function createPublicPromptWorkbench(
+    scope: Extract<PromptScope, { kind: 'public' }>, management: unknown,
+): PromptWorkbenchAdapter {
+    if (scope.kind !== 'public') {
+        throw new Error('Public prompts require an explicit public scope.');
+    }
+    const workspaceId = requireWorkspaceId(scope.id);
+    const supported = advertisedPromptOperations(management);
+    const allows = (operation: PromptOperation, prompt?: WorkspacePrompt) =>
+        promptOperationAllowed(scope, supported, operation, prompt);
+    return {
+        scope,
+        favoritesEnabled: false,
+        supported,
+        allows,
+        list: async (signal) => {
+            const params = new URLSearchParams({ page: '1', page_size: '500' });
+            const response = await api.get<unknown>(publicPromptsUrl(workspaceId, undefined, params), signal);
+            const prompts = promptsFromResponse(response);
+            prompts.forEach((prompt) => assertPublicPromptScope(prompt, workspaceId));
+            return prompts;
+        },
+        create: async (name, content, extra = {}) => {
+            if (!allows('create')) {
+                throw new Error('Creating prompts is not available in this workspace.');
+            }
+            const created = await api.post<WorkspacePrompt>(publicPromptsUrl(workspaceId), {
+                name, content, description: extra.description ?? '',
+            });
+            assertPublicPromptScope(created, workspaceId);
+            return created;
+        },
+        update: async (prompt, updates) => {
+            if (!allows('edit', prompt)) {
+                throw new Error('Editing this prompt is not available.');
+            }
+            const updated = await conditionalGroupWrite('PATCH', publicPromptsUrl(workspaceId, prompt.id), {
+                ...groupWriteBody(updates), expected_etag: requiredEtag(prompt),
+            });
+            assertPublicPromptScope(updated as WorkspacePrompt, workspaceId, prompt.id);
+            return updated as WorkspacePrompt;
+        },
+        remove: async (prompt) => {
+            if (!allows('delete', prompt)) {
+                throw new Error('Deleting this prompt is not available.');
+            }
+            await conditionalGroupWrite('DELETE', publicPromptsUrl(workspaceId, prompt.id), {
                 expected_etag: requiredEtag(prompt),
             });
         },

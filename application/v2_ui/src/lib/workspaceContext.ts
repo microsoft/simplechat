@@ -203,6 +203,15 @@ export interface PublicWorkspaceContext extends WorkspaceAvailability {
         schema_version: number;
         operations: string[];
     };
+    /**
+     * The public prompt management hint (M9C). Present as `{schema_version: 1, operations: [...]}`
+     * when the viewer may create, edit or delete public workspace prompts, computed from role and
+     * status exactly like document_management. Absence means "read-only", never an empty grant.
+     */
+    prompt_management?: {
+        schema_version: number;
+        operations: string[];
+    };
 }
 
 export function requireWorkspaceId(id: string): string {
