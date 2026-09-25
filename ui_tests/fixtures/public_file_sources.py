@@ -175,7 +175,7 @@ class PublicFileSourcesFixture(PublicWorkspaceFixture):
         current = self.workspaces.get(workspace_id)
         name = name or (current["workspace"]["name"] if current else f"{workspace_id} workspace")
         role = role or (self.file_source_policy.get(workspace_id, {}).get("role") or "Owner")
-        context = public_context(workspace_id, name, role=role, status=status)
+        context = public_context(workspace_id, name, role=role, status=status, file_sync=available)
         self.workspaces[workspace_id] = context
         operations = []
         if available and role in MANAGER_ROLES and status == "active":

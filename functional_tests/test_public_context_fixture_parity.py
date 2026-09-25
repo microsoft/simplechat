@@ -1,7 +1,7 @@
 # test_public_context_fixture_parity.py
 """
 Parity between the public workspace context the V2 browser fixtures serve and the real builder.
-Version: 0.261.178
+Version: 0.261.179
 Implemented in: 0.261.168
 
 Every public browser suite builds its selected-workspace context from
@@ -17,7 +17,8 @@ section or hint only one side has fails. That covers every field the V2 client r
 - `role`, `status`, `can_manage_workspace` and the envelope (`schema_version`, `enabled`);
 - every section: `enabled`, `can_manage`, `reason` and `group`;
 - `document_permissions` and `document_queries`;
-- three hints: `document_management`, `document_collaboration` and `prompt_management`.
+- five hints: `document_management`, `document_collaboration`, `prompt_management`,
+  `identity_management` and `file_source_management`.
 
 The workspace metadata (`workspace`, `scope` and `viewer_id`) may differ in value but not in keys.
 
@@ -38,6 +39,13 @@ never have (agents, actions, endpoints and workflows). M9C opens the prompts sec
 and publishes a `prompt_management` hint from `public_prompt_management_operations`. The fixture
 serves the server's value, and this test walks the union of both sides' keys, so a section or hint
 only one side lists fails.
+
+M10B opens the identities and sync sections and publishes `identity_management` and
+`file_source_management` hints from their operations. File Sync for the workspace is the sole gate:
+with it off both sections stay closed and their hints empty; with it on a manager of an active
+workspace manages them. The parity run is parametrized over File Sync off and on, so both
+deployments are held to the fixture, and the reason-constants test pins the "requires File Sync" and
+manager-only texts the sections send.
 """
 
 import ast
@@ -82,7 +90,7 @@ METADATA_FIELDS = frozenset({"viewer_id", "scope", "workspace"})
 CLIENT_READ_FIELDS = (
     "schema_version", "enabled", "role", "status", "can_manage_workspace", "sections",
     "document_permissions", "document_queries", "document_management", "document_collaboration",
-    "prompt_management",
+    "prompt_management", "identity_management", "file_source_management",
 )
 WORKSPACE_ID = "pub-a"
 WORKSPACE_NAME = "Research library"
@@ -118,6 +126,14 @@ def public(environment, monkeypatch):  # noqa: F811 - the imported harness fixtu
     monkeypatch.setattr(env.helper, "find_public_workspace_by_id", Mock(
         side_effect=lambda workspace_id: deepcopy(env.public_records.get(workspace_id)),
     ))
+    # File Sync is the sole gate on the identities and sync sections and their management hints
+    # (M10B). The group harness stubs it out; drive it from a flag `real_context` toggles, so the
+    # identities-and-sync-off and -on deployments are both held to the fixture.
+    env.file_sync_on = False
+    monkeypatch.setattr(
+        env.helper, "is_file_sync_enabled_for_public_workspace",
+        lambda settings, workspace_id, **kwargs: bool(env.file_sync_on),
+    )
 
     # The real public route body, with the harness's authentication and settings decorators.
     route_namespace = {
@@ -143,16 +159,19 @@ def read_as(env, user_id, workspace_id=WORKSPACE_ID):
     return env.public_client.get(f"/api/v2/workspaces/public/{workspace_id}")
 
 
-def real_context(env, role, status):
+def real_context(env, role, status, file_sync=False):
     env.public_records[WORKSPACE_ID]["status"] = status
+    env.file_sync_on = file_sync
     response = read_as(env, ROLE_USERS[role])
     assert response.status_code == 200, response.get_data(as_text=True)
     assert response.headers["Cache-Control"] == "no-store"
     return response.get_json()
 
 
-def fixture_context(role, status):
-    return fixture_module.public_context(WORKSPACE_ID, WORKSPACE_NAME, role=role, status=status, viewer=ROLE_USERS[role])
+def fixture_context(role, status, file_sync=False):
+    return fixture_module.public_context(
+        WORKSPACE_ID, WORKSPACE_NAME, role=role, status=status, viewer=ROLE_USERS[role], file_sync=file_sync,
+    )
 
 
 def _walk(path, server, served, found):
@@ -180,10 +199,13 @@ def describe(found):
 # public_context against the builder, for every role and status.
 # --------------------------------------------------------------------------
 
+@pytest.mark.parametrize("file_sync", [False, True], ids=["file-sync-off", "file-sync-on"])
 @pytest.mark.parametrize("status", STATUSES)
 @pytest.mark.parametrize("role", list(ROLE_USERS))
-def test_the_fixture_context_is_the_server_context(public, role, status):
-    found = differences(real_context(public, role, status), fixture_context(role, status))
+def test_the_fixture_context_is_the_server_context(public, role, status, file_sync):
+    found = differences(
+        real_context(public, role, status, file_sync), fixture_context(role, status, file_sync),
+    )
     assert not found, describe(found)
 
 
@@ -213,6 +235,14 @@ def test_the_reason_constants_are_the_servers_texts(public):
     assert real_context(public, "Owner", "archived")["sections"]["documents"]["reason"] == (
         fixture_module.PUBLIC_STATUS_UNKNOWN_REASON
     )
+    # M10B: File Sync gates the identities and sync sections. A manager of an active workspace with
+    # File Sync off sees the "requires File Sync" text; a reader sees the manager-only text.
+    manager_off = real_context(public, "Owner", "active", file_sync=False)
+    assert manager_off["sections"]["identities"]["reason"] == fixture_module.PUBLIC_IDENTITIES_UNAVAILABLE_REASON
+    assert manager_off["sections"]["sync"]["reason"] == fixture_module.PUBLIC_FILE_SOURCES_UNAVAILABLE_REASON
+    reader = real_context(public, "User", "active", file_sync=True)
+    assert reader["sections"]["identities"]["reason"] == fixture_module.PUBLIC_CONNECTIONS_MANAGER_REASON
+    assert reader["sections"]["sync"]["reason"] == fixture_module.PUBLIC_CONNECTIONS_MANAGER_REASON
 
 
 def test_an_unrecognized_status_is_reported_as_unknown_by_both():
@@ -376,6 +406,49 @@ def test_a_reader_sees_the_prompts_section_open_without_management(public, statu
     assert real["sections"]["prompts"]["enabled"] is True
     assert real["sections"]["prompts"]["can_manage"] is False
     assert real["prompt_management"]["operations"] == []
+
+
+# --------------------------------------------------------------------------
+# M10B: the identities and sync sections and their management hints, gated on File Sync.
+# --------------------------------------------------------------------------
+
+@pytest.mark.parametrize("role", list(fixture_module.PUBLIC_MANAGER_ROLES))
+def test_an_active_public_manager_manages_connections_when_file_sync_on(public, role):
+    real = real_context(public, role, "active", file_sync=True)
+    assert real["sections"]["identities"]["enabled"] is True
+    assert real["sections"]["identities"]["can_manage"] is True
+    assert real["sections"]["sync"]["enabled"] is True
+    assert real["sections"]["sync"]["can_manage"] is True
+    assert real["identity_management"]["operations"] == ["create", "edit", "delete"]
+    assert real["file_source_management"]["operations"] == ["create", "edit", "delete", "sync", "test"]
+
+
+@pytest.mark.parametrize("role", list(fixture_module.PUBLIC_MANAGER_ROLES))
+def test_a_manager_has_no_connections_when_file_sync_off(public, role):
+    real = real_context(public, role, "active", file_sync=False)
+    assert real["sections"]["identities"]["enabled"] is False
+    assert real["sections"]["sync"]["enabled"] is False
+    assert real["identity_management"]["operations"] == []
+    assert real["file_source_management"]["operations"] == []
+
+
+@pytest.mark.parametrize("status", ("locked", "upload_disabled"))
+def test_connections_are_read_only_off_an_active_workspace_even_with_file_sync(public, status):
+    """A non-active status is read-only: the sections may not open and no write is advertised, even
+    when File Sync is on."""
+    real = real_context(public, "Owner", status, file_sync=True)
+    assert real["sections"]["identities"]["can_manage"] is False
+    assert real["sections"]["sync"]["can_manage"] is False
+    assert real["identity_management"]["operations"] == []
+    assert real["file_source_management"]["operations"] == []
+
+
+def test_a_reader_never_manages_connections_even_with_file_sync(public):
+    real = real_context(public, "User", "active", file_sync=True)
+    assert real["sections"]["identities"]["enabled"] is False
+    assert real["sections"]["sync"]["enabled"] is False
+    assert real["identity_management"]["operations"] == []
+    assert real["file_source_management"]["operations"] == []
 
 
 if __name__ == "__main__":
