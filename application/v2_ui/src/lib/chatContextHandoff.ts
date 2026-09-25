@@ -27,6 +27,7 @@ import {
     documentSelectionReason, fetchScopedGroupDocument, fetchScopedGroupDocumentTags,
 } from './documentReadAdapter';
 import { fetchGroupWorkspaceContext } from './workspaceContext';
+import { getPublicWorkspaceLabels } from './publicWorkspaceLabels';
 import {
     PERSONAL_SCOPE,
     documentContextItem,
@@ -136,7 +137,7 @@ function handoffScope(
         const match = publicWorkspaces.find(
             (workspace) => String(workspace.id) === handoff.workspaceId,
         );
-        return publicScope(match ?? { id: handoff.workspaceId, name: 'Public workspace' });
+        return publicScope(match ?? { id: handoff.workspaceId, name: getPublicWorkspaceLabels().singular });
     }
     return PERSONAL_SCOPE;
 }

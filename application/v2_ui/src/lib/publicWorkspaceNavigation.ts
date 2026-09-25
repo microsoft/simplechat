@@ -1,13 +1,16 @@
 // publicWorkspaceNavigation.ts
 //
 // Path, blurb and status helpers for the read-only public workspace surface. Public
-// workspaces reuse the same section registry as groups, so the section ids come from
-// GROUP_WORKSPACE_SECTION_IDS; only the wording differs.
+// workspaces have their own section registry (PUBLIC_WORKSPACE_SECTION_IDS): the wording
+// differs from a group's, and a public workspace never offers agents, actions, workflows or
+// endpoints, so those ids are not valid public sections.
 
 import {
-    GROUP_WORKSPACE_SECTION_IDS, requireWorkspaceId, workspaceBasePath,
-    type GroupWorkspaceSectionId, type PublicWorkspaceContext,
+    PUBLIC_WORKSPACE_SECTION_IDS, requireWorkspaceId, workspaceBasePath,
+    type GroupWorkspaceSectionId, type PublicWorkspaceContext, type PublicWorkspaceSectionId,
 } from './workspaceContext';
+import { getPublicWorkspaceLabels } from './publicWorkspaceLabels';
+import { GROUP_ROLE_LABELS } from './groupWorkspaceNavigation';
 
 export const PUBLIC_SECTION_BLURBS: Record<GroupWorkspaceSectionId, string> = {
     documents: 'Published files anyone here can search and use in chat.',
@@ -27,8 +30,8 @@ export function classicPublicSectionLabel(section: string, label: string): strin
     return label;
 }
 
-export function isPublicWorkspaceSection(value: string | undefined): value is GroupWorkspaceSectionId {
-    return GROUP_WORKSPACE_SECTION_IDS.some((id) => id === value);
+export function isPublicWorkspaceSection(value: string | undefined): value is PublicWorkspaceSectionId {
+    return PUBLIC_WORKSPACE_SECTION_IDS.some((id) => id === value);
 }
 
 export function publicWorkspacePath(workspaceId: string, section?: string): string {
@@ -47,7 +50,7 @@ export function readPublicDocumentTarget(search: string): { id: string | null; e
     if (!values.length) return { id: null, error: null };
     if (params.has('public_workspace_id') || params.has('workspace_id')
         || params.has('group_id') || params.has('group_ids')) {
-        return { id: null, error: 'This document link contains conflicting workspace arguments. Use the public workspace named in its path.' };
+        return { id: null, error: `This document link contains conflicting workspace arguments. Use the ${getPublicWorkspaceLabels().lower_singular} named in its path.` };
     }
     if (values.length !== 1) return { id: null, error: 'This document link has more than one target. Open a link to one document.' };
     try {
@@ -64,3 +67,15 @@ export const PUBLIC_STATUS_LABELS: Record<PublicWorkspaceContext['status'], stri
     inactive: 'Inactive',
     unknown: 'Status unavailable',
 };
+
+// The friendly label for a public workspace status, tolerant of a raw server string outside the
+// reader vocabulary (which reads as "Status unavailable" rather than leaking the raw token).
+export function publicStatusLabel(status: string): string {
+    return (PUBLIC_STATUS_LABELS as Record<string, string>)[status] ?? PUBLIC_STATUS_LABELS.unknown;
+}
+
+// The friendly label for a reader's own role, shared with the group vocabulary so a raw
+// "DocumentManager" or "User" never leaks into the directory badge.
+export function publicRoleLabel(role: string): string {
+    return GROUP_ROLE_LABELS[role] ?? role;
+}

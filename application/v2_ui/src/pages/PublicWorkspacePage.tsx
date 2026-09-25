@@ -22,7 +22,8 @@ import {
     PUBLIC_SECTION_BLURBS, PUBLIC_STATUS_LABELS, publicWorkspacePath,
     classicPublicSectionLabel, readPublicDocumentTarget,
 } from '../lib/publicWorkspaceNavigation';
-import { GROUP_WORKSPACE_SECTION_IDS } from '../lib/workspaceContext';
+import { PUBLIC_WORKSPACE_SECTION_IDS } from '../lib/workspaceContext';
+import { usePublicWorkspaceLabels } from '../lib/publicWorkspaceLabels';
 import { resolveWorkspaceSections } from '../lib/workspaceSections';
 import { PUBLIC_WORKSPACES } from '../lib/workspaces';
 import { useBootstrapStore } from '../stores/bootstrapStore';
@@ -42,6 +43,7 @@ export function PublicWorkspacePage() {
     const state = usePublicWorkspaceStore();
     const viewerId = bootstrap?.user?.id;
     const enabled = Boolean(bootstrap?.features?.enable_public_workspaces);
+    const labels = usePublicWorkspaceLabels();
     const activeWorkspaceId = bootstrap?.scope?.active_public_workspace_id;
     const [notice, setNotice] = useState('');
     const [retry, setRetry] = useState(0);
@@ -117,7 +119,7 @@ export function PublicWorkspacePage() {
     const context = state.context && state.context.scope.id === workspaceId && state.context.viewer_id === viewerId ? state.context : null;
     const ready = context && !state.loading;
     const basePath = workspaceId ? publicWorkspacePath(workspaceId) : '/public';
-    const sections = useMemo(() => GROUP_WORKSPACE_SECTION_IDS.map((id) => {
+    const sections = useMemo(() => PUBLIC_WORKSPACE_SECTION_IDS.map((id) => {
         const { label, icon, group } = WORKSPACE_SECTIONS_BY_ID[id];
         return {
             id, label, icon, group, blurb: PUBLIC_SECTION_BLURBS[id],
@@ -149,7 +151,7 @@ export function PublicWorkspacePage() {
         // fire-and-forget: navigation and reads target the id in the path, never this write.
         void PUBLIC_WORKSPACES.setActive(id).catch((cause: unknown) => {
             const detail = cause instanceof Error ? cause.message : 'setActive failed';
-            console.warn(`Public workspace setActive did not complete: ${detail}`);
+            console.warn(`${labels.singular} setActive did not complete: ${detail}`);
         });
         const params = new URLSearchParams(location.search);
         if (id !== workspaceId) {
@@ -174,7 +176,8 @@ export function PublicWorkspacePage() {
 
     const header = (
         <>
-            <PageHeader title="Public workspaces" description="Read-only shared knowledge published for everyone" leading={<Globe size={20} className="text-accent" />} />
+            <PageHeader title={labels.plural} description="Read-only shared knowledge published for everyone" leading={<Globe size={20} className="text-accent" />}
+                actions={<GlassButton size="sm" variant="subtle" onClick={() => navigate('/public/directory')}><LayoutGrid size={14} />Public directory</GlassButton>} />
             <div className="shrink-0 space-y-3 border-b border-edge px-4 py-3">
                 <PublicWorkspacePicker key={viewerId} value={state.pendingWorkspaceId ?? workspaceId}
                     selectedName={context?.workspace.name || bootstrap?.scope?.public_workspaces?.find((workspace) => workspace.id === workspaceId)?.name}
@@ -190,7 +193,7 @@ export function PublicWorkspacePage() {
                         </div>
                         <div className="min-w-0 flex-1 basis-48">
                             <p className="break-words text-sm font-semibold text-text-1">{context.workspace.name}</p>
-                            <p className="text-xs text-text-3">Read-only public workspace</p>
+                            <p className="text-xs text-text-3">Read-only {labels.lower_singular}</p>
                         </div>
                         <Pill tone={context.status === 'active' ? 'neutral' : 'warn'}>Status: {PUBLIC_STATUS_LABELS[context.status]}</Pill>
                     </div>
@@ -202,9 +205,9 @@ export function PublicWorkspacePage() {
 
     if (!enabled) return (
         <div className="flex h-full flex-col">
-            <PageHeader title="Public workspaces" />
-            <div className="p-4"><EmptyState icon={<Lock size={28} />} title="Public workspaces are not enabled"
-                description="Your administrator has not enabled public workspaces for this deployment." /></div>
+            <PageHeader title={labels.plural} />
+            <div className="p-4"><EmptyState icon={<Lock size={28} />} title={`${labels.plural} are not enabled`}
+                description={`Your administrator has not enabled ${labels.lower_plural} for this deployment.`} /></div>
         </div>
     );
 
@@ -224,10 +227,10 @@ export function PublicWorkspacePage() {
                     <Skeleton className="h-20 w-full" /><Skeleton className="h-32 w-full" />
                 </div>
             ) : !workspaceId ? (
-                <EmptyState icon={<Globe size={28} />} title="Choose a public workspace"
-                    description={hasDocumentLink ? 'A document link must include its explicit public workspace. Choose one and open the document from that workspace.'
-                        : 'Select a public workspace above to browse its published documents.'}
-                    action={<a href="/public_directory" className="text-sm text-accent underline">Browse the public directory in classic</a>} />
+                <EmptyState icon={<Globe size={28} />} title={`Choose a ${labels.lower_singular}`}
+                    description={hasDocumentLink ? `A document link must include its explicit ${labels.lower_singular}. Choose one and open the document from that workspace.`
+                        : `Select a ${labels.lower_singular} above to browse its published documents.`}
+                    action={<GlassButton size="sm" variant="subtle" onClick={() => navigate('/public/directory')}><LayoutGrid size={14} />Browse the public directory</GlassButton>} />
             ) : ready ? (
                 <div key={`${context.scope.id}:${section ?? 'overview'}`}
                     className={nativeDocuments ? 'flex min-h-0 flex-1 flex-col' : 'space-y-4'}>
@@ -238,7 +241,7 @@ export function PublicWorkspacePage() {
                                 <div><dt className="text-xs text-text-3">Owner</dt><dd className="break-words">{context.workspace.owner.display_name || 'Owner information unavailable'}{context.workspace.owner.email ? ` · ${context.workspace.owner.email}` : ''}</dd></div>
                             </dl>
                             <WorkspaceOverview basePath={basePath} resolved={resolved} showRelationships={false}
-                                description="Published documents for this public workspace. Sections marked Classic open in the existing interface while their V2 experience is being built." />
+                                description={`Published documents for this ${labels.lower_singular}. Sections marked Classic open in the existing interface while their V2 experience is being built.`} />
                         </>
                     ) : !selected ? <EmptyState icon={<LayoutGrid size={28} />} title="Section not found" description="Choose a section from this workspace's navigation." />
                         : !selected.enabled ? <EmptyState icon={<Lock size={28} />} title={`${selected.section.label} is not available`} description={selected.reason ?? undefined} />
@@ -248,16 +251,16 @@ export function PublicWorkspacePage() {
                                     onDirtyChange={reportDocumentDirty} onBusyChange={reportDocumentBusy}
                                     linkedDocumentId={linkedDocument.id} linkedDocumentError={linkedDocument.error}
                                     onClearLinkedDocument={clearDocumentLink} />
-                                    : <EmptyState icon={<Lock size={28} />} title="Documents are not available" description="You do not have access to this public workspace's documents." />
+                                    : <EmptyState icon={<Lock size={28} />} title="Documents are not available" description={`You do not have access to this ${labels.lower_singular}'s documents.`} />
                             ) : (
                                 <GlassPanel elevation="flat" className="space-y-4 p-5">
                                     <SectionIntro title={selected.section.label} description={selected.section.blurb} />
-                                    <p className="text-sm text-text-2">This section is available in the classic public workspace. Choose {classicPublicSectionLabel(selected.section.id, selected.section.label)} there; {context.workspace.name} will be selected for you.</p>
-                                    <GlassButton variant="primary" onClick={() => openClassic(CLASSIC_WORKSPACE_HREF)}>Open classic public workspace<ArrowUpRight size={15} /></GlassButton>
+                                    <p className="text-sm text-text-2">This section is available in the classic {labels.lower_singular}. Choose {classicPublicSectionLabel(selected.section.id, selected.section.label)} there; {context.workspace.name} will be selected for you.</p>
+                                    <GlassButton variant="primary" onClick={() => openClassic(CLASSIC_WORKSPACE_HREF)}>Open classic {labels.lower_singular}<ArrowUpRight size={15} /></GlassButton>
                                 </GlassPanel>
                             )}
                 </div>
-            ) : !error ? <EmptyState title="Workspace details unavailable" description="Select another public workspace or refresh workspace details." /> : null}
+            ) : !error ? <EmptyState title="Workspace details unavailable" description={`Select another ${labels.lower_singular} or refresh workspace details.`} /> : null}
             {blocker.state === 'blocked' ? <WorkspaceLeavePrompt
                 saving={resourceBusy}
                 onStay={() => { if (blocker.state === 'blocked') blocker.reset(); }}

@@ -6,6 +6,7 @@
 
 import { useEffect, useState } from 'react';
 import { PUBLIC_WORKSPACES, type WorkspacePage } from '../../lib/workspaces';
+import { usePublicWorkspaceLabels } from '../../lib/publicWorkspaceLabels';
 import { GlassButton } from '../ui/primitives';
 
 const PAGE_SIZE = 25;
@@ -20,6 +21,7 @@ export function PublicWorkspacePicker({
     onSelect: (id: string) => void;
 }) {
     const [search, setSearch] = useState('');
+    const labels = usePublicWorkspaceLabels();
     const [term, setTerm] = useState('');
     const [page, setPage] = useState(1);
     const [result, setResult] = useState<WorkspacePage | null>(null);
@@ -41,7 +43,7 @@ export function PublicWorkspacePicker({
         }).catch((cause: unknown) => {
             if (!controller.signal.aborted) {
                 setResult(null);
-                setError(cause instanceof Error ? cause.message : 'Could not load public workspaces. Please retry.');
+                setError(cause instanceof Error ? cause.message : `Could not load ${labels.lower_plural}. Please retry.`);
             }
         }).finally(() => {
             if (!controller.signal.aborted) setLoading(false);
@@ -54,11 +56,11 @@ export function PublicWorkspacePicker({
         <div className="min-w-0 space-y-2">
             <div className="grid min-w-0 gap-3 sm:grid-cols-2">
                 <label className="min-w-0 space-y-1 text-xs text-text-2">
-                    <span>Public workspace</span>
-                    <select aria-label="Public workspace" className={INPUT_CLASS} value={value ?? ''}
+                    <span>{labels.singular}</span>
+                    <select aria-label={labels.singular} className={INPUT_CLASS} value={value ?? ''}
                         disabled={disabled || loading || Boolean(error)}
                         onChange={(event) => { if (event.target.value) onSelect(event.target.value); }}>
-                        <option value="">{loading ? 'Loading public workspaces...' : 'Select a public workspace'}</option>
+                        <option value="">{loading ? `Loading ${labels.lower_plural}...` : `Select a ${labels.lower_singular}`}</option>
                         {value && !items.some((item) => item.id === value) ? (
                             <option value={value}>{selectedName || value}</option>
                         ) : null}
@@ -66,25 +68,25 @@ export function PublicWorkspacePicker({
                     </select>
                 </label>
                 <label className="min-w-0 space-y-1 text-xs text-text-2">
-                    <span>Search public workspaces</span>
+                    <span>Search {labels.lower_plural}</span>
                     <input type="search" className={INPUT_CLASS} value={search} disabled={disabled}
-                        placeholder="Search all public workspaces" onChange={(event) => setSearch(event.target.value)} />
+                        placeholder={`Search all ${labels.lower_plural}`} onChange={(event) => setSearch(event.target.value)} />
                 </label>
             </div>
             {error ? (
                 <div role="alert" className="flex flex-wrap items-center gap-2 text-sm text-danger">
-                    <span>{error}</span><GlassButton size="sm" disabled={disabled} onClick={() => setRetry((count) => count + 1)}>Retry public workspace list</GlassButton>
+                    <span>{error}</span><GlassButton size="sm" disabled={disabled} onClick={() => setRetry((count) => count + 1)}>Retry {labels.lower_singular} list</GlassButton>
                 </div>
             ) : null}
             {!loading && !error && items.length === 0 ? (
-                <p role="status" className="text-xs text-text-3">{term ? 'No public workspaces match your search.' : 'You cannot access any public workspace yet.'}</p>
+                <p role="status" className="text-xs text-text-3">{term ? `No ${labels.lower_plural} match your search.` : `You cannot access any ${labels.lower_singular} yet.`}</p>
             ) : null}
             {result && (page > 1 || result.totalCount > PAGE_SIZE) ? (
                 <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-text-3">
-                    <span>Page {page} of {Math.max(1, Math.ceil(result.totalCount / PAGE_SIZE))} · {result.totalCount} public workspaces</span>
+                    <span>Page {page} of {Math.max(1, Math.ceil(result.totalCount / PAGE_SIZE))} · {result.totalCount} {labels.lower_plural}</span>
                     <div className="flex gap-2">
-                        <GlassButton size="sm" disabled={disabled || loading || page <= 1} onClick={() => setPage((current) => current - 1)}>Previous public workspaces</GlassButton>
-                        <GlassButton size="sm" disabled={disabled || loading || page * PAGE_SIZE >= result.totalCount} onClick={() => setPage((current) => current + 1)}>Next public workspaces</GlassButton>
+                        <GlassButton size="sm" disabled={disabled || loading || page <= 1} onClick={() => setPage((current) => current - 1)}>Previous {labels.lower_plural}</GlassButton>
+                        <GlassButton size="sm" disabled={disabled || loading || page * PAGE_SIZE >= result.totalCount} onClick={() => setPage((current) => current + 1)}>Next {labels.lower_plural}</GlassButton>
                     </div>
                 </div>
             ) : null}

@@ -250,11 +250,19 @@ Before it, the public fixture had drifted from the server:
 - the unrecognized-status handling, the inactive reason and the not-found text
   differed.
 
-It also pins one server inconsistency as a strict expected failure. The public
-builder opens Documents with a section whose `can_manage` is false even for an
-active manager, whose `document_management` hint grants every operation. The
-group builder doesn't do this. No V2 client reads that flag today; the public
-directory work will correct it.
+It also pinned one server inconsistency as a strict expected failure. The
+public builder opened Documents with a section whose `can_manage` was false even
+for an active manager, whose `document_management` hint grants every operation.
+From version **0.261.175** the Documents section is managed by an active Owner,
+Admin or DocumentManager, as in the group builder, and the three cases pass.
+
+From version **0.261.175**, the public context lists only the sections public
+workspaces have: documents, tags, prompts, identities and sync. Agents,
+actions, endpoints and workflows, which public workspaces will never have, are
+no longer listed. The client checks a public context against its own section
+list (`PUBLIC_WORKSPACE_SECTION_IDS` in `lib/workspaceContext.ts`), not the
+group one, and a link to a section public workspaces don't have opens "Section
+not found". See [V2 Public Workspace Directory](V2_PUBLIC_DIRECTORY.md).
 
 `ui_tests/test_v2_personal_document_scope.py` provides the personal-document
 integration baseline added in version **0.261.128**. It checks that an unrelated

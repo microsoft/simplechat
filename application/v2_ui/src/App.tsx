@@ -21,6 +21,7 @@ import { PlaceholderPage } from './pages/PlaceholderPage';
 import { GroupWorkspacePage } from './pages/GroupWorkspacePage';
 import { GroupDirectoryPage } from './pages/GroupDirectoryPage';
 import { PublicWorkspacePage } from './pages/PublicWorkspacePage';
+import { PublicDirectoryPage } from './pages/PublicDirectoryPage';
 import { clearWorkspaceEditorDrafts } from './lib/workspaceEditorDrafts';
 import { ContentReviewPage } from './pages/ContentReviewPage';
 
@@ -210,6 +211,7 @@ export function App() {
                     path="/public"
                     element={<PublicWorkspacePage />}
                 />
+                <Route path="/public/directory" element={<PublicDirectoryPage />} />
                 <Route path="/public/:workspaceId" element={<PublicWorkspacePage />} />
                 <Route path="/public/:workspaceId/:section" element={<PublicWorkspacePage />} />
                 <Route path="/public/:workspaceId/:section/:resourceId" element={<PublicWorkspacePage />} />

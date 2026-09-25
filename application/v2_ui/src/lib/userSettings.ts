@@ -138,6 +138,36 @@ export interface UserSettings {
      */
     aiNoticeDismissal?: { hash: string; frequency: string };
 
+    /**
+     * Per-workspace visibility choices for the public directory, keyed by workspace id.
+     *
+     * The exact `{ workspaceId: boolean }` shape the classic interface owns (see
+     * `static/js/public/public_directory.js`), so a workspace shown or hidden in one
+     * interface stays that way in the other. `true` means shown; a workspace missing from
+     * the map is treated as hidden by the classic directory, and the aggregate public chat
+     * route derives its visible set from the `true` entries rather than from ids the client
+     * sends.
+     */
+    publicDirectorySettings?: Record<string, boolean>;
+
+    /**
+     * Named sets of visible public-workspace ids, `{ listName: [id, ...] }`.
+     *
+     * The classic interface writes the same shape (`publicDirectorySavedLists[name] = ids`),
+     * so both interfaces read the same saved lists.
+     */
+    publicDirectorySavedLists?: Record<string, string[]>;
+
+    /**
+     * The active public workspace pointer.
+     *
+     * Read-only here, like `activeGroupOid`: the route pops it and routes it to
+     * `update_active_public_workspace_for_user()` rather than storing it as a setting, so it
+     * is deliberately absent from `WRITABLE_USER_SETTING_KEYS`. Setting the active workspace
+     * gets its own call.
+     */
+    activePublicWorkspaceOid?: string;
+
     [key: string]: unknown;
 }
 
@@ -189,6 +219,12 @@ export const WRITABLE_USER_SETTING_KEYS = [
     // Written by dismissAiNotice() rather than the preferences store, but listed here so
     // the whitelist test still proves the route will accept it.
     'aiNoticeDismissal',
+    // Public directory visibility, shared with the classic interface so both interfaces
+    // read the same writes: the per-workspace view/hide map and the named saved lists. The
+    // active public workspace pointer (activePublicWorkspaceOid) is deliberately NOT here --
+    // it is routed to update_active_public_workspace_for_user() and never returns from a GET.
+    'publicDirectorySettings',
+    'publicDirectorySavedLists',
 ] as const;
 
 export type WritableUserSettingKey = (typeof WRITABLE_USER_SETTING_KEYS)[number];

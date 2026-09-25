@@ -2,6 +2,16 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.175)**
+
+#### New Features
+
+*   **A Public Workspace Directory In V2**
+    *   **Public Workspaces** in V2 now opens a directory of every public workspace you can discover, with **All** and **My workspaces** views, search, and paging kept in the address. Open a workspace, or choose which ones your public chat searches with **Visible for chat**, the same setting the classic directory uses.
+    *   It reads a new route, `GET /api/public_workspaces/directory`, which the V2 public workspace picker now uses too. Its rows carry no owner email, unlike the classic list route.
+    *   The directory, public workspace pages, the picker and the chat handoffs use the public workspace names an administrator configures.
+    *   (Ref: `route_backend_public_directory.py`, `functions_public_directory.py`, `PublicDirectoryPage.tsx`, `lib/publicVisibility.ts`, `lib/publicWorkspaceLabels.ts`, [V2 Public Workspace Directory](features/V2_PUBLIC_DIRECTORY.md), [Public Directory APIs](features/PUBLIC_DIRECTORY_APIS.md))
+
 ### **(v0.261.174)**
 
 #### User Interface Enhancements
