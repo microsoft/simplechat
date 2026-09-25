@@ -277,8 +277,8 @@ request could not be completed. Try again.", logged with the error type only.
 
 ## Known limitations
 
-- **The V2 Settings, Activity and Statistics views are a later release.** Use
-  the classic manage page until then.
+- **The V2 Settings, Activity and Statistics views** shipped in version
+  **0.261.165**; see [V2 Group Settings, Activity and Statistics](V2_GROUP_SETTINGS.md).
 - **Classic saves carry no revision,** so a classic save made after a native
   read still wins. The native save that follows it gets a 409 and reloads.
 - **Deleting a group stays classic.** The classic page asks the owner to remove
@@ -290,15 +290,15 @@ request could not be completed. Try again.", logged with the error type only.
 - **Classic status rules are unchanged.** The classic routes still accept
   profile and logo changes in locked and inactive groups; only their page hides
   the form.
-- **Remaining classic gaps,** recorded for a follow-up:
-  - the classic download route turns downloads back on when its body omits the
-    field or isn't JSON;
-  - the classic retention route answers a body that isn't a JSON object with a
-    500;
-  - the classic `/api/groups/<group_id>/stats` answers an owner or admin with a
-    500 for a custom date at the edge of the calendar. The public workspace
-    statistics and the personal activity trends share the same date helpers
-    and the same gap.
+- **The classic request gaps recorded here were fixed in version 0.261.160**
+  ([Group Classic Request Gaps Fix](../fixes/GROUP_CLASSIC_REQUEST_GAPS_FIX.md)):
+  - the download setting accepts only a boolean;
+  - the retention route refuses a body that isn't a JSON object with a 400;
+  - classic statistics use the bounded window.
+
+  Public workspace statistics are fixed in the public writer-safety slice. The
+  personal profile trends still share the unbounded window, recorded as a
+  follow-up.
 
 ## Testing and validation
 

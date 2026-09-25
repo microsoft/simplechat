@@ -1,11 +1,12 @@
 # group_workspace.py
 """
 Closed HTTP fixtures for the real V2 group workspace shell.
-Version: 0.261.161
+Version: 0.261.165
 Implemented in: 0.261.127
 Members section in the group context (M7B): 0.261.155
 File source credential identifiers modelled as `_prepare_auth_payload` stores them: 0.261.156
 Group context held to the server's builder, field by field: 0.261.157
+Settings, Activity and Statistics sections in the group context (M7C): 0.261.161
 Group agent responses held to the real routes, route by route: 0.261.161
 Group action responses held to the real routes, route by route: 0.261.161
 
@@ -23,20 +24,84 @@ the base class and is reused unchanged by the dedicated per-section fixtures, so
 answers these routes with one implementation.
 """
 
+import ast
+import base64
 import copy
 import hashlib
 import re
-from datetime import datetime, timezone
-from urllib.parse import unquote, urlsplit
+from datetime import date, datetime, timedelta, timezone
+from email import policy as email_policy
+from email.parser import BytesParser
+from pathlib import Path
+from urllib.parse import quote, unquote, urlsplit
 
 import pytest
 
 from ui_tests.fixtures.workspace_authoring import (
     MISSING, OWNER_ID, SCHEMA_ROOT, SECRET_MASK, SPA_INDEX, EditorSecretError, WorkspaceAuthoringFixture,
     _editor_candidate, _get_pointer, _schema, _set_pointer, _walk_values, action_record, agent_record,
-    connect_options,  # noqa: F401
+    connect_options as connect_options,
     editor_options, personal_scope_leak,
 )
+
+_CONNECT_OPTIONS_EXPORT = connect_options
+
+
+# The application package, so a handful of reviewed constants are read from the server itself by AST
+# rather than duplicated as a literal that could silently drift from it.
+APP_ROOT = Path(__file__).resolve().parents[2] / "application" / "single_app"
+
+
+def _app_constant(file_name, name):
+    """Return a reviewed module-level constant from ``application/single_app/<file_name>``.
+
+    The constants mirrored by this fixture are intentionally tiny: literals, ``date(...)``
+    calls and f-strings built from earlier constants. Evaluating that subset keeps the
+    fixture tied to server truth without importing the application package into Playwright.
+    """
+    tree = ast.parse((APP_ROOT / file_name).read_text(encoding="utf-8"))
+    values = {}
+
+    def evaluate(node):
+        if isinstance(node, ast.Constant):
+            return node.value
+        if isinstance(node, ast.Tuple):
+            return tuple(evaluate(item) for item in node.elts)
+        if isinstance(node, ast.List):
+            return [evaluate(item) for item in node.elts]
+        if isinstance(node, ast.Dict):
+            return {evaluate(key): evaluate(value) for key, value in zip(node.keys, node.values)}
+        if isinstance(node, ast.Name) and node.id in values:
+            return values[node.id]
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "date":
+            return date(*(evaluate(argument) for argument in node.args))
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
+            value = evaluate(node.func.value)
+            if node.func.attr == "isoformat" and not node.args and not node.keywords:
+                return value.isoformat()
+        if isinstance(node, ast.JoinedStr):
+            parts = []
+            for part in node.values:
+                if isinstance(part, ast.Constant):
+                    parts.append(str(part.value))
+                elif isinstance(part, ast.FormattedValue):
+                    parts.append(str(evaluate(part.value)))
+                else:
+                    raise ValueError(f"Unsupported f-string node: {ast.dump(part)}")
+            return "".join(parts)
+        return ast.literal_eval(node)
+
+    for node in tree.body:
+        if isinstance(node, ast.Assign) and any(
+            isinstance(target, ast.Name) and target.id == name for target in node.targets
+        ):
+            return evaluate(node.value)
+        if isinstance(node, ast.Assign) and len(node.targets) == 1 and isinstance(node.targets[0], ast.Name):
+            try:
+                values[node.targets[0].id] = evaluate(node.value)
+            except (ValueError, SyntaxError):
+                pass
+    raise LookupError(f"{file_name} defines no literal {name}")
 
 
 SECTION_GROUPS = {
@@ -681,11 +746,13 @@ def _ordered_hint(vocabulary, operations):
     return {"schema_version": 1, "operations": [operation for operation in vocabulary if operation in operations]}
 
 
-def document_management(role, status, *, extract_metadata=False):
-    """`group_document_management_operations`, with the group's downloads allowed."""
+def document_management(role, status, *, extract_metadata=False, download_enabled=True):
+    """`group_document_management_operations`: the download operation is offered only when the group's
+    file downloads are enabled, exactly as the server threads `download_enabled=` into the helper."""
     operations = set()
     if role in GROUP_CONTENT_MANAGER_ROLES and status in GROUP_VIEWABLE_STATUSES:
-        operations.add("download")
+        if download_enabled:
+            operations.add("download")
         if status == "active":
             operations.update({"upload", "edit_metadata", "tag_documents", "manage_tags"})
             if extract_metadata:
@@ -729,50 +796,203 @@ GROUP_SETTINGS_READ_ONLY_STATUSES = ("locked", "inactive")
 # As the server's GROUP_SETTINGS_WRITABLE_STATUSES (0.261.157): the only statuses in which the profile
 # and logo can change. Any other value, including one the server doesn't recognize, is read-only.
 GROUP_SETTINGS_WRITABLE_STATUSES = ("active", "upload_disabled")
+GROUP_SETTINGS_MANAGEMENT_SCHEMA_VERSION = 1
+
+# Write roles in the server's terms; the profile operations are the three the owner may edit.
+GROUP_SETTINGS_OWNER_ROLE = "Owner"
+GROUP_SETTINGS_MANAGER_ROLES = ("Owner", "Admin")
+GROUP_PROFILE_OPERATIONS = ("edit_name", "edit_description", "edit_color")
+
+# Reason codes. Each is also the ``error_code`` a route refuses that operation with.
+GROUP_OWNER_REQUIRED = "group_owner_required"
+GROUP_MANAGER_REQUIRED = "group_manager_required"
+GROUP_CREATION_ROLE_REQUIRED = "create_groups_role_required"
+GROUP_STATUS_UNAVAILABLE = "group_status_unavailable"
+GROUP_DOWNLOADS_NOT_ENABLED = "group_downloads_not_enabled"
+GROUP_RETENTION_DISABLED = "group_retention_disabled"
+
+# The reviewed refusal text, verbatim from functions_group_settings.REFUSAL_MESSAGES.
+GROUP_SETTINGS_REFUSAL_MESSAGES = {
+    GROUP_OWNER_REQUIRED: "Only the group owner can do this.",
+    GROUP_MANAGER_REQUIRED: "Only the group owner or an admin can do this.",
+    GROUP_CREATION_ROLE_REQUIRED:
+        "You need the CreateGroups role to change this group's name, description or color.",
+    GROUP_STATUS_UNAVAILABLE:
+        "This group is locked or inactive, so its name, description, color and logo can't be changed.",
+    GROUP_DOWNLOADS_NOT_ENABLED: "An administrator hasn't turned on file downloads for this group.",
+    GROUP_RETENTION_DISABLED: "Retention policies aren't turned on for group workspaces.",
+}
+# An unrecognized status has its own profile/logo refusal text, verbatim from functions_group_settings.
+# functions_group_settings.refusal() picks it in place of the "locked or inactive" sentence when the
+# refused reason is the status refusal and the status is "unknown"; the error_code stays
+# group_status_unavailable. The fixture picks it the same way.
+GROUP_STATUS_UNRECOGNIZED_MESSAGE = (
+    "This group's status isn't recognized, so its name, description, color and logo can't be changed."
+)
+
+# The navigation reason the real builder's section() default gives a viewable but disabled manage
+# section, verbatim from functions_workspace_context.section().
+GROUP_SECTION_DISABLED_REASON = "This section is not enabled for this group."
+GROUP_SETTINGS_MANAGER_REASON = GROUP_SETTINGS_REFUSAL_MESSAGES[GROUP_MANAGER_REQUIRED]
+
+# The reviewed 409/400 texts, verbatim from functions_group_settings and functions_group_insights.
+GROUP_SETTINGS_CHANGED_MESSAGE = "These settings changed since you opened them. Reload them before saving."
+# The settings writes raise the group directory's shared write-conflict message. It is read from
+# functions_group.GROUP_WRITE_CONFLICT_MESSAGE by AST, the way group_members.py reads it, so the
+# fixture and the server can never drift apart on the one sentence.
+GROUP_WRITE_CONFLICT_MESSAGE = _app_constant("functions_group.py", "GROUP_WRITE_CONFLICT_MESSAGE")
+NO_GROUP_LOGO_MESSAGE = "This group has no logo to remove."
+# Membership boundary messages, verbatim from functions_group_settings and functions_group_directory.
+GROUP_ACCESS_DENIED_MESSAGE = "You do not have access to the selected group."
+GROUP_NOT_FOUND_MESSAGE = "Group not found."
+GROUP_SETTINGS_QUERY_MESSAGE = "This request does not accept query parameters."
+GROUP_ACTIVITY_UNAVAILABLE_MESSAGE = "Group activity is unavailable right now. Try again."
+GROUP_STATS_UNAVAILABLE_MESSAGE = "Group statistics are unavailable right now. Try again."
+GROUP_STATS_EARLIEST_DATE = _app_constant("functions_stats_windows.py", "STATS_EARLIEST_CUSTOM_DATE")
+GROUP_STATS_LATEST_DATE = _app_constant("functions_stats_windows.py", "STATS_LATEST_CUSTOM_DATE")
+GROUP_STATS_MAX_CUSTOM_DAYS = 366
+GROUP_STATS_DATE_RANGE_MESSAGE = _app_constant("functions_stats_windows.py", "STATS_DATE_RANGE_MESSAGE")
+
+GROUP_ACTIVITY_LIMITS = (10, 20, 50)
+GROUP_ACTIVITY_DEFAULT_LIMIT = 50
+ALLOWED_STATS_WINDOW_DAYS = (7, 30, 90)
+DEFAULT_STATS_WINDOW_DAYS = 30
+
+# A tiny valid PNG the group logo image route serves once a group carries a logo, so the
+# Settings logo preview's `<img>` resolves rather than failing the run on a broken image.
+_GROUP_LOGO_PNG = base64.b64decode(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
+)
 
 
-def settings_management(role, status):
-    """`build_group_settings_management` for the modelled deployment.
+def group_settings_flags(group=None):
+    """The capability switches a settings decision reads, with the fixture's defaults.
 
-    The profile and logo need the owner, and an `active` or `upload_disabled` group; downloads,
-    retention, activity and stats need the owner or an admin, and the file count the owner. Retention
-    is off, so a manager is told so. Like the server's `group_settings_read_only`, any other status,
-    including one the server does not recognize, makes the profile and logo read-only.
+    They mirror the administrator settings the real policy consults: whether an admin has
+    turned on group file downloads, whether group retention is on, and whether the group's
+    name, description and color need the CreateGroups app role of a caller who lacks it. The
+    defaults are the modelled deployment the context parity test pins: downloads on, retention
+    off, and no CreateGroups requirement, so a settings variant opts in per test.
     """
-    owner = role == "Owner"
-    manager = role in ("Owner", "Admin")
+    source = group.get("settings_flags") if isinstance(group, dict) else None
+    flags = {
+        "downloads_admin": True,
+        "retention_enabled": False,
+        "create_role_required": False,
+        "has_create_role": True,
+    }
+    if isinstance(source, dict):
+        flags.update({key: bool(source[key]) for key in flags if key in source})
+    return flags
+
+
+def settings_decisions(role, status, *, downloads_admin=True, retention_enabled=False,
+                       create_role_required=False, has_create_role=True):
+    """Return ``{operation: None or reason}`` for every operation, in the server's order.
+
+    A self-contained port of functions_group_settings_policy.group_settings_decisions: the profile and
+    logo need the owner and a writable status; the profile also needs the CreateGroups role when the
+    deployment requires it and the caller lacks it; downloads and retention need a manager and their
+    capability switch; the two insight reads need a manager and the file count the owner, in every
+    status. Like the server's group_settings_read_only, any status outside the writable set, recognized
+    or not, is read-only (fail closed).
+    """
+    owner = role == GROUP_SETTINGS_OWNER_ROLE
+    manager = role in GROUP_SETTINGS_MANAGER_ROLES
     read_only = status not in GROUP_SETTINGS_WRITABLE_STATUSES
-    profile = "group_owner_required" if not owner else "group_status_unavailable" if read_only else None
-    decisions = {
-        "edit_name": profile,
-        "edit_description": profile,
-        "edit_color": profile,
-        "edit_logo": "group_owner_required" if not owner else "group_status_unavailable" if read_only else None,
-        "edit_downloads": None if manager else "group_manager_required",
-        "edit_retention": "group_retention_disabled" if manager else "group_manager_required",
-        "view_activity": None if manager else "group_manager_required",
-        "view_stats": None if manager else "group_manager_required",
-        "view_file_count": None if owner else "group_owner_required",
-    }
+
+    if not owner:
+        profile = GROUP_OWNER_REQUIRED
+    elif create_role_required and not has_create_role:
+        profile = GROUP_CREATION_ROLE_REQUIRED
+    elif read_only:
+        profile = GROUP_STATUS_UNAVAILABLE
+    else:
+        profile = None
+
+    decisions = {operation: profile for operation in GROUP_PROFILE_OPERATIONS}
+    decisions["edit_logo"] = (
+        GROUP_OWNER_REQUIRED if not owner else GROUP_STATUS_UNAVAILABLE if read_only else None
+    )
+    if not manager:
+        decisions["edit_downloads"] = GROUP_MANAGER_REQUIRED
+    elif not downloads_admin:
+        decisions["edit_downloads"] = GROUP_DOWNLOADS_NOT_ENABLED
+    else:
+        decisions["edit_downloads"] = None
+    if not manager:
+        decisions["edit_retention"] = GROUP_MANAGER_REQUIRED
+    elif not retention_enabled:
+        decisions["edit_retention"] = GROUP_RETENTION_DISABLED
+    else:
+        decisions["edit_retention"] = None
+    decisions["view_activity"] = None if manager else GROUP_MANAGER_REQUIRED
+    decisions["view_stats"] = None if manager else GROUP_MANAGER_REQUIRED
+    decisions["view_file_count"] = None if owner else GROUP_OWNER_REQUIRED
+    return {operation: decisions[operation] for operation in GROUP_SETTINGS_OPERATIONS}
+
+
+def settings_management(role, status, **flags):
+    """`build_group_settings_management` for the modelled deployment, flags-aware.
+
+    Without flags it is the modelled deployment: the administrator's group downloads allowed, group
+    retention off and no CreateGroups requirement, as the context parity test pins. A settings variant
+    passes the switches settings_decisions reads.
+    """
+    decisions = settings_decisions(role, status, **flags)
     return {
-        "schema_version": 1,
-        "operations": [operation for operation in GROUP_SETTINGS_OPERATIONS if decisions[operation] is None],
-        "reasons": {
-            operation: decisions[operation]
-            for operation in GROUP_SETTINGS_OPERATIONS if decisions[operation] is not None
-        },
+        "schema_version": GROUP_SETTINGS_MANAGEMENT_SCHEMA_VERSION,
+        "operations": [operation for operation, reason in decisions.items() if reason is None],
+        "reasons": {operation: reason for operation, reason in decisions.items() if reason is not None},
     }
-# --- end of settings_management --------------------------------------------------------------------
+
+
+def _settings_kwargs(flags):
+    """Map an internal settings-flags dict to the four ``group_context`` keyword switches it feeds.
+
+    ``group_settings_flags`` fills any absent switch with the modelled deployment's default, so a
+    partial dict (one test turning retention on, say) rebuilds a complete, consistent context.
+    """
+    resolved = group_settings_flags({"settings_flags": flags})
+    return {
+        "allow_group_workspace_file_downloads": resolved["downloads_admin"],
+        "enable_retention_policy_group": resolved["retention_enabled"],
+        "require_member_of_create_group": resolved["create_role_required"],
+        "holds_create_groups_role": resolved["has_create_role"],
+    }
+
+
+class _GroupSettingsRefusal(Exception):
+    """A settings or insights refusal, carrying the reviewed message, status and error_code.
+
+    The handlers raise it exactly where the server raises a ``GroupSettingsError``, and one
+    boundary turns it into the same ``{"error", "error_code"}`` response the route returns.
+    """
+
+    def __init__(self, message, status, error_code):
+        super().__init__(message)
+        self.message = message
+        self.status = status
+        self.error_code = error_code
 
 
 def group_context(identifier, name, *, role="Owner", status="active", viewer=OWNER_ID,
-                  enable_extract_meta_data=False, allow_group_agents=True, allow_group_plugins=True):
+                  enable_extract_meta_data=False, allow_group_agents=True, allow_group_plugins=True,
+                  allow_group_workspace_file_downloads=True, enable_retention_policy_group=False,
+                  require_member_of_create_group=False, holds_create_groups_role=True,
+                  disable_file_downloads=False):
     """The selected-group context the server builds, as a fresh copy on every call.
 
     `enable_extract_meta_data` turns metadata extraction on, as the document fixtures' deployment does.
     `allow_group_plugins=False` switches group actions off; the Call agent tools stay open but read-only,
     as managing them also needs group plugins. `allow_group_agents=False` switches group agents off, and
     with them group actions and the Call agent tools, which both need group agents on the server.
+
+    The four settings switches feed the native group settings policy, each named for the server setting
+    it stands for so one dict configures both this fixture and the real builder: whether the
+    administrator allows group file downloads, whether group retention is on, whether creating a group's
+    profile needs the CreateGroups app role, and whether the caller holds it. The defaults are the
+    deployment the context parity test pins: downloads on, retention off and no CreateGroups requirement.
     """
     status = status if status in GROUP_STATUSES else "unknown"
     status_reason = group_status_reason(status)
@@ -781,6 +1001,15 @@ def group_context(identifier, name, *, role="Owner", status="active", viewer=OWN
     manager = role in GROUP_CONTENT_MANAGER_ROLES
     automation = role in WRITER_ROLES
     actions_available = allow_group_agents and allow_group_plugins
+    # The four settings switches, mapped to the internal flag names settings_decisions and
+    # settings_management read, so the manage sections and the settings hint model one deployment.
+    settings_flags = {
+        "downloads_admin": allow_group_workspace_file_downloads,
+        "retention_enabled": enable_retention_policy_group,
+        "create_role_required": require_member_of_create_group,
+        "has_create_role": holds_create_groups_role,
+    }
+    downloads_enabled = settings_flags["downloads_admin"] and not disable_file_downloads
 
     def section(group, enabled, can_manage, reason):
         available = viewable and enabled
@@ -806,6 +1035,20 @@ def group_context(identifier, name, *, role="Owner", status="active", viewer=OWN
     # M7B: Members is a group-only section in the "manage" group, open to every member of a
     # viewable group and managed by the Owner and Admins in an active one, as the context builds it.
     sections["members"] = section("manage", True, automation, None)
+    # M7C: Settings, Activity and Statistics join Members in the "manage" group, built exactly as the
+    # server's build_group_workspace_context builds them beside members. Settings opens to a manager
+    # (Owner or Admin), and each insight view opens when its native settings decision is unrefused; the
+    # shared section() rule closes them in a status that isn't viewable. The controls each offers still
+    # come from settings_management, never from these navigation entries.
+    manage_manager = role in GROUP_SETTINGS_MANAGER_ROLES
+    manage_decisions = settings_decisions(role, status, **settings_flags)
+    sections["settings"] = section("manage", manage_manager, manage_manager, GROUP_SETTINGS_MANAGER_REASON)
+    sections["activity"] = section(
+        "manage", manage_decisions["view_activity"] is None, False, GROUP_SETTINGS_MANAGER_REASON,
+    )
+    sections["statistics"] = section(
+        "manage", manage_decisions["view_stats"] is None, False, GROUP_SETTINGS_MANAGER_REASON,
+    )
     return {
         "schema_version": 1, "enabled": True, "viewer_id": viewer,
         "scope": {"kind": "group", "id": identifier},
@@ -825,7 +1068,7 @@ def group_context(identifier, name, *, role="Owner", status="active", viewer=OWN
             "can_view": viewable, "can_chat": viewable,
             "can_upload": manager and active, "can_edit": manager and active,
             "can_delete": manager and status in ("active", "upload_disabled"),
-            "can_download": manager and viewable,
+            "can_download": manager and viewable and downloads_enabled,
         },
         "document_queries": {
             "sort_fields": [
@@ -834,7 +1077,10 @@ def group_context(identifier, name, *, role="Owner", status="active", viewer=OWN
             ],
             "facets": True, "places": True,
         },
-        "document_management": document_management(role, status, extract_metadata=enable_extract_meta_data),
+        "document_management": document_management(
+            role, status, extract_metadata=enable_extract_meta_data,
+            download_enabled=downloads_enabled,
+        ),
         "document_collaboration": document_collaboration(role, status),
         "prompt_management": prompt_management(role, status),
         # A switched-off capability sends an empty hint, as its availability predicate empties it.
@@ -847,7 +1093,7 @@ def group_context(identifier, name, *, role="Owner", status="active", viewer=OWN
         "identity_management": identity_management(role, status),
         "endpoint_management": endpoint_management(role, status),
         "file_source_management": file_source_management(role, status),
-        "settings_management": settings_management(role, status),
+        "settings_management": settings_management(role, status, **settings_flags),
     }
 
 
@@ -937,6 +1183,29 @@ class GroupWorkspaceFixture(WorkspaceAuthoringFixture):
         self.file_source_forced_write_conflict = None
         self.file_source_list_item_defect = None
         self.file_source_type_visibility = {"smb": True, "azure_files": True, "azure_blob": True}
+        # M7C native group settings state. Each group carries the settings VALUES the read projects
+        # (profile, logo, downloads and retention), and a per-(group, section) revision marker the
+        # client round-trips as `revision`; a write that names a stale marker is refused with
+        # `group_settings_changed`, and a successful write advances the marker. The capability
+        # switches a settings decision reads are kept per group in `group_settings_flags_by_id`, so a
+        # test can turn file downloads or retention off; `apply_group_settings_flags` sets them and
+        # rebuilds the context so its `settings_management` matches what the handlers enforce.
+        # `settings_force_changed`, `settings_force_write_conflict` and `next_settings_write_error`
+        # script the one-shot 409 group_settings_changed, the 409 group_write_conflict (a plain-retry
+        # race) and a reviewed 400 the next write is refused with. The insight stores are scriptable:
+        # `group_activity`, `group_stats` and `group_file_count` hold the served figures, and a group
+        # in `activity_unavailable`/`stats_unavailable` gets its route's 503.
+        self.native_group_settings = {}
+        self.settings_revisions = {}
+        self.group_settings_flags_by_id = {}
+        self.settings_force_changed = set()
+        self.settings_force_write_conflict = set()
+        self.next_settings_write_error = None
+        self.group_activity = {}
+        self.group_stats = {}
+        self.group_file_count = {}
+        self.activity_unavailable = set()
+        self.stats_unavailable = set()
         for group_id in self.groups:
             self.group_agents[group_id] = [{
                 "id": "caller", "name": "caller", "display_name": "Local caller",
@@ -985,6 +1254,62 @@ class GroupWorkspaceFixture(WorkspaceAuthoringFixture):
                                   source_type="smb", auth_type="username_password",
                                   username="svc-reports", domain="CORP"),
             ])
+            # M7C: seed the settings VALUES the native Settings view reads and writes, drawn from the
+            # same profile the context already shows so a fresh read matches the shell. Every section
+            # starts at revision marker 0, and the group's decision flags start permissive.
+            self._seed_group_settings(group_id)
+
+    def _seed_group_settings(self, group_id):
+        """Seed one group's native settings values, revisions and permissive decision flags."""
+        profile = self.groups[group_id]["workspace"]
+        self.native_group_settings[group_id] = {
+            "name": profile["name"],
+            "description": profile["description"],
+            "hero_color": profile["hero_color"],
+            "has_logo": bool(profile.get("logo_url")),
+            # The server reads logoVersion from the branding doc and floors it at 1
+            # (functions_workspace_branding.get_workspace_logo_metadata), so even a group with no logo
+            # never reports 0. Seed the same floor.
+            "logo_version": 1,
+            "disable_file_downloads": False,
+            "retention": {"conversation_retention_days": "default", "document_retention_days": "default"},
+        }
+        for section in ("profile", "logo", "downloads", "retention"):
+            self.settings_revisions[(group_id, section)] = 0
+        self.group_settings_flags_by_id.setdefault(group_id, {})
+        # A modest, deterministic activity feed and statistics window so the views render real
+        # content without a live app. A test overrides these to prove limits, windows and empties.
+        self.group_activity[group_id] = [
+            {"id": f"{group_id}-activity-1", "occurred_at": "2024-05-02T09:00:00Z",
+             "type": "document_creation", "summary": "Uploaded a document",
+             "actor": {"kind": "member", "display_name": "Group owner"}},
+            {"id": f"{group_id}-activity-2", "occurred_at": "2024-05-01T09:00:00Z",
+             "type": "token_usage", "summary": "Used 8 tokens in chat",
+             "actor": {"kind": "system"}},
+        ]
+        self.group_stats[group_id] = {
+            "totalDocuments": 4, "storageUsed": 2048, "totalTokens": 128, "totalMembers": 3,
+            "storage": {"ai_search_size": 512, "storage_account_size": 2048},
+        }
+        self.group_file_count[group_id] = 4
+
+    def apply_group_settings_flags(self, group_id, **flags):
+        """Set a group's settings decision flags and rebuild its context so the two agree.
+
+        The handlers derive every refusal from these flags, and the context's ``settings_management``
+        must publish the same decision, so both are set from one call. Absent flags keep the
+        permissive defaults ``group_settings_flags`` supplies.
+        """
+        self.group_settings_flags_by_id[group_id] = dict(flags)
+        context = self.groups[group_id]
+        store = self.native_group_settings.get(group_id, {})
+        self.groups[group_id] = group_context(
+            group_id, context["workspace"]["name"], role=context["role"], status=context["status"],
+            viewer=self.viewer_id, disable_file_downloads=bool(store.get("disable_file_downloads")),
+            **_settings_kwargs(flags),
+        )
+        self.groups[group_id]["workspace"].update(context["workspace"])
+        self._sync_download_context(group_id)
 
     def _bootstrap(self):
         payload = super()._bootstrap()
@@ -1057,6 +1382,20 @@ class GroupWorkspaceFixture(WorkspaceAuthoringFixture):
             return
         if path.startswith("/api/groups/") and "/file-sources" in path:
             self._file_sources(route, entry)
+            return
+        if path.startswith("/api/groups/") and "/insights/" in path:
+            # M7C: the group Activity and Statistics views and the Settings danger zone read the
+            # insight routes. It precedes /settings only for clarity; the paths do not overlap.
+            self._group_insights(route, entry)
+            return
+        if path.startswith("/api/groups/") and "/settings" in path:
+            # M7C: the native group Settings view reads and writes profile, logo, downloads and
+            # retention through /api/groups/<g>/settings[/logo].
+            self._group_settings(route, entry)
+            return
+        if path.startswith("/api/groups/") and path.endswith("/logo") and method == "GET":
+            # M7C: the Settings logo preview fetches the group logo image once a logo is set.
+            self._group_logo(route, entry)
             return
         if path.startswith("/api/groups/") and "/identities" in path:
             self._identities(route, entry)
@@ -1200,6 +1539,505 @@ class GroupWorkspaceFixture(WorkspaceAuthoringFixture):
                 self._json(route, {"error": "Unexpected group fixture request."}, 500)
         else:
             super()._dispatch(route, entry)
+
+    # --- M7C native group settings and insights serving ------------------------------------------
+
+    def _settings_json(self, route, payload, status=200):
+        """Fulfill a settings or insights response with the route's no-store header, and record it."""
+        self.responses.append((route.request.url, copy.deepcopy(payload)))
+        if status >= 400:
+            self.expected_http_errors.add((route.request.url, status))
+        route.fulfill(
+            status=status, json=payload,
+            headers={"Cache-Control": "no-store", "Content-Type": "application/json"},
+        )
+
+    def _refuse(self, message, status, error_code):
+        raise _GroupSettingsRefusal(message, status, error_code)
+
+    def _settings_revision(self, group_id, section):
+        return f"{section}-{self.settings_revisions[(group_id, section)]}"
+
+    def _advance_revision(self, group_id, section):
+        self.settings_revisions[(group_id, section)] += 1
+
+    def _load_settings_group(self, group_id):
+        """Return the group's context, or raise the membership 404/403 the server raises first."""
+        if group_id in self.denied_groups:
+            self._refuse(GROUP_ACCESS_DENIED_MESSAGE, 403, "group_access_denied")
+        if group_id not in self.groups:
+            self._refuse(GROUP_NOT_FOUND_MESSAGE, 404, "group_not_found")
+        return self.groups[group_id]
+
+    def _settings_flags(self, group_id):
+        return group_settings_flags({"settings_flags": self.group_settings_flags_by_id.get(group_id)})
+
+    def _require_operation(self, decisions, operation, status=None):
+        reason = decisions[operation]
+        if reason is None:
+            return
+        message = GROUP_SETTINGS_REFUSAL_MESSAGES[reason]
+        # functions_group_settings.refusal() swaps in the unrecognized-status text for a profile or
+        # logo write refused by the status in an "unknown" group; the error_code stays the same.
+        if reason == GROUP_STATUS_UNAVAILABLE and status == "unknown":
+            message = GROUP_STATUS_UNRECOGNIZED_MESSAGE
+        self._refuse(message, 403, reason)
+
+    def _check_settings_write(self, group_id, section, revision):
+        """Raise the scripted or natural write conflict, exactly as the server's guarded write does."""
+        if self.next_settings_write_error is not None:
+            message, self.next_settings_write_error = self.next_settings_write_error, None
+            self._refuse(message, 400, "invalid_request")
+        if group_id in self.settings_force_write_conflict:
+            self.settings_force_write_conflict.discard(group_id)
+            self._refuse(GROUP_WRITE_CONFLICT_MESSAGE, 409, "group_write_conflict")
+        if group_id in self.settings_force_changed:
+            self.settings_force_changed.discard(group_id)
+            # The section moves on, so the client's re-read carries a fresh revision its retry sends.
+            self._advance_revision(group_id, section)
+            self._refuse(GROUP_SETTINGS_CHANGED_MESSAGE, 409, "group_settings_changed")
+        if revision != self._settings_revision(group_id, section):
+            self._refuse(GROUP_SETTINGS_CHANGED_MESSAGE, 409, "group_settings_changed")
+
+    def _build_settings_read(self, group_id, role, status, flags):
+        store = self.native_group_settings[group_id]
+        read = {
+            "schema_version": 1,
+            "group_id": group_id,
+            "viewer_role": role,
+            "status": status,
+            "profile": {
+                "name": store["name"],
+                "description": store["description"],
+                "hero_color": store["hero_color"],
+                "revision": self._settings_revision(group_id, "profile"),
+            },
+            "logo": {
+                "has_logo": store["has_logo"],
+                "logo_version": store["logo_version"],
+                "logo_url": (
+                    f"/api/groups/{quote(group_id, safe='')}/logo?v={store['logo_version']}"
+                    if store["has_logo"] else None
+                ),
+                "revision": self._settings_revision(group_id, "logo"),
+            },
+            "settings_management": settings_management(role, status, **flags),
+        }
+        if flags["downloads_admin"]:
+            read["downloads"] = {
+                "disable_file_downloads": store["disable_file_downloads"],
+                "file_downloads_enabled": not store["disable_file_downloads"],
+                "revision": self._settings_revision(group_id, "downloads"),
+            }
+        if flags["retention_enabled"]:
+            read["retention"] = {
+                "conversation_retention_days": store["retention"]["conversation_retention_days"],
+                "document_retention_days": store["retention"]["document_retention_days"],
+                "bounds": {
+                    "conversation": {"min_days": 1, "max_days": 3650},
+                    "document": {"min_days": 1, "max_days": 3650},
+                },
+                "organization_defaults": {
+                    "conversation_retention_days": "none",
+                    "document_retention_days": "none",
+                },
+                "revision": self._settings_revision(group_id, "retention"),
+            }
+        return read
+
+    def _group_logo(self, route, entry):
+        """Serve the group logo image the Settings preview requests once a logo is set."""
+        group_id = entry.path.split("/")[3]
+        store = self.native_group_settings.get(group_id)
+        if not store or not store["has_logo"]:
+            self.expected_http_errors.add((route.request.url, 404))
+            route.fulfill(status=404, body=b"", headers={"Cache-Control": "no-store"})
+            return
+        route.fulfill(status=200, body=_GROUP_LOGO_PNG, content_type="image/png",
+                      headers={"Cache-Control": "no-store"})
+
+    def _sync_download_context(self, group_id):
+        """Keep the served selected-group context aligned with the group's download switch."""
+        context = self.groups.get(group_id)
+        store = self.native_group_settings.get(group_id)
+        if not context or not store:
+            return
+        flags = self._settings_flags(group_id)
+        enabled = bool(flags["downloads_admin"] and not store["disable_file_downloads"])
+        context["document_permissions"]["can_download"] = bool(
+            context["role"] in GROUP_CONTENT_MANAGER_ROLES
+            and context["status"] in GROUP_VIEWABLE_STATUSES
+            and enabled
+        )
+        context["document_management"] = document_management(
+            context["role"], context["status"],
+            extract_metadata="extract_metadata" in context["document_management"].get("operations", []),
+            download_enabled=enabled,
+        )
+
+    def _sync_profile_context(self, group_id):
+        """Keep the served workspace header aligned with profile/logo settings writes."""
+        context = self.groups.get(group_id)
+        store = self.native_group_settings.get(group_id)
+        if not context or not store:
+            return
+        context["workspace"]["name"] = store["name"]
+        context["workspace"]["description"] = store["description"]
+        context["workspace"]["hero_color"] = store["hero_color"]
+        context["workspace"]["logo_url"] = (
+            f"/api/groups/{quote(group_id, safe='')}/logo?v={store['logo_version']}"
+            if store["has_logo"] else None
+        )
+
+    def _apply_settings_store_to_context(self, group_id):
+        """Re-apply a group's written settings after a context rebuild.
+
+        A context rebuild (a role, status or membership change) builds a fresh context from the seed
+        profile, which drops any settings a test has already written: the profile name, description,
+        colour and logo, and the group download switch. Replaying the store over the rebuilt context
+        keeps those, so changing status after a settings write still serves the written values -- the
+        server, which reads the same settings on every context build, never reverts them either.
+        """
+        self._sync_profile_context(group_id)
+        self._sync_download_context(group_id)
+
+    def _group_settings(self, route, entry):
+        try:
+            payload, status = self._resolve_group_settings(route, entry)
+        except _GroupSettingsRefusal as refusal:
+            self._settings_json(route, {"error": refusal.message, "error_code": refusal.error_code}, refusal.status)
+            return
+        self._settings_json(route, payload, status)
+
+    def _resolve_group_settings(self, route, entry):
+        parts = entry.path.split("/")
+        group_id = parts[3]
+        section = parts[5] if len(parts) > 5 else None
+        method = entry.method
+        if method == "GET" and section is None:
+            if entry.query:
+                self._refuse(GROUP_SETTINGS_QUERY_MESSAGE, 400, "invalid_request")
+            context = self._load_settings_group(group_id)
+            role, status = context["role"], context["status"]
+            if role not in GROUP_SETTINGS_MANAGER_ROLES:
+                self._refuse(GROUP_SETTINGS_REFUSAL_MESSAGES[GROUP_MANAGER_REQUIRED], 403, GROUP_MANAGER_REQUIRED)
+            flags = self._settings_flags(group_id)
+            return {"settings": self._build_settings_read(group_id, role, status, flags)}, 200
+        if entry.query:
+            self._refuse(GROUP_SETTINGS_QUERY_MESSAGE, 400, "invalid_request")
+        context = self._load_settings_group(group_id)
+        role, status = context["role"], context["status"]
+        flags = self._settings_flags(group_id)
+        decisions = settings_decisions(role, status, **flags)
+        if method == "PATCH" and section == "profile":
+            return self._write_group_profile(group_id, role, status, flags, decisions, entry)
+        if section == "logo" and method == "PUT":
+            return self._replace_group_logo(route, group_id, role, status, flags, decisions)
+        if section == "logo" and method == "DELETE":
+            return self._remove_group_logo(group_id, role, status, flags, decisions, entry)
+        if method == "PATCH" and section == "downloads":
+            return self._write_group_downloads(group_id, role, status, flags, decisions, entry)
+        if method == "PATCH" and section == "retention":
+            return self._write_group_retention(group_id, role, status, flags, decisions, entry)
+        self.unexpected_requests.append(f"{method} {entry.path}")
+        self._refuse("Unexpected group settings request.", 500, "group_settings_unavailable")
+
+    def _read_settings_body(self, entry, allowed_fields, unknown_message):
+        body = entry.body
+        if not isinstance(body, dict):
+            self._refuse("The request could not be processed.", 400, "invalid_request")
+        if any(key not in ("revision", *allowed_fields) for key in body):
+            self._refuse(unknown_message, 400, "invalid_request")
+        revision = body.get("revision")
+        if not isinstance(revision, str) or not revision:
+            self._refuse("Include the revision of the settings you loaded.", 400, "invalid_request")
+        return body, revision
+
+    def _validate_group_name(self, value, stored):
+        if value == stored:
+            return value
+        if value is None or (isinstance(value, str) and not value.strip()):
+            self._refuse("Enter a group name.", 400, "invalid_request")
+        if not isinstance(value, str):
+            self._refuse("The group name must be text.", 400, "invalid_request")
+        value = value.strip()
+        if len(value) > 80:
+            self._refuse("Group names can be at most 80 characters.", 400, "invalid_request")
+        if re.search(r"[\x00-\x1f\x7f-\x9f]", value):
+            self._refuse("Group names cannot contain control characters.", 400, "invalid_request")
+        return value
+
+    def _validate_group_description(self, value, stored):
+        if value == stored:
+            return value
+        if not isinstance(value, str):
+            self._refuse("The group description must be text.", 400, "invalid_request")
+        value = value.strip()
+        if len(value) > 500:
+            self._refuse("Group descriptions can be at most 500 characters.", 400, "invalid_request")
+        return value
+
+    def _write_group_profile(self, group_id, role, status, flags, decisions, entry):
+        for operation in ("edit_name", "edit_description", "edit_color"):
+            self._require_operation(decisions, operation, status)
+        body, revision = self._read_settings_body(
+            entry, ("name", "description", "hero_color"),
+            "Only the name, description and hero_color can be changed here.",
+        )
+        if not any(field in body for field in ("name", "description", "hero_color")):
+            self._refuse("Include a name, description or hero_color to change.", 400, "invalid_request")
+        store = self.native_group_settings[group_id]
+        changes = {}
+        if "name" in body:
+            changes["name"] = self._validate_group_name(body["name"], store["name"])
+        if "description" in body:
+            changes["description"] = self._validate_group_description(body["description"], store["description"])
+        if "hero_color" in body:
+            hero = body["hero_color"]
+            if not isinstance(hero, str):
+                self._refuse("The hero color must be text, such as #0078d4.", 400, "invalid_request")
+            changes["hero_color"] = hero if re.fullmatch(r"#[0-9a-fA-F]{6}", hero) else store["hero_color"]
+        self._check_settings_write(group_id, "profile", revision)
+        store.update(changes)
+        self._advance_revision(group_id, "profile")
+        self._sync_profile_context(group_id)
+        return {"settings": self._build_settings_read(group_id, role, status, flags)}, 200
+
+    def _parse_logo_upload(self, route):
+        """Return the revision from a multipart logo upload, refusing a malformed one as the server does."""
+        request = route.request
+        content_type = request.headers.get("content-type", "")
+        if not content_type.startswith("multipart/form-data"):
+            self._refuse(
+                "Upload the logo as multipart form data with a logo_file and the logo revision.",
+                400, "invalid_request",
+            )
+        message = BytesParser(policy=email_policy.default).parsebytes(
+            f"Content-Type: {content_type}\r\nMIME-Version: 1.0\r\n\r\n".encode("ascii")
+            + (request.post_data_buffer or b"")
+        )
+        form, files = {}, {}
+        for part in message.iter_parts():
+            name = part.get_param("name", header="content-disposition")
+            if part.get_filename():
+                files.setdefault(name, []).append({
+                    "filename": part.get_filename(),
+                    "content": part.get_payload(decode=True) or b"",
+                })
+            else:
+                form.setdefault(name, []).append(part.get_content())
+        if set(form) - {"revision"} or set(files) - {"logo_file"}:
+            self._refuse("Only a logo_file and the logo revision can be sent.", 400, "invalid_request")
+        if len(form.get("revision", [])) > 1 or len(files.get("logo_file", [])) > 1:
+            self._refuse("Send one logo_file and one revision.", 400, "invalid_request")
+        revision = (form.get("revision") or [None])[0]
+        if not isinstance(revision, str) or not revision:
+            self._refuse("Include the revision of the settings you loaded.", 400, "invalid_request")
+        upload = (files.get("logo_file") or [{"filename": "", "content": b""}])[0]
+        filename = upload["filename"]
+        if not filename:
+            self._refuse("Choose a PNG or JPEG image for the logo.", 400, "invalid_request")
+        if not filename.lower().endswith((".png", ".jpg", ".jpeg")):
+            self._refuse("The logo must be a PNG or JPEG image.", 400, "invalid_request")
+        content = upload["content"]
+        if not (content.startswith(b"\x89PNG\r\n\x1a\n") or content.startswith(b"\xff\xd8\xff")):
+            self._refuse(
+                "The logo image could not be read. Upload a PNG or JPEG image.",
+                400, "invalid_request",
+            )
+        return revision
+
+    def _replace_group_logo(self, route, group_id, role, status, flags, decisions):
+        self._require_operation(decisions, "edit_logo", status)
+        revision = self._parse_logo_upload(route)
+        self._check_settings_write(group_id, "logo", revision)
+        store = self.native_group_settings[group_id]
+        store["has_logo"] = True
+        store["logo_version"] = max(1, store["logo_version"] + 1)
+        self._advance_revision(group_id, "logo")
+        self._sync_profile_context(group_id)
+        return {"settings": self._build_settings_read(group_id, role, status, flags)}, 200
+
+    def _remove_group_logo(self, group_id, role, status, flags, decisions, entry):
+        self._require_operation(decisions, "edit_logo", status)
+        _body, revision = self._read_settings_body(
+            entry, (), "Only the logo revision can be sent to remove the logo.",
+        )
+        self._check_settings_write(group_id, "logo", revision)
+        store = self.native_group_settings[group_id]
+        if not store["has_logo"]:
+            self._refuse(NO_GROUP_LOGO_MESSAGE, 409, "no_group_logo")
+        store["has_logo"] = False
+        store["logo_version"] = max(1, store["logo_version"] + 1)
+        self._advance_revision(group_id, "logo")
+        self._sync_profile_context(group_id)
+        return {"settings": self._build_settings_read(group_id, role, status, flags)}, 200
+
+    def _write_group_downloads(self, group_id, role, status, flags, decisions, entry):
+        self._require_operation(decisions, "edit_downloads")
+        body, revision = self._read_settings_body(
+            entry, ("disable_file_downloads",), "Only disable_file_downloads can be changed here.",
+        )
+        disabled = body.get("disable_file_downloads")
+        if not isinstance(disabled, bool):
+            self._refuse("Set disable_file_downloads to true or false.", 400, "invalid_request")
+        self._check_settings_write(group_id, "downloads", revision)
+        self.native_group_settings[group_id]["disable_file_downloads"] = disabled
+        self._advance_revision(group_id, "downloads")
+        self._sync_download_context(group_id)
+        return {"settings": self._build_settings_read(group_id, role, status, flags)}, 200
+
+    def _validate_retention_value(self, field, value):
+        label = "Conversation" if field.startswith("conversation") else "Document"
+        if isinstance(value, str) and value in ("none", "default"):
+            return value
+        if isinstance(value, bool) or not isinstance(value, int):
+            self._refuse(
+                f'{label} retention must be a whole number of days, "none" or "default".',
+                400, "invalid_request",
+            )
+        if value < 1 or value > 3650:
+            self._refuse(f"{label} retention must be between 1 and 3650 days.", 400, "invalid_request")
+        return value
+
+    def _write_group_retention(self, group_id, role, status, flags, decisions, entry):
+        self._require_operation(decisions, "edit_retention")
+        fields = ("conversation_retention_days", "document_retention_days")
+        body, revision = self._read_settings_body(
+            entry, fields,
+            "Only conversation_retention_days and document_retention_days can be changed here.",
+        )
+        values = {field: self._validate_retention_value(field, body[field]) for field in fields if field in body}
+        if not values:
+            self._refuse(
+                "Include conversation_retention_days or document_retention_days to change.",
+                400, "invalid_request",
+            )
+        self._check_settings_write(group_id, "retention", revision)
+        self.native_group_settings[group_id]["retention"].update(values)
+        self._advance_revision(group_id, "retention")
+        return {"settings": self._build_settings_read(group_id, role, status, flags)}, 200
+
+    def _group_insights(self, route, entry):
+        try:
+            payload = self._resolve_group_insights(entry)
+        except _GroupSettingsRefusal as refusal:
+            self._settings_json(route, {"error": refusal.message, "error_code": refusal.error_code}, refusal.status)
+            return
+        self._settings_json(route, payload)
+
+    def _resolve_group_insights(self, entry):
+        parts = entry.path.split("/")
+        group_id = parts[3]
+        name = parts[5] if len(parts) > 5 else None
+        if name == "activity":
+            limit = self._read_activity_limit(entry.query)
+            context = self._load_settings_group(group_id)
+            decisions = settings_decisions(context["role"], context["status"], **self._settings_flags(group_id))
+            self._require_operation(decisions, "view_activity")
+            if group_id in self.activity_unavailable:
+                self._refuse(GROUP_ACTIVITY_UNAVAILABLE_MESSAGE, 503, "group_activity_unavailable")
+            items = copy.deepcopy(self.group_activity.get(group_id, [])[:limit])
+            return {"activity": items, "limit": limit}
+        if name == "stats":
+            window = self._read_stats_window(entry.query)
+            context = self._load_settings_group(group_id)
+            decisions = settings_decisions(context["role"], context["status"], **self._settings_flags(group_id))
+            self._require_operation(decisions, "view_stats")
+            if group_id in self.stats_unavailable:
+                self._refuse(GROUP_STATS_UNAVAILABLE_MESSAGE, 503, "group_stats_unavailable")
+            return {"stats": self._build_group_stats(group_id, window)}
+        if name == "file-count":
+            if entry.query:
+                self._refuse("This request does not accept query parameters.", 400, "invalid_request")
+            context = self._load_settings_group(group_id)
+            decisions = settings_decisions(context["role"], context["status"], **self._settings_flags(group_id))
+            self._require_operation(decisions, "view_file_count")
+            return {"file_count": self.group_file_count.get(group_id, 0)}
+        self.unexpected_requests.append(f"{entry.method} {entry.path}")
+        self._refuse("Unexpected group insights request.", 500, "group_settings_unavailable")
+
+    def _read_activity_limit(self, query):
+        for key, values in query.items():
+            if key != "limit":
+                self._refuse("Use only the limit query parameter.", 400, "invalid_request")
+            if len(values) > 1:
+                self._refuse("Give each query parameter only once.", 400, "invalid_request")
+        raw = query.get("limit", [None])[0]
+        if raw is None:
+            return GROUP_ACTIVITY_DEFAULT_LIMIT
+        if not re.fullmatch(r"\d+", raw) or int(raw) not in GROUP_ACTIVITY_LIMITS:
+            self._refuse("The limit must be 10, 20 or 50.", 400, "invalid_request")
+        return int(raw)
+
+    def _read_stats_window(self, query):
+        allowed = ("days", "start_date", "end_date")
+        for key, values in query.items():
+            if key not in allowed:
+                self._refuse("Use only the days, start_date and end_date query parameters.", 400, "invalid_request")
+            if len(values) > 1:
+                self._refuse("Give each query parameter only once.", 400, "invalid_request")
+        custom = "start_date" in query or "end_date" in query
+        if custom and "days" in query:
+            self._refuse("Use days or a start_date and end_date, not both.", 400, "invalid_request")
+        if custom:
+            start_raw = (query.get("start_date", [""])[0] or "").strip()
+            end_raw = (query.get("end_date", [""])[0] or "").strip()
+            for field, raw in (("start_date", start_raw), ("end_date", end_raw)):
+                if not raw:
+                    self._refuse(f"{field} is required.", 400, "invalid_request")
+            try:
+                start = date.fromisoformat(start_raw)
+            except ValueError:
+                self._refuse("start_date must use YYYY-MM-DD format.", 400, "invalid_request")
+            try:
+                end = date.fromisoformat(end_raw)
+            except ValueError:
+                self._refuse("end_date must use YYYY-MM-DD format.", 400, "invalid_request")
+            if start > end:
+                self._refuse("start_date must be before or equal to end_date.", 400, "invalid_request")
+            if start < GROUP_STATS_EARLIEST_DATE or end > GROUP_STATS_LATEST_DATE:
+                self._refuse(GROUP_STATS_DATE_RANGE_MESSAGE, 400, "invalid_request")
+            days = (end - start).days + 1
+            if days > GROUP_STATS_MAX_CUSTOM_DAYS:
+                self._refuse(f"Choose a date range of {GROUP_STATS_MAX_CUSTOM_DAYS} days or fewer.", 400, "invalid_request")
+            label = f"{start.month}/{start.day}/{start.year} - {end.month}/{end.day}/{end.year}"
+            return {"type": "custom", "days": days, "label": label, "start": start, "end": end}
+        if "days" in query:
+            raw = query.get("days", [None])[0]
+            if not re.fullmatch(r"\d+", raw or "") or int(raw) not in ALLOWED_STATS_WINDOW_DAYS:
+                self._refuse("The days must be 7, 30 or 90.", 400, "invalid_request")
+            days = int(raw)
+        else:
+            days = DEFAULT_STATS_WINDOW_DAYS
+        end = date(2024, 5, 30)
+        start = end - timedelta(days=days - 1)
+        return {"type": "days", "days": days, "label": f"Last {days} Days", "start": start, "end": end}
+
+    def _build_group_stats(self, group_id, window):
+        series = []
+        current = window["start"]
+        while current <= window["end"]:
+            series.append(current)
+            current += timedelta(days=1)
+        labels = [f"{day.month}/{day.day}" for day in series]
+        zeros = [0] * len(series)
+        figures = self.group_stats.get(group_id, {})
+        return {
+            "totalDocuments": figures.get("totalDocuments", 0),
+            "storageUsed": figures.get("storageUsed", 0),
+            "totalTokens": figures.get("totalTokens", 0),
+            "totalMembers": figures.get("totalMembers", 0),
+            "storage": copy.deepcopy(figures.get("storage", {"ai_search_size": 0, "storage_account_size": 0})),
+            "documentActivity": {"labels": list(labels), "uploads": list(zeros), "deletes": list(zeros)},
+            "tokenUsage": {"labels": list(labels), "data": list(zeros)},
+            "dateRange": [day.isoformat() for day in series],
+            "window": {
+                "type": window["type"], "days": window["days"], "label": window["label"],
+                "startDate": f"{window['start'].isoformat()}T00:00:00",
+                "endDate": f"{window['end'].isoformat()}T23:59:59.999999",
+            },
+        }
 
     # --- Native group action serving, shared with GroupActionsFixture ---------------------------
 

@@ -45,7 +45,19 @@ from functions_group_file_source_policy import (
     group_file_sources_available,
 )
 from functions_group_membership_policy import GROUP_MEMBERSHIP_MANAGER_ROLES
-from functions_group_settings_policy import build_group_settings_management
+from functions_group_settings_policy import (
+    GROUP_MANAGER_REQUIRED,
+    GROUP_SETTINGS_MANAGER_ROLES,
+    build_group_settings_management,
+    group_settings_decisions,
+)
+try:
+    from functions_group_settings import REFUSAL_MESSAGES
+except ImportError:
+    # Isolated context tests load this module with a stubbed functions_group; keep the
+    # navigation seam tied to the one server text it needs without importing the full
+    # settings writer boundary in that harness.
+    REFUSAL_MESSAGES = {GROUP_MANAGER_REQUIRED: "Only the group owner or an admin can do this."}
 from functions_settings import (
     get_group_workflow_management_roles,
     is_group_workflows_enabled_for_group,
@@ -195,6 +207,26 @@ def build_group_workspace_context(user_id, group_id, settings, *, user_info=None
     # offers comes from the member list's own hints, never from this navigation entry.
     sections["members"] = {
         **section(True, role in GROUP_MEMBERSHIP_MANAGER_ROLES),
+        "group": GROUP_MANAGE_SECTION_GROUP,
+    }
+    # Settings, Activity and Statistics (M7C) join Members in the "manage" group. Their
+    # availability is the native group settings decision, so the navigation, the settings
+    # read and the routes agree on one gate: Settings and both insight views open to a
+    # manager (Owner or Admin), in any status that lets the caller view the group, and the
+    # controls each offers still come from settings_management, never from this entry.
+    manage_manager = role in GROUP_SETTINGS_MANAGER_ROLES
+    manage_decisions = group_settings_decisions(role, group, settings, (user_info or {}).get("roles"))
+    manage_reason = REFUSAL_MESSAGES[GROUP_MANAGER_REQUIRED]
+    sections["settings"] = {
+        **section(manage_manager, manage_manager, manage_reason),
+        "group": GROUP_MANAGE_SECTION_GROUP,
+    }
+    sections["activity"] = {
+        **section(manage_decisions["view_activity"] is None, reason=manage_reason),
+        "group": GROUP_MANAGE_SECTION_GROUP,
+    }
+    sections["statistics"] = {
+        **section(manage_decisions["view_stats"] is None, reason=manage_reason),
         "group": GROUP_MANAGE_SECTION_GROUP,
     }
 

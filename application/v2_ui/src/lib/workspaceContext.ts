@@ -19,7 +19,7 @@ export const GROUP_WORKSPACE_SECTION_IDS = [
  * from GROUP_WORKSPACE_SECTION_IDS, which the public workspace context shares, so a public
  * workspace is never expected to report them. M7C adds settings, activity and statistics.
  */
-export const GROUP_MANAGE_SECTION_IDS = ['members'] as const;
+export const GROUP_MANAGE_SECTION_IDS = ['members', 'settings', 'activity', 'statistics'] as const;
 
 export type GroupWorkspaceSectionId = typeof GROUP_WORKSPACE_SECTION_IDS[number];
 export type GroupManageSectionId = typeof GROUP_MANAGE_SECTION_IDS[number];
@@ -132,6 +132,18 @@ export interface GroupWorkspaceContext extends WorkspaceAvailability {
     file_source_management?: {
         schema_version: number;
         operations: string[];
+    };
+    /**
+     * The group settings management hint (M7C). Present as `{schema_version: 1, operations: [...],
+     * reasons: {...}}`, gating the profile, logo, downloads, retention edits and the activity,
+     * statistics and file-count reads. `operations` are the ops the viewer may perform; `reasons`
+     * maps every withheld op to the server's reason code, so an unavailable control is explained,
+     * never guessed. Absence means "read-only", never an empty grant.
+     */
+    settings_management?: {
+        schema_version: number;
+        operations: string[];
+        reasons?: Record<string, string>;
     };
 }
 

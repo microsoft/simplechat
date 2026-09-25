@@ -1,7 +1,7 @@
 # group_members.py
 """
 Closed M7B group membership HTTP fixtures for the real production V2 SPA.
-Version: 0.261.160
+Version: 0.261.165
 Implemented in: 0.261.155
 
 The fixture serves the native group membership family the V2 Members section reads and writes
@@ -43,7 +43,7 @@ from urllib.parse import urlsplit
 
 import pytest
 
-from ui_tests.fixtures.group_workspace import GroupWorkspaceFixture, group_context
+from ui_tests.fixtures.group_workspace import GroupWorkspaceFixture, group_context, _settings_kwargs
 from ui_tests.fixtures.workspace_authoring import OWNER_ID
 
 
@@ -299,7 +299,11 @@ class GroupMembersFixture(GroupWorkspaceFixture):
         self.groups[group_id] = group_context(
             group_id, current["workspace"]["name"], role=role,
             status=status if status in ("active", "locked", "upload_disabled", "inactive") else "unknown",
+            **_settings_kwargs(self._settings_flags(group_id)),
         )
+        # Replay any settings a test has written (profile, logo, downloads) so a membership or status
+        # change never reverts the served context to the seed profile.
+        self._apply_settings_store_to_context(group_id)
 
     def _json(self, route, payload, status=200):
         # Every native membership response -- success or error -- is `no-store`, as the server's

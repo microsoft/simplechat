@@ -38,7 +38,9 @@ The journeys tested in this suite:
 - **Status changes (J4):** locking the group removes the write controls from
   Documents, Prompts, Identities, Endpoints, File sources and Members after the
   page revalidates, and the header shows the status. An inactive group shows the
-  server's reason, and **Manage group (classic)** stays available.
+  server's reason. From 0.261.165, **Manage group (classic)** appears only in
+  an inactive group or one whose status isn't recognized, and never in an
+  active one.
 - **Role changes (J5):** an Admin demoted to member loses the manager-only
   sections and every write control, and keeps Members without its management
   controls.
@@ -49,11 +51,12 @@ The journeys tested in this suite:
   table names.
 - **The classic round trip (J8):** a classic link confirms the group before
   leaving V2, and a change made in classic shows in V2 after the page regains
-  focus.
-- **The unsaved-editor guard (J9):** an unsaved draft in any of the seven
-  authoring editors (prompt, identity, endpoint, file source, agent, action and
-  workflow) blocks switching groups and asks before leaving the section.
-  **Keep editing** keeps the address, the draft and the active group.
+  focus. From 0.261.165 the link is Settings' **Delete group (classic)**.
+- **The unsaved-editor guard (J9):** an unsaved draft in any of the eight
+  editors (prompt, identity, endpoint, file source, agent, action, workflow
+  and, from 0.261.165, the group settings) blocks switching groups and asks
+  before leaving the section. **Keep editing** keeps the address, the draft and
+  the active group.
 - **The role, status and section matrix (J10):** for each of the four roles and
   five statuses, every section is present or locked exactly as the server's
   context says, and the overview lists the locked sections with the server's
@@ -107,10 +110,9 @@ python -m pytest functional_tests\test_group_picker_fixture_parity.py
 
 When it was added, the suite passed 44 tests on three consecutive runs, with
 the one strict `xfail` expected, and the picker pin passed 8. From 0.261.162 it
-passes all 45, with no `xfail`.
+passes all 45, with no `xfail`. From 0.261.165 it also covers the Settings
+delete link (J8), the Settings editor (J9) and the unknown-status case of J4.
 
-- The Settings delete link (J8) and the Settings editor (J9) are pending the
-  native Settings section.
 - J11 checks the join request and the owner's approval separately; the
   requester's picker after approval isn't driven end to end.
 - The shared base fixture's `setActive` answer differs from the server for an

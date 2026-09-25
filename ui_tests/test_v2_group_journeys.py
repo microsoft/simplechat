@@ -1,7 +1,7 @@
 # test_v2_group_journeys.py
 """M8 group workspace end-to-end journeys, on the real built SPA.
 
-Version: 0.261.162
+Version: 0.261.165
 Implemented in: 0.261.161
 
 These ride one composite group store (`group_journeys_ui`) that answers the
@@ -50,10 +50,10 @@ Coverage table (contract sec 4 / M8_GROUP_PARITY_MATRIX sec 8; every row names i
                                   + test_j8_a_classic_side_change_shows_in_v2_after_a_refocus (here)
                                   documents test_v2_group_classic_handoffs.py::test_documents_section_shows_the_relabelled_classic_link
                                   shell     shell::test_classic_handoff_reconfirms_the_selected_group
-                                  (PENDING M7C-FE: the Settings delete link, sec 8.10)
-  J9  unsaved-editor guard ..... test_j9_unsaved_editor_guards_every_authoring_section (here, 7-editor sweep)
+                                  Settings delete link (sec 8.10) test_j8_manage_classic_confirms_setactive_before_leaving (here)
+  J9  unsaved-editor guard ..... test_j9_unsaved_editor_guards_every_authoring_section (here, 8-editor sweep)
                                   + shell::test_group_delegation_editing_and_navigation_keep_the_correct_scope
-                                  (PENDING M7C-FE: the Settings editor)
+                                  Settings editor test_j9_unsaved_editor_guards_every_authoring_section[settings] (here)
   J10 role x status matrix ..... test_j10_rail_matches_the_pinned_context_matrix (here)
                                   + test_j10_overview_lists_locked_sections_with_their_reason (here)
   J11 directory to member ...... test_v2_group_directory.py::test_join_then_cancel_follow_the_server_rows (the join request)
@@ -331,10 +331,10 @@ def test_j4_inactive_status_bars_viewing_and_keeps_the_classic_link(group_journe
     ui = group_journeys_ui
     ui.open("/groups/group-a")
     expect(ui.page.get_by_text("Status: Active", exact=True)).to_be_visible()
-    # An owner can always reach the classic tools; today the link's visibility follows
-    # can_manage_workspace, in every status. M7C-FE sec 8.10 will restrict it to inactive/unknown
-    # groups -- listed pending in the coverage table.
-    expect(ui.page.get_by_role("button", name="Manage group (classic)", exact=True)).to_be_visible()
+    # An active group no longer shows the header's classic escape hatch: sec 8.9 restricts it to the
+    # barred statuses, where the native sections are unavailable. In an active group the only classic
+    # link lives in the Settings danger zone (see test_j8_manage_classic_confirms_setactive_before_leaving).
+    expect(ui.page.get_by_role("button", name="Manage group (classic)", exact=True)).to_have_count(0)
     ui.set_status("group-a", "inactive")
     refocus(ui)
     expect(ui.page.get_by_text("Status: Inactive", exact=True)).to_be_visible()
@@ -342,7 +342,14 @@ def test_j4_inactive_status_bars_viewing_and_keeps_the_classic_link(group_journe
     # The rail no longer offers the sections a viewable status would.
     nav = ui.page.get_by_role("navigation", name="Workspace sections", exact=True)
     expect(nav.get_by_role("link", name="Documents", exact=True)).to_have_count(0)
-    # The owner still has the classic escape hatch in the barred status (today's rule).
+    # The owner still has the classic escape hatch in the barred status.
+    expect(ui.page.get_by_role("button", name="Manage group (classic)", exact=True)).to_be_visible()
+    # The unknown status is barred the same way, with its own reason, and nothing else covers it here.
+    ui.set_status("group-a", "unknown")
+    refocus(ui)
+    expect(ui.page.get_by_text("Status: Status unavailable", exact=True)).to_be_visible()
+    expect(ui.page.get_by_text(GROUP_STATUS_UNKNOWN_REASON, exact=False).first).to_be_visible()
+    expect(nav.get_by_role("link", name="Documents", exact=True)).to_have_count(0)
     expect(ui.page.get_by_role("button", name="Manage group (classic)", exact=True)).to_be_visible()
 
 
@@ -425,9 +432,16 @@ def test_j8_manage_classic_confirms_setactive_before_leaving(group_journeys_ui):
     ui = group_journeys_ui
     ui.open("/groups/group-a")
     expect(ui.page.get_by_text("Role: Owner", exact=True)).to_be_visible()
+    # The classic escape hatch for an active group lives in the Settings danger zone now, not the header.
+    section(ui.page, "Settings")
+    expect(ui.page.get_by_test_id("group-settings-danger")).to_be_visible()
     # Another tab moved the active group to B while this page stayed on A.
     ui.active_group = "group-b"
-    ui.page.get_by_role("button", name="Manage group (classic)", exact=True).click()
+    ui.page.get_by_role("button", name="Delete group (classic)", exact=True).click()
+    # The danger-zone confirm explains the classic hand-off before leaving.
+    dialog = ui.page.get_by_role("dialog")
+    expect(dialog.get_by_role("heading", name="Delete this group in classic?", exact=True)).to_be_visible()
+    dialog.get_by_role("button", name="Open classic", exact=True).click()
     # The classic hand-off re-activates A before it navigates: the setActive write names A, and the
     # classic page is entered with A active, never B.
     expect(ui.page).to_have_url(f"{ORIGIN}/groups/group-a")
@@ -523,6 +537,18 @@ def _open_workflow_draft(ui):
     return field, "Draft workflow"
 
 
+def _open_settings_draft(ui):
+    section(ui.page, "Settings")
+    # The Settings editor feeds the group-level dirty flag from both its profile and its retention
+    # drafts (S1/S5). Dirty the retention select first, then the profile name, and track the name for
+    # the survival assertion; both must persist through the discard guard.
+    retention = ui.page.get_by_test_id("group-settings-retention-conversation")
+    retention.select_option("none" if retention.input_value() != "none" else "default")
+    field = ui.page.get_by_test_id("group-settings-name")
+    field.fill("Draft group name")
+    return field, "Draft group name"
+
+
 _EDITORS = [
     pytest.param("switcher", _open_action_draft, id="actions-delegation"),
     pytest.param("frame", _open_agent_draft, id="agents"),
@@ -531,6 +557,7 @@ _EDITORS = [
     pytest.param("modal", _open_endpoint_draft, id="endpoints"),
     pytest.param("modal", _open_file_source_draft, id="file-sources"),
     pytest.param("modal", _open_workflow_draft, id="workflows"),
+    pytest.param("switcher", _open_settings_draft, id="settings"),
 ]
 
 

@@ -1,5 +1,5 @@
 // test_v2_group_workspace_context_logic.mjs
-// Version: 0.261.155
+// Version: 0.261.165
 // Implemented in: 0.261.126
 // Shared shell navigation and revalidation: 0.261.127
 // Members section validation (M7B): 0.261.155
@@ -177,7 +177,10 @@ try {
         const reported = resolveWorkspaceSections([{ id: 'members', group: 'manage' }], withMembers);
         assert.deepEqual(reported.map((entry) => entry.enabled), [true]);
         assert.equal(groupWorkspacePath('group-a', 'members'), '/groups/group-a/members');
-        assert.equal(groupWorkspacePath('group-a', 'settings'), '/groups/group-a');
+        assert.equal(groupWorkspacePath('group-a', 'settings'), '/groups/group-a/settings');
+        assert.equal(groupWorkspacePath('group-a', 'activity'), '/groups/group-a/activity');
+        assert.equal(groupWorkspacePath('group-a', 'statistics'), '/groups/group-a/statistics');
+        assert.equal(groupWorkspacePath('group-a', 'nonsense'), '/groups/group-a');
     });
     await run('explicit reads work without paging or changing the saved active group', async () => {
         const result = await useGroupWorkspaceStore.getState().load('group-1001');

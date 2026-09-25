@@ -1,7 +1,7 @@
 # test_group_context_fixture_parity.py
 """
 Parity between the group workspace context the V2 browser fixtures serve and the real builder.
-Version: 0.261.157
+Version: 0.261.165
 Implemented in: 0.261.157
 
 Every group browser suite builds its selected-group context from
@@ -46,7 +46,7 @@ for candidate in (ROOT, ROOT / "ui_tests", ROOT / "ui_tests" / "fixtures"):
         sys.path.insert(0, str(candidate))
 
 from test_support.agent_delegation import execute_functions  # noqa: E402
-from test_v2_group_workspace_context import environment, read_as  # noqa: E402,F401 - the real builder's harness
+from test_v2_group_workspace_context import environment as environment, read_as  # noqa: E402,F401 - the real builder's harness
 from ui_tests.fixtures import group_workspace as fixture_module  # noqa: E402
 from ui_tests.fixtures.group_actions import GroupActionsFixture  # noqa: E402
 from ui_tests.fixtures.group_agents import GroupAgentsFixture  # noqa: E402
@@ -56,6 +56,8 @@ from ui_tests.fixtures.group_documents import GroupDocumentsFixture  # noqa: E40
 from ui_tests.fixtures.group_members import GroupMembersFixture  # noqa: E402
 from ui_tests.fixtures.group_prompts import GroupPromptsFixture  # noqa: E402
 from ui_tests.fixtures.workspace_authoring import ApiRequest, ORIGIN  # noqa: E402
+
+_PYTEST_FIXTURES = (environment,)
 
 
 ROLE_USERS = {"Owner": "owner", "Admin": "admin", "DocumentManager": "manager", "User": "reader"}
@@ -85,8 +87,40 @@ VARIANTS = {
     "extraction-on": {"enable_extract_meta_data": True},
     "plugins-off": {"allow_group_plugins": False},
     "agents-off": {"allow_group_agents": False},
+    "group-downloads-disabled": {"disable_file_downloads": True},
 }
 EXTRACTION_ON = VARIANTS["extraction-on"]
+
+# The four settings capability switches `settings_management` reads. Each entry is the `group_context`
+# switches, the real settings they stand for, and the session app roles the real read runs under --
+# `holds_create_groups_role` is a session role on the server, not a setting, so it configures the roles
+# rather than the settings dict. The switch test compares the WHOLE context under each switch (walking
+# every field as the main 4x5 test does), not just `settings_management`: `allow_group_workspace_file_downloads`
+# also moves `document_permissions.can_download` and the `download` operation in `document_management`, and
+# the fixture models all three, so a browser test that turns downloads off never sees a Download the server
+# would refuse.
+SETTINGS_SWITCHES = {
+    "downloads-off": (
+        {"allow_group_workspace_file_downloads": False},
+        {"allow_group_workspace_file_downloads": False},
+        ("User",),
+    ),
+    "retention-on": (
+        {"enable_retention_policy_group": True},
+        {"enable_retention_policy_group": True},
+        ("User",),
+    ),
+    "create-role-required-lacking": (
+        {"require_member_of_create_group": True, "holds_create_groups_role": False},
+        {"require_member_of_create_group": True},
+        ("User",),
+    ),
+    "create-role-required-holding": (
+        {"require_member_of_create_group": True, "holds_create_groups_role": True},
+        {"require_member_of_create_group": True},
+        ("User", "CreateGroups"),
+    ),
+}
 
 # The workspace metadata may differ in value, but not in keys. Every other top-level field either side
 # sends is compared value for value, and so is every section the real context reports, so a section,
@@ -118,8 +152,14 @@ def modelled(environment):  # noqa: F811 - the imported harness fixture
 
 
 def real_context(env, role, status, **settings):
+    group_overrides = {}
+    for key in ("disable_file_downloads",):
+        if key in settings:
+            group_overrides[key] = settings.pop(key)
     env.settings.update(settings)
     env.records["group-a"]["status"] = status
+    for key, value in group_overrides.items():
+        env.records["group-a"][key] = value
     response = read_as(env, ROLE_USERS[role])
     assert response.status_code == 200, response.get_data(as_text=True)
     return response.get_json()
@@ -191,10 +231,47 @@ def test_the_reason_constants_are_the_servers_texts(modelled):
     reader = real_context(modelled, "User", "active")
     assert reader["sections"]["identities"]["reason"] == fixture_module.GROUP_CONNECTIONS_ROLE_REASON
     assert reader["sections"]["sync"]["reason"] == fixture_module.GROUP_CONNECTIONS_ROLE_REASON
+    for section in ("settings", "activity", "statistics"):
+        assert reader["sections"][section]["reason"] == fixture_module.GROUP_SETTINGS_MANAGER_REASON
     no_plugins = real_context(modelled, "Owner", "active", allow_group_plugins=False)
     assert no_plugins["sections"]["actions"]["reason"] == fixture_module.GROUP_ACTIONS_DISABLED_REASON
     no_agents = real_context(modelled, "Owner", "active", allow_group_agents=False)
     assert no_agents["sections"]["agents"]["reason"] == fixture_module.GROUP_AGENTS_DISABLED_REASON
+    downloads_disabled = real_context(modelled, "Owner", "active", disable_file_downloads=True)
+    assert downloads_disabled["document_permissions"]["can_download"] is False
+    assert "download" not in downloads_disabled["document_management"]["operations"]
+
+
+def real_context_as(env, role, status, *, roles=("User",), **settings):
+    """The whole context the real builder sends for a role, status, settings and the caller's session
+    app roles. The switch test needs the session-role seam because `holds_create_groups_role` is a
+    session role on the server, not a setting, so it can't go through `real_context`'s fixed ["User"]."""
+    group_overrides = {}
+    for key in ("disable_file_downloads",):
+        if key in settings:
+            group_overrides[key] = settings.pop(key)
+    env.settings.update(settings)
+    env.records["group-a"]["status"] = status
+    for key, value in group_overrides.items():
+        env.records["group-a"][key] = value
+    with env.client.session_transaction() as state:
+        state["user"] = {"oid": ROLE_USERS[role], "roles": list(roles)}
+    response = env.client.get("/api/v2/workspaces/group/group-a")
+    assert response.status_code == 200, response.get_data(as_text=True)
+    return response.get_json()
+
+
+@pytest.mark.parametrize("switch", list(SETTINGS_SWITCHES))
+def test_settings_management_tracks_each_capability_switch(modelled, switch):
+    """Each `group_context` settings switch moves the WHOLE context exactly as the real policy does
+    under the setting or session role it stands for -- not just `settings_management`. Downloads-off,
+    for one, also has to empty `document_permissions.can_download` and the `download` operation, and
+    the walk catches any other field a switch moves that the fixture would otherwise miss."""
+    fixture_switches, real_settings, roles = SETTINGS_SWITCHES[switch]
+    served = fixture_context("Owner", "active", **fixture_switches)
+    real = real_context_as(modelled, "Owner", "active", roles=roles, **real_settings)
+    found = differences(real, served)
+    assert not found, f"{switch}:\n{describe(found)}"
 
 
 def test_an_unrecognized_status_is_reported_as_unknown_by_both():

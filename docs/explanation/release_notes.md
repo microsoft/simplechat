@@ -2,6 +2,23 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.165)**
+
+#### New Features
+
+*   **Group Settings, Activity And Statistics In V2**
+    *   Group owners and admins can manage a group's profile, logo, file downloads and retention, read its recent activity, and chart and export its statistics in the V2 group workspace, under **Manage** beside Members.
+    *   The server decides who sees what and which controls work, and a locked control says why. Unsaved edits survive switching browser tabs and conflicting saves, a failed save keeps them, and **Discard changes** puts an editor back to the saved settings.
+    *   Statistics reuse the personal charts and export dialog. The export writes the classic group CSV column for column.
+    *   Deleting a group is still finished on the classic page, from a **Delete this group** section in Settings that shows how many documents remain.
+    *   (Ref: `GroupSettingsSection.tsx`, `GroupActivitySection.tsx`, `GroupStatisticsSection.tsx`, `lib/groupSettings.ts`, `lib/groupStats.ts`, `functions_workspace_context.py`, [V2 Group Settings, Activity and Statistics](features/V2_GROUP_SETTINGS.md))
+
+#### User Interface Enhancements
+
+*   **Manage Group (Classic) Only Where It's Still Needed**
+    *   The group header's **Manage group (classic)** button now appears only in an inactive group or one whose status isn't recognized. Everything else it offered is native in V2.
+    *   (Ref: `GroupWorkspacePage.tsx`, [V2 Group Settings, Activity and Statistics](features/V2_GROUP_SETTINGS.md))
+
 ### **(v0.261.164)**
 
 #### Bug Fixes

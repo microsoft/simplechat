@@ -28,6 +28,9 @@ import { GroupIdentitiesSection } from './workspace/GroupIdentitiesSection';
 import { GroupEndpointsSection } from './workspace/GroupEndpointsSection';
 import { GroupFileSourcesSection } from './workspace/GroupFileSourcesSection';
 import { GroupMembersSection } from './workspace/GroupMembersSection';
+import { GroupSettingsSection } from './workspace/GroupSettingsSection';
+import { GroupActivitySection } from './workspace/GroupActivitySection';
+import { GroupStatisticsSection } from './workspace/GroupStatisticsSection';
 import { GROUP_MANAGE_SECTIONS } from './workspace/groupManageSections';
 import { ActionsSection } from './workspace/ActionsSection';
 import { ActionEditorPage } from './workspace/ActionEditorPage';
@@ -38,6 +41,7 @@ import { createGroupAgentWorkbench } from '../lib/agentWorkbench';
 import { createGroupIdentityWorkbench } from '../lib/identityWorkbench';
 import { createGroupModelConnectionsAdapter } from '../lib/modelConnections';
 import { createGroupFileSourceWorkbench } from '../lib/fileSourceWorkbench';
+import { createGroupSettingsAdapter } from '../lib/groupSettings';
 
 export function GroupWorkspacePage() {
     const { groupId, section, resourceId } = useParams<{ groupId?: string; section?: string; resourceId?: string }>();
@@ -142,6 +146,21 @@ export function GroupWorkspacePage() {
         };
     }, [revalidate]);
 
+    // A successful profile or logo save re-reads the context so the header, picker and branding follow
+    // the new name, colour and logo. Unlike the focus revalidate this is not gated on the busy flag,
+    // because it fires from inside the still-in-flight save; the Settings section keeps its own drafts,
+    // so this refresh can never wipe an edit.
+    const refreshContextNow = useCallback(() => {
+        const current = useGroupWorkspaceStore.getState();
+        if (!groupId || !enabled || current.loading || current.activating || current.refreshing
+            || current.needsReconciliation || current.context?.scope.id !== groupId) return;
+        void current.revalidate(groupId).catch((cause: unknown) => {
+            if (!(cause instanceof WorkspaceRequestSuperseded)) {
+                setNotice(useGroupWorkspaceStore.getState().error || 'Could not refresh this workspace.');
+            }
+        });
+    }, [groupId, enabled]);
+
     const context = state.context && state.context.scope.id === groupId && state.context.viewer_id === viewerId ? state.context : null;
     const ready = context && !state.loading && !state.activating && !state.needsReconciliation && !externalTarget;
     const accessUnconfirmed = state.refreshing || state.needsRevalidation;
@@ -231,6 +250,22 @@ export function GroupWorkspacePage() {
             ? createGroupFileSourceWorkbench({ kind: 'group', id: context.scope.id, name: context.workspace.name }, context.file_source_management)
             : null,
         [context?.scope.id, context?.workspace.name, context?.sections.sync.enabled, context?.file_source_management],
+    );
+
+    // The Manage group's Settings, Activity and Statistics sections (M7C) share one scoped client.
+    // Its gating reads context.settings_management with no fallback: an absent hint (a member) is a
+    // read-only surface, never an empty grant. The client itself only needs the group scope, so it
+    // is built whenever a group is loaded; each section renders only when its own nav slot is
+    // available, and the section's own controls come from the hint.
+    // The Manage group's Settings, Activity and Statistics sections (M7C) share one scoped client.
+    // The adapter is keyed on the group id ALONE, so a plain refocus (which reparses the context into
+    // a new object) never rebuilds it and never discards the Settings section's open drafts. The
+    // freshest settings_management hint is passed to the section separately so its controls still
+    // re-gate on every context revalidation without the adapter churning.
+    const groupSettingsAdapter = useMemo(
+        () => context ? createGroupSettingsAdapter(context.scope, context.settings_management) : null,
+        // eslint-disable-next-line react-hooks/exhaustive-deps -- keyed on the group id only, on purpose (S1)
+        [context?.scope.id],
     );
 
     useEffect(() => { setLogoFailed(false); }, [context?.scope.id, context?.workspace.logo_url]);
@@ -354,10 +389,11 @@ export function GroupWorkspacePage() {
                             <p className="text-xs text-text-3">Role: {groupRoleLabel(context.role)}</p>
                         </div>
                         <Pill tone={context.status === 'active' ? 'neutral' : 'warn'}>Status: {GROUP_STATUS_LABELS[context.status]}</Pill>
-                        {context.can_manage_workspace ? <GlassButton size="sm" disabled={resourceBusy || accessUnconfirmed}
-                            onClick={() => openClassic(`/groups/${encodeURIComponent(context.scope.id)}`)}>
-                            Manage group (classic)<ArrowUpRight size={14} />
-                        </GlassButton> : null}
+                        {context.can_manage_workspace && (context.status === 'inactive' || context.status === 'unknown')
+                            ? <GlassButton size="sm" disabled={resourceBusy || accessUnconfirmed}
+                                onClick={() => openClassic(`/groups/${encodeURIComponent(context.scope.id)}`)}>
+                                Manage group (classic)<ArrowUpRight size={14} />
+                            </GlassButton> : null}
                     </div>
                 ) : null}
                 {dirty ? <p role="status" className="text-xs text-warn">Save or cancel your group changes before switching groups.</p> : null}
@@ -475,6 +511,16 @@ export function GroupWorkspacePage() {
                                     <GroupEndpointsSection adapter={groupEndpointAdapter} />
                                 ) : section === 'sync' && !resourceId && groupFileSourceAdapter ? (
                                     <GroupFileSourcesSection adapter={groupFileSourceAdapter} />
+                                ) : section === 'settings' && !resourceId && groupSettingsAdapter ? (
+                                    <GroupSettingsSection adapter={groupSettingsAdapter} management={context.settings_management}
+                                        interactionDisabled={accessUnconfirmed}
+                                        onBusyChange={reportDocumentBusy} onDirtyChange={reportDocumentDirty}
+                                        onAccessChanged={revalidate} onSaved={refreshContextNow}
+                                        onOpenClassic={() => openClassic(`/groups/${encodeURIComponent(context.scope.id)}`)} />
+                                ) : section === 'activity' && !resourceId && groupSettingsAdapter ? (
+                                    <GroupActivitySection adapter={groupSettingsAdapter} />
+                                ) : section === 'statistics' && !resourceId && groupSettingsAdapter ? (
+                                    <GroupStatisticsSection adapter={groupSettingsAdapter} />
                                 ) : (
                                     <div className="flex items-center justify-center gap-2 py-12 text-sm text-text-3" role="status" aria-live="polite">
                                         <Loader2 size={16} className="animate-spin" aria-hidden="true" />

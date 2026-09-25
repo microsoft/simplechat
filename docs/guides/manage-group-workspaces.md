@@ -214,8 +214,11 @@ none of them sends you to the classic page. **Classic tools**, in Documents,
 still opens the classic group workspace for its one remaining tool: upgrading
 legacy documents. It confirms the selected group before navigating.
 
-Owners and administrators also have **Manage group (classic)** for group
-settings, and for members in an inactive group. From version **0.261.151**, membership
+From version **0.261.165**, a group's settings, activity and statistics are
+native too (see **Settings, activity and statistics** below), so **Manage group
+(classic)** only appears in an inactive group, or one whose status isn't
+recognized, where it's still how an administrator manages members. The classic
+manage page itself keeps working. From version **0.261.151**, membership
 changes made there no longer overwrite each other. For example, two admins
 approving and removing members at the same time both take effect. Approving
 someone who is already a member no longer adds them twice, and a bulk removal
@@ -239,7 +242,8 @@ group and explains the difference. **Make this group active** selects it again.
 After an uncertain switch, use **Refresh workspace selection** to reconcile the
 server's selection without repeating the change.
 
-Group settings, and public workspace pages, still use the classic interface.
+Public workspace management, beyond its documents, still uses the classic
+interface.
 
 ### Manage members
 
@@ -255,6 +259,32 @@ email, and filter by role.
 - Anyone except the owner can **Leave this group**.
 - Members isn't available in an inactive group. Use **Manage group (classic)**
   there.
+
+### Settings, activity and statistics
+
+From version **0.261.165**, **Settings**, **Activity** and **Statistics** sit
+under **Manage** beside Members. They're for the group's owner and admins; other
+members see them locked, with the reason.
+
+- **Settings:**
+  - the owner edits the group's name, description and colour, with a preview
+    of the header, and uploads or removes its logo;
+  - owners and admins can turn off file downloads for the group, and set how
+    long conversations and documents are kept, when an administrator has turned
+    those options on;
+  - a control you can't change says why.
+
+  Unsaved edits survive switching browser tabs, and leaving asks first.
+  **Discard changes** puts them back to the saved settings. If someone else
+  changed the settings meanwhile, your edits are kept on top of theirs.
+- **Delete this group** is at the bottom of Settings, for the owner. It shows
+  how many documents the group still holds, and **Delete group (classic)**
+  opens the classic page to finish, after asking.
+- **Activity** lists the group's recent events: what happened, who did it and
+  when. Choose to show 10, 20 or 50.
+- **Statistics** charts the group's documents, token usage and storage over 7,
+  30 or 90 days or a custom range. **Export** downloads the same CSV as the
+  classic page.
 
 ## Use the classic workspace
 

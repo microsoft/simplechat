@@ -1,7 +1,7 @@
 # test_v2_group_members.py
 """
 Production-SPA coverage for the native V2 group Members section.
-Version: 0.261.157
+Version: 0.261.165
 Implemented in: 0.261.155
 
 Exercises the real Members section -- a section of the group WorkspaceShell in its Manage group,
@@ -162,8 +162,9 @@ def test_members_is_a_section_of_the_one_workspace_navigation(group_members_ui):
     expect(nav.get_by_text("Manage", exact=True)).to_be_visible()
     expect(page.get_by_role("heading", name="Manage", exact=True)).to_be_visible()
     expect(page.get_by_role("link").filter(has_text="Who belongs to this group, their roles, and who is asking to join.")).to_be_visible()
-    # The classic hand-off stays for settings until M7C; Members adds no button of its own.
-    expect(page.get_by_role("button", name=re.compile("Manage group \\(classic\\)"))).to_be_visible()
+    # M7C landed native Settings/Activity/Statistics, so an active group no longer hands off to
+    # classic from the header; the button now survives only for inactive or unknown statuses (§8.9).
+    expect(page.get_by_role("button", name=re.compile("Manage group \\(classic\\)"))).to_have_count(0)
     expect(page.get_by_role("button", name=re.compile("members", re.IGNORECASE))).to_have_count(0)
     assert not ui.membership_requests(), "The overview must not read the member list."
     nav.get_by_role("link", name="Members", exact=True).click()
