@@ -70,6 +70,9 @@ from functions_public_document_policy import (
     public_document_collaboration_operations,
     public_document_management_operations,
 )
+from functions_public_prompt_policy import (
+    public_prompt_management_operations,
+)
 from functions_public_workspaces import (
     check_public_workspace_status_allows_operation,
     find_public_workspace_by_id,
@@ -375,15 +378,15 @@ def build_public_workspace_context(user_id, workspace_id, settings, *, user_info
             "reason": None if available else (status_reason if not view_allowed else reason),
         }
 
-    # Public workspaces offer read-only document browsing, and a manager of an active
-    # workspace manages the documents section. Tags, prompts, identities and sync are
-    # listed but not yet available (M9C/M10B). Sections public workspaces will never
-    # have -- agents, actions, endpoints and workflows -- are left out of the registry
-    # entirely rather than shown as "not available yet".
+    # Public workspaces offer read-only document browsing and, from M9C, a read-only prompts
+    # library that a manager of an active workspace manages. Tags, identities and sync are listed
+    # but not yet available (M10B). Sections public workspaces will never have -- agents, actions,
+    # endpoints and workflows -- are left out of the registry entirely rather than shown as "not
+    # available yet".
     sections = {
         "documents": section(True, manager),
         "tags": section(False),
-        "prompts": section(False),
+        "prompts": section(True, manager),
         "identities": section(False),
         "sync": section(False),
     }
@@ -437,6 +440,10 @@ def build_public_workspace_context(user_id, workspace_id, settings, *, user_info
         "document_collaboration": {
             "schema_version": 1,
             "operations": public_document_collaboration_operations(workspace, role, settings),
+        },
+        "prompt_management": {
+            "schema_version": 1,
+            "operations": public_prompt_management_operations(workspace, role, settings),
         },
         "document_queries": {
             "sort_fields": [

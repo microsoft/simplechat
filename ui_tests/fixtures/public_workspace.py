@@ -7,11 +7,12 @@ Every context carries the server's document_management hint, as build_public_wor
 sends it: 0.261.167
 Every context is the real builder's, held to it by
 functional_tests/test_public_context_fixture_parity.py: 0.261.168
+Its prompts section opens and every context carries the server's prompt_management hint: 0.261.178
 
-The public surface mirrors the group shell. Only its documents section is open, and a manager role
-can be granted document management and the generated-artifact review. It never advertises native
-delegation, and every document read or operation carries its workspace id in the request path
-rather than an active selection.
+The public surface mirrors the group shell. Its documents and prompts sections are open, and a
+manager role can be granted document management, the generated-artifact review and prompt
+management. It never advertises native delegation, and every document or prompt read or operation
+carries its workspace id in the request path rather than an active selection.
 """
 
 import copy
@@ -37,6 +38,8 @@ PUBLIC_DOCUMENT_OPERATIONS = (
 )
 # functions_public_document_policy.PUBLIC_DOCUMENT_COLLABORATION_OPERATIONS, in the server's order.
 PUBLIC_DOCUMENT_COLLABORATION_OPERATIONS = ("inspect", "approve_artifact", "reject_artifact", "cancel_artifact")
+# functions_public_prompt_policy.PUBLIC_PROMPT_OPERATIONS, in the server's order.
+PUBLIC_PROMPT_OPERATIONS = ("create", "edit", "delete")
 SECTION_GROUPS = {
     "documents": "knowledge", "tags": "knowledge", "sync": "knowledge", "prompts": "knowledge",
     "identities": "connections",
@@ -88,6 +91,16 @@ def public_document_collaboration(role, status):
     }
 
 
+def public_prompt_management(role, status):
+    """`public_prompt_management_operations`: a manager of an active workspace creates, edits and
+    deletes prompts. No status but active permits a write, and a reader gets nothing. The server
+    sends this hint in every public context from M9C on."""
+    operations = []
+    if role in PUBLIC_MANAGER_ROLES and status == "active":
+        operations = list(PUBLIC_PROMPT_OPERATIONS)
+    return {"schema_version": 1, "operations": operations}
+
+
 def public_context(identifier, name, *, status="active", role="User", viewer=OWNER_ID):
     """`build_public_workspace_context` for the modelled deployment: public workspaces, metadata
     extraction and the administrator's public downloads on."""
@@ -96,13 +109,14 @@ def public_context(identifier, name, *, status="active", role="User", viewer=OWN
     manager = role in PUBLIC_MANAGER_ROLES
     status_reason = None if readable else PUBLIC_INACTIVE_REASON if status == "inactive" else PUBLIC_STATUS_UNKNOWN_REASON
     sections = {}
+    open_sections = ("documents", "prompts")
     for section, group in SECTION_GROUPS.items():
-        # Only documents open; a manager of an active workspace manages that section, and
-        # every other section is listed but not yet available. Every write reauthorizes.
-        enabled = readable and section == "documents"
+        # Documents and prompts open; a manager of an active workspace manages either, and every
+        # other section is listed but not yet available. Every write reauthorizes.
+        enabled = readable and section in open_sections
         sections[section] = {
             "group": group, "enabled": enabled,
-            "can_manage": bool(enabled and status == "active" and manager and section == "documents"),
+            "can_manage": bool(enabled and status == "active" and manager),
             "reason": None if enabled else status_reason or PUBLIC_SECTION_UNAVAILABLE_REASON,
         }
     return {
@@ -131,6 +145,7 @@ def public_context(identifier, name, *, status="active", role="User", viewer=OWN
         },
         "document_management": public_document_management(role, status),
         "document_collaboration": public_document_collaboration(role, status),
+        "prompt_management": public_prompt_management(role, status),
     }
 
 
