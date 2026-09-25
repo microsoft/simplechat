@@ -2,6 +2,22 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.167)**
+
+#### Bug Fixes
+
+*   **A Lost Group Tag Change Says What Happened**
+    *   When a group's tags changed while someone was creating, recolouring or renaming a tag, the answer depended on timing. A change caught early said "The group's tags or permissions changed. Refresh and retry." A change that landed during the write said "The resource changed. Refresh and retry the operation.", with no code.
+    *   Both now answer 409 with the first sentence and `error_code: vocabulary_conflict`. The final vocabulary step of a rename or delete, and bulk tagging, report the same sentence and code.
+    *   (Ref: `functions_group_document_management.py`, [Group Tag Vocabulary Conflict Code Fix](fixes/GROUP_TAG_VOCABULARY_CONFLICT_CODE_FIX.md))
+
+#### User Interface Enhancements
+
+*   **Shared Workspaces Say Who Can Add Documents**
+    *   An empty group or public Documents section no longer tells a viewer who can't upload to "Use the classic workspace to manage files", which couldn't help them either. It says who can add documents, or why no one can right now: uploads disabled, a locked workspace, or a status that doesn't allow it.
+    *   A viewer with no document operations who tries a change is told the same way, rather than being sent to classic. Public workspaces now say "public workspace" instead of "group".
+    *   (Ref: `lib/documentAccessCopy.ts`, `DocumentExplorer.tsx`, `DocumentsSection.tsx`, [Shared Workspace Document Access Copy Fix](fixes/SHARED_WORKSPACE_DOCUMENT_ACCESS_COPY_FIX.md))
+
 ### **(v0.261.166)**
 
 #### User Interface Enhancements

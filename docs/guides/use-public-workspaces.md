@@ -43,7 +43,9 @@ the workspace it is for.
   extraction mode), and delete the current revision or every version.
   Downloads are available to them when the administrator allows downloads for
   the workspace. Ordinary members can read documents but cannot change or
-  download them.
+  download them. From version **0.261.167**, an empty workspace tells them who
+  can add documents, or why no one can right now, rather than sending them to
+  the classic page.
 - **Review publish requests** (version **0.261.134**). When someone asks to
   publish a generated file into the workspace, the request waits in the
   explorer. A reviewer approves, rejects, or withdraws it without leaving the

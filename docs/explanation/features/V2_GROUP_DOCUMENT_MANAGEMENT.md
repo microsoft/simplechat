@@ -108,6 +108,15 @@ Toolbar, row/detail commands, shortcuts, drag/drop, tag chips, dialogs, and
 empty-state actions use the same operation policy. Mixed selections are not
 silently filtered into a successful-looking subset.
 
+A viewer the server grants no document operation never gets sent to classic,
+which applies the same role and status rules. From version **0.261.167**, an
+empty Documents section says who can add documents, or why no one can right
+now: uploads disabled, a locked group, or a status that doesn't allow it. A
+change such a viewer tries, such as dropping a file, is refused in the same
+terms. If the `document_management` hint isn't recognized, both ask for a
+refresh instead. The sentences are in `lib/documentAccessCopy.ts`, and the
+explorer gets the group's status from the Documents section.
+
 Failed saves retain usable drafts and clear error/recovery guidance. Dirty and
 busy callbacks cooperate with the group shell's navigation guards. Aborting a
 request is not treated as proof that a mutation was cancelled on the server.

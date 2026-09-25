@@ -62,6 +62,10 @@ GROUP_DOCUMENT_DELETE_OPTIONS = frozenset({
     "delete_mode", "conversation_linked_delete_confirmed", "file_sync_delete_action",
 })
 MAX_GROUP_DOCUMENT_BATCH = 1000
+# A tag vocabulary write that finds the group changed answers this, whether its etag pre-check
+# caught the change or its conditional patch lost to it.
+GROUP_TAG_VOCABULARY_CONFLICT_MESSAGE = "The group's tags or permissions changed. Refresh and retry."
+GROUP_TAG_VOCABULARY_CONFLICT_CODE = "vocabulary_conflict"
 
 
 class GroupDocumentOperationError(GroupDocumentReadError):
@@ -178,10 +182,16 @@ def _tag_pointer(tag):
     return f"/tag_definitions/{tag.replace('~', '~0').replace('/', '~1')}"
 
 
+def _vocabulary_conflict():
+    return GroupDocumentOperationError(
+        GROUP_TAG_VOCABULARY_CONFLICT_MESSAGE, 409, details={"error_code": GROUP_TAG_VOCABULARY_CONFLICT_CODE},
+    )
+
+
 def _patch_tag_definitions(user_id, group_id, group, changes, removals=()):
     current, _role, _settings = require_group_document_management_context(user_id, group_id, "manage_tags")
     if not group.get("_etag") or current.get("_etag") != group["_etag"]:
-        raise GroupDocumentOperationError("The group's tags or permissions changed. Refresh and retry.", 409)
+        raise _vocabulary_conflict()
     definitions = group.get("tag_definitions")
     if definitions is not None and not isinstance(definitions, dict):
         raise GroupDocumentOperationError("The group's tag definitions are unavailable.", 409)
@@ -197,10 +207,17 @@ def _patch_tag_definitions(user_id, group_id, group, changes, removals=()):
         )
     if not operations:
         return current
-    return cosmos_groups_container.patch_item(
-        item=group_id, partition_key=group_id, patch_operations=operations,
-        filter_predicate=f"FROM c WHERE c._etag = {json.dumps(group['_etag'])}",
-    )
+    try:
+        return cosmos_groups_container.patch_item(
+            item=group_id, partition_key=group_id, patch_operations=operations,
+            filter_predicate=f"FROM c WHERE c._etag = {json.dumps(group['_etag'])}",
+        )
+    except Exception as error:
+        # A group write that landed after the pre-check fails the etag predicate: Cosmos answers
+        # 412 and stores nothing, which is the conflict the pre-check reports.
+        if getattr(error, "status_code", None) == 412:
+            raise _vocabulary_conflict() from error
+        raise
 
 
 def _new_tag_definition(tag_name, color=None):
@@ -404,7 +421,7 @@ def change_group_document_tag(user_id, group_id, tag_name, payload=None, *, dele
             failure, status = group_operation_error(error, "manage_tags", group_id=group_id)
             result["errors"].append({
                 "stage": "vocabulary", "group_id": group_id,
-                "error": "vocabulary_conflict" if status == 409 else "vocabulary_update_failed",
+                "error": GROUP_TAG_VOCABULARY_CONFLICT_CODE if status == 409 else "vocabulary_update_failed",
                 "message": failure.get("message") or failure["error"],
             })
     result["vocabulary_retained"] = bool(result["errors"])

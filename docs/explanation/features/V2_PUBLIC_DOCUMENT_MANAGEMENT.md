@@ -102,6 +102,12 @@ personal or group behavior. `document_collaboration` and `native_delegation`
 are still absent rather than empty, and absence continues to mean "not
 available".
 
+From version **0.261.167**, a reader or other viewer who can't upload is told
+who can add documents to an empty workspace, or why no one can right now, in
+public-workspace terms rather than the group wording or a classic link it saw
+before. A change such a viewer tries is refused the same way, instead of with
+the generic per-document message. An unrecognized handshake asks for a refresh.
+
 ## File structure
 
 | File | Role |

@@ -2,10 +2,12 @@
 """
 Production-SPA coverage for native V2 public workspace document browsing (M3A),
 management (M3B) and generated-artifact approval (M3C).
-Version: 0.261.164
+Version: 0.261.167
 Implemented in: 0.261.132
 A coded failure shows the server's sentence (apiClient), and an archive takes the server's
 name: 0.261.164
+The empty explorer and a refused change name this public workspace and who can change its
+documents, never a group or classic: 0.261.167
 
 Exercises real components, stores and navigation with closed synthetic HTTP.
 The read fixture never permits personal or group document requests, and never
@@ -315,6 +317,13 @@ def test_empty_workspace_stays_read_only(public_documents_ui):
     ui.documents["pub-a"] = []
     ui.open("/public/pub-a/documents")
     expect(ui.page.get_by_text("No documents yet", exact=True)).to_be_visible()
+    # A reader can't add documents here or in classic, so the empty explorer names this public
+    # workspace and who can add them, and offers no classic hand-off.
+    expect(explorer(ui).get_by_text(
+        "This public workspace's owner, admins and document managers can add documents.", exact=True,
+    )).to_be_visible()
+    expect(explorer(ui).get_by_text(re.compile(r"\bgroup\b|classic", re.IGNORECASE))).to_have_count(0)
+    expect(ui.page.get_by_role("button", name="Manage files in classic", exact=True)).to_have_count(0)
     expect(explorer(ui).get_by_role("button", name="Chat", exact=True)).to_be_disabled()
     assert_read_only(ui)
 
@@ -520,10 +529,19 @@ def test_missing_or_unknown_handshake_keeps_public_management_read_only(public_m
         assert_read_only(ui)
         assert_no_shared_place(ui)
         expect(document_row(ui, "same-document")).to_have_attribute("draggable", "false")
+        drop_file(ui)
+        expect(ui.page.get_by_text(
+            "This public workspace's document permissions couldn't be confirmed. Refresh this workspace before "
+            "managing documents.", exact=True,
+        ).first).to_be_visible()
         assert not ui.operation_requests
     ui.documents["pub-a"] = []
     ui.open("/public/pub-a/documents")
     expect(ui.page.get_by_text("No documents yet", exact=True)).to_be_visible()
+    expect(explorer(ui).get_by_text(
+        "This public workspace's document permissions couldn't be confirmed. Refresh this workspace to check "
+        "whether you can add documents.", exact=True,
+    )).to_be_visible()
     assert_read_only(ui)
     assert not ui.operation_requests
 
@@ -537,6 +555,58 @@ def test_user_role_leaves_the_public_surface_read_only(public_management_ui):
     expect(command(ui, "Chat")).to_be_enabled()
     assert_read_only(ui)
     assert_no_shared_place(ui)
+    assert not ui.operation_requests
+
+
+def drop_file(ui):
+    ui.page.get_by_role("table").evaluate("""element => {
+        const transfer = new DataTransfer();
+        transfer.items.add(new File(['blocked'], 'blocked.txt', {type: 'text/plain'}));
+        element.dispatchEvent(new DragEvent('drop', {
+            bubbles: true, cancelable: true, dataTransfer: transfer,
+        }));
+    }""")
+
+
+EMPTY_WORKSPACE_CASES = [
+    ("DocumentManager", "active", None),
+    ("User", "active", "This public workspace's owner, admins and document managers can add documents."),
+    ("DocumentManager", "upload_disabled", "Document uploads are disabled for this public workspace."),
+    ("Owner", "locked", "This public workspace is locked (read-only), so documents can't be added."),
+]
+
+
+@pytest.mark.parametrize("role, status, description", EMPTY_WORKSPACE_CASES)
+def test_an_empty_public_workspace_says_who_can_add_documents(public_management_ui, role, status, description):
+    ui = public_management_ui
+    ui.set_policy("pub-a", role=role, status=status)
+    ui.documents["pub-a"] = []
+    ui.open("/public/pub-a/documents")
+    expect(ui.page.get_by_text("No documents yet", exact=True)).to_be_visible()
+    upload = explorer(ui).get_by_role("button", name="Upload a document", exact=True)
+    if description is None:
+        expect(explorer(ui).get_by_text("Upload a file to make it available for grounded chat.", exact=True)).to_be_visible()
+        expect(upload).to_be_visible()
+    else:
+        expect(explorer(ui).get_by_text(description, exact=True)).to_be_visible()
+        expect(upload).to_have_count(0)
+    expect(explorer(ui).get_by_text(re.compile(r"\bgroup\b|classic", re.IGNORECASE))).to_have_count(0)
+    expect(ui.page.get_by_role("button", name="Manage files in classic", exact=True)).to_have_count(0)
+    assert not ui.operation_requests
+
+
+def test_a_reader_who_drops_files_is_told_who_manages_public_documents(public_management_ui):
+    ui = public_management_ui
+    ui.set_policy("pub-a", role="User")
+    open_management(ui)
+    drop_file(ui)
+    expect(ui.page.get_by_text(
+        "Only this public workspace's owner, admins and document managers can manage its documents.", exact=True,
+    ).first).to_be_visible()
+    expect(ui.page.get_by_text(
+        "This operation is not currently permitted for every selected document. Refresh access or adjust the selection.",
+        exact=True,
+    )).to_have_count(0)
     assert not ui.operation_requests
 
 

@@ -89,6 +89,9 @@ Owners, Admins, and DocumentManagers can use the available upload, metadata,
 tag, extraction, reprocessing, deletion, and download commands. Each command
 also depends on group status and the selected files; readable incoming shares
 are not editable source documents. Ordinary User membership stays read-only.
+From version **0.261.167**, a member who can't upload sees who can add
+documents to an empty group, or why no one can right now, instead of a link to
+the classic workspace, which couldn't help either.
 On compact screens, **Actions** holds selected-file commands while Upload and
 Filters stay directly reachable.
 
@@ -96,7 +99,9 @@ Use **Tags** to create, rename, recolour, or remove the group's vocabulary.
 Changes apply to current documents owned by that group, not historical
 revisions or incoming shared sources. If propagation or a vocabulary update
 only partly succeeds, the old vocabulary can remain until the reported
-failures are resolved.
+failures are resolved. If someone else changes the group's tags at the same
+moment, the change is refused with "The group's tags or permissions changed.
+Refresh and retry.", and nothing is lost by refreshing and trying again.
 
 Review each upload/bulk result. Queued extraction or metadata screening is not
 finished processing, and a partial outcome is not an instruction to retry the

@@ -1,10 +1,12 @@
 # test_v2_group_document_management.py
 """
 Closed, real-SPA browser scenarios for M2B group document management.
-Version: 0.261.164
+Version: 0.261.167
 Implemented in: 0.261.129
 Coded failures show the server's sentence, delete guards name the conversation, and an archive takes
 the server's name: 0.261.164
+A tag vocabulary conflict shows its sentence; the empty explorer and a refused change say who can
+change documents, or why no one can, and never point at classic: 0.261.167
 Every scripted receipt is the server's (the builders in fixtures/group_document_management.py,
 pinned by functional_tests/test_group_document_fixture_parity.py), except the deliberately
 malformed receipts each robustness scenario names.
@@ -35,10 +37,11 @@ from ui_tests.fixtures.group_document_management import (
     CONVERSATION_DELETE_MESSAGE, DOCUMENT_ACTIONS, DOCUMENT_CHANGED_ERROR, DOCUMENT_DELETED_MESSAGE,
     DOCUMENT_OPERATION_FAILED_ERROR, GROUP_ARCHIVE_NAME, METADATA_UPDATED_MESSAGE, OPERATIONS,
     PROPAGATION_INCOMPLETE_MESSAGE, SYNCED_DELETE_OPTIONS, TAG_CREATED_MESSAGE, TAG_REVISION_CHANGED_ERROR,
+    VOCABULARY_CONFLICT_CODE, VOCABULARY_CONFLICT_MESSAGE,
     attachment, batch_error, bulk_tag_result, connect_options, conversation_delete_guard,  # noqa: F401
     delete_result, group_management_ui, metadata_result, operation_path, propagation_incomplete,  # noqa: F401
-    queue_result, synced_delete_guard, tag_created, tag_result, tag_vocabulary_conflict, upload_refusal,
-    upload_result,
+    queue_result, synced_delete_guard, tag_created, tag_result, tag_vocabulary_conflict, tag_vocabulary_refusal,
+    upload_refusal, upload_result,
 )
 from ui_tests.fixtures.group_documents import ARTIFACT_AWAITING_APPROVAL_STATUS, document, pending_artifact, restricted
 from ui_tests.fixtures.workspace_authoring import ORIGIN, OWNER_ID
@@ -202,7 +205,8 @@ def test_missing_or_unknown_handshake_keeps_every_entry_point_read_only(group_ma
             }));
         }""")
         expect(ui.page.get_by_text(
-            "Document management is available in the classic group workspace.", exact=True,
+            "This group's document permissions couldn't be confirmed. Refresh this workspace before managing documents.",
+            exact=True,
         )).to_be_visible()
         page_size = ui.page.get_by_label("Documents per page", exact=True)
         current_size = page_size.input_value()
@@ -215,7 +219,61 @@ def test_missing_or_unknown_handshake_keeps_every_entry_point_read_only(group_ma
     ui.documents["group-a"] = []
     ui.open("/groups/group-a/documents")
     expect(ui.page.get_by_text("No documents yet", exact=True)).to_be_visible()
+    # An unreadable hint is never read as the viewer's role: an Owner here is asked to refresh.
+    expect(explorer(ui).get_by_text(
+        "This group's document permissions couldn't be confirmed. Refresh this workspace to check whether you can "
+        "add documents.", exact=True,
+    )).to_be_visible()
     assert_read_only(ui)
+
+
+EMPTY_GROUP_CASES = [
+    ("Owner", "active", None),
+    ("User", "active", "This group's owner, admins and document managers can add documents."),
+    ("DocumentManager", "upload_disabled", "Document uploads are disabled for this group."),
+    ("User", "upload_disabled", "Document uploads are disabled for this group."),
+    ("Owner", "locked", "This group is locked (read-only), so documents can't be added."),
+]
+
+
+@pytest.mark.parametrize("role, status, description", EMPTY_GROUP_CASES)
+def test_an_empty_group_says_who_can_add_documents_and_never_offers_classic(group_management_ui, role, status, description):
+    ui = group_management_ui
+    ui.set_policy(role=role, status=status)
+    ui.documents["group-a"] = []
+    ui.open("/groups/group-a/documents")
+    expect(ui.page.get_by_text("No documents yet", exact=True)).to_be_visible()
+    upload = explorer(ui).get_by_role("button", name="Upload a document", exact=True)
+    if description is None:
+        expect(explorer(ui).get_by_text("Upload a file to make it available for grounded chat.", exact=True)).to_be_visible()
+        expect(upload).to_be_visible()
+    else:
+        expect(explorer(ui).get_by_text(description, exact=True)).to_be_visible()
+        expect(upload).to_have_count(0)
+    expect(ui.page.get_by_role("button", name="Manage files in classic", exact=True)).to_have_count(0)
+    expect(explorer(ui).get_by_text(re.compile("classic", re.IGNORECASE))).to_have_count(0)
+    assert not ui.operation_requests
+
+
+@pytest.mark.parametrize("status, refusal", [
+    ("active", "Only this group's owner, admins and document managers can manage its documents."),
+    ("locked", "This group is locked (read-only), so its documents can't be changed."),
+])
+def test_a_member_who_drops_files_is_told_who_manages_documents(group_management_ui, status, refusal):
+    ui = group_management_ui
+    ui.set_policy(role="User", status=status)
+    open_documents(ui)
+    assert_read_only(ui)
+    ui.page.get_by_role("table").evaluate("""element => {
+        const transfer = new DataTransfer();
+        transfer.items.add(new File(['blocked'], 'blocked.txt', {type: 'text/plain'}));
+        element.dispatchEvent(new DragEvent('drop', {
+            bubbles: true, cancelable: true, dataTransfer: transfer,
+        }));
+    }""")
+    expect(ui.page.get_by_text(refusal, exact=True).first).to_be_visible()
+    expect(ui.page.get_by_text("Document management is available in the classic group workspace.", exact=True)).to_have_count(0)
+    assert not ui.operation_requests
 
 
 def test_user_role_is_read_only_in_documents_and_native_tags(group_management_ui):
@@ -1204,6 +1262,26 @@ def test_tag_creation_requires_201_and_the_actual_name_and_colour(group_manageme
         expect(ui.page.get_by_role("button", name="Create", exact=True)).to_be_enabled()
         assert ui.vocabulary["group-a"] == original, name
     assert len(ui.operation_requests) == len(cases)
+
+
+def test_a_tag_vocabulary_conflict_shows_the_servers_sentence_and_keeps_the_draft(group_management_ui):
+    ui = group_management_ui
+    original = copy.deepcopy(ui.vocabulary["group-a"])
+    open_tags(ui)
+    ui.page.get_by_label("New tag", exact=True).fill("urgent")
+    # The real 409 when the group changed under the vocabulary write: its sentence in `error`, its
+    # machine code in `error_code`.
+    reply = ui.queue_operation(
+        "POST", "tags", body={"tag_name": "urgent", "color": "#3b82f6"}, response=tag_vocabulary_refusal(), status=409,
+    )
+    perform(ui, reply, ui.page.get_by_role("button", name="Create", exact=True).click)
+    expect(ui.page.get_by_role("alert").filter(has_text=VOCABULARY_CONFLICT_MESSAGE)).to_be_visible()
+    expect(ui.page.get_by_text(VOCABULARY_CONFLICT_CODE)).to_have_count(0)
+    expect(ui.page.get_by_label("New tag", exact=True)).to_have_value("urgent")
+    expect(ui.page.get_by_label("Colour for urgent", exact=True)).to_have_count(0)
+    expect(ui.page.get_by_role("button", name="Create", exact=True)).to_be_enabled()
+    assert ui.vocabulary["group-a"] == original
+    assert len(ui.operation_requests) == 1
 
 
 def test_native_tag_encoded_rename_merge_and_delete_consume_owned_current_outcomes(group_management_ui):

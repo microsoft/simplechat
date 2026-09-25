@@ -185,6 +185,15 @@ and reports `{stage:"vocabulary",group_id:G,error,message}` without inventing a
 failed document ID. Per-document errors retain `document_id`. Clients refresh
 authoritative vocabulary and do not automatically replay successful writes.
 
+From version **0.261.167**, a vocabulary write that finds the group changed
+answers the same way wherever it's caught: at its etag check, or when Cosmos
+refuses its conditional patch (412). Create, recolour and rename answer 409
+"The group's tags or permissions changed. Refresh and retry." with
+`error_code: "vocabulary_conflict"`. The 207 vocabulary stage reports
+`error: "vocabulary_conflict"` with that sentence, and bulk tagging reports it
+per document. Before, a lost patch answered the generic "The resource changed.
+Refresh and retry the operation." with no code.
+
 ## Worker and download boundaries
 
 Jobs capture group, actor, document and revision; workers revalidate those

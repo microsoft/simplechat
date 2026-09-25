@@ -58,7 +58,7 @@ export function GroupDocumentsSection({
             <div className="min-h-0 flex-1">
                 <DocumentExplorer reader={reader} operations={operations} collaboration={collaboration}
                     canChat={context.document_permissions.can_chat}
-                    interactionDisabled={interactionDisabled} onOpenClassic={onOpenClassic}
+                    interactionDisabled={interactionDisabled} workspaceStatus={context.status}
                     onDirtyChange={onDirtyChange} onBusyChange={onBusyChange}
                     linkedDocumentId={linkedDocumentId} linkedDocumentError={linkedDocumentError}
                     onClearLinkedDocument={onClearLinkedDocument} />
@@ -108,7 +108,7 @@ export function PublicDocumentsSection({
             <div className="min-h-0 flex-1">
                 <DocumentExplorer reader={reader} operations={operations} collaboration={collaboration}
                     canChat={context.document_permissions.can_chat}
-                    interactionDisabled={interactionDisabled} onOpenClassic={onOpenClassic}
+                    interactionDisabled={interactionDisabled} workspaceStatus={context.status}
                     onDirtyChange={onDirtyChange} onBusyChange={onBusyChange}
                     linkedDocumentId={linkedDocumentId} linkedDocumentError={linkedDocumentError}
                     onClearLinkedDocument={onClearLinkedDocument} />
