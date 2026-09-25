@@ -21,8 +21,20 @@ export const GROUP_WORKSPACE_SECTION_IDS = [
  */
 export const GROUP_MANAGE_SECTION_IDS = ['members', 'settings', 'activity', 'statistics'] as const;
 
+/**
+ * The sections a public workspace reports. Deliberately its own list rather than a slice of
+ * GROUP_WORKSPACE_SECTION_IDS: a public workspace never has agents, actions, workflows or
+ * endpoints, so the public context and its registry leave those out entirely rather than
+ * listing them as "not available yet". Keeping this apart from the group list means a change
+ * to either surface's sections cannot silently move the other (M9A R5).
+ */
+export const PUBLIC_WORKSPACE_SECTION_IDS = [
+    'documents', 'tags', 'sync', 'prompts', 'identities',
+] as const;
+
 export type GroupWorkspaceSectionId = typeof GROUP_WORKSPACE_SECTION_IDS[number];
 export type GroupManageSectionId = typeof GROUP_MANAGE_SECTION_IDS[number];
+export type PublicWorkspaceSectionId = typeof PUBLIC_WORKSPACE_SECTION_IDS[number];
 export type GroupWorkspaceRole = 'Owner' | 'Admin' | 'DocumentManager' | 'User';
 export type GroupWorkspaceStatus = 'active' | 'locked' | 'upload_disabled' | 'inactive' | 'unknown';
 
@@ -169,7 +181,7 @@ export interface PublicWorkspaceContext extends WorkspaceAvailability {
     role: GroupWorkspaceRole;
     status: GroupWorkspaceStatus;
     can_manage_workspace: boolean;
-    sections: Record<GroupWorkspaceSectionId, WorkspaceSectionAccess>;
+    sections: Record<PublicWorkspaceSectionId, WorkspaceSectionAccess>;
     document_permissions: {
         can_view: boolean;
         can_chat: boolean;
@@ -235,6 +247,7 @@ function matchesWorkspaceContextShape(
     id: string,
     kind: 'group' | 'public',
     logoPrefix: string,
+    sectionIds: readonly string[],
 ): boolean {
     if (!isRecord(value) || value.schema_version !== 1 || value.enabled !== true || value.viewer_id !== viewerId
         || !isRecord(value.scope) || value.scope.kind !== kind || value.scope.id !== id
@@ -253,7 +266,7 @@ function matchesWorkspaceContextShape(
         && typeof value.status === 'string'
         && ['active', 'locked', 'upload_disabled', 'inactive', 'unknown'].includes(value.status)
         && typeof value.can_manage_workspace === 'boolean'
-        && GROUP_WORKSPACE_SECTION_IDS.every((sectionId) => isSectionAccess(sections[sectionId]))
+        && sectionIds.every((sectionId) => isSectionAccess(sections[sectionId]))
         && (value.native_delegation === undefined || isSectionAccess(value.native_delegation))
         && ['can_view', 'can_chat', 'can_upload', 'can_edit', 'can_delete', 'can_download']
             .every((key) => typeof permissions[key] === 'boolean')
@@ -268,7 +281,7 @@ export function isGroupWorkspaceContext(
     groupId: string,
 ): value is GroupWorkspaceContext {
     return matchesWorkspaceContextShape(value, viewerId, groupId, 'group',
-        `/api/groups/${encodeWorkspaceId(groupId)}/logo?v=`)
+        `/api/groups/${encodeWorkspaceId(groupId)}/logo?v=`, GROUP_WORKSPACE_SECTION_IDS)
         && isRecord(value) && isRecord(value.sections)
         && GROUP_MANAGE_SECTION_IDS.every((sectionId) => {
             const sections = value.sections as Record<string, unknown>;
@@ -287,7 +300,7 @@ export function isPublicWorkspaceContext(
     workspaceId: string,
 ): value is PublicWorkspaceContext {
     return matchesWorkspaceContextShape(value, viewerId, workspaceId, 'public',
-        `/api/public_workspaces/${encodeWorkspaceId(workspaceId)}/logo?v=`);
+        `/api/public_workspaces/${encodeWorkspaceId(workspaceId)}/logo?v=`, PUBLIC_WORKSPACE_SECTION_IDS);
 }
 
 export async function fetchGroupWorkspaceContext(

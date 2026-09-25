@@ -12,6 +12,7 @@
 
 import { api } from './apiClient';
 import { isRecord } from './workspaceAuthoring';
+import { useBootstrapStore } from '../stores/bootstrapStore';
 
 export interface WorkspaceSummary {
     id: string;
@@ -114,10 +115,24 @@ export const GROUP_WORKSPACES: WorkspaceKind = {
 export const PUBLIC_WORKSPACES: WorkspaceKind = {
     scope: 'public',
     list: async (page, pageSize, search, signal) => {
+        // The picker and the settings tab share the native directory route with the V2 directory
+        // page, so there is one server-side notion of which public workspaces a caller may see.
+        // The directory omits owner and member disclosures the legacy list carried; this consumer
+        // only reads id and name, so the narrower row is a superset of what it needs. The route
+        // defaults view to "all", which is the browse-everything list this picker wants.
         const response = await api.get<PublicWorkspacesResponse>(
-            `/api/public_workspaces?${query(page, pageSize, search)}`, signal,
+            `/api/public_workspaces/directory?${query(page, pageSize, search)}`, signal,
         );
-        return readPage(response, 'workspaces', page, pageSize);
+        const result = readPage(response, 'workspaces', page, pageSize);
+        // The directory omits the active-workspace flag the legacy list carried, so the settings
+        // tab's "Active" badge is derived here from the bootstrap's resolved active id. This is a
+        // read the server already made authoritative; the picker ignores it and the directory page
+        // uses its own adapter, so the derivation is confined to this shared settings-tab consumer.
+        const activeId = useBootstrapStore.getState().data?.scope?.active_public_workspace_id ?? null;
+        return {
+            ...result,
+            items: result.items.map((workspace) => ({ ...workspace, isActive: activeId !== null && workspace.id === activeId })),
+        };
     },
     setActive: async (id) => {
         await api.patch('/api/public_workspaces/setActive', { workspaceId: id });

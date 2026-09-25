@@ -22,7 +22,7 @@ import {
     PUBLIC_SECTION_BLURBS, PUBLIC_STATUS_LABELS, publicWorkspacePath,
     classicPublicSectionLabel, readPublicDocumentTarget,
 } from '../lib/publicWorkspaceNavigation';
-import { GROUP_WORKSPACE_SECTION_IDS } from '../lib/workspaceContext';
+import { PUBLIC_WORKSPACE_SECTION_IDS } from '../lib/workspaceContext';
 import { resolveWorkspaceSections } from '../lib/workspaceSections';
 import { PUBLIC_WORKSPACES } from '../lib/workspaces';
 import { useBootstrapStore } from '../stores/bootstrapStore';
@@ -117,7 +117,7 @@ export function PublicWorkspacePage() {
     const context = state.context && state.context.scope.id === workspaceId && state.context.viewer_id === viewerId ? state.context : null;
     const ready = context && !state.loading;
     const basePath = workspaceId ? publicWorkspacePath(workspaceId) : '/public';
-    const sections = useMemo(() => GROUP_WORKSPACE_SECTION_IDS.map((id) => {
+    const sections = useMemo(() => PUBLIC_WORKSPACE_SECTION_IDS.map((id) => {
         const { label, icon, group } = WORKSPACE_SECTIONS_BY_ID[id];
         return {
             id, label, icon, group, blurb: PUBLIC_SECTION_BLURBS[id],
@@ -174,7 +174,8 @@ export function PublicWorkspacePage() {
 
     const header = (
         <>
-            <PageHeader title="Public workspaces" description="Read-only shared knowledge published for everyone" leading={<Globe size={20} className="text-accent" />} />
+            <PageHeader title="Public workspaces" description="Read-only shared knowledge published for everyone" leading={<Globe size={20} className="text-accent" />}
+                actions={<GlassButton size="sm" variant="subtle" onClick={() => navigate('/public/directory')}><LayoutGrid size={14} />Public directory</GlassButton>} />
             <div className="shrink-0 space-y-3 border-b border-edge px-4 py-3">
                 <PublicWorkspacePicker key={viewerId} value={state.pendingWorkspaceId ?? workspaceId}
                     selectedName={context?.workspace.name || bootstrap?.scope?.public_workspaces?.find((workspace) => workspace.id === workspaceId)?.name}
@@ -227,7 +228,7 @@ export function PublicWorkspacePage() {
                 <EmptyState icon={<Globe size={28} />} title="Choose a public workspace"
                     description={hasDocumentLink ? 'A document link must include its explicit public workspace. Choose one and open the document from that workspace.'
                         : 'Select a public workspace above to browse its published documents.'}
-                    action={<a href="/public_directory" className="text-sm text-accent underline">Browse the public directory in classic</a>} />
+                    action={<GlassButton size="sm" variant="subtle" onClick={() => navigate('/public/directory')}><LayoutGrid size={14} />Browse the public directory</GlassButton>} />
             ) : ready ? (
                 <div key={`${context.scope.id}:${section ?? 'overview'}`}
                     className={nativeDocuments ? 'flex min-h-0 flex-1 flex-col' : 'space-y-4'}>

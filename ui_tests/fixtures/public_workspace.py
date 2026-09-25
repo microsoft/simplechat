@@ -183,7 +183,11 @@ class PublicWorkspaceFixture(WorkspaceAuthoringFixture):
             self.unexpected_requests.append(f"{method} {path} ({leak} from a public page)")
             self._json(route, {"error": "Personal-scope reads are not available on public pages."}, 500)
             return
-        if path == "/api/public_workspaces" and method == "GET":
+        if path == "/api/public_workspaces/directory" and method == "GET":
+            # The V2 picker and settings tab now share the native directory route (M9A commit 4).
+            # This suite only needs the request answered with a valid page; the directory page's own
+            # fixture (public_directory.py) intercepts this path first for the directory-specific
+            # projection, so the two never collide.
             term = entry.query.get("search", [""])[0].lower()
             page = int(entry.query.get("page", ["1"])[0])
             size = int(entry.query.get("page_size", ["25"])[0])
