@@ -2,6 +2,19 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.176)**
+
+#### Bug Fixes
+
+*   **Statistics Date Ranges Are Limited To 366 Days**
+    *   The classic group, public workspace and profile statistics accepted any custom range between 2000 and 9998, and the profile route had no bound at all. A range of millions of days made one request take seconds of processing and over a gigabyte of memory, and return a very large response.
+    *   Every statistics route now refuses a custom range longer than 366 days with "Choose a date range of 366 days or fewer.", as the V2 group statistics already did. The profile statistics also refuse dates outside 2000-01-01 to 9998-12-31.
+    *   (Ref: `functions_stats_windows.py`, `route_backend_groups.py`, `route_backend_public_workspaces.py`, `route_frontend_profile.py`, [Statistics Window Span Limit Fix](fixes/STATS_WINDOW_SPAN_LIMIT_FIX.md))
+
+*   **Public Workspace Role Changes Check Permission First**
+    *   A public workspace role change or ownership transfer looked the member up in the directory before checking that the caller could make the change. It now checks first. A transfer to an older member entry keeps the member's name and email, and Control Center's ownership approvals keep every member.
+    *   (Ref: `route_backend_public_workspaces.py`, `route_backend_control_center.py`, [Public Workspace Writer Safety Fix](fixes/PUBLIC_WORKSPACE_WRITER_SAFETY_FIX.md))
+
 ### **(v0.261.175)**
 
 #### New Features

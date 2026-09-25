@@ -7501,6 +7501,8 @@ def register_route_backend_control_center(bp):
                         new_admins.append(admin)
                     elif admin_id in resolved_users:
                         new_admins.append(resolved_users[admin_id])
+                    else:
+                        new_admins.append({'userId': admin_id, 'email': 'unknown', 'displayName': 'unknown'})
                 fresh['admins'] = new_admins
 
                 new_dms = []
@@ -7512,6 +7514,8 @@ def register_route_backend_control_center(bp):
                         new_dms.append(dm)
                     elif dm_id in resolved_users:
                         new_dms.append(resolved_users[dm_id])
+                    else:
+                        new_dms.append({'userId': dm_id, 'email': 'unknown', 'displayName': 'unknown'})
                 fresh['documentManagers'] = new_dms
 
                 # Demote old owner to admin if not already a member
@@ -7782,6 +7786,8 @@ def register_route_backend_control_center(bp):
                         new_admins.append(admin)
                     elif admin_id in resolved_users:
                         new_admins.append(resolved_users[admin_id])
+                    else:
+                        new_admins.append({'userId': admin_id, 'email': 'unknown', 'displayName': 'unknown'})
                 fresh['admins'] = new_admins
 
                 new_dms = []
@@ -7793,6 +7799,8 @@ def register_route_backend_control_center(bp):
                         new_dms.append(dm)
                     elif dm_id in resolved_users:
                         new_dms.append(resolved_users[dm_id])
+                    else:
+                        new_dms.append({'userId': dm_id, 'email': 'unknown', 'displayName': 'unknown'})
                 fresh['documentManagers'] = new_dms
 
                 # Add old owner to admins if not already a member

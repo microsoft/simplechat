@@ -77,6 +77,13 @@ copy on every attempt, so a decision is never made from a stale one.
   stored name and email. A directory (Graph) lookup is used only for an old
   bare-id entry, and only before the conditional write.
 - The previous owner stays a document manager, with their name and email.
+- From version **0.261.176**, a role change and a transfer check the caller's
+  role, and a role change checks the new role, before any directory lookup. So
+  someone without the right can't trigger a lookup. A transfer to a bare-id
+  document manager also takes the name and email from the directory, as a role
+  change already did. Control Center's ownership approvals keep a bare-id
+  member written between their two reads, as `unknown`, instead of dropping it.
+  An independent review of this release found these three low-severity gaps.
 
 ### Settings, logo, downloads and retention
 

@@ -1,7 +1,7 @@
 # test_control_center_public_writers.py
 """
 Functional test for the Control Center's public-workspace writers on the etag guard.
-Version: 0.261.173
+Version: 0.261.176
 Implemented in: 0.261.173
 
 The Control Center metrics cache, the public-workspace status change, the bulk
@@ -651,6 +651,42 @@ def test_transfer_ownership_refused_when_someone_else_owns_it(env):
     result = transfer_ownership(env, new_owner_id="successor", recorded_owner_id="owner")
 
     assert result == {"success": False, "message": env.route_ns["PUBLIC_OWNERSHIP_CHANGED_MESSAGE"]}
+
+
+def _add_late_string_admin(env, entry="late-string-admin"):
+    """Land a bare-string admin between the reads, so it is absent from the
+    pre-read ``resolved_users`` and must survive the rebuild as ``unknown``."""
+    def land(current):
+        current.setdefault("admins", []).append(entry)
+    concurrently(env, land)
+
+
+def test_take_keeps_a_string_member_added_between_the_reads(env):
+    seed_workspace(env, owner={"userId": "owner", "displayName": "Owner", "email": "owner@example.test"},
+                   admins=[], document_managers=[])
+    _add_late_string_admin(env, entry="late-string-admin")
+
+    result = take_ownership(env, requester_id="requester", recorded_owner_id="owner")
+
+    assert result["success"] is True
+    admins = {a["userId"]: a for a in stored(env)["admins"]}
+    assert "late-string-admin" in admins  # kept, not dropped
+    assert admins["late-string-admin"] == {
+        "userId": "late-string-admin", "email": "unknown", "displayName": "unknown"}
+
+
+def test_transfer_keeps_a_string_member_added_between_the_reads(env):
+    seed_workspace(env, owner={"userId": "owner", "displayName": "Owner", "email": "owner@example.test"},
+                   admins=[], document_managers=[])
+    _add_late_string_admin(env, entry="late-string-admin")
+
+    result = transfer_ownership(env, new_owner_id="successor", recorded_owner_id="owner")
+
+    assert result["success"] is True
+    admins = {a["userId"]: a for a in stored(env)["admins"]}
+    assert "late-string-admin" in admins  # kept, not dropped
+    assert admins["late-string-admin"] == {
+        "userId": "late-string-admin", "email": "unknown", "displayName": "unknown"}
 
 
 if __name__ == "__main__":

@@ -1167,7 +1167,8 @@ def register_route_backend_groups(bp):
         try:
             # A custom date outside 2000-01-01 to 9998-12-31, or one whose UTC offset
             # carries it past the calendar's edge, is refused here, so the day-by-day
-            # series below can't overflow. Classic windows keep no length cap.
+            # series below can't overflow. A custom range longer than
+            # STATS_MAX_CUSTOM_DAYS (366) days is refused too, as the V2 routes refuse it.
             stats_window = resolve_bounded_stats_time_window(request.args)
         except ValueError as ex:
             return jsonify({"error": str(ex)}), 400

@@ -14,7 +14,7 @@ from functions_settings import (
 )
 from functions_notifications import create_notification
 from swagger_wrapper import swagger_route, get_auth_security
-from functions_debug import debug_print
+from functions_debug import debug_print, is_debug_enabled
 from functions_stats_windows import (
     build_stats_date_series,
     resolve_bounded_stats_time_window,
@@ -67,6 +67,22 @@ def _member_user_id(entry):
     if isinstance(entry, dict):
         return entry.get("userId")
     return entry
+
+def _is_bare_string_member(ws, target_id):
+    """
+    True only when ``target_id`` is stored as a legacy bare-string entry in the
+    workspace's ``admins`` or ``documentManagers``. This is the one case where a
+    Microsoft Graph lookup is the correct fallback for a member's name and email
+    (R5.7): a dict entry already carries them, and a non-member must never trigger
+    a Graph call from an unauthorized or invalid request.
+    """
+    if not isinstance(ws, dict):
+        return False
+    for key in ("admins", "documentManagers"):
+        for entry in ws.get(key, []) or []:
+            if not isinstance(entry, dict) and entry == target_id:
+                return True
+    return False
 
 def get_user_details_from_graph(user_id):
     """
@@ -874,18 +890,28 @@ def register_route_backend_public_workspaces(bp):
             return None
 
         # R5.7: carry the member's stored name and email when they move between
-        # admins and documentManagers. Graph is only the fallback for a legacy
-        # string-format entry, and runs once, before the guarded write, never
-        # inside the retryable change.
+        # admins and documentManagers. The caller's role and the requested role
+        # are checked on the pre-read *before* any Graph call, so an unauthorized
+        # or invalid request can never trigger a Graph lookup; Graph is the
+        # fallback only for a legacy bare-string entry, and runs once, before the
+        # guarded write, never inside the retryable change. The authoritative
+        # decision is still re-made on the fresh copy inside ``apply``.
         current = find_public_workspace_by_id(ws_id)
         if not current:
             return jsonify({"error": "Not found"}), 404
+        if get_user_role_in_public_workspace(current, user_id) not in ["Owner", "Admin"]:
+            return jsonify({"error": "Forbidden"}), 403
+        if new_role not in ["Admin", "DocumentManager"]:
+            return jsonify({"error": "Invalid role"}), 400
         fallback = _stored_member_identity(current)
         if fallback is None:
-            try:
-                details = get_user_details_from_graph(member_id)
-                fallback = (details.get("displayName", ""), details.get("email", ""))
-            except Exception:
+            if _is_bare_string_member(current, member_id):
+                try:
+                    details = get_user_details_from_graph(member_id)
+                    fallback = (details.get("displayName", ""), details.get("email", ""))
+                except Exception:
+                    fallback = ("", "")
+            else:
                 fallback = ("", "")
 
         outcome = {}
@@ -969,14 +995,20 @@ def register_route_backend_public_workspaces(bp):
                     return {"userId": new_owner, "displayName": admin.get("displayName", ""), "email": admin.get("email", "")}
             return None
 
-        # R5.7: carry the new owner's stored name and email. Graph is only the
-        # fallback for a legacy string-format admin entry, and runs once, before
-        # the guarded write, never inside the retryable change.
+        # R5.7: carry the new owner's stored name and email. The caller must be
+        # the current owner, which is checked on the pre-read *before* any Graph
+        # call, so an unauthorized transfer can never trigger a Graph lookup;
+        # Graph is the fallback only for a legacy bare-string entry in either
+        # admins or documentManagers, and runs once, before the guarded write,
+        # never inside the retryable change. The owner check is re-made on the
+        # fresh copy inside ``apply``.
         current = find_public_workspace_by_id(ws_id)
         if not current:
             return jsonify({"error": "Not found"}), 404
+        if (current.get("owner") or {}).get("userId") != user_id:
+            return jsonify({"error": "Forbidden"}), 403
         graph_fallback = None
-        if _new_owner_identity(current) is None and is_user_in_admins(new_owner, current.get("admins", [])):
+        if _new_owner_identity(current) is None and _is_bare_string_member(current, new_owner):
             try:
                 d = get_user_details_from_graph(new_owner)
                 graph_fallback = {"userId": new_owner, "displayName": d.get("displayName", ""), "email": d.get("email", "")}
@@ -1297,7 +1329,8 @@ def register_route_backend_public_workspaces(bp):
             "window": stats_window_response_payload(stats_window)
         }
         
-        debug_print(f"[PUBLIC_WORKSPACE_STATS] Final stats: {stats}")
+        if is_debug_enabled():
+            debug_print(f"[PUBLIC_WORKSPACE_STATS] Final stats: {stats}")
 
         return jsonify(stats), 200
 

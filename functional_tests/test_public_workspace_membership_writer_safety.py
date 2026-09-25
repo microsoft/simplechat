@@ -1,7 +1,7 @@
 # test_public_workspace_membership_writer_safety.py
 """
 Functional test for the guarded public-workspace membership, request and role routes.
-Version: 0.261.173
+Version: 0.261.176
 Implemented in: 0.261.173
 
 The six classic writers ``api_request_public_workspace``, ``api_handle_public_request``,
@@ -202,7 +202,7 @@ def _environment():
     )
     _exec_names(
         ROUTE_FILE,
-        {"is_user_in_admins", "remove_user_from_admins", "_member_user_id",
+        {"is_user_in_admins", "remove_user_from_admins", "_member_user_id", "_is_bare_string_member",
          "_PublicClassicResponse", "_guarded_public_write"},
         namespace,
     )
@@ -527,6 +527,120 @@ def test_ownership_can_transfer_to_a_string_document_manager():
 def _id(entry):
     """The user id of a member entry stored as a dict or a bare string (test helper)."""
     return entry["userId"] if isinstance(entry, dict) else entry
+
+
+# --------------------------------------------------------------------------- #
+# Follow-up items 1 and 2: the role change and the transfer authorize the caller on
+# the pre-read before any Microsoft Graph lookup, and call Graph only for a legacy
+# bare-string entry (R5.7 fallback only). A dict entry already carries its name and
+# email, and a non-owner, an unauthorized caller or an invalid role can never trigger
+# a Graph lookup for an arbitrary id.
+# --------------------------------------------------------------------------- #
+
+def _spy_on_graph(env):
+    """Record every ``get_user_details_from_graph`` id and keep returning blanks."""
+    calls = []
+
+    def _record(user_id):
+        calls.append(user_id)
+        return {"displayName": "", "email": ""}
+
+    env.namespace["get_user_details_from_graph"] = _record
+    return calls
+
+
+def test_a_role_change_by_a_non_manager_is_refused_before_any_graph_lookup():
+    """A caller who is neither owner nor admin is refused, and no Graph lookup runs for
+    the target first (item 1). Moving the Graph call before the role check reddens this."""
+    env = _environment()
+    env.container.seed(_workspace(documentManagers=[STRING_DM]))
+    calls = _spy_on_graph(env)
+    _as_actor(env, "stranger")
+    _set_body(env, {"role": "Admin"})
+
+    payload, status = env.handlers["api_update_public_member_role"](WS_ID, STRING_DM)
+
+    assert status == 403
+    assert calls == []
+    assert env.bumps == []
+
+
+def test_an_invalid_new_role_is_refused_before_any_graph_lookup():
+    """An unknown role is refused on the pre-read before any Graph lookup (item 1)."""
+    env = _environment()
+    env.container.seed(_workspace(documentManagers=[STRING_DM]))
+    calls = _spy_on_graph(env)
+    _as_actor(env, "owner")
+    _set_body(env, {"role": "Sovereign"})
+
+    payload, status = env.handlers["api_update_public_member_role"](WS_ID, STRING_DM)
+
+    assert status == 400
+    assert calls == []
+
+
+def test_a_dict_target_role_change_never_calls_graph():
+    """A dict entry already carries its name and email, so a role change reads no Graph
+    (item 1: Graph is the fallback only for a bare-string entry)."""
+    env = _environment()
+    env.container.seed(_workspace(
+        documentManagers=[{"userId": "mgr", "displayName": "Manager One", "email": "mgr@example.test"}],
+    ))
+    calls = _spy_on_graph(env)
+    _as_actor(env, "owner")
+    _set_body(env, {"role": "Admin"})
+
+    payload, status = env.handlers["api_update_public_member_role"](WS_ID, "mgr")
+
+    assert status == 200
+    assert calls == []
+
+
+def test_a_string_target_role_change_calls_graph_once_for_the_entry():
+    """A bare-string entry is the one case a Graph lookup is the correct fallback."""
+    env = _environment()
+    env.container.seed(_workspace(documentManagers=[STRING_DM]))
+    calls = _spy_on_graph(env)
+    _as_actor(env, "owner")
+    _set_body(env, {"role": "Admin"})
+
+    payload, status = env.handlers["api_update_public_member_role"](WS_ID, STRING_DM)
+
+    assert status == 200
+    assert calls == [STRING_DM]
+
+
+def test_a_transfer_by_a_non_owner_is_refused_before_any_graph_lookup():
+    """Only the owner may transfer; a non-owner admin is refused before any Graph lookup
+    (item 1). Moving the Graph call before the owner check reddens this."""
+    env = _environment()
+    env.container.seed(_workspace(admins=[DICT_ADMIN], documentManagers=[STRING_DM]))
+    calls = _spy_on_graph(env)
+    _as_actor(env, "admin")  # an admin is not the owner
+    _set_body(env, {"newOwnerId": STRING_DM})
+
+    payload, status = env.handlers["api_transfer_public_ownership"](WS_ID)
+
+    assert status == 403
+    assert calls == []
+    assert env.bumps == []
+
+
+def test_a_transfer_to_a_string_manager_computes_the_graph_fallback():
+    """Item 2: a bare-string new owner in documentManagers gets the Graph fallback, so an
+    admins-only check can no longer save a blank owner."""
+    env = _environment()
+    env.container.seed(_workspace(documentManagers=[STRING_DM]))
+    calls = _spy_on_graph(env)
+    _as_actor(env, "owner")
+    _set_body(env, {"newOwnerId": STRING_DM})
+
+    payload, status = env.handlers["api_transfer_public_ownership"](WS_ID)
+
+    assert status == 200
+    assert calls == [STRING_DM]
+    stored = env.container.get(WS_ID, WS_ID)
+    assert stored["owner"] == {"userId": STRING_DM, "displayName": "", "email": ""}
 
 
 if __name__ == "__main__":

@@ -1,7 +1,7 @@
 # test_group_classic_request_gaps.py
 """
 Functional test for three classic group request gaps (residuals R2).
-Version: 0.261.173
+Version: 0.261.176
 Implemented in: 0.261.160
 
 - ``PATCH /api/groups/<group_id>/download-settings`` read
@@ -19,10 +19,11 @@ Implemented in: 0.261.160
   and a window ending near 9999-12-31 overflowed building its day-by-day series,
   both a 500. The bounds, message and checker the native statistics use now live in
   ``functions_stats_windows`` (``resolve_bounded_stats_time_window``), and both
-  routes use them, so such a date is a 400 with the native text. Classic windows keep
-  no length cap. Public workspace statistics now use the bounded window too (pinned in
-  ``test_public_classic_request_gaps.py``); profile trends still use the unbounded
-  window, unchanged.
+  routes use them, so such a date is a 400 with the native text. The bounded resolver
+  also caps a custom span at ``STATS_MAX_CUSTOM_DAYS`` days (the native group insights'
+  cap, moved into the shared helper), so a longer classic window is a 400 too. Public
+  workspace statistics and profile trends now use the bounded window as well; the new
+  cap is pinned across all three routes in ``test_stats_custom_window_cap.py``.
 
 The routes run for real in ``test_support/group_settings_harness.py``.
 """
@@ -185,14 +186,21 @@ def test_dates_outside_the_supported_range_are_a_reviewed_400(env, window):
 @pytest.mark.parametrize("query,days", [
     ({"start_date": "2000-01-01", "end_date": "2000-01-31"}, 31),
     ({"start_date": "9998-12-01", "end_date": "9998-12-31"}, 31),
-    # Classic windows keep no length cap.
-    ({"start_date": "2000-01-01", "end_date": "2003-12-31"}, 1461),
+    # The longest window the shared cap allows (2000 is a leap year, so 366 days).
+    ({"start_date": "2000-01-01", "end_date": "2000-12-31"}, 366),
 ])
 def test_windows_inside_the_range_are_read(env, query, days):
     response = env.call("GET", STATS_PATH, query_string=query)
     assert response.status_code == 200
     body = response.get_json()
     assert (body["window"]["type"], body["window"]["days"], len(body["dateRange"])) == ("custom", days, days)
+
+
+def test_a_window_longer_than_the_cap_is_a_reviewed_400(env):
+    # 2000-01-01..2001-01-01 is 367 days: one past the shared cap.
+    response = env.call("GET", STATS_PATH, query_string={"start_date": "2000-01-01", "end_date": "2001-01-01"})
+    assert outcome(response) == (400, {"error": "Choose a date range of 366 days or fewer."})
+    assert env.activity_logs.queries == [] and error_logs(env) == []
 
 
 @pytest.mark.parametrize("query,message", [
@@ -227,9 +235,9 @@ def windows():
 
 def test_the_bounded_window_refuses_only_custom_dates_outside_the_range(windows):
     assert windows.resolve_bounded_stats_time_window({"days": "7"})["days"] == 7
-    inside = windows.resolve_bounded_stats_time_window({"start_date": "2000-01-01", "end_date": "9998-12-31"})
+    inside = windows.resolve_bounded_stats_time_window({"start_date": "2000-01-01", "end_date": "2000-12-31"})
     assert (inside["type"], inside["start_date_iso"], inside["end_date_iso"]) == (
-        "custom", "2000-01-01T00:00:00", "9998-12-31T23:59:59.999999",
+        "custom", "2000-01-01T00:00:00", "2000-12-31T23:59:59.999999",
     )
     for query in OUT_OF_RANGE_WINDOWS.values():
         with pytest.raises(windows.StatsDateRangeError) as refused:
@@ -241,7 +249,7 @@ def test_the_bounded_window_refuses_only_custom_dates_outside_the_range(windows)
 
 
 def test_the_unbounded_window_is_unchanged(windows):
-    """Public workspace statistics and profile trends still use it, recorded rather than changed."""
+    """The unbounded resolver stays available and uncapped; the bounded resolver wraps it."""
     window = windows.resolve_stats_time_window({"start_date": "1999-12-31", "end_date": "2000-01-01"})
     assert window["days"] == 2
     with pytest.raises(OverflowError):
@@ -261,7 +269,7 @@ def _window_resolvers(file_name):
     ("route_backend_groups.py", ["resolve_bounded_stats_time_window"]),
     ("functions_group_insights.py", ["resolve_bounded_stats_time_window"]),
     ("route_backend_public_workspaces.py", ["resolve_bounded_stats_time_window"]),
-    ("route_frontend_profile.py", ["resolve_stats_time_window"]),
+    ("route_frontend_profile.py", ["resolve_bounded_stats_time_window"]),
 ])
 def test_each_stats_route_uses_its_window(file_name, expected):
     assert _window_resolvers(file_name) == expected

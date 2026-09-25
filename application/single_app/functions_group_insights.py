@@ -63,6 +63,7 @@ from functions_group_settings import (
 from functions_settings import get_settings
 from functions_stats_windows import (
     ALLOWED_STATS_WINDOW_DAYS,
+    STATS_MAX_CUSTOM_DAYS,
     build_stats_date_series,
     resolve_bounded_stats_time_window,
     stats_window_response_payload,
@@ -72,7 +73,9 @@ from functions_stats_windows import (
 
 GROUP_ACTIVITY_LIMITS = (10, 20, 50)
 GROUP_ACTIVITY_DEFAULT_LIMIT = 50
-GROUP_STATS_MAX_CUSTOM_DAYS = 366
+# The custom-span cap now lives in the shared bounded resolver; this alias records the
+# group-facing name for the same value.
+GROUP_STATS_MAX_CUSTOM_DAYS = STATS_MAX_CUSTOM_DAYS
 GROUP_STATS_UNAVAILABLE_MESSAGE = "Group statistics are unavailable right now. Try again."
 GROUP_ACTIVITY_UNAVAILABLE_MESSAGE = "Group activity is unavailable right now. Try again."
 WHOLE_NUMBER = re.compile(r"[1-9][0-9]{0,5}")
@@ -192,14 +195,13 @@ def read_stats_window():
         if not WHOLE_NUMBER.fullmatch(raw) or int(raw) not in ALLOWED_STATS_WINDOW_DAYS:
             raise _invalid("The days must be 7, 30 or 90.")
     try:
-        # The shared checker refuses a custom date outside 2000-01-01 to 9998-12-31,
-        # including one whose UTC offset carries it past the calendar's edge. The window
+        # The shared bounded resolver refuses a custom date outside 2000-01-01 to
+        # 9998-12-31 (including one whose UTC offset carries it past the calendar's
+        # edge) and a custom span longer than STATS_MAX_CUSTOM_DAYS days. The window
         # helpers' messages name only their own fields, formats and range.
         window = resolve_bounded_stats_time_window(arguments)
     except ValueError as error:
         raise _invalid(str(error)) from error
-    if window["type"] == "custom" and window["days"] > GROUP_STATS_MAX_CUSTOM_DAYS:
-        raise _invalid(f"Choose a date range of {GROUP_STATS_MAX_CUSTOM_DAYS} days or fewer.")
     return window
 
 
