@@ -335,24 +335,31 @@ def register_route_backend_retention_policy(bp):
             # Force push to public workspaces
             if 'public' in scopes:
                 debug_print("Force pushing retention defaults to public workspaces...")
-                from functions_public_workspaces import cosmos_public_workspaces_container
+                from functions_public_workspaces import update_public_workspace_document_with_etag_guard
                 all_workspaces = get_all_public_workspaces()
                 public_count = 0
-                
+
+                def apply_default_public_retention(fresh):
+                    fresh['retention_policy'] = {
+                        'conversation_retention_days': 'default',
+                        'document_retention_days': 'default'
+                    }
+                    return fresh
+
                 for workspace in all_workspaces:
                     workspace_id = workspace.get('id')
                     if not workspace_id:
                         continue
-                    
+
                     try:
-                        # Update workspace's retention policy to use 'default'
-                        workspace['retention_policy'] = {
-                            'conversation_retention_days': 'default',
-                            'document_retention_days': 'default'
-                        }
-                        
-                        cosmos_public_workspaces_container.upsert_item(workspace)
-                        public_count += 1
+                        # Update the workspace's retention policy to use 'default', on its
+                        # current copy: changes since the listing are kept, and a workspace
+                        # deleted since then is skipped rather than recreated.
+                        written = update_public_workspace_document_with_etag_guard(
+                            workspace_id, apply_default_public_retention, cache_reason=None,
+                        )
+                        if written is not None:
+                            public_count += 1
                     except Exception as e:
                         debug_print(f"Error updating public workspace {workspace_id}: {e}")
                         log_event(f"Error updating public workspace {workspace_id} during force push: {e}", level=logging.ERROR)
@@ -678,10 +685,18 @@ def register_route_backend_retention_policy(bp):
         """
         try:
             user_id = get_current_user_id()
-            data = request.get_json()
+            # Read quietly: a body that isn't JSON is answered below, after the role check.
+            data = request.get_json(silent=True)
             
             # Get workspace and verify permissions
-            from functions_public_workspaces import find_public_workspace_by_id, get_user_role_in_public_workspace
+            from functions_public_workspaces import (
+                PUBLIC_WORKSPACE_WRITE_CONFLICT_CODE,
+                PUBLIC_WORKSPACE_WRITE_CONFLICT_MESSAGE,
+                PublicWorkspaceDocumentWriteConflict,
+                find_public_workspace_by_id,
+                get_user_role_in_public_workspace,
+                update_public_workspace_document_with_etag_guard,
+            )
             workspace = find_public_workspace_by_id(public_workspace_id)
             
             if not workspace:
@@ -696,6 +711,13 @@ def register_route_backend_retention_policy(bp):
                     'success': False,
                     'error': 'Insufficient permissions. Must be workspace owner or admin.'
                 }), 403
+
+            # R5.2: a body that isn't a JSON object is refused rather than answered 500.
+            if not isinstance(data, dict):
+                return jsonify({
+                    'success': False,
+                    'error': 'A JSON object is required for this request.'
+                }), 400
             
             retention_settings = {}
             
@@ -755,9 +777,38 @@ def register_route_backend_retention_policy(bp):
                     'error': 'No retention settings provided'
                 }), 400
             
-            # Update workspace document
-            workspace['retention_policy'] = retention_settings
-            cosmos_public_workspaces_container.upsert_item(workspace)
+            # Update the workspace document on its current copy: the caller's role is
+            # checked again there, and the retention key the request leaves out is kept
+            # from that copy rather than dropped.
+            def apply_retention(fresh):
+                if get_user_role_in_public_workspace(fresh, user_id) not in ['Owner', 'Admin']:
+                    raise PermissionError('Insufficient permissions. Must be workspace owner or admin.')
+                stored_policy = fresh.get('retention_policy')
+                retention_policy = dict(stored_policy) if isinstance(stored_policy, dict) else {}
+                retention_policy.update(retention_settings)
+                fresh['retention_policy'] = retention_policy
+                return fresh
+
+            try:
+                updated = update_public_workspace_document_with_etag_guard(
+                    public_workspace_id, apply_retention, cache_reason=None,
+                )
+            except PermissionError:
+                return jsonify({
+                    'success': False,
+                    'error': 'Insufficient permissions. Must be workspace owner or admin.'
+                }), 403
+            except PublicWorkspaceDocumentWriteConflict:
+                return jsonify({
+                    'success': False,
+                    'error': PUBLIC_WORKSPACE_WRITE_CONFLICT_MESSAGE,
+                    'error_code': PUBLIC_WORKSPACE_WRITE_CONFLICT_CODE
+                }), 409
+            if updated is None:
+                return jsonify({
+                    'success': False,
+                    'error': 'Public workspace not found'
+                }), 404
             
             return jsonify({
                 'success': True,

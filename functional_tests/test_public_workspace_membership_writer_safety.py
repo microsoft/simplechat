@@ -78,8 +78,14 @@ def _forwarded_reasons(writer):
 def test_the_membership_writers_forward_their_classic_cache_reasons():
     """Converted with the bumps they always had: approve bumps once after the commit
     (the action is read inside the change), add/remove/role/transfer forward theirs,
-    and the join request commits without a bump."""
-    assert _forwarded_reasons("_guarded_public_write") == {
+    and the join request commits without a bump. Other guarded writers (settings,
+    logo, download) are pinned by their own suite, so this reads only the six here."""
+    membership = {
+        "api_request_public_workspace", "api_handle_public_request", "api_add_public_member",
+        "api_remove_public_member", "api_update_public_member_role", "api_transfer_public_ownership",
+    }
+    forwarded = _forwarded_reasons("_guarded_public_write")
+    assert {name: forwarded[name] for name in membership if name in forwarded} == {
         "api_request_public_workspace": None,
         "api_handle_public_request": None,
         "api_add_public_member": "public_workspace_member_added",

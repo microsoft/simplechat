@@ -114,13 +114,20 @@ class _PublicClassicResponse(Exception):
         self.status = status
 
 
-def _guarded_public_write(ws_id, apply_changes, *, cache_reason):
+def _guarded_public_write(ws_id, apply_changes, *, cache_reason,
+                          not_found_error="Not found",
+                          storage_error=None, storage_log_message=None):
     """Run a classic public route's change through ``update_public_workspace_document_with_etag_guard``.
 
     ``apply_changes`` re-checks the route's rules on each fresh copy and raises
     ``_PublicClassicResponse`` with the route's own refusal. Returns ``(committed, None)``
     after a commit, or ``(None, response)`` with that refusal, the classic 404 for a
     workspace missing or deleted mid-write, or a 409 for a workspace that keeps changing.
+
+    When ``storage_error`` is given, a Cosmos write failure is logged with only its
+    error type and status code -- never ``str(ex)`` -- under ``storage_log_message`` and
+    answered with the reviewed ``storage_error`` text at 400, mirroring the group
+    settings routes. Without it the Cosmos error propagates unchanged.
     """
     try:
         committed = update_public_workspace_document_with_etag_guard(ws_id, apply_changes, cache_reason=cache_reason)
@@ -131,8 +138,18 @@ def _guarded_public_write(ws_id, apply_changes, *, cache_reason):
             "error": PUBLIC_WORKSPACE_WRITE_CONFLICT_MESSAGE,
             "error_code": PUBLIC_WORKSPACE_WRITE_CONFLICT_CODE,
         }), 409)
+    except exceptions.CosmosHttpResponseError as ex:
+        if storage_error is None:
+            raise
+        log_event(
+            storage_log_message,
+            extra={"workspace_id": ws_id, "error_type": type(ex).__name__,
+                   "status_code": getattr(ex, "status_code", None)},
+            level=logging.ERROR,
+        )
+        return None, (jsonify({"error": storage_error}), 400)
     if committed is None:
-        return None, (jsonify({"error": "Not found"}), 404)
+        return None, (jsonify({"error": not_found_error}), 404)
     return committed, None
 
 
@@ -331,19 +348,36 @@ def register_route_backend_public_workspaces(bp):
                 "error": "File downloads have not been enabled for this public workspace by an administrator"
             }), 403
 
-        data = request.get_json(silent=True) or {}
-        ws["disable_file_downloads"] = bool(data.get("disable_file_downloads", False))
-        ws["modifiedDate"] = datetime.utcnow().isoformat()
+        # R5.1: the classic page always sends the checkbox's boolean. Anything else,
+        # or a body that isn't a JSON object, changes nothing rather than turning
+        # downloads on through ``bool(...)`` coercion.
+        data = request.get_json(silent=True)
+        disable_file_downloads = data.get("disable_file_downloads") if isinstance(data, dict) else None
+        if not isinstance(disable_file_downloads, bool):
+            return jsonify({"error": "Set disable_file_downloads to true or false."}), 400
 
-        try:
-            cosmos_public_workspaces_container.upsert_item(ws)
-        except exceptions.CosmosHttpResponseError as ex:
-            return jsonify({"error": str(ex)}), 400
+        def apply(fresh):
+            # The caller's role is checked again on the copy being written.
+            if get_user_role_in_public_workspace(fresh, user_id) not in ["Owner", "Admin"]:
+                raise _PublicClassicResponse(
+                    {"error": "Only workspace owners and admins can update download settings"}, 403)
+            fresh["disable_file_downloads"] = disable_file_downloads
+            fresh["modifiedDate"] = datetime.utcnow().isoformat()
+            return fresh
+
+        committed, refusal = _guarded_public_write(
+            ws_id, apply, cache_reason="public_workspace_updated",
+            not_found_error="Workspace not found",
+            storage_error="The download settings could not be saved. Try again.",
+            storage_log_message="[PUBLIC_SETTINGS] Classic download settings save failed.",
+        )
+        if refusal:
+            return refusal
 
         return jsonify({
             "success": True,
             "message": "Download settings updated",
-            "disable_file_downloads": ws["disable_file_downloads"],
+            "disable_file_downloads": committed["disable_file_downloads"],
         }), 200
 
     @bp.route("/api/public_workspaces/<ws_id>", methods=["PATCH", "PUT"])
@@ -366,20 +400,30 @@ def register_route_backend_public_workspaces(bp):
             return jsonify({"error": "Only owner can update"}), 403
 
         data = request.get_json() or {}
-        ws["name"] = data.get("name", ws.get("name"))
-        ws["description"] = data.get("description", ws.get("description"))
-        ws["heroColor"] = normalize_workspace_hero_color(
-            data.get("heroColor"),
-            ws.get("heroColor", DEFAULT_WORKSPACE_HERO_COLOR),
-        )
-        ws["modifiedDate"] = datetime.utcnow().isoformat()
 
-        try:
-            cosmos_public_workspaces_container.upsert_item(ws)
-            bump_chat_bootstrap_global_cache_version(reason="public_workspace_updated")
-            return jsonify({"message": "Updated"}), 200
-        except exceptions.CosmosHttpResponseError as ex:
-            return jsonify({"error": str(ex)}), 400
+        def apply(fresh):
+            # The owner is checked again on the copy being written, and the fields the
+            # request leaves out are kept from that copy.
+            if fresh["owner"]["userId"] != user_id:
+                raise _PublicClassicResponse({"error": "Only owner can update"}, 403)
+            fresh["name"] = data.get("name", fresh.get("name"))
+            fresh["description"] = data.get("description", fresh.get("description"))
+            fresh["heroColor"] = normalize_workspace_hero_color(
+                data.get("heroColor"),
+                fresh.get("heroColor", DEFAULT_WORKSPACE_HERO_COLOR),
+            )
+            fresh["modifiedDate"] = datetime.utcnow().isoformat()
+            return fresh
+
+        _committed, refusal = _guarded_public_write(
+            ws_id, apply, cache_reason="public_workspace_updated",
+            not_found_error="Workspace not found",
+            storage_error="The workspace could not be saved. Try again.",
+            storage_log_message="[PUBLIC_SETTINGS] Classic public workspace update failed.",
+        )
+        if refusal:
+            return refusal
+        return jsonify({"message": "Updated"}), 200
 
     @bp.route("/api/public_workspaces/<ws_id>/logo", methods=["GET"])
     @swagger_route(security=get_auth_security())
@@ -434,22 +478,33 @@ def register_route_backend_public_workspaces(bp):
                 logo_file.read(),
                 logo_file.filename,
             )
-        except (ValueError, OSError) as ex:
-            return jsonify({"error": str(ex)}), 400
+        except Exception:  # noqa: BLE001 - any decoding failure of an untrusted image is the same 400
+            return jsonify({"error": "The logo image could not be read. Upload a PNG or JPEG image."}), 400
 
-        current_logo_version = get_workspace_logo_metadata(ws)["logoVersion"]
-        ws["logoBase64"] = processed_logo["base64_str"]
-        ws["logoVersion"] = current_logo_version + 1
-        ws["modifiedDate"] = datetime.utcnow().isoformat()
+        stored_logo = processed_logo["base64_str"]
 
-        try:
-            cosmos_public_workspaces_container.upsert_item(ws)
-        except exceptions.CosmosHttpResponseError as ex:
-            return jsonify({"error": str(ex)}), 400
+        def apply(fresh):
+            # The owner is checked again on the copy being written, and the version
+            # follows that copy's, so a cached image is never reused.
+            if fresh["owner"]["userId"] != user_id:
+                raise _PublicClassicResponse({"error": "Only owner can update the workspace logo"}, 403)
+            fresh["logoBase64"] = stored_logo
+            fresh["logoVersion"] = get_workspace_logo_metadata(fresh)["logoVersion"] + 1
+            fresh["modifiedDate"] = datetime.utcnow().isoformat()
+            return fresh
+
+        committed, refusal = _guarded_public_write(
+            ws_id, apply, cache_reason=None,
+            not_found_error="Workspace not found",
+            storage_error="The logo could not be saved. Try again.",
+            storage_log_message="[PUBLIC_SETTINGS] Classic public workspace logo save failed.",
+        )
+        if refusal:
+            return refusal
 
         return jsonify({
             "message": "Workspace logo updated",
-            "logoVersion": ws["logoVersion"],
+            "logoVersion": committed["logoVersion"],
         }), 200
 
     @bp.route("/api/public_workspaces/<ws_id>", methods=["DELETE"])

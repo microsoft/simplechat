@@ -234,7 +234,7 @@ def test_phase3_low_churn_invalidation_hooks_are_wired():
             "cache_reason=\"group_ownership_transferred\"",
         ],
         "route_backend_public_workspaces.py": [
-            "bump_chat_bootstrap_global_cache_version(reason=\"public_workspace_updated\")",
+            "cache_reason=\"public_workspace_updated\"",
             "bump_chat_bootstrap_global_cache_version(reason=\"public_workspace_member_request_approved\")",
             "cache_reason=\"public_workspace_member_added\"",
             "cache_reason=\"public_workspace_member_removed\"",
@@ -266,6 +266,16 @@ def test_phase3_low_churn_invalidation_hooks_are_wired():
     assert "update_group_document_with_etag_guard(" in group_update_route
     assert "cosmos_groups_container.upsert_item" not in group_update_route
     assert "cache_reason=\"group_updated\"" in group_update_route
+
+    public_source = open(os.path.join(SINGLE_APP_DIR, "route_backend_public_workspaces.py"), "r", encoding="utf-8").read()
+    public_update_route = public_source[
+        public_source.index("def api_update_public_workspace(ws_id):"):
+        public_source.index("def api_upload_public_workspace_logo(ws_id):")
+    ]
+    # The public settings write goes through the public etag guard, which bumps the cache on commit.
+    assert "_guarded_public_write(" in public_update_route
+    assert "cosmos_public_workspaces_container.upsert_item" not in public_update_route
+    assert "cache_reason=\"public_workspace_updated\"" in public_update_route
 
 
 def test_chat_bootstrap_payload_cache_does_not_fallback_to_settings_container_without_redis():
