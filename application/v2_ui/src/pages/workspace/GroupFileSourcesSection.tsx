@@ -143,6 +143,10 @@ export function GroupFileSourcesSection({ adapter }: { adapter: FileSourceWorkbe
     const [editorLoading, setEditorLoading] = useState(false);
     const [options, setOptions] = useState<FileSourceOptions | null>(null);
     const [identities, setIdentities] = useState<WorkspaceIdentity[]>([]);
+    // The group's existing tags, offered as fixed-tag suggestions. They are optional: a failed read
+    // only costs the suggestions, so the editor still opens and a tag can still be typed.
+    const [tagSuggestions, setTagSuggestions] = useState<string[]>([]);
+    const [tagSuggestionsFailed, setTagSuggestionsFailed] = useState(false);
 
     const [deleteState, setDeleteState] = useState<DeleteState | null>(null);
 
@@ -165,6 +169,11 @@ export function GroupFileSourcesSection({ adapter }: { adapter: FileSourceWorkbe
         setEditorLoading(true);
         // A blank draft while options load, so the dialog can open immediately.
         setDraft(source ? draftFromSource(source, 1) : emptyFileSourceDraft('smb', 1));
+        setTagSuggestionsFailed(false);
+        void adapter.tags().then(setTagSuggestions, () => {
+            setTagSuggestions([]);
+            setTagSuggestionsFailed(true);
+        });
         try {
             const [loadedOptions, loadedIdentities] = await Promise.all([
                 adapter.options(),
@@ -474,6 +483,8 @@ export function GroupFileSourcesSection({ adapter }: { adapter: FileSourceWorkbe
                     draft={draft}
                     options={options}
                     identities={identities}
+                    tagSuggestions={tagSuggestions}
+                    tagSuggestionsFailed={tagSuggestionsFailed}
                     saving={saving || editorLoading}
                     error={saveError}
                     onChange={setDraft}

@@ -478,10 +478,16 @@ export interface FileSourceOptions {
  */
 export interface FileSourceBrowseEntry {
     name?: string;
+    /** The entry's path relative to the source root, as browse returns and accepts it. */
     path?: string;
     type?: string;
     size?: number;
     modified_at?: string;
+    /**
+     * A file's canonical remote path, the one the sync engine keys its item by. Ignore and restore
+     * send this, never `path`; a folder has none, since the engine keeps items only for files.
+     */
+    remote_path?: string;
     [key: string]: unknown;
 }
 

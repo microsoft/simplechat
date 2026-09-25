@@ -2,6 +2,74 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.176)**
+
+#### Bug Fixes
+
+*   **Statistics Date Ranges Are Limited To 366 Days**
+    *   The classic group, public workspace and profile statistics accepted any custom range between 2000 and 9998, and the profile route had no bound at all. A range of millions of days made one request take seconds of processing and over a gigabyte of memory, and return a very large response.
+    *   Every statistics route now refuses a custom range longer than 366 days with "Choose a date range of 366 days or fewer.", as the V2 group statistics already did. The profile statistics also refuse dates outside 2000-01-01 to 9998-12-31.
+    *   (Ref: `functions_stats_windows.py`, `route_backend_groups.py`, `route_backend_public_workspaces.py`, `route_frontend_profile.py`, [Statistics Window Span Limit Fix](fixes/STATS_WINDOW_SPAN_LIMIT_FIX.md))
+
+*   **Public Workspace Role Changes Check Permission First**
+    *   A public workspace role change or ownership transfer looked the member up in the directory before checking that the caller could make the change. It now checks first. A transfer to an older member entry keeps the member's name and email, and Control Center's ownership approvals keep every member.
+    *   (Ref: `route_backend_public_workspaces.py`, `route_backend_control_center.py`, [Public Workspace Writer Safety Fix](fixes/PUBLIC_WORKSPACE_WRITER_SAFETY_FIX.md))
+
+### **(v0.261.175)**
+
+#### New Features
+
+*   **A Public Workspace Directory In V2**
+    *   **Public Workspaces** in V2 now opens a directory of every public workspace you can discover, with **All** and **My workspaces** views, search, and paging kept in the address. Open a workspace, or choose which ones your public chat searches with **Visible for chat**, the same setting the classic directory uses.
+    *   It reads a new route, `GET /api/public_workspaces/directory`, which the V2 public workspace picker now uses too. Its rows carry no owner email, unlike the classic list route.
+    *   The directory, public workspace pages, the picker and the chat handoffs use the public workspace names an administrator configures.
+    *   (Ref: `route_backend_public_directory.py`, `functions_public_directory.py`, `PublicDirectoryPage.tsx`, `lib/publicVisibility.ts`, `lib/publicWorkspaceLabels.ts`, [V2 Public Workspace Directory](features/V2_PUBLIC_DIRECTORY.md), [Public Directory APIs](features/PUBLIC_DIRECTORY_APIS.md))
+
+### **(v0.261.174)**
+
+#### User Interface Enhancements
+
+*   **Content Screening Scans From A Group's Documents**
+    *   A group's Owner, Admins and DocumentManagers now get **Screening scans** in the V2 group Documents section, the same modal personal documents offer. They can scan the group, follow recent scans with cancel, resume and retry, see the policy additions, and open Content review.
+    *   The server decides who sees it: the workspace context publishes the members the screening routes accept, so a member is never offered a control the server would refuse.
+    *   (Ref: `DocumentsSection.tsx`, `ScreeningWorkspaceControls.tsx`, `functions_workspace_context.py`, [V2 Group Document Management](features/V2_GROUP_DOCUMENT_MANAGEMENT.md))
+
+### **(v0.261.173)**
+
+#### Bug Fixes
+
+*   **Public Workspace Changes No Longer Overwrite Each Other**
+    *   Every classic writer of a public workspace, 27 in all, saved a copy it had read earlier. They covered members, requests, roles, ownership, settings, logo, downloads, retention, tags and seven Control Center actions. So one change could undo another made at the same moment, and a save could bring back a deleted workspace. They now write conditionally, keep unrelated changes, never recreate a deleted workspace, and answer "The public workspace changed while your request was being saved. Try again." when a workspace keeps changing.
+    *   Admins promoted in classic can now see and decide document manager requests, add members and receive ownership. A legacy member entry no longer breaks the members routes, and a role change or ownership transfer keeps the member's name and email.
+    *   Unknown workspace statuses now get the inactive permissions instead of the active ones. Statistics refuse out-of-range dates with a reviewed message instead of failing. The update, download and logo routes answer reviewed messages instead of raw error text, including for an oversized image. Invalid download and retention settings are refused.
+    *   A tag change that loses to a concurrent change answers the coded vocabulary conflict, and metadata edits and bulk tagging save nothing when refused.
+    *   (Ref: `functions_public_workspaces.py`, `route_backend_public_workspaces.py`, `route_backend_public_documents.py`, `route_backend_control_center.py`, `route_backend_retention_policy.py`, [Public Workspace Writer Safety Fix](fixes/PUBLIC_WORKSPACE_WRITER_SAFETY_FIX.md))
+
+### **(v0.261.172)**
+
+#### Bug Fixes
+
+*   **Ignoring A Browsed File Takes Effect**
+    *   In the V2 group file source editor, **Ignore** sent the file's path under the source's root, but the sync engine tracks each file by its full remote path, so the ignore never matched and the file kept syncing. Folders were also offered Ignore, which the engine can't honour.
+    *   Browse now gives every file its full remote path, built the way the engine builds it for SMB, Azure Files, Azure Blob and OneDrive. **Ignore** and **Restore** send it, and appear on files only.
+    *   (Ref: `functions_file_sync.py`, `FileSourceEditorDialog.tsx`, [File Source Browse Ignore Fix](fixes/FILE_SOURCE_BROWSE_IGNORE_FIX.md))
+
+### **(v0.261.171)**
+
+#### New Features
+
+*   **Choose What A Group File Source Syncs, In V2**
+    *   The V2 group file source editor now sets the four remaining classic options: the folders and files to sync under the root (picked with Browse or typed), fixed tags for every synced file (with the group's existing tags as suggestions), how folders become tags, and what happens to the SimpleChat copy when a source file is deleted.
+    *   Editing a source keeps all four unless you change them, and a conflict reload merges them like the other fields.
+    *   (Ref: `FileSourceEditorDialog.tsx`, `lib/fileSourceFields.ts`, [V2 Group File Sources](features/V2_GROUP_FILE_SOURCES.md))
+
+#### Bug Fixes
+
+*   **Browsing A Group File Source Works For SMB Sources**
+    *   V2 Browse sent the source's root as the folder to list, which the server resolves under the root, so every SMB source answered an error. Choosing an entry also overwrote the root.
+    *   Browse now starts at the root, opens folders by their path under it, and never changes the root.
+    *   (Ref: `FileSourceEditorDialog.tsx`, [File Source Browse Path Fix](fixes/FILE_SOURCE_BROWSE_PATH_FIX.md))
+
 ### **(v0.261.170)**
 
 #### Bug Fixes

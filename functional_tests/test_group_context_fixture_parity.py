@@ -1,8 +1,9 @@
 # test_group_context_fixture_parity.py
 """
 Parity between the group workspace context the V2 browser fixtures serve and the real builder.
-Version: 0.261.165
+Version: 0.261.174
 Implemented in: 0.261.157
+The screening_management hint: 0.261.174
 
 Every group browser suite builds its selected-group context from
 `ui_tests/fixtures/group_workspace.py::group_context`, directly or through a per-section fixture that
@@ -17,9 +18,9 @@ so a section or hint only one side has fails. That covers every field the V2 cli
 - `role`, `status`, `can_manage_workspace` and the envelope (`schema_version`, `enabled`);
 - every section, including `members`: `enabled`, `can_manage`, `reason` and `group`;
 - `native_delegation`, `document_permissions` and `document_queries`;
-- every hint: `document_management`, `document_collaboration`, `prompt_management`,
-  `action_management`, `agent_management`, `identity_management`, `endpoint_management`,
-  `file_source_management` and `settings_management`.
+- every hint: `document_management`, `document_collaboration`, `screening_management`,
+  `prompt_management`, `action_management`, `agent_management`, `identity_management`,
+  `endpoint_management`, `file_source_management` and `settings_management`.
 
 The workspace metadata (`workspace`, `scope` and `viewer_id`) may differ in value but not in keys.
 
@@ -131,9 +132,9 @@ METADATA_FIELDS = frozenset({"viewer_id", "scope", "workspace"})
 CLIENT_READ_FIELDS = (
     "schema_version", "enabled", "role", "status", "can_manage_workspace",
     "sections", "native_delegation", "document_permissions", "document_queries",
-    "document_management", "document_collaboration", "prompt_management", "action_management",
-    "agent_management", "identity_management", "endpoint_management", "file_source_management",
-    "settings_management",
+    "document_management", "document_collaboration", "screening_management", "prompt_management",
+    "action_management", "agent_management", "identity_management", "endpoint_management",
+    "file_source_management", "settings_management",
 )
 
 

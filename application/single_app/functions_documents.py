@@ -12672,6 +12672,14 @@ class _GroupTagDefinitionPresent(Exception):
         self.definition = definition
 
 
+class _PublicTagDefinitionPresent(Exception):
+    """The public workspace's current copy already has the definition; carries it, so nothing is written."""
+
+    def __init__(self, definition):
+        super().__init__("The public workspace already has this tag definition.")
+        self.definition = definition
+
+
 def get_or_create_tag_definition(user_id, tag_name, workspace_type='personal', color=None, group_id=None, public_workspace_id=None):
     """
     Get or create a tag definition.
@@ -12729,7 +12737,7 @@ def get_or_create_tag_definition(user_id, tag_name, workspace_type='personal', c
                 group_doc = {'tag_definitions': {tag_name: present.definition}}
             except GroupDocumentWriteConflict:
                 log_event(
-                    "[Tags] A group tag definition was not saved because the group kept changing.",
+                    "[CREATE_TAG] A group tag definition was not saved because the group kept changing.",
                     level=logging.WARNING,
                 )
                 return {'color': safe_color}
@@ -12740,18 +12748,49 @@ def get_or_create_tag_definition(user_id, tag_name, workspace_type='personal', c
         stored_tag_def['color'] = get_safe_tag_color(stored_tag_def.get('color'), tag_name)
         return stored_tag_def
     elif workspace_type == 'public' and public_workspace_id:
-        from functions_public_workspaces import find_public_workspace_by_id
+        from functions_public_workspaces import (
+            PublicWorkspaceDocumentWriteConflict,
+            find_public_workspace_by_id,
+            update_public_workspace_document_with_etag_guard,
+        )
         ws_doc = find_public_workspace_by_id(public_workspace_id)
         if not ws_doc:
             return {'color': safe_color}
         tag_defs = ws_doc.get('tag_definitions', {})
         if tag_name not in tag_defs:
-            tag_defs[tag_name] = {
-                'color': safe_color,
-                'created_at': datetime.now(timezone.utc).isoformat()
-            }
-            ws_doc['tag_definitions'] = tag_defs
-            cosmos_public_workspaces_container.upsert_item(ws_doc)
+            # Added to the workspace's current copy, and only while that copy still lacks
+            # it: a definition added meanwhile is kept, not replaced, nothing else on the
+            # workspace is restored from the copy read above, and a workspace deleted
+            # meanwhile is not recreated. A workspace that keeps changing is left without
+            # it; the colour answered is the same either way.
+            created_at = datetime.now(timezone.utc).isoformat()
+
+            def add_definition(fresh):
+                fresh_defs = fresh.get('tag_definitions') or {}
+                if tag_name in fresh_defs:
+                    raise _PublicTagDefinitionPresent(fresh_defs[tag_name])
+                fresh_defs[tag_name] = {
+                    'color': safe_color,
+                    'created_at': created_at
+                }
+                fresh['tag_definitions'] = fresh_defs
+                return fresh
+
+            try:
+                ws_doc = update_public_workspace_document_with_etag_guard(
+                    public_workspace_id, add_definition, cache_reason=None
+                )
+            except _PublicTagDefinitionPresent as present:
+                ws_doc = {'tag_definitions': {tag_name: present.definition}}
+            except PublicWorkspaceDocumentWriteConflict:
+                log_event(
+                    "[PUBLIC_DOCUMENTS] A public workspace tag definition was not saved because the workspace kept changing.",
+                    level=logging.WARNING,
+                )
+                return {'color': safe_color}
+            if not ws_doc:
+                return {'color': safe_color}
+            tag_defs = ws_doc.get('tag_definitions') or {}
         stored_tag_def = dict(tag_defs[tag_name])
         stored_tag_def['color'] = get_safe_tag_color(stored_tag_def.get('color'), tag_name)
         return stored_tag_def

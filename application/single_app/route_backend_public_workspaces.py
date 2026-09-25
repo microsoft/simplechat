@@ -14,10 +14,10 @@ from functions_settings import (
 )
 from functions_notifications import create_notification
 from swagger_wrapper import swagger_route, get_auth_security
-from functions_debug import debug_print
+from functions_debug import debug_print, is_debug_enabled
 from functions_stats_windows import (
     build_stats_date_series,
-    resolve_stats_time_window,
+    resolve_bounded_stats_time_window,
     stats_window_response_payload,
     timestamp_to_stats_date_key,
 )
@@ -57,6 +57,33 @@ def remove_user_from_admins(user_id, admins_list):
             (isinstance(admin, str) and admin != user_id) or
             (isinstance(admin, dict) and admin.get("userId") != user_id)]
 
+def _member_user_id(entry):
+    """
+    Return the user id for an admin or document-manager entry stored either as a
+    dict ({userId, email, displayName}) or as a legacy bare-string id. A bare
+    string is its own id, so a legacy documentManagers entry no longer crashes a
+    route that reads ``entry["userId"]``.
+    """
+    if isinstance(entry, dict):
+        return entry.get("userId")
+    return entry
+
+def _is_bare_string_member(ws, target_id):
+    """
+    True only when ``target_id`` is stored as a legacy bare-string entry in the
+    workspace's ``admins`` or ``documentManagers``. This is the one case where a
+    Microsoft Graph lookup is the correct fallback for a member's name and email
+    (R5.7): a dict entry already carries them, and a non-member must never trigger
+    a Graph call from an unauthorized or invalid request.
+    """
+    if not isinstance(ws, dict):
+        return False
+    for key in ("admins", "documentManagers"):
+        for entry in ws.get(key, []) or []:
+            if not isinstance(entry, dict) and entry == target_id:
+                return True
+    return False
+
 def get_user_details_from_graph(user_id):
     """
     Get user details (displayName, email) from Microsoft Graph API by user ID.
@@ -92,6 +119,55 @@ def get_user_details_from_graph(user_id):
     except Exception as e:
         print(f"Failed to get user details for {user_id}: {e}")
         return {"displayName": "", "email": ""}
+
+
+class _PublicClassicResponse(Exception):
+    """A classic public-workspace route's own response, raised from inside a guarded change."""
+
+    def __init__(self, payload, status):
+        super().__init__(status)
+        self.payload = payload
+        self.status = status
+
+
+def _guarded_public_write(ws_id, apply_changes, *, cache_reason,
+                          not_found_error="Not found",
+                          storage_error=None, storage_log_message=None):
+    """Run a classic public route's change through ``update_public_workspace_document_with_etag_guard``.
+
+    ``apply_changes`` re-checks the route's rules on each fresh copy and raises
+    ``_PublicClassicResponse`` with the route's own refusal. Returns ``(committed, None)``
+    after a commit, or ``(None, response)`` with that refusal, the classic 404 for a
+    workspace missing or deleted mid-write, or a 409 for a workspace that keeps changing.
+
+    When ``storage_error`` is given, a Cosmos write failure is logged with only its
+    error type and status code -- never ``str(ex)`` -- under ``storage_log_message`` and
+    answered with the reviewed ``storage_error`` text at 400, mirroring the group
+    settings routes. Without it the Cosmos error propagates unchanged.
+    """
+    try:
+        committed = update_public_workspace_document_with_etag_guard(ws_id, apply_changes, cache_reason=cache_reason)
+    except _PublicClassicResponse as refusal:
+        return None, (jsonify(refusal.payload), refusal.status)
+    except PublicWorkspaceDocumentWriteConflict:
+        return None, (jsonify({
+            "error": PUBLIC_WORKSPACE_WRITE_CONFLICT_MESSAGE,
+            "error_code": PUBLIC_WORKSPACE_WRITE_CONFLICT_CODE,
+        }), 409)
+    except exceptions.CosmosHttpResponseError as ex:
+        if storage_error is None:
+            raise
+        log_event(
+            storage_log_message,
+            extra={"workspace_id": ws_id, "error_type": type(ex).__name__,
+                   "status_code": getattr(ex, "status_code", None)},
+            level=logging.ERROR,
+        )
+        return None, (jsonify({"error": storage_error}), 400)
+    if committed is None:
+        return None, (jsonify({"error": not_found_error}), 404)
+    return committed, None
+
 
 def register_route_backend_public_workspaces(bp):
     """
@@ -288,19 +364,36 @@ def register_route_backend_public_workspaces(bp):
                 "error": "File downloads have not been enabled for this public workspace by an administrator"
             }), 403
 
-        data = request.get_json(silent=True) or {}
-        ws["disable_file_downloads"] = bool(data.get("disable_file_downloads", False))
-        ws["modifiedDate"] = datetime.utcnow().isoformat()
+        # R5.1: the classic page always sends the checkbox's boolean. Anything else,
+        # or a body that isn't a JSON object, changes nothing rather than turning
+        # downloads on through ``bool(...)`` coercion.
+        data = request.get_json(silent=True)
+        disable_file_downloads = data.get("disable_file_downloads") if isinstance(data, dict) else None
+        if not isinstance(disable_file_downloads, bool):
+            return jsonify({"error": "Set disable_file_downloads to true or false."}), 400
 
-        try:
-            cosmos_public_workspaces_container.upsert_item(ws)
-        except exceptions.CosmosHttpResponseError as ex:
-            return jsonify({"error": str(ex)}), 400
+        def apply(fresh):
+            # The caller's role is checked again on the copy being written.
+            if get_user_role_in_public_workspace(fresh, user_id) not in ["Owner", "Admin"]:
+                raise _PublicClassicResponse(
+                    {"error": "Only workspace owners and admins can update download settings"}, 403)
+            fresh["disable_file_downloads"] = disable_file_downloads
+            fresh["modifiedDate"] = datetime.utcnow().isoformat()
+            return fresh
+
+        committed, refusal = _guarded_public_write(
+            ws_id, apply, cache_reason="public_workspace_updated",
+            not_found_error="Workspace not found",
+            storage_error="The download settings could not be saved. Try again.",
+            storage_log_message="[PUBLIC_SETTINGS] Classic download settings save failed.",
+        )
+        if refusal:
+            return refusal
 
         return jsonify({
             "success": True,
             "message": "Download settings updated",
-            "disable_file_downloads": ws["disable_file_downloads"],
+            "disable_file_downloads": committed["disable_file_downloads"],
         }), 200
 
     @bp.route("/api/public_workspaces/<ws_id>", methods=["PATCH", "PUT"])
@@ -323,20 +416,30 @@ def register_route_backend_public_workspaces(bp):
             return jsonify({"error": "Only owner can update"}), 403
 
         data = request.get_json() or {}
-        ws["name"] = data.get("name", ws.get("name"))
-        ws["description"] = data.get("description", ws.get("description"))
-        ws["heroColor"] = normalize_workspace_hero_color(
-            data.get("heroColor"),
-            ws.get("heroColor", DEFAULT_WORKSPACE_HERO_COLOR),
-        )
-        ws["modifiedDate"] = datetime.utcnow().isoformat()
 
-        try:
-            cosmos_public_workspaces_container.upsert_item(ws)
-            bump_chat_bootstrap_global_cache_version(reason="public_workspace_updated")
-            return jsonify({"message": "Updated"}), 200
-        except exceptions.CosmosHttpResponseError as ex:
-            return jsonify({"error": str(ex)}), 400
+        def apply(fresh):
+            # The owner is checked again on the copy being written, and the fields the
+            # request leaves out are kept from that copy.
+            if fresh["owner"]["userId"] != user_id:
+                raise _PublicClassicResponse({"error": "Only owner can update"}, 403)
+            fresh["name"] = data.get("name", fresh.get("name"))
+            fresh["description"] = data.get("description", fresh.get("description"))
+            fresh["heroColor"] = normalize_workspace_hero_color(
+                data.get("heroColor"),
+                fresh.get("heroColor", DEFAULT_WORKSPACE_HERO_COLOR),
+            )
+            fresh["modifiedDate"] = datetime.utcnow().isoformat()
+            return fresh
+
+        _committed, refusal = _guarded_public_write(
+            ws_id, apply, cache_reason="public_workspace_updated",
+            not_found_error="Workspace not found",
+            storage_error="The workspace could not be saved. Try again.",
+            storage_log_message="[PUBLIC_SETTINGS] Classic public workspace update failed.",
+        )
+        if refusal:
+            return refusal
+        return jsonify({"message": "Updated"}), 200
 
     @bp.route("/api/public_workspaces/<ws_id>/logo", methods=["GET"])
     @swagger_route(security=get_auth_security())
@@ -391,22 +494,33 @@ def register_route_backend_public_workspaces(bp):
                 logo_file.read(),
                 logo_file.filename,
             )
-        except (ValueError, OSError) as ex:
-            return jsonify({"error": str(ex)}), 400
+        except Exception:  # noqa: BLE001 - any decoding failure of an untrusted image is the same 400
+            return jsonify({"error": "The logo image could not be read. Upload a PNG or JPEG image."}), 400
 
-        current_logo_version = get_workspace_logo_metadata(ws)["logoVersion"]
-        ws["logoBase64"] = processed_logo["base64_str"]
-        ws["logoVersion"] = current_logo_version + 1
-        ws["modifiedDate"] = datetime.utcnow().isoformat()
+        stored_logo = processed_logo["base64_str"]
 
-        try:
-            cosmos_public_workspaces_container.upsert_item(ws)
-        except exceptions.CosmosHttpResponseError as ex:
-            return jsonify({"error": str(ex)}), 400
+        def apply(fresh):
+            # The owner is checked again on the copy being written, and the version
+            # follows that copy's, so a cached image is never reused.
+            if fresh["owner"]["userId"] != user_id:
+                raise _PublicClassicResponse({"error": "Only owner can update the workspace logo"}, 403)
+            fresh["logoBase64"] = stored_logo
+            fresh["logoVersion"] = get_workspace_logo_metadata(fresh)["logoVersion"] + 1
+            fresh["modifiedDate"] = datetime.utcnow().isoformat()
+            return fresh
+
+        committed, refusal = _guarded_public_write(
+            ws_id, apply, cache_reason=None,
+            not_found_error="Workspace not found",
+            storage_error="The logo could not be saved. Try again.",
+            storage_log_message="[PUBLIC_SETTINGS] Classic public workspace logo save failed.",
+        )
+        if refusal:
+            return refusal
 
         return jsonify({
             "message": "Workspace logo updated",
-            "logoVersion": ws["logoVersion"],
+            "logoVersion": committed["logoVersion"],
         }), 200
 
     @bp.route("/api/public_workspaces/<ws_id>", methods=["DELETE"])
@@ -473,12 +587,8 @@ def register_route_backend_public_workspaces(bp):
         if not ws:
             return jsonify({"error": "Not found"}), 404
 
-        role = (
-            "Owner" if ws["owner"]["userId"] == user_id else
-            "Admin" if user_id in ws.get("admins", []) else
-            None
-        )
-        if role not in ["Owner", "Admin"]:
+        # R5.5: recognise a promoted Admin stored as a dict via the one role helper.
+        if get_user_role_in_public_workspace(ws, user_id) not in ["Owner", "Admin"]:
             return jsonify({"error": "Forbidden"}), 403
 
         return jsonify(ws.get("pendingDocumentManagers", [])), 200
@@ -496,25 +606,24 @@ def register_route_backend_public_workspaces(bp):
         info = get_current_user_info()
         user_id = info["userId"]
 
-        ws = find_public_workspace_by_id(ws_id)
-        if not ws:
-            return jsonify({"error": "Not found"}), 404
+        def apply(ws):
+            # already manager?
+            if any(_member_user_id(dm) == user_id for dm in ws.get("documentManagers", [])):
+                raise _PublicClassicResponse({"error": "Already a document manager"}, 400)
+            # already requested?
+            if any(_member_user_id(p) == user_id for p in ws.get("pendingDocumentManagers", [])):
+                raise _PublicClassicResponse({"error": "Already requested"}, 400)
+            ws.setdefault("pendingDocumentManagers", []).append({
+                "userId": user_id,
+                "email": info["email"],
+                "displayName": info["displayName"]
+            })
+            ws["modifiedDate"] = datetime.utcnow().isoformat()
+            return ws
 
-        # already manager?
-        if any(dm["userId"] == user_id for dm in ws.get("documentManagers", [])):
-            return jsonify({"error": "Already a document manager"}), 400
-
-        # already requested?
-        if any(p["userId"] == user_id for p in ws.get("pendingDocumentManagers", [])):
-            return jsonify({"error": "Already requested"}), 400
-
-        ws.setdefault("pendingDocumentManagers", []).append({
-            "userId": user_id,
-            "email": info["email"],
-            "displayName": info["displayName"]
-        })
-        ws["modifiedDate"] = datetime.utcnow().isoformat()
-        cosmos_public_workspaces_container.upsert_item(ws)
+        _committed, refusal = _guarded_public_write(ws_id, apply, cache_reason=None)
+        if refusal:
+            return refusal
         return jsonify({"message": "Requested"}), 201
 
     @bp.route("/api/public_workspaces/<ws_id>/requests/<req_id>", methods=["PATCH"])
@@ -531,40 +640,47 @@ def register_route_backend_public_workspaces(bp):
         user_id = info["userId"]
         data = request.get_json() or {}
         action = data.get("action")
+        outcome = {}
 
-        ws = find_public_workspace_by_id(ws_id)
-        if not ws:
-            return jsonify({"error": "Not found"}), 404
+        def apply(ws):
+            # R5.5: decide the caller's role on the fresh copy through the one role
+            # helper, so a promoted Admin stored as a dict is recognised.
+            if get_user_role_in_public_workspace(ws, user_id) not in ["Owner", "Admin"]:
+                raise _PublicClassicResponse({"error": "Forbidden"}, 403)
 
-        role = (
-            "Owner" if ws["owner"]["userId"] == user_id else
-            "Admin" if user_id in ws.get("admins", []) else
-            None
-        )
-        if role not in ["Owner", "Admin"]:
-            return jsonify({"error": "Forbidden"}), 403
+            pend = ws.get("pendingDocumentManagers", [])
+            idx = next((i for i, p in enumerate(pend) if _member_user_id(p) == req_id), None)
+            if idx is None:
+                raise _PublicClassicResponse({"error": "Request not found"}, 404)
 
-        pend = ws.get("pendingDocumentManagers", [])
-        idx = next((i for i, p in enumerate(pend) if p["userId"] == req_id), None)
-        if idx is None:
-            return jsonify({"error": "Request not found"}), 404
+            if action == "approve":
+                dm = pend.pop(idx)
+                existing_manager_ids = {
+                    m.get("userId") if isinstance(m, dict) else m
+                    for m in ws.get("documentManagers", [])
+                }
+                if _member_user_id(dm) not in existing_manager_ids:
+                    ws.setdefault("documentManagers", []).append(dm)
+                outcome["message"] = "Approved"
+            elif action == "reject":
+                pend.pop(idx)
+                outcome["message"] = "Rejected"
+            else:
+                raise _PublicClassicResponse({"error": "Invalid action"}, 400)
 
-        if action == "approve":
-            dm = pend.pop(idx)
-            ws.setdefault("documentManagers", []).append(dm)
-            msg = "Approved"
-        elif action == "reject":
-            pend.pop(idx)
-            msg = "Rejected"
-        else:
-            return jsonify({"error": "Invalid action"}), 400
+            ws["pendingDocumentManagers"] = pend
+            ws["modifiedDate"] = datetime.utcnow().isoformat()
+            outcome["action"] = action
+            return ws
 
-        ws["pendingDocumentManagers"] = pend
-        ws["modifiedDate"] = datetime.utcnow().isoformat()
-        cosmos_public_workspaces_container.upsert_item(ws)
-        if action == "approve":
+        # Only an approval bumps the cache, and the action is read inside the change
+        # after the role check, so the bump follows the commit.
+        _committed, refusal = _guarded_public_write(ws_id, apply, cache_reason=None)
+        if refusal:
+            return refusal
+        if outcome["action"] == "approve":
             bump_chat_bootstrap_global_cache_version(reason="public_workspace_member_request_approved")
-        return jsonify({"message": msg}), 200
+        return jsonify({"message": outcome["message"]}), 200
 
     @bp.route("/api/public_workspaces/<ws_id>/members", methods=["GET"])
     @swagger_route(security=get_auth_security())
@@ -587,7 +703,7 @@ def register_route_backend_public_workspaces(bp):
         is_member = (
             ws["owner"]["userId"] == user_id or
             is_user_in_admins(user_id, ws.get("admins", [])) or
-            any(dm["userId"] == user_id for dm in ws.get("documentManagers", []))
+            any(_member_user_id(dm) == user_id for dm in ws.get("documentManagers", []))
         )
         if not is_member:
             return jsonify({"error": "Forbidden"}), 403
@@ -622,14 +738,23 @@ def register_route_backend_public_workspaces(bp):
                     "email": admin.get("email", ""),
                     "role": "Admin"
                 })
-        # doc managers
+        # doc managers (support both old bare-string format and new {userId, ...} format)
         for dm in ws.get("documentManagers", []):
-            results.append({
-                "userId": dm["userId"],
-                "displayName": dm.get("displayName", ""),
-                "email": dm.get("email", ""),
-                "role": "DocumentManager"
-            })
+            if isinstance(dm, dict):
+                results.append({
+                    "userId": dm.get("userId", ""),
+                    "displayName": dm.get("displayName", ""),
+                    "email": dm.get("email", ""),
+                    "role": "DocumentManager"
+                })
+            else:
+                # Legacy bare-string entry has no stored name or email.
+                results.append({
+                    "userId": dm,
+                    "displayName": "",
+                    "email": "",
+                    "role": "DocumentManager"
+                })
 
         # filter
         def keep(m):
@@ -657,47 +782,41 @@ def register_route_backend_public_workspaces(bp):
         info = get_current_user_info()
         user_id = info["userId"]
 
-        ws = find_public_workspace_by_id(ws_id)
-        if not ws:
-            return jsonify({"error": "Not found"}), 404
-
-        role = (
-            "Owner" if ws["owner"]["userId"] == user_id else
-            "Admin" if user_id in ws.get("admins", []) else
-            None
-        )
-        if role not in ["Owner", "Admin"]:
-            return jsonify({"error": "Forbidden"}), 403
-
         data = request.get_json() or {}
         new_id = data.get("userId")
         if not new_id:
             return jsonify({"error": "Missing userId"}), 400
 
-        # prevent dup
-        if any(dm["userId"] == new_id for dm in ws.get("documentManagers", [])):
-            return jsonify({"error": "Already a manager"}), 400
+        def apply(ws):
+            # R5.5: decide the caller's role on the fresh copy through the one role helper.
+            if get_user_role_in_public_workspace(ws, user_id) not in ["Owner", "Admin"]:
+                raise _PublicClassicResponse({"error": "Forbidden"}, 403)
+            # prevent dup
+            if any(_member_user_id(dm) == new_id for dm in ws.get("documentManagers", [])):
+                raise _PublicClassicResponse({"error": "Already a manager"}, 400)
+            ws.setdefault("documentManagers", []).append({
+                "userId": new_id,
+                "displayName": data.get("displayName", ""),
+                "email": data.get("email", "")
+            })
+            ws["modifiedDate"] = datetime.utcnow().isoformat()
+            return ws
 
-        ws.setdefault("documentManagers", []).append({
-            "userId": new_id,
-            "displayName": data.get("displayName", ""),
-            "email": data.get("email", "")
-        })
-        ws["modifiedDate"] = datetime.utcnow().isoformat()
-        cosmos_public_workspaces_container.upsert_item(ws)
-        bump_chat_bootstrap_global_cache_version(reason="public_workspace_member_added")
-        
+        committed, refusal = _guarded_public_write(ws_id, apply, cache_reason="public_workspace_member_added")
+        if refusal:
+            return refusal
+
         # Send notification to the added member
         try:
             create_notification(
                 user_id=new_id,
                 notification_type='public_workspace_membership_change',
                 title='Added to Public Workspace',
-                message=f"You have been added to the public workspace '{ws.get('name', 'Unknown')}' as Document Manager.",
+                message=f"You have been added to the public workspace '{committed.get('name', 'Unknown')}' as Document Manager.",
                 link_url=f"/public_workspaces/{quote(str(ws_id), safe='')}",
                 metadata={
                     'workspace_id': ws_id,
-                    'workspace_name': ws.get('name', 'Unknown'),
+                    'workspace_name': committed.get('name', 'Unknown'),
                     'role': 'DocumentManager',
                     'added_by': info.get('email', 'Unknown')
                 }
@@ -721,33 +840,27 @@ def register_route_backend_public_workspaces(bp):
         info = get_current_user_info()
         user_id = info["userId"]
 
-        ws = find_public_workspace_by_id(ws_id)
-        if not ws:
-            return jsonify({"error": "Not found"}), 404
-
         # if self-removal
         if member_id == user_id:
             return jsonify({"error": "Cannot leave public workspace"}), 403
 
-        # only Owner/Admin can remove others
-        role = (
-            "Owner" if ws["owner"]["userId"] == user_id else
-            "Admin" if is_user_in_admins(user_id, ws.get("admins", [])) else
-            None
-        )
-        if role not in ["Owner", "Admin"]:
-            return jsonify({"error": "Forbidden"}), 403
+        def apply(ws):
+            # R5.5: only Owner/Admin can remove others, decided on the fresh copy.
+            if get_user_role_in_public_workspace(ws, user_id) not in ["Owner", "Admin"]:
+                raise _PublicClassicResponse({"error": "Forbidden"}, 403)
+            # remove from admins if present
+            ws["admins"] = remove_user_from_admins(member_id, ws.get("admins", []))
+            # remove from doc managers
+            ws["documentManagers"] = [
+                dm for dm in ws.get("documentManagers", [])
+                if _member_user_id(dm) != member_id
+            ]
+            ws["modifiedDate"] = datetime.utcnow().isoformat()
+            return ws
 
-        # remove from admins if present
-        ws["admins"] = remove_user_from_admins(member_id, ws.get("admins", []))
-        # remove from doc managers
-        ws["documentManagers"] = [
-            dm for dm in ws.get("documentManagers", [])
-            if dm["userId"] != member_id
-        ]
-        ws["modifiedDate"] = datetime.utcnow().isoformat()
-        cosmos_public_workspaces_container.upsert_item(ws)
-        bump_chat_bootstrap_global_cache_version(reason="public_workspace_member_removed")
+        _committed, refusal = _guarded_public_write(ws_id, apply, cache_reason="public_workspace_member_removed")
+        if refusal:
+            return refusal
         return jsonify({"success": True, "message": "Removed"}), 200
 
     @bp.route("/api/public_workspaces/<ws_id>/members/<member_id>", methods=["PATCH"])
@@ -766,92 +879,87 @@ def register_route_backend_public_workspaces(bp):
         data = request.get_json() or {}
         new_role = data.get("role")
 
-        ws = find_public_workspace_by_id(ws_id)
-        if not ws:
-            return jsonify({"error": "Not found"}), 404
-
-        role = (
-            "Owner" if ws["owner"]["userId"] == user_id else
-            "Admin" if is_user_in_admins(user_id, ws.get("admins", [])) else
-            None
-        )
-        if role not in ["Owner", "Admin"]:
-            return jsonify({"error": "Forbidden"}), 403
-
-        # Get member details (from documentManagers or Graph API)
-        member_name = ""
-        member_email = ""
-        for dm in ws.get("documentManagers", []):
-            if dm.get("userId") == member_id:
-                member_name = dm.get("displayName", "")
-                member_email = dm.get("email", "")
-                break
-        
-        # If not found in documentManagers, try to get from existing admins or Graph
-        if not member_name:
+        def _stored_member_identity(ws):
+            """Name/email for member_id from the workspace's own admin/DM entries."""
+            for dm in ws.get("documentManagers", []):
+                if isinstance(dm, dict) and dm.get("userId") == member_id:
+                    return dm.get("displayName", ""), dm.get("email", "")
             for admin in ws.get("admins", []):
                 if isinstance(admin, dict) and admin.get("userId") == member_id:
-                    member_name = admin.get("displayName", "")
-                    member_email = admin.get("email", "")
-                    break
-            if not member_name:
-                # Fetch from Graph API
+                    return admin.get("displayName", ""), admin.get("email", "")
+            return None
+
+        # R5.7: carry the member's stored name and email when they move between
+        # admins and documentManagers. The caller's role and the requested role
+        # are checked on the pre-read *before* any Graph call, so an unauthorized
+        # or invalid request can never trigger a Graph lookup; Graph is the
+        # fallback only for a legacy bare-string entry, and runs once, before the
+        # guarded write, never inside the retryable change. The authoritative
+        # decision is still re-made on the fresh copy inside ``apply``.
+        current = find_public_workspace_by_id(ws_id)
+        if not current:
+            return jsonify({"error": "Not found"}), 404
+        if get_user_role_in_public_workspace(current, user_id) not in ["Owner", "Admin"]:
+            return jsonify({"error": "Forbidden"}), 403
+        if new_role not in ["Admin", "DocumentManager"]:
+            return jsonify({"error": "Invalid role"}), 400
+        fallback = _stored_member_identity(current)
+        if fallback is None:
+            if _is_bare_string_member(current, member_id):
                 try:
                     details = get_user_details_from_graph(member_id)
-                    member_name = details.get("displayName", "")
-                    member_email = details.get("email", "")
-                except Exception as ex:
-                    pass
+                    fallback = (details.get("displayName", ""), details.get("email", ""))
+                except Exception:
+                    fallback = ("", "")
+            else:
+                fallback = ("", "")
 
-        # clear any existing
-        ws["admins"] = remove_user_from_admins(member_id, ws.get("admins", []))
-        ws["documentManagers"] = [
-            dm for dm in ws.get("documentManagers", [])
-            if dm["userId"] != member_id
-        ]
+        outcome = {}
 
-        if new_role == "Admin":
-            ws.setdefault("admins", []).append({
+        def apply(ws):
+            # R5.5: decide the caller's role on the fresh copy through the one role helper.
+            if get_user_role_in_public_workspace(ws, user_id) not in ["Owner", "Admin"]:
+                raise _PublicClassicResponse({"error": "Forbidden"}, 403)
+            if new_role not in ["Admin", "DocumentManager"]:
+                raise _PublicClassicResponse({"error": "Invalid role"}, 400)
+
+            member_name, member_email = _stored_member_identity(ws) or fallback
+            outcome["old_role"] = get_user_role_in_public_workspace(ws, member_id)
+
+            # clear any existing membership rows for this user
+            ws["admins"] = remove_user_from_admins(member_id, ws.get("admins", []))
+            ws["documentManagers"] = [
+                dm for dm in ws.get("documentManagers", [])
+                if _member_user_id(dm) != member_id
+            ]
+            entry = {
                 "userId": member_id,
                 "displayName": member_name,
                 "email": member_email
-            })
-        elif new_role == "DocumentManager":
-            # need displayName/email from pending or empty
-            ws.setdefault("documentManagers", []).append({
-                "userId": member_id,
-                "email": "",
-                "displayName": ""
-            })
-        else:
-            return jsonify({"error": "Invalid role"}), 400
+            }
+            if new_role == "Admin":
+                ws.setdefault("admins", []).append(entry)
+            else:
+                ws.setdefault("documentManagers", []).append(entry)
+            ws["modifiedDate"] = datetime.utcnow().isoformat()
+            return ws
 
-        ws["modifiedDate"] = datetime.utcnow().isoformat()
-        cosmos_public_workspaces_container.upsert_item(ws)
-        bump_chat_bootstrap_global_cache_version(reason="public_workspace_member_role_updated")
-        
+        committed, refusal = _guarded_public_write(ws_id, apply, cache_reason="public_workspace_member_role_updated")
+        if refusal:
+            return refusal
+
         # Send notification to the member whose role changed
         try:
-            # Determine old role for notification
-            old_role = "DocumentManager"  # Default, will be corrected if needed
-            for admin in ws.get("admins", []):
-                if isinstance(admin, dict) and admin.get("userId") == member_id:
-                    old_role = "Admin"
-                    break
-                elif isinstance(admin, str) and admin == member_id:
-                    old_role = "Admin"
-                    break
-            
             create_notification(
                 user_id=member_id,
                 notification_type='public_workspace_membership_change',
                 title='Workspace Role Changed',
-                message=f"Your role in the public workspace '{ws.get('name', 'Unknown')}' has been changed to {new_role}.",
+                message=f"Your role in the public workspace '{committed.get('name', 'Unknown')}' has been changed to {new_role}.",
                 link_url=f"/public_workspaces/{quote(str(ws_id), safe='')}",
                 metadata={
                     'workspace_id': ws_id,
-                    'workspace_name': ws.get('name', 'Unknown'),
-                    'old_role': old_role,
+                    'workspace_name': committed.get('name', 'Unknown'),
+                    'old_role': outcome.get('old_role', 'DocumentManager'),
                     'new_role': new_role,
                     'changed_by': info.get('email', 'Unknown')
                 }
@@ -877,55 +985,71 @@ def register_route_backend_public_workspaces(bp):
         data = request.get_json() or {}
         new_owner = data.get("newOwnerId")
 
-        ws = find_public_workspace_by_id(ws_id)
-        if not ws:
+        def _new_owner_identity(ws):
+            """New owner's stored name/email from the workspace's own entries."""
+            for dm in ws.get("documentManagers", []):
+                if isinstance(dm, dict) and dm.get("userId") == new_owner:
+                    return {"userId": new_owner, "displayName": dm.get("displayName", ""), "email": dm.get("email", "")}
+            for admin in ws.get("admins", []):
+                if isinstance(admin, dict) and admin.get("userId") == new_owner:
+                    return {"userId": new_owner, "displayName": admin.get("displayName", ""), "email": admin.get("email", "")}
+            return None
+
+        # R5.7: carry the new owner's stored name and email. The caller must be
+        # the current owner, which is checked on the pre-read *before* any Graph
+        # call, so an unauthorized transfer can never trigger a Graph lookup;
+        # Graph is the fallback only for a legacy bare-string entry in either
+        # admins or documentManagers, and runs once, before the guarded write,
+        # never inside the retryable change. The owner check is re-made on the
+        # fresh copy inside ``apply``.
+        current = find_public_workspace_by_id(ws_id)
+        if not current:
             return jsonify({"error": "Not found"}), 404
-        if ws["owner"]["userId"] != user_id:
+        if (current.get("owner") or {}).get("userId") != user_id:
             return jsonify({"error": "Forbidden"}), 403
+        graph_fallback = None
+        if _new_owner_identity(current) is None and _is_bare_string_member(current, new_owner):
+            try:
+                d = get_user_details_from_graph(new_owner)
+                graph_fallback = {"userId": new_owner, "displayName": d.get("displayName", ""), "email": d.get("email", "")}
+            except Exception:
+                graph_fallback = {"userId": new_owner, "displayName": "", "email": ""}
 
-        # must be existing documentManager or admin
-        is_member = (
-            any(dm["userId"] == new_owner for dm in ws.get("documentManagers", [])) or
-            new_owner in ws.get("admins", [])
-        )
-        if not is_member:
-            return jsonify({"error": "New owner must be a manager or admin"}), 400
+        def apply(ws):
+            if ws["owner"]["userId"] != user_id:
+                raise _PublicClassicResponse({"error": "Forbidden"}, 403)
 
-        # swap
-        old_owner = ws["owner"]["userId"]
-        
-        # Get the new owner details - check if they're a documentManager first, then admin
-        new_owner_dm = next(
-            (dm for dm in ws.get("documentManagers", []) if dm["userId"] == new_owner), 
-            None
-        )
-        
-        if new_owner_dm:
-            # New owner is a documentManager
-            ws["owner"] = new_owner_dm
-        else:
-            # New owner must be an admin - get their details from Microsoft Graph
-            admin_details = get_user_details_from_graph(new_owner)
-            ws["owner"] = {
-                "userId": new_owner,
-                "displayName": admin_details["displayName"],
-                "email": admin_details["email"]
+            # R5.5: eligibility on the fresh copy, recognising both admin formats.
+            is_member = (
+                any(_member_user_id(dm) == new_owner for dm in ws.get("documentManagers", [])) or
+                is_user_in_admins(new_owner, ws.get("admins", []))
+            )
+            if not is_member:
+                raise _PublicClassicResponse({"error": "New owner must be a manager or admin"}, 400)
+
+            # decision 21: the old owner stays a DocumentManager with their name and email
+            old_owner_id = ws["owner"]["userId"]
+            old_owner_name = ws["owner"].get("displayName", "")
+            old_owner_email = ws["owner"].get("email", "")
+
+            ws["owner"] = _new_owner_identity(ws) or graph_fallback or {
+                "userId": new_owner, "displayName": "", "email": ""
             }
-        # remove new_owner from docManagers/admins
-        ws["documentManagers"] = [dm for dm in ws["documentManagers"] if dm["userId"] != new_owner]
-        if new_owner in ws.get("admins", []):
-            ws["admins"].remove(new_owner)
+            # remove the new owner from docManagers/admins (R5.5: both formats)
+            ws["documentManagers"] = [dm for dm in ws.get("documentManagers", []) if _member_user_id(dm) != new_owner]
+            ws["admins"] = remove_user_from_admins(new_owner, ws.get("admins", []))
 
-        # legacy: old owner stays as documentManager
-        ws.setdefault("documentManagers", []).append({
-            "userId": old_owner,
-            "displayName": "",
-            "email": ""
-        })
+            ws.setdefault("documentManagers", []).append({
+                "userId": old_owner_id,
+                "displayName": old_owner_name,
+                "email": old_owner_email
+            })
+            ws["modifiedDate"] = datetime.utcnow().isoformat()
+            return ws
 
-        ws["modifiedDate"] = datetime.utcnow().isoformat()
-        cosmos_public_workspaces_container.upsert_item(ws)
-        bump_chat_bootstrap_global_cache_version(reason="public_workspace_ownership_transferred")
+        _committed, refusal = _guarded_public_write(ws_id, apply, cache_reason="public_workspace_ownership_transferred")
+        if refusal:
+            return refusal
         return jsonify({"message": "Ownership transferred"}), 200
 
     @bp.route("/api/public_workspaces/<ws_id>/fileCount", methods=["GET"])
@@ -994,13 +1118,13 @@ def register_route_backend_public_workspaces(bp):
         is_member = (
             ws["owner"]["userId"] == user_id or
             is_user_in_admins(user_id, ws.get("admins", [])) or
-            any(dm["userId"] == user_id for dm in ws.get("documentManagers", []))
+            any(_member_user_id(dm) == user_id for dm in ws.get("documentManagers", []))
         )
         if not is_member:
             return jsonify({"error": "Forbidden"}), 403
 
         try:
-            stats_window = resolve_stats_time_window(request.args)
+            stats_window = resolve_bounded_stats_time_window(request.args)
         except ValueError as ex:
             return jsonify({"error": str(ex)}), 400
 
@@ -1205,7 +1329,8 @@ def register_route_backend_public_workspaces(bp):
             "window": stats_window_response_payload(stats_window)
         }
         
-        debug_print(f"[PUBLIC_WORKSPACE_STATS] Final stats: {stats}")
+        if is_debug_enabled():
+            debug_print(f"[PUBLIC_WORKSPACE_STATS] Final stats: {stats}")
 
         return jsonify(stats), 200
 

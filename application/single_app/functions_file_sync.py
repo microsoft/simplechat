@@ -2232,6 +2232,15 @@ def browse_file_sync_source_path(
     browsed_by: str,
     source_id: Optional[str] = None,
 ) -> Dict[str, Any]:
+    """List what is under a source root, one level at a time.
+
+    ``browse_path`` and every entry's ``path`` are relative to the configured root. Each
+    file entry also carries ``remote_path``: the file's canonical remote path, built exactly
+    as the sync engine builds the ``remote_path`` it keys that file's item by
+    (``_item_id_for_path``), so ignoring a browsed file by its ``remote_path`` reaches the
+    item the engine checks before syncing it. Folders carry none: the engine keeps items
+    only for files.
+    """
     source = _build_connection_test_source(scope_type, scope_id, payload or {}, browsed_by, source_id=source_id)
     browse_path = _normalize_selected_path((payload or {}).get("browse_path") or (payload or {}).get("path") or "")
     if source.get("source_type") == FILE_SYNC_SOURCE_TYPE_ONEDRIVE:
@@ -3130,15 +3139,18 @@ def _browse_onedrive_path(source: Dict[str, Any], browse_path: str) -> List[Dict
         if not item_name:
             continue
         relative_path = _onedrive_relative_path(item, browse_path)
-        entries.append(
-            {
-                "name": item_name,
-                "path": relative_path,
-                "type": "folder" if item.get("folder") else "file",
-                "size": int(item.get("size") or 0),
-                "modified_at": item.get("lastModifiedDateTime"),
-            }
-        )
+        entry = {
+            "name": item_name,
+            "path": relative_path,
+            "type": "folder" if item.get("folder") else "file",
+            "size": int(item.get("size") or 0),
+            "modified_at": item.get("lastModifiedDateTime"),
+        }
+        # The engine's own remote file, so the path is the one its item is keyed by.
+        remote_file = _onedrive_remote_file_from_item(item, browse_path)
+        if remote_file:
+            entry["remote_path"] = remote_file["remote_path"]
+        entries.append(entry)
     return entries
 
 
@@ -3460,7 +3472,8 @@ def _build_azure_blob_url(account_url: str, container_name: str, blob_name: str)
 
 def _browse_azure_blob_path(source: Dict[str, Any], browse_path: str) -> List[Dict[str, Any]]:
     container_client = _get_azure_blob_container_client(source)
-    blob_prefix = source.get("connection", {}).get("blob_prefix", "")
+    connection = source.get("connection", {})
+    blob_prefix = connection.get("blob_prefix", "")
     full_path = _join_azure_blob_path(blob_prefix, browse_path)
     browse_prefix = f"{full_path.rstrip('/')}/" if full_path else ""
     entries = []
@@ -3472,15 +3485,20 @@ def _browse_azure_blob_path(source: Dict[str, Any], browse_path: str) -> List[Di
         display_name = relative_path.split("/")[-1]
         if not display_name:
             continue
-        entries.append(
-            {
-                "name": display_name,
-                "path": relative_path,
-                "type": "folder" if _azure_blob_item_is_folder(entry) else "file",
-                "size": _azure_blob_item_size(entry),
-                "modified_at": _azure_blob_item_modified_at(entry),
-            }
-        )
+        is_folder = _azure_blob_item_is_folder(entry)
+        browse_entry = {
+            "name": display_name,
+            "path": relative_path,
+            "type": "folder" if is_folder else "file",
+            "size": _azure_blob_item_size(entry),
+            "modified_at": _azure_blob_item_modified_at(entry),
+        }
+        if not is_folder:
+            # Built as _list_azure_blobs builds it, from the blob's full name.
+            browse_entry["remote_path"] = _build_azure_blob_url(
+                connection.get("account_url", ""), connection.get("container_name", ""), entry_name,
+            )
+        entries.append(browse_entry)
         if len(entries) >= 100:
             break
     return entries
@@ -3554,7 +3572,8 @@ def _join_selected_azure_file_path(root_directory_path: str, selected_path: str)
 
 def _browse_azure_files_path(source: Dict[str, Any], browse_path: str) -> List[Dict[str, Any]]:
     share_client = _get_azure_files_share_client(source)
-    root_directory_path = source.get("connection", {}).get("directory_path", "")
+    connection = source.get("connection", {})
+    root_directory_path = connection.get("directory_path", "")
     directory_path = _join_selected_azure_file_path(root_directory_path, browse_path)
     entries = []
     for entry in share_client.list_directories_and_files(directory_name=directory_path or None):
@@ -3562,15 +3581,20 @@ def _browse_azure_files_path(source: Dict[str, Any], browse_path: str) -> List[D
         if not entry_name:
             continue
         entry_path = _join_azure_file_path(directory_path, entry_name)
-        entries.append(
-            {
-                "name": entry_name,
-                "path": _relative_azure_file_path(root_directory_path, entry_path),
-                "type": "folder" if _azure_files_item_is_directory(entry) else "file",
-                "size": _azure_files_item_size(entry),
-                "modified_at": _azure_files_item_modified_at(entry),
-            }
-        )
+        is_directory = _azure_files_item_is_directory(entry)
+        browse_entry = {
+            "name": entry_name,
+            "path": _relative_azure_file_path(root_directory_path, entry_path),
+            "type": "folder" if is_directory else "file",
+            "size": _azure_files_item_size(entry),
+            "modified_at": _azure_files_item_modified_at(entry),
+        }
+        if not is_directory:
+            # Built as _list_azure_files builds it, from the file's full share path.
+            browse_entry["remote_path"] = _build_azure_files_url(
+                connection.get("account_url", ""), connection.get("share_name", ""), entry_path,
+            )
+        entries.append(browse_entry)
         if len(entries) >= 100:
             break
     return entries
@@ -3692,15 +3716,18 @@ def _browse_smb_path(source: Dict[str, Any], browse_path: str) -> List[Dict[str,
     for entry in smbclient.scandir(directory_path):
         entry_path = _join_smb_path(directory_path, entry.name)
         stat_result = entry.stat()
-        entries.append(
-            {
-                "name": entry.name,
-                "path": _relative_remote_path(root_path, entry_path).replace("\\", "/"),
-                "type": "folder" if entry.is_dir() else "file",
-                "size": int(getattr(stat_result, "st_size", 0) or 0),
-                "modified_at": _format_smb_modified_at(getattr(stat_result, "st_mtime", None)),
-            }
-        )
+        is_folder = entry.is_dir()
+        browse_entry = {
+            "name": entry.name,
+            "path": _relative_remote_path(root_path, entry_path).replace("\\", "/"),
+            "type": "folder" if is_folder else "file",
+            "size": int(getattr(stat_result, "st_size", 0) or 0),
+            "modified_at": _format_smb_modified_at(getattr(stat_result, "st_mtime", None)),
+        }
+        if not is_folder and entry.is_file():
+            # The engine walks the same joins and keys a file's item by this path.
+            browse_entry["remote_path"] = entry_path
+        entries.append(browse_entry)
         if len(entries) >= 100:
             break
     return entries

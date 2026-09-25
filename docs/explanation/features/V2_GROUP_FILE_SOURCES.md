@@ -70,11 +70,35 @@ Creating or editing opens a dialog with:
   it, and a sync interval in minutes within the server's limits.
 - **Filters** (optional): include patterns, exclude patterns, and allowed file
   types.
+- **What to sync** (from version **0.261.171**): the folders and files under the
+  source's root to sync, chosen with **Browse** or typed in. Leave it empty to
+  sync everything under the root. A typed path is cleaned up the way the server
+  stores it, and a path with an empty, `.` or `..` segment is refused before
+  saving, with its reason.
+- **Tags and deletions** (from version **0.261.171**):
+  - **fixed tags** that every synced file gets, with the group's existing tags
+    offered as suggestions, most used first;
+  - **folder tags**, which say how a file's folders become its tags;
+  - the **remote delete policy**, which says what happens to the SimpleChat
+    copy when its source file is deleted.
+  An edit opens all four from the stored source and saves them back, and a
+  conflict reload merges them like any other field. A path or tag you typed but
+  didn't add stops the save with a message, instead of being dropped.
 
-When browsing a saved source, **Ignore** skips a path on the next run, and
-**Restore** includes it again. Browse doesn't report which paths are ignored, so
-the dialog shows the state the server returned for each path you change during
-the session.
+**Browse** starts at the source's root and opens folders by their path under
+the root, with **Up one folder** to go back. Choosing an entry never changes
+the root. Before version 0.261.171 it sent the root itself as the folder to
+list, which the server resolves under the root, so every SMB source answered
+an error; see the [file source browse path fix](../fixes/FILE_SOURCE_BROWSE_PATH_FIX.md).
+
+When browsing a saved source, **Ignore** skips a file on the next run, and
+**Restore** includes it again. From version **0.261.172** they're offered on files
+only, and they send the file's full remote path, which the server gives each
+browsed file. Before that, they sent the path under the root, which never matched
+the file the sync engine tracks, so an ignore had no effect; see the
+[file source browse ignore fix](../fixes/FILE_SOURCE_BROWSE_IGNORE_FIX.md).
+Browse doesn't report which paths are ignored, so the dialog shows the state the
+server returned for each file you change during the session.
 
 ### Saving
 

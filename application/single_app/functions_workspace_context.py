@@ -9,6 +9,7 @@ to a particular document or resource. Resource routes must still check access.
 import re
 from urllib.parse import quote
 
+from content_screening.permissions import REVIEW_ROLES as SCREENING_REVIEW_ROLES
 from functions_file_sync import is_file_sync_enabled_for_group
 from functions_governance import is_governance_access_allowed
 from functions_group import (
@@ -293,6 +294,16 @@ def build_group_workspace_context(user_id, group_id, settings, *, user_info=None
         "document_collaboration": {
             "schema_version": 1,
             "operations": group_document_collaboration_operations(group, role, settings),
+        },
+        # The authorization every group-scoped /api/content-screening route checks
+        # (content_screening.permissions.assert_scope_access): the group's Owner, Admin or
+        # DocumentManager, in any status, since those routes check none. The Documents
+        # section offers the screening controls from it, so it never shows a member controls
+        # the server would refuse. Whether scans can start is still the screening
+        # configuration's decision, which the controls read for themselves.
+        "screening_management": {
+            "schema_version": 1,
+            "operations": ["manage"] if role in SCREENING_REVIEW_ROLES else [],
         },
         "prompt_management": {
             "schema_version": 1,

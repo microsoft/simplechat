@@ -27,6 +27,18 @@ Use public workspaces for curated materials intended for a broad audience, such 
 
 ## Use public workspaces in V2
 
+From version **0.261.175**, **Public Workspaces** in V2 opens a directory of
+every public workspace you can discover.
+- Switch between **All** and **My workspaces** (the ones you own, administer
+  or manage documents in), and search by name, description or id.
+- **Open** a workspace to go to its page.
+- **Visible for chat** chooses which public workspaces your public chat
+  searches. It's the same setting as the classic directory's, so a choice
+  made in one interface shows in the other. With no choices saved, every
+  workspace is visible.
+- The directory and the workspace pages use the names your administrator
+  gave public workspaces.
+
 Public workspace documents open in the same document explorer as My Workspace
 and group workspaces, from version **0.261.132**. Open **Public Workspaces** and
 choose a workspace. The address includes the workspace, so a bookmark opens the
@@ -54,7 +66,12 @@ the workspace it is for.
 Sharing a public document with other workspaces is not available. Public
 prompts and workspace administration (members, roles, ownership, settings,
 logo, requests, statistics, and activity) still use the classic page, as do the
-directory's visibility preferences and saved visibility lists.
+directory's saved visibility lists.
+
+From version **0.261.173**, the classic public workspace pages save changes
+conditionally. If someone else changes the same workspace at that moment, a
+save that can't be applied answers "The public workspace changed while your
+request was being saved. Try again." Nothing else is lost, so try again.
 
 ## Use the classic workspace
 

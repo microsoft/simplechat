@@ -119,6 +119,20 @@ explorer gets the group's status from the Documents section. From version
 **0.261.168**, a manager who can't upload, because uploads are disabled or the
 group is locked, is told the same reason when dropping files.
 
+From version **0.261.174**, the Documents header offers **Screening scans** to
+the group's Owner, Admins and DocumentManagers. These are the members every
+group-scoped content screening route accepts, and the workspace context
+publishes them as `screening_management` (computed from the routes'
+`REVIEW_ROLES`, in any status, since the routes check none).
+- The modal is the one personal documents offer: scan this workspace, recent
+  scans with cancel, resume and retry, the policy additions, and **Open Content
+  review**.
+- Scans start only when screening is on for the tenant.
+- Scanning selected documents and filtering the explorer by screening status
+  aren't in V2 yet, for personal or group documents.
+- **Open Content review** opens the review page without a scope, because
+  that page doesn't read one from its address.
+
 Failed saves retain usable drafts and clear error/recovery guidance. Dirty and
 busy callbacks cooperate with the group shell's navigation guards. Aborting a
 request is not treated as proof that a mutation was cancelled on the server.

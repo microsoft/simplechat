@@ -1,13 +1,14 @@
 # test_v2_group_document_management.py
 """
 Closed, real-SPA browser scenarios for M2B group document management.
-Version: 0.261.168
+Version: 0.261.174
 Implemented in: 0.261.129
 Coded failures show the server's sentence, delete guards name the conversation, and an archive takes
 the server's name: 0.261.164
 A tag vocabulary conflict shows its sentence; the empty explorer and a refused change say who can
 change documents, or why no one can, and never point at classic: 0.261.167
 A manager who can't upload is told why when dropping files: 0.261.168
+The group's content screening controls, offered to the members the screening routes accept: 0.261.174
 Every scripted receipt is the server's (the builders in fixtures/group_document_management.py,
 pinned by functional_tests/test_group_document_fixture_parity.py), except the deliberately
 malformed receipts each robustness scenario names.
@@ -1602,3 +1603,103 @@ def test_management_layout_dialogs_and_tags_in_both_themes(group_management_ui, 
     ui.assert_no_overflow()
     ui.page.screenshot(path=str(SCREENSHOTS / f"{label}-tags.png"), full_page=True)
     assert not ui.operation_requests
+
+
+# --- Content screening in the group Documents section (G3) -----------------------------------------
+# The section mounts personal documents' screening controls for the group, offered to the members the
+# context's `screening_management` hint names. The routes they call are modelled in
+# fixtures/group_screening.py, by the real screening rules.
+
+SCREENING_REFUSED = "You are not authorized for this screening action. Your workspace access may have changed."
+NO_SCAN_OFFERED = "No scan action is authorized for this scope, or new scanning is disabled."
+
+
+def screening_requests(ui):
+    return [entry for entry in ui.requests if entry.path.startswith("/api/content-screening/")]
+
+
+def open_screening(ui):
+    open_documents(ui)
+    ui.page.get_by_role("button", name="Screening scans", exact=True).click()
+    dialog = ui.page.get_by_role("dialog", name="Content screening controls", exact=True)
+    expect(dialog).to_be_visible()
+    return dialog
+
+
+def test_a_manager_scans_the_group_from_its_documents(group_management_ui):
+    """The group's own screening controls: the policy additions, the scan and its cancellation all
+    name the group, never the viewer's personal workspace. The server accepts the start, and a
+    cancel only requests cancellation, so the job stays listed with its holds enforced."""
+    ui = group_management_ui
+    dialog = open_screening(ui)
+    expect(dialog.get_by_text("New scanning: enabled.", exact=False)).to_be_visible()
+    expect(dialog.get_by_role("region", name="Workspace screening policy", exact=True)).to_be_visible()
+    expect(dialog.get_by_role("link", name="Open Content review", exact=True)).to_have_attribute(
+        "href", "/v2/content-review",
+    )
+    dialog.get_by_role("button", name="Start scan", exact=True).click()
+    expect(dialog.get_by_role("button", name="Cancel scan", exact=True)).to_be_enabled()
+    assert ui.screening_scan_starts == [{"scope_type": "group", "scope_id": "group-a"}]
+    dialog.get_by_role("button", name="Cancel scan", exact=True).click()
+    expect(dialog.get_by_text("Cancellation requested; existing holds remain enforced.", exact=False)).to_be_visible()
+    expect(dialog.get_by_role("button", name="Cancel scan", exact=True)).to_be_disabled()
+    assert ui.screening_actions == [("job-group-1", "cancel")]
+    requests = screening_requests(ui)
+    assert "/api/content-screening/policies/group/group-a" in {entry.path for entry in requests}
+    assert all(entry.query.get("scope_id", ["group-a"]) == ["group-a"] for entry in requests)
+    assert not [entry for entry in requests if "/personal/" in entry.path or "personal" in entry.query.get("scope_type", [])]
+
+
+def test_no_scan_is_offered_while_new_scanning_is_off(group_management_ui):
+    """With new scanning off the controls still open and say so, but offer no scan; the policy
+    additions stay with the members the server accepts, exactly as personal's do."""
+    ui = group_management_ui
+    ui.screening_enabled = False
+    dialog = open_screening(ui)
+    expect(dialog.get_by_text("New scanning: disabled.", exact=False)).to_be_visible()
+    expect(dialog.get_by_text(NO_SCAN_OFFERED, exact=True)).to_be_visible()
+    expect(dialog.get_by_role("button", name="Start scan", exact=True)).to_have_count(0)
+    expect(dialog.get_by_role("region", name="Workspace screening policy", exact=True)).to_be_visible()
+    assert not ui.screening_scan_starts
+
+
+@pytest.mark.parametrize("role,offered", [
+    ("Owner", True), ("Admin", True), ("DocumentManager", True), ("User", False),
+])
+def test_screening_is_offered_to_exactly_the_members_the_server_accepts(group_management_ui, role, offered):
+    """The screening routes accept a group's Owner, Admin or DocumentManager, and the hint says so: an
+    ordinary member is offered nothing. Nothing is read until the controls are opened."""
+    ui = group_management_ui
+    ui.set_policy("group-a", role=role)
+    open_documents(ui)
+    button = ui.page.get_by_role("button", name="Screening scans", exact=True)
+    if offered:
+        expect(button).to_be_enabled()
+    else:
+        expect(button).to_have_count(0)
+    assert not screening_requests(ui)
+
+
+@pytest.mark.parametrize("status", ["locked", "upload_disabled"])
+def test_screening_follows_the_role_in_every_viewable_status(group_management_ui, status):
+    """The screening routes check no group status, so neither does the hint: the Owner of a locked or
+    upload-disabled group is still offered the controls, and the server still answers them."""
+    ui = group_management_ui
+    ui.set_policy("group-a", role="Owner", status=status)
+    dialog = open_screening(ui)
+    expect(dialog.get_by_role("region", name="Workspace screening policy", exact=True)).to_be_visible()
+    expect(dialog.get_by_role("button", name="Start scan", exact=True)).to_be_enabled()
+
+
+def test_a_stale_screening_hint_meets_the_servers_refusal(group_management_ui):
+    """The controls stay the server's to authorize: when the viewer's role changes after the page read
+    its context, opening them shows the refusal and offers neither a scan nor policy additions."""
+    ui = group_management_ui
+    open_documents(ui)
+    ui.set_policy("group-a", role="User")
+    ui.page.get_by_role("button", name="Screening scans", exact=True).click()
+    dialog = ui.page.get_by_role("dialog", name="Content screening controls", exact=True)
+    expect(dialog.get_by_text(SCREENING_REFUSED, exact=True)).to_be_visible()
+    expect(dialog.get_by_role("button", name="Start scan", exact=True)).to_have_count(0)
+    expect(dialog.get_by_role("region", name="Workspace screening policy", exact=True)).to_have_count(0)
+    assert not ui.screening_scan_starts

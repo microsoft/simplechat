@@ -89,6 +89,16 @@ export interface GroupWorkspaceContext extends WorkspaceAvailability {
         operations: string[];
     };
     /**
+     * The group content screening hint. Present as `{schema_version: 1, operations: ["manage"] | []}`:
+     * `manage` is the authorization every group-scoped screening route checks (the group's Owner,
+     * Admin or DocumentManager, in any status), so the Documents section offers the screening
+     * controls to exactly the members the server accepts. Absence means "not offered".
+     */
+    screening_management?: {
+        schema_version: number;
+        operations: string[];
+    };
+    /**
      * The group prompt management hint (M3). Present as `{schema_version: 1, operations: [...]}`
      * when the viewer may create, edit or delete group prompts, computed from role and status
      * exactly like document_management. Absence means "read-only", never an empty grant.

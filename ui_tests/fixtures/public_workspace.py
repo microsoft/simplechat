@@ -1,7 +1,7 @@
 # public_workspace.py
 """
 Closed HTTP fixtures for the real V2 public workspace shell.
-Version: 0.261.168
+Version: 0.261.175
 Implemented in: 0.261.132
 Every context carries the server's document_management hint, as build_public_workspace_context
 sends it: 0.261.167

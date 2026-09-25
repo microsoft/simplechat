@@ -23,6 +23,7 @@
 // documents WERE deleted, and a delete_incomplete keeps the source but reports the counts.
 
 import { ApiError, api, requestWithStatus } from './apiClient';
+import { fetchScopedGroupDocumentTags } from './documentReadAdapter';
 import { isRecord } from './workspaceAuthoring';
 import { requireWorkspaceId } from './workspaceContext';
 import {
@@ -163,6 +164,11 @@ export interface FileSourceWorkbenchAdapter {
     options: (signal?: AbortSignal) => Promise<FileSourceOptions | null>;
     /** The group identities that back the credential picker; empty for personal. */
     identities: (signal?: AbortSignal) => Promise<WorkspaceIdentity[]>;
+    /**
+     * The workspace's existing tag names, offered as fixed-tag suggestions, most used first; empty
+     * for personal. A failed read only costs the suggestions, so the section treats it as optional.
+     */
+    tags: (signal?: AbortSignal) => Promise<string[]>;
     runs: (sourceId: string, signal?: AbortSignal) => Promise<WorkspaceSyncRun[]>;
     sync: (sourceId: string) => Promise<WorkspaceSyncRun | null>;
     testConnection: (source: WorkspaceSyncSource | null, write: FileSourceWrite | null) => Promise<FileSourceConnectionResult>;
@@ -243,6 +249,7 @@ export const PERSONAL_FILE_SOURCE_WORKBENCH: FileSourceWorkbenchAdapter = {
     },
     options: async () => null,
     identities: async () => [],
+    tags: async () => [],
     runs: (sourceId, signal) => fetchPersonalSyncRuns(sourceId, signal),
     sync: async (sourceId) => {
         const response = await startPersonalSyncRun(sourceId);
@@ -489,6 +496,13 @@ export function createGroupFileSourceWorkbench(
         identities: async (signal) => {
             const response = await api.get<unknown>(identitiesUrl, signal);
             return identitiesFromResponse(response);
+        },
+        tags: async (signal) => {
+            // The explicit-group tag read the Documents and Tags sections use, never the active group.
+            const response = await fetchScopedGroupDocumentTags(groupId, signal);
+            return [...response.tags ?? []]
+                .sort((left, right) => (Number(right.count) - Number(left.count)) || left.name.localeCompare(right.name))
+                .map((tag) => tag.name);
         },
         runs: async (sourceId, signal) => {
             const response = await api.get<unknown>(groupFileSourcesUrl(groupId, sourceId, 'runs'), signal);

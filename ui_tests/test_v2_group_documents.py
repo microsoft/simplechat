@@ -1,9 +1,10 @@
 # test_v2_group_documents.py
 """
 Production-SPA coverage for native read-only V2 group document browsing.
-Version: 0.261.167
+Version: 0.261.174
 Implemented in: 0.261.128
 A member's empty explorer and refused change say who manages documents, never classic: 0.261.167
+A tag's Chat hands the tag and the group to the composer: 0.261.174
 
 Exercises real components, stores and navigation with closed synthetic HTTP.
 The API fixture never permits personal document requests or document writes, and
@@ -495,6 +496,29 @@ def test_chat_handoff_keeps_source_identity(group_documents_ui):
     assert body["tags"] == ["finance"]
     assert "group-a" in body["active_group_ids"]
     assert body["chat_type"] == "user" and body["doc_scope"] == "all"
+    expect(ui.page.get_by_text("Workspace review response.", exact=True)).to_be_visible()
+    assert ui.active_group == "group-b"
+    assert not [entry for entry in ui.writes if entry.path == "/api/groups/setActive"]
+
+
+def test_tag_chat_handoff_carries_the_tag_and_the_group(group_documents_ui):
+    """A tag's Chat takes the tag to the composer as a filter on this group's documents, not a list of
+    them: the chip shows, and the message searches the group by the tag without selecting documents or
+    changing the active group."""
+    ui = group_documents_ui
+    ui.open("/groups/group-a/tags")
+    expect(ui.page.get_by_role("heading", name="Tags", exact=True)).to_be_visible()
+    ui.active_group = "group-b"
+    ui.page.get_by_role("button", name="Chat with documents tagged finance", exact=True).click()
+    expect(ui.page.get_by_role("button", name="Remove finance", exact=True)).to_be_visible()
+    ui.allow_chat_writes = True
+    ui.page.locator("#composer-input").fill("Summarize the finance material.")
+    with ui.page.expect_request(lambda request: request.method == "POST" and urlsplit(request.url).path == "/api/chat/stream") as sent:
+        ui.page.get_by_role("button", name="Send message", exact=True).click()
+    body = sent.value.post_data_json
+    assert body["tags"] == ["finance"]
+    assert "group-a" in body["active_group_ids"]
+    assert not body.get("selected_document_ids")
     expect(ui.page.get_by_text("Workspace review response.", exact=True)).to_be_visible()
     assert ui.active_group == "group-b"
     assert not [entry for entry in ui.writes if entry.path == "/api/groups/setActive"]

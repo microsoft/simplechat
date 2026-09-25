@@ -127,6 +127,15 @@ vocabulary is still present, whatever the cause. The successful document updates
 stand either way. Refresh the vocabulary rather than replaying the writes that
 already succeeded.
 
+From version **0.261.173**, a tag definition write that finds the workspace
+changed answers the same way wherever it's caught: at its up-front check, or
+when Cosmos refuses its conditional write. Creating, recolouring or renaming a
+tag answers 409 "The workspace's tags or permissions changed. Refresh and
+retry." with `error_code: "vocabulary_conflict"`, and the vocabulary stage
+reports that sentence. A metadata edit and bulk tagging write the new tags'
+definitions before any document, so such a refusal saves nothing. See the
+[Public Workspace Writer Safety Fix](../fixes/PUBLIC_WORKSPACE_WRITER_SAFETY_FIX.md).
+
 ## Authorization
 
 Manager roles are `Owner`, `Admin`, and `DocumentManager`. Ordinary `User`
