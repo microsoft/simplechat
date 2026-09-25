@@ -1,8 +1,9 @@
 # test_v2_orchestration_recovery.py
 """
 Real-component browser coverage for orchestration failure and checkpoint recovery.
-Version: 0.261.127
+Version: 0.261.139
 Implemented in: 0.261.105
+Earlier-version run refusals covered in: 0.261.139
 
 The production controller, SSE reader, stores, message list, and Run drawer execute
 in the existing local/Azure Playwright harness. Only API responses are deterministic.
@@ -28,6 +29,10 @@ pytestmark = pytest.mark.ui
 CONVERSATION = "recovery-chat"
 TURN = "recovery-turn"
 FAILURE = "The selected agent did not finish before this step's time limit."
+LEGACY_PLAN_MESSAGE = (
+    "This plan was created by an earlier orchestration version and can't be opened or rerun. "
+    "Start a new request."
+)
 
 
 class RecoveryApi:
@@ -49,6 +54,9 @@ class RecoveryApi:
         self.prepare_mode = "success"
         self.stream_mode = "failure"
         self.waiting = []
+        # Runs the server refuses as an earlier orchestration version: every by-id request
+        # answers 409 legacy_plan and the run list leaves them out.
+        self.legacy = set()
         self.add_record(self.plan)
 
     def add_record(self, plan, attempt=1, retry_of=None):
@@ -132,6 +140,18 @@ class RecoveryApi:
             message="This attempt is still running. Wait for it to finish or stop it.",
         )
 
+    def legacy_run(self, path, body):
+        """The run a request addresses, when the server refuses it as an earlier version."""
+        if path == editor_tests.RUN:
+            run_id = (body or {}).get("run_id")
+        elif path.startswith("/api/v2/orchestration/cancel/"):
+            run_id = path.rsplit("/", 1)[-1]
+        elif path.startswith(editor_tests.RUNS + "/"):
+            run_id = path.split("/")[5]
+        else:
+            return None
+        return run_id if run_id in self.legacy else None
+
     @staticmethod
     def stream(route, events):
         route.fulfill(content_type="text/event-stream",
@@ -147,6 +167,9 @@ class RecoveryApi:
             return
         if path == "/favicon.ico":
             route.fulfill(status=204)
+            return
+        if self.legacy_run(path, body):
+            route.fulfill(status=409, json={"error": LEGACY_PLAN_MESSAGE, "code": "legacy_plan"})
             return
         if path == editor_tests.RUN:
             record = self.records[body["run_id"]]
@@ -206,7 +229,9 @@ class RecoveryApi:
             route.fulfill(json={"cancelled": True})
             return
         if path == editor_tests.RUNS:
-            route.fulfill(json={"runs": list(self.records.values())})
+            route.fulfill(json={"runs": [
+                record for run_id, record in self.records.items() if run_id not in self.legacy
+            ]})
             return
         if path.startswith(editor_tests.RUNS + "/"):
             run_id = path.split("/")[5]
@@ -595,3 +620,140 @@ def test_prepared_run_rejection_reports_error_without_false_success_or_polling(r
     assert not state["inFlight"]
     assert state["history"][CONVERSATION][0]["status"] == "failed"
     assert state["messages"][-1]["content"] == FAILURE
+
+
+def has_active_orchestration(page):
+    return page.evaluate(
+        "(id) => window.OrchHarness.controller.hasActiveOrchestration(id)", CONVERSATION,
+    )
+
+
+def detail_reads(api, run_id):
+    return [request for request in api.requests if request["path"] == f"{editor_tests.RUNS}/{run_id}"]
+
+
+def test_legacy_message_notice_shows_the_server_text_without_actions(recovery_ui):
+    page, api = recovery_ui
+    run_id = api.plan["run_id"]
+    api.finish(run_id)
+    api.legacy.add(run_id)
+    mount_recovery(page, api, saved=True)
+    expect(page.get_by_text(LEGACY_PLAN_MESSAGE, exact=True).first).to_be_visible()
+    expect(page.get_by_text("Recovery details could not be loaded", exact=False)).to_have_count(0)
+    expect(page.get_by_text("no verified recovery checkpoint", exact=False)).to_have_count(0)
+    for name in ("Check saved status", "Review saved attempt", "Retry from failed step"):
+        expect(page.get_by_role("button", name=name)).to_have_count(0)
+    reads = len(detail_reads(api, run_id))
+    page.wait_for_timeout(300)
+    assert len(detail_reads(api, run_id)) == reads, "A refused run must not be fetched again."
+    assert not api.calls("/run") and not api.calls("/retry")
+
+
+def test_transport_loss_then_legacy_refusal_ends_the_tracked_run(recovery_ui):
+    page, api = recovery_ui
+    api.stream_mode = "transport"
+    page.clock.install()
+    mount_recovery(page, api)
+    page.get_by_role("button", name="Approve and run the plan").click()
+    expect(page.get_by_text("Checking execution status", exact=False).first).to_be_visible()
+    run_id = api.plan["run_id"]
+    assert run_id in main_state(page)["inFlight"]
+    api.legacy.add(run_id)
+    page.get_by_role("button", name="Check saved status").first.click()
+    expect(page.get_by_text(LEGACY_PLAN_MESSAGE, exact=True).first).to_be_visible()
+    state = main_state(page)
+    assert run_id not in state["inFlight"]
+    assert state["history"][CONVERSATION][0]["status"] == "failed"
+    assert not has_active_orchestration(page)
+    for name in ("Stop execution", "Check saved status", "Retry from failed step"):
+        expect(page.get_by_role("button", name=name)).to_have_count(0)
+    reads = len(detail_reads(api, run_id))
+    page.clock.fast_forward(15001)
+    assert len(detail_reads(api, run_id)) == reads, "A refused run must not keep being polled."
+    assert not api.calls("/retry")
+    assert not any("/cancel/" in request["path"] for request in api.requests)
+
+
+def test_stop_on_a_legacy_run_releases_it_with_the_server_message(recovery_ui):
+    page, api = recovery_ui
+    api.stream_mode = "transport"
+    page.clock.install()
+    mount_recovery(page, api)
+    page.get_by_role("button", name="Approve and run the plan").click()
+    expect(page.get_by_text("Checking execution status", exact=False).first).to_be_visible()
+    run_id = api.plan["run_id"]
+    api.legacy.add(run_id)
+    page.get_by_role("button", name="Stop execution").first.click()
+    expect(page.get_by_text(LEGACY_PLAN_MESSAGE, exact=True).first).to_be_visible()
+    assert run_id not in main_state(page)["inFlight"]
+    assert not has_active_orchestration(page)
+    expect(page.get_by_role("button", name="Stop execution")).to_have_count(0)
+    assert len([request for request in api.requests if "/cancel/" in request["path"]]) == 1
+
+
+def restore_tracked_run(page, api):
+    page.evaluate("""(spec) => {
+        const S = window.OrchHarness.stores.orchestration.useOrchestrationStore;
+        S.getState().restoreRuns([{ conversationId: spec.conversation, turnId: spec.turn,
+            runId: spec.run, planId: spec.plan, startedAt: Date.now() - 60000, resumed: true }]);
+    }""", {"conversation": CONVERSATION, "turn": TURN, "run": api.plan["run_id"],
+           "plan": api.plan["plan_id"]})
+
+
+def test_restored_legacy_run_is_released_when_the_conversation_opens(recovery_ui):
+    page, api = recovery_ui
+    run_id = api.plan["run_id"]
+    api.legacy.add(run_id)
+    page.clock.install()
+    mount_recovery(page, api, saved=True, resume_saved=False)
+    restore_tracked_run(page, api)
+    assert main_state(page)["inFlight"][run_id]["resumed"] is True
+    assert has_active_orchestration(page)
+    page.evaluate("(id) => window.OrchHarness.resume.resumeOrchestrationForConversation(id)", CONVERSATION)
+    page.wait_for_function("""(id) => !(id in window.OrchHarness.stores.orchestration
+        .useOrchestrationStore.getState().inFlight)""", arg=run_id)
+    state = main_state(page)
+    assert not state["history"].get(CONVERSATION), "An unlisted earlier-version run stays out of the history."
+    assert not has_active_orchestration(page)
+    assert page.evaluate("() => window.sessionStorage.getItem('simplechat.v2.orchestrationRuns.v1')") is None
+    assert len(detail_reads(api, run_id)) == 1
+    page.clock.fast_forward(15001)
+    assert len(detail_reads(api, run_id)) == 1
+    assert not api.calls("/run") and not api.calls("/retry")
+    assert not any("/cancel/" in request["path"] for request in api.requests)
+
+
+def test_restored_listed_run_is_still_settled_by_hydration_without_an_extra_read(recovery_ui):
+    page, api = recovery_ui
+    run_id = api.plan["run_id"]
+    api.finish(run_id, "completed")
+    mount_recovery(page, api, saved=True, resume_saved=False)
+    restore_tracked_run(page, api)
+    page.evaluate("(id) => window.OrchHarness.resume.resumeOrchestrationForConversation(id)", CONVERSATION)
+    page.wait_for_function("""(id) => !(id in window.OrchHarness.stores.orchestration
+        .useOrchestrationStore.getState().inFlight)""", arg=run_id)
+    assert not has_active_orchestration(page)
+    assert not detail_reads(api, run_id)
+
+
+def test_legacy_refusal_at_run_start_puts_the_plan_away_with_the_server_message(recovery_ui):
+    page, api = recovery_ui
+    api.legacy.add(api.plan["run_id"])
+    mount_recovery(page, api)
+    page.get_by_role("button", name="Approve and run the plan").click()
+    expect(page.get_by_role("alert").filter(has_text=LEGACY_PLAN_MESSAGE).first).to_be_visible()
+    for name in ("Approve and run the plan", "Run the saved plan", "Edit the plan"):
+        expect(page.get_by_role("button", name=name)).to_have_count(0)
+    expect(page.get_by_text("Approval paused in this tab", exact=False)).to_have_count(0)
+    state = page.evaluate("""() => {
+        const H = window.OrchHarness;
+        const orchestration = H.stores.orchestration.useOrchestrationStore.getState();
+        const chat = H.stores.chat.useChatStore.getState();
+        return { plans: Object.keys(orchestration.plans), activeTurns: orchestration.activeTurns,
+            inFlight: orchestration.inFlight, streaming: chat.streaming, streamError: chat.streamError };
+    }""")
+    assert state["plans"] == [] and CONVERSATION not in state["activeTurns"]
+    assert state["inFlight"] == {} and state["streaming"] is False
+    assert state["streamError"] == LEGACY_PLAN_MESSAGE
+    assert not has_active_orchestration(page)
+    assert len(api.calls("/run")) == 1

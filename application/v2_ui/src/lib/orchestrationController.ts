@@ -860,7 +860,15 @@ async function executeSavedPlan(
             transportUnknown: false,
             error: legacyMessage
                 || 'The saved attempt was not started. Its saved progress or access may have changed. Review the current attempt; no steps were replayed.',
+            ...(legacyMessage ? { legacyPlan: true } : {}),
         });
+        if (legacyMessage) {
+            // The server will never run this plan, so it is put away and the thread says why.
+            current.clearPlan(conversationId, turnId);
+            current.clearActiveTurn(conversationId);
+            useChatStore.getState().settleOrchestrationTurn(conversationId, { status: 'failed', error: legacyMessage });
+            return;
+        }
         useChatStore.getState().settleOrchestrationTurn(conversationId, { status: 'planned' });
         return;
     }
@@ -887,6 +895,29 @@ async function executeSavedPlan(
 const reconciliationTimers = new Map<string, ReturnType<typeof setTimeout>>();
 const recoverySubmissions = new Map<string, { id: string; version: string; confirmed: boolean; unresolved: boolean }>();
 const recoveryLocks = new Set<string>();
+
+/**
+ * Stop tracking a run the server refuses as an earlier orchestration version.
+ *
+ * Nothing else would settle it. The server leaves those runs out of the run history and refuses
+ * every read of one, so a tracked record would keep the conversation busy, with its retries
+ * disabled, until the tab closed. A plan this tab still holds for the run is ended, so its card
+ * settles and says why; a record restored from storage has no plan here and is only released,
+ * which matches the run history.
+ */
+function releaseLegacyRun(conversationId: string, runId: string, message: string): void {
+    const store = useOrchestrationStore.getState();
+    store.updateRunRecovery(runId, {
+        checking: false, transportUnknown: false, busy: false, error: message, legacyPlan: true,
+    });
+    const tracked = store.inFlight[runId];
+    if (!tracked) return;
+    if (selectPlan(store, conversationId, tracked.turnId)?.run_id === runId) {
+        store.endRun(runId, 'failed');
+    } else {
+        store.releaseRunAttempt(runId);
+    }
+}
 
 export async function loadOrchestrationRecovery(conversationId: string, runId: string): Promise<PersistedRun | null> {
     const outputRevision = useOrchestrationStore.getState().runRecovery[runId]?.outputRevision ?? 0;
@@ -976,9 +1007,7 @@ export async function reconcileOrchestrationRun(conversationId: string, runId: s
     } catch (error) {
         const legacyMessage = legacyPlanErrorMessage(error);
         if (legacyMessage) {
-            useOrchestrationStore.getState().updateRunRecovery(runId, {
-                checking: false, transportUnknown: false, busy: false, error: legacyMessage,
-            });
+            releaseLegacyRun(conversationId, runId, legacyMessage);
             return;
         }
         useOrchestrationStore.getState().updateRunRecovery(runId, {
@@ -998,10 +1027,11 @@ export function openOrchestrationRecovery(conversationId: string, runId: string)
         if (record && isOrchestrationRunPending(record)) {
             return reconcileOrchestrationRun(conversationId, runId);
         }
-    }).catch(() => {
-        useOrchestrationStore.getState().updateRunRecovery(runId, {
-            error: 'The saved attempt could not be loaded. Your previous failure and progress have been kept.',
-        });
+    }).catch((error) => {
+        const legacyMessage = legacyPlanErrorMessage(error);
+        useOrchestrationStore.getState().updateRunRecovery(runId, legacyMessage
+            ? { error: legacyMessage, legacyPlan: true }
+            : { error: 'The saved attempt could not be loaded. Your previous failure and progress have been kept.' });
     });
 }
 
@@ -1179,9 +1209,14 @@ export async function cancelOrchestration(conversationId: string, runId?: string
         await reconcileOrchestrationRun(conversationId, run.runId);
     } catch (error) {
         const legacyMessage = legacyPlanErrorMessage(error);
+        if (legacyMessage) {
+            // The server can neither stop nor report on this run, so this tab stops following it.
+            if (activeControllers.get(conversationId) === controller) controller?.abort();
+            releaseLegacyRun(conversationId, run.runId, legacyMessage);
+            return;
+        }
         useOrchestrationStore.getState().updateRunRecovery(run.runId, {
-            error: legacyMessage
-                || 'Stop could not be confirmed by the server. Execution may still be running. Try Stop again or check saved status.',
+            error: 'Stop could not be confirmed by the server. Execution may still be running. Try Stop again or check saved status.',
         });
     }
 }

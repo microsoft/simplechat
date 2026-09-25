@@ -16,6 +16,7 @@ import {
     isOrchestrationRunPending, isOrchestrationRunWaiting, normalizeOrchestrationAttempt,
     type OrchestrationPlan, type PlanStatus,
 } from '../../lib/orchestration';
+import { legacyPlanErrorMessage } from '../../lib/orchestrationErrors';
 
 function RecoveryConfirmation({
     busy, onConfirm, onClose,
@@ -92,17 +93,22 @@ export function OrchestrationRecoveryNotice({
     const currentPlan = saved?.plan ?? plan;
     const recovery = attempt.recovery;
     const fileOutputs = Boolean(attempt.outputs?.length);
+    // The server refuses runs from an earlier orchestration version: there is nothing to reload,
+    // check or review, only its message to show.
+    const legacy = Boolean(saved?.legacyPlan);
 
     useEffect(() => {
-        if (!runId || saved?.detailLoaded || (!relevant && outcome)) return;
+        if (!runId || saved?.detailLoaded || legacy || (!relevant && outcome)) return;
         let mounted = true;
-        void loadOrchestrationRecovery(conversationId, runId).catch(() => {
-            if (mounted) useOrchestrationStore.getState().updateRunRecovery(runId, {
-                error: 'Recovery details could not be loaded. The previous result has been kept. Check saved status before retrying.',
-            });
+        void loadOrchestrationRecovery(conversationId, runId).catch((error) => {
+            if (!mounted) return;
+            const legacyMessage = legacyPlanErrorMessage(error);
+            useOrchestrationStore.getState().updateRunRecovery(runId, legacyMessage
+                ? { error: legacyMessage, legacyPlan: true }
+                : { error: 'Recovery details could not be loaded. The previous result has been kept. Check saved status before retrying.' });
         });
         return () => { mounted = false; };
-    }, [conversationId, runId, saved?.detailLoaded, Boolean(relevant), outcome]);
+    }, [conversationId, runId, saved?.detailLoaded, legacy, Boolean(relevant), outcome]);
 
     if (!runId || !relevant) return null;
     const active = Object.values(inFlight).some((run) => run.conversationId === conversationId);
@@ -135,7 +141,7 @@ export function OrchestrationRecoveryNotice({
                     Checking saved status or reloading does not run the task again.
                 </p>
             ) : null}
-            {failed && !saved?.transportUnknown ? (
+            {failed && !saved?.transportUnknown && !legacy ? (
                 <p>{fileOutputs ? 'Review each file separately. File retry controls do not repeat the plan or its producer tasks.'
                     : recovery?.message || (newer && newer !== runId
                     ? 'A newer execution attempt already exists. Review its saved result.'
@@ -174,11 +180,13 @@ export function OrchestrationRecoveryNotice({
                         View previous attempt
                     </GlassButton>
                 ) : null}
-                <GlassButton size="sm" variant="ghost"
-                    onClick={() => openOrchestrationRecovery(conversationId, runId)}>
-                    Review saved attempt
-                </GlassButton>
-                {waiting || saved?.transportUnknown || saved?.error ? (
+                {!legacy ? (
+                    <GlassButton size="sm" variant="ghost"
+                        onClick={() => openOrchestrationRecovery(conversationId, runId)}>
+                        Review saved attempt
+                    </GlassButton>
+                ) : null}
+                {!legacy && (waiting || saved?.transportUnknown || saved?.error) ? (
                     <GlassButton size="sm" variant="subtle" disabled={saved?.checking}
                         onClick={() => void reconcileOrchestrationRun(conversationId, runId)}>
                         Check saved status

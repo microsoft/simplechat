@@ -97,6 +97,8 @@ export interface RunRecoveryState extends OrchestrationAttempt {
     plan?: OrchestrationPlan;
     busy?: boolean;
     error?: string | null;
+    /** The server refuses this run as an earlier orchestration version: it cannot be read, checked or rerun. */
+    legacyPlan?: boolean;
     transportUnknown?: boolean;
     checking?: boolean;
     detailLoaded?: boolean;
