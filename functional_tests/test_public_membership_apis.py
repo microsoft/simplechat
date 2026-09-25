@@ -96,7 +96,9 @@ def environment(monkeypatch):
         }
         cache_reasons = []
         notifications = []
+        activity_records = []
         conflict = {"raise": False}
+        audit_fault = {"raise": False}
 
         def find_public_workspace_by_id(workspace_id):
             found = store.get(workspace_id)
@@ -128,7 +130,8 @@ def environment(monkeypatch):
         env = SimpleNamespace(
             settings=settings, store=store, cache_reasons=cache_reasons,
             notifications=notifications, conflict=conflict, network=network,
-            role_reader=role_reader, graph=graph_guard,
+            role_reader=role_reader, graph=graph_guard, activity_records=activity_records,
+            audit_fault=audit_fault,
         )
 
         scoped.setitem(sys.modules, "functions_appinsights", module_stub(
@@ -185,8 +188,19 @@ def environment(monkeypatch):
             update_public_workspace_document_with_etag_guard=guard,
         ))
 
+        def record_activity(body):
+            if audit_fault["raise"]:
+                raise RuntimeError("activity log unavailable")
+            activity_records.append(deepcopy(body))
+
+        activity_container = SimpleNamespace(create_item=record_activity)
+        scoped.setitem(sys.modules, "config", module_stub(
+            "config", cosmos_activity_logs_container=activity_container,
+        ))
+
         load_real_module(scoped, "functions_public_membership_policy")
         load_real_module(scoped, "functions_public_membership_disclosure")
+        load_real_module(scoped, "functions_public_membership_audit")
         load_real_module(scoped, "functions_public_membership")
         route = load_real_module(scoped, "route_backend_public_membership")
 
@@ -523,6 +537,82 @@ def test_routes_are_gated_by_the_public_workspaces_feature_flag(environment):
     response = environment.client.get(MEMBERS_PATH)
     assert response.status_code == 400
     assert "disabled" in response.get_json()["error"].casefold()
+
+
+# ---------------------------------------------------------------------------
+# Audit trail
+# ---------------------------------------------------------------------------
+
+def _records_of(environment, activity_type):
+    return [r for r in environment.activity_records if r.get("activity_type") == activity_type]
+
+
+def test_adding_a_member_writes_one_audit_record(environment):
+    response = environment.client.post(MEMBERS_PATH, json={
+        "userId": OUTSIDER, "displayName": "Nia New", "email": "nia@example.com", "role": "DocumentManager",
+    })
+    assert response.status_code == 201
+    records = _records_of(environment, "public_add_member_directly")
+    assert len(records) == 1
+    record = records[0]
+    assert record["public_workspace_id"] == "ws-a"
+    assert record["added_by_user_id"] == OWNER and record["added_by_role"] == "Owner"
+    assert record["member_user_id"] == OUTSIDER and record["member_role"] == "DocumentManager"
+    assert record["member_name"] == "Nia New" and record["member_email"] == "nia@example.com"
+
+
+def test_changing_a_role_writes_one_audit_record_with_both_roles(environment):
+    response = environment.client.patch(f"{MEMBERS_PATH}/{MANAGER}", json={"role": "Admin"})
+    assert response.status_code == 200
+    records = _records_of(environment, "public_update_member_role")
+    assert len(records) == 1
+    record = records[0]
+    assert record["type"] == "public_workspace_member_role_changed"
+    assert record["old_role"] == "DocumentManager" and record["new_role"] == "Admin"
+    assert record["member_user_id"] == MANAGER
+    assert record["member_name"] == "Mona Manager" and record["member_email"] == "mona@example.com"
+    assert record["changed_by_user_id"] == OWNER and record["changed_by_role"] == "Owner"
+
+
+def test_an_unchanged_role_writes_no_audit_record(environment):
+    response = environment.client.patch(f"{MEMBERS_PATH}/{ADMIN}", json={"role": "Admin"})
+    assert response.status_code == 200 and response.get_json()["changed"] is False
+    assert _records_of(environment, "public_update_member_role") == []
+
+
+def test_removing_a_member_writes_one_audit_record(environment):
+    response = environment.client.delete(f"{MEMBERS_PATH}/{MANAGER}")
+    assert response.status_code == 200
+    records = _records_of(environment, "public_member_removed")
+    assert len(records) == 1
+    record = records[0]
+    assert record["removed_by"]["user_id"] == OWNER and record["removed_by"]["role"] == "Owner"
+    assert record["removed_member"]["user_id"] == MANAGER
+    assert record["removed_member"]["name"] == "Mona Manager"
+    assert record["removed_member"]["email"] == "mona@example.com"
+    assert record["public_workspace"]["public_workspace_id"] == "ws-a"
+
+
+def test_approve_reject_and_transfer_write_no_audit_records(environment):
+    environment.client.post(f"{REQUESTS_PATH}/{PENDING}/approve")
+    environment.client.put(OWNER_PATH, json={"userId": ADMIN})
+    login(environment, ADMIN)
+    environment.client.post(MEMBERS_PATH, json={"userId": OUTSIDER, "role": "DocumentManager"})
+    # Approve and transfer write no audit record; only the final add does.
+    assert _records_of(environment, "public_add_member_directly")
+    assert all(
+        r.get("activity_type") == "public_add_member_directly"
+        for r in environment.activity_records
+    )
+
+
+def test_a_failed_audit_write_never_fails_a_committed_change(environment):
+    environment.audit_fault["raise"] = True
+    response = environment.client.post(MEMBERS_PATH, json={"userId": OUTSIDER, "role": "Admin"})
+    assert response.status_code == 201
+    stored_ids = {entry["userId"] for entry in environment.store["ws-a"]["admins"]}
+    assert OUTSIDER in stored_ids
+    assert environment.activity_records == []
 
 
 if __name__ == "__main__":

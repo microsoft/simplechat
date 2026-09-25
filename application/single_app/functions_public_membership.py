@@ -74,6 +74,11 @@ from werkzeug.exceptions import HTTPException
 
 from functions_appinsights import log_event
 from functions_notifications import create_notification
+from functions_public_membership_audit import (
+    log_public_member_added,
+    log_public_member_removed,
+    log_public_member_role_change,
+)
 from functions_public_membership_disclosure import project_member_rows
 from functions_public_membership_policy import (
     PUBLIC_ASSIGNABLE_ROLES,
@@ -601,9 +606,10 @@ def add_public_member(user_info, workspace_id):
     member_id = fields["user_id"]
     new_role = fields["role"]
     member = {"userId": member_id, "displayName": fields["display_name"], "email": fields["email"]}
+    audit = {}
 
     def apply(fresh):
-        _manager_role(fresh, actor_id)
+        audit["caller_role"] = _manager_role(fresh, actor_id)
         _require_add_allowed(fresh)
         if _stored_role(fresh, member_id) is not None:
             raise _error(ALREADY_MEMBER_MESSAGE, 409, "already_member")
@@ -627,6 +633,17 @@ def add_public_member(user_info, workspace_id):
             "added_by": user_info.get("email", "Unknown"),
         },
     )
+    log_public_member_added(
+        workspace_id=workspace_id,
+        workspace_doc=committed,
+        added_by_user_id=actor_id,
+        added_by_email=user_info.get("email", "Unknown"),
+        added_by_role=audit.get("caller_role", ""),
+        member_id=member_id,
+        member_name=member["displayName"],
+        member_email=member["email"],
+        member_role=new_role,
+    )
     return {"member": _row_for(committed, member_id, actor_id)}, 201
 
 
@@ -639,7 +656,7 @@ def change_public_member_role(user_info, workspace_id, member_id):
     audit = {}
 
     def apply(fresh):
-        _manager_role(fresh, actor_id)
+        audit["caller_role"] = _manager_role(fresh, actor_id)
         _require_add_allowed(fresh)
         target_role = _stored_role(fresh, member_id)
         if target_role is None:
@@ -655,6 +672,8 @@ def change_public_member_role(user_info, workspace_id, member_id):
         key = "admins" if new_role == "Admin" else "documentManagers"
         fresh[key] = [*_list_field(fresh, key), {"userId": member_id, "displayName": name, "email": email}]
         audit["old_role"] = target_role
+        audit["member_name"] = name
+        audit["member_email"] = email
         return fresh
 
     try:
@@ -676,6 +695,18 @@ def change_public_member_role(user_info, workspace_id, member_id):
             "changed_by": user_info.get("email", "Unknown"),
         },
     )
+    log_public_member_role_change(
+        workspace_id=workspace_id,
+        workspace_doc=committed,
+        changed_by_user_id=actor_id,
+        changed_by_email=user_info.get("email", "Unknown"),
+        changed_by_role=audit.get("caller_role", ""),
+        member_id=member_id,
+        member_name=audit.get("member_name", ""),
+        member_email=audit.get("member_email", ""),
+        old_role=audit["old_role"],
+        new_role=new_role,
+    )
     return {"member": _row_for(committed, member_id, actor_id), "changed": True}, 200
 
 
@@ -686,19 +717,31 @@ def remove_public_member(user_info, workspace_id, member_id):
     _identifier(member_id, "user identifier")
     if member_id == actor_id:
         raise _error(SELF_REMOVAL_MESSAGE, 403, "cannot_leave")
+    audit = {}
 
     def apply(fresh):
-        _manager_role(fresh, actor_id)
+        audit["caller_role"] = _manager_role(fresh, actor_id)
         target_role = _stored_role(fresh, member_id)
         if target_role is None:
             raise _member_not_found()
         if target_role == "Owner":
             raise _error(OWNER_REMOVAL_MESSAGE, 409, "owner_target")
+        audit["member_name"], audit["member_email"] = _stored_member_identity(fresh, member_id)
         _remove_member_id(fresh, "admins", member_id)
         _remove_member_id(fresh, "documentManagers", member_id)
         return fresh
 
-    _write(workspace_id, apply, cache_reason="public_workspace_member_removed")
+    committed = _write(workspace_id, apply, cache_reason="public_workspace_member_removed")
+    log_public_member_removed(
+        workspace_id=workspace_id,
+        workspace_doc=committed,
+        removed_by_user_id=actor_id,
+        removed_by_email=user_info.get("email", "Unknown"),
+        removed_by_role=audit.get("caller_role", ""),
+        member_id=member_id,
+        member_name=audit.get("member_name", ""),
+        member_email=audit.get("member_email", ""),
+    )
     return {"userId": member_id}, 200
 
 
