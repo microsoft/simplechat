@@ -78,19 +78,9 @@ ALLOWED_DYNAMIC_MODULES = {
 # The ratchet: the unconditional public workspace writers this slice moves onto the
 # guard, seeded here and emptied commit by commit.
 PENDING_RAW_WRITES = Counter({
-    ("functions_public_workspaces.py", "add_document_manager", "upsert_item"): 1,
-    ("functions_public_workspaces.py", "remove_document_manager", "upsert_item"): 1,
-    ("functions_public_workspaces.py", "approve_document_manager_request", "upsert_item"): 1,
-    ("functions_public_workspaces.py", "reject_document_manager_request", "upsert_item"): 1,
     ("route_backend_public_workspaces.py", "api_update_public_workspace_download_settings", "upsert_item"): 1,
     ("route_backend_public_workspaces.py", "api_update_public_workspace", "upsert_item"): 1,
     ("route_backend_public_workspaces.py", "api_upload_public_workspace_logo", "upsert_item"): 1,
-    ("route_backend_public_workspaces.py", "api_request_public_workspace", "upsert_item"): 1,
-    ("route_backend_public_workspaces.py", "api_handle_public_request", "upsert_item"): 1,
-    ("route_backend_public_workspaces.py", "api_add_public_member", "upsert_item"): 1,
-    ("route_backend_public_workspaces.py", "api_remove_public_member", "upsert_item"): 1,
-    ("route_backend_public_workspaces.py", "api_update_public_member_role", "upsert_item"): 1,
-    ("route_backend_public_workspaces.py", "api_transfer_public_ownership", "upsert_item"): 1,
     ("route_backend_public_documents.py", "api_create_public_workspace_tag", "upsert_item"): 1,
     ("route_backend_public_documents.py", "api_update_public_workspace_tag", "upsert_item"): 2,
     ("route_backend_public_documents.py", "api_delete_public_workspace_tag", "upsert_item"): 1,
