@@ -36,7 +36,10 @@ import {
 import { useBootstrapStore } from '../../stores/bootstrapStore';
 import {
     DOCUMENT_ARRAY_FIELDS,
+    KNOWLEDGE_BASIS_LABELS,
+    VISUAL_KIND_LABELS,
     describeInputBinding,
+    describePlanner,
     groupStepsForDisplay,
     orderStepsForDisplay,
     planBindingIssues,
@@ -91,7 +94,10 @@ function readableArguments(step: OrchestrationStep): Array<[string, string]> {
     const args = step.arguments as Json;
     for (const [key, value] of Object.entries(args)) {
         // Action identity is named from validated inputs below, not from planner arguments.
-        if (step.capability_id === 'action_invoke' && (key !== 'task' || typeof value !== 'string')) {
+        if (
+            step.capability_id === 'action_invoke'
+            && !((key === 'task' && typeof value === 'string') || key === 'visuals')
+        ) {
             continue;
         }
         if (hidden.has(key)) {
@@ -101,6 +107,14 @@ function readableArguments(step: OrchestrationStep): Array<[string, string]> {
             continue;
         }
         if (Array.isArray(value) && value.length === 0) {
+            continue;
+        }
+        if (key === 'knowledge_basis' && typeof value === 'string') {
+            entries.push(['answer basis', KNOWLEDGE_BASIS_LABELS[value] ?? value]);
+            continue;
+        }
+        if (key === 'visuals' && Array.isArray(value)) {
+            entries.push(['visuals', value.map((kind) => VISUAL_KIND_LABELS[String(kind)] ?? String(kind)).join(', ')]);
             continue;
         }
         const text =
@@ -491,6 +505,11 @@ export function OrchestrationRunView({
             ) : null}
             <div>
                 <p className="text-sm font-medium text-text-1">{plan.intent.summary}</p>
+                {describePlanner(plan) ? (
+                    <p className="mt-1 text-xs text-text-3" data-testid="orchestration-plan-planner">
+                        {describePlanner(plan)}
+                    </p>
+                ) : null}
                 {dependencyPlan ? (
                     <p className="mt-1 text-xs text-text-3">
                         Tasks follow their dependencies in the saved execution order. Roles can repeat.

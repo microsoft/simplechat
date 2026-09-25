@@ -1,9 +1,10 @@
 # test_orchestration_external_configuration_capture.py
 """
 Functional tests for private, invocation-time Gather configuration capture.
-Version: 0.261.129
+Version: 0.261.134
 Implemented in: 0.261.127
 Acquisition-boundary coverage updated in: 0.261.129
+Pre-acquisition provider failure classification updated in: 0.261.134
 
 Real adapters, web search and source review run with provider/page I/O doubled.
 No live provider, remote configuration or user artifact is accessed.
@@ -271,6 +272,40 @@ def run_gather(runtime, capability="web_search", *, cancel_requested=None, argum
         emit=None, cancel_requested=cancel_requested,
     )
     return step, result
+
+
+@pytest.mark.parametrize("error,code", [
+    (ConnectionResetError("PRIVATE_PROVIDER_TEXT"), "connection_failed"),
+    (TimeoutError("PRIVATE_PROVIDER_TEXT"), "provider_timeout"),
+    (RuntimeError("PRIVATE_PROVIDER_TEXT"), "provider_failed"),
+])
+def test_provider_failure_before_acquisition_is_classified_not_reported_as_attestation(
+    capture_runtime, monkeypatch, error, code,
+):
+    """Version 0.261.134: a failure before any capture is still a provider failure, and transient."""
+    runtime = capture_runtime
+    create_client = runtime.modules.foundry.AzureAIAgent.create_client
+
+    def failing_client(**kwargs):
+        client = create_client(**kwargs)
+
+        async def get_agent(agent_id):
+            runtime.state.calls.append("definition")
+            raise error
+
+        client.get_agent = get_agent
+        return client
+
+    monkeypatch.setattr(runtime.modules.foundry.AzureAIAgent, "create_client", staticmethod(failing_client))
+    schema = importlib.import_module("functions_orchestration_schema")
+    _, result = run_gather(runtime, "web_search")
+
+    assert result["status"] == "failed"
+    assert result["failure"]["code"] == code
+    assert "attested" not in result["summary"]
+    assert schema.failure_is_transient(result["failure"]) is True
+    assert "PRIVATE_PROVIDER_TEXT" not in json.dumps(result)
+    assert "web" not in runtime.state.calls
 
 
 @pytest.mark.parametrize("capability,source_type", [

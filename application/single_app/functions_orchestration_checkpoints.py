@@ -183,6 +183,9 @@ def step_input_fingerprint(step, context, binding, *, settings=None):
             for spec in step_input_specs(step):
                 if spec.binding.existing_result is not None:
                     reference = context.result_aliases[spec.binding.existing_result]
+                elif spec.optional and spec.binding.step_id not in context.task_results:
+                    references[spec.name] = {'missing_optional_producer': spec.binding.step_id}
+                    continue
                 else:
                     reference = context.task_results[spec.binding.step_id].output(spec.binding.output_name)
                 references[spec.name] = reference.to_dict()

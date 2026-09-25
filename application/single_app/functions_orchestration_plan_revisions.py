@@ -57,7 +57,7 @@ _PLAN_FIELDS = (
     'plan_id', 'run_id', 'turn_id', 'revision', 'conversation_id', 'user_id',
     'planner_contract_version', 'intent', 'assumptions', 'approval', 'status',
     'steps', 'inputs', 'outputs', 'validation', 'edit_version',
-    'final_response', 'model_routing',
+    'final_response', 'model_routing', 'planner',
 )
 _STEP_FIELDS = (
     'step_id', 'capability_id', 'title', 'rationale', 'arguments', 'depends_on',

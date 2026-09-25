@@ -1,8 +1,9 @@
 # test_orchestration_external_metadata.py
 """
 Functional tests for independent current external-source metadata reconstruction.
-Version: 0.261.127
+Version: 0.261.134
 Implemented in: 0.261.127
+Per-step Auto bindings rebuilt from the producing step's binding since: 0.261.134
 
 Real application resolvers, manifest preparation, SDK metadata deserialization
 and configuration projections run with storage/HTTP I/O doubled. No source
@@ -918,6 +919,224 @@ def test_unnamed_action_model_cannot_be_retargeted_by_later_multi_endpoint_setti
         read_current(world, "action", source=source, selector=selector)
     assert original["model"]["endpoint"] == world.settings["azure_openai_gpt_endpoint"]
     assert world.requests == world.credentials == []
+
+
+def bind_producing_step(world, capability, selection, *, group_id=None):
+    """Make the saved run a per-step Auto plan whose producing step has its own model.
+
+    Auto requests carry no model of their own, so the run's seeds hold none.
+    """
+    run = world.run_store.items["run"]
+    run["seeds"]["model"] = None
+    run["plan"].update(model_routing="auto", steps=[{
+        "step_id": "gather", "capability_id": capability,
+        "model_binding": {
+            "selection": deepcopy(selection), "label": selection["model_deployment"],
+            "profile_id": "profile", "profile_revision": "one", "task": "general",
+            "required_capabilities": ["generatesText", "processesText"], "group_id": group_id,
+        },
+    }])
+    return deepcopy(run["plan"]["steps"][0]["model_binding"])
+
+
+def bound_step_model(world, binding):
+    """Resolve the model exactly as a per-step Auto scope does for this binding."""
+    routing = importlib.import_module("functions_orchestration_model_routing")
+    seeds = deepcopy(world.run_store.items["run"]["seeds"])
+    return world.modules.models.resolve_orchestration_model(
+        world.settings, user_id="owner", seeds=routing.binding_seeds(seeds, binding),
+    )
+
+
+def add_classic_model(world, deployment="gpt-4o-mini", response_length=1024):
+    world.settings["gpt_model"]["selected"].append({
+        "deploymentName": deployment, "modelName": deployment, "responseLength": response_length,
+    })
+
+
+def test_bound_auto_research_is_rebuilt_from_its_binding_not_the_run_or_planner_override(metadata_world):
+    world = metadata_world
+    world.settings.update(
+        enable_web_search=False, enable_deep_source_review=False,
+        chat_orchestration_planner_deployment="gpt-4o", chat_orchestration_planner_model_provider="aoai",
+    )
+    add_classic_model(world)
+    world.run_store.items["run"]["seeds"]["reasoning_effort"] = "medium"
+    binding = bind_producing_step(world, "deep_research", {
+        "model_deployment": "gpt-4o-mini", "model_provider": "aoai",
+    })
+    current = read_current(world, "deep_research")
+    assert current["model"]["deployment"] == "gpt-4o-mini"
+    assert current["model"]["parameters"] == {"response_length": 1024}
+    model = bound_step_model(world, binding)
+    try:
+        evidence = world.modules.models.planner_client_construction_source(
+            model.as_planner_client(), model.deployment,
+        )
+        attestor = new_attestor(world)
+        identity = producer(world, "deep_research")
+        attestor.capture("deep_research", producer=identity, settings=world.settings)
+        attestor.capture("deep_research", producer=identity, settings=world.settings, source=evidence)
+        attestor.validate_acquisition(
+            "deep_research", producer=identity, settings=world.settings,
+            current_settings=world.settings, source=evidence,
+        )
+        admitted = attestor.for_admission("deep_research", producer=identity, settings=world.settings)
+        fresh = new_attestor(world).current("deep_research", producer=identity, settings=world.settings)
+        assert fresh == admitted
+    finally:
+        model.close()
+    assert world.requests == world.credentials == []
+
+
+@pytest.mark.parametrize("selection", ["legacy", "endpoint"])
+def test_bound_auto_action_is_rebuilt_from_its_binding_and_admits_its_actual_model(metadata_world, selection):
+    world = metadata_world
+    if selection == "legacy":
+        add_classic_model(world)
+        chosen = {"model_deployment": "gpt-4o-mini", "model_provider": "aoai"}
+    else:
+        endpoint = configure_model_endpoint(world)
+        endpoint["models"].append({
+            "id": "model-two", "deploymentName": "gpt-4.1", "modelName": "gpt-4.1", "enabled": True,
+        })
+        chosen = {
+            "model_endpoint_id": "endpoint-one", "model_id": "model-two",
+            "model_deployment": "gpt-4.1", "model_provider": "aoai",
+        }
+    binding = bind_producing_step(world, "action_invoke", chosen)
+    source, selector = action_source(world)
+    current = read_current(world, "action", source=source, selector=selector)
+    assert current["model"]["deployment"] == chosen["model_deployment"]
+    assert current["model"]["model_id"] == chosen.get("model_id")
+    model = bound_step_model(world, binding)
+    try:
+        context = SimpleNamespace(
+            model_context={
+                "provider": model.provider, "model_deployment": model.deployment,
+                "endpoint_id": model.endpoint_id, "model_id": model.model_id,
+                "user_id": "owner", "active_group_ids": [],
+            },
+            gpt_model=model.deployment, active_group_ids=[],
+        )
+    finally:
+        model.close()
+    service, built = world.modules.actions._build_action_model(
+        world.settings, context, "owner", capture_configuration=True,
+    )
+    try:
+        execution = service.get_prompt_execution_settings_class()(
+            service_id="orchestration-action", parallel_tool_calls=False, tool_choice="auto",
+        )
+        built["parameters"] = {
+            "parallel_tool_calls": execution.parallel_tool_calls, "tool_choice": execution.tool_choice,
+        }
+        captured = {
+            "version": world.modules.configuration.EXTERNAL_ACQUISITION_VERSION,
+            "kind": "action", "phase": "resolved",
+            "reference": {"id": "action-one", "scope_type": "personal", "scope_id": "owner"},
+            "manifest": source,
+            "prepared_manifest": world.modules.loader.prepare_action_plugin_manifest(source, world.settings),
+            "model": built,
+        }
+        attestor = new_attestor(world)
+        identity = producer(world, "action_invoke")
+        attestor.capture("action", producer=identity, settings=world.settings, source=captured, selector=selector)
+        admitted = attestor.for_admission(
+            "action", producer=identity, settings=world.settings, source=source, selector=selector,
+        )
+        fresh = new_attestor(world).current("action", producer=identity, settings=world.settings, source=source)
+        assert fresh == admitted
+    finally:
+        asyncio.run(service.client.close())
+    assert world.requests == world.credentials == []
+
+
+@pytest.mark.parametrize("mutation", ["unbound", "malformed", "other-step", "other-capability"])
+def test_auto_step_without_its_own_binding_is_refused(metadata_world, mutation):
+    world = metadata_world
+    world.settings["enable_web_search"] = False
+    bind_producing_step(world, "deep_research", {"model_deployment": "gpt-4o", "model_provider": "aoai"})
+    # A usable run selection must not stand in for the step's missing binding.
+    world.run_store.items["run"]["seeds"]["model"] = {"model_deployment": "gpt-4o", "model_provider": "aoai"}
+    step = world.run_store.items["run"]["plan"]["steps"][0]
+    if mutation == "unbound":
+        step.pop("model_binding")
+    elif mutation == "malformed":
+        step["model_binding"]["selection"] = "gpt-4o"
+    elif mutation == "other-step":
+        step["step_id"] = "another"
+    else:
+        step["capability_id"] = "action_invoke"
+    with pytest.raises(world.modules.configuration.ResultUnavailableError):
+        read_current(world, "deep_research")
+    assert world.requests == world.credentials == []
+
+
+def test_pinned_runs_keep_their_own_selection_and_planner_override(metadata_world):
+    world = metadata_world
+    world.settings.update(enable_web_search=False, chat_orchestration_planner_deployment="gpt-4o-mini")
+    add_classic_model(world)
+    run = world.run_store.items["run"]
+    run["plan"]["steps"] = [{
+        "step_id": "gather", "capability_id": "deep_research",
+        "model_binding": {"selection": {"model_deployment": "gpt-4o"}},
+    }]
+    current = read_current(world, "deep_research")
+    assert current["model"]["deployment"] == "gpt-4o-mini", "a pinned run still honors the planner override"
+
+
+@pytest.mark.parametrize("planner,expected", [
+    (True, ["document-group", "model-group"]),
+    (False, ["document-group"]),
+])
+def test_bound_step_groups_match_how_each_client_authorizes_its_model(metadata_world, planner, expected):
+    """Research resolves its model with the binding's model group, as the step scope does.
+
+    The action builder authorizes with the run's own groups only, never groups carried in
+    model context, so a rebuilt action configuration cannot use the binding's group either.
+    """
+    world = metadata_world
+    world.run_store.items["run"]["seeds"]["active_group_ids"] = ["document-group"]
+    capability = "deep_research" if planner else "action_invoke"
+    bind_producing_step(
+        world, capability, {"model_deployment": "gpt-4o", "model_provider": "aoai"},
+        group_id="model-group",
+    )
+    read = world.modules.metadata._MetadataRead("owner", "conversation", world.read_conversation, None)
+    seeds = world.modules.metadata._run_seeds(read, producer(world, capability), planner=planner)
+    assert seeds == {
+        "model": {"model_deployment": "gpt-4o", "model_provider": "aoai"},
+        "reasoning_effort": "", "active_group_ids": expected, "bound": True,
+    }
+    assert world.run_store.items["run"]["seeds"]["active_group_ids"] == ["document-group"]
+
+
+def test_bound_action_model_is_still_authorized_only_with_the_run_groups(metadata_world, monkeypatch):
+    """A step scope's model context never widens the groups an action model is checked against."""
+    world = metadata_world
+    runtime = importlib.import_module("functions_model_endpoint_runtime")
+    routing = importlib.import_module("functions_orchestration_model_routing")
+    seen = []
+
+    def resolve(settings, model_context, authorize=False):
+        seen.append((deepcopy(model_context["active_group_ids"]), authorize))
+        return None
+
+    monkeypatch.setattr(runtime, "resolve_model_endpoint_from_context", resolve)
+    binding = {"selection": {"model_endpoint_id": "group-endpoint", "model_id": "group-model"}, "group_id": "model-group"}
+    scoped = routing.binding_seeds({"active_group_ids": ["document-group"]}, binding)
+    context = SimpleNamespace(
+        model_context={
+            "endpoint_id": "group-endpoint", "model_id": "group-model", "provider": "aoai",
+            "active_group_ids": scoped["active_group_ids"],
+        },
+        gpt_model="group-model", active_group_ids=["document-group"],
+    )
+    assert scoped["active_group_ids"] == ["document-group", "model-group"]
+    with pytest.raises(PermissionError):
+        world.modules.actions._build_action_model(world.settings, context, "owner")
+    assert seen == [(["document-group"], True)]
 
 
 @pytest.mark.parametrize("auth", ["managed_identity", "service_principal"])

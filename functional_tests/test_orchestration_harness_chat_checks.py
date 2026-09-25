@@ -184,18 +184,26 @@ def test_dependency_plan_with_auto_bindings_fails_closed_before_model_setup(harn
     assert lease.stopped.is_set()
 
 
-def test_dependency_planning_rejects_auto_routing_before_candidates_or_models(harness, monkeypatch):
-    catalog = importlib.import_module("functions_model_catalog")
+def test_dependency_planning_with_auto_routing_reads_authorized_candidates(harness, monkeypatch):
     candidates = []
     monkeypatch.setattr(
         harness.planner, "authorized_routing_candidates",
         lambda *args, **kwargs: candidates.append(args) or [],
     )
-    with pytest.raises(catalog.ModelCatalogError) as failure:
+    harness.replies = [json.dumps({
+        "kind": "plan", "intent": {"summary": "Prepare the requested report.", "complexity": "simple"},
+        "steps": [{
+            "step_id": "prepare", "capability_id": "compose", "arguments": {"instruction": "Prepare it."},
+            "outputs": [{"name": "answer", "kind": "markdown-v1"}],
+        }],
+    })]
+    catalog = importlib.import_module("functions_model_catalog")
+    # Auto is enforced by the dependency executor: planning reads the authorized inventory
+    # and refuses to bind a model-backed step when nothing eligible is connected.
+    with pytest.raises(catalog.ModelCatalogError):
         harness.planner.plan_request(
             "Prepare the requested report.", {}, "conversation-1", "owner",
             settings=harness.settings, seeds={"model_routing": "auto"}, contract_version=2,
         )
 
-    assert failure.value.code == "model_routing_unsupported" and failure.value.field == "model_routing"
-    assert candidates == [] and harness.model_calls == [] and harness.clients == []
+    assert candidates and len(harness.model_calls) == 1

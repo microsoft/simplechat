@@ -54,6 +54,7 @@ from functions_orchestration_registry import (
     CAPABILITY_COMPOSE,
     CAPABILITY_TABULAR_ANALYZE,
     DEPENDENCY_PLAN_CONTRACT_VERSION,
+    GENERAL_KNOWLEDGE_BASES,
     PRODUCES_EVIDENCE,
     TERMINAL_CAPABILITY_ID,
     admitted_export_pairs,
@@ -570,17 +571,31 @@ def step_input_specs(step):
         raise PlanValidationError('The capability requires an explicit named input.')
     specs = []
     for name, value in step.get('inputs', {}).items():
-        if type(value) is not dict or set(value) - {'binding', 'allow_partial'} or 'binding' not in value:
+        if type(value) is not dict or set(value) - {'binding', 'allow_partial', 'optional'} or 'binding' not in value:
             raise PlanValidationError('Each named input requires an explicit result binding.')
         kinds = accepted.get(name, accepted.get('*'))
         if not kinds:
             raise PlanValidationError('This capability does not accept that named input.')
         if value.get('allow_partial') is True and not capability['partial_inputs_supported']:
             raise PlanValidationError('This capability requires complete named inputs.')
+        if type(value.get('optional', False)) is not bool:
+            raise PlanValidationError('Input optionality must be a boolean.')
+        if value.get('optional') is True and not capability.get('optional_inputs_supported'):
+            raise PlanValidationError('This capability cannot proceed without a named input.')
         specs.append(InputSpec(
             name, InputBinding.from_dict(value['binding']), tuple(kinds), value.get('allow_partial', False),
+            value.get('optional', False),
         ))
     return tuple(specs)
+
+
+def optional_input_producers(step):
+    """Producers a step can run without, because every binding to them is optional."""
+    required, optional = set(), set()
+    for spec in step_input_specs(step):
+        if spec.binding.step_id is not None:
+            (optional if spec.optional else required).add(spec.binding.step_id)
+    return optional - required
 
 
 def step_result_bindings(step):
@@ -712,6 +727,8 @@ def validate_dependency_plan(
     fields = {
         'step_id', 'capability_id', 'title', 'rationale', 'arguments', 'depends_on',
         'optional', 'enabled', 'estimated_cost', 'role', 'status', 'inputs', 'outputs',
+        # Auto routing: the planner may name a task category; only the server assigns a binding.
+        'model_task', 'model_binding',
     }
     try:
         for raw in raw_steps:
@@ -728,6 +745,10 @@ def validate_dependency_plan(
                 raise PlanValidationError('Step enablement and optionality must be booleans.')
             if type(raw.get('depends_on', [])) is not list:
                 raise PlanValidationError('Dependencies must be a list of step IDs.')
+            if 'model_task' in raw and (type(raw['model_task']) is not str or not raw['model_task'].strip()):
+                raise PlanValidationError('A model task must be a named task category.')
+            if 'model_binding' in raw and type(raw['model_binding']) is not dict:
+                raise PlanValidationError('A model binding is server-owned structured data.')
             counts[capability_id] = counts.get(capability_id, 0) + 1
             if capability['max_per_plan'] is not None and counts[capability_id] > capability['max_per_plan']:
                 raise PlanValidationError('The plan exceeds a capability work limit.', code='result_step_limit')
@@ -788,8 +809,16 @@ def validate_dependency_plan(
                 'optional': raw.get('optional', False), 'enabled': raw.get('enabled', True),
                 'estimated_cost': capability['cost_class'], 'role': capability['role'],
                 'status': STEP_STATUS_PENDING,
+                **({'model_task': raw['model_task'].strip()} if 'model_task' in raw else {}),
+                **({'model_binding': deepcopy(raw['model_binding'])} if 'model_binding' in raw else {}),
             }
-            step_input_specs(step)
+            specs = step_input_specs(step)
+            if any(spec.optional for spec in specs) and (
+                arguments.get('knowledge_basis') not in GENERAL_KNOWLEDGE_BASES
+            ):
+                raise PlanValidationError(
+                    'An optional input requires an answer basis that allows general knowledge.',
+                )
             if capability_id == 'document_analyze' and not arguments.get('document_ids') and 'sources' not in step['inputs']:
                 raise PlanValidationError('Analyze requires named sources or a source-set binding.')
             if capability_id == 'document_analyze' and arguments.get('document_ids') and 'sources' in step['inputs']:
@@ -812,6 +841,19 @@ def validate_dependency_plan(
             )
         for step in accepted:
             step['depends_on'] = list(dependencies[step['step_id']])
+        # A producer that only feeds optional inputs is not required work: its failure is
+        # disclosed by the consumer instead of failing the whole plan. The final response and
+        # any required binding keep it required.
+        final_producer = InputBinding.from_dict(plan['final_response']).step_id if 'final_response' in plan else None
+        consumers = {}
+        for step in accepted:
+            for spec in step_input_specs(step):
+                if spec.binding.step_id is not None:
+                    consumers.setdefault(spec.binding.step_id, []).append(spec.optional)
+        for step in accepted:
+            uses = consumers.get(step['step_id'])
+            if uses and all(uses) and step['step_id'] != final_producer:
+                step['optional'] = True
     except ResultContractError as exc:
         raise PlanValidationError('The plan has an invalid or unavailable result binding.', code=exc.code) from exc
     compiled = deepcopy(plan)
@@ -1482,6 +1524,8 @@ FAILURE_MESSAGES = {
     'delegation_timeout': 'The delegated agent did not finish before its time limit.',
     'provider_timeout': 'The service used by this step timed out.',
     'provider_http_error': 'The service used by this step returned an unsuccessful HTTP response.',
+    'provider_not_configured': 'The service used by this step is not configured for this deployment.',
+    'provider_failed': 'The service used by this step reported an error before returning results.',
     'connection_failed': 'This step could not connect to the service it uses.',
     'execution_interrupted': 'This step stopped unexpectedly. The underlying cause was not recorded.',
     'execution_expired': 'The execution lease expired before the worker recorded a final outcome.',
@@ -1552,6 +1596,21 @@ def failure_from_exception(exc, *, answering=False, _depth=0):
     if cause is not None and cause is not exc and _depth < 3:
         return failure_from_exception(cause, answering=answering, _depth=_depth + 1)
     return build_failure('model_failed' if answering else 'step_failed')
+
+
+# Failures one bounded retry of a read-only step could plausibly outlast. Configuration,
+# authorization and validation failures are never retried; they would fail the same way.
+TRANSIENT_FAILURE_CODES = frozenset({'provider_timeout', 'connection_failed', 'provider_failed'})
+TRANSIENT_PROVIDER_STATUSES = frozenset({408, 429, 500, 502, 503, 504})
+
+
+def failure_is_transient(failure):
+    """Whether an application-owned failure describes a transient provider condition."""
+    failure = failure if isinstance(failure, dict) else {}
+    code = failure.get('code')
+    if code in TRANSIENT_FAILURE_CODES:
+        return True
+    return code == 'provider_http_error' and failure.get('provider_status') in TRANSIENT_PROVIDER_STATUSES
 
 
 def failure_explanation(failures, *, partial=False, cancelled=False):

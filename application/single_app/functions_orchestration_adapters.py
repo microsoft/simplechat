@@ -104,6 +104,9 @@ from functions_orchestration_registry import (
     CAPABILITY_URL_FETCH,
     CAPABILITY_WEB_SEARCH,
     DOCUMENT_ACTION_TYPE_COMPARISON,
+    VISUAL_CHART,
+    VISUAL_DIAGRAM,
+    VISUAL_IMAGE_PROPOSAL,
     get_capability,
 )
 from functions_orchestration_schema import (
@@ -122,6 +125,7 @@ from functions_orchestration_visuals import (
     build_answer_visual_guidance,
     build_existing_charts_note,
     collect_run_charts,
+    image_proposals_available,
     is_inline_chart_citation,
     place_chart_blocks,
     requested_visual_outputs,
@@ -377,10 +381,23 @@ def _effective_request(context):
     return _text(_ctx(context, 'resolved_message', '')) or _text(_ctx(context, 'user_message', ''))
 
 
-def _step_visuals(context, settings, *planned_texts):
-    """Visual outputs a step should consider. Dependency (v2) plans keep their own contract."""
+def _step_visuals(context, settings, *planned_texts, step=None):
+    """Visual outputs a step should consider.
+
+    Dependency plans carry them as structured step arguments the planner chose; legacy plans
+    still read them from the request and the planner's wording.
+    """
     if _ctx(context, 'plan_contract_version', 1) == 2:
-        return {}
+        flags = set(_arguments(step).get('visuals') or ())
+        if not flags:
+            return {}
+        return {
+            'explicit_chart': VISUAL_CHART in flags, 'chart': VISUAL_CHART in flags, 'proactive_chart': False,
+            'diagram': VISUAL_DIAGRAM in flags,
+            'image': image_proposals_available(settings) and VISUAL_IMAGE_PROPOSAL in flags,
+            'image_required': False,
+            'request': _effective_request(context),
+        }
     visuals = requested_visual_outputs(
         (_ctx(context, 'user_message', ''), _effective_request(context)),
         planned_texts, settings=settings, seeds=_ctx(context, 'original_seeds', None),
@@ -1541,6 +1558,21 @@ def run_tabular_analyze(step, context, *, settings, user_id, emit, cancel_reques
 # web_search -> route_backend_chats.perform_web_search (lazy: circular import otherwise)
 # --------------------------------------------------------------------------------------
 
+def _web_search_failure(run):
+    """An application-owned failure for a web search run, from its structured facts only."""
+    run = run if isinstance(run, dict) else {}
+    if run.get('status') == 'agent_not_configured':
+        return build_failure('provider_not_configured')
+    provider_status = run.get('provider_status')
+    if isinstance(provider_status, int) and not isinstance(provider_status, bool) and 400 <= provider_status <= 599:
+        return build_failure('provider_http_error', provider_status=provider_status)
+    if run.get('provider_timeout'):
+        return build_failure('provider_timeout')
+    if run.get('provider_connection'):
+        return build_failure('connection_failed')
+    return build_failure('provider_failed')
+
+
 def run_web_search(step, context, *, settings, user_id, emit, cancel_requested):
     arguments = _arguments(step)
     query = _step_user_request(arguments.get('query'), context)
@@ -1598,6 +1630,18 @@ def run_web_search(step, context, *, settings, user_id, emit, cancel_requested):
     ):
         raise
     except ResultContractError as exc:
+        run = web_runs[-1] if web_runs else None
+        if (
+            isinstance(run, dict) and run.get('success') is False
+            and run.get('status') in ('foundry_invocation_error', 'unexpected_error')
+        ):
+            # The provider failed before anything was acquired, so nothing could be attested.
+            # Report that provider failure; a retry starts a fresh capture.
+            failure = _web_search_failure(run)
+            return build_step_result(
+                status=STEP_STATUS_FAILED, summary=failure['message'], error=failure['message'],
+                failure=failure,
+            )
         return _failed_result('Web search configuration could not be attested.', exc)
     except Exception as exc:
         log_event(
@@ -1615,14 +1659,15 @@ def run_web_search(step, context, *, settings, user_id, emit, cancel_requested):
     ]
 
     if ok is False:
-        # perform_web_search returns False only for a genuine failure/misconfiguration; its
-        # own explanatory system message is already in notes for the answer to use.
+        # perform_web_search returns False only for a genuine failure/misconfiguration. Its
+        # explanatory note carries provider text, so only its structured facts are used.
+        failure = _web_search_failure(web_runs[-1] if web_runs else None)
         return build_step_result(
             status=STEP_STATUS_FAILED,
-            summary='Web search was unavailable.',
-            notes=notes,
+            summary=failure['message'],
             citations=web_citations,
-            error='Web search failed or is not configured.',
+            error=failure['message'],
+            failure=failure,
         )
 
     summary = (
@@ -2299,7 +2344,7 @@ def run_action_invoke(step, context, *, settings, user_id, emit, cancel_requeste
         return _cancelled_result('Cancelled before using the action.')
     display_name = _text(selected.get('display_name') or selected.get('name'), 200)
     _emit(emit, _progress(step, CAPABILITY_ACTION_INVOKE, f'Using action {display_name}'))
-    visual_request = _step_visuals(context, settings, task)
+    visual_request = _step_visuals(context, settings, task, step=step)
     task = _with_conversation_reference(task, context)
     try:
         invocation_kwargs = {}
@@ -2310,7 +2355,7 @@ def run_action_invoke(step, context, *, settings, user_id, emit, cancel_requeste
             )
             settings = deepcopy(settings)
             invocation_kwargs['invocation_capture']('action', settings=settings, selector=action_ref)
-        elif visual_request:
+        if visual_request:
             invocation_kwargs['visual_request'] = visual_request
         from functions_orchestration_actions import invoke_action
         from semantic_kernel_plugins.plugin_invocation_logger import sanitize_plugin_invocation_value
@@ -2371,7 +2416,7 @@ def run_agent_invoke(step, context, *, settings, user_id, emit, cancel_requested
     arguments = _arguments(step)
     agent_name = _text(arguments.get('agent_name'))
     agent_task = _text(arguments.get('task')) or _effective_request(context)
-    visual_note = agent_visual_note(_step_visuals(context, settings, agent_task))
+    visual_note = agent_visual_note(_step_visuals(context, settings, agent_task, step=step))
     task = _with_conversation_reference(
         f'{agent_task}\n\n{visual_note}' if visual_note else agent_task, context
     )

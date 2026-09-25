@@ -457,10 +457,16 @@ class InputSpec:
     binding: InputBinding
     kinds: tuple[str, ...]
     allow_partial: bool = False
+    # An optional input lets its consumer run without it when the producer fails. It never
+    # makes a failed or partial result readable; the consumer simply receives no reader.
+    optional: bool = False
 
     def __post_init__(self):
         output_name(self.name)
-        if type(self.binding) is not InputBinding or type(self.allow_partial) is not bool:
+        if (
+            type(self.binding) is not InputBinding or type(self.allow_partial) is not bool
+            or type(self.optional) is not bool
+        ):
             raise ResultContractError()
         _tuple(self.kinds, str, maximum=len(RESULT_KINDS))
         if not self.kinds or len(set(self.kinds)) != len(self.kinds):

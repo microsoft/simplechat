@@ -96,6 +96,8 @@ from functions_orchestration_schema import (
     safe_failure,
     failure_from_exception,
     failure_explanation,
+    failure_is_transient,
+    optional_input_producers,
     plan_contract_version,
     validate_plan,
 )
@@ -107,6 +109,47 @@ from functions_orchestration_timing import (
 )
 
 _LOG_PREFIX = '[ORCHESTRATION_EXECUTOR]'
+
+# One retry of a read-only step after a transient provider failure, after this pause. The
+# pause is interruptible and never extends past the step or run deadline.
+_TRANSIENT_RETRY_DELAY_SECONDS = 1.5
+_TRANSIENT_RETRY_SUMMARY = 'Retrying after a temporary service error.'
+
+
+def _should_retry_transient(step, result, step_cancel):
+    """Whether a failed read-only step should get its single transient-failure retry."""
+    capability = get_capability(step.get('capability_id'))
+    if not capability or not capability.get('retry_on_transient'):
+        return False
+    if not isinstance(result, dict) or result.get('status') != STEP_STATUS_FAILED:
+        return False
+    if not failure_is_transient(result.get('failure')):
+        return False
+    return not step_cancel()
+
+
+def _pause_before_retry(step_cancel, delay=None):
+    """Wait for the retry delay, returning False when the step was stopped meanwhile."""
+    delay = _TRANSIENT_RETRY_DELAY_SECONDS if delay is None else delay
+    deadline = time.monotonic() + delay
+    while time.monotonic() < deadline:
+        if step_cancel():
+            return False
+        time.sleep(min(0.25, max(0.0, deadline - time.monotonic())))
+    return not step_cancel()
+
+
+def _log_transient_retry(context, step, result):
+    log_event(
+        f'{_LOG_PREFIX} Retrying a read-only step after a transient failure.',
+        extra={
+            'run_id': getattr(context, 'run_id', None), 'conversation_id': getattr(context, 'conversation_id', None),
+            'step_id': step.get('step_id'), 'capability_id': step.get('capability_id'),
+            'reason_code': ((result or {}).get('failure') or {}).get('code'),
+            'provider_status': ((result or {}).get('failure') or {}).get('provider_status'),
+        },
+        level=logging.WARNING,
+    )
 
 # Budget fallbacks for when a setting is absent or unparseable. Chosen to match the shipped
 # defaults in functions_settings so a missing settings dict behaves like the default config
@@ -1037,6 +1080,14 @@ def execute_plan(
         usage_before = deepcopy(context.token_usage)
         prompt_usage_before = deepcopy(getattr(context, 'prompt_token_usage', {}) or {})
         result = _run_single_step(step, context, settings, user_id, emit, _step_cancel, get_adapter)
+        if _should_retry_transient(step, result, _step_cancel):
+            _log_transient_retry(context, step, result)
+            _emit(emit, {'type': 'step', 'phase': STEP_STATUS_RUNNING, 'step_id': step_id,
+                         'capability_id': step.get('capability_id'), 'step_index': index,
+                         'title': step.get('title'), 'summary': _TRANSIENT_RETRY_SUMMARY,
+                         'completed': index, 'total': total_units})
+            if _pause_before_retry(_step_cancel):
+                result = _run_single_step(step, context, settings, user_id, emit, _step_cancel, get_adapter)
         _step_cancel()
         reason = control['reason']
         if reason or result.get('status') in (STEP_STATUS_FAILED, STEP_STATUS_CANCELLED):
@@ -1328,7 +1379,12 @@ def _run_dependency_step(
                 ) or (source.get('content_sha256') is not None and current.get('content_sha256') != source['content_sha256']):
                     raise ResultUnavailableError('result_source_snapshot_changed')
         scoped = _dependency_adapter_context(context, manifest, step, input_fingerprint)
-        with orchestration_file_policy(allow_generated_files=step['role'] == 'render'):
+        binding_scope = getattr(context, 'step_model_scope', None)
+        model_scope = (
+            binding_scope(step, scoped)
+            if callable(binding_scope) and step['role'] != 'render' else nullcontext()
+        )
+        with orchestration_file_policy(allow_generated_files=step['role'] == 'render'), model_scope:
             if step['capability_id'] == 'render_file':
                 result = _render_dependency_step(
                     runtime_step, scoped, settings=settings, user_id=user_id, cancel_requested=cancel_probe,
@@ -1353,6 +1409,13 @@ def _run_dependency_step(
                     runtime_step, scoped, settings=settings, user_id=user_id,
                     emit=emit, cancel_requested=cancel_probe,
                 )
+            if isinstance(result, dict) and step.get('model_binding') and step['role'] != 'render':
+                # The executed binding, including the reasoning the provider actually accepted.
+                result['model_binding'] = deepcopy(step['model_binding'])
+                model = getattr(scoped, 'step_model', None)
+                if model is not None:
+                    result['model_binding']['selection'] = model.answer_model_selection()
+                    result['model_binding']['reasoning'] = deepcopy(model.reasoning_resolution)
         context.token_usage = scoped.token_usage
         if hasattr(scoped, 'prompt_token_usage'):
             context.prompt_token_usage = scoped.prompt_token_usage
@@ -1725,6 +1788,8 @@ def _execute_dependency_plan(
             result = build_step_result(status=STEP_STATUS_WAITING, summary='Waiting for required results.')
         elif any(
             statuses.get(dependency) not in (STEP_STATUS_COMPLETED, STEP_STATUS_PARTIAL)
+            # A producer bound only through optional inputs may fail; the consumer discloses it.
+            and dependency not in optional_input_producers(step)
             for dependency in step['depends_on']
         ):
             result = build_step_result(
@@ -1849,6 +1914,17 @@ def _execute_dependency_plan(
                         step, context, settings, user_id, emit, step_cancel, resolver,
                         input_fingerprint=input_fingerprint,
                     )
+                    if _should_retry_transient(step, result, step_cancel):
+                        _log_transient_retry(context, step, result)
+                        _emit(emit, {
+                            'type': 'step', 'phase': STEP_STATUS_RUNNING, **running,
+                            'summary': _TRANSIENT_RETRY_SUMMARY, 'completed': index, 'total': len(steps),
+                        })
+                        if _pause_before_retry(step_cancel):
+                            result = _run_dependency_step(
+                                step, context, settings, user_id, emit, step_cancel, resolver,
+                                input_fingerprint=input_fingerprint,
+                            )
                 except MixedSourceCancellationError:
                     result = build_step_result(
                         status=STEP_STATUS_CANCELLED if reason == 'user_cancelled' else STEP_STATUS_FAILED,

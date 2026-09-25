@@ -1,6 +1,6 @@
 # Chat Orchestration
 
-**Version: 0.261.132** (tracked in `application/single_app/config.py`)
+**Version: 0.261.137** (tracked in `application/single_app/config.py`)
 
 **Implemented in version: 0.261.086**
 **Knowledge phase added in version: 0.261.089**
@@ -19,6 +19,8 @@
 **Same-attempt waiting continuation and external Gather retention implemented in version: 0.261.127**
 **Runtime boundary hardening implemented in version: 0.261.129**
 **Charts, Mermaid diagrams, and image proposals implemented in version: 0.261.132**
+**Gather / Reason / Render answer parity implemented in version: 0.261.134**
+**Orchestrate model picker placement and remembered choice fixed in version: 0.261.137**
 
 ## Overview
 
@@ -661,9 +663,18 @@ model setting or API version is required.
 
 #### Model selection
 
-The answer model comes from **Manual controls** when one is selected, otherwise from
-the administrator's default model connection. Classic single-endpoint or APIM settings
-remain the fallback only when no connection-based selection or default applies.
+With **Auto - choose per step**, the default wherever a connected model has a catalog
+profile rated for general answering, the server binds a model to each model-backed step, and the
+answer is attributed to the step that writes it: the `respond` step in a standard
+plan, or the task that `final_response` names in a Gather / Reason / Render plan. When
+no step in the run writes the reply, for example when it reuses an earlier turn's result
+or the plan only delivers files, the reply keeps the default model. See
+[Model catalog profiles and per-step Auto routing](MODEL_CATALOG_PROFILES_AND_AUTO_ROUTING.md).
+
+With a pinned model, the answer model comes from **Manual controls** when one is
+selected, otherwise from the administrator's default model connection. Classic
+single-endpoint or APIM settings remain the fallback only when no connection-based
+selection or default applies.
 The selected deployment, provider, endpoint ID and model ID are resolved together:
 changing only the deployment on a legacy client could send it to the wrong endpoint.
 
@@ -677,7 +688,10 @@ resolution, plan generation and research review as well as the answer. A configu
 planner deployment or endpoint remains separate and does not override the answer model.
 Planner endpoint selections use the existing planner model/endpoint/provider settings and
 the caller's normal model access checks. A deployment-only planner override retains the
-classic single-endpoint/APIM connection.
+classic single-endpoint/APIM connection. Since **0.261.137**, administrators choose the
+planner from a **Planner model** dropdown on both admin pages, which writes those settings
+from a listed model instead of typed identifiers; see
+[Orchestration settings](../../admin/orchestration.md#chat-orchestration-planner-model-section).
 
 Planning resolves its client on the request thread after restoring canonical turn state,
 with authenticated streaming context retained for endpoint authorization. Execution
@@ -1019,6 +1033,58 @@ and style preferences apply to whichever step authors the visual. The chart sub-
 receives saved instructions only, never recalled facts, and never the action's own
 functions. See the [visual outputs fix](../fixes/ORCHESTRATION_VISUAL_OUTPUTS_FIX.md).
 
+### Gather / Reason / Render answer parity
+
+Since **0.261.134**, a Gather / Reason / Render plan answers with the same inputs the
+legacy answer step had, and the planner states what the answer may rely on. See the
+[deliverable planning fix](../fixes/ORCHESTRATION_DELIVERABLE_PLANNING_FIX.md).
+
+- **Auto model routing.** Each model-backed step, including `compose`, is bound to an
+  authorized connected model at planning time. The binding is checked again before
+  execution, and the step runs on that model. An Auto request no longer falls back to a
+  legacy plan. The answer model is the one bound to the step that produces
+  `final_response`; a reply that reuses an earlier turn's result keeps the default
+  selection. When no connected model is rated for a step's task, the step uses the
+  capable model best rated for general answering instead of failing the plan.
+- **Saved memory and follow-ups.** `compose` reads saved instruction and fact memory with
+  the same precedence as before, plus the conversation messages the resolver selected. A
+  follow-up can transform an earlier answer, but that answer is not treated as evidence.
+- **Knowledge basis.** Each compose step declares one of three bases:
+  - `general_knowledge`: stable, widely known facts that need no retrieval.
+  - `sources`: every claim must come from the named inputs. This is for private
+    documents, integration data, and current or local facts.
+  - `sources_and_general_knowledge`: inputs lead, and stable general knowledge may
+    fill gaps.
+
+  The plan panel shows the basis for each step.
+- **Optional inputs.**
+  - Only a compose step whose basis includes general knowledge can mark a named input
+    `optional`.
+  - A producer that feeds only optional inputs does not decide whether the plan
+    succeeds. If it fails, the answer is still written, says once what could not be
+    gathered, and does not present that content as sourced.
+  - A retry is offered only when another step also failed. It runs that producer again,
+    and also runs again the steps that completed without it and every step computed from
+    them, so the retried work can use what the first attempt missed. Other completed
+    steps are still reused.
+  - Required inputs still fail closed.
+- **Retrying a run with files.** Each attempt owns its files, and preparing a retry
+  supersedes the previous attempt's files. So a whole-run retry never reuses a render
+  step: it renders the files again, from reused content where possible, without calling
+  a model, and the previous attempt's files are shown as superseded. React V2 offers that
+  retry only for an attempt without files; an attempt with files is recovered per file.
+- **Visuals.** The planner names the visuals a Markdown answer should author, and a chart
+  over an action's rows, as structured `visuals` arguments. Keyword detection is not
+  used. Charts drawn during gathering are placed at their tokens.
+- **Web search.**
+  - Foundry citation placeholders become numbered links, and the answer receives the
+    source list.
+  - A failed search reports a specific reason, such as a timeout, an HTTP status, or a
+    service that is not configured.
+  - Read-only gathering retries once after a transient provider failure.
+- **Who planned it.** The plan records its planning model and how that model was
+  chosen, and the plan panel shows "Planned by ...".
+
 ## API
 
 Planning and execution are deliberately separate requests. The plan is durable between
@@ -1210,7 +1276,8 @@ See [the Orchestration settings page](../../admin/orchestration.md) for the full
 3. Open a V2 chat. Where orchestration is enabled the composer opens in it, with the
    capability toggles and the model, agent and reasoning pickers folded behind **Manual
    controls**; file upload and voice input stay where they are. The **Orchestrate** toggle
-   turns it off again for anyone who wants the classic composer.
+   turns it off again for anyone who wants the classic composer. The model picker under
+   **Manual controls** starts on **Auto - choose per step** wherever Auto can be used.
 4. Ask a question. If an inline clarification appears, answer it using choices, text, references, or uploads, then select **Finish**.
 5. Review the resulting plan. Use **Edit** to discuss changes with the planner, then
    explicitly run the accepted version or cancel the plan.
@@ -1232,6 +1299,14 @@ loaded, the composer keeps the draft and offers **Retry loading approval prefere
 before orchestration can start. An unsuccessful save shows an error and rolls back
 to the last confirmed selection unless a newer choice is still pending. Choose the
 mode again to retry saving. Existing plans retain their own approval state.
+
+The Orchestrate model choice is saved the same way, since **0.261.137**:
+`orchestrationModelRouting` records Auto or a pinned model, and
+`orchestrationPreferredModelId` records the pinned model's catalog selection key.
+Both are separate from the normal chat model. A pin whose model is no longer in the
+catalog falls back to the default, and a pin is ignored while an administrator hides
+Manual controls. Sending waits until the saved choice has loaded; a failed load
+does not block sending, because the picker shows what will be used.
 
 See [the approval persistence fix](../fixes/V2_ORCHESTRATION_APPROVAL_PERSISTENCE_FIX.md)
 for the persistence contract and failure handling.
@@ -1272,6 +1347,8 @@ to the front.
 | `functional_tests/test_orchestration_action_planning.py` | Default-off action gating, short requests, validated action inputs, and retained agent selections |
 | `functional_tests/test_orchestration_action_runtime.py` | One-action loading, bounded function calls, model authorization, cancellation, usage and resource cleanup; the chart sub-step charts exact rows, cannot reach the action, and receives only saved instructions |
 | `functional_tests/test_orchestration_visual_outputs.py` | Visual intent, answer guidance and saved-memory precedence, exact-row downsampling, chart placement, untruncated chart citations, planner visual context, and the Image seed |
+| `functional_tests/test_orchestration_single_contract_parity.py` | Gather / Reason / Render parity in the real headless harness: Auto planning and bound execution, knowledge-basis policies, memory and conversation references, optional inputs with one transient retry and disclosure, retries that run again what completed without a retried producer, planner-named visuals and chart placement, the planner descriptor, web search failure classification, and citation links |
+| `functional_tests/test_v2_orchestration_planner_display.mjs` | Browser normalization of the planner descriptor, Auto routing, optional inputs, and answer-basis and visual labels |
 | `functional_tests/test_orchestration_context_picker.py` | Picked tags reach the seeds and both search paths under the parameter `hybrid_search` really takes; a tag scopes the probe rather than replacing it; a picked document reaches the planner and the approval card by name; a browser-supplied name cannot widen access; search citations carry the workspace a document came from; a step can read what an earlier step found, an unusable reference is repaired or dropped, and a run-time document still respects the configured ceiling |
 | `functional_tests/test_orchestration_conversation_context.py` | Message eligibility, bounds, snapshot validation, nullable unused clarifications, strict response validation, bounded repair, token accounting, provider/refusal handling, contextualized adapters, synthesis roles, and URL provenance |
 | `functional_tests/test_orchestration_conversation_context_routes.py` | New and existing conversations across HTTP/SSE planning and execution, all approval modes, null clarifications, bounded recovery, model selection and attribution, revocation, completion failures, stream cleanup, stale sources and legacy cutoffs |
@@ -1292,10 +1369,11 @@ research-selection rate is not itself a quality improvement.
 - **Recent transcript context only.** There is no orchestration rolling summary or
   cross-chat transcript lookup. A reference outside the retained window may need
   clarification. Enabled scoped fact memories are a separate, bounded source of context.
-- **Automatic per-step model routing is not implemented.** Planning and research use the
-  selected/default answer model unless a dedicated planner override is configured.
-  Direct action execution receives the answer selection. Models are not selected
-  dynamically by task capability or cost; configured agents retain their own model behavior.
+- **Auto routing binds steps to connected models by task.** Planning uses the selected or
+  default model unless a dedicated planner override is configured. With **Auto**, each
+  model-backed step is bound to an authorized connected model chosen by task suitability,
+  then priority. Since **0.261.134** this applies to Gather / Reason / Render plans as well.
+  Configured agents retain their own model behavior.
 - **No output-phase workflow.** Existing MCP, OpenAPI and other action types can now
   gather knowledge directly, but the `output` phase remains empty. There are no dedicated
   output scheduling, workspace placement or delivery steps. Actions retain their existing
@@ -1306,9 +1384,12 @@ research-selection rate is not itself a quality improvement.
   agent creates with its chart tool travels in those citations and is placed in the answer,
   and images are offered as proposal cards by the answer step. Agent steps do not receive
   saved memories.
-- **Visuals are limited to the legacy contract.** The Gather/Reason/Render harness does not
-  yet produce charts, diagrams, or image proposals. A chart renders at most 200 points per
-  series; longer series are reduced to each segment's highest and lowest values.
+- **Images in generated files are not yet supported.** Since **0.261.134**, Gather /
+  Reason / Render answers author charts, Mermaid diagrams, and image proposal cards when
+  the planner names them. Proposal images are generated only after the user approves each
+  card, so a file rendered during the run cannot contain them. A chart renders at most
+  200 points per series; longer series are reduced to each segment's highest and lowest
+  values.
 - **One agent per plan.** Loading an agent resolves Key Vault secrets, hydrates every plugin
   it declares, and introspects SQL and Cosmos schemas. There is no working kernel cache, so
   each agent step pays that cost in full.
