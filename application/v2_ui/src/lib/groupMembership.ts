@@ -270,6 +270,13 @@ export function isPublicAssignableMemberRole(value: unknown): value is Assignabl
     return typeof value === 'string' && (PUBLIC_ASSIGNABLE_MEMBER_ROLES as readonly string[]).includes(value);
 }
 
+/**
+ * The roles a public workspace member can hold, for the Members "filter by role" select. A public
+ * workspace has no plain members, so `User` is deliberately absent: its members are exactly the
+ * owner, the admins and the document managers.
+ */
+export const PUBLIC_MEMBER_ROLES = ['Owner', 'Admin', 'DocumentManager'] as const;
+
 const MEMBER_TEXT_CONTROL_CHARACTERS = /[\u0000-\u001f\u007f-\u009f]/;
 
 /**
