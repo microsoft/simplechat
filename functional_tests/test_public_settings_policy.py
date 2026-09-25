@@ -16,7 +16,8 @@ real in ``test_support/public_settings_harness.py``:
   or an admin, with the administrator's download capability;
 - retention against ``POST /api/retention-policy/public/<ws_id>``: the owner or an admin;
 - the activity and statistics reads against ``/activity`` and ``/stats``: the owner or an
-  admin, and any stored role, respectively.
+  admin, and any stored role, respectively, with the native ``/insights/activity`` and
+  ``/insights/stats``.
 
 Admins and document managers are stored as bare ids or as ``{userId, ...}`` entries, and
 every cell runs with both. In every cell the decision allows exactly what the classic
@@ -249,19 +250,22 @@ def test_retention_needs_public_workspaces_on_where_the_classic_route_does_not(e
 # ---------------------------------------------------------------------------
 
 READS = {
-    "view_activity": "/activity",
-    "view_stats": "/stats",
+    "view_activity": ("/activity", "/insights/activity"),
+    "view_stats": ("/stats", "/insights/stats"),
 }
 READ_CELLS = list(itertools.product(CALLERS, MEMBER_FORMATS, READS, ("active", "locked", "inactive", "archived")))
 
 
 @pytest.mark.parametrize("caller,members,operation,status", READ_CELLS)
-def test_insight_decisions_follow_the_classic_reads(env, caller, members, operation, status):
+def test_insight_reads_follow_the_classic_reads(env, caller, members, operation, status):
+    classic_path, native_path = READS[operation]
     prepare(env, caller, members, status=status)
     reason = decision(env, caller, operation)
-    classic = env.call("GET", f"/api/public_workspaces/{WORKSPACE}{READS[operation]}", legacy=True)
+    classic = env.call("GET", f"/api/public_workspaces/{WORKSPACE}{classic_path}", legacy=True)
+    native = env.call("GET", f"/api/public-workspaces/{WORKSPACE}{native_path}")
 
     assert_seam(allowed(classic), reason)
+    assert_native_follows(env, native, reason)
 
 
 @pytest.mark.parametrize("caller,members", list(itertools.product(CALLERS, MEMBER_FORMATS)))
@@ -397,10 +401,12 @@ def _called(function, name):
     )
 
 
-def test_every_native_write_is_gated_by_the_one_decision():
+def test_every_native_write_and_read_is_gated_by_the_one_decision():
     for name in ("update_public_profile", "replace_public_logo", "remove_public_logo",
                  "update_public_downloads", "update_public_retention"):
         assert _called(_function("functions_public_settings.py", name), "require_operation"), name
+    for name in ("read_public_activity", "read_public_stats"):
+        assert _called(_function("functions_public_insights.py", name), "require_operation"), name
     assert _called(_function("functions_public_settings.py", "require_operation"), "public_settings_decisions")
     assert _called(_function("functions_public_settings.py", "build_public_settings"),
                    "build_public_settings_management")

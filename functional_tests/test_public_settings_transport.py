@@ -4,8 +4,9 @@ Functional test for how the native public workspace settings routes resolve.
 Version: 0.261.181
 Implemented in: 0.261.181
 
-The native paths under ``/api/public-workspaces/<workspace_id>/settings`` share no
-pattern with any other route. This test pins, from every route the application declares:
+The native paths under ``/api/public-workspaces/<workspace_id>/settings`` and
+``/api/public-workspaces/<workspace_id>/insights`` share no pattern with any other route.
+This test pins, from every route the application declares:
 
 - that ``route_backend_public_settings`` declares exactly the native routes;
 - that on a server without that file every native path, with every method, matches no
@@ -35,6 +36,8 @@ EXPECTED_NEW_ROUTES = {
     ("DELETE", "/api/public-workspaces/<workspace_id>/settings/logo", "api_public_settings_logo_remove"),
     ("PATCH", "/api/public-workspaces/<workspace_id>/settings/downloads", "api_public_settings_downloads_update"),
     ("PATCH", "/api/public-workspaces/<workspace_id>/settings/retention", "api_public_settings_retention_update"),
+    ("GET", "/api/public-workspaces/<workspace_id>/insights/activity", "api_public_insights_activity"),
+    ("GET", "/api/public-workspaces/<workspace_id>/insights/stats", "api_public_insights_stats"),
 }
 NEW_PATHS = sorted({path.replace("<workspace_id>", "public-1") for _, path, _ in EXPECTED_NEW_ROUTES})
 

@@ -13,7 +13,8 @@ Loaded unchanged from their files:
   (including the real logo processing) and ``functions_stats_windows``;
 - ``functions_public_workspaces`` (the role predicate and the etag guard),
   ``functions_public_directory``, ``functions_public_settings_policy``,
-  ``functions_public_settings`` and ``route_backend_public_settings``;
+  ``functions_public_settings``, ``functions_public_insights`` and
+  ``route_backend_public_settings``;
 - the classic ``route_backend_public_workspaces`` and ``route_backend_retention_policy``,
   registered as ``app.py`` registers them, so every seam test compares the native
   routes with the classic routes' real outcomes. ``env.client`` has both, and
@@ -25,12 +26,12 @@ the real definitions.
 Only services outside the application are replaced:
 
 - Cosmos: an etag-enforcing public workspaces container, which refuses every query, and an
-  activity logs container whose model evaluates exactly the queries the classic routes
-  send, as Cosmos evaluates them (type-strict equality, undefined properties omitted from
-  projections and excluded from ``ORDER BY``), and refuses any other query. The model
-  holds its own copy of each query text, so a change to a module's query fails these
-  tests until the model is reviewed with it. The public documents container refuses every
-  query;
+  activity logs container whose model evaluates exactly the aliased native activity query
+  and the queries the classic routes send, as Cosmos evaluates them (type-strict equality,
+  undefined properties omitted from projections and excluded from ``ORDER BY``), and
+  refuses any other query. The model holds its own copy of each query text, so a change
+  to a module's query fails these tests until the model is reviewed with it. The public
+  documents container refuses every query;
 - the retention job's listing helpers, the chat bootstrap cache bump, notifications,
   ``log_event``, user settings writes and the activity logger are recorders;
 - network access, including DNS, is refused.
@@ -90,6 +91,25 @@ def _normalized(query):
 
 
 # The queries this fixture models, kept here rather than read from the modules.
+EXPECTED_NATIVE_ACTIVITY_QUERY = _normalized(
+    "SELECT TOP @limit a.id AS id, a.activity_type AS activity_type, a.timestamp AS timestamp, "
+    "a.user_id AS user_id, a.changed_by.user_id AS changed_by_user_id, a.token_type AS token_type, "
+    "a.usage.total_tokens AS total_tokens, a.status_change.old_status AS old_status, "
+    "a.status_change.new_status AS new_status, a.action AS action "
+    "FROM a WHERE a.workspace_context.public_workspace_id = @workspace_id ORDER BY a.timestamp DESC"
+)
+NATIVE_ACTIVITY_ALIASES = {
+    "id": ("id",),
+    "activity_type": ("activity_type",),
+    "timestamp": ("timestamp",),
+    "user_id": ("user_id",),
+    "changed_by_user_id": ("changed_by", "user_id"),
+    "token_type": ("token_type",),
+    "total_tokens": ("usage", "total_tokens"),
+    "old_status": ("status_change", "old_status"),
+    "new_status": ("status_change", "new_status"),
+    "action": ("action",),
+}
 LEGACY_ACTIVITY_QUERY = re.compile(
     r"SELECT TOP (10|20|50) \* FROM a WHERE a\.workspace_context\.public_workspace_id = @wsId "
     r"ORDER BY a\.timestamp DESC"
@@ -198,6 +218,21 @@ class ActivityLogsContainer(FakeContainer):
             self.fail_queries -= 1
             raise cosmos_exceptions.CosmosHttpResponseError(status_code=503, message="Service unavailable")
         records = list(self.records.values())
+        if normalized == EXPECTED_NATIVE_ACTIVITY_QUERY:
+            if set(values) != {"@limit", "@workspace_id"} or not isinstance(values["@limit"], int):
+                raise AssertionError("The activity query takes exactly a whole-number limit and the workspace id")
+            matching = [record for record in self._scoped(records, values["@workspace_id"])
+                        if isinstance(_path(record, "timestamp"), str)]
+            matching.sort(key=lambda record: record["timestamp"], reverse=True)
+            rows = []
+            for record in matching[:values["@limit"]]:
+                row = {}
+                for alias, keys in NATIVE_ACTIVITY_ALIASES.items():
+                    value = _path(record, *keys)
+                    if value is not _UNDEFINED:
+                        row[alias] = copy.deepcopy(value)
+                rows.append(row)
+            return rows
         legacy = LEGACY_ACTIVITY_QUERY.fullmatch(normalized)
         if legacy:
             if set(values) != {"@wsId"}:
@@ -504,13 +539,14 @@ def public_settings_environment():
         directory = _load(stack, "functions_public_directory")
         policy = _load(stack, "functions_public_settings_policy")
         settings_functions = _load(stack, "functions_public_settings")
+        insights = _load(stack, "functions_public_insights")
         routes = _load(stack, "route_backend_public_settings")
         legacy_routes = _load(stack, "route_backend_public_workspaces")
         retention_routes = _load(stack, "route_backend_retention_policy")
 
         env.modules = SimpleNamespace(
             branding=branding, stats_windows=stats_windows, group=group, public_workspaces=public_workspaces,
-            directory=directory, policy=policy, settings=settings_functions, routes=routes,
+            directory=directory, policy=policy, settings=settings_functions, insights=insights, routes=routes,
             legacy_routes=legacy_routes, retention_routes=retention_routes, authentication=authentication,
             settings_module=settings_module,
         )
@@ -535,6 +571,7 @@ def public_settings_environment():
 __all__ = [
     "ActivityLogsContainer",
     "BASE_SETTINGS",
+    "EXPECTED_NATIVE_ACTIVITY_QUERY",
     "LEGACY_ACTIVITY_QUERY",
     "PEOPLE",
     "PublicSettingsEnvironment",

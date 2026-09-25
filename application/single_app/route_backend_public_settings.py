@@ -10,18 +10,21 @@
 - ``PATCH /api/public-workspaces/<workspace_id>/settings/downloads`` sets the workspace's
   file download switch;
 - ``PATCH /api/public-workspaces/<workspace_id>/settings/retention`` changes its retention
-  policy.
+  policy;
+- ``GET /api/public-workspaces/<workspace_id>/insights/activity`` and ``/insights/stats``
+  read the activity feed and the statistics.
 
 They sit beside the classic ``/api/public_workspaces/<ws_id>`` routes, which are
 unchanged. None of these paths matches any other route, so a server without them
-answers 404. The rules live in ``functions_public_settings`` and
-``functions_public_settings_policy``.
+answers 404. The rules live in ``functions_public_settings``,
+``functions_public_insights`` and ``functions_public_settings_policy``.
 """
 
 from functools import wraps
 
 from functions_authentication import get_current_user_id, login_required, user_required
 from functions_public_directory import reject_request_body
+from functions_public_insights import read_public_activity, read_public_stats
 from functions_public_settings import (
     no_store,
     public_settings_error_response,
@@ -109,3 +112,25 @@ def register_route_backend_public_settings(bp):
     def api_public_settings_retention_update(workspace_id):
         """Merge ``{revision, conversation_retention_days?, document_retention_days?}``."""
         return no_store(*update_public_retention(get_current_user_id(), workspace_id))
+
+    @bp.route('/api/public-workspaces/<workspace_id>/insights/activity', methods=['GET'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    @enabled_required("enable_public_workspaces")
+    @_public_settings_boundary
+    def api_public_insights_activity(workspace_id):
+        """Read the workspace's activity feed: ``limit`` is 10, 20 or 50."""
+        reject_request_body()
+        return no_store(*read_public_activity(get_current_user_id(), workspace_id))
+
+    @bp.route('/api/public-workspaces/<workspace_id>/insights/stats', methods=['GET'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    @enabled_required("enable_public_workspaces")
+    @_public_settings_boundary
+    def api_public_insights_stats(workspace_id):
+        """Read the workspace's statistics for ``days`` or ``start_date`` and ``end_date``."""
+        reject_request_body()
+        return no_store(*read_public_stats(get_current_user_id(), workspace_id))

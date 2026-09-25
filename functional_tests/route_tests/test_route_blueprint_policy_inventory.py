@@ -213,6 +213,8 @@ SENSITIVE_ROUTE_POLICIES = {
     ("route_backend_public_settings.py", "api_public_settings_logo_remove"): ("login_required", "user_required", "enabled_required"),
     ("route_backend_public_settings.py", "api_public_settings_downloads_update"): ("login_required", "user_required", "enabled_required"),
     ("route_backend_public_settings.py", "api_public_settings_retention_update"): ("login_required", "user_required", "enabled_required"),
+    ("route_backend_public_settings.py", "api_public_insights_activity"): ("login_required", "user_required", "enabled_required"),
+    ("route_backend_public_settings.py", "api_public_insights_stats"): ("login_required", "user_required", "enabled_required"),
     ("route_backend_group_membership.py", "api_group_membership_list"): ("login_required", "user_required", "enabled_required"),
     ("route_backend_group_membership.py", "api_group_membership_add"): ("login_required", "user_required", "enabled_required"),
     ("route_backend_group_membership.py", "api_group_membership_role"): ("login_required", "user_required", "enabled_required"),
