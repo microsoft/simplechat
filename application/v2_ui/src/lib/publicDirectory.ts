@@ -79,6 +79,28 @@ export {
     codePointLength,
 };
 
+// The bulk visibility controls (All visible, All hidden, Show all and chat, Save list) act on
+// every workspace in the directory, not the one page on screen. The directory is server-paged,
+// so covering "all" means walking the pages, which is bounded so a very large collection can
+// never turn one click into an unbounded fan-out of requests or a settings blob that will not
+// save. Past the bound the control refuses with the count rather than writing part of the set
+// and implying the whole -- the plan rule that a bulk action never claims more than it wrote.
+export const DIRECTORY_BULK_PAGE_SIZE = 100; // the server's PUBLIC_DIRECTORY_MAX_PAGE_SIZE
+export const DIRECTORY_BULK_MAX_WORKSPACES = 1000;
+
+/** Raised when the directory is larger than a single bulk action may cover. */
+export class DirectoryBulkTooLargeError extends Error {
+    readonly count: number;
+    constructor(count: number) {
+        super(
+            `There are ${count} public workspaces, too many to change all at once. `
+            + 'Show or hide them individually, or use a saved list.',
+        );
+        this.name = 'DirectoryBulkTooLargeError';
+        this.count = count;
+    }
+}
+
 const MEMBERSHIPS: readonly PublicDirectoryMembership[] = ['member', 'pending', 'none'];
 
 function isMembership(value: unknown): value is PublicDirectoryMembership {
@@ -184,6 +206,13 @@ export interface PublicDirectoryAdapter {
     requestAccess: (id: string) => Promise<PublicDirectoryWorkspace>;
     /** Cancel the caller's own pending request; returns the server's fresh row. */
     cancelRequest: (id: string) => Promise<PublicDirectoryWorkspace>;
+    /**
+     * Every discoverable workspace's id, walked across the server's pages so a bulk action
+     * covers the whole directory rather than the page on screen. Throws
+     * {@link DirectoryBulkTooLargeError} when the directory is larger than the bound, so the
+     * caller refuses rather than writing a partial set.
+     */
+    listAllWorkspaceIds: (signal?: AbortSignal) => Promise<string[]>;
     /** The logo URL for a row, or null when it carries no loadable logo. */
     logoUrl: (workspace: PublicDirectoryWorkspace) => string | null;
     /** Where Open navigates for a row, by immutable id and with no activate handshake. */
@@ -222,6 +251,23 @@ export const PUBLIC_DIRECTORY: PublicDirectoryAdapter = {
             { method: 'DELETE' },
         );
         return readPublicDirectoryWorkspace(data);
+    },
+    listAllWorkspaceIds: async (signal) => {
+        // Walk the 'all' view with no search at the server's largest page. The first page carries
+        // total_count, so a directory past the bound is refused before any further request. Ids are
+        // deduplicated because a workspace can shift pages if the collection changes mid-walk.
+        const query = (page: number) => `/api/public_workspaces/directory?${listQuery('all', '', page, DIRECTORY_BULK_PAGE_SIZE)}`;
+        const first = readPublicDirectoryPage(await api.get<unknown>(query(1), signal), 1, DIRECTORY_BULK_PAGE_SIZE);
+        if (first.totalCount > DIRECTORY_BULK_MAX_WORKSPACES) {
+            throw new DirectoryBulkTooLargeError(first.totalCount);
+        }
+        const ids = new Set<string>(first.workspaces.map((workspace) => workspace.id));
+        const pages = Math.max(1, Math.ceil(first.totalCount / DIRECTORY_BULK_PAGE_SIZE));
+        for (let page = 2; page <= pages; page += 1) {
+            const next = readPublicDirectoryPage(await api.get<unknown>(query(page), signal), page, DIRECTORY_BULK_PAGE_SIZE);
+            for (const workspace of next.workspaces) ids.add(workspace.id);
+        }
+        return [...ids];
     },
     logoUrl: (workspace) => {
         // A logo is requested only when the server says one is stored for this workspace.

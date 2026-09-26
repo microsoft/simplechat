@@ -1,7 +1,7 @@
 # test_v2_public_directory.py
 """
 Production-SPA coverage for the native V2 public workspace directory page.
-Version: 0.261.183
+Version: 0.261.184
 Implemented in: 0.261.175
 
 Exercises the real public directory surface -- the browse-and-curate page built on the My Workspace
@@ -19,7 +19,9 @@ which, unlike a group, follows storage alone and is served to any caller regardl
 a malformed envelope surfacing as a hard error rather than an empty directory, the visibility map's
 exact rules (default-all-visible with the honest note, an additive one-entry write, and an
 unavailable-status row that stays hideable and never errors), a graceful deep link into a section a
-public workspace does not offer, and both themes at both breakpoints.
+public workspace does not offer, the whole-directory visibility tools (bulk show/hide, saved lists,
+and the classic-chat hand-off, each acting across the server's pages), and both themes at both
+breakpoints.
 """
 
 import re
@@ -562,6 +564,191 @@ def test_a_workspace_not_found_reports_and_drops_the_row(public_directory_ui):
     request_button(ui, REQUESTABLE_WORKSPACE_NAME).click()
     expect(page.get_by_role("status").filter(has_text="The public workspace was not found.")).to_be_visible()
     expect(row(ui, REQUESTABLE_WORKSPACE_NAME)).to_have_count(0)
+
+
+# --------------------------------------------------------------------------
+# Visibility tools: bulk show/hide, saved lists, and the classic-chat hand-off.
+#
+# The bulk and saved-list controls act on the whole directory, which is server-paged, so the page
+# walks the directory route at the server's largest page to cover every workspace rather than the
+# page on screen. The single chat entry point hands off to the classic public chat -- V2 chat has
+# no all-visible public scope (recorded exception, decision 31) -- and writes nothing itself.
+# --------------------------------------------------------------------------
+
+def all_directory_ids(ui):
+    return set(ui.directory_workspaces)
+
+
+def visibility_map(ui):
+    return ui.preferences.get("publicDirectorySettings")
+
+
+def saved_lists(ui):
+    return ui.preferences.get("publicDirectorySavedLists")
+
+
+def enumeration_gets(ui):
+    """Directory reads at the server's largest page: the whole-directory walk, not the page load."""
+    return [entry for entry in directory_gets(ui) if entry.query.get("page_size") == ["100"]]
+
+
+def wrote_key(key):
+    def _match(response):
+        return (
+            response.request.method == "POST"
+            and response.url.endswith("/api/user/settings")
+            and key in (response.request.post_data or "")
+        )
+    return _match
+
+
+def stub_chat_navigation(ui):
+    """Fulfil the classic aggregate-chat document navigation so the hand-off can be observed."""
+    ui.page.context.route(
+        "**/chats*",
+        lambda route: route.fulfill(status=200, content_type="text/html",
+                                    body="<!doctype html><title>chat</title>"),
+    )
+
+
+def test_show_all_makes_every_workspace_visible_and_reports_the_count(public_directory_ui):
+    """Show all in chat writes true for every workspace across all pages, and reports the true count."""
+    ui, page = public_directory_ui, public_directory_ui.page
+    open_directory(ui)
+    ids = all_directory_ids(ui)
+    with page.expect_response(wrote_key("publicDirectorySettings")):
+        page.get_by_role("button", name="Show all in chat", exact=True).click()
+    written = visibility_map(ui)
+    assert set(written) == ids and all(written.values()), (
+        "Show all must make every workspace in the directory visible, not just the page on screen."
+    )
+    assert enumeration_gets(ui), "The bulk action must walk the directory at the server's largest page."
+    expect(page.get_by_text(f"Made {len(ids)} workspaces visible in chat.", exact=False)).to_be_visible()
+
+
+def test_hide_all_hides_every_workspace_and_reports_the_count(public_directory_ui):
+    """Hide all from chat writes false for every workspace, and reports the count it wrote."""
+    ui, page = public_directory_ui, public_directory_ui.page
+    open_directory(ui)
+    ids = all_directory_ids(ui)
+    with page.expect_response(wrote_key("publicDirectorySettings")):
+        page.get_by_role("button", name="Hide all from chat", exact=True).click()
+    written = visibility_map(ui)
+    assert set(written) == ids and not any(written.values()), "Hide all must hide every workspace."
+    expect(page.get_by_text(f"Hid {len(ids)} workspaces from chat.", exact=False)).to_be_visible()
+
+
+def test_a_bulk_action_preserves_entries_it_did_not_name(public_directory_ui):
+    """A bulk write merges onto the stored map, so an entry for a since-removed workspace survives."""
+    ui, page = public_directory_ui, public_directory_ui.page
+    ui.seed_visibility({"ghost-ws": True})
+    open_directory(ui)
+    ids = all_directory_ids(ui)
+    with page.expect_response(wrote_key("publicDirectorySettings")):
+        page.get_by_role("button", name="Show all in chat", exact=True).click()
+    written = visibility_map(ui)
+    assert "ghost-ws" not in ids, "The stale id is genuinely absent from the directory."
+    assert written.get("ghost-ws") is True, "A bulk action must preserve entries it did not name (R2)."
+    assert all(written[identifier] is True for identifier in ids), "Every real workspace is visible."
+
+
+def test_save_current_snapshots_the_whole_directory_by_default(public_directory_ui):
+    """With no custom map every workspace is visible, so a saved list captures the whole directory."""
+    ui, page = public_directory_ui, public_directory_ui.page
+    open_directory(ui)
+    ids = all_directory_ids(ui)
+    page.get_by_placeholder("Name this visible set").fill("Everything")
+    with page.expect_response(wrote_key("publicDirectorySavedLists")):
+        page.get_by_role("button", name="Save current", exact=True).click()
+    assert set(saved_lists(ui)["Everything"]) == ids, (
+        "The default snapshot is the whole directory, applying the empty-map fallback."
+    )
+    assert enumeration_gets(ui), "Saving the default set walks the directory to enumerate it."
+    expect(page.get_by_text(f'Saved "Everything" with {len(ids)} workspaces.', exact=False)).to_be_visible()
+
+
+def test_save_current_snapshots_only_the_visible_ids_and_drops_stale(public_directory_ui):
+    """A custom map's snapshot keeps only the visible ids that still exist, dropping a stale entry."""
+    ui, page = public_directory_ui, public_directory_ui.page
+    ui.seed_visibility({LOGO_WORKSPACE: True, "ghost-ws": True})
+    open_directory(ui)
+    page.get_by_placeholder("Name this visible set").fill("Just the atlas")
+    with page.expect_response(wrote_key("publicDirectorySavedLists")):
+        page.get_by_role("button", name="Save current", exact=True).click()
+    assert saved_lists(ui)["Just the atlas"] == [LOGO_WORKSPACE], (
+        "The snapshot keeps the one visible id and drops the stale one, like the classic snapshot."
+    )
+    expect(page.get_by_text('Saved "Just the atlas" with 1 workspace.', exact=False)).to_be_visible()
+
+
+def test_use_this_list_replaces_the_map_with_only_the_list(public_directory_ui):
+    """Using a saved list is a full replace: only its workspaces are visible and the rest are hidden."""
+    ui, page = public_directory_ui, public_directory_ui.page
+    ui.preferences["publicDirectorySavedLists"] = {"Pair": [LOGO_WORKSPACE, REQUESTABLE_WORKSPACE]}
+    ui.seed_visibility({INACTIVE_WORKSPACE: True})
+    open_directory(ui)
+    page.get_by_label("Saved list", exact=True).select_option("Pair")
+    with page.expect_response(wrote_key("publicDirectorySettings")):
+        page.get_by_role("button", name="Use this list", exact=True).click()
+    assert visibility_map(ui) == {LOGO_WORKSPACE: True, REQUESTABLE_WORKSPACE: True}, (
+        "Using a list replaces the whole map with exactly the list's workspaces."
+    )
+    assert not enumeration_gets(ui), "A non-empty list needs no directory walk; the custom map hides the rest."
+    expect(page.get_by_text("2 workspaces now visible in chat; the rest are hidden.", exact=False)).to_be_visible()
+
+
+def test_use_an_empty_saved_list_hides_every_workspace(public_directory_ui):
+    """An empty list cannot be a custom map, so applying it walks the directory to hide every id."""
+    ui, page = public_directory_ui, public_directory_ui.page
+    ui.preferences["publicDirectorySavedLists"] = {"Nothing visible": []}
+    open_directory(ui)
+    ids = all_directory_ids(ui)
+    page.get_by_label("Saved list", exact=True).select_option("Nothing visible")
+    with page.expect_response(wrote_key("publicDirectorySettings")):
+        page.get_by_role("button", name="Use this list", exact=True).click()
+    written = visibility_map(ui)
+    assert set(written) == ids and not any(written.values()), "An empty list hides every workspace."
+    assert enumeration_gets(ui), "The empty-list case walks the directory to build an all-hidden map."
+    expect(page.get_by_text("All workspaces are now hidden from chat.", exact=False)).to_be_visible()
+
+
+def test_delete_removes_only_the_named_list(public_directory_ui):
+    """Deleting a saved list removes just that key and leaves every other list untouched."""
+    ui, page = public_directory_ui, public_directory_ui.page
+    ui.preferences["publicDirectorySavedLists"] = {
+        "Alpha": [LOGO_WORKSPACE], "Beta": [REQUESTABLE_WORKSPACE],
+    }
+    open_directory(ui)
+    page.get_by_label("Saved list", exact=True).select_option("Alpha")
+    with page.expect_response(wrote_key("publicDirectorySavedLists")):
+        page.get_by_role("button", name="Delete saved list Alpha", exact=True).click()
+    assert saved_lists(ui) == {"Beta": [REQUESTABLE_WORKSPACE]}, "Delete removes only the named list."
+    expect(page.get_by_text('Deleted the saved list "Alpha".', exact=False)).to_be_visible()
+
+
+def test_chat_with_visible_opens_chat_and_writes_nothing(public_directory_ui):
+    """Chat with visible (classic) hands off to the classic public chat without changing any preference."""
+    ui, page = public_directory_ui, public_directory_ui.page
+    stub_chat_navigation(ui)
+    open_directory(ui)
+    # The help text is exact about the destination: it is classic chat searching the visible
+    # workspaces, not the classic workspace page, and the button itself writes nothing (decision 31).
+    expect(page.get_by_text(
+        "Opens classic chat, searching the public workspaces that are visible now. It changes nothing.",
+        exact=False,
+    )).to_be_visible()
+    with page.expect_navigation(url=re.compile(r"/chats\?openSearch=1&scope=public"),
+                                wait_until="domcontentloaded"):
+        page.get_by_role("button", name="Chat with visible (classic)", exact=True).click()
+    assert not visibility_writes(ui), "Chat with visible must not write any visibility preference."
+
+
+def test_the_visibility_tools_are_hidden_on_an_empty_directory(public_directory_ui):
+    """With nothing to curate -- an empty directory, no custom list, no saved lists -- the panel is gone."""
+    ui, page = public_directory_ui, public_directory_ui.page
+    ui.directory_workspaces = {}
+    open_directory(ui)
+    expect(page.get_by_role("group", name="Chat visibility for public workspaces", exact=True)).to_have_count(0)
 
 
 if __name__ == "__main__":
