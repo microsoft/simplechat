@@ -2,6 +2,16 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.182)**
+
+#### New Features
+
+*   **Manage Public Workspace Identities And File Sources In V2**
+    *   A public workspace's Owner, Admins and DocumentManagers now keep its identities and File Sync sources in V2, in the **Identities** and **Sync** sections, when File Sync is enabled for the workspace. They're the group sections, with public rules: writes only while the workspace is active, read-only in locked and upload-disabled workspaces, and nothing for readers.
+    *   New routes name the workspace in the path, `/api/public-workspaces/<id>/identities` and `/file-sources`. Their writes are conditional, stored secrets are never returned, and a source's documents are deleted only when asked, as public documents. The classic routes are unchanged.
+    *   The identity editor offers only the File Sync use, and the source editor says "Use a saved workspace identity".
+    *   (Ref: `route_backend_public_identities_scoped.py`, `route_backend_public_file_sources_scoped.py`, `functions_public_identity_policy.py`, `functions_public_file_source_policy.py`, `identityWorkbench.ts`, `fileSourceWorkbench.ts`, [V2 Public Connections](features/V2_PUBLIC_CONNECTIONS.md), [Public Connection APIs](features/PUBLIC_CONNECTION_APIS.md))
+
 ### **(v0.261.181)**
 
 Merged from the React V2 branch at `d243b0ca`. These changes shipped there as 0.261.134, 0.261.137, 0.261.138, 0.261.139 and 0.261.140. This branch had already used those numbers for its own changes, so here they carry the merge's version. The version numbers inside their own documentation and tests are the React V2 branch's.
