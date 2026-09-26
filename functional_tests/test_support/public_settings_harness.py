@@ -31,7 +31,10 @@ Only services outside the application are replaced:
   undefined properties omitted from projections and excluded from ``ORDER BY``), and
   refuses any other query. The model holds its own copy of each query text, so a change
   to a module's query fails these tests until the model is reviewed with it. The public
-  documents container refuses every query;
+  documents container models only the classic ``/fileCount`` query;
+- ``count_current_public_documents`` is a recorder returning ``file_count``: its
+  predicate is pinned against the public document list by
+  ``test_public_document_count_predicate.py``;
 - the retention job's listing helpers, the chat bootstrap cache bump, notifications,
   ``log_event``, user settings writes and the activity logger are recorders;
 - network access, including DNS, is refused.
@@ -119,6 +122,8 @@ _WINDOW = (
     "OR (IS_DEFINED(a.created_at) AND a.created_at >= @startDate AND a.created_at <= @endDate) )"
 )
 _SCOPE = "a.workspace_context.public_workspace_id = @wsId"
+# The classic /fileCount query: every stored document record of the workspace.
+LEGACY_FILE_COUNT_QUERY = _normalized("SELECT VALUE COUNT(1) FROM d WHERE d.public_workspace_id = @wsId")
 STATS_QUERIES = {
     _normalized(f"SELECT a.usage FROM a WHERE {_SCOPE} {_WINDOW} AND a.activity_type = 'token_usage'"):
         ("token_total", ("usage",), "token_usage"),
@@ -263,7 +268,11 @@ class ActivityLogsContainer(FakeContainer):
 
 
 class PublicDocumentsContainer(FakeContainer):
-    """The public documents container, which no settings code under test queries."""
+    """The public documents container: the classic ``/fileCount`` query and nothing else.
+
+    The native count goes through ``count_current_public_documents``, so any other query
+    sent here fails the test.
+    """
 
     def __init__(self):
         super().__init__("cosmos_public_documents_container", "id")
@@ -271,7 +280,16 @@ class PublicDocumentsContainer(FakeContainer):
 
     def query_items(self, query, parameters=None, partition_key=None, enable_cross_partition_query=None, **kwargs):
         normalized = _normalized(query)
+        values = {parameter["name"]: parameter["value"] for parameter in parameters or []}
         self.queries.append(normalized)
+        if normalized == LEGACY_FILE_COUNT_QUERY:
+            if set(values) != {"@wsId"} or enable_cross_partition_query is not True:
+                raise AssertionError("The classic document count fans out and takes exactly the workspace id")
+            # ``SELECT VALUE COUNT(1)`` yields one number; the classic route reads it with next().
+            return iter([sum(
+                1 for record in self.records.values()
+                if _cosmos_equal(_path(record, "public_workspace_id"), values["@wsId"])
+            )])
         raise AssertionError(f"The code under test queried public documents directly: {normalized}")
 
 
@@ -326,6 +344,8 @@ class PublicSettingsEnvironment:
         self.bumps = []
         self.logs = []
         self.user_settings_writes = []
+        self.file_count = 0
+        self.file_count_calls = []
         self.activity = Recorder("functions_activity_logging")
 
     # --- seams ------------------------------------------------------------
@@ -347,6 +367,10 @@ class PublicSettingsEnvironment:
     def all_public_workspaces(self):
         return [copy.deepcopy(record) for record in self.public_workspaces.records.values()]
 
+    def count_current_public_documents(self, workspace_id):
+        self.file_count_calls.append(workspace_id)
+        return self.file_count
+
     # --- state ------------------------------------------------------------
 
     def reset(self):
@@ -363,6 +387,8 @@ class PublicSettingsEnvironment:
         self.bumps.clear()
         self.logs.clear()
         self.user_settings_writes.clear()
+        self.file_count = 0
+        self.file_count_calls.clear()
         self.activity.calls.clear()
         self.as_user("outsider-1")
 
@@ -385,6 +411,10 @@ class PublicSettingsEnvironment:
 
     def seed_workspace(self, ws_id="public-1", name=None, **kwargs):
         return self.public_workspaces.seed(workspace_document(ws_id, name, **kwargs))
+
+    def seed_document(self, document_id, ws_id="public-1", **fields):
+        """A stored public document record, for the classic document count."""
+        return self.public_documents.seed({"id": document_id, "public_workspace_id": ws_id, **fields})
 
     def stored_workspace(self, ws_id="public-1"):
         return self.public_workspaces.get(ws_id, ws_id)
@@ -516,6 +546,10 @@ def public_settings_environment():
             ),
             "functions_prompts": module_stub(
                 "functions_prompts", count_public_prompts_for_workspace=_refuse("count_public_prompts_for_workspace"),
+            ),
+            "functions_public_document_reads": module_stub(
+                "functions_public_document_reads",
+                count_current_public_documents=env.count_current_public_documents,
             ),
             "functions_retention_policy": module_stub(
                 "functions_retention_policy",

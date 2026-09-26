@@ -38,6 +38,7 @@ EXPECTED_NEW_ROUTES = {
     ("PATCH", "/api/public-workspaces/<workspace_id>/settings/retention", "api_public_settings_retention_update"),
     ("GET", "/api/public-workspaces/<workspace_id>/insights/activity", "api_public_insights_activity"),
     ("GET", "/api/public-workspaces/<workspace_id>/insights/stats", "api_public_insights_stats"),
+    ("GET", "/api/public-workspaces/<workspace_id>/insights/file-count", "api_public_insights_file_count"),
 }
 NEW_PATHS = sorted({path.replace("<workspace_id>", "public-1") for _, path, _ in EXPECTED_NEW_ROUTES})
 

@@ -1,12 +1,13 @@
 # functions_public_insights.py
 """Native public workspace insights: the activity feed and the statistics.
 
-This backs ``GET /api/public-workspaces/<workspace_id>/insights/activity`` and
-``/insights/stats`` (``route_backend_public_settings``). The classic
-``/api/public_workspaces/<ws_id>/activity`` and ``/stats`` are separate and unchanged
-here. Access follows ``public_settings_decisions``: the owner or an admin reads the
-activity, and the owner, an admin or a document manager reads the statistics, as the
-classic reads allow, in every workspace status.
+This backs ``GET /api/public-workspaces/<workspace_id>/insights/activity``,
+``/insights/stats`` and ``/insights/file-count`` (``route_backend_public_settings``). The
+classic ``/api/public_workspaces/<ws_id>/activity``, ``/stats`` and ``/fileCount`` are
+separate and unchanged here. Access follows ``public_settings_decisions``: the owner or an
+admin reads the activity, the owner, an admin or a document manager reads the statistics,
+as the classic reads allow, and the owner reads the document count, in every workspace
+status.
 
 Activity
 --------
@@ -44,6 +45,13 @@ The window is ``days`` (7, 30 or 90, 30 when neither form is given) or a custom
 ``start_date`` and ``end_date`` of at most 366 days, between 2000-01-01 and 9998-12-31.
 A window that can't be used is a 400 before the workspace is read, so the 503 only ever
 means that storage failed.
+
+Document count
+--------------
+The count is the workspace's current documents, counted as the public document list
+shows them, for the Settings danger zone. The classic ``/fileCount``, which the classic
+manage page checks before it offers to delete a workspace, counts every stored document
+record instead, superseded revisions included.
 """
 
 import logging
@@ -56,6 +64,7 @@ from flask import request
 from config import cosmos_activity_logs_container
 from functions_appinsights import log_event
 from functions_public_directory import _require_user_id
+from functions_public_document_reads import count_current_public_documents
 from functions_public_settings import (
     PublicSettingsError,
     _invalid,
@@ -453,3 +462,12 @@ def read_public_stats(user_id, workspace_id):
         _log_storage_failure("[PUBLIC_SETTINGS] Public workspace statistics read failed.", error)
         raise _refuse_unavailable(PUBLIC_STATS_UNAVAILABLE_MESSAGE, "public_workspace_stats_unavailable") from error
     return {"stats": build_public_stats(workspace, window, date_series, rows)}, 200
+
+
+def read_public_file_count(user_id, workspace_id):
+    """Return ``({"file_count": n}, 200)`` for the owner."""
+    user_id = _require_user_id(user_id)
+    _single_arguments((), "This request does not accept query parameters.")
+    workspace, role = load_public_workspace(user_id, workspace_id)
+    require_operation(workspace, role, get_settings(), "view_file_count")
+    return {"file_count": count_current_public_documents(workspace_id)}, 200

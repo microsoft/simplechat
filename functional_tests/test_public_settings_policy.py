@@ -17,7 +17,10 @@ real in ``test_support/public_settings_harness.py``:
 - retention against ``POST /api/retention-policy/public/<ws_id>``: the owner or an admin;
 - the activity and statistics reads against ``/activity`` and ``/stats``: the owner or an
   admin, and any stored role, respectively, with the native ``/insights/activity`` and
-  ``/insights/stats``.
+  ``/insights/stats``;
+- the document count against ``/fileCount``, which answers every signed-in caller: the
+  native ``/insights/file-count`` backs the owner's danger zone and is the owner's alone,
+  pinned as the one read narrower than classic.
 
 Admins and document managers are stored as bare ids or as ``{userId, ...}`` entries, and
 every cell runs with both. In every cell the decision allows exactly what the classic
@@ -252,6 +255,7 @@ def test_retention_needs_public_workspaces_on_where_the_classic_route_does_not(e
 READS = {
     "view_activity": ("/activity", "/insights/activity"),
     "view_stats": ("/stats", "/insights/stats"),
+    "view_file_count": ("/fileCount", "/insights/file-count"),
 }
 READ_CELLS = list(itertools.product(CALLERS, MEMBER_FORMATS, READS, ("active", "locked", "inactive", "archived")))
 
@@ -264,7 +268,13 @@ def test_insight_reads_follow_the_classic_reads(env, caller, members, operation,
     classic = env.call("GET", f"/api/public_workspaces/{WORKSPACE}{classic_path}", legacy=True)
     native = env.call("GET", f"/api/public-workspaces/{WORKSPACE}{native_path}")
 
-    assert_seam(allowed(classic), reason)
+    if operation == "view_file_count":
+        # The classic count answers every signed-in caller. The native count backs the
+        # owner's danger zone, so it is the owner's alone: the one read narrower than classic.
+        assert allowed(classic)
+        assert reason == (None if caller == "owner-1" else "public_workspace_owner_required")
+    else:
+        assert_seam(allowed(classic), reason)
     assert_native_follows(env, native, reason)
 
 
@@ -325,14 +335,18 @@ def test_every_other_status_keeps_the_profile_and_logo_read_only(env, status):
     for operation in ("edit_name", "edit_description", "edit_color", "edit_logo"):
         assert decisions[operation] == "public_workspace_status_unavailable", operation
     assert decisions["view_activity"] is None and decisions["view_stats"] is None
+    assert decisions["view_file_count"] is None
 
 
 @pytest.mark.parametrize("role,expected", [
-    ("Owner", {"view_activity": None, "view_stats": None}),
-    ("Admin", {"view_activity": None, "view_stats": None}),
-    ("DocumentManager", {"view_activity": "public_workspace_manager_required", "view_stats": None}),
-    ("User", {"view_activity": "public_workspace_manager_required", "view_stats": "public_workspace_member_required"}),
-    (None, {"view_activity": "public_workspace_manager_required", "view_stats": "public_workspace_member_required"}),
+    ("Owner", {"view_activity": None, "view_stats": None, "view_file_count": None}),
+    ("Admin", {"view_activity": None, "view_stats": None, "view_file_count": "public_workspace_owner_required"}),
+    ("DocumentManager", {"view_activity": "public_workspace_manager_required", "view_stats": None,
+                         "view_file_count": "public_workspace_owner_required"}),
+    ("User", {"view_activity": "public_workspace_manager_required", "view_stats": "public_workspace_member_required",
+              "view_file_count": "public_workspace_owner_required"}),
+    (None, {"view_activity": "public_workspace_manager_required", "view_stats": "public_workspace_member_required",
+            "view_file_count": "public_workspace_owner_required"}),
 ])
 def test_the_reads_follow_the_classic_roles(env, role, expected):
     decisions = env.modules.policy.public_settings_decisions(role, {"id": WORKSPACE, "status": "inactive"}, {})
@@ -405,7 +419,7 @@ def test_every_native_write_and_read_is_gated_by_the_one_decision():
     for name in ("update_public_profile", "replace_public_logo", "remove_public_logo",
                  "update_public_downloads", "update_public_retention"):
         assert _called(_function("functions_public_settings.py", name), "require_operation"), name
-    for name in ("read_public_activity", "read_public_stats"):
+    for name in ("read_public_activity", "read_public_stats", "read_public_file_count"):
         assert _called(_function("functions_public_insights.py", name), "require_operation"), name
     assert _called(_function("functions_public_settings.py", "require_operation"), "public_settings_decisions")
     assert _called(_function("functions_public_settings.py", "build_public_settings"),

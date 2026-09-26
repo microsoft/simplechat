@@ -27,7 +27,11 @@ outcomes):
   native only too;
 - ``view_activity`` needs the owner or an admin, and ``view_stats`` the owner, an
   admin or a document manager, as the classic ``/activity`` and ``/stats`` reads do,
-  in every status.
+  in every status;
+- ``view_file_count`` needs the owner, in every status. It backs the Settings danger
+  zone, which only the owner sees because only the owner can delete the workspace
+  (``DELETE /api/public_workspaces/<ws_id>``). The classic ``/fileCount`` answers any
+  signed-in caller; the native count is deliberately narrower.
 
 Every signed-in caller reads a public workspace as at least a ``User``, so a role is
 always known. When several reasons apply, the caller's role is reported before the
@@ -50,6 +54,7 @@ PUBLIC_SETTINGS_OPERATIONS = (
     "edit_retention",
     "view_activity",
     "view_stats",
+    "view_file_count",
 )
 PUBLIC_PROFILE_OPERATIONS = ("edit_name", "edit_description", "edit_color")
 PUBLIC_SETTINGS_OWNER_ROLE = "Owner"
@@ -116,6 +121,7 @@ def public_settings_decisions(role, workspace, settings):
         decisions["edit_retention"] = None
     decisions["view_activity"] = None if manager else PUBLIC_MANAGER_REQUIRED
     decisions["view_stats"] = None if member else PUBLIC_MEMBER_REQUIRED
+    decisions["view_file_count"] = None if owner else PUBLIC_OWNER_REQUIRED
     return {operation: decisions[operation] for operation in PUBLIC_SETTINGS_OPERATIONS}
 
 

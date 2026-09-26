@@ -22,7 +22,10 @@ native ones over the same records. This test pins:
   refusal a reviewed 400 before the workspace is read; and a 503 rather than a zero figure
   when a query fails, and only then;
 - access in every workspace status: the owner or an admin for the activity, and any
-  stored role for the statistics, with the session, role and feature gates.
+  stored role for the statistics, with the session, role and feature gates;
+- the document count for the Settings danger zone: the owner only, from
+  ``count_current_public_documents``, beside the classic ``/fileCount``, which answers any
+  signed-in caller and counts every stored document record.
 """
 
 import logging
@@ -36,8 +39,10 @@ from test_support.public_settings_harness import EXPECTED_NATIVE_ACTIVITY_QUERY,
 WORKSPACE = "public-1"
 ACTIVITY_PATH = f"/api/public-workspaces/{WORKSPACE}/insights/activity"
 STATS_PATH = f"/api/public-workspaces/{WORKSPACE}/insights/stats"
+FILE_COUNT_PATH = f"/api/public-workspaces/{WORKSPACE}/insights/file-count"
 CLASSIC_ACTIVITY_PATH = f"/api/public_workspaces/{WORKSPACE}/activity"
 CLASSIC_STATS_PATH = f"/api/public_workspaces/{WORKSPACE}/stats"
+CLASSIC_FILE_COUNT_PATH = f"/api/public_workspaces/{WORKSPACE}/fileCount"
 STATS_UNAVAILABLE = {"error": "Workspace statistics are unavailable right now. Try again.",
                      "error_code": "public_workspace_stats_unavailable"}
 ACTIVITY_UNAVAILABLE = {"error": "Workspace activity is unavailable right now. Try again.",
@@ -615,10 +620,50 @@ def test_missing_metrics_count_as_zero(env, metrics):
 
 
 # ---------------------------------------------------------------------------
+# The document count
+# ---------------------------------------------------------------------------
+
+def test_the_owner_reads_the_count_of_current_documents(env):
+    env.file_count = 7
+    response = env.call("GET", FILE_COUNT_PATH)
+    assert answer(response) == {"file_count": 7}
+    assert env.file_count_calls == [WORKSPACE]
+    assert env.public_documents.queries == []
+
+
+@pytest.mark.parametrize("caller", ["admin-1", "manager-1", "reader-1", "outsider-1"])
+def test_only_the_owner_reads_the_count(env, caller):
+    env.as_user(caller)
+    assert_error(env.call("GET", FILE_COUNT_PATH), 403, "public_workspace_owner_required",
+                 "Only the workspace owner can do this.")
+    assert env.file_count_calls == []
+
+
+def test_the_count_takes_no_query_parameters(env):
+    assert_error(env.call("GET", FILE_COUNT_PATH, query_string={"workspace_id": "public-2"}), 400, "invalid_request",
+                 "This request does not accept query parameters.")
+    assert env.file_count_calls == []
+
+
+@pytest.mark.parametrize("caller", ["owner-1", "reader-1"])
+def test_the_classic_count_answers_anyone_and_counts_every_stored_record(env, caller):
+    """What the classic manage page checks before it offers to delete a workspace: every
+    stored document record, superseded revisions included, for any signed-in caller."""
+    for document_id, version in (("report-v1", 1), ("report-v2", 2), ("report-v3", 3)):
+        env.seed_document(document_id, revision_family_id="report", version=version,
+                          is_current_version=version == 3)
+    env.seed_document("elsewhere", ws_id="public-2")
+    env.as_user(caller)
+    response = env.call("GET", CLASSIC_FILE_COUNT_PATH)
+    assert (response.status_code, response.get_json()) == (200, {"fileCount": 3})
+    assert env.file_count_calls == []
+
+
+# ---------------------------------------------------------------------------
 # Access and the boundary
 # ---------------------------------------------------------------------------
 
-INSIGHTS = [ACTIVITY_PATH, STATS_PATH]
+INSIGHTS = [ACTIVITY_PATH, STATS_PATH, FILE_COUNT_PATH]
 
 
 @pytest.mark.parametrize("path", INSIGHTS)
@@ -667,7 +712,7 @@ def test_the_statistics_need_a_stored_role(env, managers, caller, expected):
 def test_a_missing_workspace_is_refused(env, path):
     assert_error(env.call("GET", path.replace(WORKSPACE, "public-9")), 404, "public_workspace_not_found",
                  "The selected public workspace was not found.")
-    assert env.activity_logs.queries == []
+    assert env.activity_logs.queries == [] and env.file_count_calls == []
 
 
 @pytest.mark.parametrize("path", INSIGHTS)
@@ -681,7 +726,7 @@ def test_every_insight_needs_a_session_the_user_role_and_public_workspaces(env, 
     disabled = env.call("GET", path)
     assert disabled.status_code == 400
     assert disabled.get_json() == {"error": "Enable Public Workspaces is disabled."}
-    assert env.activity_logs.queries == []
+    assert env.activity_logs.queries == [] and env.file_count_calls == []
 
 
 @pytest.mark.parametrize("path", INSIGHTS)
@@ -693,7 +738,7 @@ def test_an_insight_read_takes_no_body(env, path):
 def test_an_invalid_workspace_id_never_reaches_storage(env, path):
     assert_error(env.call("GET", path.replace(WORKSPACE, "public,1")), 400, "invalid_request",
                  "Invalid public workspace identifier.")
-    assert workspace_reads(env) == [] and env.activity_logs.queries == []
+    assert workspace_reads(env) == [] and env.activity_logs.queries == [] and env.file_count_calls == []
 
 
 def test_a_membership_change_is_reflected_in_the_next_feed(env):

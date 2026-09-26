@@ -11,8 +11,9 @@
   file download switch;
 - ``PATCH /api/public-workspaces/<workspace_id>/settings/retention`` changes its retention
   policy;
-- ``GET /api/public-workspaces/<workspace_id>/insights/activity`` and ``/insights/stats``
-  read the activity feed and the statistics.
+- ``GET /api/public-workspaces/<workspace_id>/insights/activity``, ``/insights/stats`` and
+  ``/insights/file-count`` read the activity feed, the statistics and the count of the
+  workspace's current documents.
 
 They sit beside the classic ``/api/public_workspaces/<ws_id>`` routes, which are
 unchanged. None of these paths matches any other route, so a server without them
@@ -24,7 +25,7 @@ from functools import wraps
 
 from functions_authentication import get_current_user_id, login_required, user_required
 from functions_public_directory import reject_request_body
-from functions_public_insights import read_public_activity, read_public_stats
+from functions_public_insights import read_public_activity, read_public_file_count, read_public_stats
 from functions_public_settings import (
     no_store,
     public_settings_error_response,
@@ -134,3 +135,14 @@ def register_route_backend_public_settings(bp):
         """Read the workspace's statistics for ``days`` or ``start_date`` and ``end_date``."""
         reject_request_body()
         return no_store(*read_public_stats(get_current_user_id(), workspace_id))
+
+    @bp.route('/api/public-workspaces/<workspace_id>/insights/file-count', methods=['GET'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    @enabled_required("enable_public_workspaces")
+    @_public_settings_boundary
+    def api_public_insights_file_count(workspace_id):
+        """Count the workspace's current documents, for the owner."""
+        reject_request_body()
+        return no_store(*read_public_file_count(get_current_user_id(), workspace_id))
