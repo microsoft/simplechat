@@ -47,8 +47,10 @@ from admin_settings_nav import ADMIN_NAV
 from content_screening.contracts import ScreeningError
 from functions_mcp_server_config import is_mcp_ui_enabled
 from config import (
+    CLIENTS,
     ensure_custom_favicon_file_exists,
     ensure_custom_logo_file_exists,
+    get_allowed_extension_categories,
 )
 from functions_appinsights import log_event
 from functions_branding_images import (
@@ -549,6 +551,20 @@ def _build_notices(public_settings, user_settings_dict):
     }
 
 
+def _build_workspace_uploads(public_settings):
+    """Use the classic workspace's format catalog, not the chat attachment list."""
+    return {
+        "categories": get_allowed_extension_categories(
+            enable_video=public_settings.get("enable_video_file_support") in (True, "True", "true"),
+            enable_audio=public_settings.get("enable_audio_file_support") in (True, "True", "true"),
+            enable_xsd=bool(
+                public_settings.get("enable_enhanced_citations", False)
+                and CLIENTS.get("storage_account_office_docs_client")
+            ),
+        ),
+    }
+
+
 def register_route_backend_v2(bp):
     @bp.route("/api/v2/prompts/fill-variables", methods=["POST"])
     @swagger_route(security=get_auth_security())
@@ -787,6 +803,7 @@ def register_route_backend_v2(bp):
                 "admin_nav": ADMIN_NAV if "Admin" in current_user_roles else [],
                 "notices": _build_notices(public_settings, user_settings_dict),
                 "workspace": workspace,
+                "workspace_uploads": _build_workspace_uploads(public_settings),
                 "settings": public_settings,
             }
 

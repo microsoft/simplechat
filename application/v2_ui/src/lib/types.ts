@@ -923,6 +923,10 @@ export interface BootstrapPayload {
      * and the file sync and governance checks are not settings keys at all.
      */
     workspace: WorkspaceAvailability;
+    /** Server-owned workspace formats; older backends omit this catalog. */
+    workspace_uploads?: {
+        categories: { name: string; extensions: string[] }[];
+    };
     /** Sanitized settings. Never contains keys, secrets or connection strings. */
     settings: Json;
 }

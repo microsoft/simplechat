@@ -44,6 +44,28 @@ COPY application/v2_ui/ ./
 # /single_app/static/v2 relative to this stage's working directory.
 RUN npm run build
 
+FROM rust:1.85.1@sha256:e51d0265072d2d9d5d320f6a44dde6b9ef13653b035098febd68cce8fa7c0bc4 AS onenote-builder
+
+COPY docker-customization/custom-ca-certificates/ /usr/local/share/ca-certificates/
+RUN update-ca-certificates
+WORKDIR /build
+COPY application/single_app/native/onenote_extractor/ ./
+COPY LICENSE /onenote-source/wrapper/LICENSE
+RUN cargo build --release --locked \
+    && mkdir -p /onenote-source/wrapper/.cargo \
+    && cargo vendor --locked --versioned-dirs /onenote-source/dependencies > /onenote-source/vendor-config.toml \
+    && sed 's|directory = "/onenote-source/dependencies"|directory = "../dependencies"|' /onenote-source/vendor-config.toml > /onenote-source/wrapper/.cargo/config.toml \
+    && rm /onenote-source/vendor-config.toml \
+    && cp Cargo.toml Cargo.lock /onenote-source/wrapper/ \
+    && cp -R src /onenote-source/wrapper/
+
+FROM mcr.microsoft.com/azurelinux/distroless/python:3.12 AS onenote-runtime
+
+COPY --from=onenote-builder /build/target/release/simplechat-onenote-extractor /app/native/onenote_extractor/bin/simplechat-onenote-extractor
+COPY --from=onenote-builder /build/THIRD_PARTY_NOTICES.txt /usr/share/simplechat/onenote-extractor/THIRD_PARTY_NOTICES.txt
+COPY --from=onenote-builder /build/licenses/ /usr/share/simplechat/onenote-extractor/licenses/
+COPY --from=onenote-builder /onenote-source/ /usr/share/simplechat/onenote-extractor/source/
+
 FROM mcr.microsoft.com/azurelinux/base/python:3.12 AS builder
 
 ARG UID
@@ -220,7 +242,7 @@ RUN set -eux; \
             ;; \
     esac
 
-FROM mcr.microsoft.com/azurelinux/distroless/python:3.12
+FROM onenote-runtime
 
 ARG UID
 ARG GID

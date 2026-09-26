@@ -64,6 +64,7 @@ from functions_data_management_search_write_fence import (
     hold_data_management_search_write_slot,
 )
 from functions_visio import build_visio_page_markdown, parse_vsdx_pages
+from functions_onenote import ONENOTE_MAX_CHUNKS, OneNoteExtractionError, extract_onenote
 from functions_content import *
 from functions_office_media import extract_office_embedded_images_with_diagnostics
 from functions_content_understanding import analyze_image_with_content_understanding
@@ -9087,6 +9088,143 @@ def process_tabular(document_id, user_id, temp_file_path, original_filename, fil
 
     return total_chunks_saved, total_embedding_tokens, embedding_model_name
 
+def process_onenote(document_id, user_id, temp_file_path, original_filename, enable_enhanced_citations, update_callback, group_id=None, public_workspace_id=None, auto_extract_metadata=True):
+    """Index current OneNote typed text without losing page and section context."""
+    scope = {}
+    if public_workspace_id is not None:
+        scope["public_workspace_id"] = public_workspace_id
+    elif group_id is not None:
+        scope["group_id"] = group_id
+
+    try:
+        settings = get_settings()
+        max_file_size_bytes = int(settings.get("max_file_size_mb", 16) * 1024 * 1024)
+        chunk_config = get_chunk_size_config(settings)
+        target_words = chunk_config["txt"]["value"]
+        max_characters = get_embedding_safe_chunk_characters(settings)
+        update_callback(status="Extracting OneNote typed text and tables...")
+        extraction = extract_onenote(
+            temp_file_path, max_file_size_bytes, original_filename=original_filename
+        )
+
+        chunks = []
+        ancestors = []
+        previous_section = None
+        for source_page_number, page in enumerate(extraction.pages, start=1):
+            if previous_section != page.section_path:
+                ancestors = []
+                previous_section = page.section_path
+            while ancestors and ancestors[-1][0] >= page.level:
+                ancestors.pop()
+            page_title = " ".join(page.title.split()) or "(untitled page)"
+            page_titles = [title for _, title in ancestors] + [page_title]
+            ancestors.append((page.level, page_title))
+            if not page.text.strip():
+                continue
+
+            section_label = " / ".join(" ".join(part.split()) for part in page.section_path)
+            page_label = " / ".join(page_titles)
+            header = (
+                f"Section: {section_label}\n"
+                f"Page: {page_label}\n"
+                f"Source page: {source_page_number}\n\n"
+            )
+            available_words = target_words - count_words(header)
+            available_characters = max_characters - len(header)
+            if available_words < 1 or available_characters < 1:
+                raise OneNoteExtractionError("limit_exceeded")
+            pieces = split_text_by_word_limit(page.text, available_words)
+            pieces = split_oversized_chunks(pieces, available_characters)
+            for piece in pieces:
+                if not piece.strip():
+                    continue
+                content = f"{header}{piece}"
+                if (
+                    len(chunks) >= ONENOTE_MAX_CHUNKS
+                    or len(content) > max_characters
+                    or count_words(content) > target_words
+                ):
+                    raise OneNoteExtractionError("limit_exceeded")
+                chunks.append({
+                    "page_text_content": content,
+                    "page_number": len(chunks) + 1,
+                    "file_name": original_filename,
+                })
+        if not chunks:
+            raise OneNoteExtractionError("no_text")
+
+        # Validate the complete notebook and every chunk before any searchable writes.
+        update_callback(
+            number_of_pages=len(chunks),
+            onenote_source_page_count=len(extraction.pages),
+            onenote_section_count=extraction.sections,
+            onenote_excluded_content=extraction.excluded_content,
+            status="Indexing OneNote typed text; images, handwriting, and attachments excluded",
+        )
+        if enable_enhanced_citations:
+            upload_to_blob(
+                temp_file_path=temp_file_path,
+                user_id=user_id,
+                document_id=document_id,
+                blob_filename=original_filename,
+                update_callback=update_callback,
+                **scope,
+            )
+
+        total_chunks_saved = 0
+        total_embedding_tokens = 0
+        embedding_model_name = None
+        for start in range(0, len(chunks), 32):
+            batch = chunks[start:start + 32]
+            update_callback(
+                current_file_chunk=start + 1,
+                status=f"Indexing OneNote chunks {start + 1}-{start + len(batch)}/{len(chunks)}...",
+            )
+            token_usage = save_chunks_batch(batch, user_id, document_id, **scope)
+            total_chunks_saved += len(batch)
+            if token_usage:
+                total_embedding_tokens += token_usage.get("total_tokens", 0)
+                if not embedding_model_name:
+                    embedding_model_name = token_usage.get("model_deployment_name")
+            update_callback(num_chunks=total_chunks_saved, current_file_chunk=total_chunks_saved)
+
+        if auto_extract_metadata:
+            _run_final_metadata_extraction(
+                document_id,
+                user_id,
+                total_chunks_saved,
+                settings.get("enable_extract_meta_data", False),
+                update_callback,
+                **scope,
+            )
+        log_event(
+            "[ONENOTE_INGESTION] Indexed OneNote typed content.",
+            extra={
+                "document_id": document_id,
+                "sections": extraction.sections,
+                "source_pages": len(extraction.pages),
+                "chunks": total_chunks_saved,
+                "excluded_content": extraction.excluded_content,
+            },
+            debug_only=True,
+        )
+        return total_chunks_saved, total_embedding_tokens, embedding_model_name
+    except OneNoteExtractionError as exc:
+        log_event(
+            "[ONENOTE_INGESTION] OneNote processing could not be completed.",
+            extra={"document_id": document_id, "error_code": exc.code},
+            level=logging.WARNING,
+        )
+        raise
+    except Exception as exc:
+        log_event(
+            "[ONENOTE_INGESTION] OneNote indexing failed.",
+            extra={"document_id": document_id, "error_type": type(exc).__name__},
+            level=logging.ERROR,
+        )
+        raise OneNoteExtractionError("indexing_failed") from exc
+
+
 def process_visio(document_id, user_id, temp_file_path, original_filename, enable_enhanced_citations, update_callback, group_id=None, public_workspace_id=None, auto_extract_metadata=True):
     """Processes Visio VSDX files as one searchable chunk per page."""
     is_group = group_id is not None
@@ -11033,6 +11171,7 @@ def _process_document_upload_background_impl(document_id, user_id, temp_file_pat
     audio_extensions = tuple('.' + ext for ext in AUDIO_EXTENSIONS)
     visio_extensions = tuple('.' + ext for ext in VISIO_EXTENSIONS)
     email_extensions = tuple('.' + ext for ext in EMAIL_EXTENSIONS)
+    onenote_extensions = tuple('.' + ext for ext in ONENOTE_EXTENSIONS)
 
     # --- Define update_document callback wrapper ---
     # This makes it easier to pass the update function to helpers without repeating args
@@ -11174,6 +11313,10 @@ def _process_document_upload_background_impl(document_id, user_id, temp_file_pat
                 total_chunks_saved, total_embedding_tokens, embedding_model_name = result
             else:
                 total_chunks_saved = result
+        elif file_ext in onenote_extensions:
+            total_chunks_saved, total_embedding_tokens, embedding_model_name = process_onenote(
+                **{k: v for k, v in processor_args_without_auto_metadata.items() if k != "file_ext"}
+            )
         elif file_ext in email_extensions:
             result = process_msg(**{k: v for k, v in processor_args_without_auto_metadata.items() if k != "file_ext"})
             if isinstance(result, tuple) and len(result) == 3:
@@ -11242,6 +11385,8 @@ def _process_document_upload_background_impl(document_id, user_id, temp_file_pat
             tabular_extensions,
             metadata_extraction_result
         )
+        if file_ext in onenote_extensions:
+            final_status += " - OneNote typed text only; images, handwriting, and attachments excluded"
 
         # Final update uses the total chunks saved across all steps/sheets
         # For DI types, number_of_pages might have been updated during DI processing,

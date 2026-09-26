@@ -72,3 +72,6 @@ local_storage_state.json
 
 # UI automation screenshots, traces, and recordings
 /ui_tests/artifacts/
+
+# Local OneNote native builds
+application/single_app/native/onenote_extractor/target/

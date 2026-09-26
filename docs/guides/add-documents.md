@@ -64,6 +64,26 @@ Treat uploads as an ingestion workflow, not just a file transfer. The target wor
 4. Add or verify metadata such as classification, title, or extraction results when your environment uses them.
 5. Run a search or grounded chat prompt to confirm the document is discoverable.
 
+## Upload OneNote notes
+
+From version **0.261.142** on the React v2 branch, workspace uploads accept `.one` sections and `.onepkg`
+notebook exports. A package becomes one document, with section and page titles
+retained in its searchable text. Use this when a notebook contains typed notes
+or tables you want to reference alongside other workspace documents.
+
+In React v2, use **My workspace > Documents > Upload** or drag the export onto
+the document list. Expand **Supported file types** to see the enabled formats.
+Group and public uploads still use their existing workspace pages.
+
+Upload from the workspace page, not the chat attachment picker. Check the file
+size against the configured upload limit, and wait for processing to finish
+before querying it. Handwriting, image OCR, and embedded attachments are excluded;
+media-only notes will not provide searchable text. Respect your organization's
+OneNote export and sensitivity-label policies.
+
+See [Native OneNote Ingestion](../explanation/features/ONENOTE_INGESTION.md) for
+deployment requirements, processing limits, and failure guidance.
+
 ## Metadata choices that improve retrieval
 
 - Use descriptive filenames so citations are meaningful.
