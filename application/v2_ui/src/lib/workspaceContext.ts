@@ -248,6 +248,26 @@ export interface PublicWorkspaceContext extends WorkspaceAvailability {
         operations: string[];
     };
     /**
+     * The public identity management hint (M10B). Present as `{schema_version: 1, operations: [...]}`
+     * when the viewer may create, edit or delete public workspace identities, computed from role and
+     * status exactly like prompt_management, and additionally gated on File Sync availability.
+     * Absence means "read-only", never an empty grant.
+     */
+    identity_management?: {
+        schema_version: number;
+        operations: string[];
+    };
+    /**
+     * The public file source management hint (M10B). Present as `{schema_version: 1, operations: [...]}`
+     * when the viewer may create, edit, sync or delete public workspace file sources, computed from
+     * file source manage roles and status exactly like identity_management, and gated on File Sync
+     * availability. Absence means "read-only", never an empty grant.
+     */
+    file_source_management?: {
+        schema_version: number;
+        operations: string[];
+    };
+    /**
      * The public membership hint (M10A). Present as `{schema_version: 1, operations: [...]}`: the
      * operations an Owner or Admin may run (add_member, review_requests, change_role,
      * remove_member, transfer_ownership), or an empty set for a reader who cannot manage members.

@@ -10,7 +10,10 @@ import re
 from urllib.parse import quote
 
 from content_screening.permissions import REVIEW_ROLES as SCREENING_REVIEW_ROLES
-from functions_file_sync import is_file_sync_enabled_for_group
+from functions_file_sync import (
+    is_file_sync_enabled_for_group,
+    is_file_sync_enabled_for_public_workspace,
+)
 from functions_governance import is_governance_access_allowed
 from functions_group import (
     assert_group_role,
@@ -74,6 +77,16 @@ from functions_public_document_policy import (
 )
 from functions_public_prompt_policy import (
     public_prompt_management_operations,
+)
+from functions_public_identity_policy import (
+    public_identities_available,
+    public_identity_management_operations,
+    PUBLIC_IDENTITIES_UNAVAILABLE_REASON,
+)
+from functions_public_file_source_policy import (
+    public_file_sources_available,
+    public_file_source_management_operations,
+    PUBLIC_FILE_SOURCES_UNAVAILABLE_REASON,
 )
 from functions_public_membership_policy import (
     PUBLIC_MEMBERSHIP_MANAGER_ROLES,
@@ -396,6 +409,20 @@ def build_public_workspace_context(user_id, workspace_id, settings, *, user_info
     active = status == "active"
     manager = role in PUBLIC_CONTENT_MANAGER_ROLES
 
+    # File Sync is the sole consumer of a public workspace's identities and the only
+    # gate on its file sources, so resolve it once here and share it with both
+    # availability predicates -- exactly the ones the immutable identity and file
+    # source routes call, so the sections, the projections and the routes agree.
+    file_sync_enabled = is_file_sync_enabled_for_public_workspace(
+        settings, workspace_id, user_info=user_info,
+    )
+    identities_available, _identities_reason = public_identities_available(
+        settings, workspace_id, user_info=user_info, file_sync_enabled=file_sync_enabled,
+    )
+    file_sources_available, _file_sources_reason = public_file_sources_available(
+        settings, workspace_id, user_info=user_info, file_sync_enabled=file_sync_enabled,
+    )
+
     def section(enabled, can_manage=False, reason="This section is not available for public workspaces yet."):
         available = bool(view_allowed and enabled)
         return {
@@ -404,17 +431,25 @@ def build_public_workspace_context(user_id, workspace_id, settings, *, user_info
             "reason": None if available else (status_reason if not view_allowed else reason),
         }
 
-    # Public workspaces offer read-only document browsing and, from M9C, a read-only prompts
-    # library that a manager of an active workspace manages. Tags, identities and sync are listed
-    # but not yet available (M10B). Sections public workspaces will never have -- agents, actions,
-    # endpoints and workflows -- are left out of the registry entirely rather than shown as "not
+    # Public workspaces offer read-only document browsing, a read-only prompts library
+    # (M9C), and -- from M10B -- read-only identities and file sources that a manager of
+    # an active workspace manages, both gated on File Sync for this workspace. Tags remain
+    # unavailable. Sections public workspaces will never have -- agents, actions, endpoints
+    # and workflows -- are left out of the registry entirely rather than shown as "not
     # available yet".
+    connections_manager_reason = "Your role does not permit managing this public workspace's connections."
     sections = {
         "documents": section(True, manager),
         "tags": section(False),
         "prompts": section(True, manager),
-        "identities": section(False),
-        "sync": section(False),
+        "identities": section(
+            manager and identities_available, manager,
+            connections_manager_reason if not manager else PUBLIC_IDENTITIES_UNAVAILABLE_REASON,
+        ),
+        "sync": section(
+            manager and file_sources_available, manager,
+            connections_manager_reason if not manager else PUBLIC_FILE_SOURCES_UNAVAILABLE_REASON,
+        ),
     }
     for section_id, entry in sections.items():
         entry["group"] = WORKSPACE_SECTION_GROUPS[section_id]
@@ -480,6 +515,18 @@ def build_public_workspace_context(user_id, workspace_id, settings, *, user_info
         "prompt_management": {
             "schema_version": 1,
             "operations": public_prompt_management_operations(workspace, role, settings),
+        },
+        "identity_management": {
+            "schema_version": 1,
+            "operations": public_identity_management_operations(
+                role, workspace, settings, available=identities_available,
+            ),
+        },
+        "file_source_management": {
+            "schema_version": 1,
+            "operations": public_file_source_management_operations(
+                role, workspace, settings, available=file_sources_available,
+            ),
         },
         # Membership (M10A) advertises the management operations this caller may perform on
         # the workspace, on the same terms as the native member-list envelope. It is a hint

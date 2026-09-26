@@ -405,6 +405,8 @@ export interface WorkspaceIdentity {
     scope_id?: string;
     /** Present on native group identities; the owning group, checked against the page group. */
     group_id?: string;
+    /** Present on native public-workspace identities (M10B); checked against the page workspace. */
+    public_workspace_id?: string;
     provider?: string;
     source_type?: string;
     /** Server-normalized capabilities, e.g. ["file_sync"], ["action"] or both. */
