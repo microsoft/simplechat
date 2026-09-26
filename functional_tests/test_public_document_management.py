@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """
 Functional tests for immutable-target public workspace document management.
-Version: 0.261.173
+Version: 0.261.179
 Implemented in: 0.261.133
 Guarded tag vocabulary (R5.8): the lost patch answers one coded conflict: 0.261.173
+The revision delete double returns the real delete_document_revision's shape, deleted_mode included: 0.261.179
 
 The real public management/access/policy modules and the scoped management route
 family run in the isolated Flask app built by the M3A read fixture. The workspace
@@ -226,7 +227,9 @@ def management(environment):
         for target in targets:
             if target in env.source.records:
                 env.source.delete_item(target, target)
-        return {"deleted_document_ids": targets, "promoted_document_id": None}
+        # functions_documents.delete_document_revision's return: the mode, what it removed, and the
+        # revision it promoted, if any.
+        return {"deleted_mode": delete_mode, "deleted_document_ids": targets, "promoted_document_id": None}
 
     def fake_download(document_item, *, user_id, public_workspace_id, metadata_reader):
         metadata_reader(document_id=document_item["id"], user_id=user_id, group_id=None,
