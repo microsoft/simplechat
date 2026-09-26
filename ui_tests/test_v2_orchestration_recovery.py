@@ -1,9 +1,10 @@
 # test_v2_orchestration_recovery.py
 """
 Real-component browser coverage for orchestration failure and checkpoint recovery.
-Version: 0.261.139
+Version: 0.261.141
 Implemented in: 0.261.105
 Earlier-version run refusals covered in: 0.261.139
+Settled runs whose stored plan still reads running covered in: 0.261.141
 
 The production controller, SSE reader, stores, message list, and Run drawer execute
 in the existing local/Azure Playwright harness. Only API responses are deterministic.
@@ -369,6 +370,30 @@ def test_reload_keeps_failure_without_automatic_retry_and_message_retry_is_not_p
     page.get_by_role("button", name="Review orchestration recovery").click(force=True)
     expect(page.get_by_role("complementary", name="Review drawer")).to_be_visible()
     assert not any("/api/message/" in request["path"] for request in api.requests)
+
+
+# The server records a run's outcome on the run alone; the plan saved inside it still reads
+# running, so a reopened conversation must take the settled status from the run.
+@pytest.mark.parametrize("status", ["failed", "cancelled"])
+def test_reload_of_settled_run_with_running_stored_plan_never_offers_approval(recovery_ui, status):
+    page, api = recovery_ui
+    run_id = api.plan["run_id"]
+    api.finish(run_id, status)
+    api.records[run_id]["plan"]["status"] = "running"
+    api.records[run_id]["plan_summary"]["status"] = "running"
+    mount_recovery(page, api, saved=True)
+    page.wait_for_function(
+        """(spec) => Object.values(window.OrchHarness.stores.orchestration.useOrchestrationStore
+            .getState().plans).some(plan => plan && plan.run_id === spec.runId && plan.status === spec.status)""",
+        arg={"runId": run_id, "status": status},
+    )
+    if status == "failed":
+        expect(page.get_by_role("button", name="Retry from failed step").first).to_be_enabled()
+    else:
+        expect(page.get_by_text("This run was stopped. Available partial results were kept.", exact=True).first).to_be_visible()
+    for name in ("Approve and run the plan", "Run the saved plan", "Cancel this plan", "Edit the plan"):
+        expect(page.get_by_role("button", name=name, exact=True)).to_have_count(0)
+    assert not api.calls("/run") and not api.calls("/retry")
 
 
 def test_duplicate_confirmation_click_and_context_change_never_run_wrong_turn(recovery_ui):

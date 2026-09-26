@@ -188,6 +188,13 @@ function ScopedDocumentExplorer({
     const navigate = useNavigate();
     const features = useBootstrapStore((state) => state.data?.features);
     const settings = useBootstrapStore((state) => state.data?.settings);
+    const uploadCategories = useBootstrapStore((state) => state.data?.workspace_uploads?.categories);
+    const allowedExtensions = useMemo(
+        () => uploadCategories
+            ? new Set(uploadCategories.flatMap((category) => category.extensions))
+            : null,
+        [uploadCategories],
+    );
     const userSettings = useUserSettingsStore((state) => state.settings);
     const saveUserSettings = useUserSettingsStore((state) => state.update);
     const isGroup = reader.scope.kind === 'group';
@@ -966,6 +973,24 @@ function ScopedDocumentExplorer({
             if (!files.length) return;
             const captured = operationTargets('upload');
             if (!captured) return;
+
+            if (allowedExtensions) {
+                const isAllowed = (file: File) => {
+                    const separator = file.name.lastIndexOf('.');
+                    return separator >= 0 && allowedExtensions.has(file.name.slice(separator + 1).toLowerCase());
+                };
+                const unsupported = files.filter((file) => !isAllowed(file));
+                if (unsupported.length > 0) {
+                    toast.error(
+                        `Unsupported workspace file type: ${unsupported.map((file) => file.name).join(', ')}. Check Supported file types.`,
+                    );
+                    files = files.filter(isAllowed);
+                    if (files.length === 0) {
+                        return;
+                    }
+                }
+            }
+
             const maxSizeMb = Number(settings?.max_file_size_mb ?? 0);
             const tooLarge = maxSizeMb > 0 ? files.filter((file) => file.size > maxSizeMb * 1024 * 1024) : [];
             const accepted = files.filter((file) => !tooLarge.includes(file));
@@ -997,7 +1022,7 @@ function ScopedDocumentExplorer({
                 finishMutation();
             }
         },
-        [operationTargets, beginMutation, finishMutation, refreshAll, settings],
+        [operationTargets, beginMutation, finishMutation, refreshAll, settings, allowedExtensions],
     );
 
     const onDownload = useCallback(async (targets: WorkspaceDocument[]) => {
@@ -1371,6 +1396,8 @@ function ScopedDocumentExplorer({
             {availability.upload ? <input
                 ref={fileInputRef}
                 type="file"
+                aria-label="Upload workspace documents"
+                accept={allowedExtensions ? [...allowedExtensions].map((extension) => `.${extension}`).join(',') : undefined}
                 multiple
                 className="hidden"
                 onChange={(event) => {
@@ -1421,6 +1448,32 @@ function ScopedDocumentExplorer({
                 }}
             />
 
+            {uploadCategories ? (
+                <details className="shrink-0 text-sm text-text-2">
+                    <summary className="w-fit cursor-pointer rounded px-1 py-1 text-accent focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent">
+                        Supported file types
+                    </summary>
+                    <div className="max-h-48 space-y-3 overflow-y-auto rounded-lg border border-edge bg-surface-1 p-3">
+                        {allowedExtensions?.has('one') ? (
+                            <p>
+                                OneNote (.one, .onepkg): typed text and tables only. Images,
+                                handwriting and embedded files are excluded.
+                            </p>
+                        ) : null}
+                        <dl className="space-y-2">
+                            {uploadCategories.map((category) => (
+                                <div key={category.name}>
+                                    <dt className="font-medium text-text-1">{category.name}</dt>
+                                    <dd className="break-words">
+                                        {category.extensions.map((extension) => `.${extension}`).join(', ')}
+                                    </dd>
+                                </div>
+                            ))}
+                        </dl>
+                    </div>
+                </details>
+            ) : null}
+
             {chatPending ? <p role="status" className="text-xs text-text-3">Confirming selected documents for chat...</p> : null}
             {linkedDocumentId || linkedDocumentError ? (
                 <div role={linkedDocumentError ? 'alert' : 'status'} className="flex flex-wrap items-center justify-between gap-2 text-xs text-text-3">
@@ -1460,6 +1513,8 @@ function ScopedDocumentExplorer({
 
                     <div
                         className="min-h-0 flex-1 overflow-auto rounded-xl border border-edge bg-surface-1"
+                        role="region"
+                        aria-label="Workspace documents"
                         onDragOver={(event) => event.preventDefault()}
                         onDrop={(event) => {
                             const files = Array.from(event.dataTransfer.files ?? []);

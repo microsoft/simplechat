@@ -46,7 +46,12 @@ import {
     dismissOrchestrationTurn,
     openOrchestrationPlanEditor,
 } from '../../lib/orchestrationController';
-import { isOrchestrationRunWaiting, type CostClass, type OrchestrationPlan } from '../../lib/orchestration';
+import {
+    isOrchestrationRunSettled,
+    isOrchestrationRunWaiting,
+    type CostClass,
+    type OrchestrationPlan,
+} from '../../lib/orchestration';
 
 /** Highest cost class among the steps that will run, or null when none carry one. */
 function highestCost(plan: OrchestrationPlan): CostClass | null {
@@ -159,13 +164,16 @@ export function OrchestrationPlanCard({
 
     const isTimed = plan?.approval.mode === 'timed' && !held;
     const waiting = plan?.status === 'waiting' || isOrchestrationRunWaiting(recovery ?? {});
+    // The saved run is the authority on whether this plan already ran. Its stored plan can still
+    // read `running` after the run ended, and a card that trusted it would offer Approve again.
+    const settled = plan !== null && (isPlanTerminal(plan) || isOrchestrationRunSettled(recovery ?? {}));
     const awaitingApproval =
         plan !== null &&
         !runInFlight &&
         !historyEntry &&
         !waiting &&
         plan.status !== 'running' &&
-        !isPlanTerminal(plan) &&
+        !settled &&
         planRequiresApproval(plan);
 
     // The countdown lives in the browser: the server leaves a timed plan pending precisely so the
@@ -214,7 +222,7 @@ export function OrchestrationPlanCard({
     //
     // This is why the card renders from the store rather than from message markdown: there
     // is nothing to clean up when it stops being relevant, it simply stops rendering.
-    if ((historyEntry || isPlanTerminal(plan)) && !runInFlight && !waiting) {
+    if ((historyEntry || settled) && !runInFlight && !waiting) {
         if (hasSavedNotice) return null;
         return <>
             <OrchestrationRecoveryNotice conversationId={conversationId}

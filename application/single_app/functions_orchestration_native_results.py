@@ -1,7 +1,8 @@
 # functions_orchestration_native_results.py
 """Native computation to retained orchestration results, without publication.
 
-Version: 0.261.127
+Version: 0.261.141
+Implemented in: 0.261.127
 
 The owner binds the native mode; the default production builder validates
 explicit query/schema/transformation arguments. Runtime/schema/native execution
@@ -19,7 +20,7 @@ from jsonschema import Draft202012Validator
 
 from content_screening.contracts import ScreeningError
 from functions_analysis_access import analysis_source_snapshot
-from functions_appinsights import log_event
+from functions_appinsights import log_event, workflow_log_context
 from functions_orchestration_execution_policy import orchestration_file_policy
 from functions_orchestration_result_contracts import (
     Completeness,
@@ -53,6 +54,8 @@ _MESSAGES = {
     "native_retention_failed": "The complete native output could not be retained. No preview was substituted.",
     "native_cancelled": "Native computation was canceled.",
 }
+# Service codes meaning the approved source no longer matches what would be read.
+_SOURCE_CHANGED_CODES = frozenset({"native_compute_source_identity_mismatch"})
 
 
 class NativeOrchestrationBridgeError(ValueError):
@@ -380,13 +383,15 @@ def raise_native_orchestration_infrastructure_failure(error):
         current = current.__cause__
 
 
-def _failure(step, exc, stage):
+def _failure(step, exc, stage, context=None):
     from functions_orchestration_schema import build_failure
 
     raise_native_orchestration_infrastructure_failure(exc)
+    service_code = getattr(exc, "code", None)
+    service_code = service_code if isinstance(service_code, str) else None
     if isinstance(exc, NativeOrchestrationBridgeError):
         code = exc.code
-    elif isinstance(exc, (PermissionError, ScreeningError)):
+    elif isinstance(exc, (PermissionError, ScreeningError)) or service_code in _SOURCE_CHANGED_CODES:
         code = "native_access_unavailable"
     elif isinstance(exc, ResultContractError) and "guard" in exc.code:
         code = "native_guard_unavailable"
@@ -399,10 +404,19 @@ def _failure(step, exc, stage):
         else "analysis_result_not_saved" if code == "native_retention_failed"
         else "result_invalid"
     )
+    step_id = step.get("step_id") if isinstance(step, dict) else None
     log_event(
         "[ORCHESTRATION_ADAPTERS] Native result bridge did not complete.",
-        extra={"step_id": (step or {}).get("step_id") if isinstance(step, dict) else None,
-               "native_code": code, "stage": stage, "error_type": type(exc).__name__},
+        extra={
+            **workflow_log_context(
+                run_id=getattr(context, "run_id", None),
+                conversation_id=getattr(context, "conversation_id", None),
+                step_id=step_id,
+            ),
+            "native_code": code, "stage": stage,
+            "error_type": type(exc).__name__, "failure_code": failure_code,
+            "execution_code": service_code or code,
+        },
         level=logging.WARNING,
     )
     result = _step_result(
@@ -705,7 +719,7 @@ def execute_native_orchestration_step(
                 snapshots, binding, cancel_requested, input_fingerprint,
             )
     except Exception as exc:
-        return _failure(step, exc, stage)
+        return _failure(step, exc, stage, context)
 
 
 def resume_native_orchestration_step(
@@ -767,4 +781,4 @@ def resume_native_orchestration_step(
                 native, context, service, producer, snapshots, binding, cancel_requested, input_fingerprint,
             )
     except Exception as exc:
-        return _failure(step, exc, stage)
+        return _failure(step, exc, stage, context)

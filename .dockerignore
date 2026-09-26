@@ -8,6 +8,7 @@
 !application/v2_ui/**
 !docker-customization/
 !docker-customization/**
+!LICENSE
 
 .git/
 .github/
@@ -40,3 +41,5 @@ application/single_app/instance/
 application/v2_ui/node_modules/
 application/v2_ui/dist/
 application/single_app/static/v2/
+application/single_app/native/onenote_extractor/target/
+application/single_app/native/onenote_extractor/bin/

@@ -1,8 +1,9 @@
 # test_v2_orchestration_outputs.py
 """
 Real-component coverage for independent orchestration file recovery.
-Version: 0.261.139
+Version: 0.261.141
 Implemented in: 0.261.127
+Simplified file cards covered in: 0.261.141
 Refs: microsoft/simplechat#1509
 
 Executes the production React thread/drawer, stores, SSE reader and HTTP clients
@@ -372,15 +373,20 @@ def test_ready_sibling_download_and_keyboard_file_retry_are_independent(outputs_
     page.set_viewport_size({"width": width, "height": 900})
     files = mount_outputs(page, api)
     expect(file_card(files, "findings.csv").get_by_role("button", name="Download CSV")).to_be_enabled()
-    expect(file_card(files)).to_contain_text("Automatic attempts: 3 of 3")
-    expect(file_card(files)).to_contain_text("Automatic attempts exhausted.")
+    expect(file_card(files, "findings.csv")).to_contain_text("CSV file · 7 rows")
+    expect(file_card(files)).to_contain_text("This file could not be created.")
+    # Attempt counters and failure codes are server bookkeeping, not something to act on.
+    expect(file_card(files)).not_to_contain_text("Automatic attempts")
+    expect(file_card(files)).not_to_contain_text("output_storage_unavailable")
     expect(page.get_by_role("button", name="Retry from failed step", exact=True)).to_have_count(0)
     retry = retry_button(files)
-    expect(retry).to_have_accessible_description(re.compile("Attempt 3"))
+    expect(retry).to_have_accessible_description("This file could not be created.")
     retry.focus()
     retry.press("Enter")
     expect(file_card(files).get_by_role("status")).to_have_text("Waiting")
-    expect(file_card(files)).to_contain_text("Attempt 4")
+    expect(file_card(files)).not_to_contain_text("This file could not be created.")
+    retried = next(output for output in saved_outputs(page, api.plan["run_id"]) if output["output_id"] == RETRY_ID)
+    assert retried["attempt_count"] == 4
     expect(retry_button(files)).to_have_count(0)
     expect(file_card(files)).to_be_focused()
     with page.expect_download() as downloading:
@@ -416,8 +422,9 @@ def test_empty_text_files_preserve_zero_counts_and_download_empty_bytes(outputs_
     files = mount_outputs(page, api)
     empty_file = file_card(files, file_name)
     expect(empty_file.get_by_role("status")).to_have_text("Completed")
-    for count in ("0 rows", "0 characters", "0 bytes"):
-        expect(empty_file).to_contain_text(count)
+    label = "Text file" if output_format == "txt" else "Markdown file"
+    # Zero is a real count and a real size, never dropped as if it were missing.
+    expect(empty_file).to_contain_text(f"{label} · 0 rows · 0 B")
     expect(empty_file.get_by_role("button", name=re.compile("^Retry file "))).to_have_count(0)
     with page.expect_download() as downloading:
         empty_file.get_by_role("button", name=f"Download {output_format.upper()}", exact=True).click()
@@ -511,7 +518,7 @@ def test_unavailable_history_hydration_closes_cached_preview_and_keeps_uploads_w
     assert not write_calls(api)
 
 
-def test_all_file_states_show_server_attempts_and_scheduled_time_without_early_retry(outputs_ui):
+def test_all_file_states_show_server_status_and_scheduled_time_without_early_retry(outputs_ui):
     page, api = outputs_ui
     api.record["outputs"] = [
         public_output("orender_" + f"{index:064x}", state, f"{state}.csv", f"file_{index}")
@@ -522,7 +529,12 @@ def test_all_file_states_show_server_attempts_and_scheduled_time_without_early_r
     labels = files.get_by_role("status").all_text_contents()
     assert labels == ["Waiting", "Rendering", "Automatic retry scheduled", "Completed", "Failed", "Cancelled"]
     expect(files.locator("time")).to_have_attribute("datetime", "2026-09-23T14:30:00Z")
-    expect(files).to_contain_text("Waiting for the server; reloading does not start a retry.")
+    expect(file_card(files, "retry_scheduled.csv")).to_contain_text("Retrying automatically at")
+    # A badge that already says Waiting or Rendering is not repeated as a sentence.
+    for state in ("waiting", "rendering", "completed"):
+        expect(file_card(files, f"{state}.csv")).not_to_contain_text(public_output(READY_ID, state)["message"])
+    expect(file_card(files, "failed.csv")).to_contain_text("This file could not be created.")
+    expect(file_card(files, "cancelled.csv")).to_contain_text("This file was cancelled.")
     expect(files.get_by_role("button", name=re.compile("^Retry file "))).to_have_count(1)
     expect(files.get_by_role("button", name="Download CSV")).to_have_count(1)
     assert not write_calls(api)
@@ -619,16 +631,19 @@ def test_pending_files_poll_after_terminal_aggregate_without_reexecution(outputs
     assert not write_calls(api)
 
 
-def test_pending_outputs_restore_without_a_saved_assistant_message(outputs_ui):
+# The server records a run's outcome on the run alone, so a real stored plan still reads running.
+@pytest.mark.parametrize("stored_plan_status", ["completed", "running"])
+def test_pending_outputs_restore_without_a_saved_assistant_message(outputs_ui, stored_plan_status):
     page, api = outputs_ui
     api.record.update(status="completed", outcome="partial", assistant_message_id=None, message_saved=False)
-    api.record["plan"]["status"] = "completed"
+    api.record["plan"]["status"] = stored_plan_status
     api.record["outputs"][1] = public_output(RETRY_ID, "rendering", "summary.csv", "file_b")
     api.publish()
     api.messages = api.messages[:1]
     files = mount_outputs(page, api)
     expect(file_card(files).get_by_role("status")).to_have_text("Rendering")
     expect(page.get_by_role("button", name="Approve and run the plan")).to_have_count(0)
+    expect(page.get_by_role("button", name="Cancel this plan")).to_have_count(0)
     assert not write_calls(api)
 
 
@@ -780,7 +795,8 @@ def test_older_recovery_read_cannot_erase_new_retry_receipt(outputs_ui):
     expect(file_card(files).get_by_role("status")).to_have_text("Waiting")
     api.release()
     expect(file_card(files).get_by_role("status")).to_have_text("Waiting")
-    expect(file_card(files)).to_contain_text("Attempt 4")
+    retried = next(output for output in saved_outputs(page, api.plan["run_id"]) if output["output_id"] == RETRY_ID)
+    assert retried["attempt_count"] == 4
     assert len(write_calls(api)) == 1
 
 
@@ -879,8 +895,8 @@ def test_authoritative_unavailability_withholds_stale_card_but_preserves_ready_s
             "conversation": CONVERSATION, "run": stale_record,
         })
     expect(file_card(files).get_by_role("button", name="Download CSV")).to_have_count(0)
-    expect(file_card(files)).to_contain_text(reason)
     expect(file_card(files)).to_contain_text(message)
+    expect(file_card(files)).not_to_contain_text(reason)
     expect(file_card(files, "findings.csv").get_by_role("button", name="Download CSV")).to_be_enabled()
     unavailable_outputs = saved_outputs(page, api.plan["run_id"])
     assert unavailable_outputs[0] == initial_outputs[0]
@@ -994,8 +1010,9 @@ def test_exhaustion_does_not_override_server_retry_policy_or_enable_whole_run_re
     api.output["can_retry"] = False
     api.publish()
     files = mount_outputs(page, api)
-    expect(file_card(files)).to_contain_text("Automatic attempts exhausted.")
-    expect(file_card(files)).to_contain_text("The server is not offering a retry for this file.")
+    expect(file_card(files).get_by_role("status")).to_have_text("Failed")
+    expect(file_card(files)).to_contain_text("This file could not be created.")
+    expect(file_card(files)).not_to_contain_text("Automatic attempts")
     expect(retry_button(files)).to_have_count(0)
     page.evaluate("""(spec) => window.OrchHarness.controller.retryOrchestrationRun(
         spec.conversation, spec.runId)""", {"conversation": CONVERSATION, "runId": api.plan["run_id"]})

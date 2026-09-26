@@ -1,7 +1,7 @@
 # functions_orchestration_deliverables.py
 """What the user asked to receive, and whether the plan can actually deliver each part.
 
-Version: 0.261.140
+Version: 0.261.141
 Implemented in: 0.261.138
 
 The planner lists its plan's deliverables first: the answer, files, images, charts, and
@@ -811,6 +811,33 @@ def image_alt_text(title):
     return f'{AI_ILLUSTRATION_LABEL}: {title}'[:300]
 
 
+def _rendered_output_guidance(entry, kind):
+    """How to write an output a later step saves, by the kind of value that step reads.
+
+    Rows and structured values are data the file is built from. Asking for "the finished
+    file" there invites CSV or file text where the declared output needs JSON rows.
+    """
+    output = entry.get('output') or 'the output'
+    name = entry.get('file_name') or 'the file'
+    target = f'A later step saves output "{output}" as {name}, a {_format_label(entry.get("format"))}'
+    if kind == 'records-v1':
+        return (
+            f'{target}, from the rows you return. Return "{output}" as rows, not as file text: '
+            'that step writes the file. Never say files cannot be created.'
+        )
+    if kind == 'structured-v1':
+        return (
+            f'{target}, from the value you return. Return "{output}" as the structured value its '
+            'schema or profile describes, not as file text: that step builds the file. Never say '
+            'files cannot be created.'
+        )
+    return (
+        f'{target}. Write its complete content as the finished file: no preamble about the file, '
+        'and no notes about saving, attaching, converting, or downloading it. Never say files '
+        'cannot be created.'
+    )
+
+
 def compose_deliverable_guidance(step, images):
     """System guidance for an answer step, from its deliverables and its bound images.
 
@@ -818,17 +845,14 @@ def compose_deliverable_guidance(step, images):
     ``asset_id`` and ``title``. The guidance is built from structured plan data only.
     """
     brief = step.get('deliverable_context') or []
+    kinds = {
+        output.get('name'): output.get('kind')
+        for output in step.get('outputs') or () if isinstance(output, dict)
+    }
     lines = []
     rendered = [entry for entry in brief if entry['relation'] == 'rendered_as' and entry.get('enabled', True)]
     for entry in rendered:
-        output = entry.get('output') or 'the output'
-        name = entry.get('file_name') or 'the file'
-        lines.append(
-            f'A later step saves output "{output}" as {name}, a {_format_label(entry.get("format"))}. '
-            'Write its complete content as the finished file: no preamble about the file, and no '
-            'notes about saving, attaching, converting, or downloading it. Never say files cannot '
-            'be created.'
-        )
+        lines.append(_rendered_output_guidance(entry, kinds.get(entry.get('output'))))
     wanted = [entry for entry in brief if entry['relation'] in ('delivers', 'images')]
     if wanted:
         lines.append('This content must include what the user asked for:')

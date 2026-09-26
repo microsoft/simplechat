@@ -101,6 +101,25 @@ export function hasPendingOrchestrationOutputs(outputs?: readonly OrchestrationO
         && (output.state === 'waiting' || output.state === 'rendering' || output.state === 'retry_scheduled')));
 }
 
+const OUTPUT_TYPE_LABELS: Readonly<Record<string, string>> = {
+    csv: 'CSV file',
+    docx: 'Word document',
+    json: 'JSON file',
+    md: 'Markdown file',
+    pdf: 'PDF document',
+    pptx: 'PowerPoint deck',
+    txt: 'Text file',
+    xlsx: 'Excel workbook',
+    xml: 'XML file',
+    yaml: 'YAML file',
+};
+
+/** What a person calls the file, rather than its wire format. */
+export function orchestrationOutputTypeLabel(outputFormat: string): string {
+    const format = outputFormat.trim().replace(/^\./, '').toLowerCase();
+    return OUTPUT_TYPE_LABELS[format] ?? (format ? `${format.toUpperCase()} file` : 'File');
+}
+
 export function isOrchestrationOutputArtifact(artifact: GeneratedArtifact): boolean {
     return artifact.capability === 'render_file';
 }

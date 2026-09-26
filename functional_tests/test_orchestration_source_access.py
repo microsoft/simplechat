@@ -1,8 +1,9 @@
 # test_orchestration_source_access.py
 """
 Strict current-source authority errors for retained orchestration results.
-Version: 0.261.127
+Version: 0.261.141
 Implemented in: 0.261.127
+Authority check reason codes added in: 0.261.141
 
 Exercise real screening, source resolution, retained facade and alias discovery.
 Only external storage, membership, model and telemetry I/O are doubled.
@@ -283,6 +284,61 @@ def test_malformed_source_arguments_cannot_escape_a_caught_error_model_fence(evi
         with pytest.raises(SourceAuthorityUnverifiedError):
             guarded()
     assert calls == []
+
+
+def _authority_events(monkeypatch):
+    events = []
+    telemetry = importlib.import_module("functions_appinsights")
+    monkeypatch.setattr(telemetry, "log_event", lambda message, **kwargs: events.append(dict(kwargs.get("extra") or {})))
+    return events
+
+
+@pytest.mark.parametrize("source,value,reason", [
+    ({"document_id": "document-1", "screening_provenance": {"document_id": "PRIVATE-other"}}, None, "provenance_mismatch"),
+    ({"document_id": "   "}, None, "document_id_invalid"),
+    ("document-1", {"id": "PRIVATE-other"}, "document_record_invalid"),
+    ("document-1", {"id": "document-1", "content_screening": []}, "screening_marker_invalid"),
+    ("document-1", {"id": "document-1", "content_screening": {"state": "PRIVATE-state"}}, "screening_state_unknown"),
+])
+def test_malformed_authority_logs_which_check_failed_without_values(monkeypatch, source, value, reason):
+    events = _authority_events(monkeypatch)
+    reader = no_network if value is None else (lambda **kwargs: deepcopy(value))
+    with pytest.raises(SourceAuthorityUnverifiedError) as raised:
+        access.assert_document_available(source, "user-1", metadata_reader=reader, strict_errors=True)
+    assert raised.value.authority_reason == reason
+    assert events and all(event["authority_reason"] == reason for event in events)
+    assert all(event["failure_code"] == "source_authority_unverified" for event in events)
+    assert "PRIVATE" not in json.dumps(events)
+
+
+def test_legacy_malformed_authority_stays_a_quiet_hold(monkeypatch):
+    events = _authority_events(monkeypatch)
+    source = {"document_id": "document-1", "screening_provenance": {"document_id": "other"}}
+    with pytest.raises(DocumentHeldError) as raised:
+        access.assert_document_available(source, "user-1", metadata_reader=no_network)
+    assert events == [] and getattr(raised.value, "authority_reason", None) is None
+
+
+def test_io_authority_failures_log_their_code_without_a_check_reason(monkeypatch):
+    events = _authority_events(monkeypatch)
+
+    def reader(**kwargs):
+        raise TimeoutError("PRIVATE provider endpoint")
+
+    with pytest.raises(SourceAuthorityUnavailableError):
+        access.assert_document_available("document-1", "user-1", metadata_reader=reader, strict_errors=True)
+    assert events and all(event["failure_code"] == "source_authority_unavailable" for event in events)
+    assert all("authority_reason" not in event for event in events)
+
+
+def test_malformed_manifest_context_logs_its_check(monkeypatch):
+    events = _authority_events(monkeypatch)
+    malformed = {"scope": "personal", "document": {"id": "PRIVATE-other"}}
+    with pytest.raises(SourceAuthorityUnverifiedError) as raised:
+        resolve_orchestration_source_manifest(["document-1"], "user-1", context_resolver=lambda **kwargs: malformed)
+    assert raised.value.authority_reason == "manifest_context_invalid"
+    assert events and events[0]["authority_reason"] == "manifest_context_invalid"
+    assert "PRIVATE" not in json.dumps(events)
 
 
 def test_concurrent_headless_authority_scopes_do_not_share_caught_failures():

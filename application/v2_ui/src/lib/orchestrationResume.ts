@@ -27,7 +27,7 @@ import {
 } from '../stores/orchestrationStore';
 import {
     fetchConversationRuns, fetchOrchestrationRun, fetchRunSteps,
-    isOrchestrationRunPending, isOrchestrationRunWaiting,
+    isOrchestrationRunPending, persistedRunPlan,
 } from './orchestration';
 import { loadOrchestrationRecovery, reconcileOrchestrationRun, refreshOrchestrationPlanEditor } from './orchestrationController';
 import type { Json } from './orchestration';
@@ -108,10 +108,9 @@ export async function resumeOrchestrationForConversation(
             const current = useOrchestrationStore.getState();
             if (record && !selectActiveTurn(current, conversationId)
                 && useChatStore.getState().activeConversationId === conversationId) {
-                current.adoptPersistedPlan(conversationId, newest.turnId, {
-                    ...record.plan,
-                    ...(isOrchestrationRunWaiting(record) ? { status: 'waiting' } : {}),
-                }, steps);
+                // A finished run's stored plan still reads `running`; adopted as it is, the card
+                // would offer Approve for work that already ran.
+                current.adoptPersistedPlan(conversationId, newest.turnId, persistedRunPlan(record), steps);
                 current.setActiveTurn(conversationId, newest.turnId);
             }
             if (record && (pending || isOrchestrationRunPending(record))) {

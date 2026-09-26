@@ -144,7 +144,10 @@ CSV or Word file.
 
 If the browser loses the live stream, reopen the existing conversation or run.
 The saved output state is the authority; sending the same request again is not
-necessary merely to check progress.
+necessary merely to check progress. Since **0.261.141**, the live stream sends a
+periodic keep-alive signal while a long render or a series of generated images
+produces no visible progress, which helps keep a quiet connection from being
+closed as idle.
 
 ## Recover a failed file
 
@@ -171,6 +174,15 @@ access. Restore the required access or revise the plan when its requirements
 have changed. An authorization or storage outage is not proof that a previously
 committed file has disappeared; current access must be verified before it is
 offered again.
+
+Rendering a file counts against its step's time limit. Since **0.261.141**, a
+render still producing its file when that limit is reached is stopped before the
+file is saved. The file shows **Failed** with the explanation that its step
+reached the time limit, and the step's explanation says an admin can raise the
+step timeout under **Admin Settings > Orchestration > Chat Orchestration >
+Limits**. Because the same file would stop again under the same limit, this
+failure does not offer **Retry file**. A file that was already being saved when
+the limit passed is kept and stays available.
 
 ## Understand retained results and access
 

@@ -1,11 +1,12 @@
 # test_orchestration_harness_routes.py
 """
 Real authenticated routes and bootstrap for orchestration file admission.
-Version: 0.261.139
+Version: 0.261.141
 Implemented in: 0.261.127
 Initial-claim timing coverage added in: 0.261.129
 Auto-routing admission and content-review file visibility added in: 0.261.131
 Single plan contract, no admission switch, legacy runs refused: 0.261.139
+Execution stream keepalive for silent steps added in: 0.261.141
 
 Only external settings/storage I/O is replaced. The production Flask routes,
 Blueprint guards, result services and shared format registry run unchanged.
@@ -1493,6 +1494,75 @@ def test_headless_worker_keeps_running_after_browser_disconnect(modules):
     assert not closed_on_disconnect
     assert worker_closed
     assert finished_work == ["committed"]
+    execution.close.assert_called_once()
+
+
+def test_headless_stream_keeps_a_silent_step_connected(modules, monkeypatch):
+    execution = Mock()
+    release = threading.Event()
+    progress = modules.route.serialize_sse({"type": "thought", "content": "progress"})
+    complete = modules.route.serialize_sse({"done": True, "status": "completed"})
+
+    def execute(emit):
+        emit(progress)
+        if not release.wait(timeout=5):
+            raise RuntimeError("The test did not release its worker.")
+        return [complete]
+
+    execution.execute.side_effect = execute
+    monkeypatch.setattr(modules.route, "SSE_KEEPALIVE_SECONDS", 0.01)
+    response = modules.route._stream_execution(
+        execution, run_id="run", conversation_id="conversation",
+    )
+    iterator = iter(response.response)
+    try:
+        first = next(iterator)
+        idle = [next(iterator), next(iterator)]
+    finally:
+        release.set()
+    remaining = list(iterator)
+    response.close()
+    keepalive = modules.route.SSE_KEEPALIVE_FRAME
+    assert keepalive.startswith(":") and keepalive.endswith("\n\n")
+    assert first == progress
+    assert idle == [keepalive, keepalive]
+    assert remaining[-1] == complete
+    assert set(remaining[:-1]) <= {keepalive}
+    execution.close.assert_called_once()
+
+
+def test_headless_stream_keepalive_detects_a_disconnected_browser(modules, monkeypatch):
+    execution = Mock()
+    release = threading.Event()
+    closed = threading.Event()
+    emitted_after_disconnect = []
+
+    def execute(emit):
+        if not release.wait(timeout=5):
+            raise RuntimeError("The test did not release its worker.")
+        emitted_after_disconnect.append("progress")
+        emit(modules.route.serialize_sse({"type": "thought", "content": "after disconnect"}))
+        return [modules.route.serialize_sse({"done": True, "status": "completed"})]
+
+    execution.execute.side_effect = execute
+    execution.close.side_effect = closed.set
+    monkeypatch.setattr(modules.route, "SSE_KEEPALIVE_SECONDS", 0.01)
+    response = modules.route._stream_execution(
+        execution, run_id="run", conversation_id="conversation",
+    )
+    iterator = iter(response.response)
+    try:
+        first = next(iterator)
+        iterator.close()
+        response.close()
+        closed_on_disconnect = closed.is_set()
+    finally:
+        release.set()
+        worker_closed = closed.wait(timeout=5)
+    assert first == modules.route.SSE_KEEPALIVE_FRAME
+    assert not closed_on_disconnect
+    assert worker_closed
+    assert emitted_after_disconnect == ["progress"]
     execution.close.assert_called_once()
 
 

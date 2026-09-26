@@ -22,7 +22,7 @@ import {
     type StepRuntimeMap,
     type TrackedRun,
 } from '../../stores/orchestrationStore';
-import { fetchOrchestrationRun, fetchRunSteps, type OrchestrationPlan } from '../../lib/orchestration';
+import { fetchOrchestrationRun, fetchRunSteps, persistedRunPlan, type OrchestrationPlan } from '../../lib/orchestration';
 import { legacyPlanErrorMessage } from '../../lib/orchestrationErrors';
 import { normalizePlan } from '../../lib/orchestrationPlan';
 import { loadOrchestrationRecovery, openOrchestrationPlanEditor } from '../../lib/orchestrationController';
@@ -167,7 +167,8 @@ export function OrchestrationPlanPanel() {
                 if (!isCurrent()) {
                     return;
                 }
-                const plan = normalizePlan(run?.plan);
+                const storedPlan = run ? persistedRunPlan(run) : null;
+                const plan = normalizePlan(storedPlan);
                 if (!plan) {
                     setLoadError('This run did not keep a plan.');
                     return;
@@ -185,7 +186,7 @@ export function OrchestrationPlanPanel() {
                     }
                     setArchivedPreview({ runId, plan, runtime });
                 } else {
-                    store.adoptPersistedPlan(activeConversationId, turnId, run?.plan, steps, {
+                    store.adoptPersistedPlan(activeConversationId, turnId, storedPlan, steps, {
                         readOnly: true,
                     });
                 }

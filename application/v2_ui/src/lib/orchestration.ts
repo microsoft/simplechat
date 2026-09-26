@@ -171,6 +171,28 @@ export function isOrchestrationRunWaiting(run: OrchestrationAttempt & { status?:
     return run.status === 'waiting' || run.outcome === 'waiting';
 }
 
+const SETTLED_RUN_STATUSES: ReadonlySet<string> = new Set(['completed', 'failed', 'cancelled', 'superseded']);
+
+/** Whether the server has recorded the run's end and has nothing left to publish for it. */
+export function isOrchestrationRunSettled(run: OrchestrationAttempt & { status?: string | null }): boolean {
+    return typeof run.status === 'string' && SETTLED_RUN_STATUSES.has(run.status) && !isOrchestrationRunPending(run);
+}
+
+/**
+ * A stored run's plan, with the status the run has now.
+ *
+ * The server marks a plan `running` when it claims the run and records the outcome on the run
+ * alone, so a finished run's stored plan still reads `running`. Adopted as it is, that plan is
+ * neither running here nor finished, and its card falls back to offering Approve.
+ */
+export function persistedRunPlan(record: PersistedRun): Json {
+    const plan = record.plan;
+    if (!plan || typeof plan !== 'object' || Array.isArray(plan)) return plan;
+    const status = isOrchestrationRunWaiting(record) ? 'waiting'
+        : isOrchestrationRunSettled(record) ? record.status : null;
+    return status ? { ...plan, status } : plan;
+}
+
 /** A closed stream can acknowledge a durable wait without completing the producing attempt. */
 export function orchestrationTerminalStatus(event: RunStreamEvent): 'completed' | 'failed' | 'cancelled' | 'waiting' {
     const outcome = normalizeOrchestrationAttempt(event).outcome;

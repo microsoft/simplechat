@@ -152,6 +152,36 @@ def is_reasoning_parameter_rejection(error: Exception) -> bool:
     return detail.get("code") in {"unsupported_value", "unsupported_parameter"}
 
 
+def is_response_format_rejection(error: Exception) -> bool:
+    """Recognize an HTTP 400 refusing the ``response_format`` option itself.
+
+    Endpoints and API versions differ in JSON-mode support, so a caller may resend without
+    the option. Any other rejection, including one about the messages, is not matched.
+    """
+    if isinstance(error, SanitizedModelEndpointError):
+        return getattr(error, "response_format_rejected", False) is True
+    if not isinstance(error, BadRequestError) or error.status_code != 400:
+        return False
+    body = error.body
+    if not isinstance(body, Mapping):
+        return False
+    detail = body.get("error", body)
+    if not isinstance(detail, Mapping):
+        return False
+    parameter = str(detail.get("param") or "")
+    message = str(detail.get("message") or "").lower()
+    if parameter:
+        if parameter != "response_format" and not parameter.startswith("response_format."):
+            return False
+    elif "response_format" not in message:
+        return False
+    return (
+        detail.get("code") in {"unsupported_value", "unsupported_parameter"}
+        or "not supported" in message
+        or "unsupported" in message
+    )
+
+
 def create_completion_with_reasoning(create_callable, params, model_name, *, on_resolution=None):
     """Resolve effort and recover once from a provider-policy disagreement.
 
@@ -544,6 +574,7 @@ def _sanitized_custom_request_error(exc, *, api_type="", protocol="", request_ur
         status_code=getattr(exc, "status_code", None),
     )
     error.reasoning_parameter_rejected = is_reasoning_parameter_rejection(exc)
+    error.response_format_rejected = is_response_format_rejection(exc)
     return error
 
 

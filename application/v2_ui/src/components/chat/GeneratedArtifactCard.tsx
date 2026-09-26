@@ -10,6 +10,9 @@
 // say what it is, so the preview moves behind a "View" control. Everything else shows where
 // the file went, what it came from and an inline preview, because for those the preview is
 // the only way to judge whether the file is the one that was asked for.
+//
+// Embedded inside an orchestration file card, which already names the file and reports its
+// state, neither layout is drawn: only the approval banner and the file's controls are.
 
 import { useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
@@ -257,9 +260,15 @@ function ArtifactPreviewDialog({
 export function GeneratedArtifactCard({
     artifact: initialArtifact,
     conversationId,
+    embedded = false,
 }: {
     artifact: GeneratedArtifact;
     conversationId?: string;
+    /**
+     * Rendered inside a card that already names the file and reports its state, so only what
+     * that card cannot offer is drawn: the approval banner and the download and view controls.
+     */
+    embedded?: boolean;
 }) {
     const [artifact, setArtifact] = useState(initialArtifact);
     const [finished, setFinished] = useState<GeneratedArtifact[] | null>(null);
@@ -392,6 +401,95 @@ export function GeneratedArtifactCard({
         </>
     );
 
+    const approvalNotice = approval ? (
+        <div className={clsx('flex flex-wrap items-center gap-3 rounded-lg bg-surface-sunken px-3 py-2', !embedded && 'mt-3')}>
+            <FileLock2
+                size={14}
+                className={clsx('shrink-0', withheld ? 'text-warn' : 'text-ok')}
+            />
+            <p className="min-w-0 flex-1 text-xs text-text-2">
+                {describeArtifactApproval(approval)}
+            </p>
+            {approval.viewerCanApprove && (
+                <div className="flex shrink-0 gap-2">
+                    <GlassButton
+                        size="sm"
+                        variant="primary"
+                        disabled={deciding !== null}
+                        onClick={() => void decide('approve')}
+                    >
+                        {deciding === 'approve' ? (
+                            <Loader2 size={13} className="animate-spin" />
+                        ) : null}
+                        Approve
+                    </GlassButton>
+                    <GlassButton
+                        size="sm"
+                        variant="danger"
+                        disabled={deciding !== null}
+                        onClick={() => void decide('deny')}
+                    >
+                        {deciding === 'deny' ? (
+                            <Loader2 size={13} className="animate-spin" />
+                        ) : null}
+                        Deny
+                    </GlassButton>
+                </div>
+            )}
+        </div>
+    ) : null;
+
+    const fileControls = !running && !withheld && downloadUrl ? (
+        <div className={clsx('flex flex-wrap gap-2', !embedded && 'mt-3')}>
+            <GlassButton size="sm" variant="subtle" onClick={() => void download()} disabled={downloading}>
+                {downloading ? <Loader2 size={13} className="animate-spin" /> : <Download size={13} />}
+                {downloading ? 'Downloading' : 'Download'} {outputFormat.toUpperCase()}
+            </GlassButton>
+
+            {compact && hasArtifactPreview(artifact) && (
+                <GlassButton
+                    size="sm"
+                    variant="subtle"
+                    onClick={() => setPreviewOpen(true)}
+                >
+                    <Eye size={13} />
+                    View {outputFormat.toUpperCase()}
+                </GlassButton>
+            )}
+
+            {!compact && isMarkdownArtifact(artifact) && hasArtifactPreview(artifact) && (
+                <GlassButton
+                    size="sm"
+                    variant="subtle"
+                    onClick={() => setPreviewOpen(true)}
+                >
+                    <Eye size={13} />
+                    View MD
+                </GlassButton>
+            )}
+        </div>
+    ) : null;
+
+    const previewDialog = previewOpen ? (
+        <ArtifactPreviewDialog
+            artifact={artifact}
+            onClose={() => setPreviewOpen(false)}
+        />
+    ) : null;
+
+    if (embedded) {
+        if (!approvalNotice && !fileControls) {
+            return null;
+        }
+        return (
+            <div className="min-w-0 space-y-2 [overflow-wrap:anywhere]">
+                {approvalNotice}
+                {fileControls}
+                {previewDialog}
+            </div>
+        );
+    }
+
     return (
         <section className="glass-flat mt-3 min-w-0 rounded-xl p-3 [overflow-wrap:anywhere]">
             <div className="flex flex-wrap items-start justify-between gap-2">
@@ -461,81 +559,11 @@ export function GeneratedArtifactCard({
                 </div>
             )}
 
-            {approval && (
-                <div className="mt-3 flex flex-wrap items-center gap-3 rounded-lg bg-surface-sunken px-3 py-2">
-                    <FileLock2
-                        size={14}
-                        className={clsx('shrink-0', withheld ? 'text-warn' : 'text-ok')}
-                    />
-                    <p className="min-w-0 flex-1 text-xs text-text-2">
-                        {describeArtifactApproval(approval)}
-                    </p>
-                    {approval.viewerCanApprove && (
-                        <div className="flex shrink-0 gap-2">
-                            <GlassButton
-                                size="sm"
-                                variant="primary"
-                                disabled={deciding !== null}
-                                onClick={() => void decide('approve')}
-                            >
-                                {deciding === 'approve' ? (
-                                    <Loader2 size={13} className="animate-spin" />
-                                ) : null}
-                                Approve
-                            </GlassButton>
-                            <GlassButton
-                                size="sm"
-                                variant="danger"
-                                disabled={deciding !== null}
-                                onClick={() => void decide('deny')}
-                            >
-                                {deciding === 'deny' ? (
-                                    <Loader2 size={13} className="animate-spin" />
-                                ) : null}
-                                Deny
-                            </GlassButton>
-                        </div>
-                    )}
-                </div>
-            )}
+            {approvalNotice}
 
-            {!running && !withheld && downloadUrl && (
-                <div className="mt-3 flex flex-wrap gap-2">
-                    <GlassButton size="sm" variant="subtle" onClick={() => void download()} disabled={downloading}>
-                        {downloading ? <Loader2 size={13} className="animate-spin" /> : <Download size={13} />}
-                        {downloading ? 'Downloading' : 'Download'} {outputFormat.toUpperCase()}
-                    </GlassButton>
+            {fileControls}
 
-                    {compact && hasArtifactPreview(artifact) && (
-                        <GlassButton
-                            size="sm"
-                            variant="subtle"
-                            onClick={() => setPreviewOpen(true)}
-                        >
-                            <Eye size={13} />
-                            View {outputFormat.toUpperCase()}
-                        </GlassButton>
-                    )}
-
-                    {!compact && isMarkdownArtifact(artifact) && hasArtifactPreview(artifact) && (
-                        <GlassButton
-                            size="sm"
-                            variant="subtle"
-                            onClick={() => setPreviewOpen(true)}
-                        >
-                            <Eye size={13} />
-                            View MD
-                        </GlassButton>
-                    )}
-                </div>
-            )}
-
-            {previewOpen && (
-                <ArtifactPreviewDialog
-                    artifact={artifact}
-                    onClose={() => setPreviewOpen(false)}
-                />
-            )}
+            {previewDialog}
         </section>
     );
 }

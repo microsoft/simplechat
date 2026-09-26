@@ -50,6 +50,11 @@ OUTPUT_UNAVAILABLE_MESSAGES = {
     "output_artifact_mismatch": "This file is unavailable because its artifact binding could not be verified.",
     "output_intent_invalid": "This file is unavailable because its artifact binding could not be verified.",
 }
+# A file a time budget stopped says so instead of the generic failed or cancelled text.
+OUTPUT_FAILURE_MESSAGES = {
+    "output_step_time_limit": "This file was stopped because its step reached the time limit.",
+    "output_deadline_exceeded": "This file was stopped because the run reached its time limit.",
+}
 _ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.:-]{0,199}\Z")
 _OUTPUT_ID = re.compile(r"orender_[a-f0-9]{64}\Z")
 _STORAGE_ERRORS = (AzureError, TimeoutError, ConnectionError)
@@ -193,6 +198,8 @@ def public_output(record, *, unavailable_code=None, withhold_details=False):
         "character_count": descriptor.get("character_count"),
         "size_bytes": descriptor.get("size_bytes"),
     }
+    if record["state"] in {"failed", "cancelled"} and record.get("error_code") in OUTPUT_FAILURE_MESSAGES:
+        projected["message"] = OUTPUT_FAILURE_MESSAGES[record["error_code"]]
     if not available:
         projected.update({
             "artifact_message_id": None, "can_retry": False, "next_retry_at": None,

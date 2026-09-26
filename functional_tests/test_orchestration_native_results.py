@@ -1,8 +1,9 @@
 # test_orchestration_native_results.py
 """
 Native computation, retained results and authorized export-source integration.
-Version: 0.261.127
+Version: 0.261.141
 Implemented in: 0.261.127
+Replay-location identity failure mapping added in: 0.261.141
 
 Only external storage, document metadata, model and telemetry I/O are doubled.
 The native engine, RunContext, bridge, result store, readers and export bridge
@@ -722,6 +723,40 @@ def test_foreground_and_durable_retention_are_equivalent(monkeypatch):
             outputs.append((reference.columns, reference.completeness, rows))
     assert outputs[0] == outputs[1]
     assert outputs[0][2][-1]["doubled"] == 74
+
+
+def test_replay_location_of_another_revision_is_a_clean_access_failure(monkeypatch):
+    with bridge_runtime(monkeypatch) as runtime:
+        archived = {**deepcopy(runtime.native.document), "id": "source-archived", "_etag": "source-revision-0"}
+        logged = []
+        runtime.native.patcher.setattr(
+            runtime.native.screening, "_resolve_blob_document", lambda container, blob, user_id: deepcopy(archived),
+        )
+        runtime.native.patcher.setattr(
+            runtime.module, "log_event", lambda message, extra=None, **kwargs: logged.append(dict(extra or {})),
+        )
+        runtime.native.patcher.setattr(
+            runtime.module, "workflow_log_context",
+            lambda step_id=None, run_id=None, conversation_id=None: {
+                "step_id_hash": f"hash:{step_id}", "run_id_hash": f"hash:{run_id}",
+                "conversation_id_hash": f"hash:{conversation_id}",
+            },
+        )
+        result = execute(runtime)
+        complete = commits(runtime)
+        assert result["status"] == "failed"
+        assert result["failure"]["code"] == "context_unavailable"
+        assert result["failure"]["native_code"] == "native_access_unavailable"
+        assert result["failure"]["retryable"] is False
+        assert complete == [] and runtime.native.jobs.created == 0
+        assert runtime.native.publications == []
+        assert len(logged) == 1
+        assert logged[0]["failure_code"] == "context_unavailable"
+        assert logged[0]["execution_code"] == "native_compute_source_identity_mismatch"
+        assert logged[0]["step_id_hash"] == "hash:compute" and "step_id" not in logged[0]
+        assert logged[0]["run_id_hash"] == "hash:parent-run"
+        assert logged[0]["conversation_id_hash"] == f"hash:{CONVERSATION}" and CONVERSATION
+        assert "run_id" not in logged[0] and "conversation_id" not in logged[0]
 
 
 @pytest.mark.parametrize("source_kind", ["narrative", "tabular"])

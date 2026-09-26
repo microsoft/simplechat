@@ -1,10 +1,11 @@
 # test_orchestration_deliverables.py
 """The deliverables contract and planned image generation in Gather / Reason / Render plans.
 
-Version: 0.261.140
+Version: 0.261.141
 Implemented in: 0.261.138
 Single orchestration contract updated in: 0.261.139
 Planner kind-specific fields and absent answer bindings updated in: 0.261.140
+Row-shaped compose guidance and JSON mode for CSV scenarios updated in: 0.261.141
 
 Uses the initialized headless harness (real bootstrap, planner, schema, executor, result
 store, chat image persistence, rendering service and Office renderers) with the planning
@@ -1124,12 +1125,24 @@ def test_scenario_a_csv_of_states_and_capitals_is_a_real_file(harness):
 
     harness.prepare().execute()
     saved = harness.read()
-    guidance = "\n".join(message["content"] for message in _compose_call(harness) if message["role"] == "system")
+    compose_messages = _compose_call(harness)
+    guidance = "\n".join(message["content"] for message in compose_messages if message["role"] == "system")
+    compose_request = next(
+        call for call in harness.model_calls if call["messages"][0]["content"].startswith("Prepare only")
+    )
     csv_text = _file_bytes(harness, ".csv").decode("utf-8")
 
     assert saved["status"] == "completed", saved.get("failure")
-    assert 'A later step saves output "rows" as us_states_capitals.csv, a CSV file.' in guidance
+    # The CSV is written from rows, so the model is asked for rows, never for CSV file text.
+    assert (
+        'A later step saves output "rows" as us_states_capitals.csv, a CSV file, from the rows you return.'
+    ) in guidance
+    assert 'Return "rows" as rows, not as file text' in guidance
+    assert "Write its complete content as the finished file" not in guidance
     assert "Never say files cannot be created." in guidance
+    assert 'Output "rows" is a JSON array with one object per row, not CSV or table text.' in guidance
+    assert 'exactly the keys "State" (string), "Capital" (string)' in guidance
+    assert compose_request["response_format"] == {"type": "json_object"}
     assert csv_text.splitlines() == ["State,Capital", "Alabama,Montgomery", "Alaska,Juneau"]
     assert r"us\_states\_capitals\.csv: ready" in harness.assistant_messages()[0]["content"]
     assert "Delivery notes" not in harness.assistant_messages()[0]["content"]

@@ -24,7 +24,7 @@ A saved run from the removed legacy plan contract is never opened, run, retried,
 restored or continued. Every by-id route answers it with HTTP 409 and the one stable
 ``LEGACY_PLAN_MESSAGE``, and conversation run listings omit it.
 
-Version: 0.261.140
+Version: 0.261.141
 """
 
 import hashlib
@@ -205,6 +205,12 @@ SSE_HEADERS = {
     'Connection': 'keep-alive',
 }
 
+# Azure App Service drops a response that sends nothing for 230 seconds, and one step (an
+# Office render, a series of generated images) can be silent for longer than that. An idle
+# execution stream therefore sends an SSE comment, which every event parser skips.
+SSE_KEEPALIVE_SECONDS = 15
+SSE_KEEPALIVE_FRAME = ': keep-alive\n\n'
+
 def _now_iso():
     return datetime.now(timezone.utc).isoformat()
 
@@ -349,7 +355,11 @@ def _stream_execution(execution, *, run_id, conversation_id, settings=None):
             thread.start()
             worker_started = True
             while True:
-                frame = frames.get()
+                try:
+                    frame = frames.get(timeout=SSE_KEEPALIVE_SECONDS)
+                except queue.Empty:
+                    yield SSE_KEEPALIVE_FRAME
+                    continue
                 if frame is finished:
                     return
                 yield frame

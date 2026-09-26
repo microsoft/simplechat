@@ -1,8 +1,9 @@
 # test_native_tabular_compute_service.py
 """
 Real native query, transformation, checkpoint and data-only service regressions.
-Version: 0.261.127
+Version: 0.261.141
 Implemented in: 0.261.127
+Replay-location revision identity check added in: 0.261.141
 
 Provider, Cosmos, Blob and document metadata I/O are local doubles. The native
 plugin/query/transform/runner/readers and screening rules execute for real.
@@ -455,6 +456,24 @@ def test_duplicate_submission_reuses_job_and_rejects_changed_request(monkeypatch
             submit(runtime, compute_plan(runtime, durable=True, query="amount > 10"))
         assert error.value.code == "native_compute_request_changed"
         assert runtime.jobs.created == 1
+
+
+def test_replay_location_owned_by_another_revision_is_refused_before_work(monkeypatch):
+    with native_runtime(monkeypatch) as runtime:
+        archived = {**deepcopy(runtime.document), "id": "source-archived", "_etag": "source-revision-0"}
+
+        def resolve_other_revision(container, blob, user_id):
+            if user_id != USER:
+                raise PermissionError("Fixture source location denied.")
+            return deepcopy(archived)
+
+        runtime.patcher.setattr(runtime.screening, "_resolve_blob_document", resolve_other_revision)
+        with pytest.raises(runtime.service.NativeTabularComputeError) as error:
+            submit(runtime, compute_plan(runtime))
+        assert error.value.code == "native_compute_source_identity_mismatch"
+        assert runtime.jobs.created == 0
+        assert runtime.blobs.writes == []
+        assert runtime.publications == []
 
 
 def test_snapshot_read_is_historical_but_current_read_and_resume_refuse_change(monkeypatch):

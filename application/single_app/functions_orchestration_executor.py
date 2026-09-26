@@ -31,7 +31,7 @@ itself.
 
 A plan from the removed legacy contract is refused before anything runs.
 
-Version: 0.261.139
+Version: 0.261.141
 """
 
 import logging
@@ -46,7 +46,7 @@ from werkzeug.utils import secure_filename
 
 from content_screening.access import assert_current_request_sources_available
 from content_screening.contracts import ScreeningError
-from functions_appinsights import log_event
+from functions_appinsights import log_event, workflow_log_context
 from functions_mixed_source_orchestration import (
     AUTHORIZATION_STATUS_AUTHORIZED,
     MixedSourceCancellationError,
@@ -138,16 +138,53 @@ def _pause_before_retry(step_cancel, delay=None):
     return not step_cancel()
 
 
+def _step_log_context(context, step):
+    """Hashed run/step correlation plus the capability, safe for the diagnostic allowlist."""
+    return {
+        **workflow_log_context(
+            run_id=getattr(context, 'run_id', None), conversation_id=getattr(context, 'conversation_id', None),
+            step_id=(step or {}).get('step_id'),
+        ),
+        'capability_id': (step or {}).get('capability_id'),
+    }
+
+
+def _error_code(error):
+    code = getattr(error, 'code', None)
+    return code if isinstance(code, str) else None
+
+
 def _log_transient_retry(context, step, result):
     log_event(
         f'{_LOG_PREFIX} Retrying a read-only step after a transient failure.',
         extra={
-            'run_id': getattr(context, 'run_id', None), 'conversation_id': getattr(context, 'conversation_id', None),
-            'step_id': step.get('step_id'), 'capability_id': step.get('capability_id'),
-            'reason_code': ((result or {}).get('failure') or {}).get('code'),
+            **_step_log_context(context, step),
+            'failure_code': ((result or {}).get('failure') or {}).get('code'),
             'provider_status': ((result or {}).get('failure') or {}).get('provider_status'),
         },
         level=logging.WARNING,
+    )
+
+
+def _log_step_over_budget(context, step, reason, elapsed_seconds, step_timeout):
+    log_event(
+        f'{_LOG_PREFIX} A step finished after its time budget; its finished result was kept.',
+        extra={
+            **_step_log_context(context, step),
+            'failure_code': reason,
+            'elapsed_ms': int(elapsed_seconds * 1000),
+            'step_timeout_seconds': step_timeout,
+        },
+        level=logging.WARNING,
+    )
+
+
+def _log_render_attempt(context, step, facts):
+    """Phase timings and check counts of one claimed file render, without identifiers."""
+    log_event(
+        f'{_LOG_PREFIX} A file render attempt finished.',
+        extra={**_step_log_context(context, step), **(facts or {})},
+        level=logging.INFO if (facts or {}).get('status') == 'completed' else logging.WARNING,
     )
 
 # Budget fallbacks for when a setting is absent or unparseable. Chosen to match the shipped
@@ -156,6 +193,8 @@ def _log_transient_retry(context, step, result):
 _DEFAULT_MAX_STEPS = 8
 _DEFAULT_STEP_TIMEOUT_SECONDS = 120
 _DEFAULT_MAX_REPLANS = 2
+# Stops that bound time rather than express intent; a step that already finished keeps its result.
+_BUDGET_STOP_REASONS = frozenset({'step_timeout', 'run_timeout'})
 
 
 def _now_iso():
@@ -658,11 +697,13 @@ def _raise_dependency_service_failure(step, error):
 
 def _run_dependency_step(
     step, context, settings, user_id, emit, cancel_probe, resolver, *,
-    input_fingerprint, native_pending=None,
+    input_fingerprint, native_pending=None, finished_stop=None,
 ):
     # The file policy is loaded where steps run, not when the executor is imported.
     from functions_orchestration_execution_policy import orchestration_file_policy, OrchestrationFilePolicyError
 
+    # Once the step's work has returned, the owner decides which stops still discard it.
+    after_return = finished_stop if callable(finished_stop) else cancel_probe
     try:
         if step['role'] != 'render':
             assert_current_request_sources_available(user_id)
@@ -749,7 +790,7 @@ def _run_dependency_step(
             context.prompt_token_usage = scoped.prompt_token_usage
         if step['role'] != 'render':
             assert_current_request_sources_available(user_id)
-        if cancel_probe():
+        if after_return():
             raise MixedSourceCancellationError('orchestration_step')
         if type(result) is not dict or result.get('status') not in (
             STEP_STATUS_COMPLETED, STEP_STATUS_PARTIAL, STEP_STATUS_PENDING, STEP_STATUS_WAITING,
@@ -772,7 +813,7 @@ def _run_dependency_step(
                 entry['document_id'] for entry in [*(result.get('evidence') or []), *(result.get('citations') or [])]
                 if isinstance(entry, dict) and entry.get('document_id')
             )) if step['capability_id'] == 'document_search' else []
-            manifest = _dependency_source_manifest(context, gathered_ids, settings, cancel_probe)
+            manifest = _dependency_source_manifest(context, gathered_ids, settings, after_return)
             task = retain_gather_result(step, scoped, result, source_manifest=manifest)
         validate_task_outputs(step, context, task)
         if task.status == 'pending':
@@ -789,11 +830,6 @@ def _run_dependency_step(
         raise
     except Exception as exc:
         _raise_dependency_service_failure(step, exc)
-        log_event(
-            f'{_LOG_PREFIX} A dependency-bound step could not complete.',
-            level=logging.WARNING,
-            extra={'run_id': context.run_id, 'step_id': step['step_id'], 'error_type': type(exc).__name__},
-        )
         if isinstance(exc, OrchestrationFilePolicyError):
             failure = build_failure('file_publication_not_allowed')
         elif isinstance(exc, (ResultUnavailableError, ElicitationContextError, PermissionError, ScreeningError)):
@@ -802,6 +838,14 @@ def _run_dependency_step(
             failure = build_failure('result_invalid')
         else:
             failure = failure_from_exception(exc)
+        log_event(
+            f'{_LOG_PREFIX} A dependency-bound step could not complete.',
+            level=logging.WARNING,
+            extra={
+                **_step_log_context(context, step), 'error_type': type(exc).__name__,
+                'failure_code': failure['code'], 'execution_code': _error_code(exc),
+            },
+        )
         return build_step_result(
             status=STEP_STATUS_FAILED, failure=failure, summary=failure['message'], error=failure['message'],
         )
@@ -914,7 +958,10 @@ def _render_dependency_step(
     }
     with orchestration_file_policy(allow_generated_files=saved_result is None):
         if saved_result is None:
-            result = rendering.execute_render_file(step, context, **arguments)
+            result = rendering.execute_render_file(
+                step, context, **arguments,
+                observe_render=lambda facts: _log_render_attempt(context, step, facts),
+            )
         else:
             result = rendering.resume_render_file(step, context, saved_result, **arguments)
     result = _validate_render_step_result(step, result)
@@ -1158,7 +1205,10 @@ def _execute_dependency_plan(
                     log_event(
                         f'{_LOG_PREFIX} A saved wait could not be resumed.',
                         level=logging.WARNING,
-                        extra={'run_id': context.run_id, 'step_id': step_id, 'error_type': type(exc).__name__},
+                        extra={
+                            **_step_log_context(context, step), 'error_type': type(exc).__name__,
+                            'failure_code': 'result_unavailable', 'execution_code': _error_code(exc),
+                        },
                     )
                     result = build_step_result(status=STEP_STATUS_FAILED, failure=build_failure('result_unavailable'))
                 task = result.get('task_result')
@@ -1213,6 +1263,8 @@ def _execute_dependency_plan(
                 started_at = _now_iso()
                 started = time.monotonic()
                 reason = None
+                # A time budget first noticed only after the step's work had returned.
+                overrun = None
                 usage_before = deepcopy(context.token_usage)
                 prompt_usage_before = deepcopy(getattr(context, 'prompt_token_usage', {}) or {})
 
@@ -1228,6 +1280,17 @@ def _execute_dependency_plan(
                         reason = 'step_timeout'
                     return reason is not None
 
+                def finished_stop():
+                    """After the work returned: a cancellation still discards it, an overrun does not."""
+                    nonlocal overrun
+                    observed = reason
+                    if not step_cancel():
+                        return False
+                    if reason == overrun or (observed is None and reason in _BUDGET_STOP_REASONS):
+                        overrun = reason
+                        return False
+                    return True
+
                 running = _step_record(context, step, index, STEP_STATUS_RUNNING, None, started_at, None, 0)
                 running.update({
                     'result_producer': context.result_producer(step).to_dict(),
@@ -1240,7 +1303,7 @@ def _execute_dependency_plan(
                 try:
                     result = _run_dependency_step(
                         step, context, settings, user_id, emit, step_cancel, resolver,
-                        input_fingerprint=input_fingerprint,
+                        input_fingerprint=input_fingerprint, finished_stop=finished_stop,
                     )
                     if _should_retry_transient(step, result, step_cancel):
                         _log_transient_retry(context, step, result)
@@ -1251,15 +1314,25 @@ def _execute_dependency_plan(
                         if _pause_before_retry(step_cancel):
                             result = _run_dependency_step(
                                 step, context, settings, user_id, emit, step_cancel, resolver,
-                                input_fingerprint=input_fingerprint,
+                                input_fingerprint=input_fingerprint, finished_stop=finished_stop,
                             )
                 except MixedSourceCancellationError:
                     result = build_step_result(
                         status=STEP_STATUS_CANCELLED if reason == 'user_cancelled' else STEP_STATUS_FAILED,
                         failure=build_failure(reason or 'execution_interrupted'),
                     )
+                # A stop the step's own work observed ends it. A time budget first noticed only
+                # after that work returned does not discard a result it already finished and
+                # committed (a rendered file is already stored and published by then).
+                observed_reason = reason
                 step_cancel()
-                if reason:
+                if reason and (
+                    reason == overrun or (observed_reason is None and reason in _BUDGET_STOP_REASONS)
+                ) and isinstance(result, dict) and result.get('status') in (
+                    STEP_STATUS_COMPLETED, STEP_STATUS_PARTIAL, STEP_STATUS_WAITING,
+                ):
+                    _log_step_over_budget(context, step, reason, time.monotonic() - started, step_timeout)
+                elif reason:
                     result = build_step_result(
                         status=STEP_STATUS_CANCELLED if reason == 'user_cancelled' else STEP_STATUS_FAILED,
                         failure=build_failure(reason),

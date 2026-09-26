@@ -33,7 +33,7 @@ Two contracts live here:
     render through the very same card. Our own paging lives in a sibling ``ui_hints``
     field rather than inside the schema, which keeps the schema itself MCP-clean.
 
-Version: 0.261.140
+Version: 0.261.141
 """
 
 import hashlib
@@ -1147,7 +1147,10 @@ def summarize_plan(plan):
 FAILURE_CONTRACT_VERSION = 1
 FAILURE_MESSAGES = {
     'user_cancelled': 'You stopped this run. Already submitted external actions may still finish.',
-    'step_timeout': 'This step did not finish before its time limit.',
+    'step_timeout': (
+        'This step did not finish before its time limit. An admin can raise the step timeout '
+        'under Admin Settings > Orchestration > Chat Orchestration > Limits.'
+    ),
     'run_timeout': 'The run reached its total time limit before all work could finish.',
     'step_budget': 'The run reached its step limit before all work could finish.',
     'delegation_timeout': 'The delegated agent did not finish before its time limit.',
