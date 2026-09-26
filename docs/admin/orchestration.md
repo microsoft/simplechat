@@ -354,7 +354,7 @@ context.
 | --- | --- | --- | --- |
 | Maximum steps in a plan | Caps how much work one plan may describe. Supported range is 1-30. | 8 | `chat_orchestration_max_steps` |
 | Maximum re-plans per run | Limits how often a step may send the plan back to be reconsidered after discovering something. Supported range is 0-5. | 2 | `chat_orchestration_max_replans` |
-| Step timeout | How long a single step may run before it is abandoned. Supported range is 30-1800 seconds. | 180 | `chat_orchestration_step_timeout_seconds` |
+| Step timeout | How long a single step may run before it is abandoned. Since **0.261.141** it also bounds file rendering: a render still producing its file at the limit is stopped before the file is saved, and the step's failure message points admins to this setting. A step whose work had already finished when the limit passed, such as a file already being saved, keeps its result. Raise it when large Word, PowerPoint, or PDF files routinely stop at the limit. Supported range is 30-1800 seconds. | 180 | `chat_orchestration_step_timeout_seconds` |
 | Run timeout | How long a whole run may take before it is abandoned. Supported range is 60-7200 seconds. | 900 | `chat_orchestration_total_timeout_seconds` |
 | Earlier runs shown to the planner | How many previous run summaries the planner can see. Zero disables the activity ledger, not recent message history. Supported range is 0-50. | 10 | `chat_orchestration_ledger_max_runs` |
 | Earlier-run summary size | Caps the size of that summary. Older runs lose their detail first when the budget is reached. Supported range is 1024-131072 bytes. | 16384 | `chat_orchestration_ledger_max_bytes` |

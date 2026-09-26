@@ -1,7 +1,7 @@
 # functions_orchestration_execution.py
 """Headless preparation and guarded publication for saved orchestration attempts.
 
-Version: 0.261.140
+Version: 0.261.141
 Implemented in: 0.261.127
 
 Every saved attempt uses the Gather / Reason / Render contract; a run from the removed
@@ -172,7 +172,9 @@ from functions_workflow_context import (
     WorkflowContextBudgetError,
     calculate_workflow_context_budget,
 )
-from model_endpoint_clients import ModelEndpointBehavior, extract_chat_completion_response_text
+from model_endpoint_clients import (
+    ModelEndpointBehavior, extract_chat_completion_response_text, is_response_format_rejection,
+)
 
 
 ANSWER_MAX_TOKENS = 4000
@@ -302,8 +304,35 @@ def _execution_bound_external_callback(callback, lease):
     return guarded
 
 
+def _create_answer_completion(model, messages, *, json_output, stage):
+    """Request JSON mode when asked, resending without it if the endpoint refuses the option."""
+    options = {
+        "messages": messages, "temperature": ANSWER_TEMPERATURE,
+        "max_tokens": ANSWER_MAX_TOKENS, "use_model_response_length": True,
+    }
+    if not json_output:
+        return model.create_completion(**options)
+    try:
+        return model.create_completion(**options, response_format={"type": "json_object"})
+    except Exception as exc:
+        if not is_response_format_rejection(exc):
+            raise
+        # JSON-mode support differs by endpoint and API version; the prompt already asks
+        # for one JSON object, and the caller validates the reply either way.
+        log_event(
+            "[ORCHESTRATION] Retrying the answer model without a JSON response format.",
+            level=logging.INFO,
+            extra={"stage": stage, "reason": "json_format_retry", "error_type": type(exc).__name__},
+        )
+        return model.create_completion(**options)
+
+
 def build_harness_invoke_prompt(model, *, token_usage, revalidate):
-    """Bind the authorized model once, preserving exact composition budget metadata."""
+    """Bind the authorized model once, preserving exact composition budget metadata.
+
+    ``metadata={"json_output": True}`` asks the endpoint for a JSON object; an endpoint that
+    refuses the option is asked again without it.
+    """
     behavior_name = model.behavior_name or model.deployment
     output_tokens = model.response_length
     if output_tokens is None:
@@ -330,9 +359,8 @@ def build_harness_invoke_prompt(model, *, token_usage, revalidate):
             if audit["decision"] != "full_input":
                 raise WorkflowContextBudgetError(audit)
         try:
-            response = model.create_completion(
-                messages=messages, temperature=ANSWER_TEMPERATURE,
-                max_tokens=ANSWER_MAX_TOKENS, use_model_response_length=True,
+            response = _create_answer_completion(
+                model, messages, json_output=(metadata or {}).get("json_output") is True, stage=stage,
             )
         except (OpenAIError, AzureError) as exc:
             log_event(

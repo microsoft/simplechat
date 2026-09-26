@@ -111,8 +111,12 @@ def source_authority_not_found(error):
     )
 
 
-def raise_source_authority_error(error):
-    """Preserve known access outcomes and sanitize non-authoritative I/O failures."""
+def raise_source_authority_error(error, *, reason=None):
+    """Preserve known access outcomes and sanitize non-authoritative I/O failures.
+
+    ``reason`` is an application-owned code naming the authority check that failed.
+    It is diagnostic only, travels with the raised failure, and never alters it.
+    """
     if isinstance(error, (ScreeningError, PermissionError)) or type(error) in (LookupError, FileNotFoundError):
         failure = error
     elif source_authority_not_found(error):
@@ -128,14 +132,21 @@ def raise_source_authority_error(error):
         failure = SourceAuthorityUnavailableError()
     else:
         failure = SourceAuthorityUnverifiedError()
+    reason = reason or getattr(error, "authority_reason", None)
+    if reason:
+        failure.authority_reason = reason
     _remember_screening_failure(failure)
     # Import-only screening consumers must stay below telemetry/bootstrap owners.
     # Resolve logging only for an actual authority failure, after setting its fence.
     from functions_appinsights import log_event
 
+    code = getattr(failure, "code", "source_unavailable")
     log_event(
         "[CONTENT_SCREENING] Current source authority could not be verified.",
-        extra={"error_type": type(error).__name__, "code": getattr(failure, "code", "source_unavailable")},
+        extra={
+            "error_type": type(error).__name__, "code": code, "failure_code": code,
+            **({"authority_reason": reason} if reason else {}),
+        },
         level=logging.WARNING,
     )
     if failure is error:
@@ -143,22 +154,22 @@ def raise_source_authority_error(error):
     raise failure from error
 
 
-def _malformed_source_authority():
+def _malformed_source_authority(reason):
     if strict_source_authority_enabled():
-        raise_source_authority_error(SourceAuthorityUnverifiedError())
+        raise_source_authority_error(SourceAuthorityUnverifiedError(), reason=reason)
     raise DocumentHeldError()
 
 
 def _require_available_metadata(document):
     if not isinstance(document, Mapping):
-        _malformed_source_authority()
+        _malformed_source_authority("document_record_invalid")
     invalid_available_marker = False
     if SCREENING_FIELD in document:
         marker = document.get(SCREENING_FIELD)
         if not isinstance(marker, dict) or not isinstance(marker.get("state"), str):
-            _malformed_source_authority()
+            _malformed_source_authority("screening_marker_invalid")
         if strict_source_authority_enabled() and marker["state"] not in AVAILABLE_STATES | HELD_STATES:
-            _malformed_source_authority()
+            _malformed_source_authority("screening_state_unknown")
         invalid_available_marker = (
             not isinstance(marker.get("scan_id"), str) or not marker["scan_id"].strip()
             or not isinstance(marker.get("content_fingerprint"), str) or not marker["content_fingerprint"].strip()
@@ -171,12 +182,12 @@ def _require_available_metadata(document):
                 or (isinstance(revision, str) and not revision.strip())
                 or (isinstance(revision, float) and not math.isfinite(revision))
             ):
-                _malformed_source_authority()
+                _malformed_source_authority("screening_marker_incomplete")
     require_document_available(document)
     if SCREENING_FIELD in document:
         marker = document[SCREENING_FIELD]
         if invalid_available_marker:
-            _malformed_source_authority()
+            _malformed_source_authority("screening_marker_incomplete")
         if marker.get("review_required") is True:
             raise DocumentHeldError()
 
@@ -205,7 +216,7 @@ def _authorize_document(document, user_id, group_id=None, public_workspace_id=No
             not isinstance(scope_id, str) or not scope_id.strip()
             or (document.get("public_workspace_id") and document.get("group_id"))
         ):
-            _malformed_source_authority()
+            _malformed_source_authority("document_scope_invalid")
     if document.get("public_workspace_id"):
         workspace_id = document["public_workspace_id"]
         if public_workspace_id and str(workspace_id) != str(public_workspace_id):
@@ -217,7 +228,7 @@ def _authorize_document(document, user_id, group_id=None, public_workspace_id=No
         if strict_source_authority_enabled() and workspace is not None and (
             not isinstance(workspace, Mapping) or workspace.get("id") != workspace_id
         ):
-            _malformed_source_authority()
+            _malformed_source_authority("workspace_record_invalid")
         if not workspace:
             raise PermissionError("Document not found or access denied.")
         return
@@ -278,7 +289,7 @@ def _read_authorized_document(
                 continue
             raise DocumentHeldError() from error
         if not isinstance(document, Mapping) or str(document.get("id")) != str(document_id):
-            _malformed_source_authority()
+            _malformed_source_authority("document_record_invalid")
         _authorize_document(document, user_id, group_id, public_workspace_id, metadata_only=metadata_only)
         if not metadata_only and SCREENING_FIELD in document:
             _require_release_proof(document, config.cosmos_content_screening_container)
@@ -297,7 +308,7 @@ def _require_release_proof(document, container):
             raise_source_authority_error(error)
         raise DocumentHeldError() from error
     if not isinstance(scan, Mapping):
-        _malformed_source_authority()
+        _malformed_source_authority("scan_record_invalid")
     publication = scan.get("publication")
     if (
         scan.get("kind") != "scan"
@@ -326,7 +337,7 @@ def _source_arguments(source, user_id, group_id=None, public_workspace_id=None):
                 or source.get("source_document_id") or source.get("doc_id")
             )
             if source_id is not None and str(source_id) != str(provenance.get("document_id")):
-                _malformed_source_authority()
+                _malformed_source_authority("provenance_mismatch")
         reference = provenance if isinstance(provenance, Mapping) else source
         document_id = (
             reference.get("workspace_document_id") or reference.get("document_id")
@@ -341,7 +352,7 @@ def _source_arguments(source, user_id, group_id=None, public_workspace_id=None):
     else:
         document_id = source
     if not isinstance(document_id, (str, int)) or not str(document_id).strip():
-        _malformed_source_authority()
+        _malformed_source_authority("document_id_invalid")
     return {
         "document_id": str(document_id),
         "user_id": user_id,
@@ -430,7 +441,7 @@ def assert_document_available(
     try:
         document = reader(**arguments)
         if not isinstance(document, Mapping) or str(document.get("id")) != arguments["document_id"]:
-            _malformed_source_authority()
+            _malformed_source_authority("document_record_invalid")
         _require_available_metadata(document)
         _check_source_revision(document_or_id, document)
     except (DocumentHeldError, ScreeningConflictError, LookupError, PermissionError) as error:
@@ -1229,21 +1240,61 @@ def _resolve_blob_document(container_name, blob_name, user_id):
         ],
         enable_cross_partition_query=True,
     )
+    row = _blob_location_owner(rows, blob_name, target[1])
+    scope_id = row.get(target[1])
+    # The query only locates the document. The point read is the decision.
+    return _read_authorized_document(
+        str(row["id"]), user_id,
+        group_id=scope_id if target[1] == "group_id" else None,
+        public_workspace_id=scope_id if target[1] == "public_workspace_id" else None,
+    )
+
+
+def _blob_revision_rank(row):
+    def number(value):
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return 0
+
+    return number(row.get("version")), str(row.get("upload_date") or ""), number(row.get("_ts"))
+
+
+def _blob_location_owner(rows, blob_name, scope_field):
+    """Return the one revision stored at a location, never an older same-name revision.
+
+    Revisions share a file name, and archiving moves an older revision to its own
+    path while the newest one keeps ``{scope}/{file_name}``. An exact stored path
+    outranks an archived copy, which outranks the implied ``{scope}/{file_name}``
+    of a legacy row that never stored a path.
+    """
+    exact, archived, implied = [], [], []
     for row in rows:
-        scope_id = row.get(target[1])
-        legacy_path = f"{scope_id}/{row.get('file_name', '')}"
-        marker = row.get(SCREENING_FIELD)
-        active_blob = marker.get("active_blob", {}) if isinstance(marker, Mapping) else {}
-        paths = {row.get("blob_path"), row.get("archived_blob_path"), legacy_path, active_blob.get("path")}
-        if blob_name not in paths:
+        if not isinstance(row, Mapping) or not row.get("id"):
             continue
-        # The query only locates the document. The point read is the decision.
-        return _read_authorized_document(
-            str(row["id"]), user_id,
-            group_id=scope_id if target[1] == "group_id" else None,
-            public_workspace_id=scope_id if target[1] == "public_workspace_id" else None,
-        )
-    raise DocumentHeldError()
+        marker = row.get(SCREENING_FIELD)
+        active_blob = marker.get("active_blob") if isinstance(marker, Mapping) else None
+        active_path = active_blob.get("path") if isinstance(active_blob, Mapping) else None
+        if blob_name in (row.get("blob_path"), active_path):
+            exact.append(row)
+        elif row.get("archived_blob_path") == blob_name:
+            archived.append(row)
+        elif not row.get("blob_path") and f"{row.get(scope_field)}/{row.get('file_name', '')}" == blob_name:
+            implied.append(row)
+    candidates = exact or archived or implied
+    if len(candidates) == 1:
+        return candidates[0]
+    # Only legacy rows share one location. As in the document list, the explicitly
+    # current revision owns it, then any not marked archived, then the newest.
+    pool = (
+        [row for row in candidates if row.get("is_current_version") is True]
+        or [row for row in candidates if row.get("is_current_version") is not False]
+        or candidates
+    )
+    ranked = sorted(pool, key=_blob_revision_rank, reverse=True)
+    if not ranked or (len(ranked) > 1 and _blob_revision_rank(ranked[0]) == _blob_revision_rank(ranked[1])):
+        raise DocumentHeldError()
+    return ranked[0]
 
 
 def assert_blob_available(

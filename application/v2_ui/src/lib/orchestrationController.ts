@@ -27,6 +27,7 @@ import {
     normalizeOrchestrationAttempt,
     normalizeOrchestrationRecovery,
     orchestrationTerminalStatus,
+    persistedRunPlan,
     prepareOrchestrationRetry,
     fetchPlanEditor,
     MAX_PLAN_INSTRUCTION_LENGTH,
@@ -925,10 +926,7 @@ export async function loadOrchestrationRecovery(conversationId: string, runId: s
     if (!record || record.run_id !== runId || record.conversation_id !== conversationId) {
         throw new Error('Recovery record unavailable');
     }
-    const plan = normalizePlan({
-        ...record.plan,
-        ...(isOrchestrationRunWaiting(record) ? { status: 'waiting' } : {}),
-    });
+    const plan = normalizePlan(persistedRunPlan(record));
     const snapshot = normalizeOrchestrationAttempt(record);
     if ((useOrchestrationStore.getState().runRecovery[runId]?.outputRevision ?? 0) !== outputRevision) {
         delete snapshot.outputs;
@@ -959,10 +957,7 @@ export async function reconcileOrchestrationRun(conversationId: string, runId: s
         const steps = await fetchRunSteps(runId, { conversationId }).catch(() => []);
         const current = useOrchestrationStore.getState();
         if (record.turn_id && selectPlan(current, conversationId, record.turn_id)?.run_id === runId) {
-            current.adoptPersistedPlan(conversationId, record.turn_id, {
-                ...record.plan,
-                ...(isOrchestrationRunWaiting(record) ? { status: 'waiting' } : {}),
-            }, steps);
+            current.adoptPersistedPlan(conversationId, record.turn_id, persistedRunPlan(record), steps);
         }
         const terminal = record.status === 'completed' || record.status === 'failed' || record.status === 'cancelled';
         if (terminal && !isOrchestrationRunPending(record)) {

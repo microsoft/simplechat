@@ -1,13 +1,17 @@
 # functions_orchestration_composition.py
 """Explicit one-call content preparation from named authorized result readers.
 
-Version: 0.261.139
+Version: 0.261.141
 No retrieval, file-format inference, upload, publication, or implicit sibling inputs.
 
 Answer-writing steps receive saved memory, the resolved conversation references, the
 knowledge basis the planner declared, a disclosure of optional inputs that could not be
 gathered, and guidance for the visuals the planner named (charts, Mermaid diagrams, image
 proposal cards).
+
+JSON preparation states each declared output's exact shape, asks the endpoint for a JSON
+object, and makes one corrective call when a reply breaks a declared rule. Neither reply is
+logged; the log records only application codes and hashed identifiers.
 """
 
 import json
@@ -16,7 +20,7 @@ import logging
 from jsonschema import Draft202012Validator
 
 from content_screening.contracts import ScreeningError
-from functions_appinsights import log_event
+from functions_appinsights import log_event, workflow_log_context
 from functions_mixed_source_orchestration import MixedSourceCancellationError
 from functions_orchestration_context import conversation_reference_messages
 from functions_orchestration_deliverables import (
@@ -88,6 +92,84 @@ MISSING_IMAGE_POLICY = (
     'add placeholders for them or describe them as included. A delivery note after the answer '
     'reports them.'
 )
+JSON_OUTPUT_POLICY = (
+    'Return one JSON object with exactly the declared output names as keys and '
+    'their complete values. Follow every declared schema and any matching '
+    'profile definition. No Markdown fences.'
+)
+_COLUMN_LABELS = {'boolean': 'true or false', 'json': 'any JSON value'}
+_COLUMN_EXAMPLES = {
+    'string': '...', 'integer': 1, 'number': 1.5, 'boolean': True, 'object': {}, 'array': [], 'json': '...',
+}
+# A rejected reply is asked for once more only when its rule can be stated from the
+# declarations alone. Plan, profile, size and access failures are never retried.
+_REPLY_PROBLEMS = {
+    'result_duplicate_output': 'it repeated an output name',
+    'result_output_missing': 'its keys were not exactly the declared output names',
+}
+_OUTPUT_PROBLEMS = {
+    'result_value_invalid': 'was empty or not a string',
+    'result_records_invalid': 'was not a JSON array of row objects',
+    'result_schema_invalid': 'did not match its declared columns or schema',
+    'result_json_invalid': 'contained a value that is not plain JSON',
+}
+
+
+def _quoted(value):
+    return json.dumps(value, ensure_ascii=False)
+
+
+def _output_shape(specification):
+    """One sentence stating the exact JSON value a declared output must be."""
+    name, kind = _quoted(specification['name']), specification['kind']
+    if kind == 'records-v1':
+        columns = specification.get('columns') or []
+        keys = ', '.join(
+            f"{_quoted(column['name'])} ({_COLUMN_LABELS.get(column['value_type'], column['value_type'])}"
+            f"{' or null' if column.get('nullable') else ''})"
+            for column in columns
+        )
+        example = json.dumps(
+            {specification['name']: [
+                {column['name']: _COLUMN_EXAMPLES.get(column['value_type'], '...') for column in columns},
+            ]},
+            ensure_ascii=False,
+        )
+        return (
+            f'Output {name} is a JSON array with one object per row, not CSV or table text. Each '
+            f'object has exactly the keys {keys}. Shape: {example}'
+        )
+    if kind == 'markdown-v1':
+        return f'Output {name} is one non-empty JSON string of Markdown.'
+    if kind == 'text-v1':
+        return f'Output {name} is one non-empty JSON string of plain text.'
+    return f'Output {name} is the JSON value its declared schema or profile describes.'
+
+
+def _compose_correction(error, outputs):
+    """The rule a rejected JSON reply broke, or None when asking again cannot fix it.
+
+    Built from the declared outputs and application codes only, never from the reply.
+    """
+    code = getattr(error, 'code', None)
+    if isinstance(error, json.JSONDecodeError):
+        problem = 'it was not one valid JSON object'
+    elif not isinstance(error, ResultContractError):
+        return None
+    elif code in _REPLY_PROBLEMS:
+        problem = _REPLY_PROBLEMS[code]
+    elif code in _OUTPUT_PROBLEMS:
+        output_name = getattr(error, 'output_name', None)
+        subject = f'output {_quoted(output_name)}' if type(output_name) is str else 'an output'
+        problem = f'{subject} {_OUTPUT_PROBLEMS[code]}'
+    else:
+        return None
+    names = ', '.join(_quoted(output['name']) for output in outputs)
+    return ' '.join((
+        f'Your previous reply could not be used: {problem}.',
+        f'Reply again with only one JSON object whose keys are exactly {names}, and no other text.',
+        *(_output_shape(output) for output in outputs),
+    ))
 
 
 def validate_prepared_output(specification, value, *, profile_validator=None):
@@ -183,7 +265,11 @@ def _answer_memory(context):
 
 
 def adapter_compose(step, context, *, settings, user_id, emit=None, cancel_requested=None):
-    """Prepare all declared outputs in one content-generation call."""
+    """Prepare all declared outputs in one content-generation call.
+
+    A JSON reply that breaks a rule stated by the declared outputs gets exactly one
+    corrective call naming that rule. Any other failure, or a second bad reply, fails the step.
+    """
     service = require_result_service(context)
     producer = context.result_producer(step)
     if user_id != producer.user_id or context.plan_contract_version != 2:
@@ -246,11 +332,9 @@ def adapter_compose(step, context, *, settings, user_id, emit=None, cancel_reque
         policy = ' '.join(part for part in (
             COMPOSE_POLICY, KNOWLEDGE_POLICIES[basis], MISSING_INPUT_POLICY if missing else '',
             MISSING_IMAGE_POLICY if missing_images else '',
-            'Return only the prepared text.' if plain_text else (
-                'Return one JSON object with exactly the declared output names as keys and '
-                'their complete values. Follow every declared schema and any matching '
-                'profile definition. No Markdown fences.'
-            ),
+            'Return only the prepared text.' if plain_text else ' '.join((
+                JSON_OUTPUT_POLICY, *(_output_shape(output) for output in outputs),
+            )),
         ) if part)
         history = conversation_reference_messages(
             getattr(context, 'conversation_context', None) or {},
@@ -302,35 +386,87 @@ def adapter_compose(step, context, *, settings, user_id, emit=None, cancel_reque
         )
         if audit['decision'] != 'full_input':
             raise WorkflowContextBudgetError(audit)
-        recheck()
-        response = invoke(messages, stage='orchestration_compose', metadata={
+        metadata = {
             'run_id': context.run_id, 'step_id': step['step_id'],
             'complete_named_inputs': all(reader.completeness.status == 'complete' for reader in readers.values()),
             'input_result_digests': {name: reader.reference.content_sha256 for name, reader in readers.items()},
-        })
-        recheck()
-        if type(response) is not str or not response.strip():
-            raise ResultContractError('result_value_invalid')
-        if plain_text:
-            values = {outputs[0]['name']: response}
-        else:
-            values = json.loads(response, object_pairs_hook=_unique_object)
-            if type(values) is not dict or set(values) != {output['name'] for output in outputs}:
-                raise ResultContractError('result_output_missing')
-        if charts and len(markdown_names) == 1 and type(values[markdown_names[0]]) is str:
-            # Charts drawn from exact rows are placed at their tokens, or appended once.
-            values[markdown_names[0]] = place_chart_blocks(values[markdown_names[0]], charts)
-        # Prepared content that is bound to generated images places each one that arrived at
-        # its token, or after the content, with its AI-illustration caption, and may reference
-        # no other image, even when none arrived. Content without image inputs is left to
-        # Render, which resolves nothing else.
+        }
+        if not plain_text:
+            # Ask the endpoint for a JSON object; invoke drops the option if it is refused.
+            metadata['json_output'] = True
         titles = {image['asset_id']: image['title'] for image in images}
-        for specification in outputs if images or missing_images else ():
-            value = values[specification['name']]
-            if specification['kind'] == 'markdown-v1' and type(value) is str:
-                values[specification['name']] = place_image_tokens(value, titles)
-            elif specification.get('profile') == PREPARED_SLIDE_DECK_VERSION:
-                values[specification['name']] = place_deck_images(value, titles)
+
+        def prepared_values(response):
+            if type(response) is not str or not response.strip():
+                raise ResultContractError('result_value_invalid')
+            if plain_text:
+                values = {outputs[0]['name']: response}
+            else:
+                values = json.loads(response, object_pairs_hook=_unique_object)
+                if type(values) is not dict or set(values) != {output['name'] for output in outputs}:
+                    raise ResultContractError('result_output_missing')
+            if charts and len(markdown_names) == 1 and type(values[markdown_names[0]]) is str:
+                # Charts drawn from exact rows are placed at their tokens, or appended once.
+                values[markdown_names[0]] = place_chart_blocks(values[markdown_names[0]], charts)
+            # Prepared content that is bound to generated images places each one that arrived at
+            # its token, or after the content, with its AI-illustration caption, and may reference
+            # no other image, even when none arrived. Content without image inputs is left to
+            # Render, which resolves nothing else.
+            for specification in outputs if images or missing_images else ():
+                value = values[specification['name']]
+                if specification['kind'] == 'markdown-v1' and type(value) is str:
+                    values[specification['name']] = place_image_tokens(value, titles)
+                elif specification.get('profile') == PREPARED_SLIDE_DECK_VERSION:
+                    values[specification['name']] = place_deck_images(value, titles)
+            for specification in outputs:
+                try:
+                    validate_prepared_output(
+                        specification, values[specification['name']],
+                        profile_validator=getattr(context, 'composition_profile_validator', None),
+                    )
+                except ResultContractError as error:
+                    error.output_name = specification['name']
+                    raise
+            return values
+
+        recheck()
+        response = invoke(messages, stage='orchestration_compose', metadata=metadata)
+        recheck()
+        try:
+            values = prepared_values(response)
+        except ValueError as error:
+            correction = None if plain_text else _compose_correction(error, outputs)
+            if correction is None:
+                raise
+            # One corrective call, told which declared rule the reply broke. The reply itself
+            # stays in the model conversation only; it is never logged.
+            retry_messages = [
+                *messages, {'role': 'assistant', 'content': response}, {'role': 'user', 'content': correction},
+            ]
+            retry_audit = calculate_workflow_context_budget(
+                retry_messages, getattr(invoke, 'model_metadata', None) or context.gpt_model or '',
+                provider=getattr(invoke, 'provider', None),
+                output_tokens=getattr(invoke, 'output_tokens', None),
+            )
+            if retry_audit['decision'] != 'full_input':
+                raise
+            log_event(
+                '[ORCHESTRATION_EXECUTOR] Prepared content did not match its declared outputs; asking once more.',
+                level=logging.INFO,
+                extra={
+                    **workflow_log_context(
+                        run_id=context.run_id, conversation_id=getattr(context, 'conversation_id', None),
+                        step_id=step['step_id'],
+                    ),
+                    'capability_id': step['capability_id'], 'reason': 'compose_output_retry',
+                    'error_type': type(error).__name__,
+                    **({'execution_code': error.code} if isinstance(error, ResultContractError) else {}),
+                },
+            )
+            recheck()
+            response = invoke(retry_messages, stage='orchestration_compose', metadata=metadata)
+            recheck()
+            values = prepared_values(response)
         partial = any(reader.completeness.status == 'partial' for reader in readers.values())
         limitations = tuple(dict.fromkeys(
             limitation for reader in readers.values() for limitation in reader.completeness.limitations
@@ -340,9 +476,6 @@ def adapter_compose(step, context, *, settings, user_id, emit=None, cancel_reque
         named = []
         for specification in outputs:
             value = values[specification['name']]
-            validate_prepared_output(
-                specification, value, profile_validator=getattr(context, 'composition_profile_validator', None),
-            )
             count = len(value) if specification['kind'] == 'records-v1' else 1
             named.append(NamedOutput(
                 specification['name'], specification['kind'], value,
@@ -374,11 +507,6 @@ def adapter_compose(step, context, *, settings, user_id, emit=None, cancel_reque
         raise
     except Exception as exc:
         raise_source_service_failure(exc)
-        log_event(
-            '[ORCHESTRATION_EXECUTOR] Content preparation could not complete.',
-            level=logging.WARNING,
-            extra={'run_id': context.run_id, 'step_id': step['step_id'], 'error_type': type(exc).__name__},
-        )
         code = getattr(exc, 'code', '')
         if code == 'result_requires_streaming' or isinstance(exc, WorkflowContextBudgetError):
             failure = build_failure('result_input_too_large')
@@ -390,6 +518,19 @@ def adapter_compose(step, context, *, settings, user_id, emit=None, cancel_reque
             failure = build_failure('result_invalid')
         else:
             failure = failure_from_exception(exc, answering=True)
+        log_event(
+            '[ORCHESTRATION_EXECUTOR] Content preparation could not complete.',
+            level=logging.WARNING,
+            extra={
+                **workflow_log_context(
+                    run_id=context.run_id, conversation_id=getattr(context, 'conversation_id', None),
+                    step_id=step['step_id'],
+                ),
+                'capability_id': step['capability_id'], 'error_type': type(exc).__name__,
+                'failure_code': failure['code'],
+                **({'execution_code': code} if type(code) is str and code else {}),
+            },
+        )
         return build_step_result(
             status=STEP_STATUS_FAILED, failure=failure, summary=failure['message'], error=failure['message'],
         )

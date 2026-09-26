@@ -1,11 +1,12 @@
 # test_orchestration_render_waiting_runtime.py
 """Real Render delivery resumes under the original orchestration attempt without producer replay.
 
-Version: 0.261.130
+Version: 0.261.141
 Implemented in: 0.261.127
 Uncertain output-acknowledgement regression implemented in: 0.261.129
 Saved Render payload and diagnostic preservation implemented in: 0.261.130
 Shared-resumer dispatch and effect-boundary coverage added in: 0.261.130
+Render outage wrapper forwards the step time limit since: 0.261.141
 The compiler, executor, leases, checkpoints, result store, renderer and artifact transport are real.
 Only model and external Azure I/O are isolated.
 """
@@ -526,10 +527,10 @@ def test_initial_render_read_outage_preserves_admitted_wait_without_a_task(
             raise ServiceResponseError('Isolated output acknowledgement read failure.')
         return read(item=item, partition_key=partition_key, **kwargs)
 
-    def render_with_outage(output_id):
+    def render_with_outage(output_id, **kwargs):
         if boundary == 'before_attempt':
             armed['output_id'] = output_id
-        output = render(output_id)
+        output = render(output_id, **kwargs)
         if boundary == 'after_commit':
             armed['output_id'] = output_id
         return output

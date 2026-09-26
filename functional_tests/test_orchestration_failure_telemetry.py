@@ -1,8 +1,9 @@
 # test_orchestration_failure_telemetry.py
 """Specific orchestration failure rules reach telemetry without private plan text.
 
-Version: 0.261.140
+Version: 0.261.141
 Implemented in: 0.261.140
+Step, capability, format, and authority-reason codes covered in: 0.261.141
 
 Uses real planner/validation/logging modules with offline provider replies.
 The synthetic invalid proposals test diagnostics, not the unknown historical
@@ -124,22 +125,33 @@ def test_workflow_hash_and_code_fields_do_not_preserve_arbitrary_text(harness):
     telemetry = importlib.import_module("functions_appinsights")
     correlation = telemetry.workflow_log_context(
         conversation_id="PRIVATE_CONVERSATION", turn_id="PRIVATE_TURN", run_id="PRIVATE_RUN",
+        step_id="PRIVATE_STEP",
     )
     properties = telemetry._build_logger_extra("[ORCHESTRATION_RUNS] Failure.", {
         **correlation, "validation_code": "deliverables_invalid",
         "validation_rule": "non_file_format", "execution_code": "context_unavailable",
         "response_failure": "model_refusal",
         "output_code": "output_record_invalid", "durable_status": "failed",
+        "failure_code": "source_authority_unverified", "authority_reason": "manifest_revision_invalid",
+        "capability_id": "render_file", "output_format": "docx",
         "response_type": "CosmosDict", "api_key": "PRIVATE_KEY",
         "prompt": "PRIVATE_PROMPT", "run_id": "PRIVATE_RUN",
     })
     assert properties["sc_run_id_hash"] == hashlib.sha256(b"PRIVATE_RUN").hexdigest()
+    assert properties["sc_step_id_hash"] == hashlib.sha256(b"PRIVATE_STEP").hexdigest()
     assert properties["sc_validation_rule"] == "non_file_format"
     assert properties["sc_execution_code"] == "context_unavailable"
     assert properties["sc_response_failure"] == "model_refusal"
     assert properties["sc_response_type"] == "CosmosDict"
     assert properties["sc_durable_status"] == "failed"
+    assert properties["sc_failure_code"] == "source_authority_unverified"
+    assert properties["sc_authority_reason"] == "manifest_revision_invalid"
+    assert properties["sc_capability_id"] == "render_file"
+    assert properties["sc_output_format"] == "docx"
     assert "PRIVATE_" not in json.dumps(properties)
+    assert {"stepidhash", "failurecode", "authorityreason", "capabilityid", "outputformat"} <= (
+        telemetry.LOGGER_WORKFLOW_HASH_KEYS | telemetry.LOGGER_WORKFLOW_CODE_KEYS
+    )
     for key in (*telemetry.LOGGER_WORKFLOW_HASH_KEYS, *telemetry.LOGGER_WORKFLOW_CODE_KEYS):
         invalid = telemetry._build_logger_extra("Failure.", {key: "PRIVATE_VALUE"})
         assert f"sc_{key}" not in invalid
