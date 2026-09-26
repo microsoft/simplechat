@@ -115,7 +115,9 @@ export function AgentsSection({ actionsEnabled, adapter = PERSONAL_AGENT_WORKBEN
                         return (
                             <li key={`${provided ? 'global' : 'personal'}:${agent.id}`} className="min-w-0">
                                 <GlassPanel elevation="flat" className={`h-full p-4 ${filters.view === 'cards' ? 'space-y-3' : 'flex flex-wrap items-start gap-3'}`}>
-                                    <div className="flex min-w-0 flex-1 items-start gap-3">
+                                    {/* A 12rem basis, so on a narrow screen the actions wrap below the title
+                                        instead of squeezing it to a letter per line under the buttons. */}
+                                    <div className="flex min-w-0 flex-[1_1_12rem] items-start gap-3">
                                         <AgentIcon icon={agent.icon} />
                                         <div className="min-w-0 flex-1">
                                             <h3 className="break-words text-sm font-semibold text-text-1"><Link to={path} className="inline-block py-0.5 hover:text-accent hover:underline">{label}</Link></h3>
