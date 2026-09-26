@@ -33,6 +33,10 @@ import { PUBLIC_MANAGE_SECTIONS } from './workspace/publicManageSections';
 import { PublicDocumentsSection } from './workspace/DocumentsSection';
 import { PublicPromptsSection } from './workspace/PromptsSection';
 import { PublicMembersSection } from './workspace/PublicMembersSection';
+import { PublicSettingsSection } from './workspace/PublicSettingsSection';
+import { PublicActivitySection } from './workspace/PublicActivitySection';
+import { PublicStatisticsSection } from './workspace/PublicStatisticsSection';
+import { createPublicSettingsAdapter } from '../lib/publicSettings';
 
 const CLASSIC_WORKSPACE_HREF = '/public_workspaces';
 
@@ -126,6 +130,21 @@ export function PublicWorkspacePage() {
         };
     }, [revalidate]);
 
+    // A successful profile or logo save re-reads the context so the header and picker follow the new
+    // name, colour and logo. Unlike the focus revalidate this doesn't wait for the page to be visible,
+    // because it fires from inside the just-finished save; the Settings section keeps its own drafts,
+    // so this refresh can never wipe an edit.
+    const refreshContextNow = useCallback(() => {
+        const current = usePublicWorkspaceStore.getState();
+        if (!workspaceId || !enabled || current.loading || current.refreshing
+            || current.context?.scope.id !== workspaceId) return;
+        void current.revalidate(workspaceId).catch((cause: unknown) => {
+            if (!(cause instanceof PublicWorkspaceRequestSuperseded)) {
+                setNotice(usePublicWorkspaceStore.getState().error || 'Could not refresh this workspace.');
+            }
+        });
+    }, [workspaceId, enabled]);
+
     const context = state.context && state.context.scope.id === workspaceId && state.context.viewer_id === viewerId ? state.context : null;
     const ready = context && !state.loading;
     const basePath = workspaceId ? publicWorkspacePath(workspaceId) : '/public';
@@ -141,6 +160,15 @@ export function PublicWorkspacePage() {
     const nativeDocuments = Boolean(ready && section === 'documents' && !resourceId
         && selected?.enabled && context.document_permissions.can_view);
     const nativePrompts = Boolean(ready && section === 'prompts' && !resourceId && selected?.enabled);
+    // The Manage group's Settings, Activity and Statistics sections (M10C) share one scoped client. It
+    // is keyed on the workspace id ALONE, so a plain refocus (which reparses the context into a new
+    // object) never rebuilds it and never discards the Settings section's open drafts; the freshest
+    // settings_management hint reaches the section separately, so its controls still re-gate.
+    const publicSettingsAdapter = useMemo(
+        () => context ? createPublicSettingsAdapter(context.scope, context.settings_management) : null,
+        // eslint-disable-next-line react-hooks/exhaustive-deps -- keyed on the workspace id only, on purpose
+        [context?.scope.id],
+    );
 
     useEffect(() => { setLogoFailed(false); }, [context?.scope.id, context?.workspace.logo_url]);
     useEffect(() => {
@@ -184,6 +212,29 @@ export function PublicWorkspacePage() {
     }, [location.pathname, location.search, navigate]);
 
     const openClassic = useCallback((href: string) => { window.location.assign(href); }, []);
+
+    // The Settings danger zone hands the delete to the classic manage page. As the group page does, the
+    // handoff first confirms this workspace as the active public workspace, so the classic surface and
+    // chat scoping follow, and only then leaves; a page with an unsaved or in-flight change asks first.
+    const [classicTarget, setClassicTarget] = useState<string | null>(null);
+    const [classicPrompt, setClassicPrompt] = useState<string | null>(null);
+    const openClassicManage = useCallback((href: string) => {
+        if (dirtyRef.current || busyRef.current) setClassicPrompt(href);
+        else setClassicTarget(href);
+    }, []);
+    useEffect(() => {
+        if (!classicTarget || !workspaceId) return;
+        let mounted = true;
+        void PUBLIC_WORKSPACES.setActive(workspaceId).then(() => {
+            if (mounted) window.location.assign(classicTarget);
+        }).catch((cause: unknown) => {
+            if (!mounted) return;
+            setNotice(cause instanceof Error && cause.message
+                ? cause.message : `Could not open the classic ${labels.lower_singular}.`);
+            setClassicTarget(null);
+        });
+        return () => { mounted = false; };
+    }, [classicTarget, workspaceId, labels.lower_singular]);
 
     const header = (
         <>
@@ -261,6 +312,19 @@ export function PublicWorkspacePage() {
                                     viewerId={context.viewer_id} interactionDisabled={false}
                                     onBusyChange={reportDocumentBusy} onAccessChanged={revalidate} />
                             )
+                            : section === 'settings' && !resourceId && publicSettingsAdapter ? (
+                                <PublicSettingsSection adapter={publicSettingsAdapter} management={context.settings_management}
+                                    interactionDisabled={state.refreshing}
+                                    onBusyChange={reportDocumentBusy} onDirtyChange={reportDocumentDirty}
+                                    onAccessChanged={revalidate} onSaved={refreshContextNow}
+                                    onOpenClassic={() => openClassicManage(`/public_workspaces/${encodeURIComponent(context.scope.id)}`)} />
+                            )
+                            : section === 'activity' && !resourceId && publicSettingsAdapter ? (
+                                <PublicActivitySection adapter={publicSettingsAdapter} />
+                            )
+                            : section === 'statistics' && !resourceId && publicSettingsAdapter ? (
+                                <PublicStatisticsSection adapter={publicSettingsAdapter} />
+                            )
                             : section === 'documents' && !resourceId ? (
                                 context.document_permissions.can_view ? <PublicDocumentsSection context={context}
                                     interactionDisabled={false} onOpenClassic={() => openClassic(CLASSIC_WORKSPACE_HREF)}
@@ -279,12 +343,13 @@ export function PublicWorkspacePage() {
                             )}
                 </div>
             ) : !error ? <EmptyState title="Workspace details unavailable" description={`Select another ${labels.lower_singular} or refresh workspace details.`} /> : null}
-            {blocker.state === 'blocked' ? <WorkspaceLeavePrompt
+            {blocker.state === 'blocked' || classicPrompt ? <WorkspaceLeavePrompt
                 saving={resourceBusy}
-                onStay={() => { if (blocker.state === 'blocked') blocker.reset(); }}
+                onStay={() => { if (blocker.state === 'blocked') blocker.reset(); setClassicPrompt(null); }}
                 onDiscard={() => {
                     setDirty(false);
-                    if (blocker.state === 'blocked') blocker.proceed();
+                    if (classicPrompt) { setClassicTarget(classicPrompt); setClassicPrompt(null); }
+                    else if (blocker.state === 'blocked') blocker.proceed();
                 }} /> : null}
         </WorkspaceShell>
     );
