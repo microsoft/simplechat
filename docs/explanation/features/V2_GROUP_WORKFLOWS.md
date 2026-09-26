@@ -101,6 +101,27 @@ The V2 run approval panel already decides group runs through the group route,
 `/api/group/workflows/<workflow>/runs/<run>/runtime/decision?group_id=G`. Every
 runtime read also carries `group_id`. No change was needed.
 
+### Who can run a group workflow (0.261.178)
+
+Classic, and the server's run and cancel routes, let every group member run
+and cancel a group workflow. Before this version, V2 offered **Run** and
+**Cancel** only to the members who can manage group workflows. From version
+**0.261.178**:
+- The group workspace context publishes `workflow_management`, `{schema_version:
+  1, operations: [...]}`. It comes from `functions_group_workflow_policy.py`,
+  which the routes' own role lists also come from:
+  - `run` and `cancel` go to every member (`GROUP_WORKFLOW_MEMBER_ROLES`);
+  - `create`, `edit` and `delete` go to the roles allowed to manage group
+    workflows.
+- The Workflows section gates each control on its own operation. A member
+  sees **Run**, **Cancel** and **View**, but not **Create**, **Edit** or
+  **Delete**.
+- All of them need an **active** group. The routes check no status, so V2 keeps
+  its active-only rule, and adding a status check to the routes is a recorded
+  follow-up.
+- Per-run **Cancel** and **Resume failed** in the run history aren't in V2 yet,
+  for personal or group workflows (an approved exception).
+
 ## Files
 
 | File | Change |

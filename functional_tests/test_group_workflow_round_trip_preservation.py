@@ -2,7 +2,7 @@
 #!/usr/bin/env python3
 """
 Functional test for group workflow save round-trip preservation.
-Version: 0.261.149
+Version: 0.261.178
 Implemented in: 0.261.141
 
 This test ensures that existing group workflow definitions survive load, edit and save. A group
@@ -298,11 +298,12 @@ class GroupWorkflowStore:
             "functions_workflow_runtime_store": _module("functions_workflow_runtime_store"),
             **_document_analysis_seams(),
         }
-        # Load order follows the import graph: the alert normalizer imports the definitions module.
+        # Load order follows the import graph: the alert normalizer imports the definitions module, and
+        # the group store takes its member roles from the pure workflow policy module.
         real = (
             "functions_workflow_alert_safety", "functions_workflow_definitions", "functions_workflow_alerts",
             "functions_m365_workflow_binding", "functions_workflow_definition_store", "functions_document_actions",
-            "functions_personal_workflows", "functions_group_workflows",
+            "functions_personal_workflows", "functions_group_workflow_policy", "functions_group_workflows",
         )
         with _installed((*stubs, *real)):
             sys.modules.update(stubs)

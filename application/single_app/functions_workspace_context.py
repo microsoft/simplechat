@@ -45,6 +45,7 @@ from functions_group_file_source_policy import (
     group_file_source_management_operations,
     group_file_sources_available,
 )
+from functions_group_workflow_policy import group_workflow_management_operations
 from functions_group_membership_policy import GROUP_MEMBERSHIP_MANAGER_ROLES
 from functions_group_settings_policy import (
     GROUP_MANAGER_REQUIRED,
@@ -70,6 +71,13 @@ from functions_workspace_sections import WORKSPACE_SECTION_GROUPS
 from functions_public_document_policy import (
     public_document_collaboration_operations,
     public_document_management_operations,
+)
+from functions_public_prompt_policy import (
+    public_prompt_management_operations,
+)
+from functions_public_membership_policy import (
+    PUBLIC_MEMBERSHIP_MANAGER_ROLES,
+    public_membership_operations,
 )
 from functions_public_settings_policy import build_public_settings_management
 from functions_public_workspaces import (
@@ -337,6 +345,16 @@ def build_group_workspace_context(user_id, group_id, settings, *, user_info=None
                 role, group, settings, available=file_sources_available,
             ),
         },
+        # The workflow operations the V2 section offers, from the roles the /api/group/workflows
+        # routes check: run and cancel for every member (GROUP_WORKFLOW_MEMBER_ROLES), create,
+        # edit and delete for the workflow management roles. Active groups only, as the section's
+        # controls have always been; the routes themselves check no status.
+        "workflow_management": {
+            "schema_version": 1,
+            "operations": group_workflow_management_operations(
+                role, group, available=bool(view_allowed and workflows_enabled), manager=automation_manager,
+            ),
+        },
         # The decision the native group settings routes enforce and their settings read
         # publishes; the header offers Settings from it without an extra read.
         "settings_management": build_group_settings_management(
@@ -387,20 +405,30 @@ def build_public_workspace_context(user_id, workspace_id, settings, *, user_info
             "reason": None if available else (status_reason if not view_allowed else reason),
         }
 
-    # Public workspaces offer read-only document browsing, and a manager of an active
-    # workspace manages the documents section. Tags, prompts, identities and sync are
-    # listed but not yet available (M9C/M10B). Sections public workspaces will never
-    # have -- agents, actions, endpoints and workflows -- are left out of the registry
-    # entirely rather than shown as "not available yet".
+    # Public workspaces offer read-only document browsing and, from M9C, a read-only prompts
+    # library that a manager of an active workspace manages. Tags, identities and sync are listed
+    # but not yet available (M10B). Sections public workspaces will never have -- agents, actions,
+    # endpoints and workflows -- are left out of the registry entirely rather than shown as "not
+    # available yet".
     sections = {
         "documents": section(True, manager),
         "tags": section(False),
-        "prompts": section(False),
+        "prompts": section(True, manager),
         "identities": section(False),
         "sync": section(False),
     }
     for section_id, entry in sections.items():
         entry["group"] = WORKSPACE_SECTION_GROUPS[section_id]
+    # Members (M10A) is a public management section in the "manage" group, mirroring the
+    # group Members section (M7B). Every member may open it in any status that lets them
+    # view the workspace, like every other section; which membership controls it offers
+    # comes from membership_management and each member row's actions, never from this
+    # navigation entry. The public section registry keeps its own ids (M9A); "members"
+    # sits in the shared "manage" group without touching the personal or group registries.
+    sections["members"] = {
+        **section(True, role in PUBLIC_MEMBERSHIP_MANAGER_ROLES),
+        "group": GROUP_MANAGE_SECTION_GROUP,
+    }
 
     logo = get_workspace_logo_metadata(workspace)
     owner = workspace.get("owner") or {}
@@ -449,6 +477,19 @@ def build_public_workspace_context(user_id, workspace_id, settings, *, user_info
         "document_collaboration": {
             "schema_version": 1,
             "operations": public_document_collaboration_operations(workspace, role, settings),
+        },
+        "prompt_management": {
+            "schema_version": 1,
+            "operations": public_prompt_management_operations(workspace, role, settings),
+        },
+        # Membership (M10A) advertises the management operations this caller may perform on
+        # the workspace, on the same terms as the native member-list envelope. It is a hint
+        # only: every membership route reauthorizes on a fresh copy. The group context has
+        # no equivalent top-level field; the group front end reads these operations from the
+        # member-list response instead, so this is a deliberate public-only addition.
+        "membership_management": {
+            "schema_version": 1,
+            "operations": public_membership_operations(role, workspace, settings),
         },
         "document_queries": {
             "sort_fields": [

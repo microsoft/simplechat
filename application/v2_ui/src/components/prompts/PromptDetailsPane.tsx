@@ -181,7 +181,7 @@ export function PromptDetailsPane({
                 <Link
                     to={chatHrefForPrompt(
                         prompt.id,
-                        scope && scope.kind === 'group' ? { kind: scope.kind, id: scope.id } : undefined,
+                        scope && (scope.kind === 'group' || scope.kind === 'public') ? { kind: scope.kind, id: scope.id } : undefined,
                     )}
                     className="inline-flex h-8 items-center gap-1.5 rounded-xl px-3 text-sm font-medium text-text-2 transition-colors hover:bg-surface-2 hover:text-text-1"
                 >

@@ -1,11 +1,12 @@
 # public_directory.py
 """
 Closed M9A public directory HTTP fixtures for the real production V2 SPA.
-Version: 0.261.175
+Version: 0.261.179
 Implemented in: 0.261.175
 
 The fixture serves the native public directory the directory page and the unified picker read --
-`GET /api/public_workspaces/directory` and the public `GET /api/public_workspaces/<id>/logo` -- plus
+`GET /api/public_workspaces/directory`, the classic `POST /api/public_workspaces` the M10A Create
+affordance reuses, and the public `GET /api/public_workspaces/<id>/logo` -- plus
 the shared `/api/user/settings` store the visibility toggle writes, and nothing else. It models the
 server's rules from ``functions_public_directory`` rather than a convenient shape: the strict query
 (only ``view``, ``search``, ``page`` and ``page_size``, each at most once, ``view`` in ``all|mine``),
@@ -86,6 +87,15 @@ class PublicDirectoryFixture(PublicWorkspaceFixture):
         # load error rather than render an empty directory.
         self.malformed_list = False
         self.directory_workspaces = {}
+        # The Create control follows the directory hint's can_create; this flag is what the hint
+        # publishes. It gates nothing on its own, so leaving it on while a refusal is armed is the
+        # real "hint refuses but a stale page still POSTs" case the suite pins.
+        self.can_create = True
+        # A refusal the next classic ``POST /api/public_workspaces`` answers with, and a reviewed
+        # server answer for the verbatim case. ``create_refusal`` is None, "disabled" or "role".
+        self.create_refusal = None
+        self.next_create_error = None
+        self.created_public_counter = 0
         # The Open target is a member row whose id is an inherited context, so Open lands on a real
         # public workspace shell rather than a 404.
         self._seed_directory([
@@ -124,6 +134,10 @@ class PublicDirectoryFixture(PublicWorkspaceFixture):
     def seed_visibility(self, mapping):
         """Pre-seed the shared visibility map so a scenario can start from a custom list."""
         self.preferences["publicDirectorySettings"] = copy.deepcopy(mapping)
+
+    def set_hints(self, *, can_create=None):
+        if can_create is not None:
+            self.can_create = can_create
 
     # --- response shaping -----------------------------------------------------------------------
 
@@ -166,7 +180,7 @@ class PublicDirectoryFixture(PublicWorkspaceFixture):
         }
 
     def _hints(self):
-        return {"schema_version": 1}
+        return {"schema_version": 1, "can_create": bool(self.can_create)}
 
     # --- strict parsing, ported from functions_public_directory ---------------------------------
 
@@ -190,6 +204,9 @@ class PublicDirectoryFixture(PublicWorkspaceFixture):
         path, method = entry.path, entry.method
         if path == "/api/public_workspaces/directory" and method == "GET":
             self._directory_list(route, entry)
+            return
+        if path == "/api/public_workspaces" and method == "POST":
+            self._directory_create(route, entry)
             return
         if path.startswith("/api/public_workspaces/") and path.endswith("/logo") and method == "GET":
             self._logo(route, entry)
@@ -262,6 +279,40 @@ class PublicDirectoryFixture(PublicWorkspaceFixture):
             or needle in row["description"].casefold()
             or needle == row["id"].casefold()
         )
+
+    def _directory_create(self, route, entry):
+        """Port of the classic ``POST /api/public_workspaces`` the directory reuses unchanged.
+
+        The classic route validates nothing: the two decorators (feature flag, then the
+        ``CreatePublicWorkspaces`` role) answer first, then it stores whatever name it is given,
+        defaulting only a missing ``name`` key. Its refusals carry no ``error_code``.
+        """
+        if self.create_refusal == "disabled":
+            self._json(route, {"error": "Enable Public Workspaces is disabled."}, 400)
+            return
+        if self.create_refusal == "role":
+            self._json(route, {
+                "error": "Forbidden",
+                "message": "Insufficient permissions (CreatePublicWorkspaces role required)",
+            }, 403)
+            return
+        if self.next_create_error is not None:
+            status, payload = self.next_create_error
+            self.next_create_error = None
+            self._json(route, payload, status)
+            return
+        body = entry.body if isinstance(entry.body, dict) else {}
+        name = body.get("name", "Untitled Workspace")
+        if not isinstance(name, str) or not name.strip():
+            name = "Untitled Workspace"
+        name = name.strip()
+        self.created_public_counter += 1
+        identifier = f"pub-created-{self.created_public_counter}"
+        record = directory_record(identifier, name, membership="member", user_role="Owner")
+        self.directory_workspaces[identifier] = record
+        # Register the created workspace so the 201's navigate-by-id lands on a real context load.
+        self.workspaces[identifier] = public_context(identifier, name, role="Owner")
+        self._json(route, {"id": identifier, "name": name}, 201)
 
     def _logo(self, route, entry):
         workspace_id = entry.path.split("/")[3]

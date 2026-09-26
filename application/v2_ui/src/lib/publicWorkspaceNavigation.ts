@@ -6,8 +6,8 @@
 // endpoints, so those ids are not valid public sections.
 
 import {
-    PUBLIC_WORKSPACE_SECTION_IDS, requireWorkspaceId, workspaceBasePath,
-    type GroupWorkspaceSectionId, type PublicWorkspaceContext, type PublicWorkspaceSectionId,
+    PUBLIC_MANAGE_SECTION_IDS, PUBLIC_WORKSPACE_SECTION_IDS, requireWorkspaceId, workspaceBasePath,
+    type GroupWorkspaceSectionId, type PublicManageSectionId, type PublicWorkspaceContext, type PublicWorkspaceSectionId,
 } from './workspaceContext';
 import { getPublicWorkspaceLabels } from './publicWorkspaceLabels';
 import { GROUP_ROLE_LABELS } from './groupWorkspaceNavigation';
@@ -34,9 +34,13 @@ export function isPublicWorkspaceSection(value: string | undefined): value is Pu
     return PUBLIC_WORKSPACE_SECTION_IDS.some((id) => id === value);
 }
 
+export function isPublicManageSection(value: string | undefined): value is PublicManageSectionId {
+    return PUBLIC_MANAGE_SECTION_IDS.some((id) => id === value);
+}
+
 export function publicWorkspacePath(workspaceId: string, section?: string): string {
     const base = workspaceBasePath({ kind: 'public', id: workspaceId });
-    return isPublicWorkspaceSection(section) ? `${base}/${section}` : base;
+    return isPublicWorkspaceSection(section) || isPublicManageSection(section) ? `${base}/${section}` : base;
 }
 
 export function publicWorkspaceDocumentPath(workspaceId: string, documentId: string): string {

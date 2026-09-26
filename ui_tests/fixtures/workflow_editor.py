@@ -1,11 +1,12 @@
 # workflow_editor.py
 """
 Closed API fixtures for the native V2 workflow editor.
-Version: 0.261.149
+Version: 0.261.178
 Implemented in: 0.261.108
 Group File Sync, alert handoff and personal-scope trap modelling added in: 0.261.141
 Real alert normalizer on both save routes added in: 0.261.144
 Reviewed settings errors, personal File Sync rules, deleted workflows and the run-as member trap added in: 0.261.149
+Group workflow list/save/run/cancel/delete responses held to the real route shapes in: 0.261.178
 
 Group File Sync requests are answered by the real server functions, compiled from source:
 `_serialize_workflow_file_sync_source` builds the source list, and `_normalize_file_sync_config`,
@@ -56,6 +57,8 @@ from ui_tests.fixtures.workspace_authoring import (
     connect_options,  # noqa: F401
     personal_scope_leak,
 )
+
+_CONNECT_OPTIONS_EXPORT = connect_options
 
 APP_ROOT = Path(__file__).resolve().parents[2] / "application" / "single_app"
 sys.path.insert(0, str(APP_ROOT))
@@ -461,7 +464,19 @@ class WorkflowEditorFixture(WorkspaceAuthoringFixture):
         self.file_sync_rules, self.personal_file_sync_rules = self._bind_file_sync_rules()
 
     def _group_role(self):
-        return "Admin" if getattr(self, "group_can_manage", True) else "User"
+        return getattr(self, "group_role", "Admin" if getattr(self, "group_can_manage", True) else "User")
+
+    def _group_workflow_member_allowed(self, group_id):
+        return (
+            group_id in getattr(self, "group_workflow_enabled", {group_id})
+            and self._group_role() in ("Owner", "Admin", "DocumentManager", "User")
+        )
+
+    def _group_workflow_manager_allowed(self, group_id):
+        return (
+            group_id in getattr(self, "group_workflow_enabled", {group_id})
+            and self._group_role() in ("Owner", "Admin")
+        )
 
     def _bind_file_sync_rules(self):
         """Run the compiled server functions against this fixture's source store and group role."""
@@ -785,6 +800,9 @@ class WorkflowEditorFixture(WorkspaceAuthoringFixture):
 
     def _workflow_collection(self, route, entry, workflows, scope_type, group_id=None):
         if entry.method == "GET":
+            if scope_type == "group" and group_id not in getattr(self, "group_workflow_enabled", {group_id}):
+                self._json(route, {"error": "This group is not assigned to use workflows."}, 403)
+                return
             self._json(route, {"workflows": list(workflows.values())})
             return
         assert isinstance(entry.body, dict), entry
@@ -801,7 +819,7 @@ class WorkflowEditorFixture(WorkspaceAuthoringFixture):
         if existing and entry.body.get("definition_revision") != existing.get("definition_revision"):
             self._json(route, {"error": "stale workflow definition", "code": "workflow_definition_conflict"}, 409)
             return
-        if scope_type == "group" and self._group_role() not in ("Owner", "Admin"):
+        if scope_type == "group" and not self._group_workflow_manager_allowed(group_id):
             self.unexpected_requests.append(f"POST {entry.path} (a group member cannot save workflows)")
             self._json(route, {"error": GROUP_SAVE_ERRORS[PermissionError][1]}, 403)
             return
@@ -856,20 +874,44 @@ class WorkflowEditorFixture(WorkspaceAuthoringFixture):
             saved["file_sync"] = file_sync
         saved["id"] = identifier
         saved["definition_revision"] = f"revision:{identifier}:{len(self.workflow_writes) + 2}"
+        if scope_type == "group":
+            saved.setdefault("user_id", OWNER_ID)
+            saved.setdefault("status", (existing or {}).get("status") or "idle")
+            saved.setdefault("active_run_id", (existing or {}).get("active_run_id", ""))
         workflows[identifier] = saved
         self.workflow_writes.append(entry)
-        self._json(route, {"success": True, "workflow": saved})
+        status = 201 if scope_type == "group" and not existing else 200
+        self._json(route, {"success": True, "workflow": saved}, status)
 
     def _workflow_resource(self, route, entry):
         path_parts = entry.path.split("/")
         scope_type = path_parts[2]
         workflow_id = path_parts[4]
         workflows = self.personal_workflows
+        group_id = None
         if scope_type == "group":
             group_id = entry.query.get("group_id", [""])[0]
             assert group_id == GROUP_ID, entry
             workflows = self.group_workflows[GROUP_ID]
-        assert workflow_id in workflows, entry
+            if group_id not in getattr(self, "group_workflow_enabled", {group_id}):
+                error = (
+                    "The selected group or workflow sources are not allowed."
+                    if entry.method == "POST" and not entry.path.endswith(("/run", "/cancel"))
+                    else "This group is not assigned to use workflows."
+                    if not entry.path.endswith("/cancel")
+                    else "Not authorized to access this group workspace."
+                )
+                self._json(route, {"error": error}, 403)
+                return
+        if scope_type == "group" and entry.method == "DELETE" and not self._group_workflow_manager_allowed(group_id):
+            self._json(route, {"error": "Insufficient permissions for this group"}, 403)
+            return
+        if scope_type == "group" and entry.path.endswith(("/run", "/cancel")) and not self._group_workflow_member_allowed(group_id):
+            self._json(route, {"error": "Not authorized to access this group workspace."}, 403)
+            return
+        if workflow_id not in workflows:
+            self._json(route, {"error": "Workflow not found."}, 404)
+            return
         if entry.method == "DELETE":
             del workflows[workflow_id]
             self._json(route, {"success": True})
@@ -880,8 +922,10 @@ class WorkflowEditorFixture(WorkspaceAuthoringFixture):
                     "id": run_id,
                     "workflow_id": workflow_id,
                     "status": "queued",
+                    "success": False,
                     "durable_execution": True,
                     "started_at": "2026-09-16T13:00:00Z",
+                    "completed_at": None,
                 }
                 runtime = self.runtime_projection(state="queued", version=1)
                 key = (scope_type, workflow_id, run_id)
@@ -906,10 +950,21 @@ class WorkflowEditorFixture(WorkspaceAuthoringFixture):
                 return
             workflows[workflow_id]["active_run_id"] = "run-1"
             workflows[workflow_id]["status"] = "running"
-            self._json(route, {"id": "run-1", "workflow_id": workflow_id, "status": "running"})
+            self._json(route, {
+                "success": True,
+                "workflow": workflows[workflow_id],
+                "run": {"id": "run-1", "workflow_id": workflow_id, "status": "running"},
+            }, 202)
         elif entry.path.endswith("/cancel") and entry.method == "POST":
-            workflows[workflow_id]["active_run_id"] = None
+            active_run_id = workflows[workflow_id].get("active_run_id")
+            if not active_run_id and scope_type != "group" and self.workflow_runs.get(workflow_id):
+                active_run_id = self.workflow_runs[workflow_id][0]["id"]
+            if not active_run_id:
+                self._json(route, {"error": "No active workflow run is available to cancel."}, 409)
+                return
+            workflows[workflow_id]["active_run_id"] = ""
             workflows[workflow_id]["status"] = "cancelled"
+            cancelled_runtime = None
             for key, runtime in list(self.workflow_runtimes.items()):
                 if key[1] == workflow_id and runtime["state"] not in {
                     "cancelled", "failed", "invalid", "incomplete", "completed", "completed_partial"
@@ -917,7 +972,18 @@ class WorkflowEditorFixture(WorkspaceAuthoringFixture):
                     runtime["state"] = "cancelled"
                     runtime["version"] += 1
                     runtime.pop("gate", None)
-            self._json(route, {"success": True})
+                    cancelled_runtime = runtime
+            run = {
+                "id": active_run_id,
+                "workflow_id": workflow_id,
+                "status": "cancelled",
+            }
+            if workflows[workflow_id].get("durable_execution") is True:
+                run.update({
+                    "durable_execution": True,
+                    "runtime": cancelled_runtime or self.runtime_projection(state="cancelled", version=2),
+                })
+            self._json(route, {"success": True, "workflow": workflows[workflow_id], "run": run}, 202)
         elif entry.path.endswith("/runs") and entry.method == "GET":
             if workflow_id in self.workflow_runs:
                 self._json(route, {"runs": self.workflow_runs[workflow_id]})

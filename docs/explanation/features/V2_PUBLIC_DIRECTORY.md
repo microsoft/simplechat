@@ -26,10 +26,10 @@ Dependencies:
 - **Visible for chat:** a per-workspace switch that decides whether its
   documents appear in public chat. This is the directory's only write.
 
-The directory is read-only otherwise. Unlike the group directory there's
-nothing to join or request here; public workspaces are readable by every
-signed-in user. Creating a public workspace, and document manager requests,
-come with the public membership release.
+Unlike the group directory there's nothing to join here; public workspaces are
+readable by every signed-in user. From version **0.261.179** the directory also
+offers **Create**, when the server's `public_directory` hint says the caller may
+create a public workspace; see [V2 Public Members](V2_PUBLIC_MEMBERS.md).
 
 ### Visible for chat
 
@@ -104,7 +104,6 @@ to a section public workspaces don't have opens "Section not found".
 
 - Saved visibility lists (`publicDirectorySavedLists`) have no V2 editor yet.
   V2 leaves them untouched, and classic still manages them.
-- Creating a public workspace from V2 arrives with public membership.
 
 ## Related
 

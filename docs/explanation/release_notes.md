@@ -2,6 +2,47 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.179)**
+
+#### New Features
+
+*   **Manage Public Workspace Members In V2**
+    *   A public workspace's Owner and Admins now manage its Admins and DocumentManagers in V2, in a **Members** section under **Manage**. They can add members, change roles, remove members, and decide DocumentManager requests, and the Owner can transfer ownership. It's the group Members section, with public rules.
+    *   New routes name the workspace in the path, `/api/public-workspaces/<id>/membership/...`, write conditionally, and record adds, role changes and removals in the activity log.
+    *   The V2 public directory offers **Create** to people allowed to create public workspaces.
+    *   (Ref: `route_backend_public_membership.py`, `functions_public_membership_policy.py`, `MembersSection.tsx`, `PublicMembersSection.tsx`, `functions_public_directory_policy.py`, [V2 Public Members](features/V2_PUBLIC_MEMBERS.md), [Public Membership APIs](features/PUBLIC_MEMBERSHIP_APIS.md))
+
+#### Breaking Changes
+
+*   **DocumentManagers No Longer See Members' Emails In V2**
+    *   Classic shows every member's email to every member. In V2's public Members section, the Owner and Admins see emails and a DocumentManager sees names and roles only. The server withholds the emails (decision 18). The classic page is unchanged.
+    *   **Migration**: none.
+
+### **(v0.261.178)**
+
+#### User Interface Enhancements
+
+*   **Group Members Can Run Group Workflows In V2**
+    *   Classic, and the server, let every group member run and cancel a group workflow, but V2 offered **Run** and **Cancel** only to workflow managers. Every member of an active group now gets them; creating, editing and deleting stay with the workflow manager roles.
+    *   The workspace context publishes each member's workflow operations from the same policy the routes use, so V2 never offers an action the server would refuse.
+    *   (Ref: `functions_group_workflow_policy.py`, `functions_workspace_context.py`, `WorkflowsSection.tsx`, [V2 Group Workflows](features/V2_GROUP_WORKFLOWS.md))
+
+### **(v0.261.177)**
+
+#### New Features
+
+*   **Public Workspace Prompts In V2**
+    *   A public workspace's prompts now open in the V2 prompt workbench. Every signed-in user can read and use them. Owners, Admins and DocumentManagers can create, edit and delete them in an active workspace, and a conflicting edit keeps your draft.
+    *   New routes name the workspace in the path, `/api/public-workspaces/<id>/prompts`, so a change can't land in a different workspace from the one on screen.
+    *   **Use in chat** works for a prompt in a public workspace you've hidden from chat. It fetches just that prompt and changes no setting.
+    *   (Ref: `route_backend_public_prompts_scoped.py`, `functions_public_prompt_policy.py`, `lib/promptWorkbench.ts`, `Composer.tsx`, [V2 Public Prompts](features/V2_PUBLIC_PROMPTS.md), [Public Prompt APIs](features/PUBLIC_PROMPT_APIS.md))
+
+#### Breaking Changes
+
+*   **Classic Public Prompt Changes Need An Active Workspace**
+    *   The classic `/api/public_prompts` create, update and delete routes wrote in any workspace status. They now answer 403 "This public workspace is not accepting prompt changes right now." unless the workspace is active, matching the new routes. Reading is unchanged.
+    *   **Migration**: none. Make the workspace active before changing its prompts.
+
 ### **(v0.261.176)**
 
 #### Bug Fixes

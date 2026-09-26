@@ -1,7 +1,7 @@
 # group_workspace.py
 """
 Closed HTTP fixtures for the real V2 group workspace shell.
-Version: 0.261.174
+Version: 0.261.178
 Implemented in: 0.261.127
 Members section in the group context (M7B): 0.261.155
 File source credential identifiers modelled as `_prepare_auth_payload` stores them: 0.261.156
@@ -15,6 +15,7 @@ resolved relative to the source root: 0.261.171
 Browsed files carry the engine's canonical remote path, and ignore items are keyed as the server
 keys them: 0.261.172
 The group screening hint, granted by the screening routes' own roles: 0.261.174
+The group workflow hint, and workflow routes answered by their own role rules: 0.261.178
 
 The shell fixture also serves the immutable native `/api/groups/<group_id>/actions[...]`,
 `/agents[...]`, `/identities[...]` and `/model-endpoints[...]` families -- plus the group
@@ -782,6 +783,16 @@ GROUP_CONTENT_MANAGER_ROLES = ("Owner", "Admin", "DocumentManager")
 # The roles every group-scoped content screening route accepts (`assert_scope_access`), read from the
 # server, so the `screening_management` hint grants exactly what those routes allow.
 SCREENING_REVIEW_ROLES = _app_constant("content_screening/permissions.py", "REVIEW_ROLES")
+# The group workflow hint's rule, compiled from the server's pure policy module with its own roles and
+# operation vocabularies, so `workflow_management` grants exactly what the builder does.
+_WORKFLOW_POLICY = {
+    name: _app_constant("functions_group_workflow_policy.py", name)
+    for name in (
+        "GROUP_WORKFLOW_MEMBER_ROLES", "GROUP_WORKFLOW_MEMBER_OPERATIONS", "GROUP_WORKFLOW_MANAGER_OPERATIONS",
+    )
+}
+_app_functions("functions_group_workflow_policy.py", {"group_workflow_management_operations"}, _WORKFLOW_POLICY)
+group_workflow_management_operations = _WORKFLOW_POLICY["group_workflow_management_operations"]
 
 # The server's reasons, verbatim: a status that bars viewing (check_group_status_allows_operation, and
 # the builder's own text for a status it does not recognize), a role that may not manage the group's
@@ -1169,6 +1180,14 @@ def group_context(identifier, name, *, role="Owner", status="active", viewer=OWN
         "identity_management": identity_management(role, status),
         "endpoint_management": endpoint_management(role, status),
         "file_source_management": file_source_management(role, status),
+        # The workflows section is on in the modelled deployment, so its operations open wherever the
+        # group is viewable, by the builder's own rule (active only).
+        "workflow_management": {
+            "schema_version": 1,
+            "operations": group_workflow_management_operations(
+                role, {"status": status}, available=viewable, manager=automation,
+            ),
+        },
         "settings_management": settings_management(role, status, **settings_flags),
     }
 
@@ -1322,7 +1341,11 @@ class GroupWorkspaceFixture(WorkspaceAuthoringFixture):
             self.workflows[group_id] = [{
                 "id": "workflow-1", "name": "Review group files",
                 "definition_version": 2, "description": "Review approved sources.", "status": "idle",
-                "prompt": "Summarize the selected files.", "group_id": group_id,
+                "task_prompt": "Summarize the selected files.", "group_id": group_id,
+                # The real non-durable route runs synchronously and may return a finished run. The
+                # shell exercises Run followed by Cancel, so the seeded workflow is durable: that is
+                # the route shape that leaves an active run available to cancel.
+                "durable_execution": True,
                 "runner_type": "model", "trigger_type": "manual",
             }]
             # One native action per group so the production Actions page renders a real collection
@@ -1627,7 +1650,46 @@ class GroupWorkspaceFixture(WorkspaceAuthoringFixture):
                 self.group_agents[group_id][0]["actions_to_load"] = ["legacy-name", *entry.body["action_ids"]]
                 self._json(route, {"success": True})
             elif path == "/api/group/workflows" and method == "GET":
-                self._json(route, {"workflows": self.workflows[group_id]})
+                if not self._group_workflow_feature_enabled(group_id):
+                    self._json(route, {"error": "This group is not assigned to use workflows."}, 403)
+                elif not self._group_workflow_member_allowed(group_id):
+                    self._json(route, {"error": "Forbidden."}, 403)
+                else:
+                    self._json(route, {"workflows": copy.deepcopy(self.workflows[group_id])})
+            elif path == "/api/group/workflows" and method == "POST":
+                if not self._group_workflow_feature_enabled(group_id):
+                    self._json(route, {"error": "The selected group or workflow sources are not allowed."}, 403)
+                elif not self._group_workflow_manager_allowed(group_id):
+                    self._json(route, {"error": "The selected group or workflow sources are not allowed."}, 403)
+                else:
+                    workflow = copy.deepcopy(entry.body if isinstance(entry.body, dict) else {})
+                    workflow_id = str(workflow.get("id") or f"workflow-{len(self.workflows[group_id]) + 1}").strip()
+                    is_create = not str(workflow.get("id") or "").strip()
+                    existing = self._group_workflow(group_id, workflow_id)
+                    if not is_create and existing is None:
+                        self._json(route, {"error": "The workflow or one of its sources is not available."}, 404)
+                        return
+                    saved = {**(existing or {}), **workflow, "id": workflow_id, "group_id": group_id}
+                    saved.setdefault("user_id", self.viewer_id)
+                    saved.setdefault("status", (existing or {}).get("status") or "idle")
+                    saved.setdefault("active_run_id", (existing or {}).get("active_run_id", ""))
+                    saved.setdefault("reference_inputs", [])
+                    saved.setdefault("durable_execution", (existing or {}).get("durable_execution", False))
+                    saved.setdefault("alert_mode", "off")
+                    saved.setdefault("alert_priority", "none")
+                    saved.setdefault("alert_rules", [])
+                    saved.setdefault("alert_evaluation", {"on_error": "skip"})
+                    saved.setdefault("file_sync", {
+                        "enabled": False,
+                        "wait_mode": "complete",
+                        "continue_mode": "always",
+                        "use_changed_documents": True,
+                        "sources": [],
+                    })
+                    rows = [row for row in self.workflows[group_id] if row["id"] != workflow_id]
+                    rows.append(saved)
+                    self.workflows[group_id] = rows
+                    self._json(route, {"success": True, "workflow": copy.deepcopy(saved)}, 201 if is_create else 200)
             elif path == "/api/group/workflows/editor-options":
                 self._json(route, {
                     "definition_version": 2, "scope": {"type": "group", "id": group_id},
@@ -1639,19 +1701,113 @@ class GroupWorkspaceFixture(WorkspaceAuthoringFixture):
                 self._workflow_file_sync_sources(route, entry, group_id)
             elif path.endswith("/runs"):
                 self._json(route, {"runs": []})
-            elif path.endswith("/run") or path.endswith("/cancel"):
-                workflow = self.workflows[group_id][0]
-                workflow["status"] = "running" if path.endswith("/run") else "cancelled"
-                if path.endswith("/run"):
-                    workflow["active_run_id"] = "run-1"
-                else:
-                    workflow.pop("active_run_id", None)
-                self._json(route, {"workflow": workflow, "run": {"id": "run-1", "durable_execution": True, "status": workflow["status"]}})
+            elif path.startswith("/api/group/workflows/"):
+                self._group_workflow_resource(route, entry, group_id)
             else:
                 self.unexpected_requests.append(f"{method} {path}")
                 self._json(route, {"error": "Unexpected group fixture request."}, 500)
         else:
             super()._dispatch(route, entry)
+
+    def _group_workflow_feature_enabled(self, group_id):
+        return group_id in getattr(self, "workflow_groups_enabled", {group_id})
+
+    def _group_workflow_member_allowed(self, group_id):
+        return self.groups[group_id]["role"] in _WORKFLOW_POLICY["GROUP_WORKFLOW_MEMBER_ROLES"]
+
+    def _group_workflow_manager_allowed(self, group_id):
+        return self.groups[group_id]["role"] in WRITER_ROLES
+
+    def _group_workflow(self, group_id, workflow_id):
+        return next((workflow for workflow in self.workflows[group_id] if workflow["id"] == workflow_id), None)
+
+    def _workflow_runtime_projection(self, state="queued", version=1):
+        return {
+            "version": version,
+            "state": state,
+            "phase": "Task checkpoint",
+            "progress": {"completed": 0, "total": 1},
+            "memory": {"decisions": [], "units": []},
+            "can_resume": False,
+        }
+
+    def _group_workflow_queue_response(self, group_id, workflow):
+        run_id = f"{workflow['id']}-run-1"
+        runtime = self._workflow_runtime_projection("queued")
+        workflow.update({"active_run_id": run_id, "status": "queued"})
+        # Matches route_backend_workflows._queue_workflow_response's projection of
+        # functions_workflow_runtime.queue_durable_workflow_run: only these run fields survive.
+        return {
+            "success": True,
+            "run": {
+                "id": run_id,
+                "workflow_id": workflow["id"],
+                "status": "queued",
+                "success": False,
+                "durable_execution": True,
+                "started_at": "2026-09-25T19:00:00+00:00",
+                "completed_at": None,
+            },
+            "workflow": copy.deepcopy(workflow),
+            "runtime": runtime,
+        }
+
+    def _group_workflow_cancel_response(self, workflow):
+        run_id = workflow.get("active_run_id") or f"{workflow['id']}-run-1"
+        runtime = self._workflow_runtime_projection("cancelled", version=2)
+        workflow.update({"active_run_id": "", "status": "cancelled"})
+        # Matches _request_workflow_run_cancellation's durable branch: id, workflow_id,
+        # status, durable_execution and runtime are the only safe run fields returned.
+        return {
+            "success": True,
+            "workflow": copy.deepcopy(workflow),
+            "run": {
+                "id": run_id,
+                "workflow_id": workflow["id"],
+                "status": "cancelled",
+                "durable_execution": True,
+                "runtime": runtime,
+            },
+        }
+
+    def _group_workflow_resource(self, route, entry, group_id):
+        method = entry.method
+        parts = entry.path.split("/")
+        workflow_id = parts[4] if len(parts) > 4 else ""
+        workflow = self._group_workflow(group_id, workflow_id)
+        if entry.path.endswith("/run") and method == "POST":
+            if not self._group_workflow_feature_enabled(group_id):
+                self._json(route, {"error": "This group is not assigned to use workflows."}, 403)
+            elif not self._group_workflow_member_allowed(group_id):
+                self._json(route, {"error": "Forbidden."}, 403)
+            elif workflow is None:
+                self._json(route, {"error": "Workflow not found."}, 404)
+            else:
+                self._json(route, self._group_workflow_queue_response(group_id, workflow), 202)
+        elif entry.path.endswith("/cancel") and method == "POST":
+            if not self._group_workflow_feature_enabled(group_id):
+                self._json(route, {"error": "Not authorized to access this group workspace."}, 403)
+            elif not self._group_workflow_member_allowed(group_id):
+                self._json(route, {"error": "Not authorized to access this group workspace."}, 403)
+            elif workflow is None:
+                self._json(route, {"error": "Workflow not found."}, 404)
+            elif not workflow.get("active_run_id"):
+                self._json(route, {"error": "No active workflow run is available to cancel."}, 409)
+            else:
+                self._json(route, self._group_workflow_cancel_response(workflow), 202)
+        elif method == "DELETE":
+            if not self._group_workflow_feature_enabled(group_id):
+                self._json(route, {"error": "This group is not assigned to use workflows."}, 403)
+            elif not self._group_workflow_manager_allowed(group_id):
+                self._json(route, {"error": "Insufficient permissions for this group"}, 403)
+            elif workflow is None:
+                self._json(route, {"error": "Workflow not found."}, 404)
+            else:
+                self.workflows[group_id] = [row for row in self.workflows[group_id] if row["id"] != workflow_id]
+                self._json(route, {"success": True})
+        else:
+            self.unexpected_requests.append(f"{method} {entry.path}")
+            self._json(route, {"error": "Unexpected group fixture request."}, 500)
 
     # --- M7C native group settings and insights serving ------------------------------------------
 

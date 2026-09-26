@@ -374,7 +374,14 @@ export interface WorkspacePrompt {
      */
     group_id?: string;
     /**
-     * Group scope only. The concurrency marker a conditional write sends back as
+     * Public scope only. The owning public workspace's id, echoed on every public prompt response
+     * so the client can prove a returned prompt belongs to the workspace it asked for -- the
+     * public-scope analogue of `group_id`, the same identity check the public document reader makes.
+     * Absent on personal and group prompts.
+     */
+    public_id?: string;
+    /**
+     * Group and public scope. The concurrency marker a conditional write sends back as
      * `expected_etag`; a mismatch is the 409 that keeps a failed-save draft open.
      */
     etag?: string;

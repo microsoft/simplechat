@@ -1,7 +1,7 @@
 # public_directory_harness.py
 """Shared, isolated harness for the native public workspace directory tests (M9A).
 
-Version: 0.261.175
+Version: 0.261.179
 Implemented in: 0.261.175
 
 Loaded unchanged from their files:
@@ -11,10 +11,14 @@ Loaded unchanged from their files:
 - ``functions_workspace_branding``: hero colour and logo metadata;
 - ``functions_public_workspaces``: the role predicate the directory resolves each
   row through (``get_user_role_in_public_workspace``);
+- ``functions_public_directory_policy``: the creation decision behind the
+  ``can_create`` hint (M10A), exposed as ``env.modules.policy``;
 - ``functions_public_directory`` and ``route_backend_public_directory``.
 
-The session decorators and ``enabled_required`` are the real definitions. Only
-services outside the application are replaced:
+The session decorators, ``enabled_required`` and
+``create_public_workspace_role_required`` (the classic create gate, exposed for the
+policy seam test) are the real definitions. Only services outside the application
+are replaced:
 
 - Cosmos is ``DirectoryPublicContainer``: the etag-enforcing ``FakeContainer`` from
   ``test_file_sync_concurrent_write_safety.py`` plus a model of the directory query.
@@ -354,7 +358,7 @@ def public_directory_environment():
         }
         execute_functions("functions_authentication.py", {
             "login_required", "user_required", "get_current_user_id", "get_current_user_info",
-            "apply_blueprint_auth", "user_required_blueprint",
+            "apply_blueprint_auth", "user_required_blueprint", "create_public_workspace_role_required",
         }, auth_namespace)
         authentication = module_stub("functions_authentication", **{
             name: value for name, value in auth_namespace.items() if not name.startswith("__")
@@ -382,12 +386,13 @@ def public_directory_environment():
         branding = _load(stack, "functions_workspace_branding")
         group = _load(stack, "functions_group")
         public_workspaces = _load(stack, "functions_public_workspaces")
+        policy = _load(stack, "functions_public_directory_policy")
         directory = _load(stack, "functions_public_directory")
         routes = _load(stack, "route_backend_public_directory")
 
         env.modules = SimpleNamespace(
             branding=branding, group=group, public_workspaces=public_workspaces,
-            directory=directory, routes=routes, authentication=authentication,
+            policy=policy, directory=directory, routes=routes, authentication=authentication,
             settings=settings_module,
         )
 

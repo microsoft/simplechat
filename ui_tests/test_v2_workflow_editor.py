@@ -1,8 +1,9 @@
 # test_v2_workflow_editor.py
 """
 UI tests for the native V2 LIST workflow editor.
-Version: 0.261.127
+Version: 0.261.178
 Implemented in: 0.261.108
+Personal workflow row delete coverage: 0.261.178
 
 These tests use the real V2 SPA bundle with a closed API fixture. They cover
 create/edit, stable task input bindings, shared references, schema validation,
@@ -266,6 +267,22 @@ def test_existing_agent_and_legacy_prompt_workflows_preserve_backend_shapes(work
     assert disabled_body["tasks"][0]["document_action"] == {"type": "none"}
 
 
+def test_delete_personal_workflow_from_row_confirm(workflow_ui):
+    ui, page = workflow_ui, workflow_ui.page
+    ui.open("/workspace/workflows")
+    expect(page.get_by_text("Quarterly review workflow", exact=True)).to_be_visible()
+    page.get_by_role("button", name="Delete Quarterly review workflow", exact=True).click()
+    page.get_by_role("button", name="Delete", exact=True).click()
+    delete_requests = [
+        entry for entry in ui.writes
+        if entry.method == "DELETE" and entry.path == f"/api/user/workflows/{WORKFLOW_ID}"
+    ]
+    assert len(delete_requests) == 1
+    assert delete_requests[0].query == {}
+    expect(page.get_by_text("Quarterly review workflow", exact=True)).to_have_count(0)
+    assert WORKFLOW_ID not in ui.personal_workflows
+
+
 def test_document_action_comparison_posts_real_payload(workflow_ui):
     ui, page = workflow_ui, workflow_ui.page
     ui.open("/workspace/workflows")
@@ -293,7 +310,7 @@ def test_document_action_comparison_posts_real_payload(workflow_ui):
 
 
 def test_initial_workflow_id_opens_once_and_close_stays_closed(workflow_ui):
-    _ui, page = workflow_ui, workflow_ui.page
+    page = workflow_ui.page
     workflow_ui.open(f"/workspace/workflows?workflow_id={WORKFLOW_ID}")
     expect(page.get_by_role("dialog", name="Edit workflow", exact=True)).to_be_visible()
     page.get_by_role("dialog", name="Edit workflow", exact=True).get_by_role(
