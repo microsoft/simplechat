@@ -102,6 +102,7 @@ from route_backend_agents import bpa as admin_agents_bp
 from route_backend_agent_templates import bp_agent_templates
 from route_backend_public_workspaces import *
 from route_backend_public_directory import register_route_backend_public_directory
+from route_backend_public_settings import register_route_backend_public_settings
 from route_backend_public_documents import *
 from route_backend_public_document_reads import register_route_backend_public_document_reads
 from route_backend_public_document_management import register_route_backend_public_document_management
@@ -1533,6 +1534,9 @@ register_route_blueprint('backend_public_workspaces', register_route_backend_pub
 
 # ------------------- API Public Directory Routes -------
 register_route_blueprint('backend_public_directory', register_route_backend_public_directory, user_required_blueprint)
+
+# ------------------- API Public Settings Routes --------
+register_route_blueprint('backend_public_settings', register_route_backend_public_settings, user_required_blueprint)
 
 # ------------------- API Conversation Export Routes -----
 register_route_blueprint('backend_conversation_export', register_route_backend_conversation_export, user_required_blueprint)

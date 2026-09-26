@@ -1,8 +1,10 @@
 # test_public_context_fixture_parity.py
 """
 Parity between the public workspace context the V2 browser fixtures serve and the real builder.
-Version: 0.261.182
+Version: 0.261.185
 Implemented in: 0.261.168
+settings_management, the public settings decision (M10C): 0.261.185
+the Settings, Activity and Statistics manage sections and the settings switches (M10C R5): 0.261.185
 
 Every public browser suite builds its selected-workspace context from
 `ui_tests/fixtures/public_workspace.py::public_context`, directly or through the per-suite fixtures
@@ -15,16 +17,21 @@ field and every section the real context reports, walking the union of both side
 section or hint only one side has fails. That covers every field the V2 client reads:
 
 - `role`, `status`, `can_manage_workspace` and the envelope (`schema_version`, `enabled`);
-- every section: `enabled`, `can_manage`, `reason` and `group`;
+- every section: `enabled`, `can_manage`, `reason` and `group`, including the Settings, Activity and
+  Statistics sections M10C adds to the "manage" group beside Members;
 - `document_permissions` and `document_queries`;
-- six hints: `document_management`, `document_collaboration`, `prompt_management`,
-  `identity_management`, `file_source_management` and `membership_management`.
+- the hints: `document_management`, `document_collaboration`, `prompt_management`,
+  `identity_management`, `file_source_management`, `membership_management` and, since M10C,
+  `settings_management`, the public settings decision the native settings and insights routes
+  enforce.
 
 The workspace metadata (`workspace`, `scope` and `viewer_id`) may differ in value but not in keys.
 
 It covers every role, every status and one the server does not recognize, for the deployment the
 fixture models (`MODELLED_SETTINGS`): public workspaces on, metadata extraction on, and the
-administrator's public downloads allowed. It runs in the harness `test_v2_group_workspace_context.py`
+administrator's public downloads allowed. The settings switches the M10C settings suite passes
+(the administrator's downloads, public retention and the workspace's own downloads) are walked the
+same way. It runs in the harness `test_v2_group_workspace_context.py`
 uses for the group builder (the real context module with its service seams stubbed and no network),
 with the real public role, status and download functions in place of that harness's public stubs.
 A missing workspace is refused with the server's own status and text. The fixture's denied
@@ -49,6 +56,7 @@ manager-only texts the sections send.
 """
 
 import ast
+import json
 import sys
 from copy import deepcopy
 from pathlib import Path
@@ -86,12 +94,14 @@ MODELLED_SETTINGS = {
 
 METADATA_FIELDS = frozenset({"viewer_id", "scope", "workspace"})
 # The fields the V2 client reads. The comparison is not limited to them; the envelope test only checks
-# the server still sends each one, so none can drop out of the comparison unnoticed.
+# the server still sends each one, so none can drop out of the comparison unnoticed. The public
+# Settings, Activity and Statistics sections (M10C) take their controls from settings_management.
 CLIENT_READ_FIELDS = (
     "schema_version", "enabled", "role", "status", "can_manage_workspace", "sections",
     "document_permissions", "document_queries", "document_management", "document_collaboration",
     "prompt_management", "identity_management", "file_source_management",
     "membership_management",
+    "settings_management",
 )
 WORKSPACE_ID = "pub-a"
 WORKSPACE_NAME = "Research library"
@@ -110,14 +120,16 @@ def public(environment, monkeypatch):  # noqa: F811 - the imported harness fixtu
         },
     }
     # The group harness stubs the public lookups the context module imports. Put the real role,
-    # status and download functions in their place, reading these records.
-    namespace = {}
+    # status and download functions in their place, reading these records. The download assignment
+    # list is parsed by the real File Sync normalizer, as in the application.
+    namespace = {"json": json}
     execute_functions("functions_public_workspaces.py", {
         "get_user_role_in_public_workspace", "check_public_workspace_status_allows_operation",
     }, namespace)
     execute_functions("functions_settings.py", {
         "is_public_workspace_file_download_enabled", "is_public_workspace_file_download_admin_enabled",
         "_get_workspace_policy_target_id", "normalize_file_download_allowed_public_workspace_ids",
+        "normalize_file_sync_allowed_public_workspace_ids",
     }, namespace)
     for name in (
         "get_user_role_in_public_workspace", "check_public_workspace_status_allows_operation",
@@ -293,8 +305,116 @@ def test_the_fixture_context_is_a_fresh_copy_each_time():
     first["sections"]["documents"]["enabled"] = False
     first["document_management"]["operations"].clear()
     first["document_collaboration"]["operations"].clear()
+    first["settings_management"]["operations"].clear()
+    first["settings_management"]["reasons"]["edit_name"] = "changed"
     first["document_permissions"]["can_view"] = False
     assert second == fixture_context("Owner", "active")
+
+
+@pytest.mark.parametrize("status", STATUSES)
+@pytest.mark.parametrize("role", list(ROLE_USERS))
+def test_the_settings_hint_is_the_public_settings_decision(public, role, status):
+    """settings_management is build_public_settings_management for the caller's role, the stored
+    workspace and the current settings, and the fixture serves the same hint."""
+    real = real_context(public, role, status)
+    expected = public.helper.build_public_settings_management(
+        role, deepcopy(public.public_records[WORKSPACE_ID]), deepcopy(public.settings),
+    )
+    assert real["settings_management"] == expected
+    assert fixture_context(role, status)["settings_management"] == expected
+
+
+@pytest.mark.parametrize("changes,operation,reason", [
+    ({"enable_retention_policy_public": True}, "edit_retention", None),
+    ({"allow_public_workspace_file_downloads": False}, "edit_downloads", "public_workspace_downloads_not_enabled"),
+    ({"require_public_workspace_assignment_for_file_downloads": True,
+      "file_download_allowed_public_workspace_ids": ["pub-other"]}, "edit_downloads",
+     "public_workspace_downloads_not_enabled"),
+    ({"require_public_workspace_assignment_for_file_downloads": True,
+      "file_download_allowed_public_workspace_ids": [WORKSPACE_ID]}, "edit_downloads", None),
+])
+def test_the_settings_hint_follows_the_deployment_switches(public, changes, operation, reason):
+    """Outside the modelled deployment the hint still is the decision: retention opens with the public
+    retention switch, and downloads follow the administrator's capability for this workspace."""
+    public.settings.update(changes)
+    management = real_context(public, "Owner", "active")["settings_management"]
+    assert (operation in management["operations"]) is (reason is None)
+    assert management["reasons"].get(operation) == reason
+
+
+# The Settings, Activity and Statistics sections the native context adds beside Members (M10C R5).
+# Each opens by the public settings decision -- Settings and Activity to the owner or an admin,
+# Statistics to any stored role -- in every status that lets the caller view the workspace. Only
+# Settings carries can_manage, for a manager of an active workspace; it is navigation only.
+MANAGE_SECTION_RULES = {
+    # section: (roles it opens to, whether a manager of an active workspace manages it, closed reason)
+    "settings": (("Owner", "Admin"), True, "public_workspace_manager_required"),
+    "activity": (("Owner", "Admin"), False, "public_workspace_manager_required"),
+    "statistics": (("Owner", "Admin", "DocumentManager"), False, "public_workspace_member_required"),
+}
+
+
+@pytest.mark.parametrize("status", STATUSES)
+@pytest.mark.parametrize("role", list(ROLE_USERS))
+def test_the_settings_activity_and_statistics_sections_follow_the_decision(public, role, status):
+    real = real_context(public, role, status)
+    served = fixture_context(role, status)
+    messages = public.helper.PUBLIC_SETTINGS_REFUSAL_MESSAGES
+    viewable = status in ("active", "locked", "upload_disabled")
+    status_reason = (
+        None if viewable
+        else fixture_module.PUBLIC_INACTIVE_REASON if status == "inactive"
+        else fixture_module.PUBLIC_STATUS_UNKNOWN_REASON
+    )
+    for section_id, (roles, manages, reason) in MANAGE_SECTION_RULES.items():
+        enabled = viewable and role in roles
+        expected = {
+            "group": "manage", "enabled": enabled,
+            "can_manage": bool(enabled and status == "active" and manages),
+            "reason": None if enabled else status_reason or messages[reason],
+        }
+        assert real["sections"][section_id] == expected, section_id
+        assert served["sections"][section_id] == expected, section_id
+
+
+def test_the_manage_section_reasons_are_the_policys_texts(public):
+    """A closed Settings, Activity or Statistics section shows the text its route refuses with."""
+    messages = public.helper.PUBLIC_SETTINGS_REFUSAL_MESSAGES
+    assert fixture_module.PUBLIC_SETTINGS_MANAGER_REASON == messages["public_workspace_manager_required"]
+    assert fixture_module.PUBLIC_SETTINGS_MEMBER_REASON == messages["public_workspace_member_required"]
+    sections = real_context(public, "User", "active")["sections"]
+    assert sections["settings"]["reason"] == fixture_module.PUBLIC_SETTINGS_MANAGER_REASON
+    assert sections["activity"]["reason"] == fixture_module.PUBLIC_SETTINGS_MANAGER_REASON
+    assert sections["statistics"]["reason"] == fixture_module.PUBLIC_SETTINGS_MEMBER_REASON
+
+
+# The deployments the settings suite serves besides the modelled one: the administrator's downloads
+# off, public retention on, and the workspace's own downloads off, alone and together.
+SWITCH_VARIANTS = [
+    pytest.param({"allow_public_workspace_file_downloads": False}, {}, id="downloads-admin-off"),
+    pytest.param({"enable_retention_policy_public": True}, {}, id="retention-on"),
+    pytest.param({}, {"disable_file_downloads": True}, id="workspace-downloads-off"),
+    pytest.param(
+        {"allow_public_workspace_file_downloads": False, "enable_retention_policy_public": True},
+        {"disable_file_downloads": True}, id="all-switched",
+    ),
+]
+
+
+@pytest.mark.parametrize("settings_changes,workspace_changes", SWITCH_VARIANTS)
+@pytest.mark.parametrize("status", KNOWN_STATUSES)
+@pytest.mark.parametrize("role", list(ROLE_USERS))
+def test_every_settings_switch_variant_is_the_servers(public, role, status, settings_changes, workspace_changes):
+    """The switches the settings fixture passes to public_context change every field they change on the
+    server -- the settings hint, the download permission and the download operation -- and nothing else."""
+    public.settings.update(settings_changes)
+    public.public_records[WORKSPACE_ID].update(workspace_changes)
+    served = fixture_module.public_context(
+        WORKSPACE_ID, WORKSPACE_NAME, role=role, status=status, viewer=ROLE_USERS[role],
+        **settings_changes, **workspace_changes,
+    )
+    found = differences(real_context(public, role, status), served)
+    assert not found, describe(found)
 
 
 # --------------------------------------------------------------------------
