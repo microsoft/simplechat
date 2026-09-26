@@ -530,7 +530,7 @@ def test_a_member_row_offers_no_request_control(public_directory_ui):
     (REQUESTABLE_WORKSPACE, REQUESTABLE_WORKSPACE_NAME, "request_pending",
      "Ask to manage documents in", "You've already asked to manage this public workspace's documents.", "Cancel request for"),
     (PENDING_WORKSPACE, PENDING_WORKSPACE_NAME, "no_pending_request",
-     "Cancel request for", "You don't have a pending request for this public workspace.", "Ask to manage documents in"),
+     "Cancel request for", "You don't have a pending request to manage this public workspace's documents.", "Ask to manage documents in"),
 ])
 def test_request_conflict_codes_reload_the_row(public_directory_ui, workspace_id, workspace_name, code, action, message, expected):
     """A stale-state 409 shows the server message and reloads, so the row settles on the truth."""
@@ -562,7 +562,7 @@ def test_a_workspace_not_found_reports_and_drops_the_row(public_directory_ui):
     open_directory(ui)
     search_for(ui, REQUESTABLE_WORKSPACE_NAME)
     request_button(ui, REQUESTABLE_WORKSPACE_NAME).click()
-    expect(page.get_by_role("status").filter(has_text="The public workspace was not found.")).to_be_visible()
+    expect(page.get_by_role("status").filter(has_text="Public workspace not found.")).to_be_visible()
     expect(row(ui, REQUESTABLE_WORKSPACE_NAME)).to_have_count(0)
 
 
