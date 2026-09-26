@@ -12,8 +12,8 @@
 
 import { useMemo } from 'react';
 import { PromptWorkbench } from '../../components/prompts/PromptWorkbench';
-import { createGroupPromptWorkbench } from '../../lib/promptWorkbench';
-import type { GroupWorkspaceContext } from '../../lib/workspaceContext';
+import { createGroupPromptWorkbench, createPublicPromptWorkbench } from '../../lib/promptWorkbench';
+import type { GroupWorkspaceContext, PublicWorkspaceContext } from '../../lib/workspaceContext';
 
 export function PromptsSection() {
     return <PromptWorkbench />;
@@ -31,6 +31,26 @@ export function GroupPromptsSection({ context }: { context: GroupWorkspaceContex
         () =>
             createGroupPromptWorkbench(
                 { kind: 'group', id: context.scope.id, name: context.workspace.name },
+                context.prompt_management,
+            ),
+        [context.scope.id, context.workspace.name, context.prompt_management],
+    );
+    return <PromptWorkbench adapter={adapter} />;
+}
+
+/**
+ * The prompts workbench bound to a public workspace.
+ *
+ * Mirrors GroupPromptsSection: the adapter is memoised on the workspace identity and its
+ * management hint so switching workspaces or receiving a fresh hint re-gates the write
+ * affordances. The public adapter reads and writes the immutable-target
+ * `/api/public-workspaces/<id>/prompts` family and never falls back to personal or group behaviour.
+ */
+export function PublicPromptsSection({ context }: { context: PublicWorkspaceContext }) {
+    const adapter = useMemo(
+        () =>
+            createPublicPromptWorkbench(
+                { kind: 'public', id: context.scope.id, name: context.workspace.name },
                 context.prompt_management,
             ),
         [context.scope.id, context.workspace.name, context.prompt_management],

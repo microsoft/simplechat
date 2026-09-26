@@ -1,8 +1,9 @@
 # test_orchestration_model_selection.py
 """
 Functional regressions for authorized orchestration model selection and SDK parameters.
-Version: 0.261.104
+Version: 0.261.139
 Implemented in: 0.261.103
+Single orchestration contract updated in: 0.261.139
 Canonical reasoning resolution and recovery: 0.261.104
 
 Exercises the real selection/binding code with endpoint authorization and client creation
@@ -732,9 +733,11 @@ class ModelSelectionTests(unittest.TestCase):
         context = SimpleNamespace(
             planner_client=binding.as_planner_client(), planner_deployment=binding.deployment,
         )
-        client, deployment = self.modules.adapters._resolve_source_review_planner(self.settings, context)
-        self.assertIs(client, context.planner_client)
-        self.assertEqual(deployment, 'gpt-5.6-terra')
+        # Research reads only this captured binding; no fallback planner resolver remains.
+        # test_orchestration_external_configuration_capture.py refuses a replaced binding.
+        self.assertFalse(hasattr(self.modules.adapters, '_resolve_source_review_planner'))
+        self.assertIsNotNone(context.planner_client)
+        self.assertEqual(context.planner_deployment, 'gpt-5.6-terra')
         self.legacy_resolver.assert_not_called()
 
 

@@ -77,6 +77,8 @@ def settings_api():
         "LATEST_FEATURES_HIDDEN_VERSION_SETTING": "latestFeaturesHiddenVersion",
         "get_current_user_id": lambda: state["actor"],
         "get_user_settings": lambda user_id: copy.deepcopy(state["documents"][user_id]),
+        # The GET path sanitizes before returning; these documents hold no secrets.
+        "sanitize_settings_for_user": copy.deepcopy,
         "update_user_settings": update_settings,
         "jsonify": jsonify,
         "request": request,

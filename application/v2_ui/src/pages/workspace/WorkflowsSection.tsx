@@ -1,5 +1,7 @@
 // WorkflowsSection.tsx
 // Personal and group workflows: list, author, run, cancel, inspect history and delete.
+// A group section offers each control from the context's workflow hint, the routes' own rule: every
+// member may run and cancel, and only the management roles create, edit and delete.
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Ban, ChevronDown, ChevronRight, Edit3, GitBranch, Play, Plus, Trash2, Workflow } from 'lucide-react';
@@ -55,13 +57,22 @@ export function WorkflowsSection({
     onBusyChange,
     allowManage = true,
     interactionDisabled = false,
+    operations,
 }: {
     scope?: WorkflowScope;
     onDirtyChange?: (dirty: boolean) => void;
     onBusyChange?: (busy: boolean) => void;
     allowManage?: boolean;
     interactionDisabled?: boolean;
+    /** The group workflow hint's operations; without one, `allowManage` gates every control. */
+    operations?: readonly string[];
 }) {
+    const offered = Array.isArray(operations) ? new Set(operations) : null;
+    const canCreate = offered ? offered.has('create') : allowManage;
+    const canEdit = offered ? offered.has('edit') : allowManage;
+    const canDelete = offered ? offered.has('delete') : allowManage;
+    const canRun = offered ? offered.has('run') : allowManage;
+    const canCancel = offered ? offered.has('cancel') : allowManage;
     const scopeKey = workflowScopeKey(scope);
     const loadWorkflows = useCallback((signal?: AbortSignal) => fetchScopedWorkflows(scope, signal), [scopeKey]);
     const { items, loading, error, refresh, setItems, setError } =
@@ -103,7 +114,7 @@ export function WorkflowsSection({
     }, [items, query]);
 
     const openEditor = useCallback(async (workflow: WorkflowDefinition | 'new') => {
-        if (interactionDisabled || (workflow === 'new' && !allowManage)) {
+        if (interactionDisabled || (workflow === 'new' && !canCreate)) {
             setOptionsError('You cannot create workflows with the current workspace access.');
             return;
         }
@@ -121,7 +132,7 @@ export function WorkflowsSection({
         } finally {
             setOptionsLoading(false);
         }
-    }, [scopeKey, interactionDisabled, allowManage]);
+    }, [scopeKey, interactionDisabled, canCreate]);
 
     useEffect(() => {
         const target = new URLSearchParams(window.location.search).get('workflow_id');
@@ -140,7 +151,7 @@ export function WorkflowsSection({
         action: (id: string) => Promise<unknown>,
         failure: string,
     ) => {
-        if (interactionDisabled || !allowManage) {
+        if (interactionDisabled || !canCancel) {
             setError('You cannot change workflows with the current workspace access.');
             return;
         }
@@ -164,7 +175,7 @@ export function WorkflowsSection({
     };
 
     const onRun = async (workflow: WorkflowDefinition) => {
-        if (interactionDisabled || !allowManage) {
+        if (interactionDisabled || !canRun) {
             setError('You cannot run workflows with the current workspace access.');
             return;
         }
@@ -199,7 +210,7 @@ export function WorkflowsSection({
     };
 
     const onDelete = async (workflow: WorkflowDefinition) => {
-        if (interactionDisabled || !allowManage) {
+        if (interactionDisabled || !canDelete) {
             setError('You cannot delete workflows with the current workspace access.');
             return;
         }
@@ -225,7 +236,7 @@ export function WorkflowsSection({
             <SectionIntro
                 title="Workflows"
                 description="Repeatable tasks that run on their own, using a model or one of your agents. A workflow can run on a schedule or whenever you start it."
-                actions={allowManage ?
+                actions={canCreate ?
                     <GlassCreateButton
                         busy={optionsLoading}
                         onClick={() => void openEditor('new')}
@@ -257,7 +268,7 @@ export function WorkflowsSection({
                         ? 'A workflow repeats a task you would otherwise run by hand.'
                         : undefined
                 }
-                emptyAction={allowManage ? <GlassCreateButton busy={optionsLoading} onClick={() => void openEditor('new')} /> : undefined}
+                emptyAction={canCreate ? <GlassCreateButton busy={optionsLoading} onClick={() => void openEditor('new')} /> : undefined}
                 getKey={(workflow, index) => String(workflow.id ?? index)}
                 renderItem={(workflow) => {
                     const running = Boolean(workflow.active_run_id);
@@ -286,7 +297,7 @@ export function WorkflowsSection({
                                         /> : null}
                                         <RowAction
                                             icon={<Edit3 size={15} />}
-                                            label={!allowManage ? `View ${workflow.name || 'workflow'}` : running ? `${workflow.name || 'Workflow'} is running; cancel or wait before editing` : `Edit ${workflow.name || 'workflow'}`}
+                                            label={!canEdit ? `View ${workflow.name || 'workflow'}` : running ? `${workflow.name || 'Workflow'} is running; cancel or wait before editing` : `Edit ${workflow.name || 'workflow'}`}
                                             disabled={optionsLoading || running}
                                             busy={optionsLoading && editing === workflow}
                                             onClick={() => void openEditor(workflow)}
@@ -309,7 +320,7 @@ export function WorkflowsSection({
                                             }
                                             disabled={!workflowId}
                                         />
-                                        {allowManage && (running ? (
+                                        {running ? (canCancel ? (
                                             <RowAction
                                                 icon={<Ban size={15} />}
                                                 label={`Cancel ${workflow.name ?? 'workflow'}`}
@@ -322,15 +333,15 @@ export function WorkflowsSection({
                                                     )
                                                 }
                                             />
-                                        ) : (
+                                        ) : null) : canRun ? (
                                             <RowAction
                                                 icon={<Play size={15} />}
                                                 label={`Run ${workflow.name ?? 'workflow'}`}
                                                 busy={busyId === workflow.id}
                                                 onClick={() => void onRun(workflow)}
                                             />
-                                        ))}
-                                        {allowManage ? <ConfirmAction
+                                        ) : null}
+                                        {canDelete ? <ConfirmAction
                                             icon={<Trash2 size={15} />}
                                             label={`Delete ${workflow.name ?? 'workflow'}`}
                                             confirmLabel="Delete"
@@ -361,7 +372,7 @@ export function WorkflowsSection({
                     key={`${scopeKey}:${editing === 'new' ? 'new' : editing.id}`}
                     scope={scope}
                     workflow={editing === 'new' ? null : editing}
-                    options={{ ...options, can_manage: options.can_manage && allowManage }}
+                    options={{ ...options, can_manage: options.can_manage && (editing === 'new' ? canCreate : canEdit) }}
                     interactionDisabled={interactionDisabled}
                     onBusyChange={setEditorSaving}
                     onDirtyChange={setEditorDirty}

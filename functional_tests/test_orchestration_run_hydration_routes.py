@@ -1,9 +1,10 @@
 # test_orchestration_run_hydration_routes.py
 """
 Functional test for the orchestration run hydration endpoints and their projections.
-Version: 0.261.131
+Version: 0.261.139
 Implemented in: 0.261.099
 Content-review projection helpers included in: 0.261.131
+Single plan contract projections: 0.261.139
 
 Orchestration runs have always been persisted, but nothing in the browser read them back, so a
 conversation opened after a reload or on another device showed no history for work that plainly
@@ -25,6 +26,7 @@ import re
 import sys
 from pathlib import Path
 from copy import deepcopy
+from types import SimpleNamespace
 
 from azure.cosmos.exceptions import CosmosResourceNotFoundError
 
@@ -63,11 +65,14 @@ STORED_RUN = {
         "intent_summary": "Reconcile the quarterly numbers",
         "step_count": 2,
     },
-    "capabilities_used": ["search_documents", "respond"],
-    "artifacts": [{"id": "a1"}, {"id": "a2"}],
+    "capabilities_used": ["document_search", "compose"],
+    "artifacts": [{"id": "stale-a1"}],
     "approval": {"mode": "manual", "state": "approved", "approved_by": "user-1"},
     # Heavy or internal, and none of it belongs in a listing.
-    "plan": {"steps": [{"step_id": "s1"}], "inputs": {"documents": [{"document_id": "d1"}]}},
+    "plan": {
+        "planner_contract_version": 2, "steps": [{"step_id": "s1"}],
+        "inputs": {"documents": [{"document_id": "d1"}]},
+    },
     "seeds": {"selected_document_ids": ["d1"], "internal_hint": "do not publish"},
     # These three were once stripped by name in the route. The allowlist replaced that
     # blocklist, so they are kept here to prove the replacement is not a regression.
@@ -83,8 +88,8 @@ def _load_projections():
     """Import the two projection helpers without importing the whole Flask app.
 
     ``route_backend_orchestration`` pulls in Cosmos clients and Azure settings at import time,
-    which these legacy projection tests do not require. Legacy projections remain pure;
-    real v2 service/HTTP projections are covered by test_orchestration_harness_routes.py.
+    which these projection tests do not require. The file service is a fixed stub here; the
+    real service and HTTP projections are covered by test_orchestration_harness_routes.py.
     """
     source = ROUTE_FILE.read_text(encoding="utf-8")
     tree = ast.parse(source)
@@ -107,10 +112,19 @@ def _load_projections():
         cosmos_orchestration_run_steps_container=AtomicMemoryContainer('run_id'),
     ):
         from functions_orchestration_recovery import public_execution_fields
-        from functions_orchestration_schema import plan_contract_version, safe_failure
+        from functions_orchestration_schema import is_legacy_plan, plan_contract_version, safe_failure
 
-    def forbidden_harness_service(*args, **kwargs):
-        raise AssertionError("Legacy projections must not construct harness services.")
+    completed = [
+        {"output_id": output_id, "state": "completed", "available": True}
+        for output_id in ("o1", "o2")
+    ]
+
+    def current_files(user_id, conversation_id):
+        assert (user_id, conversation_id) == ("user-1", "conv-1")
+        return SimpleNamespace(rendering=SimpleNamespace(
+            list_public_outputs=lambda run_id: deepcopy(completed),
+            committed_artifacts=lambda run_id: [{"output_id": "o1"}, {"output_id": "o2"}],
+        ))
 
     class UncheckedReplyMessages:
         def read_item(self, *args, **kwargs):
@@ -123,7 +137,8 @@ def _load_projections():
         "public_execution_fields": public_execution_fields,
         "plan_contract_version": plan_contract_version,
         "safe_failure": safe_failure,
-        "_harness_services": forbidden_harness_service,
+        "_orchestration_services": current_files,
+        "is_legacy_plan": is_legacy_plan,
         "cosmos_messages_container": UncheckedReplyMessages(),
         "CosmosResourceNotFoundError": CosmosResourceNotFoundError,
         "reply_is_retracted": lambda message: False,
@@ -170,6 +185,7 @@ def test_summary_projection_is_an_allowlist():
             "revision",
             "approval",
             "attempt_index", "retry_of_run_id", "failure", "failures", "recovery",
+            "outputs",
         }
         assert set(row) == expected_keys, (
             f"unexpected listing shape: extra={sorted(set(row) - expected_keys)} "
@@ -192,8 +208,9 @@ def test_summary_projection_is_an_allowlist():
         assert row["turn_id"] == "turn-1"
         assert row["turn_index"] == 3, "turn_index must be coerced to an int"
         assert row["revision"] == 2, "revision must be coerced to an int"
-        assert row["artifact_count"] == 2, "artifacts must be reduced to a count"
-        assert row["capabilities_used"] == ["search_documents", "respond"]
+        assert row["artifact_count"] == 2, "current files must be reduced to a count"
+        assert "stale-a1" not in str(row), "saved artifact snapshots are not published"
+        assert row["capabilities_used"] == ["document_search", "compose"]
         assert row["plan_summary"]["intent_summary"] == "Reconcile the quarterly numbers"
         assert row["user_message_id"] == "msg-1", (
             "the question's message id is what anchors a restored card to the thread"
@@ -217,8 +234,8 @@ def test_detail_projection_adds_only_the_plan():
         summary = helpers["_run_summary_row"](STORED_RUN)
         detail = helpers["_run_detail_row"](STORED_RUN)
 
-        assert set(detail) - set(summary) == {"plan"}, (
-            f"the detail row must add only the plan, saw {sorted(set(detail) - set(summary))}"
+        assert set(detail) - set(summary) == {"plan", "generated_artifacts"}, (
+            f"the detail row must add only the plan and its files, saw {sorted(set(detail) - set(summary))}"
         )
         for key, value in summary.items():
             assert detail[key] == value, f"{key!r} disagrees between the listing and the detail"

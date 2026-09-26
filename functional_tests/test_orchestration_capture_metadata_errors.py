@@ -1,9 +1,10 @@
 # test_orchestration_capture_metadata_errors.py
 """Current-metadata failures and pre-effect gates through actual acquisition.
 
-Version: 0.261.129
+Version: 0.261.139
 Implemented in: 0.261.127
 Acquisition-boundary coverage updated in: 0.261.129
+Single orchestration contract updated in: 0.261.139
 
 Real provider preflight, attestor current reads, adapters and owned SDK observers
 run with metadata/provider transport doubled. No grants or live model calls.
@@ -141,20 +142,6 @@ def test_supported_foundry_tools_keep_observed_run_binding_and_retention(capture
         assert retained == bound.admissions[0][0]
         assert len(runtime.state.web) == 1
         assert all(client.closed for client in runtime.state.clients)
-
-
-def test_legacy_foundry_tools_are_not_restricted_by_capture_policy(capture_runtime):
-    runtime = capture_runtime
-    runtime.context.plan_contract_version = 1
-    runtime.state.definition = type(runtime.state.definition)({
-        **runtime.state.definition.as_dict(),
-        "tools": [{"type": "azure_ai_search", "azure_ai_search": {}}],
-    })
-    _, result = run_gather(runtime)
-    assert result["status"] == "completed", result
-    assert len(runtime.state.web) == 1
-    assert runtime.state.sources == []
-    assert all(client.closed for client in runtime.state.clients)
 
 
 @pytest.mark.parametrize("phase", ["preflight", "definition", "run", "poll"])

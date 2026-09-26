@@ -2,17 +2,16 @@
 # test_orchestration_visual_outputs.py
 """
 Functional test for charts, Mermaid diagrams, and image proposals in orchestrated answers.
-Version: 0.261.132
+Version: 0.261.139
 Implemented in: 0.261.132
+Single orchestration contract updated in: 0.261.139
 
-This test ensures orchestration detects requested visuals the way ordinary chat does,
-gives the answer step chart, Mermaid, and image-proposal guidance that defers to saved
-instruction memories, charts exact tool rows within the 200-point display limit, carries
-charts created during gathering into the final answer untruncated, and tells the planner
-which visual outputs are available. No Azure resources, models, or credentials are used.
+This test ensures orchestration carries chart payloads safely, builds visual guidance
+only from planner-declared visual flags, preserves saved instruction memory precedence,
+and tells the planner which visual outputs are available. No Azure resources, models,
+or credentials are used.
 """
 
-import asyncio
 import importlib
 import json
 import sys
@@ -36,6 +35,7 @@ import functions_orchestration_visuals as visuals  # noqa: E402
 
 
 IMPLEMENTED_IN = '0.261.132'
+SINGLE_CONTRACT_UPDATED_IN = '0.261.139'
 PLOT_REQUEST = 'Plot BatteryVoltage1 over the last 15 minutes, provide high granularity'
 
 
@@ -97,11 +97,13 @@ def modules():
 
 def test_version_is_at_least_the_implementing_release():
     assert_app_version_at_least(IMPLEMENTED_IN)
+    assert_app_version_at_least(SINGLE_CONTRACT_UPDATED_IN)
 
 
 # --------------------------------------------------------------------------------------
 # Exact-row series charts
 # --------------------------------------------------------------------------------------
+
 
 def test_series_is_sorted_and_reduced_to_the_display_limit_keeping_extremes():
     data = charts.build_series_chart_data(telemetry_rows(), 'generation_time', ['eng_value'])
@@ -158,59 +160,23 @@ def test_result_rows_are_found_in_common_tool_shapes(value, expected):
 
 
 # --------------------------------------------------------------------------------------
-# Which visuals a request asks for
+# Guidance and saved memory precedence from planner-declared visual flags
 # --------------------------------------------------------------------------------------
 
-def test_explicit_planned_and_proactive_chart_intent_are_distinct():
-    explicit = visuals.requested_visual_outputs([PLOT_REQUEST])
-    assert explicit['explicit_chart'] and explicit['chart'] and not explicit['proactive_chart']
 
-    planned = visuals.requested_visual_outputs(['How is the battery?'], ['Retrieve the samples and chart the values.'])
-    assert planned['chart'] and not planned['explicit_chart']
-
-    proactive = visuals.requested_visual_outputs(['Analyze the quarterly metrics report'])
-    assert proactive['proactive_chart'] and not proactive['chart']
-
-    for text in ('Show me the chart of accounts for this tenant', 'Draw our org chart'):
-        assert not visuals.requested_visual_outputs([], [text])['chart']
-
-
-def test_diagram_intent_comes_from_the_user_or_the_plan():
-    assert visuals.requested_visual_outputs(['Draw a flowchart of the login process'])['diagram']
-    assert visuals.requested_visual_outputs(['Explain it'], ['Include a Mermaid sequence of the calls.'])['diagram']
-    assert not visuals.requested_visual_outputs(['What is the capital of France?'])['diagram']
-
-
-def test_image_proposals_need_image_generation_and_follow_the_request_or_image_control():
-    enabled = {'enable_image_generation': True}
-    selected = {'image_generation': True}
-    assert not visuals.requested_visual_outputs(['Create an illustration'], settings={}, seeds=selected)['image']
-    assert not visuals.requested_visual_outputs(['What is 2 + 2?'], settings=enabled)['image']
-    assert visuals.requested_visual_outputs(['Create an illustration of the launch'], settings=enabled)['image']
-    assert visuals.requested_visual_outputs(['Plan it'], ['Propose images of the venue.'], settings=enabled)['image']
-    chosen = visuals.requested_visual_outputs(['What is 2 + 2?'], settings=enabled, seeds=selected)
-    assert chosen['image'] and chosen['image_required']
-    assert visuals.planner_visual_outputs(enabled) == {'charts': True, 'diagrams': True, 'image_proposals': True}
-    assert visuals.planner_visual_outputs({})['image_proposals'] is False
-
-
-# --------------------------------------------------------------------------------------
-# Guidance and saved memory precedence
-# --------------------------------------------------------------------------------------
-
-def test_answer_guidance_reuses_chat_guidance_and_defers_to_saved_memory():
+def test_answer_guidance_uses_planner_flags_and_defers_to_saved_memory():
     assert visuals.build_answer_visual_guidance({}) == []
-    requested = visuals.requested_visual_outputs(
-        [f'{PLOT_REQUEST} and draw a flowchart of the pipeline'], settings={'enable_image_generation': True},
-        seeds={'image_generation': True},
-    )
+    requested = {
+        'explicit_chart': True, 'chart': True, 'proactive_chart': False,
+        'diagram': True, 'image': True,
+    }
     messages = visuals.build_answer_visual_guidance(requested, has_existing_charts=True)
     policy = messages[0]
     assert policy.startswith(visuals.VISUAL_OUTPUT_POLICY_MARKER)
     assert 'Saved instruction memories about visuals' in policy and 'take precedence' in policy
     assert 'explicitly asks otherwise' in policy
     assert 'never say a chart could not be produced' in policy
-    assert 'at least one image proposal' in policy
+    assert 'Propose images only where a picture adds' in policy
     joined = '\n'.join(messages)
     assert charts.PROACTIVE_CHART_GUIDANCE_MARKER in joined
     assert '[MERMAID_DIAGRAM_GUIDANCE]' in joined
@@ -259,6 +225,7 @@ def test_memory_loader_separates_instruction_memories_from_facts(modules):
 # Chart carrying and placement
 # --------------------------------------------------------------------------------------
 
+
 def test_run_charts_are_deduplicated_described_and_bounded():
     big = chart_markdown('huge', title='T' * visuals.MAX_CARRIED_CHART_MARKDOWN_LENGTH, points=1)
     found = visuals.collect_run_charts([
@@ -289,69 +256,11 @@ def test_charts_are_placed_at_their_tokens_or_appended_once():
 
 
 # --------------------------------------------------------------------------------------
-# Answer step integration
+# Gather step integration
 # --------------------------------------------------------------------------------------
 
-def respond(modules, *, user_message, settings=None, seeds=None, citations=(), memory=None, reply='Answer'):
-    calls = []
-    context = modules.executor.RunContext(
-        user_id='user1', conversation_id='conv1', user_message=user_message,
-        original_seeds=seeds or {}, memory_context=memory or {},
-        invoke_prompt=lambda messages, **kwargs: calls.append(messages) or reply,
-    )
-    context.citations = list(citations)
-    result = modules.adapters.run_respond(
-        {'arguments': {}}, context, settings=settings or {}, user_id='user1', emit=None, cancel_requested=None,
-    )
-    return result, calls[0]
 
-
-def system_contents(messages):
-    return [message['content'] for message in messages if message['role'] == 'system']
-
-
-def test_answer_places_gathered_charts_after_guidance_and_before_memory(modules):
-    memory = {'context_messages': [{
-        'role': 'system', 'content': '<Instruction Memory>\n- Keep answers short.\n</Instruction Memory>',
-    }]}
-    result, messages = respond(
-        modules, user_message=PLOT_REQUEST, citations=[chart_citation()], memory=memory,
-        reply='BatteryVoltage1 stayed between 27 and 31 V.\n\n[[chart:abc123]]\n\nNo gaps were found.',
-    )
-    systems = system_contents(messages)
-    assert systems[0] == modules.adapters.RESPONSE_CONTEXT_POLICY
-    assert systems[1].startswith(visuals.VISUAL_OUTPUT_POLICY_MARKER)
-    policy_index = next(i for i, text in enumerate(systems) if text.startswith(visuals.VISUAL_OUTPUT_POLICY_MARKER))
-    memory_index = next(i for i, text in enumerate(systems) if '<Instruction Memory>' in text)
-    chart_index = next(i for i, text in enumerate(systems) if charts.PROACTIVE_CHART_GUIDANCE_MARKER in text)
-    assert policy_index < chart_index < memory_index
-    assert '[[chart:abc123]] Voltage' in messages[-1]['content']
-    markdown = chart_citation()['function_result']['chart_markdown']
-    assert result['message'].count(markdown) == 1
-    assert result['message'].index('27 and 31 V') < result['message'].index(markdown) < result['message'].index('No gaps')
-    assert result['summary'] == 'BatteryVoltage1 stayed between 27 and 31 V.'
-
-
-def test_answer_without_visuals_is_unchanged(modules):
-    result, messages = respond(modules, user_message='What is the capital of France?', reply='Paris.')
-    assert not any(visuals.VISUAL_OUTPUT_POLICY_MARKER in text for text in system_contents(messages))
-    assert result['message'] == 'Paris.'
-
-
-def test_answer_offers_diagrams_and_image_proposals_when_available(modules):
-    _, messages = respond(modules, user_message='Draw a flowchart of the approval process')
-    assert any('[MERMAID_DIAGRAM_GUIDANCE]' in text for text in system_contents(messages))
-
-    enabled = {'enable_image_generation': True}
-    _, messages = respond(modules, user_message='Summarize our launch plan', settings=enabled, seeds={'image_generation': True})
-    joined = '\n'.join(system_contents(messages))
-    assert '[OPT_IN_IMAGE_GENERATION_PROPOSAL_GUIDANCE]' in joined and 'at least one image proposal' in joined
-
-    _, messages = respond(modules, user_message='Summarize our launch plan', settings={}, seeds={'image_generation': True})
-    assert '[OPT_IN_IMAGE_GENERATION_PROPOSAL_GUIDANCE]' not in '\n'.join(system_contents(messages))
-
-
-def test_action_step_keeps_chart_citations_whole_and_reports_the_chart(modules, monkeypatch):
+def test_action_step_uses_planner_visual_flags_and_keeps_chart_citations_whole(modules):
     long_chart = chart_markdown('longchart', title='T' * 25000, points=2)
     invocations = [
         SimpleNamespace(
@@ -369,6 +278,7 @@ def test_action_step_keeps_chart_citations_whole_and_reports_the_chart(modules, 
 
     async def invoke_action(action_ref, task, context, **kwargs):
         requests.append((task, kwargs))
+        kwargs['invocation_capture']('action', settings={}, source={'action_ref': action_ref}, selector=action_ref)
         return {'findings': 'Retrieved 900 samples.', 'artifacts': [], 'invocations': invocations,
                 'root_id': 'root', 'calls': 3, 'charts': 1}
 
@@ -383,7 +293,10 @@ def test_action_step_keeps_chart_citations_whole_and_reports_the_chart(modules, 
 
     action = {'action_ref': 'global:global:sim', 'id': 'sim', 'name': 'sim', 'display_name': 'Simulation', 'type': 'yamcs'}
     context = modules.executor.RunContext(
+        run_id='run-1', attempt_index=1,
         user_id='user1', conversation_id='conv1', user_message=PLOT_REQUEST, action_catalog=[action],
+        capture_external_source_configuration=lambda *args, **kwargs: None,
+        external_source_preflight=lambda **kwargs: None,
     )
     stubs = {
         'functions_orchestration_actions': fake_module('functions_orchestration_actions', invoke_action=invoke_action),
@@ -396,10 +309,16 @@ def test_action_step_keeps_chart_citations_whole_and_reports_the_chart(modules, 
             make_json_serializable=lambda value: value,
         ),
     }
+    step = {
+        'step_id': 'action-1', 'capability_id': 'action_invoke',
+        'arguments': {
+            'action_ref': action['action_ref'], 'task': 'Retrieve BatteryVoltage1 samples.',
+            'visuals': ['chart'],
+        },
+    }
     with patch.dict(sys.modules, stubs):
         result = modules.adapters.run_action_invoke(
-            {'arguments': {'action_ref': action['action_ref'], 'task': 'Retrieve BatteryVoltage1 samples.'}},
-            context, settings={}, user_id='user1', emit=None, cancel_requested=None,
+            step, context, settings={}, user_id='user1', emit=None, cancel_requested=None,
         )
     assert requests[0][1]['visual_request']['explicit_chart'] is True
     assert result['summary'] == 'Used Simulation (3 function calls) and created 1 chart.'
@@ -412,24 +331,45 @@ def test_action_step_keeps_chart_citations_whole_and_reports_the_chart(modules, 
 # Planner and composer seeds
 # --------------------------------------------------------------------------------------
 
-def test_planner_prompt_describes_visual_outputs_only_for_the_legacy_contract(modules):
-    legacy = ' '.join(modules.planner.build_planner_messages({}, contract_version=1)[0]['content'].split())
-    assert 'image proposal cards' in legacy
-    assert 'Charting the values an action retrieves is part of that knowledge step' in legacy
-    assert 'Saved instructions in "memory" about visuals' in legacy
-    assert 'the respond instruction must ask for at least one image proposal' in legacy
-    dependency = ' '.join(modules.planner.build_planner_messages({}, contract_version=2)[0]['content'].split())
-    assert 'image proposal cards' not in dependency
-    respond_capability = modules.registry.get_capability('respond')
-    assert 'Mermaid diagrams' in respond_capability['when_to_use']
+
+def test_planner_prompt_describes_visual_outputs_for_the_single_contract(modules):
+    prompt = ' '.join(modules.planner.build_planner_messages({})[0]['content'].split())
+    assert 'image proposal cards' in prompt
+    assert 'compose "visuals" (chart, diagram, image_proposal)' in prompt
+    assert 'set that action_invoke step\'s visuals to ["chart"]' in prompt
+    assert 'Web search returns text and links only' in prompt
+    assert 'Saved instructions in memory about visuals' in prompt
+    compose_capability = modules.registry.get_capability('compose')
+    assert 'visuals' in json.dumps(compose_capability)
 
 
 @pytest.mark.parametrize('image_enabled', [True, False])
 def test_planner_context_reports_visual_outputs_and_the_image_selection(modules, monkeypatch, image_enabled):
     supplied = []
-    plan = {'kind': 'plan', 'steps': [{
-        'capability_id': 'respond', 'step_id': 'answer', 'arguments': {'instruction': 'Include a line chart.'},
-    }]}
+    steps = []
+    if image_enabled:
+        steps.append({
+            'step_id': 'image', 'capability_id': 'generate_image',
+            'arguments': {'prompt': 'Launch illustration', 'title': 'Launch illustration'},
+            'delivers': ['art'],
+        })
+    steps.append({
+        'step_id': 'answer', 'capability_id': 'compose', 'title': 'Answer',
+        'arguments': {'instruction': 'Include a line chart.', 'visuals': ['chart']},
+        'outputs': [{'name': 'answer', 'kind': 'markdown-v1'}],
+    })
+    plan = {
+        'kind': 'plan',
+        **({'deliverables': [{
+            'id': 'art', 'kind': 'image', 'requested': 'explicit',
+            'description': 'Launch illustration', 'status': 'planned',
+        }]} if image_enabled else {}),
+        'steps': steps,
+        'final_response': {
+            'version': 'orchestration-input-binding-v1', 'step_id': 'answer',
+            'output_name': 'answer', 'existing_result': None,
+        },
+    }
 
     def complete(_client, _deployment, messages, *args, **kwargs):
         supplied.append(json.loads(messages[1]['content']))
@@ -437,16 +377,19 @@ def test_planner_context_reports_visual_outputs_and_the_image_selection(modules,
 
     monkeypatch.setattr(modules.planner, 'resolve_planner_client', lambda settings: (None, 'planner'))
     monkeypatch.setattr(modules.planner, '_call_planner', complete)
+    monkeypatch.setattr(modules.planner, 'normalize_plan', lambda *args, **kwargs: {
+        **plan, 'planner_contract_version': 2,
+    })
     settings = {'enable_chat_orchestration': True, 'enable_image_generation': image_enabled}
     context = modules.context.build_planner_context(PLOT_REQUEST)
     kind, _ = modules.planner.plan_request(
         PLOT_REQUEST, context, 'conversation', 'user1', settings=settings,
-        seeds={'image_generation': True}, request_context={},
+        seeds={'image_generation': image_enabled}, request_context={},
     )
     assert kind == 'plan'
     availability = supplied[0]['capability_availability']
     assert availability['visual_outputs'] == {'charts': True, 'diagrams': True, 'image_proposals': image_enabled}
-    assert supplied[0]['user_selected'].get('image_proposals') is (True if image_enabled else None)
+    assert supplied[0]['user_selected'].get('images') is (True if image_enabled else None)
 
 
 def test_image_seed_is_a_strict_boolean(modules):

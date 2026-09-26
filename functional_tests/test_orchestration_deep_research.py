@@ -1,8 +1,9 @@
 # test_orchestration_deep_research.py
 """
 Functional tests for bounded multi-query research in orchestration.
-Version: 0.261.122
+Version: 0.261.139
 Implemented in: 0.261.099
+Single orchestration contract updated in: 0.261.139
 
 Exercise the real adapter, shared search loop, query generator, and result contracts
 with model/search/page-fetch seams replaced. No Azure services or web pages are called.
@@ -15,7 +16,7 @@ import types
 import unittest
 from contextlib import ExitStack
 from pathlib import Path
-from unittest.mock import Mock, patch
+from unittest.mock import patch
 
 TEST_ROOT = Path(__file__).resolve().parent
 APP_ROOT = TEST_ROOT.parent / 'application' / 'single_app'
@@ -25,7 +26,18 @@ from test_support.app_stubs import stubbed_config  # noqa: E402
 from test_support.versioning import assert_app_version_at_least  # noqa: E402
 
 
-def load_search_helpers(query_planner, web_search, cancel_guard):
+class FakeInvocationCapture:
+    def __call__(self, *_args, **_kwargs):
+        return None
+
+    def refuse(self):
+        return None
+
+    def require_valid(self, **_kwargs):
+        return None
+
+
+def load_search_helpers(query_planner, web_search, cancel_guard, capture_planner):
     """Load pure route helpers without importing the Flask/Azure startup graph."""
     path = APP_ROOT / 'route_backend_chats.py'
     tree = ast.parse(path.read_text(encoding='utf-8'))
@@ -40,6 +52,7 @@ def load_search_helpers(query_planner, web_search, cancel_guard):
         'build_deep_research_query_plan': query_planner,
         'perform_web_search': web_search,
         'raise_if_mixed_source_cancelled': cancel_guard,
+        'capture_research_planner_configuration': capture_planner,
     })
     exec(compile(ast.Module(body=body, type_ignores=[]), str(path), 'exec'), module.__dict__)
     return module
@@ -61,11 +74,16 @@ class DeepResearchTests(unittest.TestCase):
             'deep_research_max_search_queries_per_turn': 3,
         }
         self.message = 'Find current press releases about two public research projects.'
+        self.client = object()
         self.context = types.SimpleNamespace(
             user_message=self.message,
             user_roles=[],
             conversation_id='test-conversation',
             user_id='test-user',
+            run_id='run-1',
+            attempt_index=1,
+            planner_client=self.client,
+            planner_deployment='test-planner',
             citations=[],
             active_group_ids=[],
         )
@@ -79,7 +97,6 @@ class DeepResearchTests(unittest.TestCase):
         self.events = []
         self.fail_queries = set()
         self.cancelled = False
-        self.client = object()
         self.planner_payload = {
             'queries': [
                 {'query': 'first project primary sources', 'reason': 'First perspective'},
@@ -90,9 +107,17 @@ class DeepResearchTests(unittest.TestCase):
             self.sources, '_invoke_deep_research_query_planner',
             side_effect=lambda **kwargs: self.planner_payload,
         ))
-        self.resolve_client = self.stack.enter_context(patch.object(
-            self.adapters, '_resolve_source_review_planner',
-            return_value=(self.client, 'test-planner'),
+        self.stack.enter_context(patch.object(
+            self.adapters, '_external_invocation_capture',
+            return_value=FakeInvocationCapture(),
+        ))
+        self.stack.enter_context(patch.object(
+            self.adapters, '_capture_external_execution_settings',
+            side_effect=self.capture_settings,
+        ))
+        self.stack.enter_context(patch.object(
+            self.sources, 'capture_research_planner_configuration',
+            side_effect=lambda **kwargs: None,
         ))
         self.adapter_log = self.stack.enter_context(patch.object(self.adapters, 'log_event'))
         self.source_log = self.stack.enter_context(patch.object(self.sources, 'log_event'))
@@ -103,8 +128,14 @@ class DeepResearchTests(unittest.TestCase):
             self.sources.build_deep_research_query_plan,
             self.search_web,
             mixed.raise_if_mixed_source_cancelled,
+            lambda **kwargs: None,
         )
         self.stack.enter_context(patch.dict(sys.modules, {'route_backend_chats': self.routes}))
+
+    def capture_settings(self, step, context, settings, **kwargs):
+        if step.get('capability_id') == 'deep_research' and context.planner_client is None:
+            raise self.adapters.ResultContractError('result_external_configuration_required')
+        return settings
 
     def search_web(self, **kwargs):
         self.search_calls.append(kwargs)
@@ -277,17 +308,15 @@ class DeepResearchTests(unittest.TestCase):
         self.assertNotIn('backup', visible.lower())
         self.assertNotIn('fallback', visible.lower())
 
-    def test_missing_planner_client_and_disabled_query_planning_use_existing_backup(self):
-        for configured in (False, True):
-            with self.subTest(query_planning_enabled=configured):
-                self.search_calls.clear()
-                self.settings['deep_research_enable_query_planning'] = configured
-                self.resolve_client.return_value = (None, None)
+    def test_missing_bound_planner_client_fails_before_external_work(self):
+        self.context.planner_client = None
 
-                result = self.run_research()
+        result = self.run_research()
 
-                self.assertEqual(result['status'], 'completed')
-                self.assertGreater(len(self.search_calls), 1)
+        self.assertEqual(result['status'], 'failed')
+        self.assertEqual(result['summary'], 'This operation could not complete.')
+        self.assertEqual(self.search_calls, [])
+        self.review.assert_not_called()
         self.query_planner.assert_not_called()
 
     def test_link_planner_recovery_diagnostics_do_not_reach_answer_evidence(self):
@@ -320,7 +349,6 @@ class DeepResearchTests(unittest.TestCase):
                 self.context.user_roles = roles
                 result = self.run_research()
                 self.assertEqual(result['status'], 'failed')
-                self.resolve_client.assert_not_called()
                 self.review.assert_not_called()
                 self.assertEqual(self.search_calls, [])
 
@@ -345,7 +373,6 @@ class DeepResearchTests(unittest.TestCase):
         result = self.run_research(cancel_requested=lambda: True)
         self.assertEqual(result['status'], 'cancelled')
         self.assertEqual(self.search_calls, [])
-        self.resolve_client.assert_not_called()
 
         result = self.run_research(cancel_requested=lambda: bool(self.search_calls))
         self.assertEqual(result['status'], 'cancelled')
@@ -459,24 +486,6 @@ class DeepResearchTests(unittest.TestCase):
         self.assertEqual(len(self.search_calls), 1)
         self.query_planner.assert_not_called()
         self.review.assert_not_called()
-
-
-class ResearchPlannerRecoveryTests(unittest.TestCase):
-    def test_expected_client_configuration_failure_keeps_backup_planning_available(self):
-        with stubbed_config(cognitive_services_scope='https://cognitiveservices.azure.com/.default'):
-            adapters = importlib.import_module('functions_orchestration_adapters')
-            planner = types.ModuleType('functions_orchestration_planner')
-            planner.PlannerError = type('PlannerError', (RuntimeError,), {})
-            planner.resolve_planner_client = Mock(side_effect=planner.PlannerError('PRIVATE_CONFIG'))
-            with patch.dict(sys.modules, {'functions_orchestration_planner': planner}):
-                with patch.object(adapters, 'log_event') as logged:
-                    self.assertEqual(adapters._resolve_source_review_planner({}), (None, None))
-                    self.assertNotIn('PRIVATE_CONFIG', str(logged.call_args))
-
-                planner.resolve_planner_client.side_effect = TypeError('programming error')
-                with self.assertRaises(TypeError):
-                    adapters._resolve_source_review_planner({})
-
 
 if __name__ == '__main__':
     assert_app_version_at_least('0.261.099')

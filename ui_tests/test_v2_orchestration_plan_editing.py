@@ -1,7 +1,7 @@
 # test_v2_orchestration_plan_editing.py
 """
 UI test for the V2 orchestration Review controls: narrowing only, never client-side widening.
-Version: 0.261.101
+Version: 0.261.139
 Implemented in: 0.261.085
 
 A user may narrow a plan before it runs -- switch a step off, or drop a document from one -- but
@@ -11,8 +11,8 @@ offers only narrowing and the store makes widening unrepresentable.
 
 This test drives the REAL OrchestrationRunView against a seeded plan and asserts:
 
-  * A non-terminal step has an off switch; the terminal answering step shows "Always runs" with a
-    lock and no switch at all.
+  * Plan steps use Run/skip toggles; a step required by the final response is disabled by its
+    dependency explanation rather than by a special lock.
   * Toggling a step off records it in the edit set and drops it from the plan the run would carry;
     toggling it back on clears that edit rather than widening past the plan's own default.
   * A document can be removed and restored; a document the step merely references
@@ -41,10 +41,11 @@ _PAGE = None
 
 
 def _plan():
-    """A manual (editable) plan: a search step over two documents plus a pinned one, then answer."""
+    """A manual (editable) plan: a search step over two documents plus a pinned one, then compose."""
     return {
         "plan_id": "plan-edit",
         "run_id": "run-edit",
+        "planner_contract_version": 2,
         "intent": {"summary": "Compare the two filings", "complexity": "simple"},
         "steps": [
             {
@@ -55,16 +56,25 @@ def _plan():
                     "document_ids": ["docA", "docB"],
                     "left_document_id": "docL",
                 },
+                "role": "gather",
+                "outputs": [{"name": "findings", "kind": "text-v1"}],
                 "estimated_cost": "low",
             },
             {
                 "step_id": "s2",
-                "capability_id": "respond",
+                "capability_id": "compose",
                 "title": "Write the comparison",
                 "arguments": {},
+                "role": "reason",
+                "outputs": [{"name": "answer", "kind": "markdown-v1"}],
+                "delivers": ["answer"],
                 "estimated_cost": "low",
             },
         ],
+        "final_response": {"version": "orchestration-input-binding-v1", "step_id": "s2",
+                           "output_name": "answer", "existing_result": None},
+        "deliverables": [{"id": "answer", "kind": "answer", "requested": "explicit",
+                          "status": "planned", "description": "A comparison answer."}],
         "approval": {"mode": "manual", "timeout_seconds": 10, "state": "pending"},
         "status": "awaiting_approval",
     }
@@ -117,9 +127,9 @@ def test_version_is_at_least_the_implementing_release():
         return False
 
 
-def test_step_has_off_switch_and_terminal_is_locked():
-    """A non-terminal step carries an off switch; the terminal step is locked with no switch."""
-    print("Testing the step switch and the locked terminal step...")
+def test_steps_have_run_controls_and_no_terminal_lock():
+    """Steps carry run controls; final-response dependencies explain unavailable toggles."""
+    print("Testing step run controls and dependency-disabled final response...")
     page = _PAGE
     try:
         conv, turn = "c-edit", "t1"
@@ -137,13 +147,12 @@ def test_step_has_off_switch_and_terminal_is_locked():
             """
         )
         assert len(shape) == 2, f"expected two steps, saw {len(shape)}"
-        # First step (search) is editable: it has a switch and is not locked.
-        assert shape[0]["hasSwitch"] is True, "the non-terminal step must have an off switch"
-        assert "Always runs" not in shape[0]["text"], "the non-terminal step must not be locked"
-        # Terminal answering step: locked, no switch.
-        assert shape[1]["hasSwitch"] is False, "the terminal step must not have a switch"
-        assert "Always runs" in shape[1]["text"], "the terminal step must read 'Always runs'"
-        print("  ok  the search step has a switch and the answer step is locked")
+        assert shape[0]["hasSwitch"] is True, "the gather step must have a run control"
+        assert shape[1]["hasSwitch"] is True, "the final response producer must still render as a step"
+        assert "Always runs" not in shape[0]["text"]
+        assert "Always runs" not in shape[1]["text"]
+        assert "Required by: Final chat response" in shape[1]["text"]
+        print("  ok  steps use run controls and dependency explanations")
         return True
     except Exception as exc:  # noqa: BLE001
         print(f"Test failed: {exc}")
@@ -309,7 +318,7 @@ def test_there_is_no_widening_affordance():
 
 
 PAGE_TESTS = [
-    test_step_has_off_switch_and_terminal_is_locked,
+    test_steps_have_run_controls_and_no_terminal_lock,
     test_toggling_a_step_narrows_then_clears,
     test_document_removes_and_restores_and_pinned_is_readonly,
     test_there_is_no_widening_affordance,

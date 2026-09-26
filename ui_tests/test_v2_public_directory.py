@@ -1,7 +1,7 @@
 # test_v2_public_directory.py
 """
 Production-SPA coverage for the native V2 public workspace directory page.
-Version: 0.261.175
+Version: 0.261.179
 Implemented in: 0.261.175
 
 Exercises the real public directory surface -- the browse-and-curate page built on the My Workspace
@@ -373,6 +373,88 @@ def test_a_deep_link_into_an_unavailable_section_lands_gracefully(public_directo
     assert not [entry for entry in ui.requests if entry.path.startswith("/api/public-workspaces/")], (
         "A section that a public workspace does not offer must not trigger a document read."
     )
+
+
+def create_posts(ui):
+    return [
+        entry for entry in ui.requests
+        if entry.path == "/api/public_workspaces" and entry.method == "POST"
+    ]
+
+
+# --------------------------------------------------------------------------
+# Create: the M10A affordance over the classic POST /api/public_workspaces, gated on the hint.
+# --------------------------------------------------------------------------
+
+def test_create_is_gated_on_the_server_hint(public_directory_ui):
+    """Create is offered only when the directory hint allows it, never on the feature flag alone."""
+    ui, page = public_directory_ui, public_directory_ui.page
+    open_directory(ui)
+    expect(page.get_by_role("button", name="Create public workspace", exact=True)).to_be_visible()
+
+
+def test_create_is_hidden_when_the_hint_refuses(public_directory_ui):
+    """With the feature on but the hint refusing (the classic create gate would 403), Create is gone."""
+    ui, page = public_directory_ui, public_directory_ui.page
+    ui.set_hints(can_create=False)
+    open_directory(ui)
+    expect(row(ui, LOGO_WORKSPACE_NAME)).to_be_visible()
+    expect(page.get_by_role("button", name="Create public workspace", exact=True)).to_have_count(0)
+
+
+def test_create_requires_a_name_before_calling_the_server(public_directory_ui):
+    """The one client rule is a form nicety: a blank name never reaches the classic route."""
+    ui, page = public_directory_ui, public_directory_ui.page
+    open_directory(ui)
+    page.get_by_role("button", name="Create public workspace", exact=True).click()
+    dialog = page.get_by_role("dialog")
+    expect(dialog).to_be_visible()
+    dialog.get_by_role("button", name="Create public workspace", exact=True).click()
+    expect(dialog.get_by_role("alert").filter(has_text="Enter a public workspace name.")).to_be_visible()
+    assert not create_posts(ui), "A name the client rejects must never reach the classic create route."
+
+
+def test_create_navigates_to_the_new_workspace_by_id(public_directory_ui):
+    """A successful create deep-links to the new public workspace by its immutable id."""
+    ui, page = public_directory_ui, public_directory_ui.page
+    open_directory(ui)
+    page.get_by_role("button", name="Create public workspace", exact=True).click()
+    dialog = page.get_by_role("dialog")
+    dialog.get_by_label("Public Workspace name", exact=True).fill("Open science library")
+    with page.expect_response(
+        lambda response: response.request.method == "POST"
+        and response.url.endswith("/api/public_workspaces")
+    ) as created:
+        dialog.get_by_role("button", name="Create public workspace", exact=True).click()
+    assert created.value.status == 201
+    # The reuse is the classic create route, not a native directory POST, and it carries no active
+    # handshake: the created workspace's own shell owns activation once we land on it by id.
+    expect(page).to_have_url(re.compile(r"/v2/public/pub-created-1(?:[/?#]|$)"))
+
+
+def test_a_role_refusal_shows_a_safe_message_keeps_the_draft_and_re_reads_the_hint(public_directory_ui):
+    """A stale Create that the classic gate now 403s shows a safe message, keeps the draft, reloads."""
+    ui, page = public_directory_ui, public_directory_ui.page
+    open_directory(ui)
+    before = len(directory_gets(ui))
+    ui.create_refusal = "role"
+    page.get_by_role("button", name="Create public workspace", exact=True).click()
+    dialog = page.get_by_role("dialog")
+    dialog.get_by_label("Public Workspace name", exact=True).fill("Denied library")
+    with page.expect_response(
+        lambda response: response.request.method == "POST"
+        and response.url.endswith("/api/public_workspaces")
+    ) as answered:
+        dialog.get_by_role("button", name="Create public workspace", exact=True).click()
+    assert answered.value.status == 403
+    # The classic 403 body is never echoed (it can carry an internal message); a safe, status-derived
+    # sentence is shown instead, and the reviewed permission wording names the surface.
+    expect(dialog.get_by_role("alert").filter(has_text="You do not have permission to create a public workspace.")).to_be_visible()
+    # The typed name survives the refusal, so a policy answer never eats the draft.
+    expect(dialog.get_by_label("Public Workspace name", exact=True)).to_have_value("Denied library")
+    # A refusal can only mean the hint went stale, so the directory is re-read.
+    expect(page.get_by_role("button", name="Create public workspace", exact=True).first).to_be_visible()
+    assert len(directory_gets(ui)) > before, "A create refusal must re-read the directory hint."
 
 
 if __name__ == "__main__":

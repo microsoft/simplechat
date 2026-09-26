@@ -15,7 +15,7 @@ import { clsx } from 'clsx';
 import { Modal } from '../ui/Modal';
 import { GlassButton } from '../ui/primitives';
 import { groupRoleLabel } from '../../lib/groupWorkspaceNavigation';
-import { MEMBER_CSV_HEADER, parseMemberCsv, type MemberCsvRow } from '../../lib/groupMembership';
+import { MEMBER_CSV_HEADER, describeMemberCsvRoles, parseMemberCsv, type AssignableMemberRole, type MemberCsvRow } from '../../lib/groupMembership';
 
 export type ImportRowOutcome =
     | { status: 'added'; name: string }
@@ -44,8 +44,9 @@ function outcomeText(outcome: ImportRowOutcome | null): string {
 }
 
 export function ImportMembersDialog({
-    onAddRow, onRunningChange, onFinished, onClose,
+    roles, onAddRow, onRunningChange, onFinished, onClose,
 }: {
+    roles: readonly AssignableMemberRole[];
     onAddRow: (row: MemberCsvRow) => Promise<ImportRowOutcome>;
     onRunningChange: (running: boolean) => void;
     onFinished: () => void;
@@ -70,7 +71,7 @@ export function ImportMembersDialog({
             setErrors(['The file could not be read. Choose it again.']);
             return;
         }
-        const parsed = parseMemberCsv(text);
+        const parsed = parseMemberCsv(text, roles);
         if (parsed.errors.length) {
             setErrors(parsed.errors);
             return;
@@ -111,7 +112,7 @@ export function ImportMembersDialog({
 
     return (
         <Modal title="Import members from CSV" size="lg"
-            description={`Columns ${MEMBER_CSV_HEADER}. Roles are user, admin or document_manager. Up to 1,000 rows.`}
+            description={`Columns ${MEMBER_CSV_HEADER}. Roles are ${describeMemberCsvRoles(roles)}. Up to 1,000 rows.`}
             onClose={busy ? () => undefined : onClose}
             footer={(
                 <>

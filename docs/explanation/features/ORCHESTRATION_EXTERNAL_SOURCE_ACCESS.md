@@ -13,10 +13,10 @@ current conversation audience, and server-owned source configuration. That lets 
 later task reuse the same content without running web search, fetching a URL,
 invoking an integration, or recalling memory again.
 
-The provider does not enable the harness by itself. The integrated application
-root binds it for web and scheduler execution; new-plan admission still requires
-the default-off orchestration and harness-preview settings. Execution budgets,
-output rendering, and current capability checks remain with their owning services.
+The provider does not enable orchestration by itself. The integrated application
+root binds it for web and scheduler execution when Chat Orchestration is enabled.
+Execution budgets, output rendering, and current capability checks remain with
+their owning services.
 
 ## Provider API and dependencies
 
@@ -33,7 +33,7 @@ The provider requires these owner-supplied callbacks:
 | --- | --- |
 | `read_identity(*, user_id, conversation_id)` | A new `CurrentExternalSourceIdentity` from a **current** account/app-role check on every call. Missing identity or loss of the User/Admin role denies access. |
 | `read_settings()` | Current normalized application settings, supplied by their owner. The provider never calls `get_settings()` or imports configuration to rediscover them. |
-| `read_conversation(id)` and `read_run(id)` | Current server records used by the existing result-access producer checks. The producer must belong to this actor/conversation and a recorded v2 plan. |
+| `read_conversation(id)` and `read_run(id)` | Current server records used by the existing result-access producer checks. The producer must belong to this actor/conversation and a recorded current-version plan. |
 | `read_configuration(source_type, *, producer, settings, source)` | An `ExternalSourceConfiguration` reconstructed from current configuration. `source` is the currently authorized agent/action record, or `None` for web/URL/deep research. Reads after restart must not require a live invocation-capture map. |
 | `configuration_admitter(source_type, *, producer, settings, source, selector)` | Required for new non-memory Gather admission. Validates the actual captured invocation configuration against current configuration and returns the captured `ExternalSourceConfiguration`, not a later replacement. Without this callback new admission fails closed; authorized retained reads remain available. |
 | `acquisition_validator(source_type, *, producer, settings, source, selector, current_settings, current_source)` | Required by `preflight_gather_acquisition`; returns `None` only after independently supported current metadata agrees with actual acquisition evidence. Bind `attestor.validate_acquisition`. The current settings and exact origin-bearing source come from fresh provider authorization, never the acquisition envelope. Optional for existing auth-only callers and capture-free retained reads. |
@@ -68,7 +68,7 @@ after execution if the original binding cannot be established.
 `provider.preflight_gather_invocation(*, producer, selector=None)` remains the
 backward-compatible **authorization-only** operation. It returns `None`, creates
 no content digest, alias or configuration proof, and does not call configuration
-metadata. It is not sufficient to establish supported v2 acquisition.
+metadata. It is not sufficient to establish supported acquisition.
 
 The root binds this real operation as `external_source_preflight`. External
 adapters invoke it before engine/import/logger/budget effects and require an
@@ -76,7 +76,7 @@ exact synchronous `None` return. It is not a presence-only readiness flag.
 The separate capture callback still performs the stronger combined
 authorization/support operation below; entry authorization is not capture proof.
 
-For the v2 root capture callback, use
+For the root capture callback, use
 `provider.preflight_gather_acquisition(source_type, *, producer, settings,
 source=None, selector=None)` before capture and effects. This public operation
 reuses the same fresh authorization and exact source resolution, then calls the
@@ -166,7 +166,7 @@ scope/audience path; this method does not enable or implicitly read it.
 
 ### Deterministic research acquisition profile
 
-Captured v2 research initially supports deterministic query and link selection.
+Captured research initially supports deterministic query and link selection.
 This avoids paying for search or page acquisition when later LLM planner request
 controls cannot be attested. Constructor `response_length`/`reasoning_effort`
 defaults do not prove the source-review planner's temperature/token variants,
@@ -210,11 +210,11 @@ LLM query/link planning, not the explicitly attested Foundry search itself.
 This is a new-acquisition restriction, not a settings migration or a new
 retained-read policy. Authorization-only preflight, `attestor.current`, saved
 configuration comparison, and capture-free recovery remain unchanged.
-Uncaptured v1 and workflow Source Review retain their existing defaults and
-planner behavior. The regression matrix in
+Workflow Source Review remains outside this orchestration capture path and
+retains its existing defaults and planner behavior. The regression matrix in
 `functional_tests/test_orchestration_research_pre_effect.py` covers normalized
 profiles, current/actual mismatch, changing current policy between events, zero
-effects, deterministic acquisition/restart and v1 LLM query planning.
+effects, and deterministic acquisition/restart.
 
 ### Current role refresh is an integration requirement
 
@@ -409,9 +409,9 @@ of **Directory.Read.All** to an already-configured application identity, as
 documented by Microsoft for the assignment API. Existing interactive read scopes
 are insufficient. This implementation performs only GET requests: it does not
 grant permissions, construct credentials, change login/scopes/settings, write
-user records, assign roles, or enable the harness. The parent owns initialized
-factory wiring and operator-facing administration documentation; the harness
-remains default-off.
+user records, assign roles, or enable orchestration. The parent owns initialized
+factory wiring and operator-facing administration documentation; Chat
+Orchestration remains default-off.
 
 Fresh HTTP reads do not eliminate Microsoft's directory replication delay:
 the complete group-grant API uses eventual consistency. There is no local role
@@ -678,7 +678,7 @@ The bounded application reader reconstructs `observed-run-v1`; a separately
 available pure pinned-request projection does not enable a pinned fallback.
 
 Action and research model selection uses a strict, conversation-partitioned read
-of the owned v2 run. Only model selector fields, selected group IDs and reasoning
+of the owned run. Only model selector fields, selected group IDs and reasoning
 effort are used from its seeds. Stored roles, endpoint configurations, client
 objects and earlier acquisition evidence are not authority. Named model endpoints
 are resolved through the existing `authorize=True` boundary, including current
@@ -716,7 +716,7 @@ configuration, actual plugin set and model construction proof can be matched
 without inferring hidden core tools or dynamic children. Assigned knowledge,
 dynamic child agents/actions, resource-dependent Foundry tools and new
 Foundry/workflow protocols likewise remain explicit refusals. These limits do
-not change standalone/v1 execution or make the harness runtime-ready.
+not change standalone execution or bypass Chat Orchestration readiness.
 
 `functional_tests/test_orchestration_external_metadata.py` exercises the real SDK
 GET/deserialization path, actual scoped resolvers and action preparation, actual
@@ -831,13 +831,13 @@ def admit(*, producer, prepared):
 Bind `capture` to `capture_external_source_configuration`, `admit` to
 `external_source_admission`, and `provider.authorize` to the result facade's
 `external_source_authorizer`. Bind `provider.preflight_gather_invocation` to
-`external_source_preflight`. These are the **four** required v2 runtime
+`external_source_preflight`. These are the **four** required runtime
 callbacks. Entry preflight performs current authorization, while independent
 fresh pre-effect authorization and current/actual support checks
 execute inside `capture`, including its initial `source=None` preparation;
 retention-time admission is not a substitute. No callback is a no-op readiness
 binding. Missing callbacks still withhold discovery/execution.
-V1 behavior is unchanged. These server callbacks remain private and
+These server callbacks remain private and
 actor/conversation-bound. Construction does not itself grant authority or
 enable a capability. Do not bind bare `attestor.capture`, or replace the new
 operation with auth-only preflight: both would omit supported current metadata
@@ -1004,9 +1004,9 @@ another Gather invocation. A receipt does not bypass current roles, scoped
 membership, or source configuration revisions, and does not change the public
 `TaskResult` wire contract.
 
-Existing capability permissions are reused independently of the new-plan rollout
-switch. Turning off `enable_chat_orchestration_harness` does not itself revoke
-saved results; ordinary capability/access revocation still does.
+Existing capability permissions are reused independently of plan creation.
+Removing the retired orchestration-contract setting does not revoke saved
+results; ordinary capability/access revocation still does.
 
 ## Explicit saved-memory use
 
@@ -1059,5 +1059,5 @@ checks on entry, capture and admission.
 
 This provider attests returned excerpts/findings, not whole-page completeness or
 ongoing remote freshness. It adds no service or storage container. Current identity
-and configuration callbacks are required production dependencies, not evidence
-that the full harness is ready for admission.
+and configuration callbacks are required production dependencies, not optional
+readiness flags.

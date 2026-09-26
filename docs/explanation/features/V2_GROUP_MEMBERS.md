@@ -99,7 +99,8 @@ Everything else works in every status that shows the section.
 
 | File | Purpose |
 |---|---|
-| `application/v2_ui/src/pages/workspace/GroupMembersSection.tsx` | The section: list, requests, row and bulk actions, confirmations |
+| `application/v2_ui/src/pages/workspace/GroupMembersSection.tsx` | The group wrapper. From version 0.261.179 the section itself (list, requests, row and bulk actions, confirmations) is the shared `MembersSection.tsx`, which public workspaces also use; the group's props and behaviour are unchanged |
+| `application/v2_ui/src/pages/workspace/MembersSection.tsx` | The scope-driven section, from version 0.261.179 |
 | `application/v2_ui/src/components/membership/AddMemberDialog.tsx` | Directory search and role choice |
 | `application/v2_ui/src/components/membership/ImportMembersDialog.tsx` | CSV import with per-row results and retry |
 | `application/v2_ui/src/lib/groupMembership.ts` | The membership client, strict response checks, CSV parsing |

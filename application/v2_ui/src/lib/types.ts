@@ -374,7 +374,14 @@ export interface WorkspacePrompt {
      */
     group_id?: string;
     /**
-     * Group scope only. The concurrency marker a conditional write sends back as
+     * Public scope only. The owning public workspace's id, echoed on every public prompt response
+     * so the client can prove a returned prompt belongs to the workspace it asked for -- the
+     * public-scope analogue of `group_id`, the same identity check the public document reader makes.
+     * Absent on personal and group prompts.
+     */
+    public_id?: string;
+    /**
+     * Group and public scope. The concurrency marker a conditional write sends back as
      * `expected_etag`; a mismatch is the 409 that keeps a failed-save draft open.
      */
     etag?: string;
@@ -398,6 +405,8 @@ export interface WorkspaceIdentity {
     scope_id?: string;
     /** Present on native group identities; the owning group, checked against the page group. */
     group_id?: string;
+    /** Present on native public-workspace identities (M10B); checked against the page workspace. */
+    public_workspace_id?: string;
     provider?: string;
     source_type?: string;
     /** Server-normalized capabilities, e.g. ["file_sync"], ["action"] or both. */
@@ -948,20 +957,16 @@ export interface NavGroup<TItem> {
  * One capability the orchestration planner may schedule, as the bootstrap advertises it.
  *
  * This is the deployment's *menu*, not a plan: the plan card reads `label`, `summary` and
- * `cost` to describe steps the server actually chose, and `terminal` marks the answer-writing
- * capability (`respond`) that a narrowing edit must never be allowed to disable. The union
- * members mirror `CostClass` in `orchestration.ts` but are inlined here so this base type
- * module keeps importing nothing — `orchestration.ts` already imports *from* here.
+ * `cost` to describe steps the server actually chose. The union members mirror `CostClass` in
+ * `orchestration.ts` but are inlined here so this base type module keeps importing nothing —
+ * `orchestration.ts` already imports *from* here.
  */
 export interface OrchestrationCapability {
     id: string;
     label: string;
-    /** Only legacy descriptors carry phases; v2 descriptors carry server-owned roles instead. */
-    phase?: string;
     role?: string;
     summary: string;
     cost: 'low' | 'medium' | 'high';
-    terminal: boolean;
 }
 
 /**

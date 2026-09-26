@@ -31,6 +31,8 @@ Favorites and priority are organization-wide preferences, not chat defaults.
 In V2 orchestration's explicit **Auto** mode, eligibility comes first, followed
 by task suitability, priority, favorite, and a stable identity tie-breaker.
 A preferred general-purpose model does not displace a better documented specialist.
+When no connected model is rated for a step's task, Auto ranks the capable models
+by their general-answering suitability instead, and the step's reason says so.
 
 | Preference | Effect |
 | --- | --- |
@@ -85,10 +87,14 @@ their work. Copy any draft content you need, reload the catalog, and review the
 current profile before saving again.
 
 Auto uses only enabled, published connections the requesting user can access.
-Unknown task support, incompatible capabilities, archived profiles, and documented
-Responses-only models cannot be repaired by marking a profile Favorite. The
-existing deployment-specific token guards still apply during execution; Auto
-does not truncate evidence or silently swap models after a budget failure.
+Incompatible capabilities, archived profiles, a task marked **Unsuitable**, and
+documented Responses-only models cannot be repaired by marking a profile Favorite.
+**Unknown** task support never outranks a model rated for that task. It matters only
+when no connected model is rated for the task, and then only through the profile's
+general-answering suitability. Rate the task explicitly when you know how a model
+performs it. The existing deployment-specific token guards still apply during
+execution; Auto does not truncate evidence or silently swap models after a budget
+failure.
 
 See [Choose models for orchestration]({{ '/guides/model-catalog-routing/' | relative_url }})
 for the user workflow and [AI Models settings]({{ '/admin/ai-models/' | relative_url }})

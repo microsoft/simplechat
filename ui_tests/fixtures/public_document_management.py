@@ -1,11 +1,11 @@
 # public_document_management.py
 """
 Closed M3B public document management responses for the real production V2 SPA.
-Version: 0.261.180
+Version: 0.261.179
 Implemented in: 0.261.133
 Server-verbatim propagation failure (`propagation_incomplete`): 0.261.164
 Every receipt builder, a manager's rows, the tag list and the download headers are the real
-management routes', held to them by functional_tests/test_public_document_fixture_parity.py: 0.261.180
+management routes', held to them by functional_tests/test_public_document_fixture_parity.py: 0.261.179
 
 Reuse M3A public reads, local production assets, request recording, response gates
 and Azure Playwright connection options. Reads and operations share the immutable

@@ -1,8 +1,9 @@
 # test_v2_group_actions.py
 """
 Production-SPA coverage for the native scope-aware V2 group actions workbench.
-Version: 0.261.166
+Version: 0.261.178
 Implemented in: 0.261.137
+Group retired MCP remote reconfiguration requirement: 0.261.178
 
 Exercises the real action collection, editor and connection-test path against closed
 synthetic HTTP. The fixture only serves the immutable `/api/groups/<id>/actions`
@@ -15,6 +16,7 @@ keeps the draft with a reload offer. A companion runtime check proves a group A 
 never restores into group B or personal scope.
 """
 
+import copy
 import os
 import re
 import subprocess
@@ -27,7 +29,7 @@ from playwright.sync_api import expect
 
 from ui_tests.fixtures.workspace_authoring import ORIGIN
 from ui_tests.fixtures.group_actions import (  # noqa: F401
-    GroupActionsFixture, connect_options, group_actions_ui,
+    connect_options, group_actions_ui,
     EDITABLE_ACTION_ID, WITHHELD_ACTION_ID, MEMBER_ACTION_ID,
     IDENTITY_ACTION_ID, MCP_ACTION_ID, PROVIDED_ACTION_ID, BOUND_IDENTITY_ID,
 )
@@ -359,6 +361,44 @@ def test_group_mcp_editor_hides_personal_preconfigurations_but_keeps_presets(gro
     assert [entry for entry in ui.requests if entry.path == "/api/plugins/mcp/presets"], (
         "Scope-neutral MCP presets should still load in group scope."
     )
+
+
+@pytest.mark.parametrize("theme,width,height", LAYOUTS)
+def test_group_retired_mcp_requires_explicit_remote_reconfiguration(group_actions_ui, theme, width, height):
+    """A retired group MCP action stays blocked until the manager chooses a supported remote endpoint."""
+    ui, page = group_actions_ui, group_actions_ui.page
+    ui.record("group-a", MCP_ACTION_ID)["endpoint"] = "stdio://legacy-command"
+    ui.record("group-a", MCP_ACTION_ID)["additionalFields"].update({
+        "transport": "stdio", "command": "legacy-command", "args": ["legacy-argument"],
+    })
+    before = copy.deepcopy(ui.record("group-a", MCP_ACTION_ID))
+    open_editor(ui, MCP_ACTION_ID, theme=theme, width=width, height=height)
+    editor_section(page, "Configuration")
+    transport = action_field(page, "Transport")
+    expect(transport).to_have_value("stdio")
+    expect(transport.get_by_role("option", name="Stdio — no longer supported", exact=True)).to_be_disabled()
+    expect(page.get_by_text(
+        "MCP actions support remote transports only. Local commands and stdio are no longer supported, including administrator-managed actions.",
+        exact=True,
+    )).to_be_visible()
+    expect(page.get_by_text("cannot be executed in any workspace", exact=False)).to_be_visible()
+    expect(page.get_by_role("button", name="Discover MCP tools", exact=True)).to_be_disabled()
+    expect(page.get_by_role("button", name="Test MCP connection", exact=True)).to_be_disabled()
+    expect(action_field(page, "MCP server endpoint")).to_be_disabled()
+    assert not ui.writes
+    assert ui.record("group-a", MCP_ACTION_ID) == before
+
+    transport.select_option("streamable_http")
+    endpoint = action_field(page, "MCP server endpoint")
+    expect(endpoint).to_be_enabled()
+    expect(endpoint).to_have_value("stdio://legacy-command")
+    expect(page.get_by_role("button", name="Discover MCP tools", exact=True)).to_be_disabled()
+    endpoint.fill("https://mcp.example.test/reconfigured")
+    expect(page.get_by_role("button", name="Discover MCP tools", exact=True)).to_be_enabled()
+    expect(page.get_by_role("button", name="Test MCP connection", exact=True)).to_be_enabled()
+    expect(page.get_by_text("cannot be executed in any workspace", exact=False)).to_have_count(0)
+    assert ui.record("group-a", MCP_ACTION_ID) == before
+    assert not ui.writes
 
 
 def test_group_without_the_actions_capability_shows_call_agent(group_actions_ui):

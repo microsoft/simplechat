@@ -3,16 +3,17 @@
 
 Ordinary chat attaches chart, Mermaid and image-proposal guidance to a request and lets
 the model that holds the tool results draw the chart. An orchestrated run splits that
-work: gathering steps hold the raw results, and only the final answer step writes the
-reply. This module decides which visuals a run should consider, builds the guidance each
-step needs, and carries charts created during gathering into the answer.
+work: gathering steps hold the raw results, and only the answer step writes the reply.
+The planner names the visuals a step should author as structured ``visuals`` arguments;
+this module builds the guidance each step needs from those flags, and carries charts
+created during gathering into the answer. No visual is inferred from keywords.
 
 Saved instruction memories are respected by the same rule the memory system already
 states: an explicit ask in the current message wins, otherwise a saved instruction about
 visuals overrides proactive or suggested visuals, and style preferences apply wherever a
 visual is authored.
 
-Version: 0.261.132
+Version: 0.261.139
 """
 
 import hashlib
@@ -24,15 +25,12 @@ from functions_chart_operations import (
     build_proactive_chart_guidance_message,
     collect_inline_chart_blocks,
     normalize_inline_chart_markdown,
-    user_request_supports_proactive_charts,
-    user_requested_chart_visualization,
 )
-from functions_diagram_operations import build_diagram_guidance_message, user_requested_diagram
+from functions_diagram_operations import build_diagram_guidance_message
 from functions_image_proposals import (
     INLINE_IMAGE_PROPOSAL_BLOCK_LANGUAGE,
     build_image_proposal_guidance_message,
     image_generation_is_enabled,
-    user_request_supports_image_proposals,
 )
 
 
@@ -44,17 +42,6 @@ MAX_CARRIED_CHART_MARKDOWN_LENGTH = 200000
 # memories in this tag. Matching it keeps the recalled facts, which are only background
 # context, out of the chart sub-step.
 INSTRUCTION_MEMORY_TAG = '<Instruction Memory>'
-
-_PLANNED_CHART_PATTERN = re.compile(r'\b(?:chart|charts|charted|charting|plot|plots|plotted|graph|graphs)\b')
-_PLANNED_IMAGE_PATTERN = re.compile(
-    r'\b(?:image|images|illustration|illustrations|picture|pictures|poster|posters|infographic|'
-    r'infographics|storyboard|concept art)\b'
-)
-_NON_VISUAL_CHART_PHRASES = ('chart of accounts', 'org chart', 'organization chart', 'organizational chart')
-
-
-def _joined_text(texts):
-    return '\n'.join(str(value).strip() for value in (texts or ()) if str(value or '').strip())
 
 
 def image_proposals_available(settings):
@@ -73,46 +60,6 @@ def planner_visual_outputs(settings):
         'charts': True,
         'diagrams': True,
         'image_proposals': image_proposals_available(settings),
-    }
-
-
-def _planned_chart(text):
-    lowered = text.lower()
-    if any(phrase in lowered for phrase in _NON_VISUAL_CHART_PHRASES):
-        return False
-    return bool(_PLANNED_CHART_PATTERN.search(lowered))
-
-
-def requested_visual_outputs(user_texts=(), planned_texts=(), *, settings=None, seeds=None):
-    """Which visuals a step should consider for this request.
-
-    ``user_texts`` are the user's own words and their contextualized form; an explicit
-    visual request there is the user's current instruction. ``planned_texts`` are what the
-    planner wrote for this run (a step task or the answer instruction); the planner already
-    weighed saved memory, so a visual it asked for is deliberate. Proactive chart markers
-    only come from the user's words and never create a chart during gathering.
-    """
-    user_text = _joined_text(user_texts)
-    planned_text = _joined_text(planned_texts)
-    images_available = image_proposals_available(settings)
-    image_selected = images_available and image_requested_by_user(seeds)
-    explicit_chart = user_requested_chart_visualization(user_text)
-    planned_chart = bool(planned_text) and (
-        user_requested_chart_visualization(planned_text) or _planned_chart(planned_text)
-    )
-    return {
-        'explicit_chart': explicit_chart,
-        'chart': explicit_chart or planned_chart,
-        'proactive_chart': not explicit_chart and user_request_supports_proactive_charts(user_text),
-        'diagram': user_requested_diagram(user_text) or (
-            bool(planned_text) and (user_requested_diagram(planned_text) or 'mermaid' in planned_text.lower())
-        ),
-        'image': images_available and (
-            image_selected
-            or user_request_supports_image_proposals(user_text)
-            or bool(_PLANNED_IMAGE_PATTERN.search(planned_text.lower()))
-        ),
-        'image_required': image_selected,
     }
 
 
@@ -152,11 +99,6 @@ def build_visual_output_policy(visuals, *, has_existing_charts=False):
             'as an illustration, scene, poster, concept art, or visual explainer. Never propose an image of '
             'data that is already charted or of structure that is already diagrammed. When the user asks '
             'for images, propose as many distinct images as the request needs.'
-        )
-    if visuals.get('image_required'):
-        lines.append(
-            '- The user selected Image for this request: include at least one image proposal that supports '
-            'it, and more when the request calls for several.'
         )
     return '\n'.join(lines)
 

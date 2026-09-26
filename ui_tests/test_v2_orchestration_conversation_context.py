@@ -1,7 +1,7 @@
 # test_v2_orchestration_conversation_context.py
 """
 Browser regressions for orchestration follow-up and clarification transport.
-Version: 0.261.122
+Version: 0.261.139
 Implemented in: 0.261.096
 Model selection transport and live answer attribution: 0.261.103
 
@@ -60,14 +60,14 @@ async ({ mode, ask, conversationId }) => {
                     plan_id: 'plan-' + body.turn_id, run_id: 'run-' + body.turn_id,
                     turn_id: body.turn_id, revision: body.revision,
                     conversation_id: conversationId, user_id: 'test-user',
-                    planner_contract_version: 1,
+                    planner_contract_version: 2,
                     intent: { summary: 'Wineries near Grants Pass open Wednesdays', complexity: 'simple' },
                     assumptions: [],
                     steps: [{
-                        step_id: 'answer', capability_id: 'respond', title: 'Answer',
+                        step_id: 'answer', capability_id: 'compose', title: 'Answer',
                         rationale: '', arguments: {}, depends_on: [],
                         optional: false, enabled: true, estimated_cost: 'low',
-                        status: 'pending', phase: 'reasoning',
+                        status: 'pending', role: 'reason',
                     }],
                     approval: {
                         mode, timeout_seconds: 3, state: mode === 'auto' ? 'approved' : 'pending',

@@ -52,7 +52,7 @@ The internal M2 producer contract, implemented in **0.261.127** and tracked with
 the application version in `application/single_app/config.py`, relates to #1509.
 It is separate from the standalone and workflow Compare behavior above.
 
-For a server-owned v2 plan, `run_document_comparison(...,
+For a server-owned orchestration plan, `run_document_comparison(...,
 result_version="comparison-v1")` keeps the full text of each completed pairwise
 comparison. It records the baseline identity, ordered target identities,
 per-source window coverage, per-target completion state, limitations, and safe

@@ -15,7 +15,7 @@ Saved-record source adapter implemented in version: **0.261.119**, tracked in
 
 Strict structured/text renderer core implemented in version: **0.261.126**,
 tracked in the same `config.py`. This is a callable serialization layer, not
-activation of the orchestration rendering harness.
+activation of file rendering in orchestration.
 
 Headless Office registry bridge implemented in version: **0.261.126**. The
 shared facade can render explicit complete sources as XLSX, DOCX, PDF and PPTX;
@@ -396,7 +396,7 @@ does not skip checks or mislabel cancellation as an automatic retry condition.
 
 ### Runtime Integration Boundary
 
-The orchestration harness integrated in **0.261.127** uses:
+Gather / Reason / Render orchestration uses:
 **authorized source adapter -> explicit shared renderer -> existing private
 artifact transport -> per-file committed visibility**. Gather and Reason supply
 retained data or prepared content; explicit Render tasks create files. The
@@ -409,7 +409,7 @@ UI. The output lifecycle owns authorized retained inputs, independent file
 commit, three automatic attempts, and separately requested manual retry.
 Existing Office response/message callers are unchanged; explicit profiles call
 the headless helpers instead. See
-[the orchestration harness](ORCHESTRATION_RENDERING_HARNESS.md) and
+[Gather / Reason / Render orchestration](ORCHESTRATION_GATHER_REASON_RENDER.md) and
 [its output lifecycle](ORCHESTRATION_OUTPUT_LIFECYCLE.md).
 
 ### Response Paths

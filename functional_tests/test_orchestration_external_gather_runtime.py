@@ -1,10 +1,11 @@
 # test_orchestration_external_gather_runtime.py
 """External Gather content retains real authorization lineage through composition.
 
-Version: 0.261.130
+Version: 0.261.139
 Implemented in: 0.261.127
 Empty-result lineage coverage added in: 0.261.129
 Authorization/capture gating and fingerprint coverage extended in: 0.261.130
+Single orchestration contract updated in: 0.261.139
 Provider identity, configuration and storage I/O are isolated; runtime and facade are real.
 """
 
@@ -56,10 +57,8 @@ def test_every_external_capability_requires_callable_acquisition_guards(runtime,
         {}, request_context=context, candidate_ids=[capability_id],
         contract_version=2, unavailable=unavailable,
     )
-    legacy = runtime.registry.get_capability(capability_id)
     assert available == []
     assert unavailable == {capability_id: 'external_result_lineage_unavailable'}
-    assert 'runtime_bindings' not in legacy and 'runtime_binding' not in legacy
 
 
 @pytest.mark.parametrize('name', ['external_source_preflight', 'capture_external_source_configuration'])
@@ -73,19 +72,15 @@ def test_context_rejects_noncallable_external_acquisition_guards(runtime, name, 
     assert caught.value.code == 'result_external_reader_required'
 
 
-@pytest.mark.parametrize('version', [1, 2])
 @pytest.mark.parametrize('name', ['external_source_preflight', 'capture_external_source_configuration'])
-def test_external_acquisition_guards_are_ephemeral_and_preserve_checkpoint_fingerprints(runtime, version, name):
+def test_external_acquisition_guards_are_ephemeral_and_preserve_checkpoint_fingerprints(runtime, name):
     context = runtime.executor.RunContext(
         run_id='run-1', plan_id='plan-1', conversation_id='conversation-1', user_id='owner',
-        user_message='', plan_contract_version=version,
+        user_message='', plan_contract_version=2,
     )
-    steps = [compose()] if version == 2 else [
-        {'step_id': 'answer', 'capability_id': 'respond', 'arguments': {}},
-    ]
     plan = runtime.schema.normalize_plan(
-        {'steps': steps}, 'conversation-1', 'owner', settings={}, contract_version=version,
-        available_capability_ids=['compose'] if version == 2 else ['respond'],
+        {'steps': [compose()]}, 'conversation-1', 'owner', settings={}, contract_version=2,
+        available_capability_ids=['compose'],
     )
     state_before = runtime.checkpoints.context_state(context)
     binding_before = runtime.checkpoints.context_binding(context, plan, {})

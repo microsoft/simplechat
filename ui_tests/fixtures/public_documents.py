@@ -4,7 +4,7 @@ Closed M3A public document HTTP fixtures for the real production V2 SPA.
 Version: 0.261.183
 Implemented in: 0.261.132
 The served rows, read texts and refusals are the real read routes', held to them by
-functional_tests/test_public_document_fixture_parity.py: 0.261.180
+functional_tests/test_public_document_fixture_parity.py: 0.261.179
 A generated artifact awaiting publication is shown, held, only to a workspace manager; to anyone
 else it does not exist: 0.261.183
 chat_list is the public chat document list as its route answers it, pending artifacts left out for

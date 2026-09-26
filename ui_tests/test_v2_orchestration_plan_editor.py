@@ -1,7 +1,7 @@
 # test_v2_orchestration_plan_editor.py
 """
 Focused real-component browser tests for conversational orchestration plan editing.
-Version: 0.261.127
+Version: 0.261.139
 Implemented in: 0.261.102
 
 Only HTTP boundaries are mocked. The real store, shared SSE reader, controller,
@@ -53,6 +53,7 @@ def make_plan(conversation="editor-chat", turn="editor-turn", mode="manual", rev
         "turn_id": turn,
         "conversation_id": conversation,
         "revision": revision,
+        "planner_contract_version": 2,
         "user_id": "editor-tester",
         "intent": {"summary": f"Compare quarterly reports for {conversation}", "complexity": "complex"},
         "inputs": {"documents": [
@@ -61,15 +62,28 @@ def make_plan(conversation="editor-chat", turn="editor-turn", mode="manual", rev
         ], "web": False},
         "steps": [
             {"step_id": "read", "capability_id": "search_documents", "title": "Read quarterly reports",
-             "arguments": {"document_ids": ["doc-a", "doc-b"]}, "phase": "knowledge",
+             "arguments": {"document_ids": ["doc-a", "doc-b"]}, "role": "gather",
+             "outputs": [{"name": "findings", "kind": "text-v1"}],
              "estimated_cost": "low", "enabled": True, "status": "pending"},
             {"step_id": "research", "capability_id": "deep_research", "title": "Investigate context",
-             "arguments": {}, "phase": "knowledge", "estimated_cost": "medium",
+             "arguments": {}, "role": "gather", "outputs": [{"name": "context", "kind": "text-v1"}],
+             "estimated_cost": "medium",
              "enabled": True, "status": "pending"},
-            {"step_id": "answer", "capability_id": "respond", "title": "Write the comparison",
-             "arguments": {}, "phase": "reasoning", "estimated_cost": "low",
+            {"step_id": "answer", "capability_id": "compose", "title": "Write the comparison",
+             "arguments": {}, "role": "reason",
+             "depends_on": ["read"],
+             "inputs": {
+                 "findings": {"binding": {"version": "orchestration-input-binding-v1", "step_id": "read",
+                                          "output_name": "findings", "existing_result": None}},
+             },
+             "outputs": [{"name": "answer", "kind": "markdown-v1"}],
+             "delivers": ["answer"], "estimated_cost": "low",
              "enabled": True, "status": "pending"},
         ],
+        "final_response": {"version": "orchestration-input-binding-v1", "step_id": "answer",
+                           "output_name": "answer", "existing_result": None},
+        "deliverables": [{"id": "answer", "kind": "answer", "requested": "explicit",
+                          "status": "planned", "description": "A comparison answer."}],
         "approval": {"mode": mode, "timeout_seconds": 1, "state": "pending"},
         "status": "awaiting_approval",
     }
@@ -146,7 +160,8 @@ class EditorApi:
                 plan["steps"].insert(-1, {
                     "step_id": f"web-{old['revision'] + 1}", "capability_id": "web_search",
                     "title": "Search the web", "arguments": {"query": instruction},
-                    "phase": "knowledge", "enabled": True, "estimated_cost": "low", "status": "pending",
+                    "role": "gather", "enabled": True, "estimated_cost": "low", "status": "pending",
+                    "outputs": [{"name": "findings", "kind": "text-v1"}],
                 })
             if "remove" in instruction.lower():
                 plan["steps"] = [step for step in plan["steps"] if step["capability_id"] != "web_search"]

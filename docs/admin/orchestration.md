@@ -5,7 +5,7 @@ description: "Orchestration lets a user describe what they want and have SimpleC
 section: "Administration"
 audience: admin
 admin_tab: orchestration
-version: "0.261.131"
+version: "0.261.140"
 ---
 
 
@@ -68,63 +68,55 @@ governance; this is not a read-only mode.
 ### Chat Orchestration {#chat-orchestration-section}
 
 Adds an orchestration mode to the V2 chat composer. While it is on, capability
-toggles and advanced agent/reasoning controls collapse behind a disclosure.
-Since **0.261.126**, the orchestration model picker remains visible: choose a
-specific model to pin it, or **Auto - choose per step** to select connected
-models using catalog suitability, administrator priority, and favorites.
-This is separate from automatic plan approval. See
-[Model Catalog]({{ '/admin/model-catalog/' | relative_url }}).
+toggles and the model, agent, and reasoning pickers collapse behind a **Manual
+controls** disclosure. The orchestration model picker offers **Auto - choose per
+step**, which selects connected models using catalog suitability, administrator
+priority, and favorites, or a specific model to pin. This is separate from automatic
+plan approval. See [Model Catalog]({{ '/admin/model-catalog/' | relative_url }}).
+
+Since **0.261.137**, the picker sits under **Manual controls** in the normal model
+picker's place (from **0.261.126** it was shown above the message box). Auto is the
+default wherever a connected model has a catalog profile that allows per-step
+selection and is rated for general answering, and each user's choice is saved to their
+account. When **Keep The Manual
+Composer Controls Available** is off, users cannot reach the picker, so orchestration
+uses Auto (or the default model when Auto cannot be used) regardless of a saved pin.
 
 #### Settings
 
 | Setting | What it does | Default | Notes |
 | --- | --- | --- | --- |
-| Enable Chat Orchestration | Makes orchestration mode available in the V2 chat composer. | Off | `enable_chat_orchestration` |
-| Gather / Reason / Render harness (preview) | Opts new plans into reusable retained results and explicit file-rendering tasks once the server admits the complete harness path. | Off (`false`) | `enable_chat_orchestration_harness`; requires Enable Chat Orchestration and server rollout readiness. Not a per-format switch. |
+| Enable Chat Orchestration | Makes orchestration mode available in the V2 chat composer. New plans use Gather / Reason / Render whenever this is on. | Off | `enable_chat_orchestration` |
 
-### Preview admission for new plans
+### Single Gather / Reason / Render contract
 
-**Rollout control implemented in version: 0.261.127**, tracked by
+**Single-contract rollout implemented in version: 0.261.139**, tracked by
 `application/single_app/config.py`. Refs
 [microsoft/simplechat#1509](https://github.com/microsoft/simplechat/issues/1509).
 
-Use this opt-in to pilot plans that separate acquiring inputs (**Gather**), preparing
-reusable results (**Reason**), and producing requested files (**Render**). Retained
-results let several representations use the same completed work rather than repeat
-analysis for each file. In an admitted harness plan, only explicit Render tasks create
-downloadable files; retaining evidence, records or a prepared report is not itself an
-export. The roles follow dependencies, not a mandatory three-stage sequence.
+Gather / Reason / Render is now the only plan architecture. New plans separate
+acquiring inputs (**Gather**), preparing reusable results (**Reason**), and
+producing requested files or images (**Render**) whenever **Enable Chat
+Orchestration** is on. There is no separate preview, harness, admission, or
+readiness setting. Stored `enable_chat_orchestration_harness` values are removed
+when settings load or save.
 
-Both settings default to `false`. The server may select **contract v2 for a new plan**
-only when `enable_chat_orchestration` and `enable_chat_orchestration_harness` are true
-**and** its rollout admission is ready. Version **0.261.127** supplies the admitted
-runtime, but does not enable either setting on existing deployments. Saving the
-preview switch never bypasses current capability or source access. Until all
-three conditions hold, enabled orchestration keeps the legacy **contract v1** path.
-When Enable Chat Orchestration is off, new orchestration remains unavailable.
+Retained results let several representations use the same completed work rather
+than repeat analysis for each file. Only explicit Render tasks create
+downloadable files; retaining evidence, records or a prepared report is not
+itself an export. The roles follow dependencies, not a mandatory three-stage
+sequence.
 
-Since **0.261.131**, a request that selects **Auto - choose per step** stays on
-contract v1 even when the preview is admitted. Only that standard step executor
-enforces per-step model bindings. Choose a specific model to use the harness.
-Harness replies, including later model-free file-status updates, pass the same
-[chat output content checks]({{ '/explanation/features/CHAT_CONTENT_CHECKS/' | relative_url }})
-as ordinary chat before they are saved.
-
-This control does not enable individual file formats, grant capability or model access,
-or bypass approval, token, time or step budgets. Keep the existing capability selection
-and limits appropriate for the pilot. Standalone Analyze/Compare, ordinary chat exports,
-and workflows keep their existing behavior.
-
-For rollback, clear **Gather / Reason / Render harness (preview)** to prevent **new v2
-plans**. Previously saved v2 plans, results and outputs keep their recorded contract;
-this setting must not reinterpret, delete or automatically rerun them. Their authorized
-reads and recovery remain governed by their saved version and existing access checks.
-Legacy plans are not migrated by either enabling or disabling the preview.
+Plans created by an earlier orchestration version no longer open or rerun. They
+are omitted from the conversation run list and from the planner's earlier-run
+context. Direct attempts to open, edit, retry, restore, continue, cancel, or read
+catalog information for one return the standard message: "This plan was created
+by an earlier orchestration version and can't be opened or rerun. Start a new
+request." Their saved data is still removed when the conversation is deleted.
 
 The [file creation guide](../guides/create-files-with-orchestration.md) explains
 how to review shared result bindings, choose compatible representations and
-recover one file without repeating completed work. It describes the admitted
-v2 preview, not a change to legacy plans or standalone export settings.
+recover one file without repeating completed work.
 
 ### Retained external-source authorization
 
@@ -137,14 +129,14 @@ external capabilities.
 The read-only Microsoft Graph identity reader uses the existing
 application registration's confidential credentials and requires administrator
 consent for the **application** permission `Directory.Read.All`. This is separate
-from the delegated sign-in scopes. The harness does not request consent, grant
+from the delegated sign-in scopes. Orchestration does not request consent, grant
 permissions, change role assignments, or widen the ordinary login scopes
 automatically. Missing permission must leave affected external results
 unavailable, rather than fall back to old session claims.
 
 This dependency is specific to retained external-source authorization; it is not
 a new Graph permission requirement for document-backed or source-free results,
-the shared file serializers, ordinary chat, or legacy orchestration. Group,
+the shared file serializers, ordinary chat, or plans created by an earlier orchestration version. Group,
 workspace, agent/action governance, and content-screening checks still apply
 independently. See [Retained external source access]({{ '/explanation/features/ORCHESTRATION_EXTERNAL_SOURCE_ACCESS/' | relative_url }})
 for the server callback boundary and the current integration status.
@@ -197,33 +189,38 @@ An empty selection also means all otherwise-enabled capabilities. **Use an actio
 (`action_invoke`) still requires **Enable Action Access**, even with an empty list or
 every capability selected. Selecting the capability alone never opts a deployment in.
 
-Legacy **Answering** remains available. For admitted harness plans, **Prepare
-content** (`compose`) controls reusable drafting and structured content, while
-**Create a file** (`render_file`) controls explicit exports. Neither is implicitly
-granted by a non-empty legacy capability selection. Both admin surfaces preserve
-these selections; an explicitly legacy-only selection does not become permission
-for every newly added capability when saved.
+**Prepare content** (`compose`) controls reusable drafting, structured content,
+and the chat answer selected by `final_response`. **Create a file**
+(`render_file`) controls explicit exports. If a stored nonempty capability list
+still contains the removed `respond` capability, it is read as `compose`, so
+narrowed deployments keep answering. The stored list is not rewritten, because
+runs saved before the upgrade are bound to the settings they ran under; both
+admin pages show **Prepare content** selected, and the next save of the list
+stores `compose`. Nothing adds `render_file` or `generate_image`; include those
+explicitly when restricted plans should create files or requested images.
 
-Selecting either harness capability does not enable the preview, bypass server
-readiness, or grant source/model access. The harness still publishes truthful
-delivery status when composition is not requested, including file-only plans
-that consume already retained results.
+Since **0.261.138**, **Generate images** (`generate_image`) lets a plan generate
+the images a user asks for, one planned task per image and at most four per plan. The
+images appear in the answer and are embedded in DOCX, PDF, and PowerPoint files. It also
+requires **Enable Image Generation** and a configured image model; users gain no image
+access they did not already have. Clearing it keeps requested images out of plans, and
+the plan then lists them as not available with the reason "The capability that produces
+this is not enabled for orchestration." Images a plan only suggests remain approval cards,
+controlled by image generation alone.
+
+Selecting a capability does not grant source/model access or enable another
+feature's prerequisite. Orchestration still publishes truthful delivery status
+when composition is not requested, including file-only plans that consume already
+retained results.
 
 #### How a plan is ordered
 
-Legacy (contract v1) plans assign every capability to one of three phases and move
-through them in order:
-
-| Phase | What happens | Capabilities |
-| --- | --- | --- |
-| Gathering knowledge | Finding out what is true | Document search, document analysis, document comparison, spreadsheet analysis, web search, reading linked pages, deep research, Ask an agent, Use an action |
-| Reasoning | Saying something about it | Answering |
-| Creating | Producing files and other artifacts | Not yet available |
-
-For legacy plans, the order is enforced rather than suggested. A plan cannot go looking
-for something after it has already answered, because the answer would be written without
-the very evidence the later step found. Admitted harness plans instead follow the
-dependencies described under Preview admission for new plans.
+Gather, Reason and Render are roles, not mandatory phase buckets. Named result
+bindings and explicit dependencies decide the order, so a plan may gather,
+reason, gather again, and then reason from the combined results. The answer is
+written by the `compose` step selected by `final_response`; that step cannot be
+disabled in the plan editor. Invalid plans are refused rather than repaired by
+silently reordering phases, dropping documents, or appending an answer step.
 
 #### The more expensive capabilities
 
@@ -309,7 +306,7 @@ Action steps gather findings before the normal answering step. This ordering des
 the plan's intent, not a guarantee that an action cannot change data. Existing operation
 restrictions and confirmation behavior remain intact. The focused loop can make model
 calls and is bounded by the existing `max_auto_invoke_attempts` setting, step/run timeouts
-and cancellation. No output phase or composer action picker is added.
+and cancellation. No composer action picker is added.
 
 ### Charts, diagrams, and images in answers
 
@@ -326,8 +323,10 @@ image proposal cards, without an extra setting:
   Image control is usable in Orchestrate and asks for at least one card.
 
 Users' saved Instruction memories shape these visuals; for example, a saved "no charts"
-instruction stops charts they did not ask for. The Gather/Reason/Render harness preview
-does not produce these visuals yet.
+instruction stops charts they did not ask for. Since **0.261.134**, Gather/Reason/Render
+Gather / Reason / Render plans produce these visuals too: the planner names them on the task that
+authors them, and a charted action step works under orchestration invocation capture
+without calling the integration again.
 
 ### Limits {#chat-orchestration-limits-section}
 
@@ -376,6 +375,24 @@ configured model connection, supply its endpoint and model IDs; the deployment a
 provider, when supplied, must agree with that selection. Model access is checked for
 the requesting user. A deployment-only override uses the classic chat/APIM connection.
 
+Since **0.261.137**, both admin pages set this with one **Planner model** dropdown
+instead of four text boxes. The dropdown lists the same models the default chat model
+picker offers: the chat models your AI Connections publish, or the classic
+(single-endpoint or APIM) deployments when connections are off. **Use the answer
+model (default)** leaves all four settings blank. Choosing a connection model saves its
+endpoint, model ID, and provider and leaves the deployment blank, so the runtime reads
+the request model from the connection. Choosing a classic deployment saves only its
+name. The V2 page lists saved connections, so save a new connection there before choosing
+it; the classic page lists connections as they are edited on the page and saves them
+together with the planner choice.
+
+A saved planner model that no longer appears in the list, for example after its
+connection was removed, is shown as not in the current model list and kept until you
+choose another. It is never replaced automatically; planning fails with a model
+availability error instead. A V2 save that could never resolve is refused, such as a
+model ID without its endpoint, or a classic deployment with a provider other than
+Azure OpenAI.
+
 The answer choice is saved with the plan and checked again when it runs. Changing the
 admin default during approval does not switch that answer to a different model.
 Plan edits and editor questions retain that saved choice, unless a separate planner
@@ -389,12 +406,14 @@ First turns without history and simple acknowledgments skip that call.
 
 #### Settings
 
+The **Planner model** dropdown writes these four stored settings together.
+
 | Setting | What it does | Default | Notes |
 | --- | --- | --- | --- |
-| Planner deployment name | Names a separate planning deployment without changing the answer model. When all planner fields are blank, planning uses the manual selection or admin default. | Empty | `chat_orchestration_planner_deployment` |
-| Planner model id | Identifies the model when planning through a configured model endpoint. | Empty | `chat_orchestration_planner_model_id` |
-| Planner model endpoint id | Identifies the endpoint when planning through a configured model endpoint rather than the default deployment. | Empty | `chat_orchestration_planner_model_endpoint_id` |
-| Planner model provider | Identifies the provider when planning through a configured model endpoint. | Empty | `chat_orchestration_planner_model_provider` |
+| Planner deployment name | Names a separate classic planning deployment without changing the answer model. When all planner fields are blank, planning uses the manual selection or admin default. | Empty | `chat_orchestration_planner_deployment`; blank for a connection model |
+| Planner model id | Identifies the model when planning through a configured model connection. | Empty | `chat_orchestration_planner_model_id` |
+| Planner model endpoint id | Identifies the connection when planning through a configured model connection rather than the classic deployment. | Empty | `chat_orchestration_planner_model_endpoint_id` |
+| Planner model provider | Records the connection's provider for a connection model. | Empty | `chat_orchestration_planner_model_provider` |
 
 ## Run history and switching devices
 
@@ -453,8 +472,8 @@ deletion and archive-and-remove; existing archived messages are unaffected.
    verify: pilot users see an orchestration control in the V2 composer, and a plan appears
    for review before any work runs.
 
-2. **Reduce planning cost.** Set a smaller planner deployment. Outcome to verify: plans are
-   still produced for document questions, and the planner deployment shows the traffic.
+2. **Reduce planning cost.** Choose a smaller model in the **Planner model** dropdown. Outcome
+   to verify: plans are still produced for document questions, and the planner model shows the traffic.
 
 3. **Adopt orchestration for search only.** Clear document analysis and document comparison
    in Capabilities. Outcome to verify: plans use document search and answering, and never
@@ -468,10 +487,17 @@ deletion and archive-and-remove; existing archived messages are unaffected.
 
 ## Troubleshooting
 
+Since **0.261.140**, planner rejection events identify the specific validation rule,
+and execution failures include their preparation stage. Use the conversation or
+run ID to correlate its hashed identifier in
+[orchestration failure diagnostics](../reference/logging-tags.md#orchestration-failure-diagnostics).
+The HTTP status alone is insufficient: a planning stream can return HTTP 200 and
+then report a rejected proposal.
+
 | Symptom | Likely cause | Fix |
 | --- | --- | --- |
 | No orchestration control appears in chat | The setting is off, or the user is in the classic interface. | Confirm Enable Chat Orchestration is on, and that the user is on a V2 chat page. |
-| The preview does not produce new v2 plans | The main orchestration setting is off or server rollout admission is not ready. | Check both settings and deployment readiness. The preview is an opt-in, not a way to bypass server admission. Existing saved plans deliberately keep their original contract. |
+| A saved run says it was created by an earlier orchestration version | The run predates the current plan architecture and is refused rather than interpreted. | Start a new request in the same conversation. Earlier-version runs are omitted from the run list and cannot be rerun. |
 | Plans never mention documents | No workspace capability is enabled, or nothing in the user's documents matched the question. | Confirm at least one workspace type is enabled, and that the user has documents that have finished processing. |
 | Every plan is a single answering step | Capabilities are narrowed to answering only, or the retrieval capabilities are disabled elsewhere. | Review Capabilities on this page, then confirm document search and web search are enabled in their own settings groups. |
 | A plan is smaller than expected | The step cap trimmed it. | Raise Maximum steps in a plan, or ask a narrower question. |
@@ -480,6 +506,7 @@ deletion and archive-and-remove; existing archived messages are unaffected.
 | A pending plan reports changed conversation context | A referenced message or its visibility changed after planning. | Create a new plan using the current conversation. |
 | Plans never propose deep research or reading a link | The user does not hold the required app role, or the capability is disabled in its own settings group. | Confirm the user holds `DeepResearchUser` or `UrlAccessUser` where your deployment requires them, and that the capability is enabled outside this page. |
 | Plans never propose an agent | Semantic Kernel is off, the user has turned agents off in their own settings, or the user has no agent they can reach. | Confirm Semantic Kernel is enabled, then check the user's own agent setting and that at least one agent is shared with them. |
+| The planner model shows "not in the current model list" | Its connection or model was removed or disabled, or connections were switched on or off since it was chosen. | Choose a listed model, or **Use the answer model (default)**. Until then planning keeps trying the saved model and fails rather than switching. |
 | Plans never propose Use an action | Action Access is off, Semantic Kernel is off, the capability is excluded, or no eligible action is available to this user. | Check the opt-in and capability selection, then the existing action scope and governance. Call agent actions are not eligible for direct use. |
 | An action step fails after plan approval | The action or its access changed, or its model/tool connection could not run. | Check current action access and configuration. Review the visible step failure; the run does not silently switch to an agent or another action. |
 | A plan proposed reading a link but found nothing | The link was not available in the eligible user-authored context. | Paste the URL into the current request. Assistant-generated links and omitted historical text do not authorize page reads. |
@@ -487,6 +514,9 @@ deletion and archive-and-remove; existing archived messages are unaffected.
 | A restored plan will not run | It was already approved on the other device. | This is expected. The conversation reloads to show the answer that run produced. |
 | A step reports a timeout or failure | Execution hit a recorded time limit or an operation failed. | Read the conversation/Run explanation. Address the reported dependency or limit, then use Retry from failed step when recovery is available. |
 | A connection was interrupted | The browser cannot yet confirm the server's execution state. | Check the existing run. Do not resend the request while that attempt may still be active. |
+| Execution returns 503, run detail repeatedly returns 404, and every step remains pending | In affected versions, Cosmos SDK response objects were rejected as invalid dictionaries at execution and status-read boundaries. | Upgrade to 0.261.140 or later, then inspect the existing attempt. Do not reset its deadline or assume that resubmitting is safe. |
+| The plan could not account for everything requested | The proposal and its correction failed deliverables validation. Earlier guidance could lead the model to put file-only fields on an answer. | Upgrade to 0.261.140 for explicit kind-specific guidance. For a remaining rejection, inspect `sc_validation_rule` and `sc_attempt`; preserve selected sources and requested outputs rather than disabling validation. |
+| A PDF/CSV comparison tries to analyze the CSV as a narrative document | Earlier planning relied on display labels rather than current source-kind metadata. | Version 0.261.140 supplies authorized file types and rejects incompatible steps before execution. Native tabular work still requires its existing capability; inspect `source_kind_invalid` or `source_binding_required` if a correction cannot produce a valid plan. |
 | Retry requires confirmation | An agent/action may have performed external effects before it failed. | Review those effects before confirming. Retry reexecutes that failed step, not its internal tool-call checkpoint. |
 | A saved run cannot be resumed | Checkpoints are absent or invalid, relevant context/access changed, or a newer/live attempt exists. | Follow the recovery explanation. Open the current attempt or create a new plan as appropriate; do not infer results from old summaries. |
 

@@ -34,6 +34,7 @@ import {
     FileSourceDeleteIncompleteError,
     FileSourcePartialDeleteError,
     FileSourceWriteConflictError,
+    createPublicFileSourceWorkbench,
     type FileSourceDeleteOutcome,
     type FileSourceWorkbenchAdapter,
 } from '../../lib/fileSourceWorkbench';
@@ -56,6 +57,7 @@ import type {
     WorkspaceSyncRun,
     WorkspaceSyncSource,
 } from '../../lib/types';
+import type { PublicWorkspaceContext } from '../../lib/workspaceContext';
 
 function formatTimestamp(value: unknown): string {
     const raw = String(value ?? '');
@@ -121,7 +123,17 @@ interface DeleteState {
     result: FileSourceDeleteOutcome | null;
 }
 
-export function GroupFileSourcesSection({ adapter }: { adapter: FileSourceWorkbenchAdapter }) {
+export function GroupFileSourcesSection({
+    adapter,
+    scopeNoun = 'group',
+}: {
+    adapter: FileSourceWorkbenchAdapter;
+    // Scope-specific copy so a public workspace reuses this section verbatim: 'group' keeps the
+    // shipped group wording byte-identical; a public workspace passes 'workspace'. Everything else
+    // -- reads, gates, the editor dialog, sync/test/browse and delete handling -- is scope-agnostic
+    // and comes from the adapter.
+    scopeNoun?: string;
+}) {
     const load = useCallback((signal: AbortSignal) => adapter.list(signal), [adapter]);
     const { items, loading, error, refresh, setItems, setError } =
         useSectionResource<WorkspaceSyncSource>(load, 'Failed to load file sources.');
@@ -385,7 +397,7 @@ export function GroupFileSourcesSection({ adapter }: { adapter: FileSourceWorkbe
             <div className="flex flex-wrap items-start justify-between gap-3">
                 <SectionIntro
                     title="File sources"
-                    description="Places this group's files already live. Approved files are brought in and processed the same way an upload is, then appear in the group's documents. Secrets are held server-side and never sent back to the browser."
+                    description={`Places this ${scopeNoun}'s files already live. Approved files are brought in and processed the same way an upload is, then appear in the ${scopeNoun}'s documents. Secrets are held server-side and never sent back to the browser.`}
                 />
                 {canCreate ? (
                     <GlassButton variant="primary" size="sm" onClick={() => void openEditor(null)}>
@@ -398,7 +410,7 @@ export function GroupFileSourcesSection({ adapter }: { adapter: FileSourceWorkbe
             <p className="text-xs text-text-3">
                 {canCreate
                     ? 'Connect a source to bring documents in without uploading them one by one.'
-                    : 'A workspace manager can connect a source for this group.'}
+                    : `A workspace manager can connect a source for this ${scopeNoun}.`}
             </p>
 
             <SectionSearch value={query} onChange={setQuery} placeholder="Search file sources" />
@@ -413,7 +425,7 @@ export function GroupFileSourcesSection({ adapter }: { adapter: FileSourceWorkbe
                     items.length === 0
                         ? canCreate
                             ? 'Connect a source to bring documents in without uploading them one by one.'
-                            : 'This group has no file sources yet. A workspace manager can add one.'
+                            : `This ${scopeNoun} has no file sources yet. A workspace manager can add one.`
                         : undefined
                 }
                 getKey={(source, index) => String(source.id ?? index)}
@@ -483,6 +495,7 @@ export function GroupFileSourcesSection({ adapter }: { adapter: FileSourceWorkbe
                     draft={draft}
                     options={options}
                     identities={identities}
+                    scopeNoun={scopeNoun}
                     tagSuggestions={tagSuggestions}
                     tagSuggestionsFailed={tagSuggestionsFailed}
                     saving={saving || editorLoading}
@@ -536,7 +549,7 @@ export function GroupFileSourcesSection({ adapter }: { adapter: FileSourceWorkbe
                     <div className="space-y-3 text-sm text-text-2">
                         <p>
                             <strong>Keep documents</strong> removes the source but leaves everything it has already
-                            imported in the group's documents.
+                            imported in the {scopeNoun}'s documents.
                         </p>
                         <p>
                             <strong>Delete documents too</strong> also removes every document this source produced. This
@@ -553,4 +566,25 @@ export function GroupFileSourcesSection({ adapter }: { adapter: FileSourceWorkbe
             ) : null}
         </div>
     );
+}
+
+/**
+ * The file sources workbench bound to a public workspace (M10B).
+ *
+ * Mirrors the way GroupWorkspacePage builds the group file source adapter, but for public scope:
+ * the adapter is memoised on the workspace identity and its management hint so switching workspaces
+ * or receiving a fresh hint re-gates the write affordances. The public adapter reads and writes the
+ * immutable-target `/api/public-workspaces/<id>/file-sources` family and never falls back to
+ * personal or group behaviour.
+ */
+export function PublicFileSourcesSection({ context }: { context: PublicWorkspaceContext }) {
+    const adapter = useMemo(
+        () =>
+            createPublicFileSourceWorkbench(
+                { kind: 'public', id: context.scope.id, name: context.workspace.name },
+                context.file_source_management,
+            ),
+        [context.scope.id, context.workspace.name, context.file_source_management],
+    );
+    return <GroupFileSourcesSection adapter={adapter} scopeNoun="workspace" />;
 }

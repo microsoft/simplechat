@@ -1,8 +1,9 @@
 # test_orchestration_plan_revision_store.py
 """
 Functional tests for the pre-execution plan revision persistence boundary.
-Version: 0.261.126
+Version: 0.261.139
 Implemented in: 0.261.102
+Single orchestration contract updated in: 0.261.139
 
 Uses real storage helpers and SDK batch formatting with an atomic in-memory container.
 No Azure network, model, or main-thread message writes are needed.
@@ -24,29 +25,47 @@ from test_support.orchestration_revisions import AtomicMemoryContainer
 from test_support.versioning import assert_app_version_at_least
 
 
+def binding(step_id, output_name):
+    return {
+        'version': 'orchestration-input-binding-v1', 'step_id': step_id,
+        'output_name': output_name, 'existing_result': None,
+    }
+
+
 def canonical_plan():
     return {
         'run_id': 'run_original', 'plan_id': 'plan_original',
         'turn_id': 'turn1', 'conversation_id': 'conv1', 'user_id': 'user1',
-        'revision': 0, 'status': 'awaiting_approval', 'planner_contract_version': 1,
+        'revision': 0, 'status': 'awaiting_approval', 'planner_contract_version': 2,
         'intent': {'summary': 'Compare the selected sources.', 'complexity': 'simple'},
         'approval': {'mode': 'timed', 'state': 'pending', 'timeout_seconds': 10},
         'steps': [
             {
-                'step_id': 'search', 'capability_id': 'document_search', 'title': 'Find sources',
+                'step_id': 'search', 'capability_id': 'document_search', 'role': 'gather',
+                'title': 'Find sources',
                 'arguments': {'query': 'Original request', 'document_ids': ['doc1', 'doc2']},
-                'enabled': True, 'depends_on': [], 'status': 'pending',
+                'enabled': True, 'optional': False, 'depends_on': [], 'status': 'pending',
+                'inputs': {}, 'outputs': [{'name': 'evidence', 'kind': 'evidence-set-v1'}],
             },
             {
-                'step_id': 'compare', 'capability_id': 'document_compare', 'title': 'Compare sources',
-                'arguments': {'document_ids': ['doc1'], 'right_document_ids': ['doc2']},
-                'enabled': True, 'depends_on': ['search'], 'status': 'pending',
+                'step_id': 'compare', 'capability_id': 'document_compare', 'role': 'reason',
+                'title': 'Compare sources',
+                'arguments': {
+                    'comparison_prompt': 'Compare the selected sources.',
+                    'left_document_id': 'doc1', 'right_document_ids': ['doc2'],
+                },
+                'enabled': True, 'optional': False, 'depends_on': ['search'], 'status': 'pending',
+                'inputs': {}, 'outputs': [{'name': 'comparison', 'kind': 'comparison-v1'}],
             },
             {
-                'step_id': 'answer', 'capability_id': 'respond', 'title': 'Answer',
-                'arguments': {}, 'enabled': True, 'depends_on': ['compare'], 'status': 'pending',
+                'step_id': 'answer', 'capability_id': 'compose', 'role': 'reason', 'title': 'Answer',
+                'arguments': {'instruction': 'Answer from the gathered evidence.', 'knowledge_basis': 'sources'},
+                'enabled': True, 'optional': False, 'depends_on': [], 'status': 'pending',
+                'inputs': {'evidence': {'binding': binding('search', 'evidence'), 'allow_partial': False}},
+                'outputs': [{'name': 'answer', 'kind': 'markdown-v1'}],
             },
         ],
+        'final_response': binding('answer', 'answer'),
     }
 
 
@@ -76,7 +95,7 @@ class PlanRevisionStoreTests(unittest.TestCase):
         patcher.start()
         self.addCleanup(patcher.stop)
         self.context = {
-            'turn_id': 'turn1', 'user_message': 'Original request',
+            'turn_id': 'turn1', 'planner_contract_version': 2, 'user_message': 'Original request',
             'user_message_id': 'message1', 'user_message_fingerprint': 'original-message-fingerprint',
             'original_seeds': {'document_ids': ['doc1', 'doc2']},
             'seeds': {'document_ids': ['doc1', 'doc2']},
@@ -300,7 +319,7 @@ class PlanRevisionStoreTests(unittest.TestCase):
             self.ordinary_replan()
         self.assertEqual(len(self.runs.batch_calls), 1)
 
-    def test_hold_wins_race_with_legacy_run(self):
+    def test_hold_wins_race_with_unversioned_run(self):
         winner = []
         self.runs.before_replace = lambda: winner.append(self.hold())
         self.assert_error('plan_changed', self.run_plan, self.original)
@@ -647,10 +666,10 @@ class PlanRevisionStoreTests(unittest.TestCase):
         self.assertEqual(claimed['approval'], claimed['plan']['approval'])
         self.assertFalse(claimed['plan']['steps'][1]['enabled'])
         self.assertEqual(claimed['plan']['steps'][0]['arguments']['document_ids'], ['doc1'])
-        self.assertEqual(claimed['plan']['steps'][2]['capability_id'], 'respond')
+        self.assertEqual(claimed['plan']['steps'][2]['capability_id'], 'compose')
         self.assert_error('already_run', self.run_plan, claimed, expected_version=claimed['edit_version'])
 
-    def test_untouched_legacy_plan_runs_without_version_and_write_failure_propagates(self):
+    def test_untouched_plan_runs_without_version_and_write_failure_propagates(self):
         self.runs.fail_writes = True
         with self.assertRaises(AzureError):
             self.run_plan(self.original)

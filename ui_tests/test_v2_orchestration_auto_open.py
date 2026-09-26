@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 UI test for the V2 chat orchestration auto-open asymmetry.
-Version: 0.261.085
+Version: 0.261.139
 Implemented in: 0.261.085
 
 The drawer opens ITSELF when a plan reaches awaiting-approval only in `manual` mode, and only for
@@ -48,6 +48,7 @@ def _plan(mode):
     return {
         "plan_id": f"plan-{mode}",
         "run_id": f"run-{mode}",
+        "planner_contract_version": 2,
         "intent": {"summary": f"A {mode} plan", "complexity": "simple"},
         "steps": [
             {
@@ -55,13 +56,15 @@ def _plan(mode):
                 "capability_id": "search_documents",
                 "title": "Search",
                 "arguments": {"document_ids": ["docA"]},
+                "role": "gather",
                 "estimated_cost": "low",
             },
             {
                 "step_id": "s2",
-                "capability_id": "respond",
+                "capability_id": "compose",
                 "title": "Answer",
                 "arguments": {},
+                "role": "reason",
                 "estimated_cost": "low",
             },
         ],

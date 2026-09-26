@@ -255,6 +255,30 @@ def normalize_public_workspace_display_settings(settings):
     return changed
 
 
+# Switches that no longer exist. A stored value is removed on load so it is not echoed to
+# the browser. Earlier releases already left it out of a saved run's settings fingerprint,
+# so removing it does not change that fingerprint.
+RETIRED_SETTING_KEYS = (
+    # Gather / Reason / Render became the only chat orchestration plan contract.
+    "enable_chat_orchestration_harness",
+)
+
+
+def normalize_retired_orchestration_settings(settings):
+    """Drop retired settings in-place.
+
+    A saved capability allowlist is left exactly as stored: the orchestration registry reads
+    a retired capability id as its replacement, and rewriting the list would change the
+    settings fingerprint that saved runs are bound to. Returns whether anything changed.
+    """
+    if not isinstance(settings, dict):
+        return False
+    removed = [key for key in RETIRED_SETTING_KEYS if key in settings]
+    for key in removed:
+        settings.pop(key, None)
+    return bool(removed)
+
+
 def attach_public_workspace_label_context(settings):
     """Attach derived end-user Public Workspace label values to a settings dict."""
     if isinstance(settings, dict):
@@ -1366,7 +1390,6 @@ def get_settings(use_cosmos=False, include_source=False):
         # This is the plan/approve/execute layer over chat, and an administrator reading
         # the settings document should not have to guess which is which.
         'enable_chat_orchestration': False,
-        'enable_chat_orchestration_harness': False,
         'enable_chat_orchestration_actions': False,
         'chat_orchestration_default_approval_mode': 'manual',
         'chat_orchestration_timed_approval_seconds': 10,
@@ -2010,6 +2033,7 @@ def get_settings(use_cosmos=False, include_source=False):
         normalize_document_access_index_required_settings(merged)
         normalize_inbound_mcp_settings(merged)
         normalize_public_workspace_display_settings(merged)
+        normalize_retired_orchestration_settings(merged)
         normalize_key_vault_reminder_settings(merged)
         normalize_model_endpoint_identity_header_settings(merged)
         normalize_tabular_parity_durable_preflight_defaults(merged)
@@ -2157,6 +2181,7 @@ def update_settings(new_settings, *, expected_etag=None):
         normalize_document_access_index_required_settings(settings_item)
         normalize_inbound_mcp_settings(settings_item)
         normalize_public_workspace_display_settings(settings_item)
+        normalize_retired_orchestration_settings(settings_item)
         normalize_key_vault_reminder_settings(settings_item)
         normalize_model_endpoint_identity_header_settings(settings_item)
         settings_item['enable_multi_model_endpoints'] = coerce_multi_model_endpoint_enablement(
@@ -3806,9 +3831,6 @@ def sanitize_settings_for_user(full_settings: dict) -> dict:
         if k in TABULAR_GENERATION_BACKEND_SETTING_KEYS:
             continue
         if any(term in k.lower() for term in sensitive_terms):
-            continue
-        if k == 'enable_chat_orchestration_harness':
-            sanitized[k] = v is True
             continue
         if k in ('model_endpoints', 'personal_model_endpoints') and isinstance(v, list):
             sanitized[k] = sanitize_model_endpoints_for_frontend(v, include_connection_details=False)

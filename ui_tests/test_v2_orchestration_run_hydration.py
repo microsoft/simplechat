@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
 UI test for hydrating a conversation's stored orchestration runs into the V2 plan drawer.
-Version: 0.261.099
-Implemented in: 0.261.099
+Version: 0.261.139
+Implemented in: 0.261.139
 
 Orchestration runs have always been written to Cosmos and read back by the planner, but nothing in
 the browser ever asked for them. The drawer's Map view built its rows purely from what this page
@@ -72,6 +72,7 @@ def _stored_plan(run_id, turn_id, summary):
         "plan_id": f"plan-{run_id}",
         "run_id": run_id,
         "turn_id": turn_id,
+        "planner_contract_version": 2,
         "intent": {"summary": summary, "complexity": "simple"},
         "steps": [
             {
@@ -79,13 +80,15 @@ def _stored_plan(run_id, turn_id, summary):
                 "capability_id": "search_documents",
                 "title": "Search the ledger",
                 "arguments": {"document_ids": ["docA"]},
+                "role": "gather",
                 "estimated_cost": "low",
             },
             {
                 "step_id": f"{run_id}-s2",
-                "capability_id": "respond",
+                "capability_id": "compose",
                 "title": "Write the answer",
                 "arguments": {},
+                "role": "reason",
                 "estimated_cost": "low",
             },
         ],
@@ -109,13 +112,16 @@ def _stored_steps(run_id):
             "step_id": f"{run_id}-s2",
             "step_index": 1,
             "title": "Write the answer",
-            "status": "completed",
+            "status": "failed",
             "summary": "",
         },
     ]
 
 
-def _install_routes(page, runs, fail_list=False):
+LEGACY_PLAN_MESSAGE = "This plan was created by an earlier orchestration version and can't be opened or rerun. Start a new request."
+
+
+def _install_routes(page, runs, fail_list=False, legacy_detail_ids=None):
     """Stub the three orchestration read endpoints for this page.
 
     Registered most-specific first: Playwright matches routes in registration order, so the steps
@@ -123,6 +129,7 @@ def _install_routes(page, runs, fail_list=False):
     them.
     """
     page.unroute_all(behavior="ignoreErrors")
+    legacy_detail_ids = set(legacy_detail_ids or [])
 
     def steps_handler(route):
         run_id = route.request.url.split("/runs/")[1].split("/steps")[0]
@@ -134,6 +141,13 @@ def _install_routes(page, runs, fail_list=False):
 
     def detail_handler(route):
         run_id = route.request.url.split("/runs/")[1].split("?")[0]
+        if run_id in legacy_detail_ids:
+            route.fulfill(
+                status=409,
+                content_type="application/json",
+                body=json.dumps({"error": LEGACY_PLAN_MESSAGE, "code": "legacy_plan"}),
+            )
+            return
         summary = STORED_SUMMARY if run_id == "run-stored" else OLDER_STORED_SUMMARY
         turn_id = "turn-stored" if run_id == "run-stored" else "turn-older"
         route.fulfill(
@@ -205,13 +219,15 @@ def _local_plan():
     return {
         "plan_id": "plan-local",
         "run_id": "run-local",
+        "planner_contract_version": 2,
         "intent": {"summary": LOCAL_SUMMARY, "complexity": "simple"},
         "steps": [
             {
                 "step_id": "local-s1",
-                "capability_id": "respond",
+                "capability_id": "compose",
                 "title": "Write the answer",
                 "arguments": {},
+                "role": "reason",
                 "estimated_cost": "low",
             }
         ],
@@ -372,6 +388,9 @@ def test_choosing_a_stored_row_loads_a_read_only_run():
         text = page.inner_text("#mount-a")
         assert STORED_SUMMARY in text, "the Run view must show the chosen run's plan"
         assert "Search the ledger" in text, "the stored plan's steps must be shown"
+        assert "Completed" in text, "read-only records must show the completed step status"
+        assert "Failed" in text, "read-only records must show the failed step status"
+        assert "Will run" not in text, "read-only records must not summarize saved steps as future work"
         toggles = page.evaluate(
             "() => document.querySelectorAll(\"#mount-a [role='switch']\").length"
         )
@@ -421,12 +440,54 @@ def test_failed_fetch_is_reported_not_hidden():
         return False
 
 
+def test_legacy_plan_409_shows_server_message_without_affordances():
+    """A saved run rejected as an older plan shows the exact server text and no actions."""
+    print("Testing older saved runs show the server message without actions...")
+    page = _PAGE
+    try:
+        for width in [1440, 390]:
+            page.set_viewport_size({"width": width, "height": 900})
+            _install_routes(
+                page,
+                [_stored_run("run-legacy", "turn-older", OLDER_STORED_SUMMARY)],
+                legacy_detail_ids={"run-legacy"},
+            )
+            page.evaluate("() => window.OrchHarness.reset()")
+            page.evaluate(_SEED_MAP, {"conv": CONVERSATION_ID})
+            _open_map(page)
+            page.wait_for_selector(
+                f"#mount-a button:has-text({OLDER_STORED_SUMMARY!r})", timeout=5000
+            )
+            page.click(f"#mount-a button:has-text({OLDER_STORED_SUMMARY!r})")
+            page.wait_for_function(
+                f"() => document.getElementById('mount-a').innerText.includes({LEGACY_PLAN_MESSAGE!r})",
+                timeout=5000,
+            )
+            text = page.inner_text("#mount-a")
+            assert LEGACY_PLAN_MESSAGE in text
+            assert "Try again" not in text
+            assert "Retry" not in text
+            assert "Ask planner" not in text
+            assert page.evaluate(
+                "() => document.querySelectorAll(\"#mount-a [role='switch']\").length"
+            ) == 0
+        print("  ok  older saved runs show the exact server message on desktop and mobile")
+        return True
+    except Exception as exc:  # noqa: BLE001
+        print(f"Test failed: {exc}")
+        import traceback
+
+        traceback.print_exc()
+        return False
+
+
 PAGE_TESTS = [
     test_stored_runs_appear_without_being_watched,
     test_stored_row_expands_to_fetched_steps,
     test_local_run_is_not_duplicated_by_its_stored_copy,
     test_choosing_a_stored_row_loads_a_read_only_run,
     test_failed_fetch_is_reported_not_hidden,
+    test_legacy_plan_409_shows_server_message_without_affordances,
 ]
 
 

@@ -1,7 +1,7 @@
 # functions_orchestration_bootstrap.py
 """Application-owned factories shared by web requests and scheduler continuations.
 
-Version: 0.261.127
+Version: 0.261.140
 
 Unlike the result/rendering services, this is an application composition root.
 Import it only after config has initialized the existing clients. Registering the
@@ -51,6 +51,11 @@ from functions_simplechat_operations import (
 from functions_workflow_result_store import WorkflowResultStore, _quota_bytes
 
 
+def _document_response(value):
+    """Remove an SDK mapping wrapper; leave invalid types for the owning contract to reject."""
+    return dict(value) if isinstance(value, dict) else value
+
+
 def read_owned_conversation(user_id, conversation_id, *, request_timeout=None):
     options = {} if request_timeout is None else {
         "connection_timeout": request_timeout, "read_timeout": request_timeout, "retry_total": 0,
@@ -63,7 +68,7 @@ def read_owned_conversation(user_id, conversation_id, *, request_timeout=None):
         or conversation.get("orchestration_deleted") or conversation.get("deleted")
     ):
         raise OutputUnavailableError("output_conversation_unavailable")
-    return conversation
+    return dict(conversation)
 
 
 def private_external_configuration_digest(value):
@@ -103,10 +108,10 @@ def build_external_identity_reader(actor_user_id, actor_conversation_id, *, exec
 
     def read_user_settings(user_id):
         authorize_conversation(user_id=user_id, conversation_id=actor_conversation_id)
-        return config.cosmos_user_settings_container.read_item(
+        return _document_response(config.cosmos_user_settings_container.read_item(
             item=user_id, partition_key=user_id,
             connection_timeout=timeout, read_timeout=timeout, retry_total=0,
-        )
+        ))
 
     def read_identity(*, user_id, conversation_id):
         nonlocal reader
@@ -268,6 +273,41 @@ def _authorize_render_output(record, *, operation, rendering_service):
     return True
 
 
+def build_image_asset_reader(user_id, conversation_id):
+    """Read a retained generated image's bytes from its own conversation image message.
+
+    The rendering service decides which images a file may contain and verifies the digest.
+    This reader only refuses anything that is not that owner's live image message: another
+    conversation, a deleted or masked message, or a blob outside the message's own folder.
+    """
+    def read(asset):
+        read_owned_conversation(user_id, conversation_id)
+        message = config.cosmos_messages_container.read_item(
+            item=asset["message_id"], partition_key=conversation_id,
+        )
+        metadata = message.get("metadata") if isinstance(message.get("metadata"), dict) else {}
+        proposal = metadata.get("image_proposal") if isinstance(metadata.get("image_proposal"), dict) else {}
+        blob_path = str(message.get("blob_path") or "")
+        if (
+            message.get("id") != asset["message_id"] or message.get("conversation_id") != conversation_id
+            or message.get("role") != "image" or message.get("file_content_source") != "blob"
+            or metadata.get("is_deleted") or metadata.get("masked")
+            or proposal.get("visualId") != asset["asset_id"]
+            or message.get("blob_container") != config.storage_account_personal_chat_container_name
+            or not blob_path.startswith(f"{user_id}/{conversation_id}/images/{asset['message_id']}/")
+        ):
+            raise OutputUnavailableError("output_source_unavailable")
+        client = config.CLIENTS.get("storage_account_office_docs_client")
+        if client is None:
+            raise OutputUnavailableError("output_source_unavailable")
+        blob = client.get_blob_client(container=message["blob_container"], blob=blob_path)
+        if blob.get_blob_properties().size != asset["size_bytes"]:
+            raise OutputUnavailableError("output_source_changed")
+        return blob.download_blob().readall()
+
+    return read
+
+
 def build_orchestration_services(user_id, conversation_id, *, settings=None):
     """Supply the initialized private result, run and chat-artifact resources."""
     read_owned_conversation(user_id, conversation_id)
@@ -355,6 +395,7 @@ def build_orchestration_services(user_id, conversation_id, *, settings=None):
         transport=transport, authorize_execution=authorize_output,
         max_output_bytes=min(maximum_mb, 500) * 1024 * 1024,
         native_bridge_for_step=native_bridge_for_step,
+        image_asset_reader=build_image_asset_reader(user_id, conversation_id),
     )
     return services
 
@@ -371,12 +412,12 @@ def build_orchestration_cleanup_service(user_id, conversation_id):
     store = OrchestrationOutputStore(
         config.cosmos_orchestration_runs_container,
         user_id=user_id, conversation_id=conversation_id,
-        read_conversation=lambda cid: config.cosmos_conversations_container.read_item(
+        read_conversation=lambda cid: _document_response(config.cosmos_conversations_container.read_item(
             item=cid, partition_key=cid,
-        ),
-        read_run_tombstone=lambda rid: config.cosmos_orchestration_run_steps_container.read_item(
+        )),
+        read_run_tombstone=lambda rid: _document_response(config.cosmos_orchestration_run_steps_container.read_item(
             item="checkpoint:lifecycle", partition_key=rid,
-        ),
+        )),
     )
     return OrchestrationOutputCleanupService(
         store, config.cosmos_messages_container,

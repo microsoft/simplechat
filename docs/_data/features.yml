@@ -682,7 +682,6 @@ chat-orchestration:
   admin_tab: orchestration
   setting_keys:
     - enable_chat_orchestration
-    - enable_chat_orchestration_harness
     - enable_chat_orchestration_actions
   reference:
     - title: "Orchestration settings"

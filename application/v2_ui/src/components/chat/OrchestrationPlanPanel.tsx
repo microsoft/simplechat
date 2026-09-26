@@ -23,6 +23,7 @@ import {
     type TrackedRun,
 } from '../../stores/orchestrationStore';
 import { fetchOrchestrationRun, fetchRunSteps, type OrchestrationPlan } from '../../lib/orchestration';
+import { legacyPlanErrorMessage } from '../../lib/orchestrationErrors';
 import { normalizePlan } from '../../lib/orchestrationPlan';
 import { loadOrchestrationRecovery, openOrchestrationPlanEditor } from '../../lib/orchestrationController';
 import { GlassButton } from '../ui/primitives';
@@ -189,8 +190,8 @@ export function OrchestrationPlanPanel() {
                     });
                 }
             })
-            .catch(() => {
-                if (isCurrent()) setLoadError('This run could not be loaded.');
+            .catch((error) => {
+                if (isCurrent()) setLoadError(legacyPlanErrorMessage(error) || 'This run could not be loaded.');
             })
             .finally(() => {
                 if (isCurrent()) setLoadingRunId(null);
@@ -230,8 +231,10 @@ export function OrchestrationPlanPanel() {
             if (cancelled || !run?.turn_id) return;
             setPinned({ runId: recoveryTarget.runId, turnId: run.turn_id });
             loadArchivedRun(run.turn_id, recoveryTarget.runId);
-        }).catch(() => {
-            if (!cancelled) setLoadError('The saved attempt could not be loaded. Please try again.');
+        }).catch((error) => {
+            if (!cancelled) {
+                setLoadError(legacyPlanErrorMessage(error) || 'The saved attempt could not be loaded. Please try again.');
+            }
         });
         return () => { cancelled = true; };
     }, [recoveryTarget, activeConversationId]);

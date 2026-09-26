@@ -992,15 +992,35 @@ def test_without_a_chart_request_the_action_loop_is_unchanged(runtime, chart_too
     assert 'Charts created' not in result['findings']
 
 
-def test_capturing_runs_never_add_the_chart_step(runtime, chart_tools):
+def test_capturing_runs_chart_retrieved_rows_without_another_acquisition(runtime, chart_tools):
     capture_module = importlib.import_module('functions_orchestration_invocation_capture')
-    state = capture_module.OrchestrationInvocationCapture(lambda *args, **kwargs: None)
-    runtime.replies = [tool_message('42')]
+    captured = []
+
+    def capture(source_type, *, settings, source, selector):
+        if source is not None:
+            captured.append((source_type, selector))
+
+    state = capture_module.OrchestrationInvocationCapture(capture)
+    runtime.lookup_value = lambda ticket: {'success': True, 'rows': telemetry_rows(20)}
+    runtime.replies = [
+        tool_message('history'),
+        text_reply('Twenty samples were retrieved.'),
+        chart_call({
+            'source_function': 'lookup', 'x_field': 'generation_time', 'y_fields': 'eng_value',
+            'title': 'Voltage',
+        }),
+        text_reply('Created the Voltage chart.'),
+    ]
     result = asyncio.run(execute(runtime, invocation_capture=state, visual_request=chart_request()))
 
-    assert result['charts'] == 0
-    assert len(runtime.requests) == 2
-    assert all('chart' not in request.lower() for request in runtime.requests)
+    # The chart step charts rows the captured call already returned and never reaches the action.
+    assert runtime.calls == [('history', 'actor')]
+    assert result['calls'] == 1 and result['charts'] == 1
+    # One manifest capture before work and one per action call; the chart step adds none.
+    assert captured == [('action', runtime.action['action_ref'])] * 2
+    assert len(runtime.requests) == 4
+    assert 'separate chart step' in runtime.requests[0]
+    assert chart_results(result)[0]['chart_markdown'].startswith('```simplechart')
 
 
 if __name__ == '__main__':

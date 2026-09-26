@@ -23,12 +23,13 @@ import { clsx } from 'clsx';
 import { Image as ImageIcon, Loader2, Pencil, TriangleAlert, X } from 'lucide-react';
 import { useChatStore } from '../../stores/chatStore';
 import {
-    findResultForSpec,
     normalizePrompt,
     parseImageProposal,
+    plannedImageRef,
     proposalBadges,
     proposalCardKey,
     PROMPT_MAX_LENGTH,
+    resultForCard,
 } from '../../lib/imageProposalSpec';
 import { describeQueuePosition, enqueueImageApproval } from '../../lib/imageProposalQueue';
 import { approvalRecordId } from '../../lib/imageProposalTracking';
@@ -190,6 +191,7 @@ export function InlineImageProposal({
         conversationId,
         assistantMessageId,
         results,
+        generatedImages,
         approveAllToken,
         setPending,
         cardStates,
@@ -213,9 +215,13 @@ export function InlineImageProposal({
     const { status, queuePosition, failure, editing, resumed } = cardState;
     const prompt = cardState.prompt ?? (spec ? spec.prompt : '');
 
+    // An image the answer's plan already generated is shown, never offered for approval: it
+    // exists and was paid for, so a second Approve could only buy a duplicate.
+    const planned = useMemo(() => plannedImageRef(spec, generatedImages), [spec, generatedImages]);
+
     const result = useMemo(
-        () => (spec ? findResultForSpec(spec, results) : null),
-        [spec, results],
+        () => (spec ? resultForCard(spec, results, generatedImages) : null),
+        [spec, results, generatedImages],
     );
 
     const recordId = useMemo(
@@ -225,7 +231,7 @@ export function InlineImageProposal({
 
     // Only an untouched card is something "Approve all" should act on, and only such a card
     // makes the bulk control worth showing at all.
-    const isPending = Boolean(spec) && !result && status === 'idle';
+    const isPending = Boolean(spec) && !result && !planned && status === 'idle';
 
     useEffect(() => {
         setPending(cardKey, isPending);
@@ -245,7 +251,7 @@ export function InlineImageProposal({
     }, [result, recordId, endApproval]);
 
     const approve = useCallback(async () => {
-        if (!spec || !assistantMessageId) {
+        if (!spec || !assistantMessageId || planned) {
             return;
         }
 
@@ -325,6 +331,7 @@ export function InlineImageProposal({
     }, [
         spec,
         assistantMessageId,
+        planned,
         prompt,
         approveImageProposal,
         cardKey,
@@ -386,6 +393,16 @@ export function InlineImageProposal({
                     </div>
                 </div>
             </ProposalCard>
+        );
+    }
+
+    if (planned) {
+        // The saved image message arrives with the conversation, not with the answer's text.
+        return (
+            <ProposalStatusCard
+                title={displayTitle}
+                detail="This image was generated with the answer. It appears here once it has loaded."
+            />
         );
     }
 

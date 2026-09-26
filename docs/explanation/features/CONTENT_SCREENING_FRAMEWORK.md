@@ -6,7 +6,7 @@ Content screening creates an admission checkpoint between document extraction an
 
 **Implemented in version: 0.261.106.** The application version is managed in `application\single_app\config.py`.
 
-**Current documentation version: 0.261.131.** Orchestration harness integration with chat checkpoints was implemented in 0.261.131. Chat checkpoints and strict retained-result source-authority errors were implemented in 0.261.127; enabled-empty policy configuration was implemented in 0.261.114; classic/V2 policy-editor alignment was implemented in 0.261.108; the original framework implementation remains 0.261.106.
+**Current documentation version: 0.261.139.** Gather / Reason / Render orchestration integration with chat checkpoints was implemented in 0.261.131 and remains the current orchestration path as of 0.261.139. Chat checkpoints and strict retained-result source-authority errors were implemented in 0.261.127; enabled-empty policy configuration was implemented in 0.261.114; classic/V2 policy-editor alignment was implemented in 0.261.108; the original framework implementation remains 0.261.106.
 
 **Dependencies:** Enhanced Citations and its configured storage account, the existing Cosmos DB and workspace knowledge services, and an approved model connection when a policy includes model evaluation.
 

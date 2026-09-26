@@ -4,6 +4,11 @@ import { showToast } from "../chat/chat-toast.js";
 import { mountProfilePicker } from "./model_catalog_ui.js";
 import { getIconPayload, setIconPayload } from "../agents_common.js";
 import {
+    classicChoices as plannerClassicChoices,
+    connectionChoices as plannerConnectionChoices,
+    mountPlannerModelPicker,
+} from "./admin_orchestration_planner_model.js";
+import {
     ModelBudgetValidationError,
     collectModelBudgetOverrides,
     createModelBudgetEditor
@@ -903,7 +908,28 @@ function buildDefaultModelOptions() {
     applyDefaultModelSelection(defaultModelSelection);
 }
 
+let plannerModelPicker = null;
+
+function plannerModelChoices() {
+    if (isMultiEndpointModeEnabled()) {
+        return plannerConnectionChoices(modelEndpoints, (model) => modelPublishesCapability(model, "chat"));
+    }
+    return plannerClassicChoices({
+        apimEnabled: !!legacyGptApimToggle?.checked,
+        apimDeployments: legacyApimGptDeploymentInput?.value || "",
+        legacyModels: Array.isArray(window.gptSelected) ? window.gptSelected : [],
+    });
+}
+
+function buildPlannerModelOptions() {
+    if (plannerModelPicker) {
+        plannerModelPicker.refresh();
+    }
+}
+
 function buildMetadataExtractionModelOptions() {
+    // The planner model choice lists the same models, so it follows every rebuild of them.
+    buildPlannerModelOptions();
     if (!metadataExtractionModelSelect) {
         return;
     }
@@ -3237,6 +3263,10 @@ function init() {
     }
     const isMultiEndpointEnabled = enableMultiEndpointToggle ? enableMultiEndpointToggle.checked : true;
 
+    plannerModelPicker = mountPlannerModelPicker({
+        getChoices: plannerModelChoices,
+        onChange: markModified,
+    });
     renderEndpoints();
     updateAuthVisibility();
     setElementVisibility(endpointsWrapper, true);

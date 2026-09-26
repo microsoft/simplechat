@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """
 Functional tests for immutable-target public workspace document management.
-Version: 0.261.180
+Version: 0.261.179
 Implemented in: 0.261.133
 Guarded tag vocabulary (R5.8): the lost patch answers one coded conflict: 0.261.173
-The revision delete double returns the real delete_document_revision's shape, deleted_mode included: 0.261.180
+The revision delete double returns the real delete_document_revision's shape, deleted_mode included: 0.261.179
 
 The real public management/access/policy modules and the scoped management route
 family run in the isolated Flask app built by the M3A read fixture. The workspace

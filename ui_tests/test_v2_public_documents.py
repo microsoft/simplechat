@@ -10,7 +10,7 @@ The empty explorer and a refused change name this public workspace and who can c
 documents, never a group or classic: 0.261.167
 A manager who can't upload is told why when dropping files: 0.261.168
 Every scripted reply is the one the public routes send, held to them by
-functional_tests/test_public_document_fixture_parity.py: 0.261.180
+functional_tests/test_public_document_fixture_parity.py: 0.261.179
 A generated artifact awaiting publication is shown, held, only to a workspace manager; a reader's
 rows, counts and places never include one: 0.261.183
 

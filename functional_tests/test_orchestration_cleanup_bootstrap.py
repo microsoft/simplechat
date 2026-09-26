@@ -1,7 +1,7 @@
 # test_orchestration_cleanup_bootstrap.py
 """Exercise the initialized deletion-only composition root against real services.
 
-Version: 0.261.127
+Version: 0.261.140
 Implemented in: 0.261.127
 
 Private storage I/O and the clock are doubled. The root must preserve genuine
@@ -77,6 +77,41 @@ def test_root_cleans_actual_deleted_conversations_without_live_or_source_access(
     assert not world.blobs.data and not world.messages.items
     assert len(world.render_calls) == world.blobs.uploads == world.blobs.deletes == 1
     assert set(complete) == {"output_id", "state", "cleanup_status", "cleanup_pending", "processed_intents"}
+
+
+@pytest.mark.parametrize("mode", ["deleted", "missing"])
+def test_root_cleanup_accepts_sdk_documents_and_preserves_tombstone_authority(cleanup_root, mode):
+    world, root = cleanup_root.world, cleanup_root.module
+    output = interrupted_output(world)
+    delete_conversation(world, mode)
+    for container in (world.runs, world.conversations, world.cleanup_guards, world.messages):
+        container.sdk_responses = True
+    cleanup = root.build_orchestration_cleanup_service("owner", "conversation-1")
+    deferred = cleanup.cleanup(output["output_id"])
+    world.now += timedelta(seconds=11)
+    finished = cleanup.cleanup(output["output_id"])
+    assert deferred["cleanup_status"] == "deferred"
+    assert finished["cleanup_status"] == "complete" and finished["processed_intents"] == 1
+    assert not world.blobs.data and not world.messages.items
+    assert len(world.render_calls) == world.blobs.uploads == world.blobs.deletes == 1
+
+
+@pytest.mark.parametrize("boundary", ["conversation", "tombstone"])
+def test_root_cleanup_does_not_coerce_non_mapping_authority(cleanup_root, monkeypatch, boundary):
+    world, root = cleanup_root.world, cleanup_root.module
+    output = interrupted_output(world)
+    delete_conversation(world, "missing" if boundary == "tombstone" else "deleted")
+    container = world.cleanup_guards if boundary == "tombstone" else world.conversations
+    read_item = container.read_item
+    monkeypatch.setattr(
+        container, "read_item", lambda *args, **kwargs: list(read_item(*args, **kwargs).items()),
+    )
+    before = deepcopy(world.runs.items)
+    cleanup = root.build_orchestration_cleanup_service("owner", "conversation-1")
+    with pytest.raises(OutputUnavailableError):
+        cleanup.cleanup(output["output_id"])
+    assert world.runs.items == before
+    assert world.blobs.deletes == 0 and world.blobs.data and world.messages.items
 
 
 @pytest.mark.parametrize("authority", ["actor", "run", "admission", "conversation_owner"])

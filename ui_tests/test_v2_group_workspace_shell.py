@@ -1,8 +1,9 @@
 # test_v2_group_workspace_shell.py
 """
 Real-SPA group selection, navigation, scope, and draft safety.
-Version: 0.261.157
+Version: 0.261.178
 Implemented in: 0.261.127
+Group workflow member run/cancel, status gates, delete, and search coverage: 0.261.178
 """
 
 import copy
@@ -178,7 +179,96 @@ def test_native_workflows_and_read_only_roles(group_ui):
     ui.page.get_by_role("combobox", name="Group workspace").select_option("group-b")
     expect(ui.page).to_have_url(f"{ORIGIN}/v2/groups/group-b/workflows")
     expect(ui.page.get_by_role("button", name="Create workflow", exact=True)).to_have_count(0)
+    expect(ui.page.get_by_role("button", name="Run Review group files", exact=True)).to_be_visible()
+
+
+def test_a_member_runs_and_cancels_a_group_workflow_but_cannot_manage_it(group_ui):
+    ui = group_ui
+    ui.open("/groups/group-b/workflows")
+    expect(ui.page.get_by_role("button", name="Create workflow", exact=True)).to_have_count(0)
+    expect(ui.page.get_by_role("button", name="Delete Review group files", exact=True)).to_have_count(0)
+    expect(ui.page.get_by_role("button", name="Edit Review group files", exact=True)).to_have_count(0)
+    expect(ui.page.get_by_role("button", name="View Review group files", exact=True)).to_be_visible()
+
+    ui.page.get_by_role("button", name="Run Review group files", exact=True).click()
+    run_requests = [
+        entry for entry in ui.writes
+        if entry.method == "POST" and entry.path == "/api/group/workflows/workflow-1/run"
+    ]
+    assert len(run_requests) == 1
+    assert run_requests[0].query == {"group_id": ["group-b"]}
+    expect(ui.page.get_by_role("button", name="Cancel Review group files", exact=True)).to_be_visible()
+
+    ui.page.get_by_role("button", name="Cancel Review group files", exact=True).click()
+    cancel_requests = [
+        entry for entry in ui.writes
+        if entry.method == "POST" and entry.path == "/api/group/workflows/workflow-1/cancel"
+    ]
+    assert len(cancel_requests) == 1
+    assert cancel_requests[0].query == {"group_id": ["group-b"]}
+    expect(ui.page.get_by_role("button", name="Run Review group files", exact=True)).to_be_visible()
+
+
+@pytest.mark.parametrize("status", ["locked", "upload_disabled"])
+def test_group_workflow_controls_are_read_only_when_owner_group_is_not_active(group_ui, status):
+    ui = group_ui
+    ui.groups["group-a"] = group_context("group-a", "Research group", role="Owner", status=status)
+    ui.open("/groups/group-a/workflows")
+    expect(ui.page.get_by_text("Review group files", exact=True)).to_be_visible()
     expect(ui.page.get_by_role("button", name="Run Review group files", exact=True)).to_have_count(0)
+    expect(ui.page.get_by_role("button", name="Cancel Review group files", exact=True)).to_have_count(0)
+    expect(ui.page.get_by_role("button", name="Create workflow", exact=True)).to_have_count(0)
+    expect(ui.page.get_by_role("button", name="Delete Review group files", exact=True)).to_have_count(0)
+    expect(ui.page.get_by_role("button", name="Edit Review group files", exact=True)).to_have_count(0)
+    expect(ui.page.get_by_role("button", name="View Review group files", exact=True)).to_be_visible()
+
+
+def test_a_manager_deletes_a_group_workflow(group_ui):
+    ui = group_ui
+    ui.open("/groups/group-a/workflows")
+    ui.page.get_by_role("button", name="Delete Review group files", exact=True).click()
+    ui.page.get_by_role("button", name="Delete", exact=True).click()
+    delete_requests = [
+        entry for entry in ui.writes
+        if entry.method == "DELETE" and entry.path == "/api/group/workflows/workflow-1"
+    ]
+    assert len(delete_requests) == 1
+    assert delete_requests[0].query == {"group_id": ["group-a"]}
+    expect(ui.page.get_by_text("Review group files", exact=True)).to_have_count(0)
+    expect(ui.page.get_by_text("No workflows yet", exact=True)).to_be_visible()
+
+
+def test_group_workflow_search_filters_by_name_and_description(group_ui):
+    ui = group_ui
+    ui.workflows["group-a"].append({
+        "id": "workflow-2",
+        "name": "Quarterly audit",
+        "definition_version": 2,
+        "description": "Find calibration gaps across approved sources.",
+        "status": "idle",
+        "task_prompt": "Audit the selected files.",
+        "group_id": "group-a",
+        "durable_execution": True,
+        "runner_type": "model",
+        "trigger_type": "manual",
+    })
+    ui.open("/groups/group-a/workflows")
+    list_reads = [entry for entry in ui.requests if entry.method == "GET" and entry.path == "/api/group/workflows"]
+    assert len(list_reads) == 1
+
+    search = ui.page.get_by_role("searchbox", name="Search workflows", exact=True)
+    search.fill("review group")
+    expect(ui.page.get_by_text("Review group files", exact=True)).to_be_visible()
+    expect(ui.page.get_by_text("Quarterly audit", exact=True)).to_have_count(0)
+    search.fill("CALIBRATION")
+    expect(ui.page.get_by_text("Review group files", exact=True)).to_have_count(0)
+    expect(ui.page.get_by_text("Quarterly audit", exact=True)).to_be_visible()
+    search.fill("not present")
+    expect(ui.page.get_by_text("No workflows match your search", exact=True)).to_be_visible()
+    search.fill("")
+    expect(ui.page.get_by_text("Review group files", exact=True)).to_be_visible()
+    expect(ui.page.get_by_text("Quarterly audit", exact=True)).to_be_visible()
+    assert len([entry for entry in ui.requests if entry.method == "GET" and entry.path == "/api/group/workflows"]) == 1
 
 
 def test_refocus_retains_dirty_draft_and_blocks_saving_until_access_is_confirmed(group_ui):

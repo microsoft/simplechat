@@ -2,7 +2,7 @@
 """
 Per-route shape parity between the M9B public document UI fixtures and the real routes.
 Version: 0.261.183
-Implemented in: 0.261.180
+Implemented in: 0.261.179
 A generated artifact awaiting publication is held for managers and absent for everyone else
 (decision 27): 0.261.183
 

@@ -1,8 +1,9 @@
 # test_chat_three_document_smoke.py
 """
 Fresh three-source Analyze, saved evidence, downloads, and cross-UI reuse.
-Version: 0.261.122
+Version: 0.261.139
 Implemented in: 0.261.115
+Single orchestration contract updated in: 0.261.139
 
 Real producer, export builders, saved readers, download route, and both browser
 renderers run offline. Source/storage I/O and provider responses are deterministic;
@@ -212,10 +213,17 @@ class FreshAnalysisApi(shared.AnalysisApi):
             plan["steps"] = [{
                 "step_id": "analyze", "capability_id": "document_analyze", "title": "Analyze three documents",
                 "arguments": {"document_ids": list(PASSAGES), "analysis_prompt": PROMPT},
-                "phase": "knowledge", "enabled": True, "status": "pending",
+                "role": "reason", "outputs": [{"name": "report", "kind": "markdown-v1"}],
+                "enabled": True, "status": "pending",
             }, {
-                "step_id": "respond", "capability_id": "respond", "title": "Explain accepted findings",
-                "arguments": {}, "phase": "reasoning", "enabled": True, "status": "pending", "depends_on": ["analyze"],
+                "step_id": "answer", "capability_id": "compose", "title": "Explain accepted findings",
+                "arguments": {"instruction": "Explain the accepted findings."}, "role": "reason",
+                "inputs": {"report": {"binding": {
+                    "version": "orchestration-input-binding-v1", "step_id": "analyze",
+                    "output_name": "report", "existing_result": None,
+                }}},
+                "outputs": [{"name": "answer", "kind": "markdown-v1"}],
+                "enabled": True, "status": "pending", "depends_on": ["analyze"],
             }]
             event = {"type": "orchestration_plan", "plan": plan, "done": True}
             route.fulfill(content_type="text/event-stream", body=f"data: {json.dumps(event)}\n\n")

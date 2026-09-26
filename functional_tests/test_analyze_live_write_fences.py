@@ -1,8 +1,9 @@
 # test_analyze_live_write_fences.py
 """
 Conditional Analyze cancellation, retry and conversation deletion integration.
-Version: 0.261.109
+Version: 0.261.139
 Implemented in: 0.261.109
+Single orchestration contract updated in: 0.261.139
 
 Use the real saved service, recovery controls and transactional result store.
 Only Cosmos/authorization I/O is doubled; no source extraction or live calls run.
@@ -413,6 +414,7 @@ def test_orchestration_live_adapter_prepares_and_passes_the_conditional_token(or
             "owner", "conversation-1", "run-1", step_id, authorize=lambda: True,
             store=store, attempt_token="existing-execution-lease-token",
         )
+        fixture.context._guard_token = value.token
         prepared.append(value)
         return value
 
@@ -426,7 +428,10 @@ def test_orchestration_live_adapter_prepares_and_passes_the_conditional_token(or
 
     fixture.store.save = save
     result = fixture.modules.adapters.run_document_analyze(
-        {"step_id": "analyze-1", "arguments": {"document_ids": ["source-1"], "analysis_prompt": "Find risks."}},
+        {
+            "step_id": "analyze-1", "capability_id": "document_analyze",
+            "arguments": {"document_ids": ["source-1"], "analysis_prompt": "Find risks."},
+        },
         fixture.context, settings={}, user_id="owner", emit=None, cancel_requested=lambda: False,
     )
     assert result["status"] == "completed", result
