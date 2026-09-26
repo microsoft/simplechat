@@ -1,10 +1,12 @@
 # public_documents.py
 """
 Closed M3A public document HTTP fixtures for the real production V2 SPA.
-Version: 0.261.180
+Version: 0.261.182
 Implemented in: 0.261.132
 The served rows, read texts and refusals are the real read routes', held to them by
 functional_tests/test_public_document_fixture_parity.py: 0.261.180
+A generated artifact awaiting publication is shown, held, only to a workspace manager; to anyone
+else it does not exist: 0.261.182
 
 Every document read is scoped by the workspace id in its request path and every
 returned record carries public_workspace_id. The fixture never permits personal
@@ -20,7 +22,9 @@ from pathlib import Path
 
 import pytest
 
-from ui_tests.fixtures.public_workspace import PublicWorkspaceFixture, connect_options  # noqa: F401
+from ui_tests.fixtures.public_workspace import (  # noqa: F401
+    PUBLIC_MANAGER_ROLES, PublicWorkspaceFixture, connect_options,
+)
 
 
 APP_ROOT = Path(__file__).resolve().parents[2] / "application" / "single_app"
@@ -60,6 +64,9 @@ PUBLIC_DOCUMENTS_DENIED_ERROR = "You do not have access to the selected public w
 PUBLIC_DOCUMENTS_STATUS_ERROR = "Documents are unavailable for this public workspace's current status."
 PUBLIC_DOCUMENT_NOT_FOUND_ERROR = "Document not found or access denied."
 SCREENING_UNAVAILABLE_STATUS = "Content screening: document unavailable"
+# The status a manager's projection gives a generated artifact awaiting publication
+# (functions_public_document_reads.PUBLIC_ARTIFACT_AWAITING_APPROVAL_STATUS).
+AWAITING_APPROVAL_STATUS = "Awaiting generated artifact approval"
 
 
 def document(workspace_id, identifier, title, *, timestamp, **overrides):
@@ -101,6 +108,32 @@ def member_projection(record):
     record.setdefault("document_actions", [])
     record.setdefault("document_collaboration_actions", ["inspect"])
     return record
+
+
+def awaiting_publication(row):
+    """functions_public_document_policy.public_document_approval_pending: a generated artifact whose
+    publication is undecided, by its promotion status or, before one is recorded, its stored status."""
+    promotion = row.get("generated_artifact_promotion_status")
+    return promotion == "pending_approval" or (
+        promotion is None and str(row.get("status") or "").strip().lower() == "pending approval"
+    )
+
+
+def awaiting_approval(record):
+    """A generated artifact awaiting publication, as a manager's projection lists it
+    (functions_public_document_reads._project_public_document), and as a group member sees one: only
+    the held fields and the request, never its content. No one else is shown it at all
+    (PublicDocumentsFixture.viewer_may_see)."""
+    projected = {
+        key: copy.deepcopy(value) for key, value in record.items()
+        if key in HELD_PUBLIC_FIELDS or key in GENERATED_ARTIFACT_REQUEST_FIELDS
+        or key in ("_ts", "content_screening")
+    }
+    projected.update({
+        "status": AWAITING_APPROVAL_STATUS, "generated_artifact_promotion_status": "pending_approval",
+        "enhanced_citations": False,
+    })
+    return projected
 
 
 def served(record):
@@ -162,8 +195,18 @@ class PublicDocumentsFixture(PublicWorkspaceFixture):
         ]
         return payload
 
+    def viewer_may_see(self, workspace_id, row):
+        """functions_public_document_policy.public_document_visible_to_role for the viewer's role: a
+        generated artifact awaiting publication is visible only to the workspace's managers."""
+        return self.workspaces[workspace_id].get("role") in PUBLIC_MANAGER_ROLES or not awaiting_publication(row)
+
     def visible(self, workspace_id):
-        return [row for row in self.documents[workspace_id] if row.get("is_current_version") is not False]
+        """The current rows the viewer may see. The list, its count, the facets and the tag counts are
+        all computed from this one set, as load_public_document_browser_documents computes them."""
+        return [
+            row for row in self.documents[workspace_id]
+            if row.get("is_current_version") is not False and self.viewer_may_see(workspace_id, row)
+        ]
 
     @staticmethod
     def tags(row):
@@ -284,7 +327,10 @@ class PublicDocumentsFixture(PublicWorkspaceFixture):
                     self._json(route, {
                         "document_id": identifier, "public_workspace_id": workspace_id,
                         "revision_family_id": record["revision_family_id"],
-                        "versions": [served(row) for row in self.versions.get((workspace_id, identifier), [record])],
+                        "versions": [
+                            served(row) for row in self.versions.get((workspace_id, identifier), [record])
+                            if self.viewer_may_see(workspace_id, row)
+                        ],
                     })
                 else:
                     assert len(parts) == 1

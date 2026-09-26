@@ -2,7 +2,7 @@
 """
 Production-SPA coverage for native V2 public workspace document browsing (M3A),
 management (M3B) and generated-artifact approval (M3C).
-Version: 0.261.180
+Version: 0.261.182
 Implemented in: 0.261.132
 A coded failure shows the server's sentence (apiClient), and an archive takes the server's
 name: 0.261.164
@@ -11,6 +11,8 @@ documents, never a group or classic: 0.261.167
 A manager who can't upload is told why when dropping files: 0.261.168
 Every scripted reply is the one the public routes send, held to them by
 functional_tests/test_public_document_fixture_parity.py: 0.261.180
+A generated artifact awaiting publication is shown, held, only to a workspace manager; a reader's
+rows, counts and places never include one: 0.261.182
 
 Exercises real components, stores and navigation with closed synthetic HTTP.
 The read fixture never permits personal or group document requests, and never
@@ -44,7 +46,7 @@ from ui_tests.fixtures.public_document_collaboration import (
     public_collaboration_ui, publication,
 )
 from ui_tests.fixtures.public_documents import (
-    NUMERIC_SORT_FIELDS, SORT_FIELDS, connect_options, document,  # noqa: F401
+    NUMERIC_SORT_FIELDS, PUBLIC_DOCUMENT_NOT_FOUND_ERROR, SORT_FIELDS, connect_options, document,  # noqa: F401
     public_documents_ui,
 )
 from ui_tests.fixtures.workspace_authoring import ORIGIN
@@ -1233,6 +1235,67 @@ def test_per_document_collaboration_actions_gate_the_review_affordance(public_co
     expect(review_control(ui, "same-document")).to_be_visible()
     expect(review_control(ui, "withheld-document")).to_have_count(0)
     assert not ui.operation_requests
+
+
+def test_only_a_manager_is_shown_an_artifact_awaiting_publication(public_collaboration_ui):
+    ui = public_collaboration_ui
+    # Decision 27: a generated artifact awaiting publication is visible only to the workspace's
+    # managers, who see it held. A reader's rows, counts and places never include one, and a link to
+    # one reads as a document that does not exist.
+    pending = ("pending-publication", "requested-publication")
+    open_management(ui, "pub-a")
+    for identifier in pending:
+        expect(review_control(ui, identifier)).to_be_visible()
+    expect(filters(ui).get_by_role("button", name=re.compile(r"^Processing"))).to_contain_text(str(len(pending)))
+    ui.view_as_reader("pub-a")
+    read_from = len(ui.responses)
+    open_management(ui, "pub-a")
+    visible = ui.visible("pub-a")
+    for identifier in pending:
+        expect(details_button(ui, identifier)).to_have_count(0)
+    expect(filters(ui).get_by_role("button", name=re.compile(r"^All documents"))).to_contain_text(str(len(visible)))
+    # The artifacts were the only unfinished rows, so a reader is offered no Processing place.
+    expect(filters(ui).get_by_role("button", name=re.compile(r"^Processing"))).to_have_count(0)
+    reads = [(urlsplit(url).path, payload) for url, payload in ui.responses[read_from:]]
+    lists = [payload for path, payload in reads if path == "/api/public-workspaces/pub-a/documents"]
+    facets = [payload for path, payload in reads if path == "/api/public-workspaces/pub-a/documents/facets"]
+    assert lists and facets
+    assert all(
+        payload["total_count"] == len(visible) and not set(pending) & {row["id"] for row in payload["documents"]}
+        for payload in lists
+    )
+    assert all(payload["total"] == len(visible) and payload["processing"] == 0 for payload in facets)
+    # A link to one (a notification's, say) reveals nothing: its detail reads as a document that does
+    # not exist, and no request, requester or decision is shown.
+    ui.open("/public/pub-a/documents?document_id=pending-publication")
+    dialog = review_dialog(ui)
+    expect(dialog).to_be_visible()
+    detail = [
+        payload for url, payload in ui.responses
+        if urlsplit(url).path == "/api/public-workspaces/pub-a/documents/pending-publication"
+    ]
+    assert detail and all(payload == {"error": PUBLIC_DOCUMENT_NOT_FOUND_ERROR} for payload in detail)
+    expect(dialog).not_to_contain_text("Publishing colleague")
+    expect(dialog.get_by_role("heading", name="Publication request", exact=True)).to_have_count(0)
+    for label in ("Approve publication", "Reject publication", "Cancel publication request"):
+        expect(dialog.get_by_role("button", name=label, exact=True)).to_have_count(0)
+    assert not ui.operation_requests
+
+
+@pytest.mark.xfail(strict=True, reason=(
+    "Pre-existing product finding, surfaced by decision 27's tests: a link to a public document the "
+    "viewer cannot read (deleted, or a rejected or cancelled artifact, which a decision notice links "
+    "to) opens the review dialog on the public adapter's readRepair. That throws 'Public workspaces "
+    "have no access-removal cleanup to repair.', and the dialog shows that sentence instead of saying "
+    "the document is gone, as the group dialog does (DocumentCollaborationDialog.loadReview, "
+    "documentCollaboration.ts createPublicDocumentCollaboration.readRepair)."
+))
+def test_a_link_to_a_public_document_that_no_longer_exists_says_so(public_collaboration_ui):
+    ui = public_collaboration_ui
+    ui.open("/public/pub-a/documents?document_id=no-such-document")
+    expect(review_dialog(ui).get_by_role("alert")).to_contain_text(
+        "The requested document or review no longer exists, or is not available in this workspace.",
+    )
 
 
 def test_refused_set_active_leaves_a_publication_decision_working(public_collaboration_ui):

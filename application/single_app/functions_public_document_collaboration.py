@@ -33,6 +33,7 @@ from functions_public_document_policy import (
     PUBLIC_DOCUMENT_MANAGER_ROLES,
     public_document_collaboration_operations,
     public_document_has_publication,
+    public_document_visible_to_role,
 )
 from functions_settings import get_settings
 
@@ -187,6 +188,9 @@ def public_document_publication_state(user_id, public_workspace_id, document_id)
     document = read_public_document_record(document_id)
     if document.get("public_workspace_id") != public_workspace_id:
         raise PublicDocumentCollaborationError("collaboration_gone", "The document is not available in this public workspace.", 404)
+    if not public_document_visible_to_role(document, role):
+        # The read of a document that does not exist answers exactly this.
+        raise PublicDocumentReadError("Document not found or access denied.", 404)
     if not document.get("_etag"):
         raise PublicDocumentCollaborationError("state_unavailable", "Conditional document state is unavailable.", 409)
     actions = get_public_document_collaboration_actions(

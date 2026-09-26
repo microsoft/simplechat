@@ -50,6 +50,20 @@ def public_document_approval_pending(document):
     )
 
 
+def public_document_visible_to_role(document, role):
+    """Whether a caller with this workspace role may learn that the document exists.
+
+    A generated artifact awaiting publication is visible only to the hosting
+    workspace's managers. Unlike a group, where any member may request a
+    publication and so has a reason to see a held request, only a manager can
+    request a public publication or decide one, while every signed-in user reads
+    a public workspace. Even a held row would show the whole tenant the file name
+    and requester of an unapproved publication, so to anyone else a pending
+    artifact is exactly a document that does not exist.
+    """
+    return role in PUBLIC_DOCUMENT_MANAGER_ROLES or not public_document_approval_pending(document)
+
+
 def public_document_has_publication(document):
     """Single source of truth for whether a public document carries a
     generated-artifact publication.
