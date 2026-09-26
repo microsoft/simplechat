@@ -2,6 +2,27 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.185)**
+
+#### New Features
+
+*   **Public Workspace Settings, Activity And Statistics In V2**
+    *   A public workspace's Owner and Admins now manage its settings in V2, under **Manage**: the Owner edits the name, description, color and logo, and the Owner and Admins edit file downloads and retention. They also read its recent activity, and chart and export its statistics, which DocumentManagers can see too.
+    *   New routes name the workspace in the path, under `/api/public-workspaces/<id>/settings` and `/insights`. Writes carry a per-section revision and go through the public workspace guard; a failed read says so instead of returning an empty list. The classic routes are unchanged.
+    *   The group Settings, Activity and Statistics sections are now shared with public workspaces; the group's behaviour and text are unchanged.
+    *   Deleting the workspace still happens on the classic page. Settings explains that it removes only the workspace record, and quotes V2's own count of the workspace's current documents.
+    *   (Ref: `route_backend_public_settings.py`, `functions_public_settings.py`, `functions_public_settings_policy.py`, `functions_public_insights.py`, `WorkspaceSettingsSection.tsx`, [V2 Public Settings](features/V2_PUBLIC_SETTINGS.md), [Public Settings APIs](features/PUBLIC_SETTINGS_APIS.md))
+
+#### Bug Fixes
+
+*   **Classic Public Statistics Show Storage Correctly**
+    *   The classic manage public workspace page read "2 undefined" for storage past a terabyte, and "NaN undefined" for a missing size, in its statistics and exported CSV. It now writes B to TB, capped at TB, and "0 B" for no size.
+    *   (Ref: `manage_public_workspace.js`, [Classic Public Stats Export Fix](fixes/CLASSIC_PUBLIC_STATS_EXPORT_FIX.md))
+
+*   **A Malformed Timestamp No Longer Hides The Group Activity Feed**
+    *   One activity record whose timestamp couldn't be converted to UTC made the whole V2 group Activity feed fail. That record now shows without a time, and the rest of the feed is shown.
+    *   (Ref: `functions_group_insights.py`, [Group Activity Timestamp Overflow Fix](fixes/GROUP_ACTIVITY_TIMESTAMP_OVERFLOW_FIX.md))
+
 ### **(v0.261.184)**
 
 #### New Features

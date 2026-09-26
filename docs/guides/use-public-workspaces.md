@@ -90,9 +90,15 @@ documents, and cancel the request, from its row. It also shows or hides every
 workspace for chat at once, saves and reuses lists of visible workspaces, and
 opens classic chat over the visible ones.
 
-Sharing a public document with other workspaces is not available. The
-workspace's settings, logo, statistics and activity still use the classic
-page.
+From version **0.261.185**, the Owner and Admins manage the workspace's
+**Settings** (name, description, color and logo for the Owner; file downloads
+and retention for both), read its **Activity**, and chart and export its
+**Statistics**, which DocumentManagers can also see, under **Manage**. Deleting
+the workspace still happens on the classic page, and removes only the workspace
+record: its documents and prompts stay behind. See
+[V2 Public Settings]({{ '/explanation/features/V2_PUBLIC_SETTINGS/' | relative_url }}).
+
+Sharing a public document with other workspaces is not available.
 
 From version **0.261.173**, the classic public workspace pages save changes
 conditionally. If someone else changes the same workspace at that moment, a

@@ -92,8 +92,10 @@ any signed-in user (decision 22). The directory's rows carry no owner email or
 id.
 
 The selected-workspace context lists only the sections public workspaces have:
-documents, tags, prompts, identities and sync, plus **Members** in a **Manage**
-group from version **0.261.179** (see [V2 Public Members](V2_PUBLIC_MEMBERS.md)).
+documents, tags, prompts, identities and sync, plus a **Manage** group:
+**Members** from version **0.261.179** (see [V2 Public Members](V2_PUBLIC_MEMBERS.md)),
+and **Settings**, **Activity** and **Statistics** from version **0.261.185** (see
+[V2 Public Settings](V2_PUBLIC_SETTINGS.md)).
 Agents, actions, endpoints and workflows, which public workspaces will never
 have, aren't listed.
 The V2 client checks a public context against its own section list, and a link
