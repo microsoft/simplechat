@@ -2,8 +2,9 @@
 """M11 public end-to-end journeys: the role x status x File-Sync matrix, mid-session
 transitions, Settings activation and the classic handoff, driven through the real SPA.
 
-Version: 0.261.185
+Version: 0.261.187
 Implemented in: 0.261.185
+The classic handoff follows the Documents header's renamed Classic tools button: 0.261.187
 
 These journeys are the public twin of test_v2_group_journeys.py. They ride one composite
 public store (public_journeys_ui) across the whole public surface in one session and assert
@@ -232,7 +233,8 @@ def test_jp_settings_activation_makes_the_surface_available(public_journeys_ui):
 def test_jp_classic_handoff_carries_the_public_workspace(public_journeys_ui):
     ui = public_journeys_ui
     ui.open("/public/pub-a/documents")
-    ui.page.get_by_role("button", name="Open classic public workspace", exact=True).click()
+    # The Documents header's hand-off is "Classic tools", named for the legacy document upgrade (M11 2.4).
+    ui.page.get_by_role("button", name="Open classic tools to upgrade legacy public workspace documents", exact=True).click()
     expect(ui.page).to_have_url(f"{ORIGIN}/public_workspaces")
     assert ("/public_workspaces", "pub-a") in ui.classic_visits
 
