@@ -181,6 +181,7 @@ class ContextApi:
                     route.fulfill(json={"tags": [{"name": TAGS[scope]}]})
                     return
                 if path == collection:
+                    # A mock convenience: the real public chat list route ignores `search` and `page`.
                     query = parse_qs(url.query).get("search", [""])[0].casefold()
                     documents = [
                         document
