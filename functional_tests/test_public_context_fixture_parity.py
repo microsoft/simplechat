@@ -3,8 +3,8 @@
 Parity between the public workspace context the V2 browser fixtures serve and the real builder.
 Version: 0.261.186
 Implemented in: 0.261.168
-settings_management, the public settings decision (M10C): 0.261.181
-the Settings, Activity and Statistics manage sections and the settings switches (M10C R5): 0.261.181
+settings_management, the public settings decision (M10C): 0.261.185
+the Settings, Activity and Statistics manage sections and the settings switches (M10C R5): 0.261.185
 Reader downloads: the M3A read fixture models a downloads-off workspace, so its seeded context is
 held against the server's for that same per-workspace switch (a reader gets no download): 0.261.186
 

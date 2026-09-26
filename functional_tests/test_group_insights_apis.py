@@ -1,9 +1,9 @@
 # test_group_insights_apis.py
 """
 Functional test for the native group insights: activity, statistics and the document count.
-Version: 0.261.181
+Version: 0.261.185
 Implemented in: 0.261.154
-A stored timestamp whose UTC offset moves it past the calendar no longer fails the feed: 0.261.181
+A stored timestamp whose UTC offset moves it past the calendar no longer fails the feed: 0.261.185
 
 ``GET /api/groups/<group_id>/insights/activity``, ``/insights/stats`` and
 ``/insights/file-count`` run for real in ``test_support/group_settings_harness.py``.

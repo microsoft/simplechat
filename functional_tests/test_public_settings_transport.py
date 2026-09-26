@@ -1,8 +1,8 @@
 # test_public_settings_transport.py
 """
 Functional test for how the native public workspace settings routes resolve.
-Version: 0.261.181
-Implemented in: 0.261.181
+Version: 0.261.185
+Implemented in: 0.261.185
 
 The native paths under ``/api/public-workspaces/<workspace_id>/settings`` and
 ``/api/public-workspaces/<workspace_id>/insights`` share no pattern with any other route.

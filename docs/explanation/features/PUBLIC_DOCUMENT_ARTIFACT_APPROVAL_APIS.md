@@ -37,7 +37,7 @@ the routes never read `activePublicWorkspaceOid`.
 
 | Method and suffix | Purpose |
 |---|---|
-| `GET /publication` | Pending artifact review state for this document |
+| `GET /publication` | Pending artifact review state for this document. From version 0.261.183, a reader who isn't a manager gets 404 `collaboration_unavailable` for a pending artifact, as for a missing document, and the decision routes answer the same before any etag check |
 | `POST /artifact/approve` | Approve a pending generated artifact |
 | `POST /artifact/reject` | Reject a pending generated artifact |
 | `POST /artifact/cancel` | Withdraw one's own artifact request |

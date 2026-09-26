@@ -1,7 +1,7 @@
 # test_public_directory_apis.py
 """
 Functional test for the native public workspace directory API.
-Version: 0.261.183
+Version: 0.261.184
 Implemented in: 0.261.175
 
 ``GET /api/public_workspaces/directory`` runs for real (``functions_public_directory``

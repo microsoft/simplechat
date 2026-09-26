@@ -2,7 +2,7 @@
 #!/usr/bin/env python3
 """
 Functional test for route blueprint policy inventory.
-Version: 0.261.182
+Version: 0.261.185
 Implemented in: 0.242.069
 Plan editor policy coverage: 0.261.102
 Selected-group context policy coverage: 0.261.126

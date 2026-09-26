@@ -1,8 +1,8 @@
 # public_settings.py
 """
 Closed M10C public workspace Settings, Activity and Statistics HTTP fixtures for the real V2 SPA.
-Version: 0.261.181
-Implemented in: 0.261.181
+Version: 0.261.185
+Implemented in: 0.261.185
 
 The fixture serves the native public settings and insights family the V2 Settings, Activity and
 Statistics sections read and write -- `GET /api/public-workspaces/<w>/settings`,

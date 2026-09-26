@@ -1,8 +1,8 @@
 # test_public_membership_apis.py
 """
 Functional tests for the immutable-target native public workspace membership APIs.
-Version: 0.261.183
-Implemented in: 0.261.179 (requester-side request/cancel added in 0.261.183)
+Version: 0.261.184
+Implemented in: 0.261.179 (requester-side request/cancel added in 0.261.184)
 
 The real public membership logic module, its route registrar, the pure policy and
 disclosure projectors, and the real ``get_user_role_in_public_workspace`` resolver run

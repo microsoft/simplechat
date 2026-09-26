@@ -3,6 +3,8 @@
 Per-route shape parity between the M9B public document UI fixtures and the real routes.
 Version: 0.261.186
 Implemented in: 0.261.179
+A generated artifact awaiting publication is held for managers and absent for everyone else
+(decision 27): 0.261.183
 Reader downloads: the read fixture models a downloads-off workspace, so a reader's
 file_downloads_enabled is False and a download the workspace no longer offers is refused
 with the server's downloads-unavailable sentence: 0.261.186
@@ -37,9 +39,11 @@ canonical publication engine). The read and management checks store the fixture'
 fixture's workspace, ``pub-a``, so each projection is compared with the server's projection of the
 same document; the publication harness publishes its own artifact into ``public-a``.
 
-One product finding is pinned as a strict xfail: a public generated artifact awaiting publication is
-listed with its full metadata and ``enhanced_citations: true``, where the group read path reduces the
-same artifact to its held fields and the request, with "Awaiting generated artifact approval".
+One product finding was pinned here as a strict xfail at 0.261.179: a public generated artifact
+awaiting publication was listed to every reader with its full metadata. Decision 27 (0.261.183) makes
+it visible only to the workspace's managers, who see it held as a group member does; to every other
+reader it does not exist. The rule is pinned against the real routes below, with the fixtures' copy of
+it held to the server's predicate.
 """
 
 import json
@@ -58,7 +62,9 @@ for candidate in (ROOT, ROOT / "ui_tests", ROOT / "ui_tests" / "fixtures"):
 from ui_tests.fixtures.workspace_authoring import ApiRequest, ORIGIN  # noqa: E402
 from ui_tests.fixtures.public_workspace import public_context  # noqa: E402
 from ui_tests.fixtures.public_documents import (  # noqa: E402
-    PUBLIC_DOCUMENT_NOT_FOUND_ERROR, PUBLIC_DOCUMENTS_STATUS_ERROR, PublicDocumentsFixture,
+    AWAITING_APPROVAL_STATUS, GENERATED_ARTIFACT_REQUEST_FIELDS, HELD_PUBLIC_FIELDS,
+    PUBLIC_DOCUMENT_NOT_FOUND_ERROR, PUBLIC_DOCUMENTS_STATUS_ERROR, PublicDocumentsFixture, awaiting_publication,
+    document,
 )
 from ui_tests.fixtures.public_document_management import (  # noqa: E402
     DOCUMENT_ACTIONS, DOWNLOAD_HEADERS, DOWNLOADS_UNAVAILABLE_ERROR, OPERATION_UNAVAILABLE_ERROR, PUBLIC_ARCHIVE_NAME,
@@ -201,7 +207,11 @@ def by_id(rows):
 def row_ui_keys(row):
     keys = set(ROW_UI_KEYS)
     screening = row.get("content_screening")
-    if not (screening and screening.get("available") is False):
+    # A held row -- by a screening hold, or an artifact awaiting publication -- has no content columns.
+    held_row = bool(screening and screening.get("available") is False) or (
+        row.get("generated_artifact_promotion_status") == "pending_approval"
+    )
+    if not held_row:
         keys |= CONTENT_UI_KEYS
     if screening:
         keys.add("content_screening")
@@ -770,7 +780,8 @@ def test_publication_review_shape_parity(publication, actor, identifier):  # noq
     ("manager", "pending-publication"), (publication_suite.REQUESTER, "requested-publication"),
 ])
 def test_pending_artifact_row_shape_parity(publication, actor, identifier):  # noqa: F811
-    """An artifact awaiting publication is listed with its request and no document operation."""
+    """An artifact awaiting publication is listed to a manager held, with its request and no document
+    operation."""
     env = publication
     publication_suite.submit(env)
     publication_suite.set_actor(env, actor)
@@ -780,26 +791,224 @@ def test_pending_artifact_row_shape_parity(publication, actor, identifier):  # n
     assert (status, real.status_code) == (200, 200), real.get_json()
     stored, served = by_id(real.get_json()["documents"])[env.target], by_id(payload["documents"])[identifier]
     assert_nested_parity(f"artifact row {identifier}", served, stored, row_ui_keys(stored))
-    for key in ("status", "generated_artifact_promotion_status", "percentage_complete", "document_actions"):
+    for key in ("status", "generated_artifact_promotion_status", "percentage_complete", "document_actions", "enhanced_citations"):
         assert served[key] == stored[key], f"artifact row {identifier}: {key} fixture {served[key]!r}, server {stored[key]!r}"
     assert set(served["document_collaboration_actions"]) == set(stored["document_collaboration_actions"])
 
 
-@pytest.mark.xfail(strict=True, reason=(
-    "Product finding (M9B): the public read projection lists a generated artifact awaiting publication "
-    "with its full metadata and enhanced_citations true. The group read path "
-    "(functions_group_document_reads._project_group_document) reduces the same artifact to its held "
-    "fields and the request, with 'Awaiting generated artifact approval'; the public projector "
-    "(functions_public_document_reads._project_public_document) has no such branch."
-))
-def test_a_pending_public_artifact_is_listed_like_a_pending_group_artifact(publication):  # noqa: F811
+# Decision 27. What a manager's held artifact row may carry: the server's held allow-list and the
+# request, and what the projection itself decides.
+HELD_ARTIFACT_KEYS = HELD_PUBLIC_FIELDS | GENERATED_ARTIFACT_REQUEST_FIELDS | {
+    "content_screening", "status", "enhanced_citations", "document_actions", "document_collaboration_actions",
+}
+ARTIFACT_CONTENT_KEYS = {"title", "abstract", "authors", "keywords", "tags", "document_classification"}
+# Every signed-in user reads a public workspace; neither of these is a manager of it.
+READER_ACTORS = (READER, "outsider")
+PLACES = ("all", "recent", "processing", "errors", "untagged")
+
+
+@pytest.mark.parametrize("surface", ["list", "detail", "versions"])
+def test_a_manager_sees_a_pending_public_artifact_held(publication, surface):  # noqa: F811
+    """A manager's list, detail and version reads show a generated artifact awaiting publication as
+    the group read path does: its held fields and the request, never its content."""
+    env = publication
+    publication_suite.submit(env)
+    publication_suite.set_actor(env, "manager")
+    if surface == "list":
+        response = get(env, PUBLICATION_ROOT, page_size=100)
+        rows = response.get_json()["documents"]
+    elif surface == "detail":
+        response = get(env, f"{PUBLICATION_ROOT}/{env.target}")
+        rows = [response.get_json()]
+    else:
+        response = get(env, f"{PUBLICATION_ROOT}/{env.target}/versions")
+        rows = response.get_json()["versions"]
+
+    assert response.status_code == 200, response.get_json()
+    row = by_id(rows)[env.target]
+    assert row["status"] == AWAITING_APPROVAL_STATUS
+    assert row["generated_artifact_promotion_status"] == "pending_approval"
+    assert row["enhanced_citations"] is False
+    assert row["generated_artifact_requested_by_user_id"] == publication_suite.REQUESTER
+    assert not ARTIFACT_CONTENT_KEYS & set(row), sorted(ARTIFACT_CONTENT_KEYS & set(row))
+    assert set(row) <= HELD_ARTIFACT_KEYS, sorted(set(row) - HELD_ARTIFACT_KEYS)
+
+
+def countable_view(env):
+    """Everything a caller can list or count about the workspace: each place's rows and count, the
+    facets and the tag counts."""
+    view = {}
+    for place in PLACES:
+        listing = get(env, PUBLICATION_ROOT, page_size=100, place=place)
+        assert listing.status_code == 200, listing.get_json()
+        payload = listing.get_json()
+        view[place] = (sorted(row["id"] for row in payload["documents"]), payload["total_count"])
+    for resource in ("facets", "tags"):
+        response = get(env, f"{PUBLICATION_ROOT}/{resource}")
+        assert response.status_code == 200, response.get_json()
+        view[resource] = response.get_json()
+    return view
+
+
+@pytest.mark.parametrize("actor", READER_ACTORS)
+def test_a_reader_never_learns_of_a_pending_public_artifact(publication, actor):  # noqa: F811
+    """To anyone but a manager, a generated artifact awaiting publication does not exist: the reader's
+    places, counts, facets and tag counts are exactly what they were before it was requested, and a
+    detail or version read of it answers as the read of a document that does not exist."""
+    env = publication
+    publication_suite.set_actor(env, actor)
+    before = countable_view(env)
+    publication_suite.submit(env)
+    publication_suite.set_actor(env, "manager")
+    managed = countable_view(env)
+    publication_suite.set_actor(env, actor)
+
+    assert countable_view(env) == before
+    assert env.target not in before["all"][0]
+    # A manager counts it, so the reader's set is exactly the manager's without it.
+    assert managed["all"] == (sorted([*before["all"][0], env.target]), before["all"][1] + 1)
+    assert managed["facets"]["total"] == before["facets"]["total"] + 1
+    for suffix in ("", "/versions"):
+        hidden = get(env, f"{PUBLICATION_ROOT}/{env.target}{suffix}")
+        missing = get(env, f"{PUBLICATION_ROOT}/missing-document{suffix}")
+        assert (hidden.status_code, hidden.get_json()) == (missing.status_code, missing.get_json()) == (
+            404, {"error": PUBLIC_DOCUMENT_NOT_FOUND_ERROR},
+        ), suffix
+
+
+@pytest.mark.parametrize("actor", READER_ACTORS)
+def test_a_readers_review_or_decision_of_a_pending_public_artifact_is_a_missing_documents(publication, actor):  # noqa: F811
+    """The review read and every decision answer a reader exactly as they answer for a document that
+    does not exist, even given the artifact's current etag, and change nothing."""
+    env = publication
+    publication_suite.submit(env)
+    etag = env.source.read_item(env.target, env.target)["_etag"]
+    before = deepcopy(env.source.records)
+    publication_suite.set_actor(env, actor)
+
+    hidden, missing = publication_suite.state(env), publication_suite.state(env, "missing-document")
+    assert (hidden.status_code, hidden.get_json()) == (missing.status_code, missing.get_json()) == (404, COLLABORATION_MISSING)
+    answers = {}
+    for action in ("approve", "reject", "cancel"):
+        hidden, missing = (
+            env.client.post(f"{PUBLICATION_ROOT}/{identifier}/artifact/{action}", json={"expected_etag": etag})
+            for identifier in (env.target, "missing-document")
+        )
+        answers[action] = (hidden.status_code, hidden.get_json())
+        assert answers[action] == (missing.status_code, missing.get_json()), action
+    # A reader may cancel only their own request, so only a cancel reaches the document at all.
+    assert answers["cancel"] == (404, COLLABORATION_MISSING)
+    assert env.source.records == before
+    assert "decision" not in publication_suite.receipt(env)
+
+
+def test_a_reader_is_served_no_pending_artifact_by_the_fixture(publication):  # noqa: F811
+    """The collaboration fixture, viewed as a reader, holds to the server: no pending artifact in its
+    list, count or facets, and a detail or review read of one answers as the server answers a reader's.
+    Every row offers a reader no management operation; the real env runs downloads on, so a reader's
+    downloadable rows may carry `download`, and the downloads-off fixture reader carries none."""
     env = publication
     publication_suite.submit(env)
     publication_suite.set_actor(env, READER)
-    row = by_id(get(env, PUBLICATION_ROOT, page_size=100).get_json()["documents"])[env.target]
-    assert row["status"] == "Awaiting generated artifact approval"
-    assert row["enhanced_citations"] is False
-    assert not {"title", "abstract", "authors", "keywords", "tags"} & set(row)
+    real_rows = by_id(get(env, PUBLICATION_ROOT, page_size=100).get_json()["documents"])
+    real_detail, real_review = get(env, f"{PUBLICATION_ROOT}/{env.target}"), publication_suite.state(env)
+    fixture = new_collaboration_fixture()
+    fixture.view_as_reader(WORKSPACE)
+    status, listing = fixture_read(fixture, READS, page_size="100")
+    served_rows = by_id(listing["documents"])
+    _status, facets = fixture_read(fixture, f"{READS}/facets")
+
+    assert status == 200 and env.target not in real_rows
+    assert not {"pending-publication", "requested-publication"} & set(served_rows)
+    assert listing["total_count"] == facets["total"] == len(served_rows)
+    for identifier in ("pending-publication", "requested-publication"):
+        assert fixture_read(fixture, f"{READS}/{identifier}") == (real_detail.status_code, real_detail.get_json())
+        assert fixture_review(fixture, identifier) == (real_review.status_code, real_review.get_json())
+    assert all(set(row["document_actions"]) <= {"download"} for row in real_rows.values())
+    assert all(row["document_actions"] == [] for row in served_rows.values())
+
+
+# The pending predicate's cases: its promotion status, or, before one is recorded, its stored status.
+PENDING_CASES = (
+    {}, {"status": "Pending approval"}, {"status": "  PENDING APPROVAL "}, {"status": "Processing complete"},
+    {"generated_artifact_promotion_status": "pending_approval"},
+    {"generated_artifact_promotion_status": "pending_approval", "status": AWAITING_APPROVAL_STATUS},
+    {"generated_artifact_promotion_status": None, "status": "Pending approval"},
+    {"generated_artifact_promotion_status": "", "status": "Pending approval"},
+    {"generated_artifact_promotion_status": "approved", "status": "Pending approval"},
+    {"generated_artifact_promotion_status": "approval_failed", "status": "Pending approval"},
+    {"generated_artifact_promotion_status": "rejected"}, {"generated_artifact_promotion_status": "cancelled"},
+)
+
+
+def test_the_fixtures_visibility_rule_is_the_servers(reads):
+    """The fixtures decide who sees a row with a copy of the server's rule; it must be the server's
+    (functions_public_document_policy, as the read harness loads it)."""
+    policy = sys.modules["functions_public_document_policy"]
+    fixture = new_collaboration_fixture()
+    for case in PENDING_CASES:
+        assert awaiting_publication(case) is policy.public_document_approval_pending(case), case
+        for role in ("Owner", "Admin", "DocumentManager", "User"):
+            fixture.workspaces[WORKSPACE] = public_context(WORKSPACE, "Research library", role=role)
+            assert fixture.viewer_may_see(WORKSPACE, case) is policy.public_document_visible_to_role(case, role), (case, role)
+
+
+def test_a_readers_version_history_omits_a_pending_revision(publication):  # noqa: F811
+    """A revision awaiting publication in a family the reader can see is left out of the reader's
+    version history, rather than refusing the whole history; a manager's shows it held. (A manager's
+    upload under the artifact's file name joins its family.)"""
+    env = publication
+    publication_suite.submit(env)
+    artifact = env.source.records[env.target]
+    artifact["revision_family_id"] = "family-mixed"
+    sibling = stored_document(document(
+        "public-a", "released-sibling", "Released revision", timestamp=1_800_000_000,
+        version=int(artifact["version"]) + 1, revision_family_id="family-mixed", file_name=artifact["file_name"],
+    ))
+    env.source.records[sibling["id"]] = sibling
+    history = f"{PUBLICATION_ROOT}/released-sibling/versions"
+
+    publication_suite.set_actor(env, READER)
+    reader_history = get(env, history)
+    assert reader_history.status_code == 200, reader_history.get_json()
+    assert [row["id"] for row in reader_history.get_json()["versions"]] == ["released-sibling"]
+    assert get(env, f"{PUBLICATION_ROOT}/{env.target}/versions").status_code == 404
+    publication_suite.set_actor(env, "manager")
+    manager_history = get(env, history)
+    assert manager_history.status_code == 200, manager_history.get_json()
+    rows = by_id(manager_history.get_json()["versions"])
+    assert set(rows) == {"released-sibling", env.target}
+    assert rows[env.target]["status"] == AWAITING_APPROVAL_STATUS
+
+
+def test_a_manager_demoted_during_a_read_is_never_answered_with_the_managers_set(publication):  # noqa: F811
+    """Visibility follows the role each read's last revalidation finds: a manager demoted after the
+    documents were queried is counted as a reader, and one demoted before the list response is
+    projected is refused rather than shown the held row."""
+    env = publication
+    publication_suite.set_actor(env, READER)
+    reader_facets = get(env, f"{PUBLICATION_ROOT}/facets").get_json()
+    publication_suite.submit(env)
+    publication_suite.set_actor(env, "manager")
+    revalidate = env.reads.require_public_document_read_context
+
+    def demote_after(checks):
+        calls = []
+
+        def check(user_id, workspace_id):
+            workspace, role = revalidate(user_id, workspace_id)
+            calls.append(role)
+            return (workspace, "User") if len(calls) > checks else (workspace, role)
+        return check
+
+    # The load revalidates before and after its query, and once more after projecting.
+    env.scoped_monkeypatch.setattr(env.reads, "require_public_document_read_context", demote_after(2))
+    facets = get(env, f"{PUBLICATION_ROOT}/facets")
+    assert (facets.status_code, facets.get_json()) == (200, reader_facets)
+    # The final response projection revalidates again, after the load's three checks.
+    env.scoped_monkeypatch.setattr(env.reads, "require_public_document_read_context", demote_after(3))
+    listing = get(env, PUBLICATION_ROOT, page_size=100)
+    assert (listing.status_code, listing.get_json()) == (404, {"error": PUBLIC_DOCUMENT_NOT_FOUND_ERROR})
 
 
 @pytest.mark.parametrize("cause", ["missing", "inactive"])

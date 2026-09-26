@@ -24,12 +24,17 @@ Dependencies:
   address, so back, forward and a shared link reopen the same list.
 - **Open** a workspace: this goes to its V2 page, `/v2/public/<id>`.
 - **Visible for chat:** a per-workspace switch that decides whether its
-  documents appear in public chat. This is the directory's only write.
+  documents appear in public chat.
 
 Unlike the group directory there's nothing to join here; public workspaces are
 readable by every signed-in user. From version **0.261.179** the directory also
 offers **Create**, when the server's `public_directory` hint says the caller may
 create a public workspace; see [V2 Public Members](V2_PUBLIC_MEMBERS.md).
+
+From version **0.261.184**, a workspace's row offers **Ask to manage documents**
+to someone who doesn't manage it yet, then marks it **Requested** with a
+**Cancel request** button until the Owner or an Admin decides in Members. The
+row's `membership` from the server decides which appears, never the browser.
 
 ### Visible for chat
 
@@ -43,6 +48,23 @@ create a public workspace; see [V2 Public Members](V2_PUBLIC_MEMBERS.md).
   Opening a workspace doesn't hide the others, unlike classic's **Set active**.
 - A workspace whose status doesn't allow reading is shown as unavailable. Its
   switch can still be turned off.
+
+### Visibility tools
+
+From version **0.261.184**, the directory also offers:
+- **Show all in chat** and **Hide all from chat**, which set every workspace in
+  the directory at once;
+- **Saved lists**: **Save current** stores the workspaces visible now, **Use
+  this list** makes exactly a list's workspaces visible and hides the rest, and
+  a list can be deleted. They're stored as `publicDirectorySavedLists`, the
+  classic directory's shape, so either interface can use them;
+- **Chat with visible (classic)**, which saves any pending change and opens
+  classic chat over the workspaces visible now. V2 chat can only scope to one
+  public workspace (decision 31).
+
+The bulk and saved-list actions cover the whole directory, not the page on
+screen, up to 1,000 workspaces; past that they refuse and say how many there
+are. Each reports how many workspaces it changed.
 
 ### Labels
 
@@ -69,9 +91,13 @@ from the classic list route because that route returns every owner's email to
 any signed-in user (decision 22). The directory's rows carry no owner email or
 id.
 
-The selected-workspace context now lists only the sections public workspaces
-have: documents, tags, prompts, identities and sync. Agents, actions, endpoints
-and workflows, which public workspaces will never have, are no longer listed.
+The selected-workspace context lists only the sections public workspaces have:
+documents, tags, prompts, identities and sync, plus a **Manage** group:
+**Members** from version **0.261.179** (see [V2 Public Members](V2_PUBLIC_MEMBERS.md)),
+and **Settings**, **Activity** and **Statistics** from version **0.261.185** (see
+[V2 Public Settings](V2_PUBLIC_SETTINGS.md)).
+Agents, actions, endpoints and workflows, which public workspaces will never
+have, aren't listed.
 The V2 client checks a public context against its own section list, and a link
 to a section public workspaces don't have opens "Section not found".
 
@@ -102,8 +128,8 @@ to a section public workspaces don't have opens "Section not found".
 
 ## Known limitations
 
-- Saved visibility lists (`publicDirectorySavedLists`) have no V2 editor yet.
-  V2 leaves them untouched, and classic still manages them.
+- **Chat with visible** opens classic chat (decision 31).
+- The bulk and saved-list actions stop at 1,000 workspaces.
 
 ## Related
 

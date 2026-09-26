@@ -85,8 +85,8 @@ owner.
 
 ## Known limitations
 
-- **Approving requests** still happens on the classic manage page, until the
-  native Members view arrives.
+- **Approving requests** happens in the group's **Members** section, from
+  version **0.261.155**. Until then it needed the classic manage page.
 - **The directory reads every group** on each request, as the classic Find
   Group did; see the API reference.
 

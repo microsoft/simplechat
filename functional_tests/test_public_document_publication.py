@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
 """
 Functional tests for immutable-target public workspace generated-artifact decisions.
-Version: 0.261.148
+Version: 0.261.183
 Implemented in: 0.261.134
 Decision link opens the V2 public workspace route: 0.261.148
+A pending artifact is visible only to the hosting workspace's managers; a reader's review or cancel
+of one answers as a document that does not exist: 0.261.183
 
 The scoped public collaboration routes, the public publication adapter, the
 shared canonical artifact-publication engine, the shared screening consume-latch
@@ -486,7 +488,12 @@ def test_manager_decisions_and_requester_cancel_do_not_borrow_each_others_author
         assert response.status_code == (202 if action == "approve" else 200), response.get_json()
         assert saved["decision"]["actor_user_id"] == actor
     else:
-        assert response.status_code == 403, response.get_json()
+        # A reader may not learn that the pending artifact exists (decision 27). Their cancel is the one
+        # refusal that reaches the document, so it answers as a document that does not exist does.
+        hidden = action == "cancel" and actor in {"reader", "outsider"}
+        assert response.status_code == (404 if hidden else 403), response.get_json()
+        if hidden:
+            assert response.get_json() == {"error": "collaboration_unavailable", "message": "Document not found or access denied."}
         assert "decision" not in saved
         assert env.source.records == before
         assert env.publication_calls["queue_attempts"] == []
@@ -628,7 +635,7 @@ def test_ambiguous_queue_acknowledgement_is_reconciled_not_a_second_job(publicat
 @pytest.mark.parametrize("actor,expected", [
     ("manager", {"inspect", "approve_artifact", "reject_artifact"}),
     (REQUESTER, {"inspect", "approve_artifact", "reject_artifact", "cancel_artifact"}),
-    ("reader", {"inspect"}),
+    ("reader", None),
 ])
 def test_publication_state_computes_actions_from_current_authority(publication, actor, expected):
     env = publication
@@ -636,6 +643,14 @@ def test_publication_state_computes_actions_from_current_authority(publication, 
     set_actor(env, actor)
     response = state(env)
     value = response.get_json()
+    if expected is None:
+        # Only the hosting workspace's managers may learn of a pending artifact (decision 27): a
+        # reader's review read of one answers exactly as the read of a document that does not exist.
+        missing = state(env, "missing-document")
+        assert (response.status_code, value) == (missing.status_code, missing.get_json()) == (
+            404, {"error": "collaboration_unavailable", "message": "Document not found or access denied."},
+        )
+        return
     assert response.status_code == 200, value
     assert set(value) == {
         "schema_version", "public_workspace_id", "document_id", "document_version",

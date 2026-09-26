@@ -122,7 +122,7 @@ doesn't suggest they are.
 | Section availability, in the selected-group context | `application/single_app/functions_workspace_context.py` |
 | The scoped settings, activity and statistics client | `application/v2_ui/src/lib/groupSettings.ts` |
 | The group statistics adapter and CSV | `application/v2_ui/src/lib/groupStats.ts` |
-| The three sections | `application/v2_ui/src/pages/workspace/GroupSettingsSection.tsx`, `GroupActivitySection.tsx`, `GroupStatisticsSection.tsx` |
+| The three sections | `application/v2_ui/src/pages/workspace/GroupSettingsSection.tsx`, `GroupActivitySection.tsx`, `GroupStatisticsSection.tsx`. From version 0.261.185 these are thin wrappers over the shared `WorkspaceSettingsSection.tsx`, `WorkspaceActivitySection.tsx` and `WorkspaceStatisticsSection.tsx`, which public workspaces also use; the group's props, text and behaviour are unchanged |
 | Wiring into the group workspace | `application/v2_ui/src/pages/GroupWorkspacePage.tsx`, `pages/workspace/groupManageSections.ts`, `lib/workspaceContext.ts` |
 | The personal statistics seam | `components/settings/StatsExportDialog.tsx` and `lib/userStats.ts`. With no group adapter passed, the personal path is unchanged. |
 

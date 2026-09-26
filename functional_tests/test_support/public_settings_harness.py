@@ -1,8 +1,8 @@
 # public_settings_harness.py
 """Shared, isolated harness for the native public workspace settings and insights tests (M10C).
 
-Version: 0.261.181
-Implemented in: 0.261.181
+Version: 0.261.185
+Implemented in: 0.261.185
 
 It builds on ``public_directory_harness`` (its people, its public workspace documents and
 the loading helpers), which it imports and does not change.

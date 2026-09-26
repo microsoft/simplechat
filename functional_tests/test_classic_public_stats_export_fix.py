@@ -2,8 +2,8 @@
 # test_classic_public_stats_export_fix.py
 """
 Functional test for the classic public workspace statistics export and its byte formatter.
-Version: 0.261.181
-Implemented in: 0.261.181
+Version: 0.261.185
+Implemented in: 0.261.185
 
 This test ensures that the classic manage public workspace page's statistics export
 (`exportWorkspaceStats` in `static/js/public/manage_public_workspace.js`) produces its

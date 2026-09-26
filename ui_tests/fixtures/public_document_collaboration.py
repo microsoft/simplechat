@@ -1,12 +1,13 @@
 # public_document_collaboration.py
 """
 Closed M3C public generated-artifact approval HTTP fixtures for the real V2 SPA.
-Version: 0.261.179
+Version: 0.261.183
 Implemented in: 0.261.134
 A configured workspace carries the server's review handshake (public_context) unless a test scripts
 its own: 0.261.168
 The review states, pending rows, receipts, refusals and partial outcomes are the real collaboration
 routes', held to them by functional_tests/test_public_document_fixture_parity.py: 0.261.179
+A pending artifact is listed held, and its review served, only to a workspace manager: 0.261.183
 
 Extend the M3B management boundary with the publication review surface. Public
 workspaces have no cross-workspace sharing in this milestone, so only generated
@@ -29,7 +30,8 @@ from ui_tests.fixtures.public_document_management import (
     OperationReply, PRESENTATION_SETTINGS, PublicDocumentManagementFixture, operation_path,
 )
 from ui_tests.fixtures.public_documents import (
-    PUBLIC_DOCUMENT_NOT_FOUND_ERROR, PUBLIC_DOCUMENTS_DENIED_ERROR, PUBLIC_DOCUMENTS_STATUS_ERROR, document,
+    PUBLIC_DOCUMENT_NOT_FOUND_ERROR, PUBLIC_DOCUMENTS_DENIED_ERROR, PUBLIC_DOCUMENTS_STATUS_ERROR,
+    awaiting_approval, document,
 )
 from ui_tests.fixtures.public_workspace import connect_options  # noqa: F401
 from ui_tests.fixtures.workspace_authoring import OWNER_ID, WorkspaceAuthoringFixture
@@ -107,22 +109,21 @@ def publication_state(
 
 
 def pending_artifact(workspace_id, identifier, title, *, timestamp, review, actions):
-    """A generated artifact awaiting publication, as the public list projection shows it: the
-    document with its request (unlike a group's, it is not reduced to its held fields -- a product
-    finding the parity test pins), not yet processed, and no document operation until decided."""
-    record = document(
+    """A generated artifact awaiting publication, as a manager's list projection shows it: held, with
+    its request, not yet processed, and no document operation until decided. Only a workspace manager
+    is shown one; to anyone else it does not exist."""
+    stored = document(
         workspace_id, identifier, title, timestamp=timestamp, status="Pending approval", tags=[],
         percentage_complete=0, user_id=review["requested_by_user_id"],
+        generated_artifact_promotion_status="pending_approval",
+        generated_artifact_requested_by_user_id=review["requested_by_user_id"],
+        generated_artifact_requested_by_display_name=review["requested_by_display_name"],
+        generated_artifact_requested_at=review["requested_at"],
     )
-    for field in ("num_chunks", "document_intelligence_extraction_mode"):
-        record.pop(field)
-    record.update({
-        "generated_artifact_promotion_status": "pending_approval",
-        "generated_artifact_requested_by_user_id": review["requested_by_user_id"],
-        "generated_artifact_requested_by_display_name": review["requested_by_display_name"],
-        "generated_artifact_requested_at": review["requested_at"],
-        "document_actions": [], "document_collaboration_actions": list(actions),
-    })
+    # Nothing is chunked until an approval queues processing.
+    stored.pop("num_chunks")
+    record = awaiting_approval(stored)
+    record.update({"document_actions": [], "document_collaboration_actions": list(actions)})
     return record
 
 
@@ -180,6 +181,19 @@ class PublicDocumentCollaborationFixture(PublicDocumentManagementFixture):
         self.set_policy(workspace_id, role=role, status=status)
         if operations is not None:
             self.workspaces[workspace_id]["document_collaboration"] = {"schema_version": 1, "operations": list(operations)}
+
+    def view_as_reader(self, workspace_id="pub-a"):
+        """Serve the workspace as an ordinary reader is served it: the reader's context on a
+        downloads-off workspace (so no Download control and no operation on any row --
+        get_public_document_actions), and no artifact awaiting publication. Reader downloads,
+        the downloads-on capability, are exercised on the management fixture."""
+        self.set_policy(workspace_id, role="User", download_enabled=False)
+        for (versions_workspace, _identifier), rows in self.versions.items():
+            if versions_workspace == workspace_id:
+                for row in rows:
+                    row["document_actions"] = []
+        for record in self.documents[workspace_id]:
+            record["document_actions"] = []
 
     def review_state(self, identifier="same-document", workspace_id="pub-a"):
         return self.reviews[(workspace_id, identifier)]
@@ -244,7 +258,10 @@ class PublicDocumentCollaborationFixture(PublicDocumentManagementFixture):
                 self._json(route, COLLABORATION_STATUS_REFUSED, 403)
                 return
             state = self.reviews.get((workspace_id, identifier))
-            if state is None:
+            record = next((row for row in self.documents[workspace_id] if row["id"] == identifier), None)
+            if state is None or (record is not None and not self.viewer_may_see(workspace_id, record)):
+                # No such review, or a pending artifact the viewer's role may not see, which is
+                # refused exactly as a review that does not exist.
                 self._json(route, COLLABORATION_MISSING, 404)
             else:
                 self._json(route, state)

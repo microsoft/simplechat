@@ -1,12 +1,14 @@
 # workflow_editor.py
 """
 Closed API fixtures for the native V2 workflow editor.
-Version: 0.261.178
+Version: 0.261.183
 Implemented in: 0.261.108
 Group File Sync, alert handoff and personal-scope trap modelling added in: 0.261.141
 Real alert normalizer on both save routes added in: 0.261.144
 Reviewed settings errors, personal File Sync rules, deleted workflows and the run-as member trap added in: 0.261.149
 Group workflow list/save/run/cancel/delete responses held to the real route shapes in: 0.261.178
+The public document picker is served the public chat list as its route answers it (chat_list), with
+no generated artifact awaiting publication: 0.261.183
 
 Group File Sync requests are answered by the real server functions, compiled from source:
 `_serialize_workflow_file_sync_source` builds the source list, and `_normalize_file_sync_config`,
@@ -45,6 +47,7 @@ from urllib.parse import parse_qs, unquote, urlsplit
 import pytest
 from playwright.sync_api import Page, Route, expect
 from ui_tests.fixtures.group_workspace import group_context
+from ui_tests.fixtures.public_documents import chat_list
 
 from ui_tests.fixtures.workspace_authoring import (
     AGENT_ID,
@@ -794,7 +797,7 @@ class WorkflowEditorFixture(WorkspaceAuthoringFixture):
             docs = self.group_documents.get(GROUP_ID, [])
             self._json(route, {"documents": docs, "total_count": len(docs)})
         elif path == "/api/public_workspace_documents" and method == "GET":
-            self._json(route, {"documents": self.public_documents, "total_count": len(self.public_documents)})
+            self._json(route, chat_list(self.public_documents))
         else:
             super()._dispatch(route, entry)
 

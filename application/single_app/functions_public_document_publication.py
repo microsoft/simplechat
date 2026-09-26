@@ -33,6 +33,7 @@ from functions_public_document_policy import (
     public_document_approval_pending,
     public_document_collaboration_operations,
     public_document_has_publication,
+    public_document_visible_to_role,
 )
 from functions_group_document_projection_fence import (
     PUBLIC_DOCUMENT_COLLABORATION_OPERATION, public_collaboration_projection_context,
@@ -186,6 +187,9 @@ def decide_public_document_publication(user_id, public_workspace_id, document_id
     document = read_public_document_record(document_id)
     if document.get("public_workspace_id") != public_workspace_id:
         raise PublicDocumentCollaborationError("publication_forbidden", "Only the hosting public workspace can decide this request.", 403)
+    if not public_document_visible_to_role(document, role):
+        # Before the etag check, so the answer cannot confirm that the artifact exists.
+        raise PublicDocumentReadError("Document not found or access denied.", 404)
     _check_etag(document, payload["expected_etag"])
     try:
         artifact, receipt, bound = publication.read_artifact_publication_request(document)

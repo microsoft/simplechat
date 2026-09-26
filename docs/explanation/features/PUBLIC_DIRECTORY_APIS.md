@@ -44,7 +44,7 @@ Any other parameter, a malformed value, or a request body is refused with 400
     {"id": "...", "name": "...", "description": "...",
      "heroColor": "#...", "hasLogo": false, "logoVersion": 1,
      "userRole": "Owner" | "Admin" | "DocumentManager" | "User",
-     "membership": "member" | "none",
+     "membership": "member" | "pending" | "none",
      "status": "active" | "locked" | "upload_disabled" | "inactive" | "unknown"}
   ],
   "page": 1,

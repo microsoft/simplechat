@@ -2,7 +2,7 @@
 """
 Ensure immutable-target public membership routes cannot match a legacy public route.
 
-Version: 0.261.183
+Version: 0.261.184
 Implemented in: 0.261.179
 
 A mixed deployment must reject an unsupported workspace-bound public membership URL

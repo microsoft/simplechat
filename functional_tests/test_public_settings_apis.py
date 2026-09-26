@@ -1,8 +1,8 @@
 # test_public_settings_apis.py
 """
 Functional test for the native public workspace settings read and writes.
-Version: 0.261.181
-Implemented in: 0.261.181
+Version: 0.261.185
+Implemented in: 0.261.185
 
 ``GET /api/public-workspaces/<workspace_id>/settings`` and the writes under it run for
 real in ``test_support/public_settings_harness.py``, over the etag-enforcing public

@@ -1,8 +1,8 @@
 # test_v2_public_settings.py
 """
 Production-SPA coverage for the native V2 public workspace Settings, Activity and Statistics sections.
-Version: 0.261.181
-Implemented in: 0.261.181
+Version: 0.261.185
+Implemented in: 0.261.185
 
 Exercises the real Settings, Activity and Statistics sections -- the M10C sections of the public
 WorkspaceShell's Manage group, the shared M7C components driven by the public scope -- against closed

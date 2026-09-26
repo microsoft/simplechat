@@ -1,6 +1,6 @@
 // test_v2_public_stats_formatter_parity.mjs
-// Version: 0.261.181
-// Implemented in: 0.261.181
+// Version: 0.261.185
+// Implemented in: 0.261.185
 // Runs the V2 statistics export's byte formatter (lib/groupStats.ts formatClassicBytes, which the public
 // Statistics section reuses rather than forks) beside the classic manage public workspace export's own
 // formatBytes (static/js/public/manage_public_workspace.js). The two exports write the same "Formatted"

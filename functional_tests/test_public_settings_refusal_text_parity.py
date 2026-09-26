@@ -1,8 +1,8 @@
 # test_public_settings_refusal_text_parity.py
 """
 Functional test for V2 public settings refusal text parity.
-Version: 0.261.181
-Implemented in: 0.261.181
+Version: 0.261.185
+Implemented in: 0.261.185
 
 The V2 public Settings section explains every withheld control with the reviewed text for the reason
 code the server's settings_management hint reports. This test holds the browser's REFUSAL_TEXT table

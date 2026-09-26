@@ -2,6 +2,51 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.185)**
+
+#### New Features
+
+*   **Public Workspace Settings, Activity And Statistics In V2**
+    *   A public workspace's Owner and Admins now manage its settings in V2, under **Manage**: the Owner edits the name, description, color and logo, and the Owner and Admins edit file downloads and retention. They also read its recent activity, and chart and export its statistics, which DocumentManagers can see too.
+    *   New routes name the workspace in the path, under `/api/public-workspaces/<id>/settings` and `/insights`. Writes carry a per-section revision and go through the public workspace guard; a failed read says so instead of returning an empty list. The classic routes are unchanged.
+    *   The group Settings, Activity and Statistics sections are now shared with public workspaces; the group's behaviour and text are unchanged.
+    *   Deleting the workspace still happens on the classic page. Settings explains that it removes only the workspace record, and quotes V2's own count of the workspace's current documents.
+    *   (Ref: `route_backend_public_settings.py`, `functions_public_settings.py`, `functions_public_settings_policy.py`, `functions_public_insights.py`, `WorkspaceSettingsSection.tsx`, [V2 Public Settings](features/V2_PUBLIC_SETTINGS.md), [Public Settings APIs](features/PUBLIC_SETTINGS_APIS.md))
+
+#### Bug Fixes
+
+*   **Classic Public Statistics Show Storage Correctly**
+    *   The classic manage public workspace page read "2 undefined" for storage past a terabyte, and "NaN undefined" for a missing size, in its statistics and exported CSV. It now writes B to TB, capped at TB, and "0 B" for no size.
+    *   (Ref: `manage_public_workspace.js`, [Classic Public Stats Export Fix](fixes/CLASSIC_PUBLIC_STATS_EXPORT_FIX.md))
+
+*   **A Malformed Timestamp No Longer Hides The Group Activity Feed**
+    *   One activity record whose timestamp couldn't be converted to UTC made the whole V2 group Activity feed fail. That record now shows without a time, and the rest of the feed is shown.
+    *   (Ref: `functions_group_insights.py`, [Group Activity Timestamp Overflow Fix](fixes/GROUP_ACTIVITY_TIMESTAMP_OVERFLOW_FIX.md))
+
+### **(v0.261.184)**
+
+#### New Features
+
+*   **Ask To Manage A Public Workspace's Documents From The V2 Directory**
+    *   A signed-in user who doesn't manage a public workspace can ask to manage its documents from the workspace's row in the V2 directory, and cancel the request while it's pending. The Owner and Admins decide in Members, as before.
+    *   New routes `POST` and `DELETE /api/public-workspaces/<id>/membership/requests` act only on the caller's own request. The directory row reports `membership: "pending"` for the caller, and nothing about anyone else.
+    *   (Ref: `functions_public_membership.py`, `route_backend_public_membership.py`, `functions_public_directory.py`, `PublicDirectoryList.tsx`, [V2 Public Directory](features/V2_PUBLIC_DIRECTORY.md), [Public Membership APIs](features/PUBLIC_MEMBERSHIP_APIS.md))
+
+*   **Public Directory Visibility Tools In V2**
+    *   **Show all in chat** and **Hide all from chat** set every workspace at once, and saved lists store and reuse a set of visible workspaces, in the classic directory's settings shape. They cover the whole directory, up to 1,000 workspaces, and report what they changed.
+    *   **Chat with visible (classic)** opens classic chat over the visible workspaces, since V2 chat scopes to one public workspace at a time.
+    *   (Ref: `PublicDirectoryVisibilityTools.tsx`, `publicDirectory.ts`, `publicVisibility.ts`, `PublicDirectoryPage.tsx`, [V2 Public Directory](features/V2_PUBLIC_DIRECTORY.md))
+
+### **(v0.261.183)**
+
+#### Bug Fixes
+
+*   **Unapproved Public Artifacts Are No Longer Shown To Every Reader**
+    *   A generated file waiting for approval to be published into a public workspace was shown to everyone who can read the workspace, which is every signed-in user: V2 listed it with its title, abstract and tags, counted it, and returned its details and its requester; chat's document picker listed it too.
+    *   Now only the workspace's Owner, Admins and DocumentManagers see it before approval, in a held form marked "Awaiting generated artifact approval". To everyone else it doesn't exist until it's approved.
+    *   The chat document list and its tag counts leave pending artifacts out for everyone, since none can be used in chat until it's approved. Classic chat and the classic workspace page's tag filter use the same routes, so they change too.
+    *   (Ref: `functions_public_document_policy.py`, `functions_public_document_reads.py`, `route_backend_public_documents.py`, [Public Pending Artifact Visibility Fix](fixes/PUBLIC_PENDING_ARTIFACT_VISIBILITY_FIX.md))
+
 ### **(v0.261.182)**
 
 #### New Features

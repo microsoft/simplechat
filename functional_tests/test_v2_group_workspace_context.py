@@ -2,11 +2,11 @@
 """
 Selected-group context authorization, safe projection, and activation contracts.
 
-Version: 0.261.181
+Version: 0.261.185
 Implemented in: 0.261.126
 Shared shell and native delegation integration: 0.261.127
 Members navigation section (M7B): 0.261.155
-The real public download predicate behind the public settings_management (M10C): 0.261.181
+The real public download predicate behind the public settings_management (M10C): 0.261.185
 
 The real context module and Flask route body run against isolated service seams.
 Existing group-role/status and Flask authentication definitions execute unchanged.

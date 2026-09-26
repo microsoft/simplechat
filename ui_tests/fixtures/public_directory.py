@@ -1,7 +1,7 @@
 # public_directory.py
 """
 Closed M9A/M10A public directory HTTP fixtures for the real production V2 SPA.
-Version: 0.261.183
+Version: 0.261.184
 Implemented in: 0.261.175
 
 The fixture serves only the native routes the directory page reads and writes --

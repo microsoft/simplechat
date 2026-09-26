@@ -1,8 +1,8 @@
 # test_public_settings_policy.py
 """
 Functional test for the native public workspace settings decision and its seam with the classic routes.
-Version: 0.261.181
-Implemented in: 0.261.181
+Version: 0.261.185
+Implemented in: 0.261.185
 
 ``public_settings_decisions`` is the one decision behind the native public workspace
 settings and insights routes and their ``settings_management`` block. This test holds

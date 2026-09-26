@@ -1,8 +1,8 @@
 # test_public_settings_fixture_parity.py
 """
 Per-route parity between the M10C public settings browser fixture and the real routes.
-Version: 0.261.181
-Implemented in: 0.261.181
+Version: 0.261.185
+Implemented in: 0.261.185
 
 The V2 public Settings, Activity and Statistics browser suite mocks the network with the closed HTTP
 fixture `ui_tests/fixtures/public_settings.py`, so a fixture whose answers drift from the server would

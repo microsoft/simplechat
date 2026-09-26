@@ -1,8 +1,8 @@
 # test_public_insights_apis.py
 """
 Functional test for the native public workspace insights: the activity feed and the statistics.
-Version: 0.261.181
-Implemented in: 0.261.181
+Version: 0.261.185
+Implemented in: 0.261.185
 
 ``GET /api/public-workspaces/<workspace_id>/insights/activity`` and ``/insights/stats``
 run for real in ``test_support/public_settings_harness.py``. Its activity logs container

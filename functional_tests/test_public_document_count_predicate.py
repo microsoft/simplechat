@@ -1,8 +1,8 @@
 # test_public_document_count_predicate.py
 """
 Functional test for the public workspace document count shown in the Settings danger zone.
-Version: 0.261.181
-Implemented in: 0.261.181
+Version: 0.261.185
+Implemented in: 0.261.185
 
 The owner's danger zone shows how many documents the workspace holds, so the count must
 be the workspace's documents exactly as the public document list shows them.
