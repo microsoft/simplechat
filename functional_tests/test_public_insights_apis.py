@@ -1,26 +1,31 @@
-# test_group_insights_apis.py
+# test_public_insights_apis.py
 """
-Functional test for the native group insights: activity, statistics and the document count.
+Functional test for the native public workspace insights: the activity feed and the statistics.
 Version: 0.261.181
-Implemented in: 0.261.154
-A stored timestamp whose UTC offset moves it past the calendar no longer fails the feed: 0.261.181
+Implemented in: 0.261.181
 
-``GET /api/groups/<group_id>/insights/activity``, ``/insights/stats`` and
-``/insights/file-count`` run for real in ``test_support/group_settings_harness.py``.
-Its activity logs container evaluates exactly the aliased activity query and the four
-classic statistics queries, as Cosmos evaluates them, and refuses any other query, so
-the classic routes run beside the native ones over the same records. This test pins:
+``GET /api/public-workspaces/<workspace_id>/insights/activity`` and ``/insights/stats``
+run for real in ``test_support/public_settings_harness.py``. Its activity logs container
+evaluates exactly the aliased activity query and the four classic statistics queries, as
+Cosmos evaluates them, and refuses any other query, so the classic routes run beside the
+native ones over the same records. This test pins:
 
-- the activity feed: the records the classic feed reads, in its order and limits,
-  each projected to ``{id, occurred_at, type, summary, actor}`` with a reviewed
-  summary, and nothing identifying beyond a current member's display name, although
-  the stored records carry file names, titles, emails, errors and conversation ids;
+- the activity feed: the records the classic feed reads, in its order and limits, each
+  projected to ``{id, occurred_at, type, summary, actor}`` with a reviewed summary, and
+  nothing identifying beyond a member's stored display name, although the stored records
+  carry file names, titles, emails, errors and conversation ids. A reader who chats with
+  the workspace is a ``non_member``, never a named person or a "former member";
+- a failed activity read: a data-free 503, never an empty feed;
 - the statistics: the classic figures over the same window, without the invented
-  ``storageLimit``; strict window parameters with a 366-day cap on custom ranges and
-  dates between 2000-01-01 and 9998-12-31, every refusal a reviewed 400 before the
-  group is read; and a 503 rather than a zero figure when a query fails, and only then;
-- the document count: the owner only, from ``count_current_group_documents``;
-- access in every group status, and the session, role and feature gates.
+  ``storageLimit``, and ``totalMembers`` as classic counts it; strict window parameters
+  with a 366-day cap on custom ranges and dates between 2000-01-01 and 9998-12-31, every
+  refusal a reviewed 400 before the workspace is read; and a 503 rather than a zero figure
+  when a query fails, and only then;
+- access in every workspace status: the owner or an admin for the activity, and any
+  stored role for the statistics, with the session, role and feature gates;
+- the document count for the Settings danger zone: the owner only, from
+  ``count_current_public_documents``, beside the classic ``/fileCount``, which answers any
+  signed-in caller and counts every stored document record.
 """
 
 import logging
@@ -28,31 +33,36 @@ from datetime import datetime, timedelta
 
 import pytest
 
-from test_support.group_directory_harness import person
-from test_support.group_settings_harness import EXPECTED_NATIVE_ACTIVITY_QUERY, group_settings_environment
+from test_support.public_settings_harness import EXPECTED_NATIVE_ACTIVITY_QUERY, public_settings_environment
 
 
-GROUP = "group-1"
-ACTIVITY_PATH = f"/api/groups/{GROUP}/insights/activity"
-STATS_PATH = f"/api/groups/{GROUP}/insights/stats"
-FILE_COUNT_PATH = f"/api/groups/{GROUP}/insights/file-count"
-STATS_UNAVAILABLE = {"error": "Group statistics are unavailable right now. Try again.",
-                     "error_code": "group_stats_unavailable"}
-ACTIVITY_UNAVAILABLE = {"error": "Group activity is unavailable right now. Try again.",
-                        "error_code": "group_activity_unavailable"}
+WORKSPACE = "public-1"
+ACTIVITY_PATH = f"/api/public-workspaces/{WORKSPACE}/insights/activity"
+STATS_PATH = f"/api/public-workspaces/{WORKSPACE}/insights/stats"
+FILE_COUNT_PATH = f"/api/public-workspaces/{WORKSPACE}/insights/file-count"
+CLASSIC_ACTIVITY_PATH = f"/api/public_workspaces/{WORKSPACE}/activity"
+CLASSIC_STATS_PATH = f"/api/public_workspaces/{WORKSPACE}/stats"
+CLASSIC_FILE_COUNT_PATH = f"/api/public_workspaces/{WORKSPACE}/fileCount"
+STATS_UNAVAILABLE = {"error": "Workspace statistics are unavailable right now. Try again.",
+                     "error_code": "public_workspace_stats_unavailable"}
+ACTIVITY_UNAVAILABLE = {"error": "Workspace activity is unavailable right now. Try again.",
+                        "error_code": "public_workspace_activity_unavailable"}
 STATUSES = ("active", "upload_disabled", "locked", "inactive", "archived")
+# The admin is stored as a {userId, email, displayName} entry and the document manager as a
+# bare id, as older data stores it, so the feed names the admin and not the manager.
+MEMBERS = {"admins": (("admin-1", "dict"),), "managers": ("manager-1",)}
 
 
 @pytest.fixture(scope="module")
 def module_env():
-    with group_settings_environment() as env:
+    with public_settings_environment() as env:
         yield env
 
 
 @pytest.fixture
 def env(module_env):
     module_env.reset()
-    module_env.seed_group(GROUP, status="active")
+    module_env.seed_workspace(WORKSPACE, status="active", **MEMBERS)
     module_env.as_user("owner-1")
     yield module_env
     module_env.reset()
@@ -73,10 +83,11 @@ def assert_error(response, status, error_code, message=None):
     return body
 
 
-def record(record_id, activity_type, when, user_id="member-1", group_id=GROUP, **fields):
+def record(record_id, activity_type, when, user_id="reader-1", workspace_id=WORKSPACE, **fields):
     """An activity record shaped as the activity logging writers shape it."""
     body = {"id": record_id, "user_id": user_id, "activity_type": activity_type, "timestamp": when,
-            "created_at": when, "workspace_type": "group", "workspace_context": {"group_id": group_id}}
+            "created_at": when, "workspace_type": "public",
+            "workspace_context": {"public_workspace_id": workspace_id}}
     body.update(fields)
     return body
 
@@ -104,21 +115,25 @@ def iso(days_ago=0, hours=0):
     return (datetime.utcnow() - timedelta(days=days_ago, hours=hours)).isoformat()
 
 
+def workspace_reads(env):
+    return [call for call in env.public_workspaces.calls if call[0] == "read_item"]
+
+
 # ---------------------------------------------------------------------------
 # Activity
 # ---------------------------------------------------------------------------
 
 def seed_sensitive_history(env):
     status_change = record(
-        "status-1", "group_status_change", "2026-09-20T07:00:00", user_id="",
-        group={"group_id": GROUP, "group_name": "Secret Group Name"},
+        "status-1", "public_workspace_status_change", "2026-09-20T07:00:00", user_id="",
+        public_workspace={"workspace_id": WORKSPACE, "workspace_name": "Secret Workspace Name"},
         status_change={"old_status": "active", "new_status": "locked", "changed_at": "2026-09-20T07:00:00",
                        "reason": "Legal hold on Project Falcon"},
         changed_by={"user_id": "control-center-admin", "email": "root.admin@example.test"},
     )
     seed(
         env,
-        record("doc-1", "document_creation", "2026-09-20T10:00:00",
+        record("doc-1", "document_creation", "2026-09-20T10:00:00", user_id="admin-1",
                document={"document_id": "doc-secret-id", "file_name": "merger-plan.docx", "file_type": ".docx",
                          "file_size_bytes": 1234, "page_count": 3, "version": 1},
                embedding_usage={"total_tokens": 99, "model_deployment_name": "embed-secret"},
@@ -128,30 +143,31 @@ def seed_sensitive_history(env):
                usage={"total_tokens": 1234, "model": "gpt-secret-deployment", "prompt_tokens": 1000,
                       "completion_tokens": 234},
                chat_details={"conversation_id": "conv-secret", "message_id": "msg-secret"}),
-        record("tok-2", "token_usage", "2026-09-20T08:00:00", token_type="embedding",
+        record("tok-2", "token_usage", "2026-09-20T08:00:00", user_id="manager-1", token_type="embedding",
                usage={"total_tokens": 1, "model": "embed-secret"},
                embedding_details={"document_id": "doc-secret-id", "file_name": "merger-plan.docx"}),
         status_change,
-        record("sync-1", "file_sync", "2026-09-20T06:00:00", user_id=GROUP, action="run_failed",
+        record("sync-1", "file_sync", "2026-09-20T06:00:00", user_id=WORKSPACE, action="run_failed",
                description="File Sync run failed",
-               workspace_context={"scope_type": "group", "source_id": "src-secret",
-                                  "source_name": "Finance SharePoint", "group_id": GROUP,
-                                  "public_workspace_id": None},
+               workspace_context={"scope_type": "public", "source_id": "src-secret",
+                                  "source_name": "Finance SharePoint", "group_id": None,
+                                  "public_workspace_id": WORKSPACE},
                additional_context={"error": "401 from https://contoso.sharepoint.com token=abc"}),
         record("conv-1", "conversation_creation", "2026-09-20T05:00:00",
                conversation={"conversation_id": "conv-secret", "title": "Salary review"}),
         record("wf-1", "workflow_run", "2026-09-20T04:00:00", user_id="gone-1",
                workflow={"name": "Nightly digest", "error": "Traceback (most recent call last)"}),
-        record("odd-1", "user_login", "2026-09-20T03:00:00", login_method="sso", email="max.member@example.test"),
+        record("odd-1", "user_login", "2026-09-20T03:00:00", user_id="owner-1", login_method="sso",
+               email="olive.owner@example.test"),
     )
 
 
 SENSITIVE_VALUES = (
     "merger-plan", "Project Falcon", "Confidential abstract", "Ana Applicant", "acquisition", "embed-secret",
-    "gpt-secret", "conv-secret", "msg-secret", "Secret Group Name", "Legal hold", "root.admin",
+    "gpt-secret", "conv-secret", "msg-secret", "Secret Workspace Name", "Legal hold", "root.admin",
     "control-center-admin", "src-secret", "Finance SharePoint", "contoso", "token=abc", "Salary review", "gone-1",
-    "Nightly digest", "Traceback", "sso", "@example.test", "member-1", "owner-1", "doc-secret-id", "prompt_tokens",
-    "workspace_context", "_etag",
+    "Nightly digest", "Traceback", "sso", "@example.test", "reader-1", "manager-1", "owner-1", "admin-1",
+    "doc-secret-id", "prompt_tokens", "workspace_context", "_etag",
 )
 
 
@@ -160,39 +176,39 @@ def test_the_feed_projects_each_record_to_reviewed_fields(env):
     body = feed(env)
     assert body == {"limit": 50, "activity": [
         {"id": "doc-1", "occurred_at": "2026-09-20T10:00:00Z", "type": "document_creation",
-         "summary": "Uploaded a document", "actor": {"kind": "member", "display_name": "Max Member"}},
+         "summary": "Uploaded a document", "actor": {"kind": "member", "display_name": "Adam Admin"}},
         {"id": "tok-1", "occurred_at": "2026-09-20T09:00:00Z", "type": "token_usage",
-         "summary": "Used 1,234 tokens in chat", "actor": {"kind": "member", "display_name": "Max Member"}},
+         "summary": "Used 1,234 tokens in chat", "actor": {"kind": "non_member"}},
         {"id": "tok-2", "occurred_at": "2026-09-20T08:00:00Z", "type": "token_usage",
-         "summary": "Used 1 token processing a document", "actor": {"kind": "member", "display_name": "Max Member"}},
-        {"id": "status-1", "occurred_at": "2026-09-20T07:00:00Z", "type": "group_status_change",
-         "summary": "Changed the group status from Active to Locked", "actor": {"kind": "system"}},
+         "summary": "Used 1 token processing a document", "actor": {"kind": "member", "display_name": ""}},
+        {"id": "status-1", "occurred_at": "2026-09-20T07:00:00Z", "type": "public_workspace_status_change",
+         "summary": "Changed the workspace status from Active to Locked", "actor": {"kind": "system"}},
         {"id": "sync-1", "occurred_at": "2026-09-20T06:00:00Z", "type": "file_sync",
          "summary": "File Sync failed", "actor": {"kind": "system"}},
         {"id": "conv-1", "occurred_at": "2026-09-20T05:00:00Z", "type": "conversation_creation",
-         "summary": "Started a conversation", "actor": {"kind": "member", "display_name": "Max Member"}},
+         "summary": "Started a conversation", "actor": {"kind": "non_member"}},
         {"id": "wf-1", "occurred_at": "2026-09-20T04:00:00Z", "type": "workflow_run",
-         "summary": "Ran a workflow", "actor": {"kind": "former_member"}},
+         "summary": "Ran a workflow", "actor": {"kind": "non_member"}},
         {"id": "odd-1", "occurred_at": "2026-09-20T03:00:00Z", "type": "other",
-         "summary": "Other activity", "actor": {"kind": "member", "display_name": "Max Member"}},
+         "summary": "Other activity", "actor": {"kind": "member", "display_name": "Olive Owner"}},
     ]}
 
 
 def test_nothing_identifying_leaves_the_feed(env):
     seed_sensitive_history(env)
     native = env.call("GET", ACTIVITY_PATH).get_data(as_text=True)
-    classic = env.call("GET", f"/api/groups/{GROUP}/activity").get_data(as_text=True)
+    classic = env.call("GET", CLASSIC_ACTIVITY_PATH).get_data(as_text=True)
     for value in SENSITIVE_VALUES:
         assert value not in native, value
     # The fixture does carry them: the classic feed returns the raw records.
-    assert all(value in classic for value in ("merger-plan", "Project Falcon", "token=abc", "root.admin"))
+    assert all(value in classic for value in ("merger-plan", "Project Falcon", "token=abc", "root.admin", "reader-1"))
 
 
 def test_only_the_aliased_fields_are_read(env):
     seed_sensitive_history(env)
     feed(env, limit="20")
     assert env.activity_logs.queries == [
-        {"query": EXPECTED_NATIVE_ACTIVITY_QUERY, "parameters": {"@limit": 20, "@group_id": GROUP}},
+        {"query": EXPECTED_NATIVE_ACTIVITY_QUERY, "parameters": {"@limit": 20, "@workspace_id": WORKSPACE}},
     ]
 
 
@@ -203,17 +219,13 @@ def test_only_the_aliased_fields_are_read(env):
     ("conversation_creation", "Started a conversation"),
     ("conversation_deletion", "Deleted a conversation"),
     ("conversation_archival", "Archived a conversation"),
-    ("agent_creation", "Created an agent"),
-    ("agent_update", "Updated an agent"),
-    ("agent_deletion", "Deleted an agent"),
-    ("agent_run", "Ran an agent"),
-    ("action_creation", "Created an action"),
-    ("action_update", "Updated an action"),
-    ("action_deletion", "Deleted an action"),
     ("workflow_creation", "Created a workflow"),
     ("workflow_update", "Updated a workflow"),
     ("workflow_deletion", "Deleted a workflow"),
     ("workflow_run", "Ran a workflow"),
+    # Recorded for groups only: a record like this is not something public workspaces write.
+    ("agent_run", "Other activity"),
+    ("group_status_change", "Other activity"),
     ("user_login", "Other activity"),
     ("", "Other activity"),
 ])
@@ -229,7 +241,7 @@ def test_each_activity_type_has_a_reviewed_summary(env, activity_type, summary):
     ({"total_tokens": 1234567}, "embedding", "Used 1,234,567 tokens processing a document"),
     ({"total_tokens": 0}, "chat", "Used 0 tokens in chat"),
     ({"total_tokens": 12.9}, None, "Used 12 tokens"),
-    ({"total_tokens": 7}, "image", "Used 7 tokens"),
+    ({"total_tokens": 7}, "web_search", "Used 7 tokens"),
     ({"total_tokens": None}, "chat", "Used tokens in chat"),
     ({"total_tokens": True}, "chat", "Used tokens in chat"),
     ({"total_tokens": -5}, "chat", "Used tokens in chat"),
@@ -245,17 +257,16 @@ def test_token_usage_summaries_take_only_a_whole_count(env, usage, token_type, s
 
 
 @pytest.mark.parametrize("old,new,summary", [
-    ("active", "locked", "Changed the group status from Active to Locked"),
-    ("upload_disabled", "inactive", "Changed the group status from Uploads disabled to Inactive"),
-    ("locked", "active", "Changed the group status from Locked to Active"),
-    ("active", "archived", "Changed the group status"),
-    (None, "locked", "Changed the group status"),
+    ("active", "locked", "Changed the workspace status from Active to Locked"),
+    ("upload_disabled", "inactive", "Changed the workspace status from Uploads disabled to Inactive"),
+    ("locked", "active", "Changed the workspace status from Locked to Active"),
+    ("active", "archived", "Changed the workspace status"),
+    (None, "locked", "Changed the workspace status"),
 ])
 def test_status_changes_name_only_known_statuses(env, old, new, summary):
-    body = record("s-1", "group_status_change", "2026-09-20T10:00:00",
+    body = record("s-1", "public_workspace_status_change", "2026-09-20T10:00:00",
                   status_change={"old_status": old, "new_status": new, "reason": "Do not show"})
-    entry = one(env, body)
-    assert entry["summary"] == summary
+    assert one(env, body)["summary"] == summary
 
 
 @pytest.mark.parametrize("action,summary", [
@@ -274,18 +285,28 @@ def test_file_sync_summaries(env, action, summary):
 @pytest.mark.parametrize("user_id,actor", [
     ("owner-1", {"kind": "member", "display_name": "Olive Owner"}),
     ("admin-1", {"kind": "member", "display_name": "Adam Admin"}),
-    ("member-1", {"kind": "member", "display_name": "Max Member"}),
+    ("manager-1", {"kind": "member", "display_name": ""}),
     ("quiet-1", {"kind": "member", "display_name": ""}),
-    ("gone-1", {"kind": "former_member"}),
+    ("reader-1", {"kind": "non_member"}),
+    ("gone-1", {"kind": "non_member"}),
     ("", {"kind": "system"}),
-    (GROUP, {"kind": "system"}),
+    (WORKSPACE, {"kind": "system"}),
     (42, {"kind": "system"}),
 ])
-def test_the_actor_is_named_only_when_they_are_a_current_member(env, user_id, actor):
-    stored = env.stored_group(GROUP)
-    stored["users"].append({"userId": "quiet-1", "email": "quiet@example.test"})
-    env.groups.seed(stored)
-    assert one(env, record("a-1", "agent_run", "2026-09-20T10:00:00", user_id=user_id))["actor"] == actor
+def test_the_actor_is_named_only_when_the_workspace_names_them(env, user_id, actor):
+    stored = env.stored_workspace(WORKSPACE)
+    stored["documentManagers"].append({"userId": "quiet-1", "email": "quiet@example.test"})
+    env.public_workspaces.seed(stored)
+    assert one(env, record("a-1", "workflow_run", "2026-09-20T10:00:00", user_id=user_id))["actor"] == actor
+
+
+def test_a_stored_name_wins_over_a_bare_id(env):
+    stored = env.stored_workspace(WORKSPACE)
+    stored["admins"] = ["manager-1"]
+    stored["documentManagers"] = [{"userId": "manager-1", "displayName": "Mia Manager"}, "manager-1"]
+    env.public_workspaces.seed(stored)
+    entry = one(env, record("a-1", "document_creation", "2026-09-20T10:00:00", user_id="manager-1"))
+    assert entry["actor"] == {"kind": "member", "display_name": "Mia Manager"}
 
 
 @pytest.mark.parametrize("changed_by,actor", [
@@ -295,7 +316,7 @@ def test_the_actor_is_named_only_when_they_are_a_current_member(env, user_id, ac
     (None, {"kind": "system"}),
 ])
 def test_a_status_change_is_attributed_to_whoever_changed_it(env, changed_by, actor):
-    body = record("s-1", "group_status_change", "2026-09-20T10:00:00", user_id="member-1",
+    body = record("s-1", "public_workspace_status_change", "2026-09-20T10:00:00", user_id="reader-1",
                   status_change={"old_status": "active", "new_status": "locked"})
     if changed_by is not None:
         body["changed_by"] = changed_by
@@ -307,38 +328,29 @@ def test_a_status_change_is_attributed_to_whoever_changed_it(env, changed_by, ac
     ("2026-09-20T10:00:00.123456", "2026-09-20T10:00:00.123456Z"),
     ("2026-09-20T12:00:00+02:00", "2026-09-20T10:00:00Z"),
     ("2026-09-20T10:00:00Z", "2026-09-20T10:00:00Z"),
-    # A UTC offset that moves the time past the calendar's first or last day can't be shown,
-    # and the feed still answers: before the fix, either one made the whole feed a 500.
+    # A UTC offset that moves the time past the calendar's first day can't be shown.
     ("0001-01-01T00:30:00+01:00", None),
-    ("9999-12-31T23:30:00-01:00", None),
     ("yesterday", None),
     ("   ", None),
 ])
 def test_timestamps_are_utc_with_a_z(env, stored, shown):
-    assert one(env, record("t-1", "agent_run", stored))["occurred_at"] == shown
-
-
-def test_a_timestamp_past_the_calendar_leaves_the_rest_of_the_feed_intact(env):
-    seed(env,
-         record("edge", "agent_run", "0001-01-01T00:30:00+01:00"),
-         record("fine", "document_creation", "2026-09-20T10:00:00"))
-    body = feed(env)
-    assert [(entry["id"], entry["occurred_at"]) for entry in body["activity"]] == [
-        ("fine", "2026-09-20T10:00:00Z"), ("edge", None),
-    ]
-    assert [entry for entry in env.logs if entry[1] == logging.ERROR] == []
+    assert one(env, record("t-1", "workflow_run", stored))["occurred_at"] == shown
 
 
 def test_a_record_id_that_is_not_text_is_omitted(env):
-    assert one(env, record(7, "agent_run", "2026-09-20T10:00:00"))["id"] is None
+    assert one(env, record(7, "workflow_run", "2026-09-20T10:00:00"))["id"] is None
 
 
 def seed_long_history(env):
-    seed(env, *(record(f"r-{index:02d}", "agent_run", f"2026-09-{1 + index // 24:02d}T{index % 24:02d}:00:00")
+    seed(env, *(record(f"r-{index:02d}", "workflow_run", f"2026-09-{1 + index // 24:02d}T{index % 24:02d}:00:00")
                 for index in range(55)))
-    seed(env, record("other-group", "agent_run", "2026-09-30T10:00:00", group_id="group-2"))
-    seed(env, {"id": "membership", "user_id": "owner-1", "activity_type": "group_member_added",
-               "timestamp": "2026-09-30T11:00:00", "group_id": GROUP, "group": {"group_id": GROUP}})
+    seed(env, record("other-workspace", "workflow_run", "2026-09-30T10:00:00", workspace_id="public-2"))
+    # A chat activity record names the workspace at the top level, not in workspace_context,
+    # and so does anything else recorded elsewhere: neither feed reads them.
+    seed(env, {"id": "chat-activity", "user_id": "reader-1", "activity_type": "chat_activity",
+               "timestamp": "2026-09-30T11:00:00", "public_workspace_id": WORKSPACE})
+    seed(env, {"id": "named-elsewhere", "user_id": "owner-1", "activity_type": "member_added",
+               "timestamp": "2026-09-30T12:00:00", "public_workspace": {"workspace_id": WORKSPACE}})
 
 
 @pytest.mark.parametrize("limit", [None, "10", "20", "50"])
@@ -346,10 +358,11 @@ def test_the_feed_reads_the_records_the_classic_feed_reads_in_its_order(env, lim
     seed_long_history(env)
     query = {"limit": limit} if limit else None
     native = [entry["id"] for entry in feed(env, **(query or {}))["activity"]]
-    classic = [entry["id"] for entry in env.call("GET", f"/api/groups/{GROUP}/activity", query_string=query).get_json()]
+    classic = [entry["id"] for entry in env.call("GET", CLASSIC_ACTIVITY_PATH, query_string=query).get_json()]
     assert native == classic
     assert len(native) == int(limit or 50)
-    assert native[0] == "r-54" and "other-group" not in native and "membership" not in native
+    assert native[0] == "r-54"
+    assert not {"other-workspace", "chat-activity", "named-elsewhere"} & set(native)
 
 
 @pytest.mark.parametrize("value", ["5", "0", "-10", "abc", "10.0", "010", " 10", "100", ""])
@@ -366,14 +379,18 @@ def test_the_feed_takes_only_one_limit(env):
                  "Use only the limit query parameter.")
 
 
-def test_a_failed_activity_query_is_a_data_free_503(env):
+def test_a_failed_activity_query_is_a_data_free_503_not_an_empty_feed(env):
     seed_sensitive_history(env)
     env.activity_logs.fail_queries = 1
     response = env.call("GET", ACTIVITY_PATH)
     assert response.status_code == 503
     assert answer(response) == ACTIVITY_UNAVAILABLE
-    assert env.logs[-1][0] == "[WORKSPACE_ROUTE] Group activity read failed."
-    assert env.logs[-1][2] == {"error_type": "CosmosHttpResponseError"}
+    assert env.logs[-1] == ("[PUBLIC_SETTINGS] Public workspace activity read failed.", logging.ERROR,
+                            {"error_type": "CosmosHttpResponseError", "status_code": 503})
+    # The classic feed answers the same failure with an empty timeline.
+    env.activity_logs.fail_queries = 1
+    classic = env.call("GET", CLASSIC_ACTIVITY_PATH)
+    assert (classic.status_code, classic.get_json()) == (200, [])
 
 
 # ---------------------------------------------------------------------------
@@ -381,8 +398,8 @@ def test_a_failed_activity_query_is_a_data_free_503(env):
 # ---------------------------------------------------------------------------
 
 def seed_stats_history(env):
-    env.groups.records.clear()
-    env.seed_group(GROUP, status="active", metrics={"document_metrics": {
+    env.public_workspaces.records.clear()
+    env.seed_workspace(WORKSPACE, status="active", **MEMBERS, metrics={"document_metrics": {
         "total_documents": 12, "storage_account_size": 2048, "ai_search_size": 512,
     }})
     created_only = record("u-created", "document_creation", None, created_at=iso(5))
@@ -401,8 +418,8 @@ def seed_stats_history(env):
         created_only,
         record("d-1", "document_deletion", iso(4)),
         record("d-2", "document_deletion", iso(80)),
-        record("x-1", "token_usage", iso(1), group_id="group-2", usage={"total_tokens": 999999}),
-        record("x-2", "document_creation", iso(1), group_id="group-2"),
+        record("x-1", "token_usage", iso(1), workspace_id="public-2", usage={"total_tokens": 999999}),
+        record("x-2", "document_creation", iso(1), workspace_id="public-2"),
     )
 
 
@@ -430,7 +447,7 @@ def test_the_statistics_are_the_classic_figures_without_the_storage_limit(env, q
     seed_stats_history(env)
     query = custom_range(10) if query == "custom-10" else query
     native = stats(env, **query)
-    classic = env.call("GET", f"/api/groups/{GROUP}/stats", query_string=query or None).get_json()
+    classic = env.call("GET", CLASSIC_STATS_PATH, query_string=query or None).get_json()
     assert classic.pop("storageLimit") == 10737418240
     assert "storageLimit" not in native
     assert native == classic
@@ -438,8 +455,21 @@ def test_the_statistics_are_the_classic_figures_without_the_storage_limit(env, q
     assert sum(native["documentActivity"]["uploads"]) == uploads
     assert sum(native["documentActivity"]["deletes"]) == deletes
     assert sum(native["tokenUsage"]["data"]) == tokens
-    assert (native["totalDocuments"], native["storageUsed"], native["totalMembers"]) == (12, 2048, 4)
+    assert (native["totalDocuments"], native["storageUsed"]) == (12, 2048)
     assert native["storage"] == {"ai_search_size": 512, "storage_account_size": 2048}
+
+
+@pytest.mark.parametrize("admins,managers,members", [
+    ((("admin-1", "dict"),), ("manager-1",), 3),
+    ((), (), 1),
+    (("admin-1", "reader-1"), (("manager-1", "dict"), "outsider-1"), 5),
+])
+def test_members_are_counted_as_classic_counts_them(env, admins, managers, members):
+    env.public_workspaces.records.clear()
+    env.seed_workspace(WORKSPACE, status="active", admins=admins, managers=managers)
+    native = stats(env)
+    classic = env.call("GET", CLASSIC_STATS_PATH).get_json()
+    assert native["totalMembers"] == classic["totalMembers"] == members
 
 
 def test_the_window_is_reported_as_the_classic_window(env):
@@ -501,11 +531,7 @@ def error_logs(env):
     return [entry for entry in env.logs if entry[1] == logging.ERROR]
 
 
-def group_reads(env):
-    return [call for call in env.groups.calls if call[0] == "read_item"]
-
-
-@pytest.mark.parametrize("caller", ["owner-1", "outsider-1"])
+@pytest.mark.parametrize("caller", ["owner-1", "reader-1"])
 @pytest.mark.parametrize("window", OUT_OF_RANGE_WINDOWS)
 def test_dates_outside_the_supported_range_are_a_reviewed_400(env, window, caller):
     env.as_user(caller)
@@ -513,20 +539,8 @@ def test_dates_outside_the_supported_range_are_a_reviewed_400(env, window, calle
     assert_error(response, 400, "invalid_request", DATE_RANGE)
     assert error_logs(env) == []
     assert env.activity_logs.queries == []
-    # Refused before the group is read, as every other window refusal is.
-    assert group_reads(env) == []
-
-
-@pytest.mark.parametrize("query", [
-    # Was a 500: the shared parser overflowed converting the offset to UTC.
-    "start_date=0001-01-01T00:00:00%2B01:00&end_date=0001-01-02",
-    # Was a 503: the window passed the length cap, then its series overflowed inside the storage try.
-    "start_date=9999-12-01&end_date=9999-12-31",
-])
-def test_the_reported_extreme_dates_are_a_reviewed_400(env, query):
-    response = env.call("GET", f"{STATS_PATH}?{query}")
-    assert_error(response, 400, "invalid_request", DATE_RANGE)
-    assert error_logs(env) == [] and env.activity_logs.queries == [] and group_reads(env) == []
+    # Refused before the workspace is read, as every other window refusal is.
+    assert workspace_reads(env) == []
 
 
 @pytest.mark.parametrize("query,first,last,days", [
@@ -541,15 +555,15 @@ def test_windows_at_the_edges_of_the_supported_range_are_read(env, query, first,
     assert (native["dateRange"][0], native["dateRange"][-1], len(native["dateRange"])) == (first, last, days)
     assert len(env.activity_logs.queries) == 4
     assert error_logs(env) == []
-    classic = env.call("GET", f"/api/groups/{GROUP}/stats", query_string=query).get_json()
+    classic = env.call("GET", CLASSIC_STATS_PATH, query_string=query).get_json()
     assert classic.pop("storageLimit") == 10737418240
     assert native == classic
 
 
 def test_a_stored_timestamp_that_cannot_be_read_is_left_out_rather_than_failing(env):
-    # Only the storage reads can be the 503, and building the figures never fails: a
-    # stored timestamp whose offset moves it past the calendar's start is left out, as
-    # any other unreadable timestamp is.
+    # Only the storage reads can be the 503, and building the figures never fails: a stored
+    # timestamp whose offset moves it past the calendar's start is left out, as any other
+    # unreadable timestamp is.
     seed(env,
          record("u-edge", "document_creation", "0001-01-01T00:30:00+01:00", created_at=iso(1)),
          record("u-ok", "document_creation", iso(1)))
@@ -574,30 +588,33 @@ def test_any_failed_statistics_query_is_a_503_not_a_zero(env, monkeypatch, faili
     response = env.call("GET", STATS_PATH)
     assert response.status_code == 503
     assert answer(response) == STATS_UNAVAILABLE
-    assert env.logs[-1] == ("[WORKSPACE_ROUTE] Group statistics read failed.", 40,
-                            {"error_type": "CosmosHttpResponseError"})
+    assert env.logs[-1] == ("[PUBLIC_SETTINGS] Public workspace statistics read failed.", logging.ERROR,
+                            {"error_type": "CosmosHttpResponseError", "status_code": 503})
 
 
 def test_malformed_stored_figures_count_as_zero(env):
-    env.groups.records.clear()
-    env.seed_group(GROUP, status="active", users="not a list", metrics={"document_metrics": {
+    env.public_workspaces.records.clear()
+    env.seed_workspace(WORKSPACE, status="active", managers=(), metrics={"document_metrics": {
         "total_documents": "12", "storage_account_size": True, "ai_search_size": None,
     }})
+    stored = env.stored_workspace(WORKSPACE)
+    stored["admins"] = "not a list"
+    env.public_workspaces.seed(stored)
     seed(env,
          record("t-1", "token_usage", iso(1), usage=None),
          record("t-2", "token_usage", iso(1), usage={"total_tokens": "100"}),
          record("t-3", "token_usage", iso(1), usage={"total_tokens": 12.5}),
          record("u-1", "document_creation", "not a timestamp"))
     result = stats(env)
-    assert (result["totalDocuments"], result["storageUsed"], result["totalMembers"]) == (0, 0, 0)
+    assert (result["totalDocuments"], result["storageUsed"], result["totalMembers"]) == (0, 0, 1)
     assert result["storage"] == {"ai_search_size": 0, "storage_account_size": 0}
     assert result["totalTokens"] == 12
 
 
 @pytest.mark.parametrize("metrics", [None, "metrics", {"document_metrics": "none"}])
 def test_missing_metrics_count_as_zero(env, metrics):
-    env.groups.records.clear()
-    env.seed_group(GROUP, status="active", metrics=metrics)
+    env.public_workspaces.records.clear()
+    env.seed_workspace(WORKSPACE, status="active", metrics=metrics)
     result = stats(env)
     assert (result["totalDocuments"], result["storageUsed"]) == (0, 0)
 
@@ -610,20 +627,35 @@ def test_the_owner_reads_the_count_of_current_documents(env):
     env.file_count = 7
     response = env.call("GET", FILE_COUNT_PATH)
     assert answer(response) == {"file_count": 7}
-    assert env.file_count_calls == [GROUP]
-    assert env.group_documents.queries == []
+    assert env.file_count_calls == [WORKSPACE]
+    assert env.public_documents.queries == []
 
 
-@pytest.mark.parametrize("caller", ["admin-1", "manager-1", "member-1"])
+@pytest.mark.parametrize("caller", ["admin-1", "manager-1", "reader-1", "outsider-1"])
 def test_only_the_owner_reads_the_count(env, caller):
     env.as_user(caller)
-    assert_error(env.call("GET", FILE_COUNT_PATH), 403, "group_owner_required", "Only the group owner can do this.")
+    assert_error(env.call("GET", FILE_COUNT_PATH), 403, "public_workspace_owner_required",
+                 "Only the workspace owner can do this.")
     assert env.file_count_calls == []
 
 
 def test_the_count_takes_no_query_parameters(env):
-    assert_error(env.call("GET", FILE_COUNT_PATH, query_string={"group_id": "group-2"}), 400, "invalid_request",
+    assert_error(env.call("GET", FILE_COUNT_PATH, query_string={"workspace_id": "public-2"}), 400, "invalid_request",
                  "This request does not accept query parameters.")
+    assert env.file_count_calls == []
+
+
+@pytest.mark.parametrize("caller", ["owner-1", "reader-1"])
+def test_the_classic_count_answers_anyone_and_counts_every_stored_record(env, caller):
+    """What the classic manage page checks before it offers to delete a workspace: every
+    stored document record, superseded revisions included, for any signed-in caller."""
+    for document_id, version in (("report-v1", 1), ("report-v2", 2), ("report-v3", 3)):
+        env.seed_document(document_id, revision_family_id="report", version=version,
+                          is_current_version=version == 3)
+    env.seed_document("elsewhere", ws_id="public-2")
+    env.as_user(caller)
+    response = env.call("GET", CLASSIC_FILE_COUNT_PATH)
+    assert (response.status_code, response.get_json()) == (200, {"fileCount": 3})
     assert env.file_count_calls == []
 
 
@@ -637,45 +669,63 @@ INSIGHTS = [ACTIVITY_PATH, STATS_PATH, FILE_COUNT_PATH]
 @pytest.mark.parametrize("path", INSIGHTS)
 @pytest.mark.parametrize("status", STATUSES)
 def test_the_owner_reads_every_insight_in_every_status(env, path, status):
-    env.groups.records.clear()
-    env.seed_group(GROUP, status=status)
+    env.public_workspaces.records.clear()
+    env.seed_workspace(WORKSPACE, status=status, **MEMBERS)
     assert env.call("GET", path).status_code == 200
 
 
-@pytest.mark.parametrize("path", [ACTIVITY_PATH, STATS_PATH])
+@pytest.mark.parametrize("admins", [("admin-1",), (("admin-1", "dict"),)])
 @pytest.mark.parametrize("caller,expected", [
-    ("admin-1", 200), ("manager-1", "group_manager_required"), ("member-1", "group_manager_required"),
+    ("admin-1", 200), ("manager-1", "public_workspace_manager_required"),
+    ("reader-1", "public_workspace_manager_required"), ("outsider-1", "public_workspace_manager_required"),
 ])
-def test_activity_and_statistics_need_the_owner_or_an_admin(env, path, caller, expected):
+def test_the_activity_needs_the_owner_or_an_admin(env, admins, caller, expected):
+    env.public_workspaces.records.clear()
+    env.seed_workspace(WORKSPACE, status="active", admins=admins, managers=("manager-1",))
     env.as_user(caller)
-    response = env.call("GET", path)
+    response = env.call("GET", ACTIVITY_PATH)
     if expected == 200:
         assert response.status_code == 200
     else:
-        assert_error(response, 403, expected, "Only the group owner or an admin can do this.")
+        assert_error(response, 403, expected, "Only the workspace owner or an admin can do this.")
+        assert env.activity_logs.queries == []
+
+
+@pytest.mark.parametrize("managers", [("manager-1",), (("manager-1", "dict"),)])
+@pytest.mark.parametrize("caller,expected", [
+    ("admin-1", 200), ("manager-1", 200),
+    ("reader-1", "public_workspace_member_required"), ("outsider-1", "public_workspace_member_required"),
+])
+def test_the_statistics_need_a_stored_role(env, managers, caller, expected):
+    env.public_workspaces.records.clear()
+    env.seed_workspace(WORKSPACE, status="active", admins=("admin-1",), managers=managers)
+    env.as_user(caller)
+    response = env.call("GET", STATS_PATH)
+    if expected == 200:
+        assert response.status_code == 200
+    else:
+        assert_error(response, 403, expected, "Only the workspace owner, an admin or a document manager can do this.")
         assert env.activity_logs.queries == []
 
 
 @pytest.mark.parametrize("path", INSIGHTS)
-def test_a_missing_group_and_a_non_member_are_refused(env, path):
-    env.as_user("outsider-1")
-    assert_error(env.call("GET", path), 403, "group_access_denied")
-    env.as_user("owner-1")
-    assert_error(env.call("GET", path.replace(GROUP, "group-9")), 404, "group_not_found", "Group not found.")
+def test_a_missing_workspace_is_refused(env, path):
+    assert_error(env.call("GET", path.replace(WORKSPACE, "public-9")), 404, "public_workspace_not_found",
+                 "The selected public workspace was not found.")
     assert env.activity_logs.queries == [] and env.file_count_calls == []
 
 
 @pytest.mark.parametrize("path", INSIGHTS)
-def test_every_insight_needs_a_session_the_user_role_and_group_workspaces(env, path):
+def test_every_insight_needs_a_session_the_user_role_and_public_workspaces(env, path):
     env.sign_out()
     assert env.call("GET", path).status_code == 401
-    env.as_user("owner-1", ["CreateGroups"])
+    env.as_user("owner-1", ["CreatePublicWorkspaces"])
     assert env.call("GET", path).status_code == 403
     env.as_user("owner-1")
-    env.settings["enable_group_workspaces"] = False
+    env.settings["enable_public_workspaces"] = False
     disabled = env.call("GET", path)
     assert disabled.status_code == 400
-    assert disabled.get_json() == {"error": "Enable Group Workspaces is disabled."}
+    assert disabled.get_json() == {"error": "Enable Public Workspaces is disabled."}
     assert env.activity_logs.queries == [] and env.file_count_calls == []
 
 
@@ -684,10 +734,22 @@ def test_an_insight_read_takes_no_body(env, path):
     assert_error(env.call("GET", path, {"x": 1}), 400, "invalid_request", "This request does not accept a request body.")
 
 
+@pytest.mark.parametrize("path", INSIGHTS)
+def test_an_invalid_workspace_id_never_reaches_storage(env, path):
+    assert_error(env.call("GET", path.replace(WORKSPACE, "public,1")), 400, "invalid_request",
+                 "Invalid public workspace identifier.")
+    assert workspace_reads(env) == [] and env.activity_logs.queries == [] and env.file_count_calls == []
+
+
 def test_a_membership_change_is_reflected_in_the_next_feed(env):
-    seed(env, record("r-1", "agent_run", "2026-09-20T10:00:00", user_id="applicant-1"))
-    assert feed(env)["activity"][0]["actor"] == {"kind": "former_member"}
-    stored = env.stored_group(GROUP)
-    stored["users"].append(person("applicant-1"))
-    env.groups.seed(stored)
-    assert feed(env)["activity"][0]["actor"] == {"kind": "member", "display_name": "Ana Applicant"}
+    seed(env, record("r-1", "workflow_run", "2026-09-20T10:00:00", user_id="reader-1"))
+    assert feed(env)["activity"][0]["actor"] == {"kind": "non_member"}
+    stored = env.stored_workspace(WORKSPACE)
+    stored["documentManagers"].append({"userId": "reader-1", "email": "rhea.reader@example.test",
+                                       "displayName": "Rhea Reader"})
+    env.public_workspaces.seed(stored)
+    assert feed(env)["activity"][0]["actor"] == {"kind": "member", "display_name": "Rhea Reader"}
+
+
+if __name__ == "__main__":
+    raise SystemExit(pytest.main([__file__, "-q"]))

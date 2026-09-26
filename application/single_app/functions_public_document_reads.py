@@ -113,15 +113,35 @@ def _project_public_document(
     return payload
 
 
-def load_public_document_browser_documents(user_id, workspace_id):
-    require_public_document_read_context(user_id, workspace_id)
-    records = _query_public_document_records(workspace_id)
-    require_public_document_read_context(user_id, workspace_id)
-    current = [
+def current_public_document_records(records):
+    """The current revision of every document family in ``records``, as the document list shows them.
+
+    ``select_current_documents`` chooses each family's current revision, and a revision
+    marked ``is_current_version: false`` is never shown. Public workspaces share no
+    documents with one another, so every record belongs to the workspace it was read for.
+    The public document list and ``count_current_public_documents`` both use this, so the
+    count always equals what the list shows.
+    """
+    return [
         document
         for document in select_current_documents(records)
         if document.get("is_current_version") is not False
     ]
+
+
+def count_current_public_documents(workspace_id):
+    """The number of the workspace's documents, counted as the public document list shows them.
+
+    Superseded revisions are not counted.
+    """
+    return len(current_public_document_records(_query_public_document_records(workspace_id)))
+
+
+def load_public_document_browser_documents(user_id, workspace_id):
+    require_public_document_read_context(user_id, workspace_id)
+    records = _query_public_document_records(workspace_id)
+    require_public_document_read_context(user_id, workspace_id)
+    current = current_public_document_records(records)
     documents = [
         _project_public_document(document, workspace_id, query_timestamp=True)
         for document in current

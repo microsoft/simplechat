@@ -1,10 +1,13 @@
 // test_v2_public_workspace_context_logic.mjs
-// Version: 0.261.179
+// Version: 0.261.181
 // Implemented in: 0.261.179
+// The settings, activity and statistics manage sections and the settings_management hint (M10C): 0.261.181
 // Executes the real public workspace context validator (isPublicWorkspaceContext in
 // lib/workspaceContext.ts) for the M10A additions: the optional top-level membership_management
 // hint, and the `members` manage section validated in the `manage` group exactly as the group
-// validator validates its own manage sections. Sits beside test_v2_group_workspace_context_logic.mjs.
+// validator validates its own manage sections. M10C adds the `settings`, `activity` and
+// `statistics` manage sections, validated the same way, and the optional settings_management hint.
+// Sits beside test_v2_group_workspace_context_logic.mjs.
 
 import assert from 'node:assert/strict';
 import './test_support/tsResolve.mjs';
@@ -49,8 +52,7 @@ function run(name, check) {
 
 try {
     run('a valid public context, with or without the membership hint, passes', () => {
-        assert.equal(PUBLIC_MANAGE_SECTION_IDS.length, 1);
-        assert.equal(PUBLIC_MANAGE_SECTION_IDS[0], 'members');
+        assert.deepEqual([...PUBLIC_MANAGE_SECTION_IDS], ['members', 'settings', 'activity', 'statistics']);
         const valid = context('ws-a');
         assert.equal(isPublicWorkspaceContext(valid, 'viewer', 'ws-a'), true);
         const withoutHint = structuredClone(valid);
@@ -83,6 +85,42 @@ try {
         misfiled.sections.documents = { ...misfiled.sections.documents, group: 'manage' };
         assert.equal(isPublicWorkspaceContext(misfiled, 'viewer', 'ws-a'), false,
             'A content section never claims the manage group.');
+    });
+
+    run('reported Settings, Activity and Statistics sections must be valid manage sections (M10C)', () => {
+        const valid = context('ws-a');
+        const withManage = structuredClone(valid);
+        withManage.sections.settings = { enabled: true, can_manage: true, reason: null, group: 'manage' };
+        withManage.sections.activity = { enabled: true, can_manage: false, reason: null, group: 'manage' };
+        withManage.sections.statistics = {
+            enabled: false, can_manage: false, reason: 'Only the workspace owner, an admin or a document manager can do this.',
+            group: 'manage',
+        };
+        assert.equal(isPublicWorkspaceContext(withManage, 'viewer', 'ws-a'), true,
+            'A closed manage section with its reason is valid, as the server sends it to a reader.');
+        for (const sectionId of ['settings', 'activity', 'statistics']) {
+            const absent = structuredClone(withManage);
+            delete absent.sections[sectionId];
+            assert.equal(isPublicWorkspaceContext(absent, 'viewer', 'ws-a'), true,
+                `An absent ${sectionId} section stays unavailable rather than invalidating the context.`);
+            for (const broken of [
+                { enabled: true, can_manage: false, reason: null, group: 'knowledge' },
+                { enabled: false, can_manage: false, reason: '', group: 'manage' },
+                { enabled: false, can_manage: true, reason: 'closed', group: 'manage' },
+                { enabled: true, can_manage: false, reason: null },
+            ]) {
+                const changed = structuredClone(withManage);
+                changed.sections[sectionId] = broken;
+                assert.equal(isPublicWorkspaceContext(changed, 'viewer', 'ws-a'), false,
+                    `A malformed ${sectionId} section fails the context.`);
+            }
+        }
+        const withHint = structuredClone(withManage);
+        withHint.settings_management = {
+            schema_version: 1, operations: ['view_stats'], reasons: { view_activity: 'public_workspace_manager_required' },
+        };
+        assert.equal(isPublicWorkspaceContext(withHint, 'viewer', 'ws-a'), true,
+            'The settings hint is optional at the validator, like the other management hints.');
     });
 
     console.log(`${checks} public workspace context validator checks passed.`);
