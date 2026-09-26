@@ -2,6 +2,17 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.045)**
+
+#### New Features
+
+*   **Native OneNote Workspace Uploads**
+    *   Upload `.one` sections and `.onepkg` notebooks to personal, group, or public workspaces to search and chat with their typed notes and table contents.
+    *   Keeps each notebook package as one workspace document while preserving section names, page titles, and subpage context in searchable text and citations.
+    *   Uses a bounded local extractor, with explicit errors for incomplete, unsafe, unsupported, or oversized files. Handwriting, image OCR, embedded attachments, and direct chat attachment uploads are not included.
+    *   **Deployment requirement:** Rebuild the application container, or build the native extractor when running from source. Existing upload limits still apply; larger notebooks may require a higher configured limit, up to the extractor's 128 MiB input ceiling.
+    *   (Ref: `config.py`, `functions_onenote.py`, `functions_documents.py`, `native/onenote_extractor/`, `Dockerfile`, [Native OneNote Ingestion](features/ONENOTE_INGESTION.md))
+
 ### **(v0.261.044)**
 
 #### New Features

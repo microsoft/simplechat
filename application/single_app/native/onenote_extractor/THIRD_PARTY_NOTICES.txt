@@ -1,0 +1,50 @@
+SimpleChat OneNote native extractor 0.1.0 / protocol 1
+====================================================
+
+The original SimpleChat integration files are MIT licensed (see LICENSE).
+Third-party licenses are separate and are not replaced by that license.
+
+OneNote parser and parser macros
+-------------------------------
+Projects: onenote_parser 2.0.0 and onenote_parser-macros 2.0.0
+Authors: Markus Siemens and onenote.rs contributors
+License: Mozilla Public License 2.0
+License text: licenses/MPL-2.0.txt
+Repository: https://github.com/msiemens/onenote.rs
+Exact source revision: d0d3330f9674f07903664329f50434d997eced8c
+Source:
+https://github.com/msiemens/onenote.rs/tree/d0d3330f9674f07903664329f50434d997eced8c
+Source archive:
+https://github.com/msiemens/onenote.rs/archive/d0d3330f9674f07903664329f50434d997eced8c.tar.gz
+
+This exact public revision is pinned in Cargo.toml and Cargo.lock. It contains
+the isolated copied-outline revision fix after 2.0.0. The integration does not
+patch, vendor a private fork of, or depend on a local checkout of that code.
+The parser's native-fs and onepkg features are disabled.
+
+Source availability for executable distribution (MPL 2.0, section 3.2)
+-------------------------------------------------------------------
+Recipients may obtain the corresponding covered Source Code Form, including
+the parser's exact revision and license, from the source links above. When
+redistributing the executable, keep this notice and the license accessible.
+The application distribution should also retain the exact covered source
+directories crates/parser and crates/parser-macros with the upstream LICENSE,
+Cargo.toml and Cargo.lock, so source availability does not depend solely on an
+external repository. Do not substitute a moving branch or a different release.
+Changes to MPL-covered source files remain governed by the MPL.
+
+Other dependencies
+------------------
+Cargo.lock is the authoritative, reproducible list of dependency versions and
+registry checksums. licenses/DEPENDENCIES.txt lists the locked dependencies,
+SPDX license expressions, and source locations. Corresponding upstream license,
+copyright and notice files are retained under licenses/dependencies/.
+Some dependencies are build-time or platform-specific and are not linked into
+every executable. Their notices are retained for both supported target families.
+
+Public regression fixtures
+--------------------------
+tests/fixtures/SOURCES.txt identifies the exact upstream source paths and Git
+blob identities for the included public MPL-2.0 OneNote test files. No files
+from the separately licensed AGPL Joplin samples are included. No user-uploaded
+notebook, private extraction output, or protected local notebook is distributed.

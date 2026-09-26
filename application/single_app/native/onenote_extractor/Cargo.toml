@@ -1,0 +1,41 @@
+[package]
+name = "simplechat-onenote-extractor"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+publish = false
+license = "MIT"
+description = "Bounded, offline OneNote text extraction for SimpleChat"
+
+[dependencies]
+bytes = "=1.12.1"
+cab = "=0.6.0"
+onenote_parser = { git = "https://github.com/msiemens/onenote.rs.git", rev = "d0d3330f9674f07903664329f50434d997eced8c", default-features = false }
+serde = { version = "=1.0.229", features = ["derive"] }
+serde_json = "=1.0.145"
+time = "=0.3.45"
+typed-path = "=0.12.3"
+
+[target.'cfg(target_os = "linux")'.dependencies]
+libc = "=0.2.177"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "=0.59.0", features = ["Win32_Foundation", "Win32_Security", "Win32_Storage_FileSystem", "Win32_System_Console", "Win32_System_JobObjects", "Win32_System_Threading"] }
+
+[profile.release]
+strip = true
+lto = "thin"
+codegen-units = 1
+overflow-checks = true
+
+[profile.dev]
+debug = 0
+
+[profile.test]
+debug = 0
+
+[lints.rust]
+unsafe_op_in_unsafe_fn = "deny"
+
+[lints.clippy]
+undocumented_unsafe_blocks = "deny"
