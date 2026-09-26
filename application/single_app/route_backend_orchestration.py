@@ -16,11 +16,15 @@ would put every existing conversation at risk for a feature that is off by defau
 Request data is captured before streaming. The planning stream retains authenticated
 request context for model authorization after canonical turn state is restored.
 Execution workers receive explicit identity and model bindings, never Flask state.
-Auto model routing stays on the standard step executor, which enforces per-step
-bindings. Harness streams share chat's content-check event filtering, and removed or
-pending replies hide their run files from history projections.
+Every plan uses the Gather / Reason / Render contract; Auto model routing binds and
+enforces each model-backed step. Execution streams share chat's content-check event
+filtering, and removed or pending replies hide their run files from history projections.
 
-Version: 0.261.131
+A saved run from the removed legacy plan contract is never opened, run, retried, edited,
+restored or continued. Every by-id route answers it with HTTP 409 and the one stable
+``LEGACY_PLAN_MESSAGE``, and conversation run listings omit it.
+
+Version: 0.261.140
 """
 
 import hashlib
@@ -38,29 +42,22 @@ from azure.core.exceptions import AzureError
 from azure.core import MatchConditions
 from azure.cosmos.exceptions import CosmosResourceNotFoundError
 from flask import Response, g, has_request_context, jsonify, request, session, stream_with_context
-from openai import OpenAIError
 
 from config import cosmos_conversations_container, cosmos_messages_container
-import functions_orchestration_admission as harness_admission
 from content_screening.contracts import DocumentHeldError, ScreeningError
-from functions_appinsights import log_event
+from functions_appinsights import log_event, workflow_log_context
 from functions_chat_content_checks import (
-    CHECK_METADATA, check_chat_content, enabled_chat_scanners, orchestration_input_text,
-    prepare_checked_reply, should_withhold_chat_event, strip_private_chat_checks,
+    CHECK_METADATA, check_chat_content, orchestration_input_text,
+    should_withhold_chat_event, strip_private_chat_checks,
 )
 from functions_chat_content_review import (
-    checked_history_messages, record_blocked_chat_attempt, record_chat_content_incident, reply_is_retracted,
+    checked_history_messages, record_blocked_chat_attempt, reply_is_retracted,
 )
-from functions_citation_tracking import merge_cited_documents_into_conversation
-from functions_conversation_cache import invalidate_conversation_cache_for_item
 from functions_saved_analysis import (
     analysis_result_contexts,
     load_saved_analysis,
-    saved_analysis_context,
     sanitize_saved_analysis_messages,
 )
-from functions_workflow_context import WorkflowContextBudgetError, calculate_workflow_context_budget
-from model_endpoint_clients import ModelEndpointBehavior
 from functions_authentication import (
     get_current_user_id,
     get_current_user_info,
@@ -80,6 +77,7 @@ from functions_orchestration_context import (
     build_elicitation_user_request,
     build_planner_context,
     build_run_ledger,
+    enrich_planner_candidates,
     collect_answered_questions,
     merge_elicitation_context,
     normalize_elicitation_answer,
@@ -96,7 +94,6 @@ from functions_orchestration_context import (
 )
 from functions_orchestration_events import (
     build_cancelled_event,
-    build_content_event,
     build_conversation_metadata_event,
     build_elicitation_event,
     build_error_event,
@@ -104,15 +101,10 @@ from functions_orchestration_events import (
     build_plan_event,
     build_planning_thought,
     build_reasoning_adjustment_event,
-    build_run_done_event,
-    build_step_event,
-    build_step_thought,
-    build_synthesis_thought,
     merge_reasoning_adjustments,
     serialize_sse,
 )
-from functions_orchestration_executor import RunContext, execute_plan
-from functions_orchestration_admission import get_new_plan_contract_version
+from functions_orchestration_executor import RunContext
 from functions_orchestration_artifacts import configure_orchestration_artifact_service
 from functions_orchestration_output_store import (
     OutputConflictError, OutputError, OutputStorageError, OutputUnavailableError,
@@ -121,10 +113,9 @@ from functions_orchestration_result_contracts import ResultContractError
 from functions_orchestration_services import (
     admitted_result_aliases, composition_profiles, discover_result_aliases,
 )
-from functions_orchestration_adapters import resolve_context_source_manifest
 from functions_orchestration_checkpoints import CheckpointError, fingerprint
 from functions_orchestration_recovery import (
-    ExecutionCheckpoints, ExecutionLease, RecoveryError, prepare_retry,
+    ExecutionLease, RecoveryError, prepare_retry,
     public_execution_fields, recovery_projection, request_cancellation, validate_resume,
     reconcile_checkpoints,
 )
@@ -153,19 +144,12 @@ from functions_orchestration_plan_revisions import (
 from functions_orchestration_planner import (
     ConversationResolutionError,
     PlannerError,
-    PlannerResponseError,
     plan_request,
     resolve_conversation_request,
-    resolve_planner_client,
 )
-from functions_orchestration_models import (
-    OrchestrationModel,
-    OrchestrationModelError,
-    REASONING_COMPLETION_BUDGET,
-    has_planner_model_override,
-    resolve_orchestration_model,
-)
+from functions_orchestration_models import resolve_orchestration_model
 from functions_orchestration_registry import (
+    DEPENDENCY_PLAN_CONTRACT_VERSION,
     CapabilityResolutionError,
     required_capability_ids,
     resolve_available_capability_ids,
@@ -193,24 +177,24 @@ from functions_orchestration_runs import (
 from functions_orchestration_schema import (
     ELICITATION_ACTION_ACCEPT,
     ELICITATION_ACTION_CANCEL,
+    LEGACY_PLAN_CODE,
+    LEGACY_PLAN_MESSAGE,
     PLAN_STATUS_CANCELLED,
     PLAN_STATUS_COMPLETED,
     PLAN_STATUS_FAILED,
     PLAN_STATUS_RUNNING,
+    LegacyPlanError,
     PlanValidationError,
     apply_plan_edits,
+    is_legacy_plan,
     plan_contract_version,
     normalize_elicitation,
-    summarize_plan,
-    build_failure,
-    failure_explanation,
     safe_failure,
 )
 from functions_settings import get_settings, get_user_settings
 from functions_model_catalog import ModelCatalogError
-from functions_orchestration_model_routing import answer_selection, step_model_context, validate_auto_bindings
+from functions_orchestration_model_routing import answer_selection, validate_auto_bindings
 from functions_prompt_metadata import build_prompt_selection_metadata
-from model_endpoint_clients import extract_chat_completion_response_text
 from swagger_wrapper import get_auth_security, swagger_route
 
 # SSE responses must not be buffered by an intermediary, or progress arrives all at once at
@@ -220,24 +204,6 @@ SSE_HEADERS = {
     'X-Accel-Buffering': 'no',
     'Connection': 'keep-alive',
 }
-
-ANSWER_MAX_TOKENS = 4000
-ANSWER_TEMPERATURE = 0.3
-
-# How often the executor's cancel probe re-reads the run record. Cancellation is recorded in
-# Cosmos rather than in process memory because the cancel request almost never lands on the
-# worker running the stream; this is the same approach the workflow runner takes.
-CANCEL_POLL_SECONDS = 3.0
-
-# How long the response waits on a silent queue before sending an SSE comment. A single
-# document analysis step can run for minutes without emitting, and an idle connection is
-# what proxies close.
-HEARTBEAT_SECONDS = 15.0
-
-# The worker has already put its sentinel by the time this runs, so the join is only
-# reclaiming the thread. Bounded anyway rather than trusted.
-RUN_JOIN_TIMEOUT_SECONDS = 30.0
-
 
 def _now_iso():
     return datetime.now(timezone.utc).isoformat()
@@ -279,28 +245,37 @@ def _orchestration_enabled(settings):
     return bool((settings or {}).get('enable_chat_orchestration'))
 
 
-def _new_plan_contract_version(settings, seeds):
-    """Admit dependency plans only where their executor can honor the model selection."""
-    if (seeds or {}).get('model_routing') == 'auto':
-        # Only the standard step executor enforces per-step Auto model bindings.
-        return 1
-    return get_new_plan_contract_version(
-        settings, admission_ready=harness_admission.HARNESS_ADMISSION_READY,
+def _legacy_plan_response():
+    """The one refusal for a saved plan from the removed legacy contract."""
+    return jsonify({'error': LEGACY_PLAN_MESSAGE, 'code': LEGACY_PLAN_CODE}), 409
+
+
+def _legacy_turn(turn_context, outcome=None):
+    """Whether saved turn state belongs to the removed legacy plan contract.
+
+    A turn context records the contract it was planned under; one without the marker, or
+    with the earlier value, is legacy. So is a saved outcome whose plan is legacy.
+    """
+    if not isinstance(turn_context, dict) or is_legacy_plan(turn_context):
+        return True
+    return (
+        isinstance(outcome, dict) and outcome.get('kind') == 'plan'
+        and is_legacy_plan(outcome.get('document'))
     )
 
 
-def _harness_services(user_id, conversation_id, *, settings=None):
-    # Bind initialized application resources only at an authorized v2 boundary;
-    # importing the legacy route must not initialize artifact transport owners.
+def _orchestration_services(user_id, conversation_id, *, settings=None):
+    # Bind initialized application resources only at an authorized request boundary;
+    # importing this route must not initialize artifact transport owners.
     from functions_orchestration_bootstrap import build_orchestration_services
 
     return build_orchestration_services(user_id, conversation_id, settings=settings)
 
 
-def _harness_export_catalog(user_id, conversation_id, *, settings=None, services=None):
+def _admitted_export_catalog(user_id, conversation_id, *, settings=None, services=None):
     settings = get_settings() if settings is None else settings
     if services is None:
-        services = _harness_services(user_id, conversation_id, settings=settings)
+        services = _orchestration_services(user_id, conversation_id, settings=settings)
     export_catalog = services.export_catalog()
     available = resolve_available_capability_ids(
         settings, allowed_ids=settings.get('chat_orchestration_enabled_capabilities'),
@@ -314,10 +289,8 @@ def _harness_export_catalog(user_id, conversation_id, *, settings=None, services
     return export_catalog
 
 
-def _plan_harness_options(record, user_id, settings):
-    if plan_contract_version(record.get('plan')) != 2:
-        return {}
-    services = _harness_services(user_id, record['conversation_id'], settings=settings)
+def _plan_result_options(record, user_id, settings):
+    services = _orchestration_services(user_id, record['conversation_id'], settings=settings)
     return {
         'result_alias_resolver': lambda current: admitted_result_aliases(current, services.results),
         'export_catalog': services.export_catalog(),
@@ -326,7 +299,7 @@ def _plan_harness_options(record, user_id, settings):
     }
 
 
-def _stream_harness_execution(execution, *, run_id, conversation_id, settings=None):
+def _stream_execution(execution, *, run_id, conversation_id, settings=None):
     """Detach the browser on stream loss, not the owning durable execution."""
     worker_started = False
 
@@ -348,7 +321,10 @@ def _stream_harness_execution(execution, *, run_id, conversation_id, settings=No
             except Exception as exc:
                 log_event(
                     '[ORCHESTRATION_RUNS] Headless execution could not return its saved outcome.',
-                    level=logging.ERROR, extra={'run_id': run_id, 'error_type': type(exc).__name__},
+                    level=logging.ERROR, extra={
+                        **workflow_log_context(run_id=run_id, conversation_id=conversation_id),
+                        'stage': 'execution_stream', 'error_type': type(exc).__name__,
+                    },
                 )
                 emit(build_error_event(
                     'The execution status could not be confirmed. Reload the run to check its saved state.',
@@ -360,12 +336,15 @@ def _stream_harness_execution(execution, *, run_id, conversation_id, settings=No
                 except Exception as exc:
                     log_event(
                         '[ORCHESTRATION_RUNS] Headless execution resources could not be closed.',
-                        level=logging.ERROR, extra={'run_id': run_id, 'error_type': type(exc).__name__},
+                        level=logging.ERROR, extra={
+                            **workflow_log_context(run_id=run_id, conversation_id=conversation_id),
+                            'stage': 'execution_close', 'error_type': type(exc).__name__,
+                        },
                     )
                 finally:
                     emit(finished)
 
-        thread = threading.Thread(target=worker, name=f'orchestration-harness-{run_id}', daemon=True)
+        thread = threading.Thread(target=worker, name=f'orchestration-run-{run_id}', daemon=True)
         try:
             thread.start()
             worker_started = True
@@ -384,8 +363,8 @@ def _stream_harness_execution(execution, *, run_id, conversation_id, settings=No
     return response
 
 
-def _prepare_harness_stream(record, data, user_id, settings, snapshot, identity, execution_identity, services):
-    # Initialize the shared web/scheduler runner only after authorized v2 admission.
+def _prepare_execution_stream(record, data, user_id, settings, snapshot, identity, execution_identity, services):
+    # Initialize the shared web/scheduler runner only after the run is authorized.
     from functions_orchestration_execution import HarnessExecutionError, prepare_harness_execution
 
     run_id, conversation_id = record['id'], record['conversation_id']
@@ -416,9 +395,13 @@ def _prepare_harness_stream(record, data, user_id, settings, snapshot, identity,
         )
     except HarnessExecutionError as exc:
         log_event(
-            '[ORCHESTRATION_RUNS] Harness preparation did not produce an executable run.',
+            '[ORCHESTRATION_RUNS] Execution preparation did not produce an executable run.',
             level=logging.WARNING, extra={
-                'run_id': run_id, 'code': exc.code, 'durable_status': exc.durable_status,
+                **workflow_log_context(
+                    run_id=run_id, conversation_id=conversation_id, turn_id=record.get('turn_id'),
+                ),
+                'stage': 'execution_prepare', 'execution_code': exc.code,
+                'durable_status': exc.durable_status, 'error_type': type(exc).__name__,
             },
         )
         if exc.durable_status is not None and exc.final_frames:
@@ -436,121 +419,23 @@ def _prepare_harness_stream(record, data, user_id, settings, snapshot, identity,
         except (CheckpointError, RecoveryError, ConversationContextError, PermissionError, AzureError) as close_error:
             log_event(
                 '[ORCHESTRATION_RUNS] Execution preparation lease is no longer writable.',
-                level=logging.WARNING, extra={'run_id': run_id, 'error_type': type(close_error).__name__},
+                level=logging.WARNING, extra={
+                    **workflow_log_context(run_id=run_id, conversation_id=conversation_id),
+                    'stage': 'execution_close', 'error_type': type(close_error).__name__,
+                },
             )
         log_event(
-            '[ORCHESTRATION_RUNS] The harness could not prepare this execution.',
-            level=logging.ERROR, extra={'run_id': run_id, 'error_type': type(exc).__name__},
+            '[ORCHESTRATION_RUNS] This execution could not be prepared.',
+            level=logging.ERROR, extra={
+                **workflow_log_context(run_id=run_id, conversation_id=conversation_id),
+                'stage': 'execution_prepare', 'error_type': type(exc).__name__,
+            },
         )
         return jsonify({
             'error': 'Execution could not start. Reload the run to check its saved status.',
             'code': 'recovery_unavailable',
         }), 503
-    return _stream_harness_execution(execution, run_id=run_id, conversation_id=conversation_id, settings=settings)
-
-
-def _build_invoke_prompt(settings, token_usage=None, model=None):
-    """A closure the adapters call to ask the model something.
-
-    The signature is not ours to choose. ``run_document_analysis``,
-    ``run_document_comparison`` and the respond adapter all call this as
-    ``invoke_prompt(prompt_text, stage=..., metadata={...})``, which is the convention
-    ``functions_workflow_runner.invoke_model_prompt`` established and every existing caller
-    follows. Getting it wrong does not fail at import or in a unit test with fake adapters
-    -- it fails at the moment a real step runs, with a TypeError that reads as a mystery,
-    which is exactly how it was found.
-
-    ``stage`` and ``metadata`` are accepted and deliberately unused beyond logging: they
-    describe which phase of a multi-pass analysis is asking, and the answer is the same
-    model call either way. They are named rather than swallowed by ``**kwargs`` so this
-    file states the contract it is honouring.
-
-    The run supplies an authorized model binding resolved from its saved selection or
-    the administrator's default. The legacy branch remains for callers without a binding.
-    """
-    if model is None:
-        client, planner_deployment = resolve_planner_client(settings)
-        gpt_model = (settings or {}).get('gpt_model') or {}
-        deployment = (
-            (gpt_model['selected'][0] or {}).get('deploymentName')
-            if gpt_model.get('selected') else None
-        ) or planner_deployment
-        model = OrchestrationModel(client, deployment)
-
-    def invoke_prompt(prompt_text, stage='window_analysis', metadata=None):
-        messages = (
-            prompt_text
-            if isinstance(prompt_text, list)
-            else [{'role': 'user', 'content': str(prompt_text or '')}]
-        )
-        if (metadata or {}).get('complete_saved_analysis_input'):
-            behavior_name = getattr(model, 'behavior_name', '') or model.deployment
-            output_tokens = getattr(model, 'response_length', None)
-            if output_tokens is None:
-                output_tokens = ANSWER_MAX_TOKENS
-                if ModelEndpointBehavior(model.provider, behavior_name).is_openai_reasoning_model:
-                    output_tokens = max(output_tokens, REASONING_COMPLETION_BUDGET)
-            audit = calculate_workflow_context_budget(
-                messages, getattr(model, 'model_metadata', None) or behavior_name,
-                provider=model.provider, output_tokens=output_tokens,
-            )
-            invoke_prompt.context_budget = audit
-            if audit['decision'] == 'blocked':
-                raise WorkflowContextBudgetError(audit)
-        try:
-            response = model.create_completion(
-                messages=messages,
-                temperature=ANSWER_TEMPERATURE,
-                max_tokens=ANSWER_MAX_TOKENS,
-                use_model_response_length=True,
-            )
-        except (OpenAIError, AzureError) as exc:
-            log_event(
-                '[ORCHESTRATION] The answer model request failed.',
-                level=logging.WARNING, extra={'stage': stage, 'error_type': type(exc).__name__},
-            )
-            raise PlannerResponseError('model_request_failed') from exc
-
-        # Accumulated here because this is the only place every model call an orchestration
-        # run makes passes through. A run's cost was previously reported as zero for that
-        # reason, not because it was free.
-        usage = getattr(response, 'usage', None)
-        if usage is not None and isinstance(token_usage, dict):
-            for field in ('prompt_tokens', 'completion_tokens', 'total_tokens'):
-                value = getattr(usage, field, None)
-                if isinstance(value, int):
-                    token_usage[field] = token_usage.get(field, 0) + value
-
-        if not response or not response.choices:
-            log_event(
-                f"[ORCHESTRATION] The model returned no choices at stage '{stage}'.",
-                level=logging.WARNING,
-            )
-            raise PlannerResponseError('empty_completion')
-        choice = response.choices[0]
-        if getattr(choice, 'finish_reason', None) == 'content_filter' or getattr(choice.message, 'refusal', None):
-            raise PlannerResponseError('model_refusal')
-        text = extract_chat_completion_response_text(response)
-        if not text.strip():
-            raise PlannerResponseError('empty_completion')
-        return text
-
-    invoke_prompt.model_metadata = getattr(model, 'model_metadata', None) or getattr(model, 'behavior_name', '') or model.deployment
-    invoke_prompt.provider = model.provider
-    invoke_prompt.output_tokens = getattr(model, 'response_length', None)
-    if invoke_prompt.output_tokens is None:
-        behavior_name = getattr(model, 'behavior_name', '') or model.deployment
-        invoke_prompt.output_tokens = (
-            max(ANSWER_MAX_TOKENS, REASONING_COMPLETION_BUDGET)
-            if ModelEndpointBehavior(model.provider, behavior_name).is_openai_reasoning_model else ANSWER_MAX_TOKENS
-        )
-    return invoke_prompt
-
-
-def _combined_token_usage(prompt_usage, step_usage):
-    usage = dict(step_usage or {})
-    usage.update(_sum_token_usage(prompt_usage, step_usage))
-    return usage
+    return _stream_execution(execution, run_id=run_id, conversation_id=conversation_id, settings=settings)
 
 
 def _authorized_document_ids(candidates, seeds):
@@ -829,37 +714,6 @@ def _conversation_context_for_run(record, user_id, settings):
     )
 
 
-def _make_cancel_probe(run_id, user_id, conversation_id):
-    """Poll the run record for a cancellation request.
-
-    In-process state would not do. The stream is a blocking POST held by one worker while
-    the cancel request is an ordinary POST that lands wherever the load balancer sends it,
-    so the only place both can see is the record itself. Polled rather than read on every
-    probe because the executor calls this between every step and inside adapters.
-    """
-    import time
-
-    state = {'checked_at': 0.0, 'cancelled': False}
-
-    def cancel_requested():
-        if state['cancelled']:
-            return True
-        now = time.monotonic()
-        if now - state['checked_at'] < CANCEL_POLL_SECONDS:
-            return False
-        state['checked_at'] = now
-        try:
-            record = get_orchestration_run(run_id, user_id, conversation_id=conversation_id)
-        except Exception:
-            # A transient read failure must not cancel a healthy run.
-            return False
-        if record and record.get('cancellation_requested_at'):
-            state['cancelled'] = True
-        return state['cancelled']
-
-    return cancel_requested
-
-
 def _ensure_conversation(conversation_id, user_id, title=''):
     """Make sure a conversation exists for this run to belong to.
 
@@ -965,67 +819,6 @@ def _request_identity(user_id=None, seeded_agent=None):
     }
 
 
-def _partition_citations(citations):
-    """Split citations into the document, web, and tool fields chat already renders.
-
-    ``hybrid_citations`` also feeds used-document tracking. Native calls belong in
-    ``agent_citations`` so their arguments and results reach the tool renderer instead
-    of becoming web-source entries without a URL.
-    """
-    document_citations = []
-    web_citations = []
-    tool_citations = []
-    for citation in citations or ():
-        if not isinstance(citation, dict):
-            continue
-        if _text(citation.get('document_id')):
-            document_citations.append(citation)
-        elif citation.get('tool_name') or citation.get('function_name'):
-            tool_citations.append(citation)
-        elif _text(citation.get('url')) or citation.get('source_type') == 'web':
-            web_citations.append(citation)
-        else:
-            # Preserve older non-document source records without treating them as documents.
-            web_citations.append(citation)
-    return document_citations, web_citations, tool_citations
-
-
-def _record_cited_documents(conversation_id, user_id, document_citations):
-    """Fold an answer's document citations into the conversation's used-document list.
-
-    This is what puts a document in the Documents drawer. The drawer reads
-    ``used_documents`` off the conversation, not the citations off the message, so an
-    answer can cite a document perfectly and still show "No documents used yet" if this
-    step is skipped -- which is exactly what an orchestrated answer did before this.
-    """
-    if not document_citations:
-        return
-
-    try:
-        conversation = cosmos_conversations_container.read_item(
-            item=conversation_id, partition_key=conversation_id
-        )
-    except Exception as exc:
-        log_event(f"[ORCHESTRATION] Could not read the conversation to record cited "
-                  f"documents: {exc}", level=logging.WARNING)
-        return
-
-    if conversation.get('user_id') != user_id or conversation.get('orchestration_deleted'):
-        return
-
-    try:
-        merge_cited_documents_into_conversation(conversation, document_citations)
-        conversation['last_updated'] = _now_iso()
-        cosmos_conversations_container.replace_item(
-            item=conversation_id, body=conversation, etag=conversation['_etag'],
-            match_condition=MatchConditions.IfNotModified,
-        )
-        invalidate_conversation_cache_for_item(conversation, reason="orchestration_completed")
-    except Exception as exc:
-        log_event(f"[ORCHESTRATION] Could not record cited documents: {exc}",
-                  level=logging.WARNING)
-
-
 def _save_message(conversation_id, role, content, metadata=None, extra=None, message_id=None, persist=None):
     """Write one message, returning its id.
 
@@ -1090,11 +883,9 @@ def _elicitation_outcome_events(outcome, turn_context, user_id, conversation_id)
         yield build_elicitation_event(outcome['document'])
     else:
         yield build_planning_thought('Plan ready.', status='completed')
-        catalog = (
-            _harness_export_catalog(user_id, conversation_id)
-            if plan_contract_version(outcome['document']) == 2 else None
+        yield build_plan_event(
+            outcome['document'], export_catalog=_admitted_export_catalog(user_id, conversation_id),
         )
-        yield build_plan_event(outcome['document'], **({'export_catalog': catalog} if catalog is not None else {}))
 
 
 def _persist_planned_turn(
@@ -1271,7 +1062,8 @@ def _run_summary_row(record, *, include_artifacts=False):
     twenty-five full plans on the wire to draw twenty-five one-line rows, and would ship the
     request's internal seeding to the browser as a side effect of a listing. Anything a future
     field adds to the record therefore stays server-side until it is named here.
-    Current v2 output states are needed even on lean rows to recover pending file work.
+    Current output states are needed even on lean rows to recover pending file work.
+    Callers never project a legacy run: listings omit it and by-id routes refuse it first.
     """
     record = record if isinstance(record, dict) else {}
     approval = record.get('approval') if isinstance(record.get('approval'), dict) else {}
@@ -1304,23 +1096,28 @@ def _run_summary_row(record, *, include_artifacts=False):
     }
     removed = _run_response_removed(record)
     plan = record.get('plan')
-    if isinstance(plan, dict) and plan_contract_version(plan) == 2:
-        if removed:
-            # Files rendered from a pending or removed reply stay private with it.
-            row['outputs'] = []
-            if include_artifacts:
-                row['generated_artifacts'] = []
+    if removed:
+        # Files rendered from a pending or removed reply stay private with it.
+        row['outputs'] = []
+        if include_artifacts:
+            row['generated_artifacts'] = []
+    elif isinstance(plan, dict) and not is_legacy_plan(plan):
+        services = _orchestration_services(record['user_id'], record['conversation_id'])
+        row['outputs'] = services.rendering.list_public_outputs(record['id'])
+        if include_artifacts:
+            row['generated_artifacts'] = services.rendering.committed_artifacts(record['id'])
+            row['artifact_count'] = len(row['generated_artifacts'])
         else:
-            services = _harness_services(record['user_id'], record['conversation_id'])
-            row['outputs'] = services.rendering.list_public_outputs(record['id'])
-            if include_artifacts:
-                row['generated_artifacts'] = services.rendering.committed_artifacts(record['id'])
-                row['artifact_count'] = len(row['generated_artifacts'])
-            else:
-                row['artifact_count'] = sum(
-                    output['state'] == 'completed' and output.get('available') is True
-                    for output in row['outputs']
-                )
+            row['artifact_count'] = sum(
+                output['state'] == 'completed' and output.get('available') is True
+                for output in row['outputs']
+            )
+    else:
+        # A partly written record has no plan, so it has no files to show.
+        row['outputs'] = []
+        if include_artifacts:
+            row['generated_artifacts'] = []
+        row['artifact_count'] = 0
     if removed:
         if "execution_steps" in row:
             row["execution_steps"] = _hide_removed_step_summaries(row["execution_steps"])
@@ -1394,7 +1191,7 @@ def _validate_retry_context(record, user_id, settings, *, preparing=False):
     conversation_id = record['conversation_id']
     contract_version = plan_contract_version(record['plan'])
     snapshot = _conversation_context_for_run(record, user_id, settings)
-    services = _harness_services(user_id, conversation_id, settings=settings) if contract_version == 2 else None
+    services = _orchestration_services(user_id, conversation_id, settings=settings)
     seeds = record.get('seeds') or {}
     resolve_elicitation_references(seeds.get('elicitation_references') or [], user_id, conversation_id, settings=settings)
     identity = _request_identity(user_id, seeded_agent=seeds.get('agent'))
@@ -1410,11 +1207,9 @@ def _validate_retry_context(record, user_id, settings, *, preparing=False):
         settings, allowed_ids=settings.get('chat_orchestration_enabled_capabilities'), candidate_ids=required,
         request_context=_capability_request_context(
             user_id, identity, record.get('user_message'), agents, actions, allowed_user_urls=allowed_urls,
-            **(services.capability_request_bindings() if services is not None else {}),
+            **services.capability_request_bindings(),
         ),
-        **({
-            'contract_version': contract_version, 'export_catalog': services.export_catalog(),
-        } if contract_version == 2 else {}),
+        contract_version=contract_version, export_catalog=services.export_catalog(),
     ))
     if required - available:
         raise CheckpointError('context_unavailable')
@@ -1461,16 +1256,15 @@ def _validate_retry_context(record, user_id, settings, *, preparing=False):
         )
         context.validate_checkpoint_artifacts = lambda artifacts: _validate_checkpoint_artifacts(artifacts, conversation_id, user_id)
         context.checkpoint_artifact_versions = lambda artifacts: _checkpoint_artifact_versions(artifacts, conversation_id, user_id)
-        if services is not None:
-            context.result_service = services.results
-            context.result_aliases = admitted_result_aliases(record, services.results)
-            context.external_source_admission = services.external_source_admission
-            context.external_source_preflight = services.external_source_preflight
-            context.capture_external_source_configuration = services.capture_external_source_configuration
-            context.export_catalog = services.export_catalog()
-            context.composition_profiles = composition_profiles()
-            context.native_bridge_for_step = services.native_bridge_for_step
-            context.rendering_service = services.rendering
+        context.result_service = services.results
+        context.result_aliases = admitted_result_aliases(record, services.results)
+        context.external_source_admission = services.external_source_admission
+        context.external_source_preflight = services.external_source_preflight
+        context.capture_external_source_configuration = services.capture_external_source_configuration
+        context.export_catalog = services.export_catalog()
+        context.composition_profiles = composition_profiles()
+        context.native_bridge_for_step = services.native_bridge_for_step
+        context.rendering_service = services.rendering
         return validate_resume(
             record, context, settings,
             lambda: _authorize_context_conversation(conversation_id, user_id),
@@ -1478,223 +1272,6 @@ def _validate_retry_context(record, user_id, settings, *, preparing=False):
         )
     finally:
         model.close()
-
-
-def _finalize_execution(record, result, error, context, lease, answer_model, research_model, run_token_usage, settings=None):
-    """Persist every terminal explanation on the worker, even after transport loss."""
-    answer_model = getattr(context, 'answer_model', answer_model)
-    current = lease.read()
-    result = result if isinstance(result, dict) else {}
-    if not error and result:
-        try:
-            _conversation_context_for_run(record, record['user_id'], get_settings())
-            _validate_turn_memory_context(record, record['user_id'], record['conversation_id'])
-            for reference in getattr(context, 'analysis_result_contexts', []) or []:
-                load_saved_analysis(record['user_id'], reference)
-            if result.get('saved_analyses'):
-                # The displayed assistant message does not exist at this boundary yet.
-                from functions_saved_analysis import load_orchestration_analysis_input
-
-                for descriptor in result['saved_analyses']:
-                    load_orchestration_analysis_input(record['user_id'], descriptor, authorize_only=True)
-            document_ids = set(getattr(context, 'documents_touched', []) or [])
-            document_ids.update(
-                item['document_id'] for item in result.get('citations') or []
-                if isinstance(item, dict) and item.get('document_id')
-            )
-            if document_ids:
-                manifest = resolve_context_source_manifest(
-                    context, sorted(document_ids), settings=get_settings(), user_id=record['user_id'],
-                )
-                authorized = {
-                    item.get('document_id') for item in manifest if item.get('authorization_status') == 'authorized'
-                }
-                if document_ids - authorized:
-                    raise CheckpointError('context_unavailable')
-            if result.get('artifacts') and not _validate_checkpoint_artifacts(
-                result['artifacts'], record['conversation_id'], record['user_id'],
-            ):
-                raise CheckpointError('context_unavailable')
-        except Exception:
-            error = CheckpointError('context_unavailable')
-    if error or not result:
-        failure = safe_failure(error.failure) if isinstance(error, CheckpointError) else build_failure(
-            'context_unavailable' if isinstance(error, (ConversationContextError, OrchestrationMemoryError, PermissionError)) else 'execution_interrupted'
-        )
-        failures = list(getattr(context, 'failures', [])) + [failure]
-        result = {
-            'status': 'failed', 'outcome': 'failed', 'failure': failures[0], 'failures': failures,
-            'message': failure_explanation(failures), 'citations': [], 'artifacts': [],
-            'token_usage': getattr(context, 'token_usage', {}),
-        }
-        if isinstance(error, CheckpointError) and not any(
-            step.get('status') == 'running' for step in current.get('execution_steps') or []
-        ):
-            current = lease.update({'recovery_blocked_code': error.code})
-    failures = [safe_failure(value) for value in result.get('failures') or []]
-    failure = failures[0] if failures else None
-    status = result.get('status') if result.get('status') in ('completed', 'failed', 'cancelled') else 'failed'
-    outcome = result.get('outcome') or status
-    answer = result.get('message') or failure_explanation(failures, cancelled=status == 'cancelled')
-    combined_usage = _combined_token_usage(run_token_usage, result.get('token_usage'))
-    reasoning = build_model_reasoning_metadata(answer_model)
-    reasoning['reasoning_adjustments'] = merge_reasoning_adjustments(
-        record['plan'].get('reasoning_adjustments'), reasoning.get('reasoning_adjustments'),
-        build_model_reasoning_metadata(research_model, 'planner').get('reasoning_adjustments')
-        if research_model is not answer_model else [],
-    )
-    steps = deepcopy(current.get('execution_steps') or [])
-    for step in steps:
-        if step.get('status') == 'running':
-            step.update({'status': 'failed', 'failure': failure or build_failure('execution_interrupted')})
-    updates = {
-        'status': status, 'outcome': outcome, 'failure': failure, 'failures': failures,
-        'error': failure['message'] if failure else None, 'completed_at': _now_iso(),
-        'execution_steps': steps, 'token_usage': combined_usage,
-        'reasoning_adjustments': reasoning['reasoning_adjustments'],
-    }
-    current = lease.update(updates)
-    # The future released state is what both the saved message and done frame
-    # describe. The live lease remains held until message persistence finishes.
-    message_id = f"assistant_orchestration_{fingerprint(record['id'])[:40]}"
-    saved_analyses = [
-        {**deepcopy(descriptor), 'conversation_id': record['conversation_id'], 'message_id': message_id}
-        for descriptor in result.get('saved_analyses') or []
-    ]
-    inherited_contexts = list(result.get('analysis_result_contexts') or [])
-    for descriptor in saved_analyses:
-        reference = saved_analysis_context(descriptor)
-        if reference not in inherited_contexts:
-            inherited_contexts.append(reference)
-    public = public_execution_fields({
-        **current, 'execution_lease': None, 'finalization_status': 'saved',
-        'assistant_message_id': message_id, 'message_saved': True,
-    })
-    summary = summarize_plan(record['plan'])
-    summary.update({'status': status, 'capabilities_used': list(result.get('capabilities_used') or [])})
-    documents, web, tools = _partition_citations(result.get('citations'))
-    terminal_metadata = {
-        'orchestration': {
-            'run_id': record['id'], 'turn_id': record.get('turn_id'),
-            'plan_summary': summary, **public,
-        },
-        'token_usage': combined_usage, **reasoning,
-    }
-    if inherited_contexts:
-        terminal_metadata['analysis_result_contexts'] = inherited_contexts
-    if saved_analyses:
-        terminal_metadata.update({'saved_analyses': saved_analyses, 'saved_analysis': saved_analyses[-1]})
-    if result.get('analysis_consumption'):
-        terminal_metadata['analysis_explanation'] = {
-            'original_sources_reanalyzed': False, 'consumption': result['analysis_consumption'],
-        }
-    analysis_artifacts = [
-        artifact for artifact in result.get('artifacts') or []
-        if isinstance(artifact, dict) and artifact.get('capability') == 'analyze'
-    ]
-    native_outputs = [
-        artifact for artifact in result.get('artifacts') or []
-        if isinstance(artifact, dict) and (
-            artifact.get('capability') == 'tabular' or artifact.get('export_run_id')
-        )
-    ]
-    if analysis_artifacts:
-        terminal_metadata['generated_analysis_artifacts'] = analysis_artifacts
-    if native_outputs:
-        terminal_metadata['generated_tabular_outputs'] = native_outputs
-    saved = False
-    checked_reply = {
-        "id": message_id, "conversation_id": record["conversation_id"],
-        "role": "assistant", "content": answer, "metadata": terminal_metadata,
-        "hybrid_citations": documents, "web_search_citations": web, "agent_citations": tools,
-        "generated_artifacts": result.get("artifacts") or [],
-    }
-    prepare_checked_reply(
-        checked_reply, user_id=record["user_id"],
-        settings=settings if settings is not None else get_settings(),
-    )
-    answer = checked_reply["content"]
-    terminal_metadata = checked_reply["metadata"]
-    if checked_reply["role"] == "safety":
-        documents, web, tools = [], [], []
-        saved_analyses, inherited_contexts = [], []
-        result = {**result, "message": answer, "artifacts": [], "saved_analyses": [], "analysis_result_contexts": []}
-    try:
-        lease.read()
-        _authorize_context_conversation(record['conversation_id'], record['user_id'])
-        persisted_id = _save_message(
-            record['conversation_id'], checked_reply["role"], answer, message_id=message_id,
-            persist=lease.publish_message,
-            metadata=terminal_metadata,
-            extra={
-                **answer_model.metadata(), **reasoning, 'hybrid_citations': documents,
-                'web_search_citations': web, 'agent_citations': tools,
-                'generated_artifacts': result.get('artifacts') or [],
-                'augmented': bool(documents or web or tools),
-            },
-        )
-        if persisted_id != message_id:
-            raise CheckpointError('message_not_saved')
-        saved = True
-        canonical_reply = cosmos_messages_container.read_item(item=message_id, partition_key=record["conversation_id"])
-        if reply_is_retracted(canonical_reply):
-            checked_reply = canonical_reply
-            answer = canonical_reply["content"]
-            terminal_metadata = canonical_reply.get("metadata") or {}
-            documents, web, tools = [], [], []
-            saved_analyses, inherited_contexts = [], []
-            result = {**result, "message": answer, "artifacts": [], "saved_analyses": [], "analysis_result_contexts": []}
-        lease.update({
-            'assistant_message_id': message_id, 'message_saved': True, 'finalization_status': 'saved',
-            'chat_content_checked_output': CHECK_METADATA in terminal_metadata,
-            'chat_content_output_pending': False,
-            **({'saved_analyses': saved_analyses} if saved_analyses else {}),
-            **({'analysis_result_contexts': inherited_contexts} if inherited_contexts else {}),
-        })
-        record_chat_content_incident(canonical_reply, record["user_id"])
-        _touch_conversation(record['conversation_id'], record['user_id'])
-        _record_cited_documents(record['conversation_id'], record['user_id'], documents)
-    except Exception as exc:
-        log_event(
-            '[ORCHESTRATION_RUNS] Terminal message publication failed.',
-            extra={'run_id': record['id'], 'error_type': type(exc).__name__}, level=logging.ERROR,
-        )
-        if not saved:
-            persistence_failure = build_failure('message_not_saved')
-            failures.append(persistence_failure)
-            failure = failures[0]
-            status, outcome = 'failed', 'failed'
-            public['recovery']['eligible'] = False
-            public['recovery'].update({'reason_code': 'message_not_saved', 'message': persistence_failure['message']})
-            lease.update({
-                'message_saved': False, 'recovery_blocked_code': 'message_not_saved',
-                'finalization_status': 'failed',
-                'status': status, 'outcome': outcome, 'failure': failure, 'failures': failures,
-                'error': persistence_failure['message'],
-            })
-    finalized = lease.close(release=True)
-    public = public_execution_fields(finalized)
-    if not saved:
-        answer = failure_explanation(failures)
-        documents, web, tools = [], [], []
-        result = {**result, "artifacts": []}
-    frame = build_run_done_event(
-        record['conversation_id'], message_id=message_id if saved else None, run_id=record['id'],
-        turn_id=record.get('turn_id'), full_content=answer, citations=documents, web_citations=web,
-        agent_citations=tools, artifacts=result.get('artifacts'), plan_summary=summary,
-        status=status, outcome=outcome, attempt_index=public['attempt_index'],
-        retry_of_run_id=public['retry_of_run_id'], failure=failure, failures=failures,
-        recovery=public['recovery'], message_saved=saved,
-        finalization_status=public.get('finalization_status'), **answer_model.metadata(), **reasoning,
-    )
-    if saved:
-        payload = json.loads(frame.partition('data:')[2].strip())
-        payload['metadata'] = terminal_metadata
-        payload["role"] = checked_reply["role"]
-        payload["replace_content"] = True
-        payload["blocked"] = checked_reply["role"] == "safety"
-        frame = serialize_sse(strip_private_chat_checks(payload))
-    return ([build_content_event(answer)] if saved else [build_error_event(build_failure('message_not_saved')['message'], record['conversation_id'])]) + [frame]
 
 
 def _plan_edit_identity(data, settings):
@@ -1717,6 +1294,15 @@ def _plan_edit_identity(data, settings):
 
 
 def _plan_edit_error(exc):
+    if isinstance(exc, LegacyPlanError) or (
+        isinstance(exc, RecoveryError) and exc.code == LEGACY_PLAN_CODE
+    ):
+        payload = {'error': LEGACY_PLAN_MESSAGE, 'code': LEGACY_PLAN_CODE}
+        log_event(
+            '[ORCHESTRATION] A saved legacy plan was refused.',
+            level=logging.INFO, extra={'error_type': type(exc).__name__, 'code': LEGACY_PLAN_CODE},
+        )
+        return payload, 409
     if isinstance(exc, PlanRevisionError):
         payload = {'error': exc.message, 'code': exc.code}
         if exc.current_run_id:
@@ -1784,16 +1370,14 @@ def _plan_editor_event(record, user_id):
     return serialize_sse({
         'type': 'orchestration_elicitation' if question else 'orchestration_plan',
         **({'elicitation': question} if question else {'plan': editor['plan']}),
-        **({
-            'export_catalog': _harness_export_catalog(user_id, record['conversation_id']),
-        } if plan_contract_version(record.get('plan')) == 2 else {}),
+        'export_catalog': _admitted_export_catalog(user_id, record['conversation_id']),
         'editor': editor, 'done': True,
     })
 
 
 def register_route_backend_orchestration(bp):
     configure_orchestration_artifact_service(
-        lambda user_id, conversation_id: _harness_services(user_id, conversation_id).rendering,
+        lambda user_id, conversation_id: _orchestration_services(user_id, conversation_id).rendering,
     )
 
     @bp.route("/api/v2/orchestration/export-catalog", methods=["GET"])
@@ -1814,13 +1398,13 @@ def register_route_backend_orchestration(bp):
             settings = get_settings()
             if run_id:
                 record = get_orchestration_run(run_id, user_id, conversation_id, strict=True)
-                if not record or plan_contract_version(record.get('plan')) != 2:
+                if not record:
                     return jsonify({'error': 'Run not found.'}), 404
-            elif get_new_plan_contract_version(
-                settings, admission_ready=harness_admission.HARNESS_ADMISSION_READY,
-            ) != 2:
-                return jsonify({'error': 'The orchestration harness is not enabled.', 'code': 'disabled'}), 403
-            formats = _harness_export_catalog(user_id, conversation_id, settings=settings)
+                if is_legacy_plan(record.get('plan')):
+                    return _legacy_plan_response()
+            elif not _orchestration_enabled(settings):
+                return jsonify({'error': 'Chat orchestration is not enabled.', 'code': 'disabled'}), 403
+            formats = _admitted_export_catalog(user_id, conversation_id, settings=settings)
             if not formats:
                 log_event(
                     '[ORCHESTRATION] File rendering is not available for the export catalog.',
@@ -1866,9 +1450,11 @@ def register_route_backend_orchestration(bp):
         try:
             _authorize_context_conversation(conversation_id, user_id)
             record = get_orchestration_run(run_id, user_id, conversation_id, strict=True)
-            if not record or plan_contract_version(record.get('plan')) != 2:
+            if not record:
                 return jsonify({'error': 'Run not found.'}), 404
-            services = _harness_services(user_id, conversation_id)
+            if is_legacy_plan(record.get('plan')):
+                return _legacy_plan_response()
+            services = _orchestration_services(user_id, conversation_id)
             output = services.outputs.get(output_id)
             if output['run_id'] != run_id:
                 return jsonify({'error': 'File not found.'}), 404
@@ -1956,7 +1542,7 @@ def register_route_backend_orchestration(bp):
             'planning_token_usage': {},
             'approval_mode': approval_mode,
             'replan_hint': replan_hint,
-            'planner_contract_version': _new_plan_contract_version(settings, seeds),
+            'planner_contract_version': DEPENDENCY_PLAN_CONTRACT_VERSION,
         }
         prior_elicitation = data.get('elicitation')
         if is_reply:
@@ -2012,6 +1598,10 @@ def register_route_backend_orchestration(bp):
                     fingerprint, elicitation_id=question_id,
                     revision=question_revision, submission_id=submission_id,
                 )
+                if _legacy_turn(submission['record'].get('turn_context'), submission.get('outcome')):
+                    # A question asked while planning with the removed legacy contract.
+                    release_elicitation_submission(submission)
+                    return _legacy_plan_response()
                 if submission.get('replayed'):
                     _conversation_context_for_run({
                         **submission['record']['turn_context'], 'conversation_id': conversation_id,
@@ -2166,6 +1756,9 @@ def register_route_backend_orchestration(bp):
                     )
                     if observed_pending and observed_pending.get('status') != 'completed':
                         pending_context = observed_pending['turn_context']
+                        if _legacy_turn(pending_context):
+                            yield serialize_sse({'error': LEGACY_PLAN_MESSAGE, 'code': LEGACY_PLAN_CODE})
+                            return
                         if pending_context['user_message'] != message:
                             raise ConversationContextError('This turn changed. Submit a new request.')
                         _conversation_context_for_run({
@@ -2312,6 +1905,9 @@ def register_route_backend_orchestration(bp):
                         effective_request, user_id, seeds=seeds,
                         conversation_id=resolved_conversation_id, settings=settings,
                     )
+                candidates = enrich_planner_candidates(
+                    candidates, user_id, conversation_id=resolved_conversation_id, seeds=seeds,
+                )
                 ledger = _load_ledger(resolved_conversation_id, user_id, settings)
                 signals = build_conversation_signals(
                     snapshot['messages'], message, truncated=snapshot['truncated'],
@@ -2341,35 +1937,26 @@ def register_route_backend_orchestration(bp):
                 if answered_record:
                     context['answered_now'] = answered_record
 
-                contract_version = (
-                    plan_contract_version(planning_base['plan']) if planning_base else
-                    turn_context.get('planner_contract_version', 1)
+                # Every plan uses the one contract; a legacy turn was refused before this point.
+                contract_version = DEPENDENCY_PLAN_CONTRACT_VERSION
+                services = _orchestration_services(
+                    user_id, resolved_conversation_id, settings=settings,
                 )
-                harness_options = {}
-                if contract_version == 2:
-                    services = _harness_services(
-                        user_id, resolved_conversation_id, settings=settings,
+                retained = discover_result_aliases(
+                    list_conversation_runs(resolved_conversation_id, user_id, limit=10, strict=True),
+                    services.results,
+                )
+                if retained['unavailable_count']:
+                    yield build_planning_thought(
+                        'Some saved results are no longer accessible and are not offered as inputs.',
                     )
-                    retained = discover_result_aliases(
-                        list_conversation_runs(resolved_conversation_id, user_id, limit=10, strict=True),
-                        services.results,
-                    )
-                    if retained['unavailable_count']:
-                        yield build_planning_thought(
-                            'Some saved results are no longer accessible and are not offered as inputs.',
-                        )
-                    existing_results = retained['aliases']
-                    turn_context['result_aliases'] = {
-                        alias: reference.to_dict() for alias, reference in existing_results.items()
-                    }
-                    context['export_catalog'] = _harness_export_catalog(
-                        user_id, resolved_conversation_id, settings=settings, services=services,
-                    )
-                    harness_options = {
-                        'contract_version': contract_version, 'existing_results': existing_results,
-                        'export_catalog': context['export_catalog'],
-                        'composition_profiles': composition_profiles(),
-                    }
+                existing_results = retained['aliases']
+                turn_context['result_aliases'] = {
+                    alias: reference.to_dict() for alias, reference in existing_results.items()
+                }
+                context['export_catalog'] = _admitted_export_catalog(
+                    user_id, resolved_conversation_id, settings=settings, services=services,
+                )
                 turn_context['planner_contract_version'] = contract_version
                 kind, plan = plan_request(
                     effective_message, context, resolved_conversation_id, user_id,
@@ -2384,10 +1971,11 @@ def register_route_backend_orchestration(bp):
                         user_id, planning_identity, message, agent_catalog,
                         action_catalog,
                         allowed_user_urls=allowed_user_urls,
-                        **(services.capability_request_bindings() if contract_version == 2 else {}),
+                        **services.capability_request_bindings(),
                     ),
                     planner_model=planner_model,
-                    **harness_options,
+                    contract_version=contract_version, existing_results=existing_results,
+                    export_catalog=context['export_catalog'], composition_profiles=composition_profiles(),
                 )
 
                 planning_usage = _sum_token_usage(planning_usage, plan.get('token_usage'))
@@ -2538,13 +2126,13 @@ def register_route_backend_orchestration(bp):
                     )
                 else:
                     yield build_planning_thought('Updating the plan without running it.')
-                    harness_options = _plan_harness_options(claim['record'], user_id, settings)
+                    result_options = _plan_result_options(claim['record'], user_id, settings)
                     outcome = build_plan_edit_outcome(
                         claim['record'], claim['request'], user_id, settings,
                         identity=identity, conversation_context=snapshot,
                         conversation=_authorize_context_conversation(conversation_id, user_id),
                         ledger=_load_ledger(conversation_id, user_id, settings),
-                        **harness_options,
+                        **result_options,
                     )
                     _conversation_context_for_run(record, user_id, settings)
                     _validate_turn_memory_context(
@@ -2554,7 +2142,7 @@ def register_route_backend_orchestration(bp):
                         outcome['document'] = validate_edited_plan(
                             outcome['document'], outcome['turn_context'], user_id,
                             get_settings(), identity,
-                            **harness_options,
+                            **result_options,
                         )
                     saved = complete_plan_revision(claim, **outcome)
                 _validate_turn_memory_context(saved, user_id, conversation_id)
@@ -2652,19 +2240,16 @@ def register_route_backend_orchestration(bp):
         except PlanValidationError as exc:
             payload, status = _plan_edit_error(exc)
             return jsonify(payload), status
-        services = None
-        existing_results = None
         if record.get('started_at') or record.get('status') in (PLAN_STATUS_RUNNING, PLAN_STATUS_COMPLETED):
             return jsonify({'error': 'This plan has already been run.', 'code': 'already_run'}), 409
 
         conversation_id = conversation_id or _text(record.get('conversation_id'))
         try:
             snapshot = _conversation_context_for_run(record, user_id, settings)
-            if contract_version == 2:
-                services = _harness_services(
-                    user_id, conversation_id or record['conversation_id'], settings=settings,
-                )
-                existing_results = admitted_result_aliases(record, services.results)
+            services = _orchestration_services(
+                user_id, conversation_id or record['conversation_id'], settings=settings,
+            )
+            existing_results = admitted_result_aliases(record, services.results)
             if record.get('retry_of_run_id'):
                 if data.get('edits'):
                     raise CheckpointError('recovery_changed')
@@ -2688,7 +2273,7 @@ def register_route_backend_orchestration(bp):
                 level=logging.ERROR, extra={'error_type': type(exc).__name__},
             )
             return jsonify({'error': 'Conversation history could not be loaded. Please retry.'}), 503
-        # Legacy records are hydrated once. The finalization callback must validate this
+        # A record without a saved snapshot is hydrated once. Finalization validates this
         # exact snapshot rather than silently loading a different history and discarding it.
         record = {**record, 'conversation_context': snapshot}
 
@@ -2705,8 +2290,6 @@ def register_route_backend_orchestration(bp):
                 'details': [exc.message],
             }), 409
 
-        # One accumulator for the whole run, filled by every model call the closure makes.
-        run_token_usage = _sum_token_usage(record.get('planning_token_usage'))
         user_message = _text(record.get('user_message')) or _text(
             (plan.get('intent') or {}).get('summary')
         )
@@ -2726,8 +2309,6 @@ def register_route_backend_orchestration(bp):
                     "source": {"kind": "orchestration_turn", "run_id": run_id},
                 },
             )
-        resolution = record.get('request_resolution') or {}
-        context_message_ids = resolution.get('message_ids')
         allowed_user_urls = revision_allowed_urls({
             **record, 'user_message': user_message, 'conversation_context': snapshot,
         })
@@ -2753,11 +2334,8 @@ def register_route_backend_orchestration(bp):
             )
             effective_plan = apply_plan_edits(
                 deepcopy(plan), data.get('edits', record.get('edit_narrowing')),
-                **({
-                    'existing_results': existing_results, 'contract_version': contract_version,
-                    'export_catalog': services.export_catalog(),
-                    'composition_profiles': composition_profiles(),
-                } if contract_version == 2 else {}),
+                existing_results=existing_results, contract_version=contract_version,
+                export_catalog=services.export_catalog(), composition_profiles=composition_profiles(),
             )
             required_steps = {
                 step['capability_id'] for step in effective_plan.get('steps') or []
@@ -2769,11 +2347,9 @@ def register_route_backend_orchestration(bp):
                 request_context=_capability_request_context(
                     user_id, identity, user_message, agent_catalog, action_catalog,
                     allowed_user_urls=allowed_user_urls,
-                    **(services.capability_request_bindings() if contract_version == 2 else {}),
+                    **services.capability_request_bindings(),
                 ),
-                **({
-                    'contract_version': contract_version, 'export_catalog': services.export_catalog(),
-                } if contract_version == 2 else {}),
+                contract_version=contract_version, export_catalog=services.export_catalog(),
             ))
             if required_steps - available_steps:
                 return jsonify({
@@ -2796,343 +2372,9 @@ def register_route_backend_orchestration(bp):
         except PlanValidationError as exc:
             payload, status = _plan_edit_error(exc)
             return jsonify(payload), status
-        if contract_version == 2:
-            return _prepare_harness_stream(
-                record, data, user_id, settings, snapshot, identity, agent_execution_identity, services,
-            )
-        answer_model = None
-        research_model = None
-        try:
-            _validate_turn_memory_context(record, user_id, conversation_id)
-            memory_context = load_orchestration_memory(
-                user_id, _authorize_context_conversation(conversation_id, user_id),
-                build_elicitation_user_request(
-                    record.get('resolved_message') or user_message, record.get('answered_questions'),
-                ),
-                settings=settings, seeds=seeds, expected_audience=record.get('memory_audience'),
-            )
-        except (OrchestrationMemoryError, ConversationContextError, AzureError) as exc:
-            payload, status = _plan_edit_error(exc)
-            return jsonify(payload), status
-
-        def close_models():
-            try:
-                if research_model is not None:
-                    research_model.close()
-            finally:
-                if answer_model is not None:
-                    answer_model.close()
-
-        try:
-            validate_auto_bindings(
-                plan, seeds, settings,
-                lambda selected, current: resolve_orchestration_model(current, user_id=user_id, seeds=selected, identity_context=identity),
-            )
-            answer_model = resolve_orchestration_model(
-                settings, user_id=user_id, seeds=answer_selection(plan, seeds), identity_context=identity,
-            )
-            research_model = (
-                resolve_orchestration_model(
-                    settings, user_id=user_id, seeds=seeds, planner=True, identity_context=identity,
-                ) if has_planner_model_override(settings) else answer_model
-            )
-            bound_invoke_prompt = _build_invoke_prompt(
-                settings, token_usage=run_token_usage, model=answer_model,
-            )
-
-            def invoke_prompt(prompt_text, stage='window_analysis', metadata=None):
-                reply = bound_invoke_prompt(prompt_text, stage=stage, metadata=metadata)
-                validate_memory_context(
-                    _authorize_context_conversation(conversation_id, user_id), user_id,
-                    memory_context['audience'], memory_context['scope'],
-                )
-                return reply
-        except (ValueError, PermissionError, PlannerError, AzureError) as exc:
-            close_models()
-            log_event(
-                '[ORCHESTRATION] The execution model could not be selected.',
-                level=logging.WARNING, extra={'error_type': type(exc).__name__},
-            )
-            return jsonify({
-                'error': 'The selected model is unavailable. Choose an enabled model you can access.',
-            }), 403 if isinstance(exc, (PermissionError, OrchestrationModelError)) else 503
-
-        action_model_context = {
-            'model_id': answer_model.model_id,
-            'endpoint_id': answer_model.endpoint_id,
-            'provider': answer_model.provider,
-            'model_deployment': answer_model.deployment,
-            'user_id': user_id,
-            'active_group_ids': seeds.get('active_group_ids') or [],
-        }
-        worker_started = False
-
-        try:
-            record = claim_plan_run(
-                run_id, user_id, conversation_id, plan_id=data.get('plan_id'),
-                expected_version=data.get('expected_version'), edits=data.get('edits'),
-                conversation_context=snapshot,
-            )
-        except (PlanRevisionError, AzureError) as exc:
-            close_models()
-            payload, status = _plan_edit_error(exc)
-            return jsonify(payload), status
-        plan = record['plan']
-        lease = ExecutionLease(
-            record, lambda: _authorize_context_conversation(conversation_id, user_id),
-            message_container=cosmos_messages_container,
+        return _prepare_execution_stream(
+            record, data, user_id, settings, snapshot, identity, agent_execution_identity, services,
         )
-        try:
-            lease.start()
-            lease.update({
-                "chat_content_output_pending": (
-                    settings.get("chat_content_output_mode") == "check_before_display"
-                    and bool(enabled_chat_scanners(settings, "chat_output"))
-                ),
-            })
-        except Exception as exc:
-            close_models()
-            log_event(
-                '[ORCHESTRATION_RUNS] Execution publication guard could not be initialized.',
-                extra={'run_id': run_id, 'error_type': type(exc).__name__}, level=logging.ERROR,
-            )
-            return jsonify({
-                'error': 'Execution could not start because its durable status could not be saved.',
-                'code': 'recovery_unavailable', 'message_saved': False,
-            }), 503
-
-        def generate():
-            nonlocal worker_started
-            initial_reasoning = merge_reasoning_adjustments(
-                plan.get('reasoning_adjustments'),
-                build_model_reasoning_metadata(answer_model).get('reasoning_adjustments'),
-                build_model_reasoning_metadata(research_model, 'planner').get('reasoning_adjustments')
-                if research_model is not answer_model else [],
-            )
-            if initial_reasoning:
-                yield build_reasoning_adjustment_event(initial_reasoning)
-            # Progress is streamed from a worker thread rather than collected and flushed at
-            # the end. The executor is synchronous and calls `emit` from inside its own loop,
-            # and a generator cannot yield from a callback -- so buffering was the obvious
-            # shape and also the wrong one: every step event would arrive at once, after the
-            # answer, which is exactly the "looks hung" experience the progress exists to
-            # prevent. The queue is the seam that lets the executor push while the response
-            # pulls.
-            frames = queue.Queue()
-
-            def emit(event):
-                """Translate the executor's internal progress into stream frames."""
-                if not isinstance(event, dict) or event.get('type') != 'step':
-                    return
-                phase = event.get('phase')
-                step = {
-                    'step_id': event.get('step_id'),
-                    'capability_id': event.get('capability_id'),
-                    'title': event.get('title'),
-                }
-                frames.put(build_step_event(
-                    event.get('step_id'), phase, _text(event.get('summary')),
-                    event.get('step_index'), event.get('capability_id'),
-                    **{key: event[key] for key in (
-                        'failure', 'reused', 'reused_from_run_id', 'checkpoint_available',
-                        'model_binding',
-                    ) if key in event},
-                ))
-                if event.get('capability_id') == 'respond':
-                    frames.put(build_synthesis_thought(
-                        event.get('step_index') or 0,
-                        status=phase or 'running',
-                    ))
-                else:
-                    frames.put(build_step_thought(
-                        step, event.get('step_index') or 0,
-                        event.get('completed') or 0, event.get('total') or 1,
-                        status=phase or 'running',
-                        summary=_text(event.get('summary')) or None,
-                    ))
-
-            def persist(record_type, payload):
-                if record_type == 'run':
-                    lease.update({k: v for k, v in (payload or {}).items() if k != 'run_id'})
-
-            def reload_memory_context():
-                nonlocal memory_context
-                refreshed = load_orchestration_memory(
-                    user_id, _authorize_context_conversation(conversation_id, user_id),
-                    build_elicitation_user_request(
-                        record.get('resolved_message') or user_message, record.get('answered_questions'),
-                    ),
-                    settings=get_settings(), seeds=seeds,
-                    expected_audience=memory_context['audience'],
-                )
-                for notice in refreshed['notices']:
-                    frames.put(build_planning_thought(notice))
-                memory_context = refreshed
-                return refreshed
-
-            context = RunContext(
-                run_id=run_id,
-                plan_id=plan.get('plan_id'),
-                conversation_id=conversation_id,
-                user_id=user_id,
-                turn_index=record.get('turn_index') or 0,
-                attempt_index=record.get('attempt_index') or 1,
-                invoke_prompt=invoke_prompt,
-                planner_client=research_model.as_planner_client(),
-                planner_deployment=research_model.deployment,
-                user_message=user_message,
-                user_message_id=record.get('user_message_id'),
-                answered_questions=record.get('answered_questions') or [],
-                elicitation_references=seeds.get('elicitation_references') or [],
-                selected_document_ids=seeds.get('document_ids') or [],
-                original_seeds=record.get('original_seeds') or {},
-                resolved_message=_text(record.get('resolved_message')) or user_message,
-                conversation_context=snapshot,
-                analysis_result_contexts=record.get('analysis_result_contexts'),
-                context_message_ids=context_message_ids,
-                allowed_user_urls=allowed_user_urls,
-                revalidate_conversation_context=lambda: _conversation_context_for_run(
-                    record, user_id, settings
-                ),
-                memory_context=memory_context,
-                reload_memory_context=reload_memory_context,
-                doc_scope=seeds.get('doc_scope') or 'all',
-                tags=seeds.get('tags') or None,
-                document_filter_mode=seeds.get('document_filter_mode') or None,
-                active_group_ids=seeds.get('active_group_ids') or None,
-                active_public_workspace_id=(seeds.get('active_public_workspace_ids') or [None])[0],
-                active_public_workspace_ids=seeds.get('active_public_workspace_ids') or None,
-                # Read on the request thread; see _request_identity.
-                user_roles=identity.get('user_roles'),
-                user_email=identity.get('user_email'),
-                user_enable_agents=identity.get('user_enable_agents', True),
-                active_group_id=(seeds.get('active_group_ids') or [None])[0],
-                agent_catalog=agent_catalog,
-                action_catalog=action_catalog,
-                gpt_model=answer_model.deployment,
-                model_context=action_model_context,
-                agent_execution_identity=agent_execution_identity,
-            )
-
-            context.validate_checkpoint_artifacts = lambda artifacts: _validate_checkpoint_artifacts(artifacts, conversation_id, user_id)
-            if plan.get('model_routing') == 'auto':
-                def resolve_step_model(step_seeds, current_settings):
-                    return resolve_orchestration_model(
-                        current_settings, user_id=user_id, seeds=step_seeds, identity_context=identity,
-                    )
-
-                def build_step_prompt(model):
-                    bound = _build_invoke_prompt(settings, token_usage=run_token_usage, model=model)
-
-                    def invoke(prompt_text, stage='window_analysis', metadata=None):
-                        reply = bound(prompt_text, stage=stage, metadata=metadata)
-                        validate_memory_context(
-                            _authorize_context_conversation(conversation_id, user_id), user_id,
-                            memory_context['audience'], memory_context['scope'],
-                        )
-                        return reply
-
-                    invoke.model_metadata = bound.model_metadata
-                    invoke.provider = bound.provider
-                    invoke.output_tokens = bound.output_tokens
-                    return invoke
-
-                context.step_model_scope = lambda step: step_model_context(
-                    step, context, settings=get_settings(), seeds=seeds,
-                    resolve_model=resolve_step_model, invoke_factory=build_step_prompt,
-                )
-            context.checkpoint_artifact_versions = lambda artifacts: _checkpoint_artifact_versions(artifacts, conversation_id, user_id)
-            context.prompt_token_usage = run_token_usage
-            cancel_requested = lease.cancel_requested
-
-            def analysis_checkpoint_factory(step_id):
-                # Reuse the active execution lease token and recovery-owned conditional guard.
-                from functions_document_analysis_checkpoints import analysis_checkpoints_for_orchestration
-
-                def authorize_analysis_work():
-                    lease.read()
-                    return not lease.cancel_requested()
-
-                return analysis_checkpoints_for_orchestration(
-                    user_id, conversation_id, run_id, step_id, authorize=authorize_analysis_work,
-                    attempt_token=lease.token, resume_run_id=record.get('retry_of_run_id'), settings=settings,
-                )
-
-            context.analysis_checkpoint_factory = analysis_checkpoint_factory
-            outcome = {}
-
-            def worker():
-                try:
-                    outcome['result'] = execute_plan(
-                        plan, context,
-                        settings=settings,
-                        user_id=user_id,
-                        emit=emit,
-                        cancel_requested=cancel_requested,
-                        persist=persist,
-                        checkpoints=lambda ctx: ExecutionCheckpoints(record, ctx, settings, lease),
-                    )
-                except Exception as exc:
-                    outcome['error'] = exc
-                    log_event(
-                        f"[ORCHESTRATION] Run {run_id} failed: {exc}",
-                        level=logging.ERROR, exceptionTraceback=True,
-                    )
-                finally:
-                    # The sentinel is what ends the drain loop. Sent from `finally` so a
-                    # thrown worker cannot leave the response waiting on a queue nothing
-                    # will ever write to again.
-                    try:
-                        try:
-                            for frame in _finalize_execution(
-                                record, outcome.get('result'), outcome.get('error'), context, lease,
-                                answer_model, research_model, run_token_usage,
-                                settings=settings,
-                            ):
-                                frames.put(frame)
-                        except Exception as exc:
-                            log_event(
-                                '[ORCHESTRATION_RUNS] Execution finalization could not be committed.',
-                                extra={'run_id': run_id, 'error_type': type(exc).__name__}, level=logging.ERROR,
-                            )
-                            frames.put(build_error_event(
-                                'The execution status could not be saved. Reload the run to check its durable state.',
-                                conversation_id,
-                            ))
-                        finally:
-                            lease.close()
-                            close_models()
-                    finally:
-                        frames.put(None)
-
-            thread = threading.Thread(
-                target=worker, name=f'orchestration-run-{run_id}', daemon=True
-            )
-            thread.start()
-            worker_started = True
-
-            while True:
-                try:
-                    frame = frames.get(timeout=HEARTBEAT_SECONDS)
-                except queue.Empty:
-                    # A single analysis step can run for minutes without emitting. An SSE
-                    # comment keeps proxies and load balancers from closing an idle-looking
-                    # connection, and the client's frame parser ignores it.
-                    yield ': keepalive\n\n'
-                    continue
-                if frame is None:
-                    break
-                yield frame
-
-            thread.join(timeout=RUN_JOIN_TIMEOUT_SECONDS)
-
-        response = _sse(generate(), check_settings=settings)
-        def close_unstarted():
-            if not worker_started:
-                lease.close()
-                close_models()
-        response.call_on_close(close_unstarted)
-        return response
 
     @bp.route("/api/v2/orchestration/cancel/<run_id>", methods=["POST"])
     @swagger_route(security=get_auth_security())
@@ -3154,6 +2396,8 @@ def register_route_backend_orchestration(bp):
         record = get_orchestration_run(run_id, user_id, conversation_id=conversation_id)
         if not record:
             return jsonify({'error': 'Run not found.'}), 404
+        if is_legacy_plan(record.get('plan')):
+            return _legacy_plan_response()
 
         try:
             conversation_id = conversation_id or record.get('conversation_id')
@@ -3179,6 +2423,7 @@ def register_route_backend_orchestration(bp):
         draws one line per run and the stored record carries the whole plan. ``include_plan``
         adds the plan back for a caller that genuinely wants it, but still through a
         projection, so neither shape can leak a field the record happens to gain later.
+        Runs from the removed legacy plan contract are omitted; their messages remain.
         """
         user_id = get_current_user_id()
         if not user_id:
@@ -3210,11 +2455,21 @@ def register_route_backend_orchestration(bp):
             log_event(
                 '[ORCHESTRATION_RUNS] Current output status could not be loaded.',
                 level=logging.ERROR,
-                extra={'conversation_id': conversation_id, 'error_type': type(exc).__name__},
+                extra={
+                    **workflow_log_context(conversation_id=conversation_id),
+                    'stage': 'run_list', 'error_type': type(exc).__name__,
+                    'output_code': exc.code if isinstance(exc, (OutputError, OutputStorageError)) else None,
+                },
             )
             return jsonify({'error': 'Current file status is unavailable.', 'code': 'output_status_unavailable'}), 503
         except Exception as exc:
-            log_event(f"[ORCHESTRATION] Could not list runs: {exc}", level=logging.ERROR)
+            log_event(
+                '[ORCHESTRATION] Could not list runs.', level=logging.ERROR, extra={
+                    **workflow_log_context(conversation_id=conversation_id),
+                    'stage': 'run_list', 'error_type': type(exc).__name__,
+                    'output_code': exc.code if isinstance(exc, OutputUnavailableError) else None,
+                },
+            )
             return jsonify({'error': 'The run history could not be loaded.'}), 500
 
         # Both paths go through a projection, so no caller can reach a raw record. The
@@ -3247,8 +2502,12 @@ def register_route_backend_orchestration(bp):
                 run_id, user_id, conversation_id=conversation_id or None, strict=True,
             )
         except Exception as exc:
-            log_event(f"[ORCHESTRATION] Could not read run {run_id}: {exc}",
-                      level=logging.ERROR)
+            log_event(
+                '[ORCHESTRATION] Could not read a saved run.', level=logging.ERROR, extra={
+                    **workflow_log_context(run_id=run_id, conversation_id=conversation_id),
+                    'stage': 'run_read', 'error_type': type(exc).__name__,
+                },
+            )
             return jsonify({'error': 'The run could not be loaded.'}), 500
 
         if not record:
@@ -3256,11 +2515,21 @@ def register_route_backend_orchestration(bp):
 
         try:
             _authorize_context_conversation(record['conversation_id'], user_id)
+            if is_legacy_plan(record.get('plan')):
+                return _legacy_plan_response()
             record = reconcile_checkpoints(
                 record, lambda: _authorize_context_conversation(record['conversation_id'], user_id),
             )
             public = _run_detail_row(record)
-        except (ConversationContextError, PermissionError):
+        except (ConversationContextError, PermissionError) as exc:
+            log_event(
+                '[ORCHESTRATION_RUNS] Current access did not permit a saved run projection.',
+                level=logging.WARNING, extra={
+                    **workflow_log_context(run_id=run_id, conversation_id=record['conversation_id']),
+                    'stage': 'run_detail', 'error_type': type(exc).__name__,
+                    'output_code': exc.code if isinstance(exc, OutputUnavailableError) else None,
+                },
+            )
             return jsonify({'error': 'Run not found.'}), 404
         except CheckpointError:
             return jsonify({'error': 'Saved progress could not be verified.', 'code': 'recovery_unavailable'}), 503
@@ -3270,7 +2539,11 @@ def register_route_backend_orchestration(bp):
         ) as exc:
             log_event(
                 '[ORCHESTRATION_RUNS] Current output status could not be loaded.',
-                level=logging.ERROR, extra={'run_id': run_id, 'error_type': type(exc).__name__},
+                level=logging.ERROR, extra={
+                    **workflow_log_context(run_id=run_id, conversation_id=record['conversation_id']),
+                    'stage': 'run_detail', 'error_type': type(exc).__name__,
+                    'output_code': exc.code if isinstance(exc, (OutputError, OutputStorageError)) else None,
+                },
             )
             return jsonify({'error': 'Current file status is unavailable.', 'code': 'output_status_unavailable'}), 503
         return jsonify({'run': public}), 200
@@ -3291,6 +2564,8 @@ def register_route_backend_orchestration(bp):
             if not record:
                 return jsonify({'error': 'Run not found.'}), 404
             _authorize_context_conversation(record['conversation_id'], user_id)
+            if is_legacy_plan(record.get('plan')):
+                return _legacy_plan_response()
             steps = list_run_steps(run_id, user_id=user_id, conversation_id=conversation_id, strict=True)
             reconciled = reconcile_checkpoints(record, lambda: _authorize_context_conversation(record['conversation_id'], user_id))
             committed = {
@@ -3309,7 +2584,12 @@ def register_route_backend_orchestration(bp):
         except ConversationContextError:
             return jsonify({'error': 'Run not found.'}), 404
         except Exception as exc:
-            log_event(f"[ORCHESTRATION] Could not list run steps: {exc}", level=logging.ERROR)
+            log_event(
+                '[ORCHESTRATION] Could not list run steps.', level=logging.ERROR, extra={
+                    **workflow_log_context(run_id=run_id, conversation_id=conversation_id),
+                    'stage': 'run_steps', 'error_type': type(exc).__name__,
+                },
+            )
             return jsonify({'error': 'The run steps could not be loaded.'}), 500
 
         return jsonify({'run_id': run_id, 'steps': steps}), 200

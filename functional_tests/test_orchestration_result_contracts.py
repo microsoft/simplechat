@@ -1,11 +1,12 @@
 # test_orchestration_result_contracts.py
 """
-Executable M0 result/binding and compatibility contracts, not a harness rollout.
-Version: 0.261.125
+Executable M0 result/binding and compatibility contracts.
+Version: 0.261.139
 Implemented in: 0.261.125
+Single orchestration contract updated in: 0.261.139
 
-These tests exercise strict new APIs alongside the unchanged v1 plan/checkpoint
-and native Analyze contracts. They do not claim later runtime/render milestones.
+These tests exercise the strict result APIs alongside the plan/checkpoint and native
+Analyze contracts. They do not claim later runtime/render milestones.
 """
 
 from copy import deepcopy
@@ -288,13 +289,19 @@ def test_source_free_and_multiple_outputs_are_named_data_not_files():
     assert all("artifact" not in record for record in fixture.container.items.values())
 
 
-def test_v1_checkpoint_state_and_fingerprint_ignore_unused_foundation():
+def test_checkpoint_state_and_fingerprint_ignore_unused_foundation():
     from functions_orchestration_checkpoints import context_binding, context_state, restore_context, step_input_fingerprint
 
-    context = SimpleNamespace(user_message="Review retained findings", memory_context={}, selected_document_ids=[])
-    plan = {"steps": [{
-        "step_id": "a", "capability_id": "document_analyze", "arguments": {"document_ids": ["d1"]},
-        "depends_on": [], "enabled": True, "optional": False,
+    context = SimpleNamespace(
+        user_message="Review retained findings", memory_context={}, selected_document_ids=[],
+        plan_contract_version=2, task_results={}, result_aliases={}, pending_results={},
+        execution_deadline_at="2030-01-01T00:00:00+00:00", composition_profiles={},
+    )
+    plan = {"planner_contract_version": 2, "steps": [{
+        "step_id": "a", "capability_id": "document_analyze", "role": "reason",
+        "arguments": {"analysis_prompt": "Review retained findings.", "document_ids": ["d1"]},
+        "depends_on": [], "enabled": True, "optional": False, "inputs": {},
+        "outputs": [{"name": "findings", "kind": "records-v1"}],
     }]}
     binding = context_binding(context, plan, {})
     state = context_state(context)

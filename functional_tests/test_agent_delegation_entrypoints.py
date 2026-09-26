@@ -1,8 +1,9 @@
 # test_agent_delegation_entrypoints.py
 """Executable root/worker/stream context and cancellation coverage.
 
-Version: 0.261.093
+Version: 0.261.139
 Implemented in: 0.261.093
+Single orchestration contract updated in: 0.261.139
 """
 
 import asyncio
@@ -239,34 +240,38 @@ def test_worker_roots_share_budget_across_steps_and_new_workflow_resets(runtime,
     assert new_budget.attempts == 5
 
 
-def test_real_orchestration_adapter_enters_runtime_and_merges_usage_once(runtime, monkeypatch):
+def test_orchestration_adapter_never_enters_the_runtime_without_acquisition_capture(runtime, monkeypatch):
+    """Orchestrated agents run only under the server's acquisition capture.
+
+    The removed earlier plan contract invoked a catalog agent directly. Gather / Reason /
+    Render requires the private configuration capture first, so an orchestration context
+    without it fails closed before the delegation runtime, a model, or the budget is used.
+    """
     adapters = importlib.import_module("functions_orchestration_adapters")
     authorize_graph(runtime, monkeypatch, {("A", "call"): "B"})
     monkeypatch.setattr(runtime, "resolve_delegation_agent", lambda ref, **kwargs: ref)
+    executed = []
 
     async def execute(target, task, context, child):
-        if target["id"] == "A":
-            await runtime.call_agent("call", "explicit child task")
-        return {"response": f'{target["id"]} answer', "citations": [],
-                "usage": {"prompt_tokens": 2, "completion_tokens": 3, "total_tokens": 5}}
+        executed.append(target["id"])
+        return {"response": "must not run", "citations": [], "usage": {"total_tokens": 5}}
 
     monkeypatch.setattr(runtime, "execute_target", execute)
     context = SimpleNamespace(
-        user_message="root task", agent_catalog=[agent("A")], user_enable_agents=True,
+        user_message="root task", agent_catalog=[agent("A", catalog_key="personal:user-1:A")],
+        user_enable_agents=True,
         agent_execution_identity=runtime.contexts.ExecutionIdentity("user-1", "conversation"),
         delegation_budget=runtime.contexts.DelegationBudget(), token_usage={}, conversation_id="conversation",
     )
-    step = {"step_id": "agent-step", "arguments": {"agent_name": "A", "task": "root task"}}
-    for _ in range(2):
-        result = adapters.run_agent_invoke(
-            step, context, settings={"enable_semantic_kernel": True, "allow_user_agents": True},
-            user_id="user-1", emit=None, cancel_requested=lambda: False,
-        )
-        assert result["status"] == "completed"
-        assert any("A answer" in note for note in result["notes"])
-    assert context.delegation_budget.attempts == 2
-    assert context.token_usage["total_tokens"] == 20
-    assert len(context.token_usage["agent_breakdown"]) == 2
+    step = {"step_id": "agent-step", "capability_id": "agent_invoke", "arguments": {"agent_name": "A", "task": "root task"}}
+    result = adapters.run_agent_invoke(
+        step, context, settings={"enable_semantic_kernel": True, "allow_user_agents": True},
+        user_id="user-1", emit=None, cancel_requested=lambda: False,
+    )
+    assert result["status"] == "failed"
+    assert executed == []
+    assert context.delegation_budget.attempts == 0
+    assert context.token_usage == {}
 
 
 @pytest.mark.parametrize("cancel", [False, True])

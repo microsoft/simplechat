@@ -2,6 +2,7 @@
 import { ReasoningAdjustmentNotice } from './ReasoningAdjustmentNotice';
 import { OrchestrationRecoveryNotice } from './OrchestrationRecoveryNotice';
 import { OrchestrationOutputs } from './OrchestrationOutputs';
+import { OrchestrationDeliverables } from './OrchestrationDeliverables';
 // The plan, inline in the thread, kept deliberately small.
 //
 // Orchestration turns the composer inside out: instead of the user picking documents, a model and
@@ -32,6 +33,7 @@ import {
 } from '../../stores/orchestrationStore';
 import {
     applyPlanEdits,
+    describePlanner,
     isPlanRunnable,
     isPlanTerminal,
     planBindingIssues,
@@ -237,7 +239,7 @@ export function OrchestrationPlanCard({
         }
         const currentStep = editedPlan?.steps.find((step) => stepRuntime[step.step_id]?.status === 'running');
         const progress = waiting ? 'Waiting for results'
-            : plan.planner_contract_version === 2 && currentStep ? stepRoleLabel(currentStep, true) : null;
+            : currentStep ? stepRoleLabel(currentStep, true) : null;
         return (
             <div className="my-3 rounded-2xl border border-edge-strong bg-surface-sunken px-3 py-2">
                 <ReasoningAdjustmentNotice adjustments={plan.reasoning_adjustments} />
@@ -295,8 +297,22 @@ export function OrchestrationPlanCard({
                                 <span className={costTone[cost]}>{cost} cost</span>
                             </>
                         ) : null}
+                        {plan.planner ? (
+                            <>
+                                <span aria-hidden="true">·</span>
+                                <span data-testid="orchestration-plan-card-planner" title={describePlanner(plan) ?? undefined}>
+                                    planned by {plan.planner.label}
+                                </span>
+                            </>
+                        ) : null}
                     </p>
                 </div>
+            </div>
+
+            {/* What the user asked for, and anything that cannot be delivered here, is part of
+                the decision to approve, so it is shown before the approval buttons. */}
+            <div className="mt-2">
+                <OrchestrationDeliverables plan={plan} edits={edits} compact />
             </div>
 
             {repairs.length > 0 ? (

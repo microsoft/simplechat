@@ -33,6 +33,7 @@ import { GlassButton } from '../ui/primitives';
 import { type ProposalCardState, type ProposalCardStates } from '../../lib/imageProposalCardState';
 import { selectCardStates, useImageProposalStore } from '../../stores/imageProposalStore';
 import { useChatStore } from '../../stores/chatStore';
+import type { GeneratedImageRef } from '../../lib/imageProposalSpec';
 import type { ChatMessage } from '../../lib/types';
 
 /**
@@ -51,6 +52,8 @@ interface ImageProposalContextValue {
     assistantMessageId: string;
     /** Images already generated from this message's proposals. */
     results: ChatMessage[];
+    /** Images this message's plan generated; their cards never offer to generate them again. */
+    generatedImages: GeneratedImageRef[];
     /** Bumped when the user asks for every pending card in this message to be approved. */
     approveAllToken: number;
     /** Cards report whether they are still awaiting a decision. */
@@ -68,12 +71,14 @@ interface ImageProposalContextValue {
 }
 
 const EMPTY_RESULTS: ChatMessage[] = [];
+const EMPTY_GENERATED_IMAGES: GeneratedImageRef[] = [];
 const EMPTY_CARD_STATES: ProposalCardStates = {};
 
 const ImageProposalContext = createContext<ImageProposalContextValue>({
     conversationId: '',
     assistantMessageId: '',
     results: EMPTY_RESULTS,
+    generatedImages: EMPTY_GENERATED_IMAGES,
     approveAllToken: 0,
     setPending: () => {},
     cardStates: EMPTY_CARD_STATES,
@@ -93,10 +98,12 @@ export function useImageProposalScope(): ImageProposalContextValue {
 export function ImageProposalScope({
     assistantMessageId,
     results,
+    generatedImages,
     children,
 }: {
     assistantMessageId: string;
     results?: ChatMessage[];
+    generatedImages?: GeneratedImageRef[];
     children: ReactNode;
 }) {
     const [pendingIds, setPendingIds] = useState<string[]>([]);
@@ -141,6 +148,7 @@ export function ImageProposalScope({
             conversationId,
             assistantMessageId,
             results: results ?? EMPTY_RESULTS,
+            generatedImages: generatedImages ?? EMPTY_GENERATED_IMAGES,
             approveAllToken,
             setPending,
             cardStates,
@@ -150,6 +158,7 @@ export function ImageProposalScope({
             conversationId,
             assistantMessageId,
             results,
+            generatedImages,
             approveAllToken,
             setPending,
             cardStates,

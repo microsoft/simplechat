@@ -5,6 +5,7 @@ import { OrchestrationResultBindings } from './OrchestrationResultBindings';
 import { OrchestrationExportCatalog } from './OrchestrationExportCatalog';
 import { OrchestrationPlannedFile } from './OrchestrationPlannedFile';
 import { OrchestrationOutputs } from './OrchestrationOutputs';
+import { OrchestrationDeliverables } from './OrchestrationDeliverables';
 // The full step list for one run or one pending plan, with the narrowing edits and live status.
 //
 // This is the detail the inline card deliberately omits. It reads the RAW plan, not the edited
@@ -21,7 +22,7 @@ import { OrchestrationOutputs } from './OrchestrationOutputs';
 
 import { useMemo } from 'react';
 import { clsx } from 'clsx';
-import { Archive, FileText, Lock, RotateCcw, X } from 'lucide-react';
+import { Archive, FileText, RotateCcw, X } from 'lucide-react';
 import { Toggle } from '../ui/primitives';
 import {
     selectEdits,
@@ -33,10 +34,11 @@ import {
     useOrchestrationStore,
     type StepRuntimeMap,
 } from '../../stores/orchestrationStore';
-import { useBootstrapStore } from '../../stores/bootstrapStore';
 import {
-    DOCUMENT_ARRAY_FIELDS,
+    KNOWLEDGE_BASIS_LABELS,
+    VISUAL_KIND_LABELS,
     describeInputBinding,
+    describePlanner,
     groupStepsForDisplay,
     orderStepsForDisplay,
     planBindingIssues,
@@ -45,7 +47,6 @@ import {
     stepDocumentIds,
     stepRoleLabel,
     stepRemovableDocumentIds,
-    TERMINAL_CAPABILITY_ID,
 } from '../../lib/orchestrationPlan';
 import type {
     CostClass,
@@ -79,19 +80,32 @@ const costTone: Record<CostClass, string> = {
     high: 'text-danger',
 };
 
+const STATUS_LABELS: Record<StepStatus, string> = {
+    pending: 'Pending',
+    running: 'Running',
+    waiting: 'Waiting for results',
+    partial: 'Partially completed',
+    completed: 'Completed',
+    failed: 'Failed',
+    skipped: 'Skipped',
+    cancelled: 'Cancelled',
+};
+
 /** A step argument key/value the run will use, minus the document fields shown as chips. */
 function readableArguments(step: OrchestrationStep): Array<[string, string]> {
     const hidden = new Set<string>([
-        ...DOCUMENT_ARRAY_FIELDS,
+        'document_ids',
+        'right_document_ids',
         'left_document_id',
-        // Shown as its own chip, naming the step rather than repeating its id.
-        'documents_from_step',
     ]);
     const entries: Array<[string, string]> = [];
     const args = step.arguments as Json;
     for (const [key, value] of Object.entries(args)) {
         // Action identity is named from validated inputs below, not from planner arguments.
-        if (step.capability_id === 'action_invoke' && (key !== 'task' || typeof value !== 'string')) {
+        if (
+            step.capability_id === 'action_invoke'
+            && !((key === 'task' && typeof value === 'string') || key === 'visuals')
+        ) {
             continue;
         }
         if (hidden.has(key)) {
@@ -101,6 +115,18 @@ function readableArguments(step: OrchestrationStep): Array<[string, string]> {
             continue;
         }
         if (Array.isArray(value) && value.length === 0) {
+            continue;
+        }
+        if (key === 'knowledge_basis' && typeof value === 'string') {
+            entries.push(['answer basis', KNOWLEDGE_BASIS_LABELS[value] ?? value]);
+            continue;
+        }
+        if (key === 'visuals' && Array.isArray(value)) {
+            entries.push(['visuals', value.map((kind) => VISUAL_KIND_LABELS[String(kind)] ?? String(kind)).join(', ')]);
+            continue;
+        }
+        if (step.capability_id === 'generate_image' && (key === 'prompt' || key === 'title')) {
+            entries.push([key === 'prompt' ? 'image prompt' : 'caption', String(value)]);
             continue;
         }
         const text =
@@ -149,7 +175,7 @@ export function OrchestrationRunView({
     );
 
     const orderedSteps = useMemo(
-        () => (plan ? orderStepsForDisplay(plan.steps, plan.planner_contract_version) : []),
+        () => (plan ? orderStepsForDisplay(plan.steps) : []),
         [plan],
     );
 
@@ -196,17 +222,9 @@ export function OrchestrationRunView({
     );
     const documentTitles = useDocumentTitles(planDocumentIds);
 
-    const capabilities = useBootstrapStore((state) => state.data?.orchestration?.capabilities);
-
-    /** Step titles by id, so a reference to another step can name it rather than show its id. */
-    const stepTitles = useMemo(
-        () => new Map(orderedSteps.map((step) => [step.step_id, step.title])),
-        [orderedSteps],
-    );
-
     const stepGroups = useMemo(
-        () => plan ? groupStepsForDisplay(plan, capabilities) : [],
-        [plan, capabilities],
+        () => plan ? groupStepsForDisplay(plan) : [],
+        [plan],
     );
 
     if (!plan) {
@@ -224,17 +242,16 @@ export function OrchestrationRunView({
         && !editor?.loading && !editor?.submitting && !editor?.state?.busy && !editor?.state?.pending;
     const disabledStepIds = new Set(edits.disabled_step_ids);
     const bindingIssues = planBindingIssues(plan, edits);
-    const dependencyPlan = plan.planner_contract_version === 2;
 
     const renderStep = (step: OrchestrationStep, displayNumber: number) => {
-        const isTerminal = step.capability_id === TERMINAL_CAPABILITY_ID;
-        const roleLabel = dependencyPlan ? stepRoleLabel(step) : null;
+        const roleLabel = stepRoleLabel(step);
         const disableExplanation = stepDisableExplanation(plan, step.step_id);
         const isAction = step.capability_id === 'action_invoke';
         const actionRef = (step.arguments as Record<string, unknown>).action_ref;
         const selectedAction = typeof actionRef === 'string' ? planInputActions.get(actionRef) : undefined;
         const willRun = step.enabled && !disabledStepIds.has(step.step_id);
-        const status = stepRuntime[step.step_id]?.status ?? step.status;
+        const rawStatus = stepRuntime[step.step_id]?.status ?? step.status;
+        const status: StepStatus = willRun ? rawStatus : 'skipped';
         const summary = stepRuntime[step.step_id]?.summary ?? '';
         const removed = new Set(edits.removed_document_ids[step.step_id] ?? []);
         const removable = new Set(stepRemovableDocumentIds(step));
@@ -242,17 +259,10 @@ export function OrchestrationRunView({
         const documents = step.capability_id === 'document_search' && explicitDocuments.length === 0
             ? [...planInputDocuments].filter(([, document]) => document.selectedByUser).map(([id]) => id)
             : explicitDocuments;
-        const fileSpecification = dependencyPlan ? plannedFileSpecification(step) : null;
+        const fileSpecification = plannedFileSpecification(step);
         const args = readableArguments(step).filter(([key]) =>
             !fileSpecification || !['file_name', 'output_format', 'profile', 'options'].includes(key),
         );
-        // A step can defer its documents to whatever an earlier step finds, so it may have
-        // none of its own to show.
-        const documentsFromStep = String(
-            (step.arguments as Record<string, unknown>).documents_from_step ?? '',
-        ).trim();
-        const documentsFromStepLabel =
-            stepTitles.get(documentsFromStep) ?? 'the earlier step';
 
         return (
             <li
@@ -290,7 +300,7 @@ export function OrchestrationRunView({
                                     statusTone[status],
                                 )}
                             >
-                                {status === 'running' && roleLabel ? stepRoleLabel(step, true) : status}
+                                {status === 'running' && roleLabel ? stepRoleLabel(step, true) : STATUS_LABELS[status]}
                             </span>
                             {stepRuntime[step.step_id]?.reused ? (
                                 <span className="rounded-full bg-ok-soft px-2 py-0.5 text-[11px] text-ok">
@@ -333,7 +343,7 @@ export function OrchestrationRunView({
                                         <dt className="shrink-0 font-mono text-text-3">
                                             {key}
                                         </dt>
-                                        <dd className={clsx('min-w-0 text-text-2', dependencyPlan ? 'whitespace-pre-wrap break-all' : 'truncate')} title={value}>
+                                        <dd className="min-w-0 whitespace-pre-wrap break-all text-text-2" title={value}>
                                             {value}
                                         </dd>
                                     </div>
@@ -434,40 +444,23 @@ export function OrchestrationRunView({
                             </ul>
                         ) : null}
 
-                        {documentsFromStep ? (
-                            // A step reading whatever an earlier one finds has no documents
-                            // to list yet. Saying so is more honest than showing nothing,
-                            // which reads as "this step touches no documents at all".
-                            <p className="mt-2 inline-flex items-center gap-1 rounded-full border border-dashed border-edge-strong px-2 py-0.5 text-[11px] text-text-3">
-                                <FileText size={10} className="shrink-0" />
-                                Whatever {documentsFromStepLabel} finds
-                            </p>
-                        ) : null}
-
                         <div className="mt-2">
-                            {isTerminal ? (
-                                <span className="inline-flex items-center gap-1 text-[11px] text-text-3">
-                                    <Lock size={11} />
-                                    Always runs
-                                </span>
-                            ) : editable ? (
+                            {editable ? (
                                 <Toggle
                                     checked={willRun}
-                                    disabled={dependencyPlan && Boolean((willRun && disableExplanation) || !step.enabled)}
+                                    disabled={Boolean((willRun && disableExplanation) || !step.enabled)}
                                     onChange={(next) =>
                                         next
                                             ? enableStep(conversationId, turnId, step.step_id)
                                             : disableStep(conversationId, turnId, step)
                                     }
-                                    label={dependencyPlan ? `Run ${step.title}` : willRun ? 'Will run' : 'Skipped'}
-                                    description={dependencyPlan
-                                        ? !step.enabled ? 'Disabled in the saved plan. Use Ask planner to change it.'
-                                        : willRun ? disableExplanation ?? undefined : 'Explicitly skipped in this plan edit.'
-                                        : undefined}
+                                    label={`Run ${step.title}`}
+                                    description={!step.enabled ? 'Disabled in the saved plan. Use Ask planner to change it.'
+                                        : willRun ? disableExplanation ?? undefined : 'Explicitly skipped in this plan edit.'}
                                 />
                             ) : (
                                 <span className="text-[11px] text-text-3">
-                                    {willRun ? 'Will run' : 'Skipped'}
+                                    {STATUS_LABELS[status]}
                                 </span>
                             )}
                         </div>
@@ -491,11 +484,14 @@ export function OrchestrationRunView({
             ) : null}
             <div>
                 <p className="text-sm font-medium text-text-1">{plan.intent.summary}</p>
-                {dependencyPlan ? (
-                    <p className="mt-1 text-xs text-text-3">
-                        Tasks follow their dependencies in the saved execution order. Roles can repeat.
+                {describePlanner(plan) ? (
+                    <p className="mt-1 text-xs text-text-3" data-testid="orchestration-plan-planner">
+                        {describePlanner(plan)}
                     </p>
                 ) : null}
+                <p className="mt-1 text-xs text-text-3">
+                    Tasks follow their dependencies in the saved execution order. Roles can repeat.
+                </p>
                 {plan.assumptions.length > 0 ? (
                     <ul className="mt-1 list-disc space-y-0.5 pl-4 text-xs text-text-3">
                         {plan.assumptions.map((assumption, index) => (
@@ -505,7 +501,12 @@ export function OrchestrationRunView({
                 ) : null}
             </div>
 
-            {dependencyPlan && plan.final_response !== undefined ? (
+            <OrchestrationDeliverables
+                plan={plan} edits={edits}
+                statusOf={(stepId) => stepRuntime[stepId]?.status}
+            />
+
+            {plan.final_response !== undefined ? (
                 <p className="break-words text-xs text-text-2" aria-label="Final chat response binding">
                     <strong>Final chat response:</strong> {describeInputBinding(plan, plan.final_response)}
                 </p>
@@ -518,13 +519,11 @@ export function OrchestrationRunView({
                     </ul>
                 </div>
             ) : null}
-            {dependencyPlan ? (
-                <OrchestrationExportCatalog
-                    catalog={exportCatalog ?? (editor?.state?.plan.run_id === plan.run_id
-                        ? editor.state.export_catalog : undefined) ?? savedRun?.export_catalog}
-                    conversationId={conversationId} runId={plan.run_id}
-                />
-            ) : null}
+            <OrchestrationExportCatalog
+                catalog={exportCatalog ?? (editor?.state?.plan.run_id === plan.run_id
+                    ? editor.state.export_catalog : undefined) ?? savedRun?.export_catalog}
+                conversationId={conversationId} runId={plan.run_id}
+            />
             <OrchestrationOutputs conversationId={conversationId} runId={plan.run_id} />
 
             {stepGroups.map((group) => (

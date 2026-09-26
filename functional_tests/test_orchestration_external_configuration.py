@@ -1,8 +1,9 @@
 # test_orchestration_external_configuration.py
 """
 Functional tests for opaque external invocation-configuration attestation.
-Version: 0.261.127
+Version: 0.261.139
 Implemented in: 0.261.127
+Single orchestration contract updated in: 0.261.139
 
 Use real source-review normalization and configuration contracts. Owner metadata
 I/O is doubled; no source fetch, model/tool invocation or client initialization.
@@ -184,7 +185,7 @@ class ExternalConfigurationTests(unittest.TestCase):
         config = project_external_configuration("url", settings=settings)
         changed = project_external_configuration(
             "url", settings={**settings, "_etag": "changed", "app_title": "Renamed",
-                             "enable_chat_orchestration_harness": False, "azure_openai_gpt_key": "rotated"},
+                             "azure_openai_gpt_key": "rotated"},
         )
         wire = json.dumps(asdict(config))
         self.assertIs(type(config), ExternalSourceConfiguration)

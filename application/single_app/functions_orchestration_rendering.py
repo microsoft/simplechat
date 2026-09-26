@@ -7,6 +7,7 @@ transport. Approved deadlines and retry admissions survive worker replacement.
 """
 
 import hashlib
+import io
 import math
 import random
 import uuid
@@ -58,7 +59,10 @@ from functions_orchestration_output_store import (
     parse_time,
     public_output,
 )
-from functions_orchestration_result_contracts import ProducerIdentity, ResultContractError, ResultRef
+from functions_orchestration_result_contracts import (
+    IMAGE_ASSET_KIND, MAX_IMAGE_ASSET_PIXELS, ProducerIdentity, ResultContractError, ResultRef,
+    validate_image_asset_value,
+)
 from functions_orchestration_results import (
     OrchestrationResultReader,
     OrchestrationResults,
@@ -239,6 +243,72 @@ def _render_request(step):
     )
 
 
+# A document embeds each generated image as a rendition the Office renderers accept.
+_DOCUMENT_IMAGE_FORMATS = frozenset({"PNG", "JPEG"})
+_DOCUMENT_IMAGE_JPEG_QUALITIES = (90, 80)
+_DOCUMENT_IMAGE_MIN_SIDE = 64
+_DOCUMENT_IMAGE_SCALE_STEP = 0.75
+
+
+def _encoded_image(image, image_format, **options):
+    with io.BytesIO() as buffer:
+        image.save(buffer, format=image_format, **options)
+        return buffer.getvalue()
+
+
+def document_image_bytes(content, *, max_bytes, max_pixels):
+    """The PNG or JPEG bytes a DOCX, PDF, or PPTX embeds for one verified generated image.
+
+    Chat keeps each image exactly as generated. The Office renderers accept only
+    single-frame PNG or JPEG within their byte and pixel limits, so an image that already
+    fits is embedded unchanged and anything else, such as WEBP or a large PNG, is re-encoded
+    and scaled down only as far as needed. Generation admits only images this can always
+    convert, so an image never fails its file for its size or format. Transparency is kept
+    in PNG and flattened onto white for JPEG.
+    """
+    # Pillow is part of the lazily loaded file-rendering stack; see functions_generated_file_exports.
+    from PIL import Image, UnidentifiedImageError
+
+    try:
+        with Image.open(io.BytesIO(content)) as image:
+            width, height = image.size
+            if not 0 < width * height <= MAX_IMAGE_ASSET_PIXELS:
+                raise OutputError("output_invalid")
+            if (
+                image.format in _DOCUMENT_IMAGE_FORMATS and getattr(image, "n_frames", 1) == 1
+                and len(content) <= max_bytes and width * height <= max_pixels
+            ):
+                return content
+            source_format = image.format
+            image.seek(0)
+            image.load()
+            alpha = "A" in image.getbands() or (image.mode == "P" and "transparency" in image.info)
+            working = image.convert("RGBA" if alpha else "RGB")
+    except OutputError:
+        raise
+    except (UnidentifiedImageError, Image.DecompressionBombError, OSError, SyntaxError, ValueError) as exc:
+        raise OutputError("output_invalid") from exc
+    scale = min(1.0, math.sqrt(max_pixels / (width * height)))
+    while True:
+        size = (max(1, math.floor(width * scale)), max(1, math.floor(height * scale)))
+        frame = working if size == working.size else working.resize(size, Image.Resampling.LANCZOS)
+        if source_format != "JPEG":
+            data = _encoded_image(frame, "PNG")
+            if len(data) <= max_bytes:
+                return data
+        flat = frame
+        if frame.mode == "RGBA":
+            flat = Image.new("RGB", frame.size, "white")
+            flat.paste(frame, mask=frame.getchannel("A"))
+        for quality in _DOCUMENT_IMAGE_JPEG_QUALITIES:
+            data = _encoded_image(flat, "JPEG", quality=quality, optimize=True)
+            if len(data) <= max_bytes:
+                return data
+        if min(size) <= _DOCUMENT_IMAGE_MIN_SIDE:
+            raise OutputError("output_invalid")
+        scale *= _DOCUMENT_IMAGE_SCALE_STEP
+
+
 class OrchestrationRenderingService:
     """One actor/conversation, no implicit source resolution or client construction.
 
@@ -251,7 +321,7 @@ class OrchestrationRenderingService:
     def __init__(
         self, store, results, transport, *, authorize_execution,
         max_output_bytes, limits=None, office_limits=None, image_resolver=None,
-        renderer=build_generated_file_export, jitter=random.random,
+        image_asset_reader=None, renderer=build_generated_file_export, jitter=random.random,
     ):
         if (
             not isinstance(store, OrchestrationOutputStore)
@@ -260,6 +330,7 @@ class OrchestrationRenderingService:
             or not callable(authorize_execution) or not callable(renderer) or not callable(jitter)
             or results.access.user_id != store.user_id
             or results.access.conversation_id != store.conversation_id
+            or (image_asset_reader is not None and not callable(image_asset_reader))
         ):
             raise OutputError("output_service_required")
         if type(max_output_bytes) is not int or not 1 <= max_output_bytes <= MAX_OUTPUT_BYTES:
@@ -274,8 +345,69 @@ class OrchestrationRenderingService:
         self.limits = limits or GeneratedFileExportLimits()
         self.office_limits = office_limits
         self.image_resolver = image_resolver
+        # ``image_asset_reader(asset)`` returns the stored bytes of one retained generated
+        # image descriptor; the owner supplies it. The service decides which images a file
+        # may contain and verifies every byte it is given.
+        self.image_asset_reader = image_asset_reader
         self.renderer = renderer
         self.jitter = jitter
+
+    def _image_resolver_for(self, record, entry):
+        """Resolve only the generated images the rendered source was prepared from.
+
+        The source's own retained lineage names them: a file can embed an image only when
+        its prepared content consumed that image as an input, under the same owner and
+        conversation, and only with the exact bytes the image step retained.
+        """
+        if not entry.rich_media:
+            return None
+        if self.image_asset_reader is None:
+            return self.image_resolver
+        source = ResultRef.from_dict(record["source_ref"])
+        cache = {}
+        # The Office stack loads lazily; its limits decide what an embedded image may be.
+        from functions_office_file_renderers import OfficeRenderLimits
+
+        office_limits = self.office_limits or OfficeRenderLimits()
+
+        def images():
+            if "lineage" not in cache:
+                reader = self.results.open_result(
+                    source, require_current_sources=record["render_spec"]["require_current_sources"],
+                )
+                cache["lineage"] = {
+                    parent.producer.step_id: parent for parent in reader.upstream_references()
+                    if parent.kind == IMAGE_ASSET_KIND and parent.producer.capability_id == "generate_image"
+                }
+            return cache["lineage"]
+
+        def resolve(reference):
+            asset_id = reference[len("asset:"):] if type(reference) is str and reference.startswith("asset:") else None
+            parent = images().get(asset_id) if asset_id else None
+            if parent is None:
+                raise OutputUnavailableError("output_source_unavailable")
+            reader = self.results.open_result(parent, require_current_sources=True)
+            asset = validate_image_asset_value(reader.read_value())
+            if asset["asset_id"] != asset_id:
+                raise OutputUnavailableError("output_source_changed")
+            content = self.image_asset_reader(deepcopy(asset))
+            reader.recheck()
+            if (
+                type(content) is not bytes or len(content) != asset["size_bytes"]
+                or hashlib.sha256(content).hexdigest() != asset["content_sha256"]
+            ):
+                raise OutputUnavailableError("output_source_changed")
+            # The exact retained bytes are verified above; the file embeds their rendition.
+            # Every image the source consumed shares the renderer's total pixel budget.
+            return document_image_bytes(
+                content, max_bytes=office_limits.max_image_bytes,
+                max_pixels=min(
+                    office_limits.max_image_pixels,
+                    office_limits.max_total_image_pixels // max(1, len(images())),
+                ),
+            )
+
+        return resolve
 
     @staticmethod
     def _read_metadata(read, *args, **kwargs):
@@ -663,7 +795,7 @@ class OrchestrationRenderingService:
                 source=source, export_request=request,
                 max_output_bytes=min(self.max_output_bytes, record["render_spec"]["max_output_bytes"]),
                 check=check, limits=bounded_limits, office_limits=self.office_limits,
-                image_resolver=self.image_resolver,
+                image_resolver=self._image_resolver_for(record, entry),
             )
             with ClosingExportResource(rendered):
                 self._verify_rendered(rendered, source, record, check)

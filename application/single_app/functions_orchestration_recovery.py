@@ -1,11 +1,17 @@
 # functions_orchestration_recovery.py
 """Execution leases and explicitly requested, checkpoint-only retry attempts.
 
-Version: 0.261.131
+Version: 0.261.140
 Retry publication is one transactional parent CAS + child create. It never
 replans, invokes an adapter, or changes plan-revision lineage.
 Terminal publication preserves an administrator's reply retraction; its probe
 never replaces the original publication failure with a missing-reply read.
+A retry that runs a failed producer again also runs the steps that completed without it.
+A retry renders its own files: it never reuses a render step or inherits the parent's
+file admissions, because preparing the retry supersedes the parent's files.
+A retry that could only resend requests a service declined is not offered.
+A run from the removed legacy contract is never retried, resumed or continued; only
+conversation deletion still reads it, to remove its saved data.
 """
 
 import logging
@@ -24,13 +30,14 @@ from functions_appinsights import log_event
 from functions_orchestration_checkpoints import (
     CHECKPOINT_VERSION, DEPENDENCY_STATE_FIELDS, LIFECYCLE_ID, OPTIONAL_STATE_FIELDS, STATE_FIELDS,
     CheckpointError, CheckpointStore, context_binding, context_state,
-    effective_plan, fingerprint, restore_context, step_input_fingerprint,
+    effective_plan, fingerprint, orchestration_answer_message_id, restore_context, step_input_fingerprint,
 )
 from functions_orchestration_plan_revisions import PlanRevisionError, read_revision_run
 from functions_orchestration_output_store import build_output_cleanup_intent
 from functions_orchestration_registry import admitted_export_pairs, get_capability
 from functions_orchestration_schema import (
-    build_failure, build_step_result, plan_contract_version, safe_failure, summarize_plan,
+    LEGACY_PLAN_CODE, LEGACY_PLAN_MESSAGE, PlanValidationError, build_failure, build_step_result,
+    failure_repeats_on_retry, is_legacy_plan, safe_failure, step_input_specs, summarize_plan,
 )
 from functions_orchestration_result_contracts import ProducerIdentity, ResultContractError, ResultRef, TaskResult
 from functions_orchestration_result_runtime import (
@@ -55,15 +62,86 @@ _STORAGE_READ_ERRORS = (
 
 
 def _retained_statuses(record):
-    return {'completed', 'partial'} if plan_contract_version(record.get('plan')) == 2 else {'completed'}
+    return {'completed', 'partial'}
 
 
 def _retained_producer_steps(record):
+    """Steps whose saved results a conversation deletion must remove.
+
+    A legacy run saved results only for its Analyze and tabular steps; it is read here
+    solely so deleting its conversation also deletes that data.
+    """
+    legacy = is_legacy_plan(record.get('plan'))
     return [
         step for step in (record.get('plan') or {}).get('steps') or []
-        if plan_contract_version(record.get('plan')) == 2
-        or step.get('capability_id') in {'document_analyze', 'tabular_analyze'}
+        if not legacy or step.get('capability_id') in {'document_analyze', 'tabular_analyze'}
     ]
+
+
+def _reuse_invalidated_by_rerun(record, retained, *, new_attempt=True):
+    """Retained dependency steps that a resume must run again.
+
+    In a new attempt a render step always runs again. Its file belongs to the attempt
+    that rendered it, and preparing a retry supersedes that attempt's files, so a reused
+    render could only point at a file that is no longer available. A restart of the same
+    attempt keeps its files, so it still reuses completed renders.
+
+    A step can also complete without an optional input whose producer failed. When a
+    resume runs that producer again, the saved result was computed without an input the
+    attempt may now have, so the step and every step computed from it run again. Reusing
+    it would otherwise fail the attempt with ``recovery_changed`` as soon as the producer
+    succeeded, and the retry could never deliver what the first attempt missed.
+
+    Callers refuse a run from the removed legacy contract before asking.
+    """
+    retained = set(retained)
+    steps = [step for step in record['plan'].get('steps') or [] if step.get('enabled', True)]
+    renders = {
+        step['step_id'] for step in steps
+        if new_attempt and step['step_id'] in retained and step.get('role') == 'render'
+    }
+    rerun = {step['step_id'] for step in steps} - retained
+    if not rerun:
+        # Run listings project recovery for every run; one with nothing to run again,
+        # such as any completed run, needs no input parsing.
+        return renders
+    consumed = {
+        step['step_id']: {spec.binding.step_id for spec in step_input_specs(step) if spec.binding.step_id is not None}
+        for step in steps if step['step_id'] in retained
+    }
+    invalidated = set(renders)
+    while True:
+        added = {
+            step_id for step_id, producers in consumed.items()
+            if step_id not in invalidated and producers & (rerun | invalidated)
+        }
+        if not added:
+            return invalidated
+        invalidated |= added
+
+
+def _retry_repeats_refusal(record, steps, retry):
+    """Whether a retry could only resend requests that were declined.
+
+    A checkpoint retry resends the exact planned requests. When every step it would run
+    again either failed because a service declined its request, such as an image prompt
+    refused under a content policy, or runs again only because of what it depends on, the
+    retry would reproduce the same outcome at the cost of running those steps again.
+    Asking again plans a new request instead. Any other failed or unfinished step, such as
+    a render that failed on a timeout, keeps the retry available.
+    """
+    saved = {step.get('step_id'): step for step in steps}
+    refused = False
+    for step_id in retry:
+        step = saved.get(step_id) or {}
+        failure = step.get('failure') if isinstance(step.get('failure'), dict) else {}
+        if step.get('status') == 'failed' and failure_repeats_on_retry(failure):
+            refused = True
+        elif step.get('status') not in _retained_statuses(record) and failure.get('code') != 'dependency_unavailable':
+            # Completed steps run again only because a producer they consumed runs again,
+            # and dependency-blocked steps only because theirs failed; anything else is new work.
+            return False
+    return refused
 
 
 class RecoveryError(RuntimeError):
@@ -112,6 +190,8 @@ def _owned(run_id, user_id, conversation_id, authorize):
             raise RecoveryError(code='not_found', status_code=404)
         return record
     except PlanRevisionError as exc:
+        if exc.code == LEGACY_PLAN_CODE:
+            raise RecoveryError(LEGACY_PLAN_MESSAGE, code=LEGACY_PLAN_CODE, status_code=409) from exc
         raise RecoveryError('Run not found.', code='not_found', status_code=404) from exc
 
 
@@ -119,10 +199,13 @@ def _replace(record, updates):
     replacement = run_store._strip_cosmos_metadata(deepcopy(record))
     replacement.update(deepcopy(updates))
     replacement['updated_at'] = _now().isoformat()
-    return run_store.cosmos_orchestration_runs_container.replace_item(
+    saved = run_store.cosmos_orchestration_runs_container.replace_item(
         item=record['id'], body=replacement, etag=record['_etag'],
         match_condition=MatchConditions.IfNotModified,
     )
+    if not isinstance(saved, dict):
+        raise CheckpointError('checkpoint_invalid')
+    return dict(saved)
 
 
 def checkpoint_store(record, authorize, *, token=None, claim_id=None):
@@ -131,7 +214,6 @@ def checkpoint_store(record, authorize, *, token=None, claim_id=None):
         run_id=record['id'], user_id=record['user_id'], conversation_id=record['conversation_id'],
         turn_id=record.get('turn_id') or record['plan'].get('turn_id'), authorize=authorize,
         token=token, claim_id=claim_id,
-        plan_contract_version=plan_contract_version(record.get('plan')),
     )
 
 
@@ -279,24 +361,19 @@ def _completed_checkpoint(record, step_id, authorize, visited=None, *, result_se
     reference = (record.get('inherited_checkpoints') or {}).get(step_id)
     store = checkpoint_store(record, authorize)
     local = store.has_manifest(step_id)
-    dependency_contract = plan_contract_version(record['plan']) == 2
     inherited = None
-    if reference and (not local or dependency_contract):
+    if reference:
         if reference.get('source_run_id') != record.get('retry_of_run_id'):
             raise CheckpointError('checkpoint_invalid')
         try:
             parent = _owned(reference['source_run_id'], record['user_id'], record['conversation_id'], authorize)
         except RecoveryError as exc:
-            if dependency_contract and (exc.status_code >= 500 or exc.status_code == 429):
+            if exc.status_code >= 500 or exc.status_code == 429:
                 raise CheckpointError('checkpoint_storage_unavailable') from exc
             raise CheckpointError('context_unavailable') from exc
         except (exceptions.CosmosResourceNotFoundError, ResourceNotFoundError) as exc:
-            if not dependency_contract:
-                raise
             raise CheckpointError('context_unavailable') from exc
         except _STORAGE_READ_ERRORS as exc:
-            if not dependency_contract:
-                raise
             raise CheckpointError('checkpoint_storage_unavailable') from exc
         _validate_inherited_parent(record, parent)
         inherited = _completed_checkpoint(parent, step_id, authorize, visited, result_service=result_service)
@@ -304,7 +381,7 @@ def _completed_checkpoint(record, step_id, authorize, visited=None, *, result_se
         payload = store.load(step_id)
     elif inherited is not None:
         payload = inherited
-    elif dependency_contract and result_service is not None and store.has_manifest(step_id, input_only=True):
+    elif result_service is not None and store.has_manifest(step_id, input_only=True):
         payload = _receipt_checkpoint(record, step_id, authorize, result_service)
         if payload is None:
             raise CheckpointError('checkpoint_unavailable')
@@ -319,7 +396,7 @@ def _completed_checkpoint(record, step_id, authorize, visited=None, *, result_se
         or reference.get('provenance') != payload.get('provenance')
     ):
         raise CheckpointError('checkpoint_invalid')
-    if dependency_contract and local and inherited is not None and any(
+    if local and inherited is not None and any(
         payload.get(key) != inherited.get(key)
         for key in ('schema_version', 'binding', 'input_fingerprint', 'step_id', 'result', 'provenance', 'artifact_versions')
     ):
@@ -330,6 +407,12 @@ def _completed_checkpoint(record, step_id, authorize, visited=None, *, result_se
 def recovery_projection(record):
     """Pure, read-only hints; POST revalidates every fact before publication."""
     run_id = record.get('run_id') or record.get('id')
+    if is_legacy_plan(record.get('plan')):
+        return {
+            'eligible': False, 'reason_code': LEGACY_PLAN_CODE, 'message': LEGACY_PLAN_MESSAGE,
+            'expected_version': None, 'source_run_id': run_id, 'retry_step_ids': [],
+            'reused_step_ids': [], 'requires_confirmation': False,
+        }
     invalid = False
     try:
         steps = _execution_steps(record)
@@ -337,13 +420,18 @@ def recovery_projection(record):
         steps = record.get('execution_steps') or []
         invalid = True
     reused = [
-        step['step_id'] for step in steps
-        if step.get('status') in _retained_statuses(record) and step.get('capability_id') != 'respond'
+        step['step_id'] for step in steps if step.get('status') in _retained_statuses(record)
     ]
+    try:
+        stale = _reuse_invalidated_by_rerun(record, reused)
+    except (PlanValidationError, ResultContractError):
+        stale, invalid = set(), True
+    reused = [step_id for step_id in reused if step_id not in stale]
     retry = [
         step['step_id'] for step in record.get('plan', {}).get('steps') or []
-        if step.get('enabled', True) and (step['step_id'] not in reused or step.get('capability_id') == 'respond')
+        if step.get('enabled', True) and step['step_id'] not in reused
     ]
+    repeats_refusal = _retry_repeats_refusal(record, steps, retry)
     uncertain = any(
         step.get('capability_id') in EFFECT_CAPABILITIES and step.get('effects_uncertain')
         for step in steps
@@ -358,9 +446,9 @@ def recovery_projection(record):
         reason, message = 'legacy_no_checkpoints', 'This run has no durable checkpoints and cannot resume. Create a new plan.'
     elif _live(record):
         reason, message = 'execution_live', 'This attempt is still running. Wait for it to finish or stop it.'
-    elif plan_contract_version(record.get('plan')) == 2 and any(step.get('status') == 'waiting' for step in steps):
+    elif any(step.get('status') == 'waiting' for step in steps):
         reason, message = 'result_not_ready', build_failure('result_not_ready')['message']
-    elif plan_contract_version(record.get('plan')) == 2 and any(step.get('status') == 'running' for step in steps):
+    elif any(step.get('status') == 'running' for step in steps):
         reason, message = 'result_commit_unconfirmed', build_failure('result_commit_unconfirmed')['message']
     elif invalid:
         reason, message = 'checkpoint_invalid', build_failure('checkpoint_invalid')['message']
@@ -375,6 +463,8 @@ def recovery_projection(record):
         reason, message = 'context_unavailable', build_failure('context_unavailable')['message']
     elif any(not step.get('checkpoint_available') for step in steps if step.get('step_id') in reused):
         reason, message = 'checkpoint_unavailable', build_failure('checkpoint_unavailable')['message']
+    elif repeats_refusal:
+        reason, message = 'retry_would_repeat', build_failure('retry_would_repeat')['message']
     return {
         'eligible': reason is None, 'reason_code': reason, 'message': message,
         'expected_version': record.get('recovery_version'),
@@ -411,11 +501,9 @@ def reconcile_checkpoints(record, authorize, *, result_service=None, _defer_inhe
         for step_id in record.get('inherited_checkpoints') or {}:
             _completed_checkpoint(record, step_id, authorize, result_service=result_service)
     store = checkpoint_store(record, authorize)
-    reconcilable = {'running', 'failed', 'waiting'}
-    if plan_contract_version(record.get('plan')) == 2:
-        reconcilable.add('cancelled')
+    reconcilable = {'running', 'failed', 'waiting', 'cancelled'}
     for step in updated.get('execution_steps') or []:
-        if step.get('status') not in reconcilable or step.get('capability_id') == 'respond':
+        if step.get('status') not in reconcilable:
             continue
         if store.has_manifest(step['step_id']):
             payload = store.load(step['step_id'])
@@ -425,7 +513,7 @@ def reconcile_checkpoints(record, authorize, *, result_service=None, _defer_inhe
                 'status': payload['result']['status'], 'checkpoint_available': True, 'effects_uncertain': False,
                 'failure': None, 'error': None, 'summary': payload['result'].get('summary') or 'Saved result',
             })
-        elif plan_contract_version(record.get('plan')) == 2 and store.has_manifest(step['step_id'], waiting=True):
+        elif store.has_manifest(step['step_id'], waiting=True):
             payload = store.load(step['step_id'], waiting=True)
             if payload.get('binding') != record.get('execution_binding'):
                 raise CheckpointError('checkpoint_invalid')
@@ -434,10 +522,7 @@ def reconcile_checkpoints(record, authorize, *, result_service=None, _defer_inhe
                 'failure': None, 'error': None, 'wait': deepcopy(payload['result'].get('wait')),
                 'summary': 'Waiting for retained computation.',
             })
-        elif (
-            plan_contract_version(record.get('plan')) == 2 and result_service is not None
-            and store.has_manifest(step['step_id'], input_only=True)
-        ):
+        elif result_service is not None and store.has_manifest(step['step_id'], input_only=True):
             payload = _receipt_checkpoint(record, step['step_id'], authorize, result_service)
             if payload is not None:
                 step.update({
@@ -505,7 +590,7 @@ class ExecutionLease:
         if self.message_container is None:
             raise CheckpointError('message_not_saved')
         if (
-            document.get('id') != f'assistant_orchestration_{fingerprint(self.run_id)[:40]}'
+            document.get('id') != orchestration_answer_message_id(self.run_id)
             or document.get('conversation_id') != self.conversation_id
             or not (document.get('role') == 'assistant' or document.get('role') == 'safety' and reply_is_retracted(document))
             or (document.get('metadata') or {}).get('orchestration', {}).get('run_id') != self.run_id
@@ -739,11 +824,7 @@ def claim_waiting_continuation(run_id, user_id, data, *, authorize, message_cont
         if previous.get('fingerprint') != request_digest:
             raise RecoveryError(code='recovery_changed')
         return {'acquired': False, 'record': record}
-    if (
-        plan_contract_version(record.get('plan')) != 2
-        or record.get('checkpoint_version') != CHECKPOINT_VERSION
-        or not record.get('execution_binding')
-    ):
+    if record.get('checkpoint_version') != CHECKPOINT_VERSION or not record.get('execution_binding'):
         raise RecoveryError(code='legacy_no_checkpoints')
     approval = record.get('approval') or (record.get('plan') or {}).get('approval') or {}
     if (
@@ -903,101 +984,42 @@ def request_cancellation(run_id, user_id, conversation_id, authorize, *, analysi
 
 
 def _validate_payload_sources(payload, context, settings, user_id):
+    """Recheck every retained result a checkpoint references, and its current sources."""
     state = payload.get('state') or {}
-    if getattr(context, 'plan_contract_version', 1) == 2:
-        if state.get('plan_contract_version') != 2:
-            raise CheckpointError('checkpoint_invalid')
-        try:
-            service = require_result_service(context)
-            tasks = state.get('task_results')
-            aliases = state.get('result_aliases')
-            if type(tasks) is not dict or type(aliases) is not dict:
-                raise CheckpointError('checkpoint_invalid')
-            references = []
-            for step_id, value in tasks.items():
-                task = TaskResult.from_dict(value)
-                if step_id != task.producer.step_id:
-                    raise CheckpointError('checkpoint_invalid')
-                service.access.authorize_producer(task.producer)
-                references.extend(task.outputs)
-            for alias, value in aliases.items():
-                reference = ResultRef.from_dict(value)
-                if alias != reuse_alias(reference) and context.result_aliases.get(alias) != reference:
-                    raise CheckpointError('recovery_changed')
-                references.append(reference)
-            for reference in references:
-                service.open_result(reference, allow_partial=True, require_current_sources=True).recheck()
-                if (
-                    reference.producer.run_id != context.run_id
-                    or reference.producer.attempt_index != context.attempt_index
-                ):
-                    context.result_aliases[reuse_alias(reference)] = reference
-        except (exceptions.CosmosResourceNotFoundError, ResourceNotFoundError) as exc:
-            raise CheckpointError('result_unavailable') from exc
-        except _STORAGE_READ_ERRORS as exc:
-            raise CheckpointError('checkpoint_storage_unavailable') from exc
-        except (ResultContractError, ResultUnavailableError, PermissionError, ScreeningError) as exc:
-            raise_source_service_failure(exc)
-            raise CheckpointError('result_unavailable') from exc
-        return
-    saved_analyses = state.get('saved_analyses', [])
-    if not isinstance(saved_analyses, list):
+    if getattr(context, 'plan_contract_version', None) != 2 or state.get('plan_contract_version') != 2:
         raise CheckpointError('checkpoint_invalid')
-    if saved_analyses:
-        # Recovery needs access checks, not legacy full-data/model materialization.
-        from functions_saved_analysis import (
-            load_orchestration_analysis_input,
-            load_saved_analysis,
-            saved_analysis_context,
-        )
-
-        for descriptor in saved_analyses:
-            if not isinstance(descriptor, dict) or not isinstance(descriptor.get('binding'), dict):
+    try:
+        service = require_result_service(context)
+        tasks = state.get('task_results')
+        aliases = state.get('result_aliases')
+        if type(tasks) is not dict or type(aliases) is not dict:
+            raise CheckpointError('checkpoint_invalid')
+        references = []
+        for step_id, value in tasks.items():
+            task = TaskResult.from_dict(value)
+            if step_id != task.producer.step_id:
                 raise CheckpointError('checkpoint_invalid')
-            try:
-                if descriptor['binding'].get('kind') == 'orchestration':
-                    load_orchestration_analysis_input(user_id, descriptor, authorize_only=True)
-                elif descriptor['binding'].get('kind') in {'chat', 'workflow'}:
-                    load_saved_analysis(user_id, saved_analysis_context(descriptor))
-                else:
-                    raise CheckpointError('checkpoint_invalid')
-            except CheckpointError:
-                raise
-            except Exception as exc:
-                raise CheckpointError('context_unavailable') from exc
-    saved = state.get('execution_manifest') or []
-    document_ids = set(state.get('documents_touched') or [])
-    document_ids.update(
-        citation['document_id'] for citation in state.get('citations') or []
-        if isinstance(citation, dict) and citation.get('document_id')
-    )
-    if document_ids:
-        # Only direct document checks need the adapter's source resolver.
-        from functions_orchestration_adapters import resolve_context_source_manifest
-
-        fresh = resolve_context_source_manifest(context, sorted(document_ids), settings=settings, user_id=user_id)
-        by_id = {item.get('document_id'): item for item in fresh}
-        original = {item.get('document_id'): item for item in saved}
-        for document_id in document_ids:
-            current = by_id.get(document_id) or {}
-            prior = original.get(document_id) or {}
+            service.access.authorize_producer(task.producer)
+            references.extend(task.outputs)
+        for alias, value in aliases.items():
+            reference = ResultRef.from_dict(value)
+            if alias != reuse_alias(reference) and context.result_aliases.get(alias) != reference:
+                raise CheckpointError('recovery_changed')
+            references.append(reference)
+        for reference in references:
+            service.open_result(reference, allow_partial=True, require_current_sources=True).recheck()
             if (
-                current.get('authorization_status') != 'authorized'
-                or not prior or prior.get('source_version') != current.get('source_version')
-                or prior.get('source_revision') != current.get('source_revision')
-                or (prior.get('source_version') is None and not prior.get('source_revision'))
-                or prior.get('scope') != current.get('scope')
-                or prior.get('scope_id') != current.get('scope_id')
+                reference.producer.run_id != context.run_id
+                or reference.producer.attempt_index != context.attempt_index
             ):
-                raise CheckpointError('context_unavailable')
-    artifacts = state.get('artifacts') or []
-    if artifacts:
-        validate_artifacts = getattr(context, 'validate_checkpoint_artifacts', None)
-        if not callable(validate_artifacts) or validate_artifacts(artifacts) is not True:
-            raise CheckpointError('context_unavailable')
-        versions = getattr(context, 'checkpoint_artifact_versions', None)
-        if not callable(versions) or versions(artifacts) != payload.get('artifact_versions'):
-            raise CheckpointError('context_unavailable')
+                context.result_aliases[reuse_alias(reference)] = reference
+    except (exceptions.CosmosResourceNotFoundError, ResourceNotFoundError) as exc:
+        raise CheckpointError('result_unavailable') from exc
+    except _STORAGE_READ_ERRORS as exc:
+        raise CheckpointError('checkpoint_storage_unavailable') from exc
+    except (ResultContractError, ResultUnavailableError, PermissionError, ScreeningError) as exc:
+        raise_source_service_failure(exc)
+        raise CheckpointError('result_unavailable') from exc
 
 
 def validate_resume(record, context, settings, authorize, *, source_run_id=None, allow_waiting=False):
@@ -1012,8 +1034,7 @@ def validate_resume(record, context, settings, authorize, *, source_run_id=None,
         or (source_id != record['id'] and source.get('latest_attempt_run_id') != record['id'])
     ):
         raise CheckpointError('recovery_changed')
-    dependency_contract = plan_contract_version(record['plan']) == 2
-    if dependency_contract and getattr(context, 'export_catalog', None) is not None:
+    if getattr(context, 'export_catalog', None) is not None:
         admitted_pairs = admitted_export_pairs(context.export_catalog)
         for step in record['plan'].get('steps') or []:
             if step['capability_id'] == 'render_file' and (
@@ -1021,30 +1042,36 @@ def validate_resume(record, context, settings, authorize, *, source_run_id=None,
             ) not in admitted_pairs:
                 raise CheckpointError('context_unavailable')
     if allow_waiting and (
-        not dependency_contract or source_id != record['id'] or context.run_id != source_id
+        source_id != record['id'] or context.run_id != source_id
         or context.attempt_index != source.get('attempt_index', 1)
     ):
         raise CheckpointError('ownership_lost')
-    result_service = require_result_service(context) if dependency_contract else None
+    result_service = require_result_service(context)
     source = reconcile_checkpoints(source, authorize, result_service=result_service)
     binding = context_binding(context, record['plan'], settings)
     if source.get('execution_binding') != binding:
         raise CheckpointError('recovery_changed')
     source_steps = {step['step_id']: step for step in _execution_steps(source)}
+    # A continuation keeps failed steps terminal, so nothing it restores is stale. Any other
+    # resume runs them again, so a step that completed without one of their outputs cannot
+    # be reused. Preparing a retry, or running the attempt it created, is a new attempt:
+    # it renders its own files instead of reusing the superseded attempt's.
+    stale = set() if allow_waiting else _reuse_invalidated_by_rerun(record, {
+        step_id for step_id, saved in source_steps.items() if saved.get('status') in _retained_statuses(source)
+    }, new_attempt=source_run_id is not None or bool(record.get('retry_of_run_id')))
     payloads = {}
-    state_fields = STATE_FIELDS + OPTIONAL_STATE_FIELDS + (DEPENDENCY_STATE_FIELDS if dependency_contract else ())
+    state_fields = STATE_FIELDS + OPTIONAL_STATE_FIELDS + DEPENDENCY_STATE_FIELDS
     initial_state = {key: deepcopy(getattr(context, key, None)) for key in state_fields}
     absent_optional_fields = {key for key in state_fields if not hasattr(context, key)}
     completed_before = set(getattr(context, '_completed_result_step_ids', ()))
     context._completed_result_step_ids = set(completed_before)
     try:
         context.execution_manifest = deepcopy(source.get('execution_initial_manifest') or [])
-        interrupted = False
         for step in record['plan'].get('steps') or []:
-            if not step.get('enabled', True) or step.get('capability_id') == 'respond':
+            if not step.get('enabled', True):
                 continue
             saved = source_steps.get(step['step_id']) or {}
-            if dependency_contract and saved.get('status') == 'waiting':
+            if saved.get('status') == 'waiting':
                 if not allow_waiting:
                     raise CheckpointError('result_not_ready')
                 source_store = checkpoint_store(source, authorize)
@@ -1062,15 +1089,10 @@ def validate_resume(record, context, settings, authorize, *, source_run_id=None,
                 restore_context(context, payload)
                 payloads[step['step_id']] = payload
                 continue
-            if dependency_contract and saved.get('status') == 'running':
+            if saved.get('status') == 'running':
                 raise CheckpointError('result_commit_unconfirmed')
-            if saved.get('status') not in _retained_statuses(source):
-                interrupted = True
+            if saved.get('status') not in _retained_statuses(source) or step['step_id'] in stale:
                 continue
-            # A later success consumed the old earlier_findings. Never repair that
-            # invalid input by silently repeating a successful external operation.
-            if interrupted and not dependency_contract:
-                raise CheckpointError('recovery_changed')
             payload = _completed_checkpoint(source, step['step_id'], authorize, result_service=result_service)
             if (
                 payload.get('binding') != binding
@@ -1107,20 +1129,16 @@ def prepare_retry(run_id, user_id, data, *, authorize, validate, message_contain
         if submission.get('fingerprint') != request_digest:
             raise RecoveryError('This retry submission changed.', code='recovery_changed')
         return _owned(submission['run_id'], user_id, conversation_id, authorize)
-    # The validate callback below rechecks v2 receipt chains with its initialized
-    # service. Structural admission alone cannot reopen a receipt-backed ancestor.
-    record = reconcile_checkpoints(
-        record, authorize, _defer_inherited_validation=plan_contract_version(record['plan']) == 2,
-    )
+    # The validate callback below rechecks receipt chains with its initialized service.
+    # Structural admission alone cannot reopen a receipt-backed ancestor.
+    record = reconcile_checkpoints(record, authorize, _defer_inherited_validation=True)
     recovery = recovery_projection(record)
     if record.get('recovery_version') != data['expected_version'] or recovery.get('current_run_id'):
         raise RecoveryError(
             'The recovery state changed. Reload this run.', code='recovery_changed',
             recovery=recovery, current_run_id=recovery.get('current_run_id'),
         )
-    receipt_candidate = (
-        plan_contract_version(record['plan']) == 2 and recovery['reason_code'] == 'result_commit_unconfirmed'
-    )
+    receipt_candidate = recovery['reason_code'] == 'result_commit_unconfirmed'
     if not recovery['eligible'] and not receipt_candidate:
         raise RecoveryError(recovery['message'], recovery=recovery)
     if recovery['requires_confirmation'] and not data.get('confirm_external_effects'):
@@ -1134,30 +1152,27 @@ def prepare_retry(run_id, user_id, data, *, authorize, validate, message_contain
         payloads = validate(record)
         if not isinstance(payloads, dict):
             raise CheckpointError('checkpoint_invalid')
-        if plan_contract_version(record['plan']) == 2:
-            planned = {step['step_id']: step for step in record['plan']['steps'] if step.get('enabled')}
-            if set(payloads) - set(planned) or set(recovery['reused_step_ids']) - set(payloads):
-                raise CheckpointError('checkpoint_invalid')
-            records = {step['step_id']: step for step in _execution_steps(record)}
-            for step_id, payload in payloads.items():
-                if (
-                    payload.get('step_id') != step_id or payload.get('binding') != record.get('execution_binding')
-                    or (payload.get('result') or {}).get('status') not in _retained_statuses(record)
-                ):
-                    raise CheckpointError('checkpoint_invalid')
-                saved = records.setdefault(step_id, {
-                    'step_id': step_id, 'capability_id': planned[step_id]['capability_id'],
-                })
-                saved.update({
-                    'status': payload['result']['status'], 'checkpoint_available': True,
-                    'effects_uncertain': False, 'failure': None, 'error': None,
-                })
-            record['execution_steps'] = list(records.values())
-            recovery = recovery_projection(record)
-            if not recovery['eligible'] or set(payloads) != set(recovery['reused_step_ids']):
-                raise CheckpointError(recovery['reason_code'] or 'checkpoint_invalid')
-        elif set(payloads) != set(recovery['reused_step_ids']):
+        planned = {step['step_id']: step for step in record['plan']['steps'] if step.get('enabled')}
+        if set(payloads) - set(planned) or set(recovery['reused_step_ids']) - set(payloads):
             raise CheckpointError('checkpoint_invalid')
+        records = {step['step_id']: step for step in _execution_steps(record)}
+        for step_id, payload in payloads.items():
+            if (
+                payload.get('step_id') != step_id or payload.get('binding') != record.get('execution_binding')
+                or (payload.get('result') or {}).get('status') not in _retained_statuses(record)
+            ):
+                raise CheckpointError('checkpoint_invalid')
+            saved = records.setdefault(step_id, {
+                'step_id': step_id, 'capability_id': planned[step_id]['capability_id'],
+            })
+            saved.update({
+                'status': payload['result']['status'], 'checkpoint_available': True,
+                'effects_uncertain': False, 'failure': None, 'error': None,
+            })
+        record['execution_steps'] = list(records.values())
+        recovery = recovery_projection(record)
+        if not recovery['eligible'] or set(payloads) != set(recovery['reused_step_ids']):
+            raise CheckpointError(recovery['reason_code'] or 'checkpoint_invalid')
     except CheckpointError as exc:
         blocked = {**recovery, 'eligible': False, 'reason_code': exc.code, 'message': exc.failure['message']}
         if exc.code == 'checkpoint_storage_unavailable':
@@ -1185,12 +1200,14 @@ def prepare_retry(run_id, user_id, data, *, authorize, validate, message_contain
         'inherited_checkpoints', 'chat_content_checked_output', 'chat_content_output_pending',
     ):
         child.pop(key, None)
-    if plan_contract_version(record['plan']) == 2:
-        for key in (
-            'execution_deadline_at', 'pending_results', 'task_results', 'outputs', 'result_outputs',
-            'message', 'summary', 'final_response', 'delivery_facts',
-        ):
-            child.pop(key, None)
+    # The child starts with none of the parent's results or file admissions. Files belong to
+    # the attempt that admitted them; the parent keeps its admission index for its own history
+    # and cleanup.
+    for key in (
+        'execution_deadline_at', 'pending_results', 'task_results', 'outputs', 'result_outputs',
+        'message', 'summary', 'final_response', 'delivery_facts', 'render_output_ids',
+    ):
+        child.pop(key, None)
     child.update({
         'id': child_id, 'run_id': child_id, 'status': 'awaiting_approval',
         'created_at': _now().isoformat(), 'started_at': None, 'completed_at': None,
@@ -1205,7 +1222,7 @@ def prepare_retry(run_id, user_id, data, *, authorize, validate, message_contain
             step_id: {
                 'source_run_id': run_id, 'payload_digest': fingerprint(payload),
                 'provenance': deepcopy(payload['provenance']),
-                **({'status': payload['result']['status']} if plan_contract_version(record['plan']) == 2 else {}),
+                'status': payload['result']['status'],
             } for step_id, payload in payloads.items()
         },
     })
@@ -1260,21 +1277,17 @@ class ExecutionCheckpoints:
         self.context = context
         self.settings = settings
         self.lease = lease
-        dependency_contract = plan_contract_version(record['plan']) == 2
         claim_id = getattr(lease, 'claim_id', None)
         self.continuing = bool(
-            dependency_contract and claim_id
-            and (record.get('continuation_submission') or {}).get('claim_id') == claim_id
+            claim_id and (record.get('continuation_submission') or {}).get('claim_id') == claim_id
         )
-        if dependency_contract and record.get('execution_deadline_at'):
+        if record.get('execution_deadline_at'):
             context.execution_deadline_at = record['execution_deadline_at']
         self.binding = context_binding(context, record['plan'], settings)
         self.store = checkpoint_store(record, lease.read, token=lease.token, claim_id=claim_id)
         self.reused = validate_resume(
             record, context, settings, lease.authorize, allow_waiting=self.continuing,
-        ) if (
-            record.get('retry_of_run_id') or (dependency_contract and record.get('execution_binding'))
-        ) else {}
+        ) if record.get('retry_of_run_id') or record.get('execution_binding') else {}
         self.records = _execution_steps(record)
         self.terminal_results = {
             row['step_id']: build_step_result(
@@ -1290,12 +1303,8 @@ class ExecutionCheckpoints:
         self.lease.initialize_checkpoint_state({
             'checkpoint_version': CHECKPOINT_VERSION, 'execution_binding': self.binding,
             'execution_steps': deepcopy(self.records), 'attempt_index': self.record.get('attempt_index') or 1,
-            'execution_initial_manifest': (
-                context_state(self.context)['execution_manifest']
-                if self.context.plan_contract_version == 2 else deepcopy(self.context.execution_manifest)
-            ),
-            **({'execution_deadline_at': self.context.execution_deadline_at}
-               if self.context.plan_contract_version == 2 else {}),
+            'execution_initial_manifest': context_state(self.context)['execution_manifest'],
+            'execution_deadline_at': self.context.execution_deadline_at,
         })
         self.store.initialize()
 
@@ -1329,58 +1338,37 @@ class ExecutionCheckpoints:
     def save_step(self, record):
         self.store.save_step(record)
         self.records = [row for row in self.records if row['step_id'] != record['step_id']] + [deepcopy(record)]
-        updates = {'execution_steps': self.records}
-        if self.context.plan_contract_version == 2:
-            current = self.lease.read()
-            task_results = deepcopy(current.get('task_results', {}))
-            pending_results = deepcopy(current.get('pending_results', {}))
-            if type(task_results) is not dict or type(pending_results) is not dict:
+        current = self.lease.read()
+        task_results = deepcopy(current.get('task_results', {}))
+        pending_results = deepcopy(current.get('pending_results', {}))
+        if type(task_results) is not dict or type(pending_results) is not dict:
+            raise CheckpointError('checkpoint_invalid')
+        step_id = record['step_id']
+        task = record.get('task_result') if record['status'] in ('completed', 'partial', 'waiting') else None
+        if task is not None:
+            parsed = TaskResult.from_dict(task)
+            if parsed.producer.step_id != step_id:
                 raise CheckpointError('checkpoint_invalid')
-            step_id = record['step_id']
-            task = record.get('task_result') if record['status'] in ('completed', 'partial', 'waiting') else None
-            if task is not None:
-                parsed = TaskResult.from_dict(task)
-                if parsed.producer.step_id != step_id:
-                    raise CheckpointError('checkpoint_invalid')
-                task_results[step_id] = parsed.to_dict()
-            else:
-                task_results.pop(step_id, None)
-            if record['status'] == 'waiting' and record.get('wait'):
-                pending_results[step_id] = deepcopy(record['wait'])
-            else:
-                pending_results.pop(step_id, None)
-            updates.update(
-                task_results=task_results, pending_results=pending_results,
-                execution_deadline_at=self.context.execution_deadline_at,
-            )
-        self.lease.update(updates)
+            task_results[step_id] = parsed.to_dict()
+        else:
+            task_results.pop(step_id, None)
+        if record['status'] == 'waiting' and record.get('wait'):
+            pending_results[step_id] = deepcopy(record['wait'])
+        else:
+            pending_results.pop(step_id, None)
+        self.lease.update({
+            'execution_steps': self.records, 'task_results': task_results,
+            'pending_results': pending_results, 'execution_deadline_at': self.context.execution_deadline_at,
+        })
 
     def commit(self, step, result, input_fingerprint, *, reused=None):
         self.lease.read()
-        if reused and self.context.plan_contract_version == 2 and self.store.has_manifest(step['step_id']):
+        if reused and self.store.has_manifest(step['step_id']):
             existing = self.store.load(step['step_id'])
             if fingerprint(existing) != fingerprint(reused):
                 raise CheckpointError('recovery_changed')
             return
-        if not reused and self.context.documents_touched and self.context.plan_contract_version == 1:
-            # Capture versions for search-discovered sources as well as named ones.
-            from functions_orchestration_adapters import resolve_context_source_manifest
-
-            manifest = resolve_context_source_manifest(
-                self.context, self.context.documents_touched, settings=self.settings, user_id=self.record['user_id'],
-            )
-            if any(
-                not any(item.get('document_id') == document_id and item.get('authorization_status') == 'authorized' for item in manifest)
-                for document_id in self.context.documents_touched
-            ):
-                raise CheckpointError('context_unavailable')
-            self.context.execution_manifest = manifest
         versions = (reused or {}).get('artifact_versions') or {}
-        if not reused and self.context.artifacts and self.context.plan_contract_version == 1:
-            resolve_versions = getattr(self.context, 'checkpoint_artifact_versions', None)
-            if not callable(resolve_versions):
-                raise CheckpointError('context_unavailable')
-            versions = resolve_versions(self.context.artifacts)
         self.store.commit(
             step, result, self.context, input_fingerprint=input_fingerprint, binding=self.binding,
             provenance=(reused or {}).get('provenance'),
@@ -1428,13 +1416,13 @@ def cleanup_conversation_checkpoints(
         for _ in range(8):
             if authorize() is False:
                 raise RecoveryError(code='not_found', status_code=404)
-            current = read_revision_run(row['id'], user_id, conversation_id)
+            current = read_revision_run(row['id'], user_id, conversation_id, allow_legacy=True)
             updates = {
                 'checkpoints_deleted': True, 'execution_lease': None,
                 'recovery_blocked_code': 'context_unavailable',
             }
             intent = None
-            if plan_contract_version(current.get('plan')) == 2:
+            if not is_legacy_plan(current.get('plan')):
                 intent = build_output_cleanup_intent(current, retain_committed=retain_committed)
                 if intent['output_ids'] and output_cleanup is not None and not callable(output_cleanup):
                     raise RecoveryError(
@@ -1460,11 +1448,13 @@ def cleanup_conversation_checkpoints(
         else:
             raise CheckpointError()
         if current.get('latest_attempt_run_id') and current['latest_attempt_run_id'] not in visited:
-            rows.append(read_revision_run(current['latest_attempt_run_id'], user_id, conversation_id))
+            rows.append(read_revision_run(
+                current['latest_attempt_run_id'], user_id, conversation_id, allow_legacy=True,
+            ))
         cleanup_runs.append((current, store))
 
     for index, (current, store) in enumerate(cleanup_runs):
-        intent = current.get('output_cleanup') if plan_contract_version(current.get('plan')) == 2 else None
+        intent = None if is_legacy_plan(current.get('plan')) else current.get('output_cleanup')
         if intent is None or not intent['output_ids']:
             continue
         if output_cleanup is None:

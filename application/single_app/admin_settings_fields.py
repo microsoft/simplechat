@@ -3660,22 +3660,6 @@ ADMIN_SETTINGS_FIELDS = {
             "default": False,
             "role": "capability",
         },
-        {
-            "key": "enable_chat_orchestration_harness",
-            "type": "switch",
-            "label": "Gather / Reason / Render harness (preview)",
-            "help": (
-                "Off by default. Requires Chat Orchestration and server rollout readiness. "
-                "Opts new plans into retained results and explicit file-rendering tasks "
-                "instead of legacy orchestration. Existing capability permissions, model "
-                "access and token, time and step budgets still apply. Turning this off "
-                "stops only new harness plans; saved plans, results and files keep their "
-                "recorded version and authorized read/recovery access."
-            ),
-            "default": False,
-            "role": "capability",
-            "depends_on": {"key": "enable_chat_orchestration", "equals": True},
-        },
     ],
     "chat-orchestration-approval-section": [
         {
@@ -3771,9 +3755,10 @@ ADMIN_SETTINGS_FIELDS = {
             "help": (
                 "Which kinds of work a plan may contain. An empty selection allows every "
                 "otherwise-enabled capability; a non-empty selection narrows plans to "
-                "those capabilities. Legacy answering is always available. Prepare content "
-                "and Create a file apply to admitted harness plans and remain subject to "
-                "rollout readiness. Use an action also requires Enable Action Access."
+                "those capabilities. Plans need Prepare content to write a chat answer or "
+                "the content of a file, and Create a file to deliver a downloadable file. "
+                "Generate images also requires Image Generation. Use an action also "
+                "requires Enable Action Access."
             ),
             "default": [],
             "options": [
@@ -3788,6 +3773,7 @@ ADMIN_SETTINGS_FIELDS = {
                 {"value": "action_invoke", "label": "Use an action"},
                 {"value": "compose", "label": "Prepare content"},
                 {"value": "render_file", "label": "Create a file"},
+                {"value": "generate_image", "label": "Generate images"},
             ],
             "depends_on": {"key": "enable_chat_orchestration", "equals": True},
         },
@@ -3877,8 +3863,27 @@ ADMIN_SETTINGS_FIELDS = {
         },
     ],
     "chat-orchestration-planner-model-section": [
+        # One dropdown writes the four planner keys below as a set. They stay declared, as
+        # legacy fields, so their validation still applies and the classic pane's form fields
+        # remain claimed, but V2 never draws them as separate text boxes.
+        {
+            "type": "component",
+            "component": "orchestration-planner-model",
+            "label": "Planner Model",
+            "help": (
+                "Which model writes the plan. Planning is a short, structured task rather "
+                "than a conversational one, so a smaller and faster model usually does it "
+                "well and costs less per message than the model that writes the answer. "
+                "The list is the models your AI Connections publish for chat, or the classic "
+                "deployments when connections are off. Keep Use the answer model to plan "
+                "with whichever model answers."
+            ),
+            "depends_on": {"key": "enable_chat_orchestration", "equals": True},
+            "group": {"id": "connection", "label": "Planner model", "variant": "connection"},
+        },
         {
             "key": "chat_orchestration_planner_deployment",
+            "legacy": True,
             "type": "text",
             "label": "Planner Deployment Name",
             "help": (
@@ -3893,6 +3898,7 @@ ADMIN_SETTINGS_FIELDS = {
         },
         {
             "key": "chat_orchestration_planner_model_id",
+            "legacy": True,
             "type": "text",
             "label": "Planner Model Id",
             "help": "Identifies the model when planning through a configured model endpoint.",
@@ -3902,6 +3908,7 @@ ADMIN_SETTINGS_FIELDS = {
         },
         {
             "key": "chat_orchestration_planner_model_endpoint_id",
+            "legacy": True,
             "type": "text",
             "label": "Planner Model Endpoint Id",
             "help": (
@@ -3914,6 +3921,7 @@ ADMIN_SETTINGS_FIELDS = {
         },
         {
             "key": "chat_orchestration_planner_model_provider",
+            "legacy": True,
             "type": "text",
             "label": "Planner Model Provider",
             "help": "Identifies the provider when planning through a configured model endpoint.",
@@ -7177,6 +7185,7 @@ def normalize_admin_settings_updates(updates, current_settings=None):
     # is known, because the capability toggle and its selection may arrive apart.
     _check_minimum_selections(normalized, current, errors)
     _check_content_screening_dependency(normalized, current, errors)
+    _check_planner_model_selection(normalized, current, errors)
 
     # Applied last so the checks above still see flat keys, which is the shape
     # they and the schema are written against.
@@ -7217,6 +7226,56 @@ def _check_content_screening_dependency(normalized, current_settings, errors):
     for key in normalized:
         if key.startswith("content_screening"):
             errors[key] = "Manage screening policies through the dedicated Content Screening API."
+
+
+PLANNER_MODEL_SETTING_KEYS = (
+    "chat_orchestration_planner_deployment",
+    "chat_orchestration_planner_model_id",
+    "chat_orchestration_planner_model_endpoint_id",
+    "chat_orchestration_planner_model_provider",
+)
+
+
+def _check_planner_model_selection(normalized, current_settings, errors):
+    """Refuse a planner model the orchestration runtime could never resolve.
+
+    The four keys name one model together: an endpoint and model id for a connection, or
+    a deployment alone for the classic endpoint. The V2 dropdown writes them as a set, but
+    the PATCH accepts any subset, so the merged result is what is judged, by the same shape
+    rules `_resolve_planner_binding` applies when planning starts. Whether the named model
+    still exists is not checked here: a later connection change can remove it, and the
+    runtime already fails closed rather than planning with another model.
+    """
+    if not any(key in normalized for key in PLANNER_MODEL_SETTING_KEYS):
+        return
+    deployment, model_id, endpoint_id, provider = (
+        str(normalized.get(key, current_settings.get(key)) or "").strip()
+        for key in PLANNER_MODEL_SETTING_KEYS
+    )
+    problem = None
+    if model_id and not endpoint_id:
+        problem = (
+            "chat_orchestration_planner_model_endpoint_id",
+            "A planner model from an AI Connection also needs that connection's endpoint.",
+        )
+    elif endpoint_id and not (model_id or deployment):
+        problem = (
+            "chat_orchestration_planner_model_id",
+            "A planner endpoint needs the model to use on it.",
+        )
+    elif not endpoint_id and provider and not deployment:
+        problem = (
+            "chat_orchestration_planner_deployment",
+            "A planner model needs a deployment or an AI Connection model.",
+        )
+    elif not endpoint_id and provider and provider.lower() != "aoai":
+        problem = (
+            "chat_orchestration_planner_model_provider",
+            "A classic planner deployment uses the Azure OpenAI provider; choose a connection model instead.",
+        )
+    if problem:
+        key, message = problem
+        errors[key] = message
 
 
 def _apply_cross_field_rules(normalized, current_settings, warnings):

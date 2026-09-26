@@ -360,11 +360,14 @@ class OrchestrationOutputStore:
 
     def _point(self, item_id):
         try:
-            return self.container.read_item(item=item_id, partition_key=self.conversation_id)
+            record = self.container.read_item(item=item_id, partition_key=self.conversation_id)
         except exceptions.CosmosResourceNotFoundError:
             return None
         except _STORAGE_ERRORS as exc:
             raise OutputStorageError() from exc
+        if not isinstance(record, dict):
+            raise OutputError("output_record_invalid")
+        return dict(record)
 
     def _validate(self, record):
         if (

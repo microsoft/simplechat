@@ -190,6 +190,7 @@ class WorkflowLoopPolicyTests(unittest.TestCase):
             "normalize_public_workspace_display_settings",
             "normalize_key_vault_reminder_settings",
             "normalize_model_endpoint_identity_header_settings",
+            "normalize_retired_orchestration_settings",
         ):
             namespace[name] = lambda _settings: None
         writer = _production_function("functions_settings.py", "update_settings", namespace)

@@ -1,8 +1,12 @@
 # functions_orchestration_execution.py
-"""Headless preparation and guarded publication for saved V2 harness attempts.
+"""Headless preparation and guarded publication for saved orchestration attempts.
 
-Version: 0.261.131
+Version: 0.261.140
 Implemented in: 0.261.127
+
+Every saved attempt uses the Gather / Reason / Render contract; a run from the removed
+legacy contract is refused before any preparation. The ``Harness*`` names below are the
+historical names of this runtime and are kept for compatibility with its callers.
 
 Web and scheduler callers claim the attempt first and pass its real ExecutionLease
 to ``prepare_harness_execution``. Preparation starts an unstarted lease; ``execute``
@@ -24,7 +28,7 @@ with ``retryable`` set when appropriate; they never masquerade as source denial.
 Directory, external-configuration and screening service failures propagate with
 that classification from preparation and normal finalization too, without
 publishing uncertain content or replacing validated service retryability.
-Typed V2 checkpoint-read and output-storage outages remain retryable through
+Typed checkpoint-read and output-storage outages remain retryable through
 known application wrappers; missing or invalid proof is not reclassified.
 An optional server ``checkpoint_factory(record, context, settings, lease)`` binds
 an explicit continuation owner at execution time. It is never persisted; omitting
@@ -37,7 +41,7 @@ lease through ``WorkflowResultStore.bind_orchestration_execution`` before capabi
 retained-result access. Its canonical binding keeps native producer tokens
 unchanged while fencing generic result access with the current parent claim;
 older store views are never rebound. Model-free delivery does not claim results.
-V2 preparation and execution each own a strict source-authority scope on the
+Preparation and execution each own a strict source-authority scope on the
 calling worker. Nested source failures remain fenced even when caught; answer
 and research calls check that fence before and after provider invocation. The
 scope is released with the operation, never retained on a lease or shared between
@@ -49,11 +53,11 @@ the output facade still owns verified source-denial and hold projections.
 Capability discovery uses the initialized services' shared request bindings;
 ``external_source_preflight``, ``external_source_admission``,
 ``external_source_authorizer`` and ``capture_external_source_configuration`` stay
-runtime-only and must all be present before their saved V2 capabilities can be
+runtime-only and must all be present before their saved capabilities can be
 prepared. Preflight is the real synchronous invocation guard; configuration capture
 separately validates current/actual acquisition support. The authorizer comes from
 ``services.results.access``. Discovery neither invokes these callbacks nor applies
-a new-plan readiness check to saved V2 work.
+a new-plan readiness check to saved work.
 Runtime preflight/capture/admission callbacks check their original claim before
 and after each invocation, including failure. The captured actor/run/token/claim
 identity cannot be replaced by retagging the lease. Their closures reject a stopped
@@ -70,8 +74,9 @@ Every published reply, including model-free delivery, passes chat's configured
 output checkpoint first. A removed reply publishes only the safe notice, without
 citations or file cards; an administrator's later retraction is never overwritten.
 Check-before-display runs keep files private until that checked reply is saved.
-Saved history rejects content-check removals through the shared normalizer. Dependency
-plans do not enforce per-step Auto model bindings, so a v2 plan carrying them fails closed.
+Saved history rejects content-check removals through the shared normalizer. An Auto plan's
+per-step model bindings are reauthorized before model setup; a missing or stale binding fails
+closed.
 
 Application-owner imports are deliberately deferred until preparation. Importing
 this module neither imports a route nor discovers configuration or Azure clients.
@@ -95,9 +100,9 @@ from content_screening.access import (
     assert_current_request_sources_available, guard_model_callable, strict_source_authority,
 )
 from content_screening.contracts import DocumentHeldError, ScreeningError
-from functions_appinsights import log_event
+from functions_appinsights import log_event, workflow_log_context
 from functions_orchestration_adapters import resolve_context_source_manifest
-from functions_orchestration_checkpoints import CheckpointError, fingerprint
+from functions_orchestration_checkpoints import CheckpointError, fingerprint, orchestration_answer_message_id
 from functions_orchestration_context import (
     HISTORY_MAX_MESSAGES,
     CatalogResolutionError,
@@ -112,6 +117,9 @@ from functions_orchestration_context import (
     resolve_elicitation_references,
     validate_clarification_answers,
     validate_conversation_snapshot,
+)
+from functions_orchestration_deliverables import (
+    delivery_notes, generated_image_assets, project_generated_images,
 )
 from functions_orchestration_events import (
     build_content_event,
@@ -134,6 +142,10 @@ from functions_orchestration_memory import (
     validate_memory_audience,
     validate_memory_context,
 )
+from functions_model_catalog import ModelCatalogError
+from functions_orchestration_model_routing import (
+    STEP_TASKS, answer_selection, step_model_context, validate_auto_bindings,
+)
 from functions_orchestration_models import (
     REASONING_COMPLETION_BUDGET,
     OrchestrationModelError,
@@ -147,8 +159,10 @@ from functions_orchestration_result_contracts import InputBinding, ResultContrac
 from functions_orchestration_result_runtime import read_complete_input, read_result_document_citations
 from functions_orchestration_results import ResultUnavailableError
 from functions_orchestration_schema import (
+    LEGACY_PLAN_CODE,
     build_failure,
     failure_explanation,
+    is_legacy_plan,
     plan_contract_version,
     PlanValidationError,
     safe_failure,
@@ -237,11 +251,20 @@ def _failure(error):
     return build_failure("execution_interrupted")
 
 
-def _log_failure(message, record, error):
+def _log_failure(message, record, error, *, stage="execution"):
+    response_type = type(record).__name__
+    record = record if isinstance(record, dict) else {}
     log_event(
         f"[ORCHESTRATION_RUNS] {message}",
         level=logging.WARNING,
-        extra={"run_id": record.get("id"), "error_type": type(error).__name__},
+        extra={
+            **workflow_log_context(
+                run_id=record.get("id"), conversation_id=record.get("conversation_id"),
+                turn_id=record.get("turn_id"),
+            ),
+            "stage": stage, "response_type": response_type,
+            "error_type": type(error).__name__, "execution_code": _failure(error)["code"],
+        },
     )
 
 
@@ -476,6 +499,7 @@ class HarnessExecution:
         self._saved_model_metadata = {}
         self._saved_reasoning = {}
         self._execution_lock = threading.Lock()
+        self._preparation_stage = "claim_validation"
 
     @property
     def service(self):
@@ -549,21 +573,30 @@ class HarnessExecution:
     def _initialize(self, settings, identity_context, execution_identity):
         # Bootstrap and recovery import config as the initialized application owner.
         # They must never run merely because a scheduler imports this module.
+        self._preparation_stage = "bootstrap"
         import functions_orchestration_bootstrap as bootstrap
         from functions_document_analysis_checkpoints import analysis_checkpoints_for_orchestration
 
         self._bootstrap = bootstrap
+        self._preparation_stage = "settings"
         self.settings = deepcopy(bootstrap.get_settings() if settings is None else settings)
         if type(self.settings) is not dict or not self.settings.get("enable_chat_orchestration"):
             raise HarnessExecutionError("context_unavailable")
-        if self.record["plan"].get("model_routing") == "auto":
-            # Dependency execution cannot enforce per-step Auto bindings; never ignore them.
+        plan = self.record["plan"]
+        auto_routing = plan.get("model_routing") == "auto"
+        if auto_routing and any(
+            step.get("enabled", True) and step.get("capability_id") in STEP_TASKS and not step.get("model_binding")
+            for step in plan.get("steps") or []
+        ):
+            # An Auto plan without its approved bindings is never run on a substituted model.
             raise HarnessExecutionError("model_routing_changed")
         user_id, conversation_id = self.record["user_id"], self.record["conversation_id"]
         seeds = self.record.get("seeds") or {}
+        self._preparation_stage = "context"
         snapshot = self._revalidate_context()
         answers = self.record.get("answered_questions") or []
         validate_clarification_answers(answers)
+        self._preparation_stage = "identity"
         current_identity = capture_execution_identity(user_id, conversation_id)
         principal = execution_identity or current_identity
         if (
@@ -595,6 +628,7 @@ class HarnessExecution:
             raise HarnessExecutionError("context_unavailable")
         identity["user_roles"] = list(identity.get("user_roles") or [])
         identity["user_email"] = current_identity.email
+        self._preparation_stage = "catalogs"
         agents = resolve_agent_catalog(
             user_id, seeds=seeds, settings=self.settings,
             user_groups=seeds.get("active_group_ids") or None,
@@ -611,9 +645,11 @@ class HarnessExecution:
                 answers,
             ),
         ]))[:8]
+        self._preparation_stage = "services"
         self.services = bootstrap.build_orchestration_services(
             user_id, conversation_id, settings=self.settings,
         )
+        self._preparation_stage = "result_binding"
         try:
             current = self.lease.read()
             if any(
@@ -628,6 +664,7 @@ class HarnessExecution:
         except Exception as exc:
             self._raise_delivery_infrastructure_failure(exc, storage_required=True)
             raise
+        self._preparation_stage = "capabilities"
         request_context = build_capability_request_context(
             user_id, identity, user_message, agents, actions, allowed_user_urls=allowed_urls,
             **self.services.capability_request_bindings(),
@@ -645,14 +682,29 @@ class HarnessExecution:
             raise HarnessExecutionError("context_unavailable")
         self._required_capabilities = required
         self._capability_context = request_context
+        self._preparation_stage = "memory"
         memory = load_orchestration_memory(
             user_id, self._validate_memory(),
             build_elicitation_user_request(self.record.get("resolved_message") or user_message, answers),
             settings=self.settings, seeds=seeds, expected_audience=self.record.get("memory_audience"),
         )
         assert_current_request_sources_available(user_id)
+
+        def resolve_step_model(step_seeds, current_settings):
+            return resolve_orchestration_model(
+                current_settings, user_id=user_id, seeds=step_seeds, identity_context=identity,
+            )
+
+        self._preparation_stage = "model_binding"
+        try:
+            if auto_routing:
+                # Reauthorize every approved binding before any step, never rerouting one.
+                validate_auto_bindings(plan, seeds, self.settings, resolve_step_model)
+            answer_seeds = answer_selection(plan, seeds)
+        except ModelCatalogError as exc:
+            raise HarnessExecutionError("model_routing_changed") from exc
         self.answer_model = resolve_orchestration_model(
-            self.settings, user_id=user_id, seeds=seeds, identity_context=identity,
+            self.settings, user_id=user_id, seeds=answer_seeds, identity_context=identity,
         )
         self.research_model = (
             resolve_orchestration_model(
@@ -667,6 +719,7 @@ class HarnessExecution:
         planner_client.chat.completions.create = strict_source_authority()(
             guard_model_callable(planner_client.chat.completions.create, (), user_id),
         )
+        self._preparation_stage = "context_binding"
         self.context = RunContext(
             run_id=self.record["id"], plan_id=self.record["plan"].get("plan_id"),
             conversation_id=conversation_id, user_id=user_id,
@@ -700,6 +753,26 @@ class HarnessExecution:
             agent_execution_identity=principal, plan_contract_version=2,
         )
         self.context.prompt_token_usage = self.prompt_token_usage
+        if auto_routing:
+            def guarded_planner_client(model):
+                client = model.as_planner_client()
+                client.chat.completions.create = strict_source_authority()(
+                    guard_model_callable(client.chat.completions.create, (), user_id),
+                )
+                return client
+
+            def step_scope(step, target=None):
+                return step_model_context(
+                    step, target if target is not None else self.context,
+                    settings=self._bootstrap.get_settings(), seeds=seeds,
+                    resolve_model=resolve_step_model,
+                    invoke_factory=lambda model: build_harness_invoke_prompt(
+                        model, token_usage=self.prompt_token_usage, revalidate=self._revalidate_context,
+                    ),
+                    planner_client_factory=guarded_planner_client,
+                )
+
+            self.context.step_model_scope = step_scope
 
         def checkpoint_factory(step_id):
             return analysis_checkpoints_for_orchestration(
@@ -724,6 +797,7 @@ class HarnessExecution:
             self.context.capture_external_source_configuration, self.lease,
         )
         assert_current_request_sources_available(user_id)
+        self._preparation_stage = "prepared"
 
     def _initialize_delivery_resources(self, settings, services):
         # Publication uses initialized owners without model or checkpoint setup.
@@ -758,7 +832,7 @@ class HarnessExecution:
     def _read_delivery_metadata(self):
         self.lease.read()
         conversation_id = self.record["conversation_id"]
-        message_id = f"assistant_orchestration_{fingerprint(self.record['id'])[:40]}"
+        message_id = orchestration_answer_message_id(self.record["id"])
         try:
             previous = self.lease.message_container.read_item(
                 item=message_id, partition_key=conversation_id,
@@ -965,7 +1039,7 @@ class HarnessExecution:
             return
         extra = {
             key: event[key] for key in (
-                "failure", "reused", "reused_from_run_id", "checkpoint_available", "role",
+                "failure", "reused", "reused_from_run_id", "checkpoint_available", "role", "model_binding",
             ) if key in event
         }
         if event.get("role") == "render":
@@ -1033,6 +1107,13 @@ class HarnessExecution:
             # A failed observation is not the facade's verified unavailable-file projection.
             raise HarnessExecutionError("message_not_saved", retryable=True) from exc
 
+    def _read_image_asset(self, reference):
+        """A generated image's retained descriptor, reauthorized for the current owner."""
+        reader = self.services.results.open_result(reference, require_current_sources=True)
+        value = read_complete_input(reader)
+        reader.recheck()
+        return value
+
     def _validate_citations(self, citations):
         document_ids = sorted({
             citation["document_id"] for citation in citations
@@ -1089,6 +1170,7 @@ class HarnessExecution:
         if status not in {"completed", "waiting", "failed", "cancelled"}:
             error = error or HarnessExecutionError("result_invalid")
         prepared, citations, reader = "", [], None
+        assets = {}
         if error is None:
             try:
                 self._revalidate_context()
@@ -1106,18 +1188,22 @@ class HarnessExecution:
                 if not self._delivery_only:
                     citations = result.get("citations") or []
                 self._validate_citations(citations)
+                if self.context is not None and not current.get("cancellation_requested_at"):
+                    assets = generated_image_assets(self.context.task_results, self._read_image_asset)
             except Exception as exc:
                 self._raise_delivery_infrastructure_failure(exc)
                 _log_failure("Execution context could not be reauthorized.", self.record, exc)
-                error, prepared, citations = exc, "", []
+                error, prepared, citations, assets = exc, "", [], {}
         if error is not None:
             failure = _failure(error)
             status = "cancelled" if failure["code"] == "user_cancelled" else "failed"
             failures.append(failure)
         if status == "cancelled" or current.get("cancellation_requested_at") or current.get("status") == "cancelled":
-            status, prepared, citations = "cancelled", "", []
+            status, prepared, citations, assets = "cancelled", "", [], {}
             if not any(value["code"] == "user_cancelled" for value in failures):
                 failures.append(build_failure("user_cancelled"))
+        # Generated images appear in the answer where its content placed them.
+        prepared = project_generated_images(prepared, assets)
 
         outputs, artifacts = self._file_state()
         delivered = {artifact["output_id"] for artifact in artifacts}
@@ -1149,6 +1235,15 @@ class HarnessExecution:
         files = _delivery_summary(outputs, artifacts)
         if files:
             content.append(files)
+        if status not in {"waiting", "cancelled"}:
+            # Deterministic, model-free: what the user asked for and did not receive.
+            notes = delivery_notes(
+                self.record["plan"],
+                {step.get("step_id"): step.get("status") for step in current.get("execution_steps") or []},
+                file_steps_with_outputs={output["step_id"] for output in outputs},
+            )
+            if notes:
+                content.append(notes)
         if status == "waiting":
             content.append(build_failure("result_not_ready")["message"])
         elif status in {"failed", "cancelled"}:
@@ -1184,7 +1279,7 @@ class HarnessExecution:
             self.answer_model.metadata() if self.answer_model is not None
             else deepcopy(self._saved_model_metadata)
         )
-        message_id = f"assistant_orchestration_{fingerprint(self.record['id'])[:40]}"
+        message_id = orchestration_answer_message_id(self.record["id"])
         timestamp = current.get("assistant_message_created_at") or _now_iso()
         # Validation may fail before checkpoint restoration populates this context.
         has_execution_state = self.context is not None and "task_results" in result
@@ -1222,10 +1317,18 @@ class HarnessExecution:
         })
         summary = summarize_plan(self.record["plan"])
         summary.update(status=status, capabilities_used=list(result.get("capabilities_used") or []))
+        # The answer owns the list of image messages it shows. Images are never re-linked:
+        # a retry lists the images it reused from an earlier attempt, and that attempt's
+        # answer keeps showing them too.
+        generated_images = [
+            {"visual_id": asset_id, "message_id": asset["message_id"]}
+            for asset_id, asset in assets.items()
+        ]
         metadata = {
             "orchestration": {
                 "run_id": self.record["id"], "turn_id": self.record.get("turn_id"),
                 "plan_summary": summary, **public, "status": status, "outputs": outputs,
+                **({"generated_images": generated_images} if generated_images else {}),
             },
             "token_usage": combined_usage, **reasoning,
         }
@@ -1300,6 +1403,7 @@ class HarnessExecution:
             attempt_index=public["attempt_index"], retry_of_run_id=public["retry_of_run_id"],
             failure=updates["failure"], failures=failures, recovery=public["recovery"],
             message_saved=True, finalization_status=public.get("finalization_status"),
+            generated_images=[] if blocked else generated_images,
             **model_metadata, **reasoning,
         )
         payload = json.loads(frame.partition("data:")[2].strip())
@@ -1340,7 +1444,10 @@ class HarnessExecution:
         return list(self._frames)
 
     def _preparation_error(self, error):
-        _log_failure("Headless execution preparation failed.", self.record, error)
+        _log_failure(
+            "Headless execution preparation failed.", self.record, error,
+            stage=self._preparation_stage,
+        )
         try:
             # A partially bound context has not restored durable producer state.
             self.context = None
@@ -1431,8 +1538,15 @@ class HarnessExecution:
 
 
 def _claimed_harness_execution(record, lease, *, delivery_only=False, checkpoint_factory=None):
-    if type(record) is not dict or plan_contract_version(record.get("plan")) != 2:
-        raise HarnessExecutionError("context_unavailable")
+    if type(record) is not dict or is_legacy_plan(record.get("plan")):
+        # A plan from the removed legacy contract is never executed or published.
+        error = HarnessExecutionError(LEGACY_PLAN_CODE if type(record) is dict else "context_unavailable")
+        _log_failure("Execution claim could not be admitted.", record, error, stage="claim_validation")
+        raise error
+    try:
+        plan_contract_version(record["plan"])
+    except PlanValidationError as exc:
+        raise HarnessExecutionError("context_unavailable") from exc
     if lease is None:
         raise HarnessExecutionError("ownership_lost")
     # The concrete lease imports the application-owned run store. It is not a
@@ -1469,11 +1583,13 @@ def _claimed_harness_execution(record, lease, *, delivery_only=False, checkpoint
         )
         accepted = True
         if lease.thread is None:
+            execution._preparation_stage = "lease_start"
             lease.start()
         return execution
     except Exception as exc:
         if accepted and not delivery_only:
             raise execution._preparation_error(exc) from exc
+        _log_failure("Execution claim could not be read.", record, exc, stage="claim_read")
         execution.close()
         execution._raise_delivery_infrastructure_failure(exc)
         raise HarnessExecutionError(_failure(exc)["code"]) from exc
@@ -1487,7 +1603,7 @@ def prepare_harness_execution(
     record, *, settings=None, identity_context=None, execution_identity=None, lease=None,
     checkpoint_factory=None,
 ):
-    """Prepare V2, finalizing definite failures but propagating uncertain authority."""
+    """Prepare a saved attempt, finalizing definite failures but propagating uncertain authority."""
     execution = _claimed_harness_execution(record, lease, checkpoint_factory=checkpoint_factory)
     try:
         if checkpoint_factory is not None and not callable(checkpoint_factory):

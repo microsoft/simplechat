@@ -1,7 +1,7 @@
 # test_v2_orchestration_outputs.py
 """
 Real-component coverage for independent orchestration file recovery.
-Version: 0.261.127
+Version: 0.261.139
 Implemented in: 0.261.127
 Refs: microsoft/simplechat#1509
 
@@ -1061,10 +1061,9 @@ def test_masked_message_does_not_expose_new_output_cards(outputs_ui, mask):
     assert not write_calls(api)
 
 
-def test_legacy_artifact_aliases_still_deduplicate_without_file_recovery(outputs_ui):
+def test_artifact_aliases_still_deduplicate_without_file_recovery(outputs_ui):
     page, api = outputs_ui
     api.record.pop("outputs")
-    api.record["plan"]["planner_contract_version"] = 1
     api.record.update(status="completed", outcome="completed")
     api.publish()
     legacy = {

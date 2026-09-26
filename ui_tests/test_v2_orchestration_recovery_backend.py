@@ -1,8 +1,10 @@
 # test_v2_orchestration_recovery_backend.py
 """
 Browser-to-Flask checkpoint recovery regressions.
-Version: 0.261.105
+Version: 0.261.140
 Implemented in: 0.261.105
+Single orchestration contract updated in: 0.261.139
+Cosmos SDK response coverage added in: 0.261.140
 
 Real orchestration routes, executor, durable checkpoint codec, conditional attempts,
 and message persistence run in the shared backend fixture. Only Azure/model/service
@@ -37,9 +39,14 @@ from test_support.orchestration_recovery import RecoveryFixture  # noqa: E402
 pytestmark = pytest.mark.ui
 
 
-@pytest.fixture
-def integrated_recovery(editor_browser, editor_assets):
+@pytest.fixture(params=[False, True], ids=["plain-dict", "cosmos-dict"])
+def integrated_recovery(editor_browser, editor_assets, request):
     with RecoveryFixture() as backend:
+        for container in (
+            backend.harness.conversations, backend.messages, backend.runs,
+            backend.steps, backend.harness.results.container,
+        ):
+            container.sdk_responses = request.param
         plan = backend.plan_attempt()
         record = backend.detail(plan["run_id"])
         context = editor_browser.new_context(viewport={"width": 1440, "height": 900})
@@ -287,9 +294,9 @@ def test_message_storage_outage_keeps_safe_terminal_explanation_in_browser(integ
     expect(page.get_by_text("This explanation could not be saved to the conversation.", exact=False).first).to_be_visible()
     state = recovery_tests.main_state(page)
     assert state["history"]["conv1"][0]["status"] == "failed"
-    assert state["messages"][-1]["content"]
-    assert state["messages"][-1]["metadata"]["orchestration"]["failure"]["code"] == (
-        "step_timeout" if agent_fails else "message_not_saved"
-    )
+    # Gather / Reason / Render never streams an answer it could not save; the run records
+    # message_not_saved whether or not a step failed first, and the browser shows that notice.
+    assert state["messages"][-1]["metadata"]["orchestration"]["failure"]["code"] == "message_not_saved"
+    assert "SECRET_SENTINEL" not in page.locator("body").inner_text()
     assert not state["inFlight"]
     assert not any("/cancel/" in request["path"] for request in requests)

@@ -31,6 +31,7 @@ import type { OrchestrationExportFormat } from './orchestrationExports';
 import {
     hasPendingOrchestrationOutputs, normalizeOrchestrationOutputs, type OrchestrationOutput,
 } from './orchestrationOutputs';
+import { LEGACY_PLAN_ERROR_CODE } from './orchestrationErrors';
 
 // `Json` is the shape of a step's `arguments` and the plan's opaque `inputs`/`outputs`, so it is
 // part of this contract's surface. Re-exported here (rather than making consumers reach into
@@ -202,15 +203,7 @@ export type PlanStatus =
 /** A capability's rough cost, from `COST_CLASSES`. Carried on a step as `estimated_cost`. */
 export type CostClass = 'low' | 'medium' | 'high';
 
-/**
- * Legacy (contract v1) phases. They must not reclassify saved work as v2 roles.
- */
-export type OrchestrationPhase = 'knowledge' | 'reasoning' | 'output';
-
-/** The phases in the order a plan runs them, so a grouped view can iterate them directly. */
-export const ORCHESTRATION_PHASES: OrchestrationPhase[] = ['knowledge', 'reasoning', 'output'];
-
-/** Contract v2 roles describe purpose, not a global scheduling order. */
+/** Step roles describe purpose, not a global scheduling order. */
 export type OrchestrationRole = 'gather' | 'reason' | 'render';
 
 /** Exact public InputBinding wire shape from functions_orchestration_result_contracts.py. */
@@ -224,6 +217,8 @@ export interface OrchestrationInputBinding {
 export interface OrchestrationNamedInput {
     binding: OrchestrationInputBinding | null;
     allow_partial?: boolean;
+    /** The consumer runs without this input, and says so, when its producer fails. */
+    optional?: boolean;
 }
 
 export interface OrchestrationNamedOutput {
@@ -274,19 +269,37 @@ export interface OrchestrationStep {
     enabled: boolean;
     estimated_cost: CostClass;
     status: StepStatus;
-    /**
-     * The phase this step runs in, echoed from its capability.
-     *
-     * Optional and a loose string because a persisted or older plan may not carry it and the
-     * value is the server's to define: the run view resolves a missing one from the capability
-     * menu rather than dropping the step, so grouping degrades gracefully instead of failing.
-     */
-    phase?: string;
-    /** Server-owned v2 purpose; never inferred from a legacy capability's name. */
+    /** Server-owned step purpose. */
     role?: string;
     /** Named result bindings are distinct from capability arguments and plan-level sources. */
     inputs?: Record<string, OrchestrationNamedInput>;
     outputs?: OrchestrationNamedOutput[];
+    /** Ids of the plan deliverables this step produces. */
+    delivers?: string[];
+}
+
+/** What a deliverable is: the chat answer, a downloadable file, an image, a chart or a diagram. */
+export type OrchestrationDeliverableKind = 'answer' | 'file' | 'image' | 'chart' | 'diagram';
+
+/**
+ * One thing the plan will deliver, from the plan's `deliverables`.
+ *
+ * `requested` separates what the user asked for from what the planner added. An
+ * `unavailable` deliverable carries a server-verified reason code and its application-owned
+ * message; `implicit` marks the answer the server assumes for plans that declared nothing.
+ */
+export interface OrchestrationDeliverable {
+    id: string;
+    kind: OrchestrationDeliverableKind;
+    /** File format id, for file deliverables. */
+    format?: string;
+    requested: 'explicit' | 'suggested';
+    quantity?: number;
+    description: string;
+    status: 'planned' | 'unavailable';
+    unavailable_reason?: string;
+    unavailable_message?: string;
+    implicit?: boolean;
 }
 
 /** The approval block, from `normalize_plan`'s `approval`. */
@@ -354,6 +367,16 @@ export interface OrchestrationPlanInputs {
 }
 
 /**
+ * The model that wrote a plan, as the server described it: a display label and how it was
+ * chosen. Connection details never reach the browser.
+ */
+export interface OrchestrationPlanner {
+    label: string;
+    source: 'selected' | 'planner_setting' | 'default';
+    reasoning_effort?: string;
+}
+
+/**
  * A validated, runnable plan.
  *
  * `outputs` is carried opaquely: its shape is owned by the executor work being built in
@@ -385,8 +408,14 @@ export interface OrchestrationPlan {
     inputs?: OrchestrationPlanInputs;
     steps: OrchestrationStep[];
     outputs?: Json[];
-    /** V2's prepared answer selection, not the executor's private result reference. */
+    /** Prepared answer selection, not the executor's private result reference. */
     final_response?: OrchestrationInputBinding | null;
+    /** What the plan will deliver, listed before its steps. */
+    deliverables?: OrchestrationDeliverable[];
+    /** Who planned this run; older plans do not carry it. */
+    planner?: OrchestrationPlanner;
+    /** Present when each model-backed step was bound to its own model by Auto routing. */
+    model_routing?: 'auto';
     approval: OrchestrationApproval;
     validation: OrchestrationValidation;
     status: PlanStatus;
@@ -531,6 +560,7 @@ export type PlanRevisionRequest = PlanRevisionAction & {
 export interface OrchestrationRequestError {
     status?: number;
     code?: string;
+    message?: string;
     current_run_id?: string;
 }
 
@@ -928,6 +958,7 @@ export function orchestrationErrorInfo(
     return {
         status,
         code: typeof data.code === 'string' ? data.code : undefined,
+        message: typeof data.error === 'string' ? data.error : undefined,
         current_run_id: typeof data.current_run_id === 'string' ? data.current_run_id : undefined,
     };
 }
@@ -1192,7 +1223,13 @@ export async function runOrchestration(
                 }
                 return;
             }
-            // Uncoded/legacy 409s and already_run retain the existing duplicate-run recovery.
+            if (error?.status === 409 && error.code === LEGACY_PLAN_ERROR_CODE) {
+                result.rejection = error;
+                result.errored = true;
+                handlers.onError?.(message);
+                return;
+            }
+            // Uncoded 409s and already_run retain the existing duplicate-run recovery.
             if (error?.status === 409 && (!error.code || error.code === 'already_run')) {
                 result.alreadyRun = true;
                 handlers.onAlreadyRun?.(message);

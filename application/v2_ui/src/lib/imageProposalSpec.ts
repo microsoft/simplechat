@@ -269,31 +269,105 @@ export function proposalSourceMessageId(message: unknown): string {
     return String(readImageProposalMetadata(message)?.source_assistant_message_id ?? '').trim();
 }
 
+/** One image an orchestrated answer shows, by the saved image message's id. */
+export interface GeneratedImageRef {
+    visualId: string;
+    messageId: string;
+}
+
+/**
+ * The images an orchestrated answer lists as its own.
+ *
+ * Written by the server to `metadata.orchestration.generated_images` when the answer is
+ * published. A retry lists the images it reused from an earlier attempt, and those stay
+ * linked to that attempt's answer, so this list rather than an image's own source id is what
+ * puts an image under every answer that shows it.
+ */
+export function answerGeneratedImages(message: unknown): GeneratedImageRef[] {
+    const candidate = message as { role?: unknown; metadata?: unknown } | null;
+    if (candidate?.role !== 'assistant') {
+        return [];
+    }
+    const metadata = candidate.metadata as { orchestration?: { generated_images?: unknown } } | undefined;
+    const entries = metadata?.orchestration?.generated_images;
+    if (!Array.isArray(entries)) {
+        return [];
+    }
+    const refs: GeneratedImageRef[] = [];
+    for (const entry of entries) {
+        const source = (entry ?? {}) as { visual_id?: unknown; message_id?: unknown };
+        const visualId = normalizeVisualId(source.visual_id);
+        const messageId = typeof source.message_id === 'string' ? source.message_id.trim() : '';
+        if (visualId && messageId) {
+            refs.push({ visualId, messageId });
+        }
+    }
+    return refs;
+}
+
+/** The planned image a card shows, when its answer generated that image as a planned step. */
+export function plannedImageRef(
+    spec: ImageProposalSpec | null,
+    generated: GeneratedImageRef[],
+): GeneratedImageRef | null {
+    const visualId = spec ? normalizeVisualId(spec.visualId) : '';
+    return (visualId && generated.find((ref) => ref.visualId === visualId)) || null;
+}
+
+/**
+ * The saved image a card shows: its planned image by message id, otherwise the image
+ * generated from the proposal.
+ */
+export function resultForCard(
+    spec: ImageProposalSpec,
+    results: ChatMessage[],
+    generated: GeneratedImageRef[],
+): ChatMessage | null {
+    const planned = plannedImageRef(spec, generated);
+    if (planned) {
+        return results.find((result) => result.id === planned.messageId) ?? null;
+    }
+    return findResultForSpec(spec, results);
+}
+
 /**
  * Group approved proposal images by the assistant message that proposed them.
  *
  * Mirrors `groupGeneratedImageProposalMessages` in the classic client. Images without the
  * metadata — an ordinary image generation from the composer's Image toggle, say — are left
- * out, because they belong in the thread on their own.
+ * out, because they belong in the thread on their own. An orchestrated answer also receives
+ * every image it lists in `generated_images`.
  */
 export function groupProposalImages(messages: ChatMessage[]): Map<string, ChatMessage[]> {
     const grouped = new Map<string, ChatMessage[]>();
+    const imagesById = new Map<string, ChatMessage>();
+    const add = (assistantMessageId: string, message: ChatMessage) => {
+        const existing = grouped.get(assistantMessageId);
+        if (!existing) {
+            grouped.set(assistantMessageId, [message]);
+        } else if (!existing.includes(message)) {
+            existing.push(message);
+        }
+    };
 
     for (const message of messages) {
         if (message?.role !== 'image') {
             continue;
         }
+        imagesById.set(message.id, message);
 
         const sourceId = proposalSourceMessageId(message);
-        if (!sourceId) {
-            continue;
+        if (sourceId) {
+            add(sourceId, message);
         }
+    }
 
-        const existing = grouped.get(sourceId);
-        if (existing) {
-            existing.push(message);
-        } else {
-            grouped.set(sourceId, [message]);
+    for (const message of messages) {
+        for (const ref of answerGeneratedImages(message)) {
+            const image = imagesById.get(ref.messageId);
+            if (image) {
+                add(message.id, image);
+            }
         }
     }
 

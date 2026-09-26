@@ -2,6 +2,8 @@
 
 **Implemented in version: 0.261.127**
 
+**Updated in version: 0.261.134** (each run attempt owns its outputs)
+
 **Application version owner:** `application/single_app/config.py`
 
 **Issue:** microsoft/simplechat#1509
@@ -18,8 +20,8 @@ This document describes the M6/M7 **service layer**, not an enabled deployment.
 The orchestration owner must connect the services to its capability registry,
 runtime, authenticated routes, existing scheduler, and output UI. Those
 connections are separate from these services. See
-[the rendering harness design](ORCHESTRATION_RENDERING_HARNESS.md) for the wider
-Gather/Reason/Render contract.
+[Gather / Reason / Render orchestration](ORCHESTRATION_GATHER_REASON_RENDER.md) for the wider
+plan contract.
 
 Dependencies are the retained-result contracts/readers, shared generated-file
 facade and format catalog, existing generated-chat-artifact transport, and
@@ -31,7 +33,8 @@ transaction.
 
 The output ID hashes:
 
-- The original approved work ID and requesting actor/conversation/step/contract.
+- The approved work ID, which is the run attempt's own ID, and the requesting
+  actor/conversation/step/contract.
 - The requested safe filename.
 - The complete immutable source-reference digest, including its result and
   manifest fingerprints.
@@ -43,6 +46,13 @@ The current render producer's full identity, run, attempt index, source
 Replacing the source, projection, filename, profile, or renderer version creates
 a different output identity. A different run attempt cannot adopt the original
 producer's admission by merely presenting its work ID.
+
+Each whole-run retry attempt is approved separately and is its own approved work.
+Since **0.261.134** its outputs therefore have their own identities, even when a
+file is rendered again from reused content. Before, the attempt presented the
+first attempt's work ID and was refused with `output_producer_changed`. Preparing
+the retry supersedes the earlier attempt's outputs; the new attempt renders and
+lists only its own.
 
 Safe requested filenames retain any extension explicitly declared by their
 shared catalog entry, including `.yml`, `.markdown`, and `.text`. The rendering
@@ -355,7 +365,7 @@ before `cleanup.cleanup(output_id)`. Tombstoning is also guarded by current
 owner-deletion proof; it cannot withdraw a live successful output arbitrarily.
 Normal staging cleanup needs no explicit committed-output withdrawal.
 
-Conversation deletion must schedule this work from each owned v2 run's
+Conversation deletion must schedule this work from each owned run's
 `render_output_ids`, not from cached file cards or a message scan. A completed
 output normally has `cleanup_pending=false`, so deleting its conversation alone
 does not make it a scheduler candidate. After logical deletion and durable
@@ -411,7 +421,7 @@ not that bytes have already been deleted. Ordinary due-output cleanup handles
 lease grace, conditional message deletion and late-writer notifications.
 The conversation-deletion lifecycle must synchronously finish this enrollment
 before source-payload cleanup or caller message/conversation purges. A missing
-enrollment dependency for nonempty v2 admissions, a missing admitted output, or
+enrollment dependency for nonempty output admissions, a missing admitted output, or
 either failed fence must fail deletion rather than report empty or successful
 cleanup. Keep the durable intent available for scheduler replay after interrupted
 parent or per-output acknowledgments. A subsequent source-cleanup failure must
@@ -465,7 +475,7 @@ not a substitute for production scheduler ownership.
 The optional injected `execute_render_file` adapter calls the real shared
 `build_step_result` factory without importing the executor or adapters. It takes
 `service_factory`, `resolve_inputs`, `build_step_result`, `build_failure`,
-`settings`, and `user_id`. It expects a v2 context, exactly one resolved retained
+`settings`, and `user_id`. It expects an orchestration context, exactly one resolved retained
 reader, and arguments `file_name`, `output_format`, `profile`, and optional
 `options` (`columns`, `title`, `sheet_name`). A pending output becomes a
 `waiting` StepResult, never a success carrying failure-shaped data. Completed

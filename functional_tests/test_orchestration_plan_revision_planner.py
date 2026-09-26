@@ -1,9 +1,10 @@
 # test_orchestration_plan_revision_planner.py
 """
 Functional tests for the plan editor's strict planner contract.
-Version: 0.261.126
+Version: 0.261.139
 Implemented in: 0.261.102
 Authorized model routing through editor replanning: 0.261.103
+Single orchestration contract updated in: 0.261.139
 
 An edit must produce a validated revision, a scoped explanation, or a question.
 It must never replace the existing plan with the initial planner's failure fallback.
@@ -20,6 +21,13 @@ from openai import APIError
 from test_orchestration_conversation_context import load_modules
 
 
+def binding(step_id, output_name):
+    return {
+        'version': 'orchestration-input-binding-v1', 'step_id': step_id,
+        'output_name': output_name, 'existing_result': None,
+    }
+
+
 class PlanRevisionPlannerTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -31,7 +39,9 @@ class PlanRevisionPlannerTests(unittest.TestCase):
             'candidate_documents': [{'document_id': 'allowed-document'}],
         }
         self.edit = {
-            'current_plan': {'steps': [{'step_id': 'old-search', 'enabled': False}]},
+            'current_plan': {
+                'planner_contract_version': 2, 'steps': [{'step_id': 'old-search', 'enabled': False}],
+            },
             'current_request': 'Compare the two products.',
             'instruction': 'Focus on price and keep the extra search disabled.',
             'chat': [{'role': 'user', 'content': 'Remove the extra search.'}],
@@ -60,8 +70,17 @@ class PlanRevisionPlannerTests(unittest.TestCase):
                     'step_id': 'search', 'capability_id': 'document_search',
                     'arguments': {'query': 'Compare product prices.', 'document_ids': ['allowed-document']},
                 },
-                {'step_id': 'answer', 'capability_id': 'respond', 'arguments': {}},
+                {
+                    'step_id': 'answer', 'capability_id': 'compose',
+                    'arguments': {
+                        'instruction': 'Compare the product prices from the gathered evidence.',
+                        'knowledge_basis': 'sources',
+                    },
+                    'inputs': {'evidence': {'binding': binding('search', 'evidence'), 'allow_partial': False}},
+                    'outputs': [{'name': 'answer', 'kind': 'markdown-v1'}],
+                },
             ],
+            'final_response': binding('answer', 'answer'),
             **overrides,
         }
 

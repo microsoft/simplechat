@@ -30,7 +30,7 @@ the same thing:
     plan card ticks specific steps by id, and reverse-engineering that from prose would be
     guesswork.
 
-Version: 0.261.127
+Version: 0.261.138
 """
 
 import json
@@ -376,6 +376,7 @@ def build_run_done_event(
     message_saved=True,
     finalization_status=None,
     outputs=None,
+    generated_images=None,
 ):
     """Terminal frame of the run endpoint.
 
@@ -384,7 +385,8 @@ def build_run_done_event(
     that are new to orchestration are additive keys rather than a different envelope.
 
     Document, web, and tool citations use chat's existing separate fields. Only document
-    citations participate in used-document tracking.
+    citations participate in used-document tracking. ``generated_images`` lists the saved
+    image messages the answer shows, so the browser loads them with the answer.
     """
     return serialize_sse({
         'done': True,
@@ -399,6 +401,7 @@ def build_run_done_event(
         'augmented': bool(citations or web_citations or agent_citations),
         'generated_artifacts': list(artifacts or ()),
         **({'outputs': outputs} if outputs is not None else {}),
+        **({'generated_images': list(generated_images)} if generated_images else {}),
         'orchestration': plan_summary or {},
         'status': status,
         'outcome': outcome or status,

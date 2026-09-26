@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 UI test for the V2 orchestration drawer: the Run and Map views and pinning from the map.
-Version: 0.261.085
+Version: 0.261.139
 Implemented in: 0.261.085
 
 The drawer's plan mode shows one run in full (the Run view) or every run as a scannable column (the
@@ -42,6 +42,7 @@ def _plan(plan_id, run_id, summary, search_title):
     return {
         "plan_id": plan_id,
         "run_id": run_id,
+        "planner_contract_version": 2,
         "intent": {"summary": summary, "complexity": "simple"},
         "steps": [
             {
@@ -49,13 +50,15 @@ def _plan(plan_id, run_id, summary, search_title):
                 "capability_id": "search_documents",
                 "title": search_title,
                 "arguments": {"document_ids": ["docA"]},
+                "role": "gather",
                 "estimated_cost": "low",
             },
             {
                 "step_id": f"{plan_id}-s2",
-                "capability_id": "respond",
+                "capability_id": "compose",
                 "title": "Write the answer",
                 "arguments": {},
+                "role": "reason",
                 "estimated_cost": "low",
             },
         ],

@@ -1,11 +1,13 @@
 # functions_orchestration_external_metadata.py
 """Initialized-application, metadata-only reconstruction of external sources.
 
-Version: 0.261.127
+Version: 0.261.134
 
 This is a composition boundary, not a configuration or credential factory for
 execution. Runtime stores, loaders and SDKs are imported only after current
 conversation ownership is established. No acquisition capture is read here.
+A step of a per-step Auto plan is rebuilt from its approved model binding, the
+model its scope actually ran it on, rather than from the run's own selection.
 """
 
 from contextlib import ExitStack
@@ -221,7 +223,34 @@ class _MetadataRead:
             raise ResultUnavailableError("external_configuration_conversation_unavailable")
 
 
-def _run_seeds(read, producer):
+def _step_binding(run, producer):
+    """The approved Auto binding the producing step ran on, or None for a pinned run.
+
+    Under Auto a step runs inside its own binding's model scope, not on the run's
+    selection or the planner override, so its current configuration is rebuilt from
+    that binding. The binding is server-owned: planner output cannot supply one, and
+    execution reauthorizes every binding before any step runs. A model-backed Auto step
+    without one is refused rather than rebuilt from the run's own selection.
+    """
+    plan = run["plan"]
+    if plan.get("model_routing") != "auto":
+        return None
+    steps = plan.get("steps")
+    if type(steps) is not list or len(steps) > 4096:
+        _invalid()
+    step = next((
+        item for item in steps
+        if type(item) is dict and item.get("step_id") == producer.step_id
+    ), None)
+    if step is None or step.get("capability_id") != producer.capability_id:
+        raise ResultUnavailableError("external_configuration_producer_unavailable")
+    binding = step.get("model_binding")
+    if type(binding) is not dict or type(binding.get("selection")) is not dict:
+        _unsupported()
+    return binding
+
+
+def _run_seeds(read, producer, *, planner):
     # This initialized store is needed only for saved model selectors. Saved
     # roles, endpoint configuration and prior client/capture data are never used.
     from functions_orchestration_runs import get_orchestration_run
@@ -241,10 +270,26 @@ def _run_seeds(read, producer):
     ):
         raise ResultUnavailableError("external_configuration_producer_unavailable")
     seeds = _mapping(run.get("seeds"), optional=True)
+    binding = _step_binding(run, producer)
+    if binding is not None:
+        # The step scope resolves its model from binding_seeds; using the same derivation
+        # keeps the rebuilt configuration identical to the one the step captured. Loaded
+        # here, like the run store, because only a bound Auto step needs it.
+        from functions_orchestration_model_routing import binding_seeds
+
+        groups = seeds.get("active_group_ids") or []
+        if type(groups) is not list:
+            _invalid()
+        seeds = binding_seeds(seeds, binding)
+        if not planner:
+            # The action builder authorizes its model with the run's own groups and never
+            # takes groups from model context, so the binding's model group is not added.
+            seeds["active_group_ids"] = list(groups)
     model = _mapping(seeds.get("model"), optional=True)
     return _copy_metadata({
         "model": {name: model[name] for name in _MODEL_FIELDS if name in model},
         **{name: seeds[name] for name in ("reasoning_effort", "active_group_ids") if name in seeds},
+        **({"bound": True} if binding is not None else {}),
     })
 
 
@@ -258,13 +303,15 @@ def _current_model(read, producer, settings, *, planner):
     )
     from model_endpoint_clients import infer_model_endpoint_protocol
 
-    seeds = _run_seeds(read, producer)
+    seeds = _run_seeds(read, producer, planner=planner)
     supplied = _mapping(seeds.get("model"), optional=True)
     selection = {name: _text(supplied.get(name), optional=True) for name in _MODEL_FIELDS}
     reasoning_effort = _text(seeds.get("reasoning_effort"), optional=True, limit=128)
+    # A bound Auto step's research client is the binding's own, so the planner
+    # override that applies to pinned runs does not apply to it.
     overrides = {
         name: _text(settings.get(key), optional=True) for name, key in _PLANNER_FIELDS.items()
-    } if planner else {}
+    } if planner and seeds.get("bound") is not True else {}
     overridden = any(overrides.values())
     if overridden:
         selection = overrides

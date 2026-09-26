@@ -1,13 +1,16 @@
 # test_orchestration_dependency_planner.py
-"""Version-aware real planner/compiler admission with an isolated model client.
+"""Real planner/compiler admission with an isolated model client.
 
-Version: 0.261.127
+Version: 0.261.140
 Implemented in: 0.261.127
+Single orchestration contract updated in: 0.261.139
 Provider I/O is replaced at client.chat.completions.create, not the compiler.
 """
 
 from copy import deepcopy
+import importlib
 import json
+import sys
 from types import SimpleNamespace
 
 import pytest
@@ -18,10 +21,16 @@ from test_support.app_stubs import stubbed_config
 
 @pytest.fixture
 def planner(runtime):
-    with stubbed_config(cognitive_services_scope='offline-scope'):
-        import functions_orchestration_planner
-
-        yield functions_orchestration_planner
+    name = "functions_orchestration_planner"
+    # Its imported logging callback must not outlive the stubbed import scope.
+    previous = sys.modules.pop(name, None)
+    try:
+        with stubbed_config(cognitive_services_scope='offline-scope'):
+            yield importlib.import_module(name)
+    finally:
+        sys.modules.pop(name, None)
+        if previous is not None:
+            sys.modules[name] = previous
 
 
 def invoke(planner, reply, *, contract_version=2, settings=None, edit_context=None):
@@ -46,7 +55,7 @@ def invoke(planner, reply, *, contract_version=2, settings=None, edit_context=No
     return result, calls
 
 
-def test_v2_planner_admits_explicit_named_answer_without_terminal_respond(planner):
+def test_planner_admits_explicit_named_answer_without_terminal_respond(planner):
     result, calls = invoke(planner, {
         'kind': 'plan', 'steps': [compose()], 'final_response': binding('draft'),
     })
@@ -64,7 +73,7 @@ def test_v2_planner_admits_explicit_named_answer_without_terminal_respond(planne
 
 
 @pytest.mark.parametrize('invalid', ['dependency', 'version', 'disabled', 'extra_work'])
-def test_v2_invalid_plan_never_falls_back_to_a_repaired_answer(planner, invalid):
+def test_invalid_plan_never_falls_back_to_a_repaired_answer(planner, invalid):
     reply = {'kind': 'plan', 'steps': [compose()]}
     settings = {}
     if invalid == 'dependency':
@@ -81,7 +90,7 @@ def test_v2_invalid_plan_never_falls_back_to_a_repaired_answer(planner, invalid)
     assert failure.value.reason == 'invalid_plan_or_missing_requirement'
 
 
-def test_v2_editor_does_not_add_legacy_terminal_rule(planner):
+def test_editor_does_not_add_legacy_terminal_rule(planner):
     edit = {'current_plan': {'planner_contract_version': 2, 'steps': [compose()]}, 'instruction': 'Keep the answer concise.'}
     result, calls = invoke(planner, {
         'kind': 'plan', 'revised_request': 'Prepare a concise original answer.',
@@ -92,10 +101,16 @@ def test_v2_editor_does_not_add_legacy_terminal_rule(planner):
     assert edit['current_plan']['steps'][0]['capability_id'] == 'compose'
 
 
-def test_v1_planner_keeps_phase_and_terminal_answer_contract(planner):
-    result, calls = invoke(planner, {
-        'kind': 'plan', 'steps': [{'step_id': 'answer', 'capability_id': 'respond', 'arguments': {}}],
-    }, contract_version=1)
-    assert result[1]['planner_contract_version'] == 1
-    assert result[1]['steps'][-1]['capability_id'] == 'respond'
-    assert 'The final step is always "respond".' in calls[0]['messages'][0]['content']
+def test_planning_refuses_the_removed_earlier_contract_before_any_model_call(planner, runtime):
+    def create(**request):
+        raise AssertionError('The earlier contract must be refused before planning.')
+
+    client = SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=create)))
+    model = SimpleNamespace(deployment='offline-planner', as_planner_client=lambda: client)
+    with pytest.raises(runtime.schema.LegacyPlanError):
+        planner.plan_request(
+            'Prepare an original short answer.', {'message': 'Prepare an original short answer.'},
+            'conversation-1', 'owner', settings={'enable_user_workspace': True},
+            planner_model=model, contract_version=1,
+        )
+    assert 'The final step is always "respond".' not in planner.PLANNER_SYSTEM_PROMPT

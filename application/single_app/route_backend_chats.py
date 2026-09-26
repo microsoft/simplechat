@@ -218,6 +218,7 @@ from functions_assistant_table_exports import (
     has_generated_tabular_csv_output,
     neutralize_csv_spreadsheet_formula,
 )
+from functions_web_search_results import describe_web_search_exception, format_linked_search_results
 from functions_generated_file_exports import (
     build_generated_file_artifact_metadata,
     build_generated_file_export,
@@ -296,6 +297,7 @@ from functions_ai_connections import AIConnectionError
 from functions_image_api_route import ImageGenerationError, resolve_selected_image_deployment_name
 from functions_image_generation import (
     build_image_proposal_guidance_message,
+    find_planned_proposal_image,
     generate_chat_image_message,
     image_generation_error_log_context,
     image_generation_error_response,
@@ -17126,6 +17128,7 @@ def register_route_backend_chats(bp):
                 or data.get('source_assistant_message_id')
                 or ''
             ).strip()
+            source_message = None
             if source_assistant_message_id:
                 try:
                     source_message = cosmos_messages_container.read_item(
@@ -17138,21 +17141,44 @@ def register_route_backend_chats(bp):
                         return jsonify({'error': 'Source message must be an assistant message'}), 400
                 except CosmosResourceNotFoundError:
                     source_assistant_message_id = ''
+                    source_message = None
 
-            image_result = generate_chat_image_message(
-                settings=settings,
-                user_id=user_id,
-                conversation_id=conversation_id,
-                prompt=proposal['prompt'],
-                user_info=get_current_user_info(),
-                proposal=proposal,
-                source_assistant_message_id=source_assistant_message_id or None,
-                store_in_blob=True,
+            def read_conversation_image(message_id):
+                try:
+                    return cosmos_messages_container.read_item(item=message_id, partition_key=conversation_id)
+                except CosmosResourceNotFoundError:
+                    return None
+
+            # An orchestrated answer's planned image already exists; approving its card again
+            # returns that image rather than paying for a duplicate.
+            planned_image = (
+                find_planned_proposal_image(source_message, proposal, read_conversation_image)
+                if source_message is not None else None
             )
+            if planned_image is not None:
+                image_result = {
+                    'image_url': planned_image.get('content'),
+                    'conversation_id': conversation_id,
+                    'model_deployment_name': planned_image.get('model_deployment_name'),
+                    'message_id': planned_image.get('id'),
+                    'image_message': planned_image,
+                    'already_generated': True,
+                }
+            else:
+                image_result = generate_chat_image_message(
+                    settings=settings,
+                    user_id=user_id,
+                    conversation_id=conversation_id,
+                    prompt=proposal['prompt'],
+                    user_info=get_current_user_info(),
+                    proposal=proposal,
+                    source_assistant_message_id=source_assistant_message_id or None,
+                    store_in_blob=True,
+                )
 
-            conversation_item['last_updated'] = datetime.utcnow().isoformat()
-            cosmos_conversations_container.replace_item(item=conversation_item['id'], body=conversation_item)
-            invalidate_conversation_cache_for_item(conversation_item, reason="chat_image_proposal_generated")
+                conversation_item['last_updated'] = datetime.utcnow().isoformat()
+                cosmos_conversations_container.replace_item(item=conversation_item['id'], body=conversation_item)
+                invalidate_conversation_cache_for_item(conversation_item, reason="chat_image_proposal_generated")
 
             image_doc = image_result.pop('image_message', {}) or {}
             image_doc_metadata = image_doc.get('metadata') if isinstance(image_doc.get('metadata'), dict) else {}
@@ -28475,7 +28501,10 @@ def perform_web_search(
     initial_seed_url_count = len(web_search_citations_list or []) if isinstance(web_search_citations_list, list) else 0
     run_started_at = datetime.utcnow().isoformat()
 
-    def record_web_search_run(success, status, error=None, result_message_length=0, raw_citation_count=0):
+    def record_web_search_run(
+        success, status, error=None, result_message_length=0, raw_citation_count=0,
+        error_type=None, provider_status=None, provider_timeout=False, provider_connection=False,
+    ):
         if not isinstance(web_search_runs_list, list):
             return
         final_seed_url_count = len(web_search_citations_list or []) if isinstance(web_search_citations_list, list) else initial_seed_url_count
@@ -28492,6 +28521,11 @@ def perform_web_search(
             'result_message_length': int(result_message_length or 0),
             'raw_citation_count': int(raw_citation_count or 0),
             'error': str(error or '')[:500],
+            # Structured, provider-text-free facts a caller can classify without the message.
+            'error_type': str(error_type or '')[:100],
+            'provider_status': provider_status if isinstance(provider_status, int) else None,
+            'provider_timeout': bool(provider_timeout),
+            'provider_connection': bool(provider_connection),
         })
 
     enable_web_search = settings.get("enable_web_search")
@@ -28586,6 +28620,11 @@ def perform_web_search(
             )
         )
     except FoundryAgentInvocationError as exc:
+        # Record structured facts first, so a caller can still classify the provider failure
+        # when the capture check below reports that nothing had been acquired yet.
+        record_web_search_run(
+            False, 'foundry_invocation_error', error=str(exc), **describe_web_search_exception(exc),
+        )
         if invocation_capture is not None:
             invocation_capture.require_valid(captured=True)
         log_event(
@@ -28603,9 +28642,11 @@ def perform_web_search(
             "role": "system",
             "content": f"Web search failed with error: {exc}. Please inform the user that the web search encountered an error and you cannot provide real-time information for this query. Do not attempt to answer questions requiring current information from your training data - instead, acknowledge the search failure and suggest the user try again.",
         })
-        record_web_search_run(False, 'foundry_invocation_error', error=str(exc))
         return False  # Search failed
     except Exception as exc:
+        record_web_search_run(
+            False, 'unexpected_error', error=str(exc), **describe_web_search_exception(exc),
+        )
         if invocation_capture is not None:
             invocation_capture.require_valid(captured=True)
         log_event(
@@ -28623,7 +28664,6 @@ def perform_web_search(
             "role": "system",
             "content": f"Web search failed with an unexpected error: {exc}. Please inform the user that the web search encountered an error and you cannot provide real-time information for this query. Do not attempt to answer questions requiring current information from your training data - instead, acknowledge the search failure and suggest the user try again.",
         })
-        record_web_search_run(False, 'unexpected_error', error=str(exc))
         return False  # Search failed
 
     debug_print("[WEB_SEARCH] ========== FOUNDRY AGENT RESULT ==========")
@@ -28660,9 +28700,12 @@ def perform_web_search(
         result_heading = "Web search results"
         if search_context_label:
             result_heading = f"Web search results ({search_context_label})"
+        # Foundry marks citations with placeholders such as 【3:1†source】 that mean nothing
+        # to a reader or to the model writing the answer. Replace each with a numbered link
+        # to the source it annotates, and list the sources so they can be cited by number.
         system_messages_for_augmentation.append({
             "role": "system",
-            "content": f"{result_heading}:\n{result.message}",
+            "content": format_linked_search_results(result_heading, result.message, result.citations or []),
         })
         debug_print(f"[WEB_SEARCH] Added system message to augmentation list. Total augmentation messages: {len(system_messages_for_augmentation)}")
 

@@ -48,7 +48,7 @@ Unused extensions preserve the exact published v1 result bytes and existing
 checkpoint fingerprints. Standalone/workflow APIs, runtime/adapters, routes,
 artifact/rendering modules, and user-facing feature activation are not changed.
 
-See [the foundation API reference](../features/ORCHESTRATION_RENDERING_HARNESS.md)
+See [the foundation API reference](../features/ORCHESTRATION_GATHER_REASON_RENDER.md)
 for exact signatures, private manifest/lineage versions, limits and collision
 semantics.
 

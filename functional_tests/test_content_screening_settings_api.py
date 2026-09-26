@@ -110,6 +110,7 @@ def settings_functions(**overrides):
         "normalize_document_access_index_required_settings", "normalize_inbound_mcp_settings",
         "normalize_public_workspace_display_settings", "normalize_key_vault_reminder_settings",
         "normalize_model_endpoint_identity_header_settings",
+        "normalize_retired_orchestration_settings",
     ):
         namespace[name] = lambda _settings: None
     namespace.update(overrides)

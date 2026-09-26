@@ -955,20 +955,16 @@ export interface NavGroup<TItem> {
  * One capability the orchestration planner may schedule, as the bootstrap advertises it.
  *
  * This is the deployment's *menu*, not a plan: the plan card reads `label`, `summary` and
- * `cost` to describe steps the server actually chose, and `terminal` marks the answer-writing
- * capability (`respond`) that a narrowing edit must never be allowed to disable. The union
- * members mirror `CostClass` in `orchestration.ts` but are inlined here so this base type
- * module keeps importing nothing — `orchestration.ts` already imports *from* here.
+ * `cost` to describe steps the server actually chose. The union members mirror `CostClass` in
+ * `orchestration.ts` but are inlined here so this base type module keeps importing nothing —
+ * `orchestration.ts` already imports *from* here.
  */
 export interface OrchestrationCapability {
     id: string;
     label: string;
-    /** Only legacy descriptors carry phases; v2 descriptors carry server-owned roles instead. */
-    phase?: string;
     role?: string;
     summary: string;
     cost: 'low' | 'medium' | 'high';
-    terminal: boolean;
 }
 
 /**
