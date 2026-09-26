@@ -6,7 +6,8 @@
 
 import { Users } from 'lucide-react';
 import {
-    groupSettingsReasonText, type GroupSettingsAdapter, type GroupSettingsManagement,
+    GROUP_STATUS_UNAVAILABLE_REASON, GROUP_STATUS_UNRECOGNIZED_TEXT, groupSettingsReasonText,
+    type GroupSettingsAdapter, type GroupSettingsManagement,
 } from '../../lib/groupSettings';
 import { WorkspaceSettingsSection, type WorkspaceSettingsSectionScope } from './WorkspaceSettingsSection';
 
@@ -14,6 +15,8 @@ import { WorkspaceSettingsSection, type WorkspaceSettingsSectionScope } from './
 const GROUP_SETTINGS_SCOPE: WorkspaceSettingsSectionScope = {
     testIdPrefix: 'group-settings',
     reasonText: groupSettingsReasonText,
+    statusReason: GROUP_STATUS_UNAVAILABLE_REASON,
+    statusUnrecognized: GROUP_STATUS_UNRECOGNIZED_TEXT,
     introTitle: 'Group settings',
     introDescription: "The group's profile, logo and policies. A locked control shows why it's unavailable to you.",
     loadFailed: 'The group settings could not be loaded. Please retry.',

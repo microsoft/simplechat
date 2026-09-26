@@ -199,6 +199,17 @@ export function groupSettingsReasonText(code: string | undefined): string | unde
     return code ? REFUSAL_TEXT[code] : undefined;
 }
 
+/** The reason code a status refusal carries (`functions_group_settings_policy.GROUP_STATUS_UNAVAILABLE`). */
+export const GROUP_STATUS_UNAVAILABLE_REASON = 'group_status_unavailable';
+
+/**
+ * The sentence the server refuses a profile or logo write with when the group's status isn't one it
+ * recognizes (`functions_group_settings.GROUP_STATUS_UNRECOGNIZED_MESSAGE`). The reason code stays the
+ * locked-or-inactive one; the server's `refusal()` swaps only the sentence. Pinned by a functional test.
+ */
+export const GROUP_STATUS_UNRECOGNIZED_TEXT =
+    "This group's status isn't recognized, so its name, description, color and logo can't be changed.";
+
 /**
  * The routes, 409 codes and wording that make one scope's native settings client (M10C). The group
  * client and the public workspace client share every request, validation and error mapping in

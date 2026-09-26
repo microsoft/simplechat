@@ -1,8 +1,9 @@
 # test_v2_group_settings.py
 """
 Production-SPA coverage for the native V2 group Settings, Activity and Statistics sections.
-Version: 0.261.165
+Version: 0.261.187
 Implemented in: 0.261.165
+An unrecognized status is explained with the server's own sentence: 0.261.187
 
 Exercises the real Settings, Activity and Statistics sections -- the M7C sections of the group
 WorkspaceShell's Manage group -- against closed synthetic HTTP. The fixture
@@ -36,6 +37,9 @@ from ui_tests.fixtures.group_settings import (  # noqa: F401
     GROUP_ACTIVITY_UNAVAILABLE_MESSAGE, GROUP_SETTINGS_CHANGED_MESSAGE,
     GROUP_STATS_UNAVAILABLE_MESSAGE, GROUP_WRITE_CONFLICT_MESSAGE,
     GroupSettingsFixture, group_settings_ui,
+)
+from ui_tests.fixtures.group_workspace import (
+    GROUP_SETTINGS_REFUSAL_MESSAGES, GROUP_STATUS_UNAVAILABLE, GROUP_STATUS_UNRECOGNIZED_MESSAGE,
 )
 from ui_tests.fixtures.workspace_authoring import ORIGIN  # noqa: F401
 
@@ -310,6 +314,25 @@ def test_lock_after_load_regates_controls_read_only(group_settings_ui):
     # The draft is kept even as the controls freeze, and no further write is attempted.
     expect(by_testid(ui, "group-settings-name")).to_have_value("Edited just before the lock")
     assert len(settings_calls(ui, "PATCH", "profile")) == 1
+
+
+def test_an_unrecognized_status_is_explained_with_its_own_sentence(group_settings_ui):
+    """A group whose status the server doesn't recognize is read-only for the same reason code as a
+    locked one, but the server refuses its writes with a sentence of its own. The context closes Settings
+    on its next read, yet a section already open adopts each write's fresh settings, and a retention save
+    stays allowed: after one, the profile's reason is that sentence, never "locked or inactive" (M11)."""
+    ui = group_settings_ui
+    open_settings(ui)
+    expect(by_testid(ui, "group-settings-name")).to_be_enabled()
+    # The group's stored status changes to one this version doesn't recognize while the section is open.
+    ui.configure("group-a", role="Owner", status="unknown")
+    by_testid(ui, "group-settings-retention-conversation").select_option("30")
+    by_testid(ui, "group-settings-save-retention").click()
+    expect(ui.page.get_by_text("Retention policy saved.", exact=True)).to_be_visible()
+    expect(by_testid(ui, "group-settings-name")).to_be_disabled()
+    expect(ui.page.get_by_text(GROUP_STATUS_UNRECOGNIZED_MESSAGE, exact=True).first).to_be_visible()
+    locked = GROUP_SETTINGS_REFUSAL_MESSAGES[GROUP_STATUS_UNAVAILABLE]
+    expect(ui.page.get_by_text(locked, exact=True)).to_have_count(0)
 
 
 # --------------------------------------------------------------------------

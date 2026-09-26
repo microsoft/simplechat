@@ -1,12 +1,16 @@
 # test_group_settings_refusal_text_parity.py
 """
 Functional test for V2 group settings refusal text parity.
-Version: 0.261.165
+Version: 0.261.187
 Implemented in: 0.261.165
 
 This test ensures the browser's REFUSAL_TEXT table stays byte-for-byte aligned
 with functions_group_settings.REFUSAL_MESSAGES, including the plural
 create_groups_role_required code used by the server.
+
+It also holds the browser's unrecognized-status sentence and the status reason code it
+replaces to functions_group_settings.GROUP_STATUS_UNRECOGNIZED_MESSAGE and
+functions_group_settings_policy.GROUP_STATUS_UNAVAILABLE (0.261.187).
 
 It also pins the ImportError fallback literal in functions_workspace_context.py
 (the copy exercised by the seam and context harnesses that stub functions_group)
@@ -40,6 +44,13 @@ def _real_server_table():
     """
     with group_settings_environment() as env:
         return env.modules.policy.GROUP_MANAGER_REQUIRED, dict(env.modules.settings.REFUSAL_MESSAGES)
+
+
+@lru_cache(maxsize=None)
+def _real_status_refusal():
+    """The status reason code and the sentence refusal() swaps in for a status the server doesn't recognize."""
+    with group_settings_environment() as env:
+        return env.modules.policy.GROUP_STATUS_UNAVAILABLE, env.modules.settings.GROUP_STATUS_UNRECOGNIZED_MESSAGE
 
 
 def _group_manager_required_code():
@@ -98,6 +109,18 @@ def _typescript_refusal_texts():
     return entries
 
 
+def _typescript_constant(name):
+    """An exported string constant from groupSettings.ts, decoded as the browser reads it."""
+    source = V2_GROUP_SETTINGS.read_text(encoding="utf-8")
+    match = re.search(
+        rf"export\s+const\s+{name}\s*=\s*(?P<quote>['\"`])(?P<value>(?:\\.|(?!(?P=quote)).)*)(?P=quote)\s*;",
+        source,
+        flags=re.S,
+    )
+    assert match, f"Could not find {name} in groupSettings.ts"
+    return _decode_js_string(match.group("quote"), match.group("value"))
+
+
 def test_v2_refusal_texts_match_the_server():
     browser_texts = _typescript_refusal_texts()
     refusal_messages = _server_refusal_messages()
@@ -109,6 +132,15 @@ def test_v2_refusal_texts_match_the_server():
             f"  server:  {refusal_messages[key]!r}"
         )
     assert browser_texts["create_groups_role_required"] == refusal_messages["create_groups_role_required"]
+
+
+def test_the_unrecognized_status_sentence_matches_the_server():
+    """The Settings section words a status refusal in a group of unknown status with the sentence the
+    server's refusal() swaps in for that same reason code, never the locked-or-inactive one (M11)."""
+    code, sentence = _real_status_refusal()
+    assert _typescript_constant("GROUP_STATUS_UNAVAILABLE_REASON") == code
+    assert _typescript_constant("GROUP_STATUS_UNRECOGNIZED_TEXT") == sentence
+    assert sentence != _server_refusal_messages()[code]
 
 
 def test_context_import_fallback_matches_the_server():
@@ -126,5 +158,6 @@ def test_context_import_fallback_matches_the_server():
 
 if __name__ == "__main__":
     test_v2_refusal_texts_match_the_server()
+    test_the_unrecognized_status_sentence_matches_the_server()
     test_context_import_fallback_matches_the_server()
     print("Test passed!")

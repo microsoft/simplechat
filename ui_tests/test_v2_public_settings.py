@@ -1,8 +1,9 @@
 # test_v2_public_settings.py
 """
 Production-SPA coverage for the native V2 public workspace Settings, Activity and Statistics sections.
-Version: 0.261.185
+Version: 0.261.187
 Implemented in: 0.261.185
+An unrecognized status is explained with the server's own sentence: 0.261.187
 
 Exercises the real Settings, Activity and Statistics sections -- the M10C sections of the public
 WorkspaceShell's Manage group, the shared M7C components driven by the public scope -- against closed
@@ -37,7 +38,7 @@ from playwright.sync_api import expect
 
 from ui_tests.fixtures.public_settings import (
     PUBLIC_ACTIVITY_UNAVAILABLE_MESSAGE, PUBLIC_SETTINGS_CHANGED_MESSAGE, PUBLIC_SETTINGS_REFUSAL_MESSAGES,
-    PUBLIC_STATS_UNAVAILABLE_MESSAGE, PUBLIC_WORKSPACE_WRITE_CONFLICT_MESSAGE,
+    PUBLIC_STATS_UNAVAILABLE_MESSAGE, PUBLIC_STATUS_UNRECOGNIZED_MESSAGE, PUBLIC_WORKSPACE_WRITE_CONFLICT_MESSAGE,
 )
 from ui_tests.fixtures.public_settings import public_settings_ui as public_settings_ui
 from ui_tests.fixtures.workspace_authoring import ORIGIN
@@ -480,6 +481,24 @@ def test_a_locked_workspace_keeps_its_policies_editable_by_the_owner(public_sett
     expect(by_testid(ui, "public-settings-downloads-toggle")).to_be_enabled()
     expect(by_testid(ui, "public-settings-save-retention")).to_be_visible()
     expect(by_testid(ui, "public-settings-danger")).to_be_visible()
+
+
+def test_an_unrecognized_status_is_explained_with_its_own_sentence(public_settings_ui):
+    """A workspace whose status the server doesn't recognize is read-only for the same reason code as a
+    locked one, but the server refuses its writes with a sentence of its own. The context closes Settings
+    on its next read, yet a section already open adopts each write's fresh settings, and a retention save
+    stays allowed: after one, the profile's reason is that sentence, never "locked or inactive" (M11)."""
+    ui = public_settings_ui
+    open_settings(ui)
+    expect(by_testid(ui, "public-settings-name")).to_be_enabled()
+    # The workspace's stored status changes to one this version doesn't recognize while the section is open.
+    ui.configure(WORKSPACE, role="Owner", status="unknown")
+    by_testid(ui, "public-settings-retention-conversation").select_option("30")
+    by_testid(ui, "public-settings-save-retention").click()
+    expect(ui.page.get_by_text("Retention policy saved.", exact=True)).to_be_visible()
+    expect(by_testid(ui, "public-settings-name")).to_be_disabled()
+    expect(ui.page.get_by_text(PUBLIC_STATUS_UNRECOGNIZED_MESSAGE, exact=True).first).to_be_visible()
+    expect(ui.page.get_by_text(LOCKED_REASON, exact=True)).to_have_count(0)
 
 
 def test_an_inactive_workspace_closes_the_manage_sections(public_settings_ui):

@@ -48,6 +48,17 @@ export function publicSettingsReasonText(code: string | undefined): string | und
     return code ? REFUSAL_TEXT[code] : undefined;
 }
 
+/** The reason code a status refusal carries (`functions_public_settings_policy.PUBLIC_STATUS_UNAVAILABLE`). */
+export const PUBLIC_STATUS_UNAVAILABLE_REASON = 'public_workspace_status_unavailable';
+
+/**
+ * The sentence the server refuses a profile or logo write with when the workspace's status isn't one it
+ * recognizes (`functions_public_settings.PUBLIC_STATUS_UNRECOGNIZED_MESSAGE`). The reason code stays the
+ * locked-or-inactive one; the server's `refusal()` swaps only the sentence. Pinned by a functional test.
+ */
+export const PUBLIC_STATUS_UNRECOGNIZED_TEXT =
+    "This workspace's status isn't recognized, so its name, description, color and logo can't be changed.";
+
 /**
  * Build the scoped settings client for one public workspace. `management` is the context's or the
  * read's `settings_management` block, read with no fallback, exactly as the group client reads it.
