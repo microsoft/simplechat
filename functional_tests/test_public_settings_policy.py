@@ -424,6 +424,8 @@ def test_every_native_write_and_read_is_gated_by_the_one_decision():
     assert _called(_function("functions_public_settings.py", "require_operation"), "public_settings_decisions")
     assert _called(_function("functions_public_settings.py", "build_public_settings"),
                    "build_public_settings_management")
+    assert _called(_function("functions_workspace_context.py", "build_public_workspace_context"),
+                   "build_public_settings_management")
 
 
 if __name__ == "__main__":

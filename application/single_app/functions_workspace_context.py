@@ -71,6 +71,7 @@ from functions_public_document_policy import (
     public_document_collaboration_operations,
     public_document_management_operations,
 )
+from functions_public_settings_policy import build_public_settings_management
 from functions_public_workspaces import (
     check_public_workspace_status_allows_operation,
     find_public_workspace_by_id,
@@ -457,4 +458,8 @@ def build_public_workspace_context(user_id, workspace_id, settings, *, user_info
             "facets": True,
             "places": True,
         },
+        # The decision the native public settings and insights routes enforce and their
+        # settings read publishes (M10C), so the workspace can offer Settings, Activity and
+        # Statistics without another read.
+        "settings_management": build_public_settings_management(role, workspace, settings),
     }

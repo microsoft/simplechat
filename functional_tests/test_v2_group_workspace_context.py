@@ -2,10 +2,11 @@
 """
 Selected-group context authorization, safe projection, and activation contracts.
 
-Version: 0.261.155
+Version: 0.261.181
 Implemented in: 0.261.126
 Shared shell and native delegation integration: 0.261.127
 Members navigation section (M7B): 0.261.155
+The real public download predicate behind the public settings_management (M10C): 0.261.181
 
 The real context module and Flask route body run against isolated service seams.
 Existing group-role/status and Flask authentication definitions execute unchanged.
@@ -14,6 +15,7 @@ These are request-boundary tests, not a claim of full Azure bootstrap coverage.
 
 import ast
 import importlib.util
+import json
 import logging
 import re
 import subprocess
@@ -76,13 +78,16 @@ def environment(monkeypatch):
     action_governance = Mock(return_value=True)
     settings_namespace = {
         "normalize_group_workflow_allowed_group_ids": lambda value: value or [],
+        "json": json,
     }
-    # The download capability is the real predicate: the settings policy behind
-    # settings_management calls it.
+    # The download capabilities are the real predicates: the group and public settings
+    # policies behind each context's settings_management call them.
     execute_functions("functions_settings.py", {
         "is_group_workflows_enabled_for_group", "get_group_workflow_management_roles",
         "is_group_workspace_file_download_admin_enabled", "_get_workspace_policy_target_id",
         "normalize_file_download_allowed_group_ids",
+        "is_public_workspace_file_download_admin_enabled", "normalize_file_download_allowed_public_workspace_ids",
+        "normalize_file_sync_allowed_public_workspace_ids",
     }, settings_namespace)
     branding_namespace = {
         "DEFAULT_WORKSPACE_HERO_COLOR": "#0078d4",
@@ -128,7 +133,8 @@ def environment(monkeypatch):
     # by the same policy the routes enforce. A stub here would let a policy change
     # pass unnoticed.
     for name in ("functions_group_document_policy", "functions_group_prompt_policy",
-                 "functions_public_document_policy", "functions_group_settings_policy"):
+                 "functions_public_document_policy", "functions_group_settings_policy",
+                 "functions_public_settings_policy"):
         monkeypatch.delitem(sys.modules, name, raising=False)
     monkeypatch.syspath_prepend(str(APP_ROOT))
     for name, module in modules.items():

@@ -1,12 +1,13 @@
 # public_workspace.py
 """
 Closed HTTP fixtures for the real V2 public workspace shell.
-Version: 0.261.175
+Version: 0.261.181
 Implemented in: 0.261.132
 Every context carries the server's document_management hint, as build_public_workspace_context
 sends it: 0.261.167
 Every context is the real builder's, held to it by
 functional_tests/test_public_context_fixture_parity.py: 0.261.168
+Every context carries the server's settings_management hint (M10C): 0.261.181
 
 The public surface mirrors the group shell. Only its documents section is open, and a manager role
 can be granted document management and the generated-artifact review. It never advertises native
@@ -37,6 +38,13 @@ PUBLIC_DOCUMENT_OPERATIONS = (
 )
 # functions_public_document_policy.PUBLIC_DOCUMENT_COLLABORATION_OPERATIONS, in the server's order.
 PUBLIC_DOCUMENT_COLLABORATION_OPERATIONS = ("inspect", "approve_artifact", "reject_artifact", "cancel_artifact")
+# functions_public_settings_policy.PUBLIC_SETTINGS_OPERATIONS, in the server's order, and the statuses in
+# which the profile and logo can change (PUBLIC_SETTINGS_WRITABLE_STATUSES).
+PUBLIC_SETTINGS_OPERATIONS = (
+    "edit_name", "edit_description", "edit_color", "edit_logo", "edit_downloads", "edit_retention",
+    "view_activity", "view_stats", "view_file_count",
+)
+PUBLIC_SETTINGS_WRITABLE_STATUSES = ("active", "upload_disabled")
 SECTION_GROUPS = {
     "documents": "knowledge", "tags": "knowledge", "sync": "knowledge", "prompts": "knowledge",
     "identities": "connections",
@@ -88,6 +96,37 @@ def public_document_collaboration(role, status):
     }
 
 
+def public_settings_management(role, status):
+    """`build_public_settings_management` for the modelled deployment, which allows the administrator's
+    public downloads and has public retention policies off. The owner edits the profile and logo in an
+    active or upload-disabled workspace; the owner and admins edit downloads (retention stays off) and read
+    the activity; any stored role reads the statistics; and the owner reads the document count."""
+    owner = role == "Owner"
+    manager = role in ("Owner", "Admin")
+    if not owner:
+        profile = "public_workspace_owner_required"
+    elif status not in PUBLIC_SETTINGS_WRITABLE_STATUSES:
+        profile = "public_workspace_status_unavailable"
+    else:
+        profile = None
+    decisions = {operation: profile for operation in ("edit_name", "edit_description", "edit_color", "edit_logo")}
+    decisions["edit_downloads"] = None if manager else "public_workspace_manager_required"
+    decisions["edit_retention"] = (
+        "public_workspace_retention_disabled" if manager else "public_workspace_manager_required"
+    )
+    decisions["view_activity"] = None if manager else "public_workspace_manager_required"
+    decisions["view_stats"] = None if role in PUBLIC_MANAGER_ROLES else "public_workspace_member_required"
+    decisions["view_file_count"] = None if owner else "public_workspace_owner_required"
+    return {
+        "schema_version": 1,
+        "operations": [operation for operation in PUBLIC_SETTINGS_OPERATIONS if decisions[operation] is None],
+        "reasons": {
+            operation: decisions[operation] for operation in PUBLIC_SETTINGS_OPERATIONS
+            if decisions[operation] is not None
+        },
+    }
+
+
 def public_context(identifier, name, *, status="active", role="User", viewer=OWNER_ID):
     """`build_public_workspace_context` for the modelled deployment: public workspaces, metadata
     extraction and the administrator's public downloads on."""
@@ -131,6 +170,7 @@ def public_context(identifier, name, *, status="active", role="User", viewer=OWN
         },
         "document_management": public_document_management(role, status),
         "document_collaboration": public_document_collaboration(role, status),
+        "settings_management": public_settings_management(role, status),
     }
 
 

@@ -1,8 +1,9 @@
 # test_public_context_fixture_parity.py
 """
 Parity between the public workspace context the V2 browser fixtures serve and the real builder.
-Version: 0.261.175
+Version: 0.261.181
 Implemented in: 0.261.168
+settings_management, the public settings decision (M10C): 0.261.181
 
 Every public browser suite builds its selected-workspace context from
 `ui_tests/fixtures/public_workspace.py::public_context`, directly or through the per-suite fixtures
@@ -17,7 +18,8 @@ section or hint only one side has fails. That covers every field the V2 client r
 - `role`, `status`, `can_manage_workspace` and the envelope (`schema_version`, `enabled`);
 - every section: `enabled`, `can_manage`, `reason` and `group`;
 - `document_permissions` and `document_queries`;
-- both hints: `document_management` and `document_collaboration`.
+- the hints: `document_management`, `document_collaboration` and, since M10C, `settings_management`,
+  the public settings decision the native settings and insights routes enforce.
 
 The workspace metadata (`workspace`, `scope` and `viewer_id`) may differ in value but not in keys.
 
@@ -39,6 +41,7 @@ this test walks the union of both sides' keys, so a section only one side lists 
 """
 
 import ast
+import json
 import sys
 from copy import deepcopy
 from pathlib import Path
@@ -76,10 +79,12 @@ MODELLED_SETTINGS = {
 
 METADATA_FIELDS = frozenset({"viewer_id", "scope", "workspace"})
 # The fields the V2 client reads. The comparison is not limited to them; the envelope test only checks
-# the server still sends each one, so none can drop out of the comparison unnoticed.
+# the server still sends each one, so none can drop out of the comparison unnoticed. The public
+# Settings, Activity and Statistics sections (M10C) take their controls from settings_management.
 CLIENT_READ_FIELDS = (
     "schema_version", "enabled", "role", "status", "can_manage_workspace", "sections",
     "document_permissions", "document_queries", "document_management", "document_collaboration",
+    "settings_management",
 )
 WORKSPACE_ID = "pub-a"
 WORKSPACE_NAME = "Research library"
@@ -98,14 +103,16 @@ def public(environment, monkeypatch):  # noqa: F811 - the imported harness fixtu
         },
     }
     # The group harness stubs the public lookups the context module imports. Put the real role,
-    # status and download functions in their place, reading these records.
-    namespace = {}
+    # status and download functions in their place, reading these records. The download assignment
+    # list is parsed by the real File Sync normalizer, as in the application.
+    namespace = {"json": json}
     execute_functions("functions_public_workspaces.py", {
         "get_user_role_in_public_workspace", "check_public_workspace_status_allows_operation",
     }, namespace)
     execute_functions("functions_settings.py", {
         "is_public_workspace_file_download_enabled", "is_public_workspace_file_download_admin_enabled",
         "_get_workspace_policy_target_id", "normalize_file_download_allowed_public_workspace_ids",
+        "normalize_file_sync_allowed_public_workspace_ids",
     }, namespace)
     for name in (
         "get_user_role_in_public_workspace", "check_public_workspace_status_allows_operation",
@@ -224,8 +231,41 @@ def test_the_fixture_context_is_a_fresh_copy_each_time():
     first["sections"]["documents"]["enabled"] = False
     first["document_management"]["operations"].clear()
     first["document_collaboration"]["operations"].clear()
+    first["settings_management"]["operations"].clear()
+    first["settings_management"]["reasons"]["edit_name"] = "changed"
     first["document_permissions"]["can_view"] = False
     assert second == fixture_context("Owner", "active")
+
+
+@pytest.mark.parametrize("status", STATUSES)
+@pytest.mark.parametrize("role", list(ROLE_USERS))
+def test_the_settings_hint_is_the_public_settings_decision(public, role, status):
+    """settings_management is build_public_settings_management for the caller's role, the stored
+    workspace and the current settings, and the fixture serves the same hint."""
+    real = real_context(public, role, status)
+    expected = public.helper.build_public_settings_management(
+        role, deepcopy(public.public_records[WORKSPACE_ID]), deepcopy(public.settings),
+    )
+    assert real["settings_management"] == expected
+    assert fixture_context(role, status)["settings_management"] == expected
+
+
+@pytest.mark.parametrize("changes,operation,reason", [
+    ({"enable_retention_policy_public": True}, "edit_retention", None),
+    ({"allow_public_workspace_file_downloads": False}, "edit_downloads", "public_workspace_downloads_not_enabled"),
+    ({"require_public_workspace_assignment_for_file_downloads": True,
+      "file_download_allowed_public_workspace_ids": ["pub-other"]}, "edit_downloads",
+     "public_workspace_downloads_not_enabled"),
+    ({"require_public_workspace_assignment_for_file_downloads": True,
+      "file_download_allowed_public_workspace_ids": [WORKSPACE_ID]}, "edit_downloads", None),
+])
+def test_the_settings_hint_follows_the_deployment_switches(public, changes, operation, reason):
+    """Outside the modelled deployment the hint still is the decision: retention opens with the public
+    retention switch, and downloads follow the administrator's capability for this workspace."""
+    public.settings.update(changes)
+    management = real_context(public, "Owner", "active")["settings_management"]
+    assert (operation in management["operations"]) is (reason is None)
+    assert management["reasons"].get(operation) == reason
 
 
 # --------------------------------------------------------------------------
