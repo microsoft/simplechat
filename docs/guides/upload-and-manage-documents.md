@@ -90,14 +90,6 @@ Simple Chat organizes documents into different workspace types:
 - `.xlsx, .xlsm, .xls` - Excel spreadsheets
 - `.csv` - Comma-separated values
 
-**OneNote Notes** (from version **0.261.045**, workspace uploads only):
-- `.one` - A section's typed notes and table contents
-- `.onepkg` - An exported notebook, stored as one workspace document with section and page context
-
-OneNote handwriting, image OCR, and embedded attachments are not extracted.
-See [Native OneNote Ingestion](../explanation/features/ONENOTE_INGESTION.md) for
-processing limits and local-extractor setup.
-
 **Images** (with OCR):
 - `.jpg, .jpeg` - JPEG images
 - `.png` - PNG images

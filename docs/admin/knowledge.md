@@ -141,11 +141,6 @@ vector is trimmed, and the event is logged.
 Custom sizes apply to new uploads only. Existing documents keep the chunks they were indexed with
 until they are uploaded again.
 
-OneNote `.one` and `.onepkg` ingestion (from **0.261.045**) reuses the TXT word
-target. Each chunk stays within a OneNote page and includes section/page context;
-that context counts toward both the word target and the embedding character
-budget. No separate OneNote chunk-size setting is required.
-
 ### Metadata Extraction {#metadata-extraction-section}
 
 The Metadata Extraction section belongs to the Document Extraction tab. Use it with the adjacent settings in this group so related rollout, access, and operational choices stay aligned.

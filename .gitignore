@@ -69,6 +69,3 @@ local_storage_state.json
 .pytest_cache
 .playwright-mcp
 .impeccable
-
-# Local OneNote native builds
-application/single_app/native/onenote_extractor/target/
