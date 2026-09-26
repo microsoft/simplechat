@@ -47,7 +47,8 @@ row's `membership` from the server decides which appears, never the browser.
 - A switch writes only that workspace's entry, so it never rewrites another.
   Opening a workspace doesn't hide the others, unlike classic's **Set active**.
 - A workspace whose status doesn't allow reading is shown as unavailable. Its
-  switch can still be turned off.
+  switch can be turned off, and from version **0.261.187** it can't be turned
+  on.
 
 ### Visibility tools
 
@@ -64,7 +65,10 @@ From version **0.261.184**, the directory also offers:
 
 The bulk and saved-list actions cover the whole directory, not the page on
 screen, up to 1,000 workspaces; past that they refuse and say how many there
-are. Each reports how many workspaces it changed.
+are. Each reports how many workspaces it changed. From version **0.261.187**,
+**Show all in chat** and **Use this list** leave an unavailable workspace
+hidden, and say how many they skipped: public chat doesn't yet check a
+workspace's status itself (decision 32).
 
 ### Labels
 

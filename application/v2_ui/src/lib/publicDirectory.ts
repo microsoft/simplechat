@@ -63,6 +63,16 @@ export interface PublicWorkspaceCreated {
     name: string;
 }
 
+/**
+ * A workspace reduced to what a whole-directory bulk action needs: its immutable id and its
+ * status. The status lets the caller tell an *available* workspace (one a reader may chat) from
+ * an unavailable one, so a bulk "show" can skip the unavailable rather than claim them for chat.
+ */
+export interface PublicDirectoryWorkspaceRef {
+    id: string;
+    status: string;
+}
+
 export interface PublicDirectoryPage {
     workspaces: PublicDirectoryWorkspace[];
     page: number;
@@ -197,6 +207,34 @@ function listQuery(view: PublicDirectoryView, search: string, page: number, page
     return params.toString();
 }
 
+/**
+ * Walk the whole directory once, bounded, returning each workspace's id and status.
+ *
+ * Walks the `all` view with no search at the server's largest page. The first page carries
+ * total_count, so a directory past the bound is refused before any further request. Ids are
+ * deduplicated by first appearance -- a workspace can shift pages if the collection changes
+ * mid-walk -- and each id keeps the status it was first seen with. This is the single source the
+ * id-only and id-plus-status bulk callers both read, so they can never diverge on what "all" means.
+ */
+async function walkAllWorkspaces(signal?: AbortSignal): Promise<PublicDirectoryWorkspaceRef[]> {
+    const query = (page: number) => `/api/public_workspaces/directory?${listQuery('all', '', page, DIRECTORY_BULK_PAGE_SIZE)}`;
+    const first = readPublicDirectoryPage(await api.get<unknown>(query(1), signal), 1, DIRECTORY_BULK_PAGE_SIZE);
+    if (first.totalCount > DIRECTORY_BULK_MAX_WORKSPACES) {
+        throw new DirectoryBulkTooLargeError(first.totalCount);
+    }
+    const seen = new Map<string, string>();
+    const record = (workspace: PublicDirectoryWorkspace) => {
+        if (!seen.has(workspace.id)) seen.set(workspace.id, workspace.status);
+    };
+    first.workspaces.forEach(record);
+    const pages = Math.max(1, Math.ceil(first.totalCount / DIRECTORY_BULK_PAGE_SIZE));
+    for (let page = 2; page <= pages; page += 1) {
+        const next = readPublicDirectoryPage(await api.get<unknown>(query(page), signal), page, DIRECTORY_BULK_PAGE_SIZE);
+        next.workspaces.forEach(record);
+    }
+    return [...seen].map(([id, status]) => ({ id, status }));
+}
+
 export interface PublicDirectoryAdapter {
     scope: 'public';
     list: (view: PublicDirectoryView, search: string, page: number, pageSize: number, signal?: AbortSignal) => Promise<PublicDirectoryPage>;
@@ -213,6 +251,13 @@ export interface PublicDirectoryAdapter {
      * caller refuses rather than writing a partial set.
      */
     listAllWorkspaceIds: (signal?: AbortSignal) => Promise<string[]>;
+    /**
+     * Every discoverable workspace's id *and status*, walked across the server's pages under the
+     * same bound as {@link listAllWorkspaceIds}. A bulk "show" reads the status so it can skip a
+     * workspace a reader cannot chat rather than claim it for chat, and a saved list leaves an
+     * unavailable member hidden.
+     */
+    listAllWorkspaces: (signal?: AbortSignal) => Promise<PublicDirectoryWorkspaceRef[]>;
     /** The logo URL for a row, or null when it carries no loadable logo. */
     logoUrl: (workspace: PublicDirectoryWorkspace) => string | null;
     /** Where Open navigates for a row, by immutable id and with no activate handshake. */
@@ -252,23 +297,8 @@ export const PUBLIC_DIRECTORY: PublicDirectoryAdapter = {
         );
         return readPublicDirectoryWorkspace(data);
     },
-    listAllWorkspaceIds: async (signal) => {
-        // Walk the 'all' view with no search at the server's largest page. The first page carries
-        // total_count, so a directory past the bound is refused before any further request. Ids are
-        // deduplicated because a workspace can shift pages if the collection changes mid-walk.
-        const query = (page: number) => `/api/public_workspaces/directory?${listQuery('all', '', page, DIRECTORY_BULK_PAGE_SIZE)}`;
-        const first = readPublicDirectoryPage(await api.get<unknown>(query(1), signal), 1, DIRECTORY_BULK_PAGE_SIZE);
-        if (first.totalCount > DIRECTORY_BULK_MAX_WORKSPACES) {
-            throw new DirectoryBulkTooLargeError(first.totalCount);
-        }
-        const ids = new Set<string>(first.workspaces.map((workspace) => workspace.id));
-        const pages = Math.max(1, Math.ceil(first.totalCount / DIRECTORY_BULK_PAGE_SIZE));
-        for (let page = 2; page <= pages; page += 1) {
-            const next = readPublicDirectoryPage(await api.get<unknown>(query(page), signal), page, DIRECTORY_BULK_PAGE_SIZE);
-            for (const workspace of next.workspaces) ids.add(workspace.id);
-        }
-        return [...ids];
-    },
+    listAllWorkspaceIds: async (signal) => (await walkAllWorkspaces(signal)).map((workspace) => workspace.id),
+    listAllWorkspaces: async (signal) => walkAllWorkspaces(signal),
     logoUrl: (workspace) => {
         // A logo is requested only when the server says one is stored for this workspace.
         if (!workspace.hasLogo) return null;

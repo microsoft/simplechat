@@ -2,6 +2,15 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.187)**
+
+#### Bug Fixes
+
+*   **The V2 Directory No Longer Makes Unavailable Workspaces Visible For Chat**
+    *   An inactive public workspace, or one whose status isn't recognized, shouldn't be searched in chat, but public chat checks only which workspaces you've made visible. The V2 directory's switch, **Show all in chat** and **Use this list** could all make such a workspace visible.
+    *   Now the switch can only turn an unavailable workspace off, and the bulk and saved-list actions leave it hidden and say how many they skipped. The server-side check in public chat is a follow-up.
+    *   (Ref: `PublicDirectoryList.tsx`, `PublicDirectoryPage.tsx`, `publicVisibility.ts`, `publicDirectory.ts`, [V2 Public Directory](features/V2_PUBLIC_DIRECTORY.md))
+
 ### **(v0.261.186)**
 
 #### Bug Fixes

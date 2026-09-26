@@ -1,7 +1,7 @@
 # public_directory.py
 """
 Closed M9A/M10A public directory HTTP fixtures for the real production V2 SPA.
-Version: 0.261.184
+Version: 0.261.187
 Implemented in: 0.261.175
 
 The fixture serves only the native routes the directory page reads and writes --
@@ -346,12 +346,14 @@ class PublicDirectoryFixture(PublicWorkspaceFixture):
 
     # --- the caller's own document-manager request, ported from functions_public_membership -----
 
+    # Ported verbatim from functions_public_membership; test_public_directory_fixture_parity.py pins
+    # each one against the real route, so the page renders the server's own words, not a paraphrase.
     _REQUEST_MESSAGES = {
         "already_member": "You already manage this public workspace's documents.",
         "request_pending": "You've already asked to manage this public workspace's documents.",
-        "no_pending_request": "You don't have a pending request for this public workspace.",
+        "no_pending_request": "You don't have a pending request to manage this public workspace's documents.",
         "public_workspace_write_conflict": "The public workspace changed while your request was being saved. Try again.",
-        "workspace_not_found": "The public workspace was not found.",
+        "workspace_not_found": "Public workspace not found.",
     }
 
     def _membership_request(self, route, entry):

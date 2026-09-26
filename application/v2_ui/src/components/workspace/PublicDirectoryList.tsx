@@ -10,8 +10,10 @@
 //
 // Two states matter per row and are independent: whether a workspace is *available* (its status
 // lets a reader chat it) and whether the reader has it *visible* for chat. An unavailable
-// workspace is dimmed and labelled, but its switch still works, because hiding one you cannot
-// currently use is a valid choice and must never error.
+// workspace is dimmed and labelled; its switch can still turn it *off* -- hiding one you cannot
+// currently use is a valid choice and must never error -- but an unavailable workspace that is
+// already hidden cannot be turned back *on*, because making it visible would claim it for chat
+// when its status forbids it (decision 32).
 
 import { useState } from 'react';
 import { ArrowUpRight, Loader2 } from 'lucide-react';
@@ -52,24 +54,36 @@ function StatusBadge({ status }: { status: string }) {
  * visible text, to keep the row tight.
  */
 function VisibilitySwitch({
-    workspace, visible, disabled, onToggle,
+    workspace, visible, available, disabled, onToggle,
 }: {
     workspace: PublicDirectoryWorkspace;
     visible: boolean;
+    available: boolean;
     disabled: boolean;
     onToggle: (id: string, next: boolean) => void;
 }) {
+    // An unavailable workspace that is already hidden is locked off: it can never be turned on,
+    // because making it visible would claim it for chat when its status forbids it (decision 32).
+    // It can always be turned off, so a reader can still remove one they cannot currently use, and
+    // an available workspace toggles freely.
+    const lockedOff = !available && !visible;
+    const switchDisabled = disabled || lockedOff;
     return (
-        <label className={`flex shrink-0 cursor-pointer items-center gap-2 ${disabled ? 'cursor-not-allowed opacity-60' : ''}`}>
+        <label className={`flex shrink-0 cursor-pointer items-center gap-2 ${switchDisabled ? 'cursor-not-allowed opacity-60' : ''}`}>
             <span className="hidden text-xs text-text-3 sm:inline">{visible ? 'Visible for chat' : 'Hidden from chat'}</span>
             <span className="relative inline-flex">
                 <input
                     type="checkbox"
                     className="peer sr-only"
                     checked={visible}
-                    disabled={disabled}
+                    disabled={switchDisabled}
                     aria-label={`Show ${workspace.name} in public chat`}
-                    onChange={(event) => onToggle(workspace.id, event.target.checked)}
+                    onChange={(event) => {
+                        // Guard the value even if the disabled state is bypassed: an unavailable
+                        // workspace may be turned off, but never on.
+                        if (!available && event.target.checked) return;
+                        onToggle(workspace.id, event.target.checked);
+                    }}
                 />
                 <span
                     aria-hidden="true"
@@ -150,7 +164,7 @@ export function PublicDirectoryRow({
             <div className="ml-auto flex shrink-0 flex-wrap items-center justify-end gap-3">
                 <RequestAction workspace={workspace} busy={busy} disabled={disabled}
                     onRequestAccess={onRequestAccess} onCancelRequest={onCancelRequest} />
-                <VisibilitySwitch workspace={workspace} visible={visible} disabled={disabled} onToggle={onToggleVisibility} />
+                <VisibilitySwitch workspace={workspace} visible={visible} available={available} disabled={disabled} onToggle={onToggleVisibility} />
                 <GlassButton size="sm" variant="subtle" disabled={disabled} aria-label={`Open ${workspace.name}`}
                     onClick={() => onOpen(workspace.id)}>
                     Open<ArrowUpRight size={14} />
