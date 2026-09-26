@@ -1,8 +1,10 @@
 # test_v2_group_prompts.py
 """
 Production-SPA coverage for the native scope-aware V2 group prompts workbench.
-Version: 0.261.157
+Version: 0.261.184
 Implemented in: 0.261.136
+The editor keeps keyboard focus while its variable picker keeps its own, and each Escape closes one
+layer and returns focus: 0.261.184
 
 Exercises the real workbench, adapter and chat resolution against closed synthetic
 HTTP. The fixture only serves the immutable `/api/groups/<id>/prompts` family, never
@@ -131,6 +133,48 @@ def test_manager_can_edit_with_conditional_write(group_prompts_ui):
     ][-1]
     assert patched.body.get("expected_etag") == '"etag-weekly-status-0"'
     assert "is_favorite" not in patched.body
+
+
+def focus_in(page, selector):
+    """Whether the document's focus sits inside the element the selector names."""
+    return page.evaluate(
+        "(selector) => Boolean(document.activeElement && document.activeElement.closest(selector))", selector,
+    )
+
+
+def test_the_edit_dialog_keeps_keyboard_focus_and_the_picker_keeps_its_own(group_prompts_ui):
+    """The editor keeps Tab inside itself, yet the variable picker it opens keeps its own Tab order, and
+    each Escape closes only the innermost layer, returning focus to the control that opened it (M11)."""
+    ui = group_prompts_ui
+    page = ui.page
+    open_prompts(ui)
+    row(ui, "Weekly status").click()
+    edit = details(ui).get_by_role("button", name="Edit", exact=True)
+    edit.focus()
+    page.keyboard.press("Enter")
+    dialog = page.get_by_role("dialog", name="Edit prompt", exact=True)
+    expect(dialog).to_be_visible()
+    expect(page.locator("#prompt-content")).to_be_focused()
+    stops = dialog.locator("button:visible, input:visible, textarea:visible").count()
+    for key in ["Tab"] * (stops + 2) + ["Shift+Tab"] * (stops + 2):
+        page.keyboard.press(key)
+        assert focus_in(page, '[role="dialog"][aria-label="Edit prompt"]'), f"{key} moved focus out of the open editor."
+
+    dialog.get_by_role("button", name="Insert variable", exact=True).click()
+    picker = page.get_by_role("dialog", name="Insert a prompt variable", exact=True)
+    expect(picker.get_by_role("textbox", name="Variable name", exact=True)).to_be_focused()
+    page.keyboard.press("Tab")
+    expect(picker.get_by_role("textbox", name="Default value (optional)", exact=True)).to_be_focused()
+    page.keyboard.press("Shift+Tab")
+    expect(picker.get_by_role("textbox", name="Variable name", exact=True)).to_be_focused()
+
+    page.keyboard.press("Escape")
+    expect(picker).to_have_count(0)
+    expect(dialog).to_be_visible()
+    expect(dialog.get_by_role("button", name="Insert variable", exact=True)).to_be_focused()
+    page.keyboard.press("Escape")
+    expect(dialog).to_have_count(0)
+    expect(edit).to_be_focused()
 
 
 def test_manager_can_delete_with_expected_etag(group_prompts_ui):

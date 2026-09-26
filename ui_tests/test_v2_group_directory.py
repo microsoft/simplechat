@@ -1,8 +1,9 @@
 # test_v2_group_directory.py
 """
 Production-SPA coverage for the native V2 group directory page.
-Version: 0.261.150
+Version: 0.261.184
 Implemented in: 0.261.150
+The Create dialog holds keyboard focus and hands it back on close: 0.261.184
 
 Exercises the real group directory surface -- the browse-and-join page built on the My Workspace
 design system and driven by the scope-neutral directory adapter -- against closed synthetic HTTP.
@@ -330,6 +331,31 @@ def test_create_navigates_to_the_new_group_by_id(group_directory_ui):
     # The create call carries no active-group handshake; the directory reserves that route. The
     # created group's shell owns its own activation once we land on it.
     expect(page).to_have_url(re.compile(r"/v2/groups/dir-created-1(?:[/?#]|$)"))
+
+
+# The document's focus is inside the open dialog, never on the page behind it.
+FOCUS_IN_DIALOG = "() => Boolean(document.activeElement && document.activeElement.closest('[role=\"dialog\"]'))"
+
+
+def test_the_create_dialog_holds_and_returns_keyboard_focus(group_directory_ui):
+    """Opened from the keyboard, Create takes focus into the dialog, Tab and Shift+Tab stay inside it
+    past both ends, and Escape hands focus back to the Create button (M11, WCAG 2.4.3)."""
+    ui, page = group_directory_ui, group_directory_ui.page
+    open_directory(ui)
+    create = page.get_by_role("button", name="Create group", exact=True)
+    create.focus()
+    page.keyboard.press("Enter")
+    dialog = page.get_by_role("dialog")
+    expect(dialog).to_be_visible()
+    page.wait_for_function(FOCUS_IN_DIALOG)
+    stops = dialog.locator("button:visible, input:visible, select:visible, textarea:visible").count()
+    assert stops >= 3, "The Create dialog should offer its fields and its buttons."
+    for key in ["Tab"] * (stops + 2) + ["Shift+Tab"] * (stops + 2):
+        page.keyboard.press(key)
+        assert page.evaluate(FOCUS_IN_DIALOG), f"{key} moved focus out of the open dialog."
+    page.keyboard.press("Escape")
+    expect(dialog).to_have_count(0)
+    expect(create).to_be_focused()
 
 
 # --------------------------------------------------------------------------
