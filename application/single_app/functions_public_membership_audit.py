@@ -3,13 +3,15 @@
 
 One activity record is written for each add, role change and member removal,
 mirroring the group's ``add_member_directly``, ``update_member_role`` and
-``group_member_deleted`` records with public-workspace fields. Approve, reject and
-transfer write no activity record, exactly as the group writes none (a recorded
-follow-up). Each helper swallows its own failure, so a failed audit write never fails
-a membership change that has already committed, and logs the failure with the action
-only -- never the member's details. No notification is sent from here: the two
-membership-change notifications the classic routes send stay in
-``functions_public_membership`` and no new one is added (decision from M10A §5).
+``group_member_deleted`` records with public-workspace fields, and one for each
+self-service document-manager request and its cancellation (the requester side of
+M10A's request family). Approve, reject and transfer write no activity record,
+exactly as the group writes none (a recorded follow-up). Each helper swallows its own
+failure, so a failed audit write never fails a membership change that has already
+committed, and logs the failure with the action only -- never the member's details. No
+notification is sent from here: the two membership-change notifications the classic
+routes send stay in ``functions_public_membership`` and no new one is added (decision
+from M10A §5), including for a request.
 """
 
 import logging
@@ -156,8 +158,78 @@ def log_public_member_removed(
         _record_failed("remove_member")
 
 
+def log_public_membership_requested(
+    *,
+    workspace_id,
+    workspace_doc,
+    requester_user_id,
+    requester_email,
+    requester_name,
+):
+    """Write the ``public_membership_requested`` activity record for a self-service request."""
+    name = _workspace_name(workspace_doc, workspace_id)
+    try:
+        cosmos_activity_logs_container.create_item(body={
+            "id": str(uuid.uuid4()),
+            "user_id": requester_user_id,
+            "activity_type": "public_membership_requested",
+            "timestamp": _now(),
+            "requested_by": {
+                "user_id": requester_user_id,
+                "email": requester_email,
+                "name": requester_name,
+            },
+            "public_workspace": {
+                "public_workspace_id": workspace_id,
+                "public_workspace_name": name,
+            },
+            "description": (
+                f"{requester_name} ({requester_email}) asked to manage documents "
+                f"in public workspace {name}"
+            ),
+        })
+    except Exception:  # noqa: BLE001 - a failed audit write must not fail a committed change
+        _record_failed("request_membership")
+
+
+def log_public_membership_request_canceled(
+    *,
+    workspace_id,
+    workspace_doc,
+    requester_user_id,
+    requester_email,
+    requester_name,
+):
+    """Write the ``public_membership_request_canceled`` activity record for a self-cancel."""
+    name = _workspace_name(workspace_doc, workspace_id)
+    try:
+        cosmos_activity_logs_container.create_item(body={
+            "id": str(uuid.uuid4()),
+            "user_id": requester_user_id,
+            "activity_type": "public_membership_request_canceled",
+            "timestamp": _now(),
+            "canceled_by": {
+                "user_id": requester_user_id,
+                "email": requester_email,
+                "name": requester_name,
+            },
+            "public_workspace": {
+                "public_workspace_id": workspace_id,
+                "public_workspace_name": name,
+            },
+            "description": (
+                f"{requester_name} ({requester_email}) canceled their request to manage "
+                f"documents in public workspace {name}"
+            ),
+        })
+    except Exception:  # noqa: BLE001 - a failed audit write must not fail a committed change
+        _record_failed("cancel_membership_request")
+
+
 __all__ = [
     "log_public_member_added",
-    "log_public_member_role_change",
     "log_public_member_removed",
+    "log_public_member_role_change",
+    "log_public_membership_request_canceled",
+    "log_public_membership_requested",
 ]

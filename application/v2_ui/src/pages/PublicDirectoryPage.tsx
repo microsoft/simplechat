@@ -2,9 +2,12 @@
 //
 // The V2 public workspace directory: a browse-and-curate surface over every public workspace
 // the caller may discover. It is not a workspace shell -- there is no active handshake and no
-// per-workspace context load -- and it is read-only: unlike the group directory there is no
-// create, join or cancel. It reads one route, GET /api/public_workspaces/directory, and keeps
-// the view, search and page in the URL so back, forward and a shared link reopen the same view.
+// per-workspace context load. It reads one route, GET /api/public_workspaces/directory, keeps
+// the view, search and page in the URL so back, forward and a shared link reopen the same view,
+// and offers three writes beyond curation: creating a public workspace (the classic route), and
+// asking to manage a workspace's documents or cancelling that request (the M10A request routes).
+// Each membership write returns the server's fresh row, which replaces the row in place, so the
+// affordance is gated purely on the server-computed membership and never a client role check.
 //
 // Its one write is the per-user "visible for chat" preference, which curates which public
 // workspaces appear in the aggregate public chat. That preference lives in publicDirectorySettings
@@ -24,7 +27,7 @@ import { CreatePublicWorkspaceDialog } from '../components/workspace/CreatePubli
 import { ApiError } from '../lib/apiClient';
 import {
     DIRECTORY_PAGE_SIZE, DIRECTORY_MAX_PAGE, DIRECTORY_SEARCH_MAX_LENGTH, PUBLIC_DIRECTORY,
-    codePointLength,
+    codePointLength, publicDirectoryErrorCode,
     type PublicDirectoryPage as PublicDirectoryPageData, type PublicDirectoryView,
 } from '../lib/publicDirectory';
 import {
@@ -41,6 +44,10 @@ const VIEWS: { id: PublicDirectoryView; label: string }[] = [
 ];
 
 const VISIBILITY_KEY = 'publicDirectorySettings';
+
+// A membership refusal that means the client's row is stale: the only way to learn the true state
+// is to re-read the directory. A write conflict keeps the row for a plain retry, so it is omitted.
+const RELOAD_CODES = new Set(['already_member', 'request_pending', 'no_pending_request', 'workspace_not_found']);
 
 function readView(value: string | null): PublicDirectoryView {
     return value === 'mine' ? 'mine' : 'all';
@@ -80,6 +87,7 @@ export function PublicDirectoryPage() {
     const [createOpen, setCreateOpen] = useState(false);
     const [creating, setCreating] = useState(false);
     const [createError, setCreateError] = useState('');
+    const [busyId, setBusyId] = useState<string | null>(null);
 
     const reload = useCallback(() => setRetry((value) => value + 1), []);
 
@@ -146,6 +154,29 @@ export function PublicDirectoryPage() {
         useUserSettingsStore.getState().update({ [VISIBILITY_KEY]: nextMap });
         setNotice(next ? 'This workspace will appear in public chat.' : 'This workspace is hidden from public chat.');
     }, []);
+
+    const runRequestAction = useCallback(async (id: string, kind: 'request' | 'cancel') => {
+        // The server's fresh row is the single source of truth: a request or cancel replaces the row
+        // in place, so its membership -- and thus the affordance -- always reflects what the server
+        // just committed, never an optimistic guess.
+        setBusyId(id);
+        setNotice('');
+        try {
+            const workspace = kind === 'request' ? await adapter.requestAccess(id) : await adapter.cancelRequest(id);
+            setResult((prev) => (prev
+                ? { ...prev, workspaces: prev.workspaces.map((row) => (row.id === id ? workspace : row)) }
+                : prev));
+            setNotice(kind === 'request'
+                ? `Your request to manage ${workspace.name} was sent.`
+                : `Your request to manage ${workspace.name} was cancelled.`);
+        } catch (cause: unknown) {
+            const code = publicDirectoryErrorCode(cause);
+            setNotice(cause instanceof Error ? cause.message : 'The request could not be completed. Please retry.');
+            if (code && RELOAD_CODES.has(code)) reload();
+        } finally {
+            setBusyId(null);
+        }
+    }, [adapter, reload]);
 
     const submitCreate = useCallback(async (name: string, description: string) => {
         setCreating(true);
@@ -261,11 +292,13 @@ export function PublicDirectoryPage() {
                             <p role="status" className="text-xs text-text-3">
                                 Showing {workspaces.length} of {totalCount} {totalCount === 1 ? 'workspace' : 'workspaces'}.
                             </p>
-                            <PublicDirectoryList workspaces={workspaces} busyId={null} disabled={false}
+                            <PublicDirectoryList workspaces={workspaces} busyId={busyId} disabled={busyId !== null}
                                 visibleFor={(workspace) => isVisibleForChat(visibilityMap, workspace.id)}
                                 logoUrlFor={(workspace) => adapter.logoUrl(workspace)}
                                 onOpen={(id) => navigate(adapter.openPath(id))}
-                                onToggleVisibility={toggleVisibility} />
+                                onToggleVisibility={toggleVisibility}
+                                onRequestAccess={(id) => void runRequestAction(id, 'request')}
+                                onCancelRequest={(id) => void runRequestAction(id, 'cancel')} />
                             {totalCount > DIRECTORY_PAGE_SIZE || page > 1 ? (
                                 <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-text-3">
                                     <span>Page {page} of {totalPages}</span>

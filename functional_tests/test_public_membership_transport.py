@@ -2,7 +2,7 @@
 """
 Ensure immutable-target public membership routes cannot match a legacy public route.
 
-Version: 0.261.179
+Version: 0.261.183
 Implemented in: 0.261.179
 
 A mixed deployment must reject an unsupported workspace-bound public membership URL
@@ -28,6 +28,8 @@ MEMBERSHIP_REQUESTS = [
     ("PATCH", "/api/public-workspaces/requested-workspace/membership/members/member-id"),
     ("DELETE", "/api/public-workspaces/requested-workspace/membership/members/member-id"),
     ("GET", "/api/public-workspaces/requested-workspace/membership/requests"),
+    ("POST", "/api/public-workspaces/requested-workspace/membership/requests"),
+    ("DELETE", "/api/public-workspaces/requested-workspace/membership/requests"),
     ("POST", "/api/public-workspaces/requested-workspace/membership/requests/member-id/approve"),
     ("POST", "/api/public-workspaces/requested-workspace/membership/requests/member-id/reject"),
     ("PUT", "/api/public-workspaces/requested-workspace/membership/owner"),

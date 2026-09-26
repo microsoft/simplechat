@@ -1,7 +1,7 @@
 # test_public_directory_apis.py
 """
 Functional test for the native public workspace directory API.
-Version: 0.261.179
+Version: 0.261.183
 Implemented in: 0.261.175
 
 ``GET /api/public_workspaces/directory`` runs for real (``functions_public_directory``
@@ -32,6 +32,7 @@ import pytest
 
 from test_support.public_directory_harness import (
     PEOPLE,
+    person,
     public_directory_environment,
 )
 
@@ -153,6 +154,38 @@ def test_role_and_membership_follow_the_read_predicate(env, caller, role, member
     row = rows(env.directory())[0]
     assert row["userRole"] == role
     assert row["membership"] == membership
+
+
+def test_a_pending_requester_reads_membership_pending(env):
+    env.seed_workspace("w-1", "Shared", pendingDocumentManagers=[person("outsider-1")])
+    env.as_user("outsider-1")
+    row = rows(env.directory())[0]
+    assert row["userRole"] == "User"
+    assert row["membership"] == "pending"
+
+
+def test_a_pending_flag_is_the_callers_own(env):
+    env.seed_workspace("w-1", "Shared", pendingDocumentManagers=[person("reader-1")])
+    env.as_user("outsider-1")
+    row = rows(env.directory())[0]
+    assert row["membership"] == "none"
+
+
+def test_a_stored_role_outranks_a_lingering_pending_entry(env):
+    env.seed_workspace(
+        "w-1", "Shared", managers=("manager-1",),
+        pendingDocumentManagers=[person("manager-1")],
+    )
+    env.as_user("manager-1")
+    row = rows(env.directory())[0]
+    assert row["userRole"] == "DocumentManager"
+    assert row["membership"] == "member"
+
+
+def test_a_bare_string_pending_entry_resolves_membership(env):
+    env.seed_workspace("w-1", "Shared", pendingDocumentManagers=["outsider-1"])
+    env.as_user("outsider-1")
+    assert rows(env.directory())[0]["membership"] == "pending"
 
 
 def test_dict_member_entries_also_resolve_the_role(env):

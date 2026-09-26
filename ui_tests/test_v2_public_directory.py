@@ -1,7 +1,7 @@
 # test_v2_public_directory.py
 """
 Production-SPA coverage for the native V2 public workspace directory page.
-Version: 0.261.179
+Version: 0.261.183
 Implemented in: 0.261.175
 
 Exercises the real public directory surface -- the browse-and-curate page built on the My Workspace
@@ -33,6 +33,8 @@ from ui_tests.fixtures.public_directory import (  # noqa: F401
     MEMBER_WORKSPACE, LOGO_WORKSPACE, INACTIVE_WORKSPACE, UNKNOWN_WORKSPACE,
     MEMBER_WORKSPACE_NAME, LOGO_WORKSPACE_NAME, INACTIVE_WORKSPACE_NAME, UNKNOWN_WORKSPACE_NAME,
     LONG_WORKSPACE_NAME,
+    REQUESTABLE_WORKSPACE, PENDING_WORKSPACE,
+    REQUESTABLE_WORKSPACE_NAME, PENDING_WORKSPACE_NAME,
 )
 
 
@@ -455,6 +457,111 @@ def test_a_role_refusal_shows_a_safe_message_keeps_the_draft_and_re_reads_the_hi
     # A refusal can only mean the hint went stale, so the directory is re-read.
     expect(page.get_by_role("button", name="Create public workspace", exact=True).first).to_be_visible()
     assert len(directory_gets(ui)) > before, "A create refusal must re-read the directory hint."
+
+
+# --------------------------------------------------------------------------
+# The self-service document-manager request, driven by the server's returned rows.
+# --------------------------------------------------------------------------
+
+def request_button(ui, name):
+    return row(ui, name).get_by_role("button", name=f"Ask to manage documents in {name}", exact=True)
+
+
+def cancel_button(ui, name):
+    return row(ui, name).get_by_role("button", name=f"Cancel request for {name}", exact=True)
+
+
+def test_request_then_cancel_follow_the_server_rows(public_directory_ui):
+    """A request turns the row to Requested, a cancel turns it back, each from the server's `{workspace}`."""
+    ui, page = public_directory_ui, public_directory_ui.page
+    open_directory(ui)
+    search_for(ui, REQUESTABLE_WORKSPACE_NAME)
+    target = row(ui, REQUESTABLE_WORKSPACE_NAME)
+    expect(request_button(ui, REQUESTABLE_WORKSPACE_NAME)).to_be_visible()
+
+    with page.expect_response(
+        lambda response: response.request.method == "POST"
+        and response.url.endswith(f"/api/public-workspaces/{REQUESTABLE_WORKSPACE}/membership/requests")
+    ) as requested:
+        request_button(ui, REQUESTABLE_WORKSPACE_NAME).click()
+    assert requested.value.status == 201
+    expect(target.get_by_text("Requested", exact=True)).to_be_visible()
+    expect(cancel_button(ui, REQUESTABLE_WORKSPACE_NAME)).to_be_visible()
+    expect(page.get_by_role("status").filter(has_text="was sent")).to_be_visible()
+
+    with page.expect_response(
+        lambda response: response.request.method == "DELETE"
+        and response.url.endswith(f"/api/public-workspaces/{REQUESTABLE_WORKSPACE}/membership/requests")
+    ) as cancelled:
+        cancel_button(ui, REQUESTABLE_WORKSPACE_NAME).click()
+    assert cancelled.value.status == 200
+    expect(request_button(ui, REQUESTABLE_WORKSPACE_NAME)).to_be_visible()
+    expect(target.get_by_text("Requested", exact=True)).to_have_count(0)
+    # The request family never activates a workspace or loads a public context from the directory.
+    assert_no_public_context_or_activation(ui)
+
+
+def test_a_pending_row_starts_on_cancel_and_hides_the_request(public_directory_ui):
+    """A row the server already reports pending shows the Requested pill and only a Cancel action."""
+    ui = public_directory_ui
+    open_directory(ui)
+    search_for(ui, PENDING_WORKSPACE_NAME)
+    pending = row(ui, PENDING_WORKSPACE_NAME)
+    expect(pending.get_by_text("Requested", exact=True)).to_be_visible()
+    expect(cancel_button(ui, PENDING_WORKSPACE_NAME)).to_be_visible()
+    expect(pending.get_by_role("button", name=f"Ask to manage documents in {PENDING_WORKSPACE_NAME}", exact=True)).to_have_count(0)
+
+
+def test_a_member_row_offers_no_request_control(public_directory_ui):
+    """A member sees neither Ask nor Cancel: the affordance is gated on server membership, not a role check."""
+    ui = public_directory_ui
+    open_directory(ui)
+    search_for(ui, MEMBER_WORKSPACE_NAME)
+    member = row(ui, MEMBER_WORKSPACE_NAME)
+    expect(member.get_by_role("button", name=f"Ask to manage documents in {MEMBER_WORKSPACE_NAME}", exact=True)).to_have_count(0)
+    expect(member.get_by_role("button", name=f"Cancel request for {MEMBER_WORKSPACE_NAME}", exact=True)).to_have_count(0)
+
+
+@pytest.mark.parametrize("workspace_id,workspace_name,code,action,message,expected", [
+    (REQUESTABLE_WORKSPACE, REQUESTABLE_WORKSPACE_NAME, "already_member",
+     "Ask to manage documents in", "You already manage this public workspace's documents.", "Open"),
+    (REQUESTABLE_WORKSPACE, REQUESTABLE_WORKSPACE_NAME, "request_pending",
+     "Ask to manage documents in", "You've already asked to manage this public workspace's documents.", "Cancel request for"),
+    (PENDING_WORKSPACE, PENDING_WORKSPACE_NAME, "no_pending_request",
+     "Cancel request for", "You don't have a pending request for this public workspace.", "Ask to manage documents in"),
+])
+def test_request_conflict_codes_reload_the_row(public_directory_ui, workspace_id, workspace_name, code, action, message, expected):
+    """A stale-state 409 shows the server message and reloads, so the row settles on the truth."""
+    ui, page = public_directory_ui, public_directory_ui.page
+    ui.force_request_conflict(workspace_id, code)
+    open_directory(ui)
+    search_for(ui, workspace_name)
+    row(ui, workspace_name).get_by_role("button", name=f"{action} {workspace_name}", exact=True).click()
+    expect(page.get_by_role("status").filter(has_text=message)).to_be_visible()
+    expect(row(ui, workspace_name).get_by_role("button", name=f"{expected} {workspace_name}", exact=False)).to_be_visible()
+
+
+def test_a_write_conflict_keeps_the_row_for_a_plain_retry(public_directory_ui):
+    """A public_workspace_write_conflict shows its message but keeps the row unchanged, no reload."""
+    ui, page = public_directory_ui, public_directory_ui.page
+    ui.force_request_conflict(REQUESTABLE_WORKSPACE, "public_workspace_write_conflict")
+    open_directory(ui)
+    search_for(ui, REQUESTABLE_WORKSPACE_NAME)
+    request_button(ui, REQUESTABLE_WORKSPACE_NAME).click()
+    expect(page.get_by_role("status").filter(has_text="The public workspace changed while your request was being saved")).to_be_visible()
+    # No reconciliation, no reload: the request is still on offer for a plain retry.
+    expect(request_button(ui, REQUESTABLE_WORKSPACE_NAME)).to_be_visible()
+
+
+def test_a_workspace_not_found_reports_and_drops_the_row(public_directory_ui):
+    """A 404 says the workspace is gone and reloads, so the vanished row leaves the list."""
+    ui, page = public_directory_ui, public_directory_ui.page
+    ui.force_request_conflict(REQUESTABLE_WORKSPACE, "workspace_not_found")
+    open_directory(ui)
+    search_for(ui, REQUESTABLE_WORKSPACE_NAME)
+    request_button(ui, REQUESTABLE_WORKSPACE_NAME).click()
+    expect(page.get_by_role("status").filter(has_text="The public workspace was not found.")).to_be_visible()
+    expect(row(ui, REQUESTABLE_WORKSPACE_NAME)).to_have_count(0)
 
 
 if __name__ == "__main__":
