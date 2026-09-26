@@ -2,6 +2,15 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.180)**
+
+#### Bug Fixes
+
+*   **Public Member Import Lists Only Public Roles**
+    *   The V2 public Members section's CSV import said roles could be user, admin or document_manager, and accepted `user` rows that the server then refused one by one. A public workspace assigns only Admins and DocumentManagers.
+    *   The dialog now says "Roles are admin or document_manager.", and a `user` row is refused when the file is read, before anything is sent. The group import is unchanged.
+    *   (Ref: `groupMembership.ts`, `ImportMembersDialog.tsx`, `MembersSection.tsx`, [Public Member CSV Roles Fix](fixes/PUBLIC_MEMBER_CSV_ROLES_FIX.md))
+
 ### **(v0.261.179)**
 
 #### New Features
