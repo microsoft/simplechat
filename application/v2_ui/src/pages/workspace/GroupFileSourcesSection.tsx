@@ -495,6 +495,7 @@ export function GroupFileSourcesSection({
                     draft={draft}
                     options={options}
                     identities={identities}
+                    scopeNoun={scopeNoun}
                     tagSuggestions={tagSuggestions}
                     tagSuggestionsFailed={tagSuggestionsFailed}
                     saving={saving || editorLoading}

@@ -370,8 +370,10 @@ def test_editor_offers_only_eligible_public_identities(public_file_sources_ui):
     ui, page = public_file_sources_ui, public_file_sources_ui.page
     open_manager(ui)
     page.get_by_role("button", name="New file source", exact=True).click()
-    # The default credential mode is a saved identity, so the picker is shown at once. Locate it by
-    # the eligible option it carries, not by copy, since the reused dialog labels it "group identity".
+    # The default credential mode is a saved identity, so the picker is shown at once. The public
+    # section passes its own noun, so the reused dialog labels it "workspace identity", not "group".
+    page.get_by_text("Use a saved workspace identity", exact=True).wait_for()
+    expect(page.get_by_text("Use a saved group identity", exact=True)).to_have_count(0)
     picker = page.get_by_role("dialog").locator("select").filter(
         has=page.get_by_role("option", name=IDENTITY_LABEL, exact=True))
     expect(picker).to_be_visible()
