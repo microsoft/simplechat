@@ -61,7 +61,9 @@ the workspace it is for.
 - **Review publish requests** (version **0.261.134**). When someone asks to
   publish a generated file into the workspace, the request waits in the
   explorer. A reviewer approves, rejects, or withdraws it without leaving the
-  workspace.
+  workspace. From version **0.261.183**, only the Owner, Admins and
+  DocumentManagers see a request before it's approved; other readers don't see
+  it at all, in V2 or in chat's document picker.
 
 From version **0.261.177**, a public workspace's **Prompts** are in V2 too.
 Everyone can read them and use them in chat. Owners, Admins and
@@ -83,10 +85,20 @@ browse connections, and start a sync while the workspace is active. Readers
 don't see either section. See
 [V2 Public Connections]({{ '/explanation/features/V2_PUBLIC_CONNECTIONS/' | relative_url }}).
 
-Sharing a public document with other workspaces is not available. The
-workspace's settings, logo, statistics and activity still use the classic page,
-as do the directory's saved visibility lists and asking to become a
-DocumentManager.
+From version **0.261.184**, the directory lets you ask to manage a workspace's
+documents, and cancel the request, from its row. It also shows or hides every
+workspace for chat at once, saves and reuses lists of visible workspaces, and
+opens classic chat over the visible ones.
+
+From version **0.261.185**, the Owner and Admins manage the workspace's
+**Settings** (name, description, color and logo for the Owner; file downloads
+and retention for both), read its **Activity**, and chart and export its
+**Statistics**, which DocumentManagers can also see, under **Manage**. Deleting
+the workspace still happens on the classic page, and removes only the workspace
+record: its documents and prompts stay behind. See
+[V2 Public Settings]({{ '/explanation/features/V2_PUBLIC_SETTINGS/' | relative_url }}).
+
+Sharing a public document with other workspaces is not available.
 
 From version **0.261.173**, the classic public workspace pages save changes
 conditionally. If someone else changes the same workspace at that moment, a

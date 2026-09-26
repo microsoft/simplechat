@@ -1,8 +1,9 @@
 # test_group_insights_apis.py
 """
 Functional test for the native group insights: activity, statistics and the document count.
-Version: 0.261.154
+Version: 0.261.185
 Implemented in: 0.261.154
+A stored timestamp whose UTC offset moves it past the calendar no longer fails the feed: 0.261.185
 
 ``GET /api/groups/<group_id>/insights/activity``, ``/insights/stats`` and
 ``/insights/file-count`` run for real in ``test_support/group_settings_harness.py``.
@@ -306,11 +307,26 @@ def test_a_status_change_is_attributed_to_whoever_changed_it(env, changed_by, ac
     ("2026-09-20T10:00:00.123456", "2026-09-20T10:00:00.123456Z"),
     ("2026-09-20T12:00:00+02:00", "2026-09-20T10:00:00Z"),
     ("2026-09-20T10:00:00Z", "2026-09-20T10:00:00Z"),
+    # A UTC offset that moves the time past the calendar's first or last day can't be shown,
+    # and the feed still answers: before the fix, either one made the whole feed a 500.
+    ("0001-01-01T00:30:00+01:00", None),
+    ("9999-12-31T23:30:00-01:00", None),
     ("yesterday", None),
     ("   ", None),
 ])
 def test_timestamps_are_utc_with_a_z(env, stored, shown):
     assert one(env, record("t-1", "agent_run", stored))["occurred_at"] == shown
+
+
+def test_a_timestamp_past_the_calendar_leaves_the_rest_of_the_feed_intact(env):
+    seed(env,
+         record("edge", "agent_run", "0001-01-01T00:30:00+01:00"),
+         record("fine", "document_creation", "2026-09-20T10:00:00"))
+    body = feed(env)
+    assert [(entry["id"], entry["occurred_at"]) for entry in body["activity"]] == [
+        ("fine", "2026-09-20T10:00:00Z"), ("edge", None),
+    ]
+    assert [entry for entry in env.logs if entry[1] == logging.ERROR] == []
 
 
 def test_a_record_id_that_is_not_text_is_omitted(env):

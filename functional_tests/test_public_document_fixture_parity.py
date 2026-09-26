@@ -36,7 +36,7 @@ canonical publication engine). The read and management checks store the fixture'
 fixture's workspace, ``pub-a``, so each projection is compared with the server's projection of the
 same document; the publication harness publishes its own artifact into ``public-a``.
 
-One product finding was pinned here as a strict xfail at 0.261.180: a public generated artifact
+One product finding was pinned here as a strict xfail at 0.261.179: a public generated artifact
 awaiting publication was listed to every reader with its full metadata. Decision 27 (0.261.183) makes
 it visible only to the workspace's managers, who see it held as a group member does; to every other
 reader it does not exist. The rule is pinned against the real routes below, with the fixtures' copy of

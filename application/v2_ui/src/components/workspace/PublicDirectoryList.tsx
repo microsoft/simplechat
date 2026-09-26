@@ -1,6 +1,7 @@
 // PublicDirectoryList.tsx
 // The presentational body of the public workspace directory: the rows, their role and status
-// badges, an Open action and the per-workspace "Visible for chat" switch.
+// badges, an Open action, the per-workspace "Visible for chat" switch, and -- for a signed-in
+// reader who is not yet a manager -- an "Ask to manage documents" / "Cancel request" control.
 //
 // Like the group DirectoryList it carries no network knowledge: the page above owns every
 // fetch, the visibility map and the settings write, and hands this component the rows plus the
@@ -13,7 +14,7 @@
 // currently use is a valid choice and must never error.
 
 import { useState } from 'react';
-import { ArrowUpRight } from 'lucide-react';
+import { ArrowUpRight, Loader2 } from 'lucide-react';
 import { GlassButton, GlassPanel } from '../ui/primitives';
 import { Pill } from './primitives';
 import { publicRoleLabel, publicStatusLabel } from '../../lib/publicWorkspaceNavigation';
@@ -83,15 +84,52 @@ function VisibilitySwitch({
     );
 }
 
+/**
+ * The self-service request affordance for a signed-in reader who is not yet a manager. It mirrors
+ * the group directory's join/cancel control, worded for public workspaces, and is gated purely on
+ * the server-computed membership: `none` offers "Ask to manage documents", `pending` offers
+ * "Cancel request", and a member sees neither. It never consults a client role.
+ */
+function RequestAction({
+    workspace, busy, disabled, onRequestAccess, onCancelRequest,
+}: {
+    workspace: PublicDirectoryWorkspace;
+    busy: boolean;
+    disabled: boolean;
+    onRequestAccess: (id: string) => void;
+    onCancelRequest: (id: string) => void;
+}) {
+    if (workspace.membership === 'pending') {
+        return (
+            <GlassButton size="sm" disabled={busy || disabled} aria-label={`Cancel request for ${workspace.name}`}
+                onClick={() => onCancelRequest(workspace.id)}>
+                {busy ? <Loader2 size={14} className="animate-spin" /> : null}Cancel request
+            </GlassButton>
+        );
+    }
+    if (workspace.membership === 'none') {
+        return (
+            <GlassButton size="sm" variant="primary" disabled={busy || disabled} aria-label={`Ask to manage documents in ${workspace.name}`}
+                onClick={() => onRequestAccess(workspace.id)}>
+                {busy ? <Loader2 size={14} className="animate-spin" /> : null}Ask to manage documents
+            </GlassButton>
+        );
+    }
+    return null;
+}
+
 export function PublicDirectoryRow({
-    workspace, visible, disabled, logoUrl, onOpen, onToggleVisibility,
+    workspace, visible, disabled, busy, logoUrl, onOpen, onToggleVisibility, onRequestAccess, onCancelRequest,
 }: {
     workspace: PublicDirectoryWorkspace;
     visible: boolean;
     disabled: boolean;
+    busy: boolean;
     logoUrl: string | null;
     onOpen: (id: string) => void;
     onToggleVisibility: (id: string, next: boolean) => void;
+    onRequestAccess: (id: string) => void;
+    onCancelRequest: (id: string) => void;
 }) {
     const available = isChattableStatus(workspace.status);
     return (
@@ -101,6 +139,7 @@ export function PublicDirectoryRow({
                 <div className="flex min-w-0 flex-wrap items-center gap-2">
                     <p className="truncate text-sm font-medium text-text-1">{workspace.name}</p>
                     {workspace.membership === 'member' ? <Pill tone="accent">{publicRoleLabel(workspace.userRole)}</Pill> : null}
+                    {workspace.membership === 'pending' ? <Pill tone="warn">Requested</Pill> : null}
                     <StatusBadge status={workspace.status} />
                 </div>
                 <p className="mt-0.5 line-clamp-2 text-xs text-text-3">{workspace.description || 'No description provided.'}</p>
@@ -108,7 +147,9 @@ export function PublicDirectoryRow({
                     <p className="mt-1 text-[11px] text-text-3">Not available for chat right now. You can still hide it from your list.</p>
                 ) : null}
             </div>
-            <div className="ml-auto flex shrink-0 items-center gap-3">
+            <div className="ml-auto flex shrink-0 flex-wrap items-center justify-end gap-3">
+                <RequestAction workspace={workspace} busy={busy} disabled={disabled}
+                    onRequestAccess={onRequestAccess} onCancelRequest={onCancelRequest} />
                 <VisibilitySwitch workspace={workspace} visible={visible} disabled={disabled} onToggle={onToggleVisibility} />
                 <GlassButton size="sm" variant="subtle" disabled={disabled} aria-label={`Open ${workspace.name}`}
                     onClick={() => onOpen(workspace.id)}>
@@ -120,7 +161,7 @@ export function PublicDirectoryRow({
 }
 
 export function PublicDirectoryList({
-    workspaces, busyId, disabled, visibleFor, logoUrlFor, onOpen, onToggleVisibility,
+    workspaces, busyId, disabled, visibleFor, logoUrlFor, onOpen, onToggleVisibility, onRequestAccess, onCancelRequest,
 }: {
     workspaces: PublicDirectoryWorkspace[];
     busyId: string | null;
@@ -129,6 +170,8 @@ export function PublicDirectoryList({
     logoUrlFor: (workspace: PublicDirectoryWorkspace) => string | null;
     onOpen: (id: string) => void;
     onToggleVisibility: (id: string, next: boolean) => void;
+    onRequestAccess: (id: string) => void;
+    onCancelRequest: (id: string) => void;
 }) {
     return (
         <ul className="space-y-2">
@@ -137,8 +180,10 @@ export function PublicDirectoryList({
                     <PublicDirectoryRow workspace={workspace}
                         visible={visibleFor(workspace)}
                         disabled={disabled && busyId !== workspace.id}
+                        busy={busyId === workspace.id}
                         logoUrl={logoUrlFor(workspace)}
-                        onOpen={onOpen} onToggleVisibility={onToggleVisibility} />
+                        onOpen={onOpen} onToggleVisibility={onToggleVisibility}
+                        onRequestAccess={onRequestAccess} onCancelRequest={onCancelRequest} />
                 </li>
             ))}
         </ul>

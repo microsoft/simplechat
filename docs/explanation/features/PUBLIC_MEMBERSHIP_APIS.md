@@ -23,6 +23,8 @@ target. Each route checks login, the user, and `enable_public_workspaces`.
 | `PATCH .../members/U` | Change a member's role |
 | `DELETE .../members/U` | Remove a member |
 | `GET .../requests` | Pending DocumentManager requests |
+| `POST .../requests` | Ask to manage the workspace's documents, for the signed-in caller (from 0.261.184) |
+| `DELETE .../requests` | Cancel the caller's own pending request (from 0.261.184) |
 | `POST .../requests/U/approve` | Approve a request |
 | `POST .../requests/U/reject` | Reject a request |
 | `PUT .../owner` | Transfer ownership |
@@ -54,6 +56,14 @@ target. Each route checks login, the user, and `enable_public_workspaces`.
   as the group's native membership writes do. Approving, rejecting and
   transferring write none, also as the group's don't. The two existing
   notifications (member added, role changed) are unchanged.
+
+- **Asking (from version 0.261.184):** any signed-in user who doesn't already
+  manage the workspace asks for themselves, and can cancel only their own
+  request. Both work in any status, as reviewing does. A second request is 409
+  `request_pending`, a manager's is 409 `already_member`, and cancelling with
+  nothing pending is 409 `no_pending_request`. Both answer the caller's own
+  directory row, and each writes an activity record. Neither sends a
+  notification, as the classic request didn't.
 
 Each hint is a hint, never a grant: every route re-checks role and status on
 the fresh copy.

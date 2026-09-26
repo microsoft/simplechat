@@ -35,9 +35,10 @@ export const PUBLIC_WORKSPACE_SECTION_IDS = [
 /**
  * The public-workspace management sections, reported in the context's `manage` group. Kept apart
  * from PUBLIC_WORKSPACE_SECTION_IDS, exactly like the group's manage list, so a change to either
- * a content section or a manage section cannot silently move the other. M10A adds `members`.
+ * a content section or a manage section cannot silently move the other. M10A adds `members`; M10C
+ * adds settings, activity and statistics.
  */
-export const PUBLIC_MANAGE_SECTION_IDS = ['members'] as const;
+export const PUBLIC_MANAGE_SECTION_IDS = ['members', 'settings', 'activity', 'statistics'] as const;
 
 export type GroupWorkspaceSectionId = typeof GROUP_WORKSPACE_SECTION_IDS[number];
 export type GroupManageSectionId = typeof GROUP_MANAGE_SECTION_IDS[number];
@@ -210,10 +211,11 @@ export interface PublicWorkspaceContext extends WorkspaceAvailability {
     status: GroupWorkspaceStatus;
     can_manage_workspace: boolean;
     /**
-     * The content sections, plus the public `manage` sections (M10A `members`). A manage section
-     * the server does not report is unavailable, never assumed; when reported it must be a valid
-     * section in the `manage` group. Its `can_manage` is navigation only: every membership control
-     * is gated by the member list's own hints.
+     * The content sections, plus the public `manage` sections (M10A `members`; M10C `settings`,
+     * `activity` and `statistics`). A manage section the server does not report is unavailable, never
+     * assumed; when reported it must be a valid section in the `manage` group. Its `can_manage` is
+     * navigation only: every membership control is gated by the member list's own hints, and every
+     * settings control by settings_management.
      */
     sections: Record<PublicWorkspaceSectionId, WorkspaceSectionAccess>
         & Partial<Record<PublicManageSectionId, WorkspaceSectionAccess>>;
@@ -277,6 +279,19 @@ export interface PublicWorkspaceContext extends WorkspaceAvailability {
     membership_management?: {
         schema_version: number;
         operations: string[];
+    };
+    /**
+     * The public settings management hint (M10C). Present as `{schema_version: 1, operations: [...],
+     * reasons: {...}}`, from the same decision the native public settings and insights routes enforce:
+     * the owner's profile and logo edits (in an active or upload-disabled workspace), the owner's and
+     * admins' downloads and retention edits and activity read, every stored role's statistics read, and
+     * the owner's document count. `reasons` maps every withheld op to the server's reason code, so an
+     * unavailable control is explained, never guessed. Absence means "read-only", never an empty grant.
+     */
+    settings_management?: {
+        schema_version: number;
+        operations: string[];
+        reasons?: Record<string, string>;
     };
 }
 

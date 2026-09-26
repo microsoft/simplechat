@@ -1,7 +1,7 @@
 # public_workspace.py
 """
 Closed HTTP fixtures for the real V2 public workspace shell.
-Version: 0.261.182
+Version: 0.261.185
 Implemented in: 0.261.132
 Every context carries the server's document_management hint, as build_public_workspace_context
 sends it: 0.261.167
@@ -10,6 +10,8 @@ functional_tests/test_public_context_fixture_parity.py: 0.261.168
 Its prompts section opens and every context carries the server's prompt_management hint: 0.261.178
 Its identities and sync sections and their management hints, gated on File Sync: 0.261.182
 The context carries the native membership hint and its Members manage section: 0.261.179
+Every context carries the server's settings_management hint (M10C): 0.261.185
+Its Settings, Activity and Statistics manage sections and the settings switches (M10C R5): 0.261.185
 
 The public surface mirrors the group shell. Its documents and prompts sections are open, and a
 manager role can be granted document management, the generated-artifact review and prompt
@@ -52,6 +54,13 @@ PUBLIC_FILE_SOURCE_OPERATIONS = ("create", "edit", "delete", "sync", "test")
 PUBLIC_MEMBERSHIP_OPERATIONS = ("add_member", "review_requests", "change_role", "remove_member", "transfer_ownership")
 # The statuses that let members be added or promoted (functions_public_membership_policy).
 PUBLIC_MEMBER_ADD_STATUSES = ("active", "upload_disabled")
+# functions_public_settings_policy.PUBLIC_SETTINGS_OPERATIONS, in the server's order, and the statuses in
+# which the profile and logo can change (PUBLIC_SETTINGS_WRITABLE_STATUSES).
+PUBLIC_SETTINGS_OPERATIONS = (
+    "edit_name", "edit_description", "edit_color", "edit_logo", "edit_downloads", "edit_retention",
+    "view_activity", "view_stats", "view_file_count",
+)
+PUBLIC_SETTINGS_WRITABLE_STATUSES = ("active", "upload_disabled")
 SECTION_GROUPS = {
     "documents": "knowledge", "tags": "knowledge", "sync": "knowledge", "prompts": "knowledge",
     "identities": "connections",
@@ -75,14 +84,20 @@ PUBLIC_CONNECTIONS_MANAGER_REASON = "Your role does not permit managing this pub
 # client robustness scenario.
 PUBLIC_CONTEXT_NOT_FOUND_ERROR = "The selected public workspace was not found."
 PUBLIC_CONTEXT_DENIED_ERROR = "You do not have access to the selected public workspace."
+# The reviewed refusal texts the builder gives a closed Settings, Activity or Statistics section
+# (M10C), verbatim from functions_public_settings_policy.PUBLIC_SETTINGS_REFUSAL_MESSAGES.
+PUBLIC_SETTINGS_MANAGER_REASON = "Only the workspace owner or an admin can do this."
+PUBLIC_SETTINGS_MEMBER_REASON = "Only the workspace owner, an admin or a document manager can do this."
 
 
-def public_document_management(role, status):
-    """`public_document_management_operations` for a deployment that allows downloads and extracts
-    metadata. The server sends this hint in every public context, with no operations for a reader."""
+def public_document_management(role, status, *, download_enabled=True):
+    """`public_document_management_operations` for a deployment that extracts metadata. The server
+    sends this hint in every public context, with no operations for a reader; `download` needs file
+    downloads enabled, exactly as the server threads `download_enabled=` into the helper."""
     operations = set()
     if role in PUBLIC_MANAGER_ROLES and status in PUBLIC_VIEWABLE_STATUSES:
-        operations.add("download")
+        if download_enabled:
+            operations.add("download")
         if status == "active":
             operations.update({"upload", "edit_metadata", "tag_documents", "manage_tags", "extract_metadata"})
         if status in ("active", "upload_disabled"):
@@ -162,14 +177,61 @@ def public_membership_management(role, status):
     }
 
 
-def public_context(identifier, name, *, status="active", role="User", viewer=OWNER_ID, file_sync=False):
+def public_settings_management(role, status, *, downloads_admin=True, retention_enabled=False):
+    """`build_public_settings_management` for the modelled deployment, which allows the administrator's
+    public downloads and has public retention policies off; a settings variant passes the two switches.
+    The owner edits the profile and logo in an active or upload-disabled workspace; the owner and admins
+    edit downloads and retention when each switch is on, and read the activity; any stored role reads the
+    statistics; and the owner reads the document count."""
+    owner = role == "Owner"
+    manager = role in ("Owner", "Admin")
+    if not owner:
+        profile = "public_workspace_owner_required"
+    elif status not in PUBLIC_SETTINGS_WRITABLE_STATUSES:
+        profile = "public_workspace_status_unavailable"
+    else:
+        profile = None
+    decisions = {operation: profile for operation in ("edit_name", "edit_description", "edit_color", "edit_logo")}
+    if not manager:
+        decisions["edit_downloads"] = "public_workspace_manager_required"
+    else:
+        decisions["edit_downloads"] = None if downloads_admin else "public_workspace_downloads_not_enabled"
+    if not manager:
+        decisions["edit_retention"] = "public_workspace_manager_required"
+    else:
+        decisions["edit_retention"] = None if retention_enabled else "public_workspace_retention_disabled"
+    decisions["view_activity"] = None if manager else "public_workspace_manager_required"
+    decisions["view_stats"] = None if role in PUBLIC_MANAGER_ROLES else "public_workspace_member_required"
+    decisions["view_file_count"] = None if owner else "public_workspace_owner_required"
+    return {
+        "schema_version": 1,
+        "operations": [operation for operation in PUBLIC_SETTINGS_OPERATIONS if decisions[operation] is None],
+        "reasons": {
+            operation: decisions[operation] for operation in PUBLIC_SETTINGS_OPERATIONS
+            if decisions[operation] is not None
+        },
+    }
+
+
+def public_context(identifier, name, *, status="active", role="User", viewer=OWNER_ID, file_sync=False,
+                   allow_public_workspace_file_downloads=True, enable_retention_policy_public=False,
+                   disable_file_downloads=False):
     """`build_public_workspace_context` for the modelled deployment: public workspaces, metadata
-    extraction and the administrator's public downloads on. `file_sync` toggles File Sync for the
-    workspace, which is the sole gate on the identities and sync sections and their management hints
-    (M10B); it is off in the base deployment and turned on by the connection suites' fixtures."""
+    extraction and the administrator's public downloads on, and public retention off.
+
+    `file_sync` toggles File Sync for the workspace, which is the sole gate on the identities and sync
+    sections and their management hints (M10B); it is off in the base deployment and turned on by the
+    connection suites' fixtures.
+
+    The settings suite (M10C) passes the two settings switches, each named for the server setting it
+    stands for, and the workspace's own download switch, so its hint and its handlers agree: whether the
+    administrator allows this workspace's downloads, whether public retention is on, and whether the
+    workspace turned its downloads off. Downloads need both the administrator's switch and the
+    workspace's, as `is_public_workspace_file_download_enabled` decides."""
     status = status if status in PUBLIC_STATUSES else "unknown"
     readable = status in PUBLIC_VIEWABLE_STATUSES
     manager = role in PUBLIC_MANAGER_ROLES
+    downloads_enabled = bool(allow_public_workspace_file_downloads and not disable_file_downloads)
     status_reason = None if readable else PUBLIC_INACTIVE_REASON if status == "inactive" else PUBLIC_STATUS_UNKNOWN_REASON
 
     def gate(enabled_flag, unavailable_reason):
@@ -203,6 +265,21 @@ def public_context(identifier, name, *, status="active", role="User", viewer=OWN
         "can_manage": bool(readable and status == "active" and role in ("Owner", "Admin")),
         "reason": None if readable else status_reason,
     }
+    # Settings, Activity and Statistics (M10C) join Members, as the server builds them: Settings and
+    # Activity open to the owner or an admin, Statistics to any stored role, in any viewable status.
+    # Only Settings carries can_manage (navigation only); the controls come from settings_management.
+    settings_manager = role in ("Owner", "Admin")
+    for section_id, opens, can_manage, reason in (
+        ("settings", settings_manager, settings_manager, PUBLIC_SETTINGS_MANAGER_REASON),
+        ("activity", settings_manager, False, PUBLIC_SETTINGS_MANAGER_REASON),
+        ("statistics", role in PUBLIC_MANAGER_ROLES, False, PUBLIC_SETTINGS_MEMBER_REASON),
+    ):
+        enabled = readable and opens
+        sections[section_id] = {
+            "group": PUBLIC_MANAGE_SECTION_GROUP, "enabled": enabled,
+            "can_manage": bool(enabled and status == "active" and can_manage),
+            "reason": None if enabled else status_reason or reason,
+        }
     return {
         "schema_version": 1, "enabled": True, "viewer_id": viewer,
         "scope": {"kind": "public", "id": identifier},
@@ -218,7 +295,7 @@ def public_context(identifier, name, *, status="active", role="User", viewer=OWN
             "can_upload": manager and status == "active",
             "can_edit": manager and status == "active",
             "can_delete": manager and status in ("active", "upload_disabled"),
-            "can_download": manager and readable,
+            "can_download": manager and readable and downloads_enabled,
         },
         "document_queries": {
             "sort_fields": [
@@ -227,12 +304,16 @@ def public_context(identifier, name, *, status="active", role="User", viewer=OWN
             ],
             "facets": True, "places": True,
         },
-        "document_management": public_document_management(role, status),
+        "document_management": public_document_management(role, status, download_enabled=downloads_enabled),
         "document_collaboration": public_document_collaboration(role, status),
         "prompt_management": public_prompt_management(role, status),
         "identity_management": public_identity_management(role, status, file_sync),
         "file_source_management": public_file_source_management(role, status, file_sync),
         "membership_management": public_membership_management(role, status),
+        "settings_management": public_settings_management(
+            role, status, downloads_admin=allow_public_workspace_file_downloads,
+            retention_enabled=enable_retention_policy_public,
+        ),
     }
 
 

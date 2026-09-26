@@ -282,6 +282,12 @@ workspace, and carries `identity_management` and `file_source_management`,
 the same hints the group context has. See
 [V2 Public Connections](V2_PUBLIC_CONNECTIONS.md).
 
+From version **0.261.185**, the public **Manage** group also lists `settings`,
+`activity` and `statistics`, opened by the public settings decision (Settings
+and Activity for the Owner and Admins, Statistics for any stored role), and the
+context carries `settings_management`, as the group context does. See
+[V2 Public Settings](V2_PUBLIC_SETTINGS.md).
+
 `ui_tests/test_v2_personal_document_scope.py` provides the personal-document
 integration baseline added in version **0.261.128**. It checks that an unrelated
 active group does not retarget personal reads, search/tag filters, action

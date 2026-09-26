@@ -94,8 +94,8 @@ entirely so one cannot appear by accident.
 
 ## Testing and validation
 
-`ui_tests/test_v2_public_documents.py` covers the surface with 26 executable
-cases: reading, filtering, sorting, pagination, empty and error states, an
+At this milestone, `ui_tests/test_v2_public_documents.py` covered the surface
+with 26 executable cases: reading, filtering, sorting, pagination, empty and error states, an
 unknown workspace returning 404, an unauthorized workspace returning 403, the
 feature being disabled, a non-blocking `setActive`, classic handoff, chat
 ceiling, markup inertness, and responsive layout in light and dark at 1440x900

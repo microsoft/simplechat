@@ -263,7 +263,11 @@ def activity_actor(record, group, names):
 
 
 def occurred_at(value):
-    """A stored activity timestamp as UTC ISO 8601 with ``Z``, or ``None`` when unreadable."""
+    """A stored activity timestamp as UTC ISO 8601 with ``Z``, or ``None`` when unreadable.
+
+    A timestamp whose UTC offset moves it past the calendar's first or last day can't be
+    shown either, and is left without a time rather than failing the whole feed.
+    """
     if not isinstance(value, str) or not value.strip():
         return None
     try:
@@ -272,7 +276,10 @@ def occurred_at(value):
         return None
     if parsed.tzinfo is None:
         parsed = parsed.replace(tzinfo=timezone.utc)
-    return parsed.astimezone(timezone.utc).replace(tzinfo=None).isoformat() + "Z"
+    try:
+        return parsed.astimezone(timezone.utc).replace(tzinfo=None).isoformat() + "Z"
+    except OverflowError:
+        return None
 
 
 def project_group_activity(records, group):

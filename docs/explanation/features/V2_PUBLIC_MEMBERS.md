@@ -74,8 +74,9 @@ and the creator becomes the Owner.
 
 ## Known limitations
 
-- Asking to become a DocumentManager still happens on the classic page. V2
-  shows and decides the requests.
+- From version **0.261.184**, people ask from the V2 directory; see
+  [V2 Public Directory](V2_PUBLIC_DIRECTORY.md). Until then, asking happened on
+  the classic page.
 
 ## Related
 

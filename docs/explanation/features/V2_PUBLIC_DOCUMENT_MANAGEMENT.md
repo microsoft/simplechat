@@ -123,8 +123,8 @@ files.
 
 ## Testing and validation
 
-`ui_tests/test_v2_public_documents.py` covers the public surface with 41 cases:
-the 26 read cases from M3A plus 15 management cases.
+At this milestone, `ui_tests/test_v2_public_documents.py` covered the public
+surface with 41 cases: the 26 read cases plus 15 management cases.
 
 Run the V2 browser suites together, one process at a time, with `PYTHONPATH`
 set:

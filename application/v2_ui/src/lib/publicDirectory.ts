@@ -1,17 +1,19 @@
 // publicDirectory.ts
 // The native public directory: discovering public workspaces read-only.
 //
-// This is the read adapter behind the V2 public directory page. It talks to one route,
-// GET /api/public_workspaces/directory (the M9A backend family), and nothing else. The
+// This is the read adapter behind the V2 public directory page. It talks to the M9A directory
+// route, GET /api/public_workspaces/directory, and the M10A request routes,
+// POST and DELETE /api/public-workspaces/<id>/membership/requests, and nothing else. The
 // directory never discloses what a reader must not see -- no owner email or id, no
 // manager-only fields -- so its row is deliberately narrower than the classic
 // GET /api/public_workspaces list, which the V2 client no longer calls.
 //
 // Every response is validated strictly: a malformed envelope or row is a load error, never
 // a silently-empty list, because a directory that renders a shape it could not verify is
-// worse than one that reports it could not read the server. The route is read-only: there
-// is no create, join or cancel, so the adapter is a pure list plus the row's logo and open
-// target.
+// worse than one that reports it could not read the server. The membership actions never keep
+// optimistic state: each write returns the server's own `{workspace}` row, and the client
+// gates the "Ask to manage documents" and "Cancel request" affordances on that server-computed
+// membership, never a client role check.
 //
 // The page and search limits mirror the server (`functions_public_directory`), reusing the
 // shared directory constants so the page never sends a request the server would answer with
@@ -28,7 +30,7 @@ import {
 } from './groupDirectory';
 
 export type PublicDirectoryView = 'all' | 'mine';
-export type PublicDirectoryMembership = 'member' | 'none';
+export type PublicDirectoryMembership = 'member' | 'pending' | 'none';
 
 export interface PublicDirectoryWorkspace {
     id: string;
@@ -39,7 +41,11 @@ export interface PublicDirectoryWorkspace {
     logoVersion: number;
     /** The caller's own role in this workspace; every reader is at least a User. */
     userRole: string;
-    /** `member` when the caller holds a stored role, `none` otherwise. */
+    /**
+     * `member` when the caller holds a stored role, `pending` when the caller has their own
+     * outstanding request to manage this workspace's documents, `none` otherwise. The pending
+     * flag is the caller's own and never discloses anyone else's request.
+     */
     membership: PublicDirectoryMembership;
     /** The workspace status, or `unknown` for a value the reader vocabulary omits. */
     status: string;
@@ -73,7 +79,29 @@ export {
     codePointLength,
 };
 
-const MEMBERSHIPS: readonly PublicDirectoryMembership[] = ['member', 'none'];
+// The bulk visibility controls (All visible, All hidden, Show all and chat, Save list) act on
+// every workspace in the directory, not the one page on screen. The directory is server-paged,
+// so covering "all" means walking the pages, which is bounded so a very large collection can
+// never turn one click into an unbounded fan-out of requests or a settings blob that will not
+// save. Past the bound the control refuses with the count rather than writing part of the set
+// and implying the whole -- the plan rule that a bulk action never claims more than it wrote.
+export const DIRECTORY_BULK_PAGE_SIZE = 100; // the server's PUBLIC_DIRECTORY_MAX_PAGE_SIZE
+export const DIRECTORY_BULK_MAX_WORKSPACES = 1000;
+
+/** Raised when the directory is larger than a single bulk action may cover. */
+export class DirectoryBulkTooLargeError extends Error {
+    readonly count: number;
+    constructor(count: number) {
+        super(
+            `There are ${count} public workspaces, too many to change all at once. `
+            + 'Show or hide them individually, or use a saved list.',
+        );
+        this.name = 'DirectoryBulkTooLargeError';
+        this.count = count;
+    }
+}
+
+const MEMBERSHIPS: readonly PublicDirectoryMembership[] = ['member', 'pending', 'none'];
 
 function isMembership(value: unknown): value is PublicDirectoryMembership {
     return typeof value === 'string' && (MEMBERSHIPS as readonly string[]).includes(value);
@@ -143,6 +171,14 @@ export function readPublicDirectoryPage(response: unknown, page: number, pageSiz
     };
 }
 
+/** The server's `{workspace}` row is the single source of truth after a request or cancel. */
+export function readPublicDirectoryWorkspace(response: unknown): PublicDirectoryWorkspace {
+    if (!isRecord(response)) {
+        throw new Error('The public directory returned invalid data. Please retry.');
+    }
+    return readRow(response.workspace);
+}
+
 /** The machine-readable `error_code` on a directory failure, when the server sent one. */
 export function publicDirectoryErrorCode(error: unknown): string | null {
     if (error instanceof ApiError && isRecord(error.payload) && typeof error.payload.error_code === 'string') {
@@ -166,6 +202,17 @@ export interface PublicDirectoryAdapter {
     list: (view: PublicDirectoryView, search: string, page: number, pageSize: number, signal?: AbortSignal) => Promise<PublicDirectoryPage>;
     /** Create a public workspace via the classic route the directory reuses unchanged. */
     create: (name: string, description: string) => Promise<PublicWorkspaceCreated>;
+    /** Ask to manage a workspace's documents; returns the server's fresh row. */
+    requestAccess: (id: string) => Promise<PublicDirectoryWorkspace>;
+    /** Cancel the caller's own pending request; returns the server's fresh row. */
+    cancelRequest: (id: string) => Promise<PublicDirectoryWorkspace>;
+    /**
+     * Every discoverable workspace's id, walked across the server's pages so a bulk action
+     * covers the whole directory rather than the page on screen. Throws
+     * {@link DirectoryBulkTooLargeError} when the directory is larger than the bound, so the
+     * caller refuses rather than writing a partial set.
+     */
+    listAllWorkspaceIds: (signal?: AbortSignal) => Promise<string[]>;
     /** The logo URL for a row, or null when it carries no loadable logo. */
     logoUrl: (workspace: PublicDirectoryWorkspace) => string | null;
     /** Where Open navigates for a row, by immutable id and with no activate handshake. */
@@ -186,6 +233,41 @@ export const PUBLIC_DIRECTORY: PublicDirectoryAdapter = {
         // when the CreatePublicWorkspaces role is required. None of those carry an error_code.
         const { data } = await requestWithStatus<unknown>('/api/public_workspaces', { method: 'POST', body: { name, description } });
         return readCreatedWorkspace(data);
+    },
+    requestAccess: async (id) => {
+        // POST /api/public-workspaces/<id>/membership/requests: 201 { workspace } on success;
+        // 409 already_member / request_pending; 409 public_workspace_write_conflict on a race.
+        const { data } = await requestWithStatus<unknown>(
+            `/api/public-workspaces/${encodeURIComponent(requireWorkspaceId(id))}/membership/requests`,
+            { method: 'POST' },
+        );
+        return readPublicDirectoryWorkspace(data);
+    },
+    cancelRequest: async (id) => {
+        // DELETE /api/public-workspaces/<id>/membership/requests: 200 { workspace } on success;
+        // 409 no_pending_request when there is nothing to cancel.
+        const { data } = await requestWithStatus<unknown>(
+            `/api/public-workspaces/${encodeURIComponent(requireWorkspaceId(id))}/membership/requests`,
+            { method: 'DELETE' },
+        );
+        return readPublicDirectoryWorkspace(data);
+    },
+    listAllWorkspaceIds: async (signal) => {
+        // Walk the 'all' view with no search at the server's largest page. The first page carries
+        // total_count, so a directory past the bound is refused before any further request. Ids are
+        // deduplicated because a workspace can shift pages if the collection changes mid-walk.
+        const query = (page: number) => `/api/public_workspaces/directory?${listQuery('all', '', page, DIRECTORY_BULK_PAGE_SIZE)}`;
+        const first = readPublicDirectoryPage(await api.get<unknown>(query(1), signal), 1, DIRECTORY_BULK_PAGE_SIZE);
+        if (first.totalCount > DIRECTORY_BULK_MAX_WORKSPACES) {
+            throw new DirectoryBulkTooLargeError(first.totalCount);
+        }
+        const ids = new Set<string>(first.workspaces.map((workspace) => workspace.id));
+        const pages = Math.max(1, Math.ceil(first.totalCount / DIRECTORY_BULK_PAGE_SIZE));
+        for (let page = 2; page <= pages; page += 1) {
+            const next = readPublicDirectoryPage(await api.get<unknown>(query(page), signal), page, DIRECTORY_BULK_PAGE_SIZE);
+            for (const workspace of next.workspaces) ids.add(workspace.id);
+        }
+        return [...ids];
     },
     logoUrl: (workspace) => {
         // A logo is requested only when the server says one is stored for this workspace.
