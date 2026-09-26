@@ -86,6 +86,7 @@ export function FileSourceEditorDialog({
     draft,
     options,
     identities,
+    scopeNoun = 'group',
     tagSuggestions = [],
     tagSuggestionsFailed = false,
     saving,
@@ -101,6 +102,8 @@ export function FileSourceEditorDialog({
     draft: FileSourceDraft;
     options: FileSourceOptions | null;
     identities: WorkspaceIdentity[];
+    /** The scope's own noun for identity copy: 'group' (default) keeps the group wording byte-identical. */
+    scopeNoun?: string;
     /** The workspace's existing tag names, most used first, offered as fixed tags. */
     tagSuggestions?: string[];
     /** The existing tags could not be read, so none are offered; a tag can still be typed. */
@@ -397,7 +400,7 @@ export function FileSourceEditorDialog({
                                 checked={draft.credentialMode === 'identity'}
                                 onChange={() => onChange({ ...draft, credentialMode: 'identity' })}
                             />
-                            Use a saved group identity
+                            Use a saved {scopeNoun} identity
                         </label>
                         <label className="flex items-center gap-2 text-sm text-text-1">
                             <input
@@ -427,7 +430,7 @@ export function FileSourceEditorDialog({
                             </select>
                             {eligible.length === 0 ? (
                                 <span className="mt-1 block text-xs text-text-3">
-                                    No group identity is eligible for this source type. Add one in Identities, or enter
+                                    No {scopeNoun} identity is eligible for this source type. Add one in Identities, or enter
                                     credentials directly.
                                 </span>
                             ) : null}

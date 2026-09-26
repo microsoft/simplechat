@@ -1,13 +1,15 @@
 # test_orchestration_v2_plan_backend.py
-"""Saved v2 plan editing, restoration, and private admission-context persistence.
+"""Saved plan editing, restoration, and private admission-context persistence.
 
-Version: 0.261.127
+Version: 0.261.139
 Implemented in: 0.261.127
+Single orchestration contract updated in: 0.261.139
 Refs: microsoft/simplechat#1509
 
 Exercise the real planner/compiler, revision/run stores, immutable result readers,
 and current source authorization. Replace only model, Cosmos, and unrelated
-catalog/memory I/O boundaries. Block network access and preserve v1 behavior.
+catalog/memory I/O boundaries. Block network access. A saved plan from the removed
+earlier contract is refused, never edited, claimed or replanned.
 """
 
 import importlib
@@ -84,7 +86,7 @@ class V2PlanBackendTests(unittest.TestCase):
             record, self.fixture.service,
         ))
         self.settings = {
-            'enable_chat_orchestration': True, 'enable_chat_orchestration_harness': False,
+            'enable_chat_orchestration': True,
             'enable_user_workspace': True, 'chat_orchestration_max_steps': 8,
         }
         self.snapshot = {'messages': [], 'truncated': False}
@@ -167,7 +169,7 @@ class V2PlanBackendTests(unittest.TestCase):
         )
         return callbacks
 
-    def plan(self, *, alias=True, profile=False, version=2, run_id='saved-plan', revision=0):
+    def plan(self, *, alias=True, profile=False, run_id='saved-plan', revision=0):
         steps = [{
             'step_id': 'draft', 'capability_id': 'compose',
             'arguments': {'instruction': 'Prepare a concise report from the complete named inputs.'},
@@ -177,33 +179,55 @@ class V2PlanBackendTests(unittest.TestCase):
                 if profile else [{'name': 'answer', 'kind': 'markdown-v1'}]
             ),
             'depends_on': [],
-        }] if version == 2 else [{
-            'step_id': 'answer', 'capability_id': 'respond', 'arguments': {},
         }]
         raw = {
-            'planner_contract_version': version, 'run_id': run_id,
+            'planner_contract_version': 2, 'run_id': run_id,
             'plan_id': f'plan-{run_id}', 'turn_id': 'turn-1', 'revision': revision,
             'intent': {'summary': 'Prepare the requested report.'}, 'steps': steps,
         }
-        if version == 2 and not profile:
+        if not profile:
             raw['final_response'] = binding('draft')
         return self.schema.normalize_plan(
             raw, 'conversation-1', 'owner', settings=self.settings,
-            contract_version=version, existing_results=self.aliases if alias else {},
+            existing_results=self.aliases if alias else {},
             composition_profiles=self.profiles,
         )
 
-    def save(self, *, alias=True, profile=False, version=2, initial_updates=None):
+    @staticmethod
+    def legacy_plan(*, run_id='saved-plan', revision=0):
+        """A plan saved by the removed earlier contract, exactly as it was stored."""
+        return {
+            'planner_contract_version': 1, 'run_id': run_id, 'plan_id': f'plan-{run_id}',
+            'turn_id': 'turn-1', 'revision': revision, 'conversation_id': 'conversation-1',
+            'user_id': 'owner', 'status': 'awaiting_approval',
+            'intent': {'summary': 'Prepare the requested report.'},
+            'approval': {'mode': 'manual', 'state': 'pending'},
+            'steps': [{
+                'step_id': 'answer', 'capability_id': 'respond', 'phase': 'output',
+                'arguments': {}, 'enabled': True, 'depends_on': [],
+            }],
+        }
+
+    def save_legacy(self):
+        """Store a run the way the removed contract saved it; nothing may reopen it."""
+        record = self.save(alias=False)
+        record['plan'] = self.legacy_plan(run_id=record['id'])
+        record['planner_contract_version'] = 1
+        record.pop('edit_version', None)
+        self.runs.upsert_item(record)
+        return deepcopy(record)
+
+    def save(self, *, alias=True, profile=False, initial_updates=None):
         context = {
-            'planner_contract_version': version,
-            'result_aliases': deepcopy(self.wire_aliases) if alias and version == 2 else {},
+            'planner_contract_version': 2,
+            'result_aliases': deepcopy(self.wire_aliases) if alias else {},
             'turn_id': 'turn-1', 'user_message': 'Prepare the requested report.',
             'user_message_id': 'user-message', 'user_message_fingerprint': 'message-fingerprint',
             'seeds': {}, 'original_seeds': {}, 'answered_questions': [],
             'resolved_message': 'Prepare the requested report.',
             'conversation_context': deepcopy(self.snapshot),
         }
-        plan = self.plan(alias=alias, profile=profile, version=version)
+        plan = self.plan(alias=alias, profile=profile)
         self.store.create_orchestration_run(
             plan, 'owner', 'conversation-1', turn_index=1, turn_context=context,
             initial_updates=initial_updates,
@@ -377,7 +401,7 @@ class V2PlanBackendTests(unittest.TestCase):
 
     def test_ordinary_replan_cannot_migrate_the_saved_contract(self):
         original = self.save()
-        legacy = self.plan(version=1, alias=False, run_id='legacy-replan', revision=1)
+        legacy = self.legacy_plan(run_id='legacy-replan', revision=1)
         with self.assertRaises(self.store.ConversationContextError):
             self.store.create_orchestration_run(
                 legacy, 'owner', 'conversation-1', turn_index=1,
@@ -387,18 +411,15 @@ class V2PlanBackendTests(unittest.TestCase):
         self.assertEqual(current, original)
         self.assertEqual(len(self.runs.items), 1)
 
-    def test_real_v2_validation_preserves_bindings_outputs_and_final_response_when_flag_off(self):
+    def test_real_validation_preserves_bindings_outputs_and_final_response(self):
         original = self.save()
         before = deepcopy(original)
-        for rollout in (None, False, True):
-            with self.subTest(rollout=rollout):
-                self.settings['enable_chat_orchestration_harness'] = rollout
-                checked = self.validate(original)
-                self.assertEqual(checked['planner_contract_version'], 2)
-                self.assertEqual(checked['steps'], original['plan']['steps'])
-                self.assertEqual(checked['final_response'], original['plan']['final_response'])
+        checked = self.validate(original)
+        self.assertEqual(checked['planner_contract_version'], 2)
+        self.assertEqual(checked['steps'], original['plan']['steps'])
+        self.assertEqual(checked['final_response'], original['plan']['final_response'])
         self.assertEqual(original, before)
-        self.assertEqual(self.resolve_aliases.call_count, 3)
+        self.assertEqual(self.resolve_aliases.call_count, 1)
         self.assertTrue(self.fixture.source_reads)
 
     def test_legacy_saved_plan_without_top_level_admission_still_uses_its_v2_plan(self):
@@ -419,7 +440,10 @@ class V2PlanBackendTests(unittest.TestCase):
                     target['planner_contract_version'] = version
                     with self.assertRaises(self.revisions.PlanRevisionError) as failure:
                         self.validate(record)
-                    self.assertEqual(failure.exception.code, 'plan_changed')
+                    # A plan with no marker or the earlier marker gets the one legacy refusal;
+                    # any other mismatch is a changed plan.
+                    legacy = field == 'plan' and (version is None or type(version) is int and version == 1)
+                    self.assertEqual(failure.exception.code, 'legacy_plan' if legacy else 'plan_changed')
         self.resolve_aliases.assert_not_called()
 
     def test_missing_alias_resolver_fails_closed_without_model_work(self):
@@ -792,23 +816,6 @@ class V2PlanBackendTests(unittest.TestCase):
         self.assertEqual(claimed['plan']['steps'], record['plan']['steps'])
         self.assertEqual(claimed['status'], 'running')
 
-    def test_legacy_edit_does_not_depend_on_the_optional_export_catalog(self):
-        record = self.save(alias=False, version=1)
-        checked = self.validate(record, export_catalog={'not': 'a v2 catalog'})
-        outcome = self.edit(record, self.reply(record), export_catalog=[])
-        self.assertEqual(checked['planner_contract_version'], 1)
-        self.assertEqual(outcome['document']['planner_contract_version'], 1)
-
-    def test_legacy_claim_ignores_optional_export_catalog_and_composition_profiles(self):
-        record = self.save(alias=False, version=1)
-        claimed = self.revisions.claim_plan_run(
-            record['id'], 'owner', 'conversation-1',
-            export_catalog={'not': 'a v2 catalog'}, composition_profiles={'not': object()},
-        )
-        self.assertEqual(claimed['planner_contract_version'], 1)
-        self.assertEqual(claimed['plan']['steps'], record['plan']['steps'])
-        self.assertEqual(claimed['status'], 'running')
-
     def test_external_callbacks_are_forwarded_unchanged_for_v2_validation_without_io(self):
         callbacks = self.make_external_callbacks()
         native = Mock(side_effect=AssertionError('Discovery must not invoke native work'))
@@ -919,25 +926,6 @@ class V2PlanBackendTests(unittest.TestCase):
             self.assertNotIn(name, serialized)
         self.assertEqual(checked['planner_contract_version'], 2)
         self.assertEqual(outcome['document']['planner_contract_version'], 2)
-
-    def test_external_callbacks_never_change_v1_validation_or_replanning_defaults(self):
-        callbacks = self.make_external_callbacks()
-        record = self.save(alias=False, version=1)
-        for options in ({}, callbacks, {'external_source_admission': True}):
-            with self.subTest(options=options):
-                with patch.object(
-                    self.editor, 'resolve_available_capabilities', wraps=self.editor.resolve_available_capabilities,
-                ) as discover:
-                    checked = self.validate(record, **options)
-                with patch.object(self.editor, 'plan_request', wraps=self.editor.plan_request) as planner:
-                    outcome = self.edit(record, self.reply(record), **options)
-                for name in EXTERNAL_CALLBACK_NAMES:
-                    self.assertNotIn(name, discover.call_args.kwargs['request_context'])
-                    self.assertNotIn(name, planner.call_args.kwargs['request_context'])
-                self.assertEqual(checked['planner_contract_version'], 1)
-                self.assertEqual(outcome['document']['planner_contract_version'], 1)
-        for callback in callbacks.values():
-            callback.assert_not_called()
 
     def test_external_callbacks_are_resupplied_for_restore_without_persistence(self):
         callbacks = self.make_external_callbacks()
@@ -1112,22 +1100,6 @@ class V2PlanBackendTests(unittest.TestCase):
         rendering.authorize_execution.assert_not_called()
         rendering.renderer.assert_not_called()
 
-    def test_render_service_is_absent_from_legacy_validation_and_replanning(self):
-        rendering = self.make_rendering_service()
-        record = self.save(alias=False, version=1)
-        with patch.object(
-            self.editor, 'resolve_available_capabilities', wraps=self.editor.resolve_available_capabilities,
-        ) as discover:
-            checked = self.validate(record, rendering_service=rendering)
-        self.assertNotIn('rendering_service', discover.call_args.kwargs['request_context'])
-        with patch.object(self.editor, 'plan_request', wraps=self.editor.plan_request) as planner:
-            outcome = self.edit(record, self.reply(record), rendering_service=rendering)
-        self.assertNotIn('rendering_service', planner.call_args.kwargs['request_context'])
-        self.assertEqual(checked['planner_contract_version'], 1)
-        self.assertEqual(outcome['document']['planner_contract_version'], 1)
-        rendering.authorize_execution.assert_not_called()
-        rendering.renderer.assert_not_called()
-
     def test_render_instance_is_the_only_added_discovery_field(self):
         rendering = self.make_rendering_service()
         record = self.save()
@@ -1170,7 +1142,7 @@ class V2PlanBackendTests(unittest.TestCase):
         self.native_factory = Mock(side_effect=AssertionError('Planning must not execute native work'))
         record = self.save_native()
         record['native_bridge_for_step'] = True
-        self.settings.update(enable_chat_orchestration_harness=True, native_bridge_for_step=True)
+        self.settings.update(native_bridge_for_step=True)
         for factory in (None, False, True, {'ready': True}):
             with self.subTest(factory=factory):
                 with patch.object(
@@ -1249,21 +1221,6 @@ class V2PlanBackendTests(unittest.TestCase):
         self.assertNotIn('native_bridge_for_step', serialized)
         self.native_factory.assert_not_called()
 
-    def test_native_factory_never_changes_legacy_validation_or_replan_context(self):
-        factory = Mock(side_effect=AssertionError('Legacy plans must not consume a v2 native factory'))
-        record = self.save(alias=False, version=1)
-        with patch.object(
-            self.editor, 'resolve_available_capabilities', wraps=self.editor.resolve_available_capabilities,
-        ) as discover:
-            checked = self.validate(record, native_bridge_for_step=factory)
-        self.assertNotIn('native_bridge_for_step', discover.call_args.kwargs['request_context'])
-        with patch.object(self.editor, 'plan_request', wraps=self.editor.plan_request) as planner:
-            outcome = self.edit(record, self.reply(record), native_bridge_for_step=factory)
-        self.assertNotIn('native_bridge_for_step', planner.call_args.kwargs['request_context'])
-        self.assertEqual(checked['planner_contract_version'], 1)
-        self.assertEqual(outcome['document']['planner_contract_version'], 1)
-        factory.assert_not_called()
-
     def test_revision_publication_and_projection_keep_the_complete_v2_graph(self):
         record = self.hold(self.save())
         outcome = self.edit(record, self.reply(record))
@@ -1308,7 +1265,7 @@ class V2PlanBackendTests(unittest.TestCase):
 
     def test_revision_publication_cannot_change_contract_versions(self):
         held = self.hold(self.save())
-        legacy = self.plan(version=1, alias=False)
+        legacy = self.legacy_plan()
         with self.assertRaises(self.revisions.PlanRevisionError):
             self.publish(held, legacy, {'planner_contract_version': 1})
         current = self.read()
@@ -1413,18 +1370,43 @@ class V2PlanBackendTests(unittest.TestCase):
         self.assertEqual(self.model_calls, [])
         self.resolve_aliases.assert_not_called()
 
-    def test_v1_edit_and_revision_stay_v1_even_when_new_plan_rollout_is_on(self):
-        self.settings['enable_chat_orchestration_harness'] = True
-        record = self.hold(self.save(alias=False, version=1))
-        checked = self.validate(record)
-        outcome = self.edit(record, self.reply(record))
-        published = self.publish(record, outcome['document'], outcome['turn_context'])
-        self.assertEqual(checked['planner_contract_version'], 1)
-        self.assertEqual(outcome['document']['planner_contract_version'], 1)
-        self.assertEqual(published['plan']['planner_contract_version'], 1)
-        self.assertEqual(published['planner_contract_version'], 1)
-        self.assertEqual(published['plan']['steps'][-1]['capability_id'], 'respond')
-        self.resolve_aliases.assert_not_called()
+    def test_saved_legacy_plan_is_refused_before_validation_editing_claiming_or_discovery(self):
+        record = self.save_legacy()
+        before = deepcopy(self.runs.items)
+        callbacks = self.make_external_callbacks()
+        native = Mock(side_effect=AssertionError('A legacy plan must not reach native discovery'))
+        rendering = self.make_rendering_service()
+        forbidden = Mock(side_effect=AssertionError('A legacy plan must not be rediscovered or replanned'))
+        operations = {
+            'read': lambda: self.read(),
+            'validate': lambda: self.validate(
+                record, native_bridge_for_step=native, rendering_service=rendering, **callbacks,
+            ),
+            'edit': lambda: self.edit(
+                record, {'kind': 'plan'}, export_catalog=[], native_bridge_for_step=native,
+                rendering_service=rendering, **callbacks,
+            ),
+            'claim': lambda: self.revisions.claim_plan_run(
+                record['id'], 'owner', 'conversation-1',
+                export_catalog={'not': 'a catalog'}, composition_profiles={'not': object()},
+            ),
+            'hold': lambda: self.hold(record),
+        }
+        with patch.object(self.editor, 'resolve_available_capabilities', forbidden), \
+                patch.object(self.editor, 'plan_request', forbidden):
+            for name, operation in operations.items():
+                with self.subTest(operation=name):
+                    with self.assertRaises(self.revisions.PlanRevisionError) as refused:
+                        operation()
+                    self.assertEqual(refused.exception.code, 'legacy_plan')
+                    self.assertEqual(refused.exception.status_code, 409)
+                    self.assertEqual(str(refused.exception), self.schema.LEGACY_PLAN_MESSAGE)
+        forbidden.assert_not_called()
+        native.assert_not_called()
+        for callback in callbacks.values():
+            callback.assert_not_called()
+        self.assertEqual(self.runs.items, before)
+        self.assertEqual(self.model_calls, [])
 
 
 if __name__ == '__main__':

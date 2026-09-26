@@ -97,6 +97,8 @@ export interface RunRecoveryState extends OrchestrationAttempt {
     plan?: OrchestrationPlan;
     busy?: boolean;
     error?: string | null;
+    /** The server refuses this run as an earlier orchestration version: it cannot be read, checked or rerun. */
+    legacyPlan?: boolean;
     transportUnknown?: boolean;
     checking?: boolean;
     detailLoaded?: boolean;
@@ -573,7 +575,7 @@ export const useOrchestrationStore = create<OrchestrationState>((set, get) => ({
             }
             return {
                 plans: { ...state.plans, [key]: canonical },
-                ...(canonical.planner_contract_version === 2 && Array.isArray(editor.export_catalog) ? {
+                ...(Array.isArray(editor.export_catalog) ? {
                     runRecovery: {
                         ...state.runRecovery,
                         [canonical.run_id]: {

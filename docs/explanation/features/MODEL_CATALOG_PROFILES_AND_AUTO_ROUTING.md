@@ -1,6 +1,8 @@
 # Model catalog profiles and per-step Auto routing
 
 Implemented in version: **0.261.126** (`application/single_app/config.py`).
+Updated in version: **0.261.134** (Gather / Reason / Render plans and the general-answering fallback).
+Updated in version: **0.261.139** (Gather / Reason / Render is the only orchestration contract).
 
 ## Overview and dependencies
 
@@ -9,10 +11,12 @@ deployments. Classic and React V2 share an administrator editor for built-in
 profiles, custom profiles, favorites, priority, and connection association.
 Only V2 orchestration adds explicit per-step Auto routing. Regular chat remains
 manual; existing planner overrides and delegated agents retain their own bindings.
-Since **0.261.131**, an Auto request stays on the standard orchestration contract
-even when the Gather / Reason / Render preview is admitted, because only that step
-executor enforces these bindings. Dependency planning rejects Auto explicitly, and a
-dependency plan carrying bindings fails closed before model setup.
+Between **0.261.131** and **0.261.133**, an Auto request stayed on the earlier
+orchestration contract, because only its step executor enforced these bindings.
+Since **0.261.134**, the Gather / Reason / Render executor enforces them: each step
+runs inside its binding's model scope, and an Auto plan with a missing or stale
+binding is refused before any model setup. Since **0.261.139**, Gather / Reason /
+Render is the only orchestration contract, so every Auto plan is bound this way.
 
 Dependencies are the existing settings store, AI Connections authorization,
 orchestration planner/executor/checkpoints, local Bootstrap assets, and the V2
@@ -62,7 +66,14 @@ The planner labels each model-backed step with a task category, but cannot choos
 credentials or forge a binding: normalization strips model-supplied bindings.
 
 The server ranks eligible candidates by task suitability, priority, favorite,
-then stable connection identity. Unknown specialist claims do not qualify.
+then stable connection identity. An unknown rating never outranks a model rated
+for the task. When no connected, capable model is rated for a step's task, the
+step uses the model best rated for general answering instead of failing the whole
+plan, and its reason reads "General answering, because no connected model is rated
+for ...". This matters because few profiles rate specialist tasks: only one
+built-in profile rates structured data analysis, and many rate no reasoning. The
+fallback never uses a model rated Unsuitable for the task, an archived profile, or
+a model missing a required capability such as tool calling for actions.
 Responses-only profiles are excluded from this Chat Completions-based path,
 including when a custom descriptive link tries to obscure the native identity.
 The candidate set is bounded at 200; exceeding it is an explicit configuration
@@ -75,6 +86,16 @@ step records use the executed binding. Bindings participate in checkpoint plan
 fingerprints and are reauthorized before checkpoint reuse. Preferences never
 reroute saved work; technical edits require a new plan.
 
+The planner prompt also lists which steps are
+model-backed (`compose`, `tabular_analyze`, `document_analyze`, `document_compare`,
+`deep_research`, `action_invoke`). The chat answer is credited to the model bound
+to the step that `final_response` names. When the reply reuses an earlier turn's
+result, or the plan only delivers files, no step writes it, so the default
+selection is kept rather than crediting another step's model. The external-source
+check that runs before an action or deep research result is admitted or reused
+rebuilds the step's model from its approved binding, because the run's own
+selection is empty under Auto.
+
 ## User workflows
 
 See [Model Catalog](../../admin/model-catalog.md) for shared profile management,
@@ -85,8 +106,15 @@ Auto versus pinned selection, plan review, and recovery.
 ## Validation and limitations
 
 `functional_tests/test_model_catalog_profiles.py` covers profile validation,
-precedence, collisions, archival, preference ordering, group binding context,
-API incompatibility, and restoration after execution failure.
+precedence, collisions, archival, preference ordering, the general-answering
+fallback and what it never bypasses, group binding context, API incompatibility,
+and restoration after execution failure.
+`functional_tests/test_orchestration_external_metadata.py` covers rebuilding bound
+Auto action and deep research steps from their bindings, and refusing a missing or
+malformed binding.
+`functional_tests/test_orchestration_single_contract_parity.py` covers Auto planning
+and execution on Gather / Reason / Render plans, answer credit, and the planner's
+model-backed step list.
 `functional_tests/test_orchestration_catalog_auto_execution.py` drives real Flask
 planning and execution with offline provider responses, checking model calls,
 live and hydrated step attribution, saved answer metadata, changed-capacity/access

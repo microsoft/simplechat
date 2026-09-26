@@ -353,8 +353,14 @@ def test_approved_images_are_folded_into_their_card():
     print("  A folded image is hidden from the top-level thread.")
 
     # An image is only hidden once a card has been shown to claim it. Hiding on the metadata
-    # alone would make an image that no card can match visible nowhere at all.
-    if "extractProposalSpecs" not in list_source or "findResultForSpec" not in list_source:
+    # alone would make an image that no card can match visible nowhere at all. The thread
+    # matches exactly as the card does: resultForCard, which prefers an orchestrated answer's
+    # planned image by message id and otherwise uses findResultForSpec.
+    card_matcher = "findResultForSpec" in list_source or (
+        "resultForCard" in list_source
+        and "return findResultForSpec(spec, results);" in spec_source
+    )
+    if "extractProposalSpecs" not in list_source or not card_matcher:
         raise AssertionError(
             "The fold hides images without checking that a card can actually show them."
         )

@@ -1,5 +1,5 @@
 // test_v2_public_membership_logic.mjs
-// Version: 0.261.179
+// Version: 0.261.180
 // Implemented in: 0.261.179
 // Executes the real V2 public membership adapter (createPublicMembershipClient in
 // lib/groupMembership.ts): the public routes each call sends, the strict envelope readers reused
@@ -17,6 +17,7 @@ const {
     createPublicMembershipClient, isAccessChangedError, isTerminalMembershipError,
     isPublicAssignableMemberRole, membershipErrorCode, membershipErrorMessage,
     PUBLIC_ASSIGNABLE_MEMBER_ROLES, PUBLIC_ASSIGNABLE_ROLE_OPTIONS, MembershipResponseError,
+    parseMemberCsv, describeMemberCsvRoles,
 } = membership;
 
 const originalFetch = globalThis.fetch;
@@ -154,6 +155,35 @@ try {
         assert.equal(isPublicAssignableMemberRole('DocumentManager'), true);
         assert.equal(isPublicAssignableMemberRole('User'), false, 'User is not publicly assignable.');
         assert.equal(isPublicAssignableMemberRole('Owner'), false);
+    });
+
+    await check('the public CSV import accepts admin and document_manager and refuses user and owner', () => {
+        const header = 'userId,displayName,email,role';
+        const idA = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee';
+        const idB = '11111111-2222-3333-4444-555555555555';
+        const accepted = parseMemberCsv([
+            header,
+            `${idA},Ada Admin,ada.admin@example.test,admin`,
+            `${idB},Dana Manager,dana.manager@example.test,document_manager`,
+        ].join('\n'), PUBLIC_ASSIGNABLE_MEMBER_ROLES);
+        assert.deepEqual(accepted.errors, [], 'admin and document_manager rows parse for the public scope.');
+        assert.deepEqual(accepted.rows.map((entry) => entry.role), ['Admin', 'DocumentManager']);
+
+        const refused = parseMemberCsv([
+            header,
+            `${idA},Uma User,uma.user@example.test,user`,
+            `${idB},Ozzy Owner,ozzy.owner@example.test,owner`,
+        ].join('\n'), PUBLIC_ASSIGNABLE_MEMBER_ROLES);
+        assert.deepEqual(refused.rows, [], 'A file with a public-invalid role is refused whole, before any add.');
+        assert.ok(refused.errors.some((error) => error.includes("Invalid role 'user'. Must be: admin or document_manager")),
+            'A `user` row is refused at parse time with the public message.');
+        assert.ok(refused.errors.some((error) => error.includes("Invalid role 'owner'. Must be: admin or document_manager")),
+            'An `owner` row is refused at parse time with the public message.');
+
+        assert.equal(describeMemberCsvRoles(PUBLIC_ASSIGNABLE_MEMBER_ROLES), 'admin or document_manager',
+            'The public dialog advertises only admin or document_manager.');
+        assert.equal(describeMemberCsvRoles(), 'user, admin or document_manager',
+            'The group dialog wording (no roles filter) is unchanged.');
     });
 
     console.log(`${checks} public membership logic checks passed.`);

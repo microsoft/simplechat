@@ -86,6 +86,18 @@ export async function resumeOrchestrationForConversation(
         return;
     }
 
+    // Hydration settles a run restored from storage only when the history lists it, and the
+    // server leaves out runs from an earlier orchestration version. Each such run is checked
+    // by its own id instead, so its record, or the server's refusal, settles it.
+    const listed = new Set(
+        (useOrchestrationStore.getState().hydratedHistory[conversationId] ?? []).map((entry) => entry.runId),
+    );
+    for (const run of Object.values(useOrchestrationStore.getState().inFlight)) {
+        if (run.conversationId === conversationId && run.resumed && !listed.has(run.runId)) {
+            void reconcileOrchestrationRun(conversationId, run.runId);
+        }
+    }
+
     const newest = useOrchestrationStore.getState().hydratedHistory[conversationId]?.[0];
     const pending = newest && isOrchestrationRunPending({ ...newest.attempt, status: newest.planStatus });
     if (newest && (newest.planStatus === 'failed' || newest.planStatus === 'cancelled' || pending

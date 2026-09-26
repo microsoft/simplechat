@@ -6,7 +6,7 @@ The revision store owns concurrency and publication. This module prepares the sc
 request, reuses the planner and source authorization boundaries, and never executes work
 or writes conversation messages.
 
-Version: 0.261.127
+Version: 0.261.140
 """
 
 import json
@@ -28,6 +28,8 @@ from functions_orchestration_context import (
     resolve_elicitation_references,
     validate_clarification_answers,
 )
+from functions_model_catalog import ModelCatalogError
+from functions_orchestration_model_routing import assign_step_models, authorized_routing_candidates
 from functions_orchestration_models import OrchestrationModelError, resolve_orchestration_model
 from functions_orchestration_memory import load_orchestration_memory, validate_memory_audience
 from functions_orchestration_events import merge_reasoning_adjustments
@@ -45,6 +47,7 @@ from functions_orchestration_schema import (
     apply_plan_edits,
     normalize_plan,
     plan_document_ids,
+    validate_plan_document_source_kinds,
     validate_plan_requirements,
 )
 
@@ -144,6 +147,7 @@ def _available_sources(context, plan, user_id, settings, candidates=()):
             'file_name': item.get('file_name') or item.get('display_name') or document_id,
             'title': item.get('display_name') or item.get('file_name') or document_id,
             'scope': item.get('scope'),
+            'source_kind': item.get('source_kind'),
             'selected_by_user': document_id in (seeds.get('document_ids') or []),
         }
         for document_id, item in available.items()
@@ -151,7 +155,7 @@ def _available_sources(context, plan, user_id, settings, candidates=()):
 
 
 def _revision_catalogs(
-    context, user_id, settings, identity, *, contract_version=1, native_bridge_for_step=None,
+    context, user_id, settings, identity, *, contract_version=2, native_bridge_for_step=None,
     rendering_service=None, external_source_preflight=None,
     external_source_admission=None, external_source_authorizer=None,
     capture_external_source_configuration=None,
@@ -169,19 +173,18 @@ def _revision_catalogs(
         user_groups=seeds.get('active_group_ids') or None,
     )
     runtime_options = {}
-    if contract_version == 2:
-        if callable(native_bridge_for_step):
-            runtime_options['native_bridge_for_step'] = native_bridge_for_step
-        if rendering_service is not None:
-            runtime_options['rendering_service'] = rendering_service
-        external_bindings = {
-            'external_source_preflight': external_source_preflight,
-            'external_source_admission': external_source_admission,
-            'external_source_authorizer': external_source_authorizer,
-            'capture_external_source_configuration': capture_external_source_configuration,
-        }
-        if any(callback is not None for callback in external_bindings.values()):
-            runtime_options.update(external_bindings)
+    if callable(native_bridge_for_step):
+        runtime_options['native_bridge_for_step'] = native_bridge_for_step
+    if rendering_service is not None:
+        runtime_options['rendering_service'] = rendering_service
+    external_bindings = {
+        'external_source_preflight': external_source_preflight,
+        'external_source_admission': external_source_admission,
+        'external_source_authorizer': external_source_authorizer,
+        'capture_external_source_configuration': capture_external_source_configuration,
+    }
+    if any(callback is not None for callback in external_bindings.values()):
+        runtime_options.update(external_bindings)
     caller = build_capability_request_context(
         user_id, identity, context.get('resolved_message') or context['user_message'],
         agents, actions, allowed_user_urls=revision_allowed_urls(context),
@@ -206,16 +209,16 @@ def validate_edited_plan(
     A supplied export catalog narrows canonical format/profile pairs without
     redefining shared exporters: None uses shared defaults, while [] admits no
     Render work. The native factory, typed rendering
-    service, and external-source callbacks are forwarded only for v2 discovery,
-    never executed or saved in admission context. The shared context helper
+    service, and external-source callbacks are forwarded only for capability
+    discovery, never executed or saved in admission context. The shared context helper
     validates the service instance and requires all four external callbacks to
     be callable together, without acquiring sources or reading configuration.
     """
     contract_version = plan_revision_contract_version(plan, context)
     existing_results = resolve_revision_result_aliases(
         context, user_id, result_alias_resolver=result_alias_resolver,
-    ) if contract_version == 2 else None
-    admitted_catalog = resolve_revision_export_catalog(export_catalog) if contract_version == 2 else None
+    )
+    admitted_catalog = resolve_revision_export_catalog(export_catalog)
     seeds = context.get('seeds') or {}
     resolve_elicitation_references(
         seeds.get('elicitation_references') or [],
@@ -252,6 +255,10 @@ def validate_edited_plan(
             contract_version=contract_version, existing_results=existing_results,
             composition_profiles=composition_profiles, export_catalog=admitted_catalog,
         )
+        validate_plan_document_source_kinds(checked, {
+            item['document_id']: item['source_kind']
+            for item in candidates if item.get('source_kind')
+        })
     except PlanValidationError as exc:
         raise PlanRevisionError(
             'That version cannot be used with the current capabilities. Your current plan is unchanged.',
@@ -267,6 +274,16 @@ def validate_edited_plan(
         *checked['validation']['repairs'],
     ]))
     validate_plan_requirements(checked, seeds, allow_changes=True)
+    if seeds.get('model_routing') == 'auto':
+        # normalize_plan strips server-owned bindings. Re-bind an Auto plan to the current
+        # authorized inventory instead of letting an edit silently turn Auto routing off.
+        try:
+            assign_step_models(checked, authorized_routing_candidates(settings, user_id))
+        except ModelCatalogError as exc:
+            raise PlanRevisionError(
+                'No eligible model is available for that version. Your current plan is unchanged.',
+                code='model_unavailable', status_code=403,
+            ) from exc
     return checked
 
 
@@ -316,10 +333,9 @@ def build_plan_edit_outcome(
                 'A restored version cannot change the saved plan contract.',
                 code='source_changed',
             )
-        if contract_version == 2:
-            resolve_revision_result_aliases(
-                restored_context, user_id, result_alias_resolver=result_alias_resolver,
-            )
+        resolve_revision_result_aliases(
+            restored_context, user_id, result_alias_resolver=result_alias_resolver,
+        )
         note = f"Restored version {int(source.get('revision') or 0) + 1}."
         return {
             'kind': 'plan', 'document': deepcopy(source['plan']),
@@ -365,16 +381,14 @@ def build_plan_edit_outcome(
         raise PlanRevisionError('The saved plan contract changed.', code='plan_changed')
     existing_results = resolve_revision_result_aliases(
         context, user_id, result_alias_resolver=result_alias_resolver,
-    ) if contract_version == 2 else None
-    admitted_catalog = resolve_revision_export_catalog(export_catalog) if contract_version == 2 else None
-    if action != 'answer' or contract_version == 2:
-        narrowing = {} if action == 'answer' else data.get('edits', record.get('edit_narrowing'))
-        current_plan = apply_plan_edits(
-            current_plan, {} if contract_version == 2 and narrowing is None else narrowing,
-            existing_results=existing_results, contract_version=contract_version,
-            export_catalog=admitted_catalog,
-            composition_profiles=composition_profiles if contract_version == 2 else None,
-        )
+    )
+    admitted_catalog = resolve_revision_export_catalog(export_catalog)
+    narrowing = {} if action == 'answer' else data.get('edits', record.get('edit_narrowing'))
+    current_plan = apply_plan_edits(
+        current_plan, {} if narrowing is None else narrowing,
+        existing_results=existing_results, contract_version=contract_version,
+        export_catalog=admitted_catalog, composition_profiles=composition_profiles,
+    )
     validate_clarification_answers(context.get('answered_questions') or [])
     seeds = context.get('seeds') or {}
     resolve_elicitation_references(
@@ -425,12 +439,22 @@ def build_plan_edit_outcome(
     edit_context = {
         'current_plan': {
             key: deepcopy(current_plan[key])
-            for key in ('planner_contract_version', 'intent', 'assumptions', 'steps', 'final_response')
+            for key in ('planner_contract_version', 'intent', 'assumptions', 'deliverables', 'steps', 'final_response')
             if key in current_plan
         },
         'current_request': current_request, 'instruction': instruction,
         'chat': [{key: turn[key] for key in ('role', 'content')} for turn in chat[-20:]],
     }
+    # A step's deliverable brief is derived again by validation; the planner edits the plan.
+    for step in edit_context['current_plan'].get('steps') or []:
+        if isinstance(step, dict):
+            step.pop('deliverable_context', None)
+    # So is the answer the server assumes for a plan that declared no deliverables.
+    if isinstance(edit_context['current_plan'].get('deliverables'), list):
+        edit_context['current_plan']['deliverables'] = [
+            deliverable for deliverable in edit_context['current_plan']['deliverables']
+            if not (isinstance(deliverable, dict) and deliverable.get('implicit') is True)
+        ]
     try:
         planner_model = resolve_orchestration_model(
             settings, user_id=user_id, seeds=seeds, planner=True, identity_context=identity,
@@ -459,6 +483,12 @@ def build_plan_edit_outcome(
             contract_version=contract_version, existing_results=existing_results,
             composition_profiles=composition_profiles, export_catalog=admitted_catalog,
         )
+    except ModelCatalogError as exc:
+        # Auto binds every revised step again; an unreachable inventory keeps the plan as it was.
+        raise PlanRevisionError(
+            'No eligible model is available for that change. Your previous plan is unchanged.',
+            code='model_unavailable', status_code=403,
+        ) from exc
     finally:
         planner_model.close()
     _add_usage(context, document.get('token_usage'))

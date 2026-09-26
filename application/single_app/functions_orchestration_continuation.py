@@ -1,12 +1,14 @@
 # functions_orchestration_continuation.py
-"""Same-attempt recovery for saved V2 work, using the existing owning lease.
+"""Same-attempt recovery for saved work, using the existing owning lease.
 
-Version: 0.261.129
+Version: 0.261.139
 Initialized callers import this module after application bootstrap. It neither
 admits plans nor creates retry attempts, and never starts or cancels native jobs.
 Valid native waits use the existing recovery claim and native restore engine.
 Other scheduler states share its stable producer token and fresh claim_id fences.
 Saved native and generic result waits retain their original core dispatch data.
+A run from the removed legacy plan contract is refused with the legacy-plan failure;
+it is never continued.
 """
 
 import logging
@@ -32,7 +34,7 @@ from functions_orchestration_checkpoints import (
     restore_context,
     step_input_fingerprint,
 )
-from functions_orchestration_plan_revisions import read_revision_run
+from functions_orchestration_plan_revisions import PlanRevisionError, read_revision_run
 from functions_orchestration_recovery import (
     HEARTBEAT_SECONDS,
     ExecutionCheckpoints,
@@ -50,7 +52,9 @@ from functions_orchestration_recovery import (
 from functions_orchestration_rendering import raise_output_read_infrastructure_failure
 from functions_orchestration_result_contracts import TaskResult
 from functions_orchestration_result_runtime import decode_step_result, validate_task_outputs
-from functions_orchestration_schema import PLAN_HARD_MAX_STEPS, build_failure, build_step_result, safe_failure
+from functions_orchestration_schema import (
+    LEGACY_PLAN_CODE, PLAN_HARD_MAX_STEPS, build_failure, build_step_result, is_legacy_plan, safe_failure,
+)
 
 
 CONTINUATION_VERSION = "orchestration-continuation-v1"
@@ -76,6 +80,8 @@ def _timestamp(value):
 
 def _saved_v2(record):
     plan = record.get("plan")
+    if is_legacy_plan(plan) or is_legacy_plan(record):
+        raise CheckpointError(LEGACY_PLAN_CODE)
     if (
         type(plan) is not dict
         or type(record.get("planner_contract_version")) is not int
@@ -100,7 +106,12 @@ def _saved_v2(record):
 def _read_owned(run_id, user_id, conversation_id, authorize):
     if not callable(authorize) or authorize() is False:
         raise CheckpointError("context_unavailable")
-    record = read_revision_run(run_id, user_id, conversation_id)
+    try:
+        record = read_revision_run(run_id, user_id, conversation_id)
+    except PlanRevisionError as exc:
+        if exc.code == LEGACY_PLAN_CODE:
+            raise CheckpointError(LEGACY_PLAN_CODE) from exc
+        raise
     _saved_v2(record)
     return record
 

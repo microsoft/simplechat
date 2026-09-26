@@ -2,8 +2,9 @@
 """
 In-memory Cosmos boundary for conditional orchestration revision tests.
 
-Version: 0.261.105
+Version: 0.261.140
 Implemented in: 0.261.102
+SDK-shaped point response coverage added in: 0.261.140
 
 Batch operations are formatted by the installed SDK and applied to a copy. A failed
 operation never makes preceding operations visible. Hooks permit deterministic races.
@@ -16,11 +17,13 @@ from threading import RLock
 from azure.core import MatchConditions
 from azure.core.exceptions import AzureError
 from azure.cosmos import _base, exceptions
+from azure.cosmos._cosmos_responses import CosmosDict
 
 
 class AtomicMemoryContainer:
-    def __init__(self, partition_field):
+    def __init__(self, partition_field, *, sdk_responses=False):
         self.partition_field = partition_field
+        self.sdk_responses = sdk_responses
         self.items = {}
         self.queries = []
         self.sequence = 0
@@ -34,6 +37,10 @@ class AtomicMemoryContainer:
         self.batch_calls = []
         self._lock = RLock()
 
+    def _response(self, record):
+        value = deepcopy(record)
+        return CosmosDict(value, response_headers={}) if self.sdk_responses else value
+
     def _hook(self, name):
         callback = getattr(self, name)
         if callback:
@@ -46,7 +53,7 @@ class AtomicMemoryContainer:
         self.sequence += 1
         saved = {**deepcopy(body), '_etag': str(self.sequence)}
         self.items[(body[self.partition_field], body['id'])] = saved
-        return deepcopy(saved)
+        return self._response(saved)
 
     def upsert_item(self, body):
         with self._lock:
@@ -65,7 +72,7 @@ class AtomicMemoryContainer:
             record = self.items.get((partition_key, item))
             if record is None:
                 raise exceptions.CosmosResourceNotFoundError(status_code=404, message='Test record not found')
-            return deepcopy(record)
+            return self._response(record)
 
     def replace_item(self, item, body, **kwargs):
         self._hook('before_replace')

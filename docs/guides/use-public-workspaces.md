@@ -76,6 +76,13 @@ transfer ownership. Nobody can remove themselves. DocumentManagers see members'
 names but not their emails. The directory offers **Create** to people allowed
 to create public workspaces.
 
+From version **0.261.182**, a workspace's Owner, Admins and DocumentManagers
+keep its **Identities** and **Sync** (File Sync sources) in V2, when File Sync
+is enabled for the workspace. They can create, edit and delete them, test and
+browse connections, and start a sync while the workspace is active. Readers
+don't see either section. See
+[V2 Public Connections]({{ '/explanation/features/V2_PUBLIC_CONNECTIONS/' | relative_url }}).
+
 Sharing a public document with other workspaces is not available. The
 workspace's settings, logo, statistics and activity still use the classic page,
 as do the directory's saved visibility lists and asking to become a

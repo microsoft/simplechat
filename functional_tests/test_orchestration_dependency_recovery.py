@@ -1,8 +1,9 @@
 # test_orchestration_dependency_recovery.py
 """Real leases, checkpoint restart, DAG reuse and current authorization for v2.
 
-Version: 0.261.127
+Version: 0.261.139
 Implemented in: 0.261.127
+Single orchestration contract updated in: 0.261.139
 Only Cosmos/Blob transport, model responses and current source access are isolated.
 """
 
@@ -12,7 +13,7 @@ from unittest.mock import patch
 
 import pytest
 
-from test_orchestration_dependency_runtime import binding, compose, runtime, source_input
+from test_orchestration_dependency_runtime import binding, compose, runtime, set_result_contract, source_input
 from test_support.app_stubs import stubbed_config
 from test_support.orchestration_revisions import AtomicMemoryContainer
 
@@ -286,7 +287,7 @@ def test_failed_typed_task_does_not_poison_an_independent_success_checkpoint(dur
 def test_changed_producer_contract_blocks_reuse_without_reinterpreting_saved_results(durable, monkeypatch):
     original = fail_first(durable)
     record = durable.read_run('run-1')
-    monkeypatch.setitem(durable.runtime.registry._DEPENDENCY_RESULT_CONTRACTS, 'compose', 'compose-v2')
+    set_result_contract(monkeypatch, durable.runtime.registry, 'compose', 'compose-v2')
     with pytest.raises(durable.runtime.checkpoints.CheckpointError) as failure:
         durable.recovery.validate_resume(
             record, durable.fresh_context(record), durable.case.settings, lambda: True,
@@ -294,4 +295,45 @@ def test_changed_producer_contract_blocks_reuse_without_reinterpreting_saved_res
         )
     assert failure.value.code == 'recovery_changed'
     assert original['task_results']['retained']['producer']['contract_version'] == 'compose-v1'
+    assert len(durable.case.model.calls) == 1
+
+
+@pytest.mark.parametrize('absent', [False, True])
+@pytest.mark.parametrize('fail_after_restore', [False, True])
+def test_resume_probe_leaves_the_live_context_unchanged_on_success_and_failure(
+    durable, monkeypatch, absent, fail_after_restore,
+):
+    # Execution validates reuse against its own live context, so a probe must never leak
+    # restored results or drop an absent optional field, whether it succeeds or fails.
+    fail_first(durable)
+    checkpoints = durable.runtime.checkpoints
+    record = durable.read_run('run-1')
+    context = durable.fresh_context(record)
+    if absent:
+        delattr(context, 'saved_analyses')
+    initial_state = checkpoints.context_state(context)
+    initial_tasks = dict(context.task_results)
+    initial_aliases = dict(context.result_aliases)
+    initial_completed = set(getattr(context, '_completed_result_step_ids', ()))
+    if fail_after_restore:
+        namespace = durable.recovery.validate_resume.__globals__
+        restore = namespace['restore_context']
+
+        def restore_then_fail(active, payload):
+            restore(active, payload)
+            raise checkpoints.CheckpointError('recovery_changed')
+
+        monkeypatch.setitem(namespace, 'restore_context', restore_then_fail)
+    for _ in range(2):
+        if fail_after_restore:
+            with pytest.raises(checkpoints.CheckpointError):
+                durable.recovery.validate_resume(record, context, durable.case.settings, lambda: True)
+        else:
+            payloads = durable.recovery.validate_resume(record, context, durable.case.settings, lambda: True)
+            assert list(payloads) == ['retained']
+        restored_state = checkpoints.context_state(context)
+        assert restored_state == initial_state
+        assert context.task_results == initial_tasks and context.result_aliases == initial_aliases
+        assert hasattr(context, 'saved_analyses') is not absent
+        assert set(getattr(context, '_completed_result_step_ids', ())) == initial_completed
     assert len(durable.case.model.calls) == 1

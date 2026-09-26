@@ -1,10 +1,11 @@
 # test_orchestration_harness_routes.py
 """
 Real authenticated routes and bootstrap for orchestration file admission.
-Version: 0.261.131
+Version: 0.261.139
 Implemented in: 0.261.127
 Initial-claim timing coverage added in: 0.261.129
 Auto-routing admission and content-review file visibility added in: 0.261.131
+Single plan contract, no admission switch, legacy runs refused: 0.261.139
 
 Only external settings/storage I/O is replaced. The production Flask routes,
 Blueprint guards, result services and shared format registry run unchanged.
@@ -59,7 +60,6 @@ def modules():
             execution_loop=environment.loop,
             route=importlib.import_module("route_backend_orchestration"),
             bootstrap=importlib.import_module("functions_orchestration_bootstrap"),
-            admission=importlib.import_module("functions_orchestration_admission"),
             auth=importlib.import_module("functions_authentication"),
             config=importlib.import_module("config"),
             runs=importlib.import_module("functions_orchestration_runs"),
@@ -86,7 +86,6 @@ def runtime(modules, monkeypatch):
     conversations.create_item({"id": "conversation", "user_id": "owner"})
     settings = {
         "enable_chat_orchestration": True,
-        "enable_chat_orchestration_harness": True,
         "max_generated_chat_artifact_size_mb": 1,
         "azure_openai_api_key": "private-setting-must-not-be-returned",
     }
@@ -185,7 +184,7 @@ def test_catalog_obeys_the_current_server_format_selection(runtime, monkeypatch,
     )
     admitted = [entry for entry in services.export_catalog() if entry["format_id"] in formats]
     monkeypatch.setattr(services, "export_catalog", lambda: deepcopy(admitted))
-    monkeypatch.setattr(runtime.modules.route, "_harness_services", lambda *args, **kwargs: services)
+    monkeypatch.setattr(runtime.modules.route, "_orchestration_services", lambda *args, **kwargs: services)
     response = catalog(runtime)
     value = response.get_json()
     if formats:
@@ -205,7 +204,7 @@ def test_invalid_server_catalog_is_an_explicit_service_failure(runtime, monkeypa
     invalid = services.export_catalog()
     invalid[0]["media_type"] = "PRIVATE_INVALID_SERVER_METADATA"
     monkeypatch.setattr(services, "export_catalog", lambda: deepcopy(invalid))
-    monkeypatch.setattr(runtime.modules.route, "_harness_services", lambda *args, **kwargs: services)
+    monkeypatch.setattr(runtime.modules.route, "_orchestration_services", lambda *args, **kwargs: services)
     response = catalog(runtime)
     value = response.get_json()
     assert response.status_code == 503, value
@@ -214,7 +213,7 @@ def test_invalid_server_catalog_is_an_explicit_service_failure(runtime, monkeypa
     assert not runtime.runs.items and not runtime.results.items and not runtime.messages.items
 
 
-def test_catalog_requires_actual_render_runtime_even_when_new_plan_admission_is_ready(runtime, monkeypatch):
+def test_catalog_requires_actual_render_runtime(runtime, monkeypatch):
     login(runtime)
     rendering = importlib.import_module("functions_orchestration_rendering")
     monkeypatch.delattr(rendering, "resume_render_file", raising=False)
@@ -254,7 +253,7 @@ def test_editor_catalog_hides_disabled_rendering_without_removing_saved_file_int
     before = deepcopy(runtime.runs.items)
     frame = runtime.modules.route._plan_editor_event(record, "owner")
     event = json.loads(frame.removeprefix("data:").strip())
-    options = runtime.modules.route._plan_harness_options(record, "owner", runtime.settings)
+    options = runtime.modules.route._plan_result_options(record, "owner", runtime.settings)
     after = deepcopy(runtime.runs.items)
     assert event["export_catalog"] == []
     assert event["plan"]["steps"][1]["arguments"] == plan["steps"][1]["arguments"]
@@ -456,7 +455,7 @@ def test_root_output_authorization_cannot_escape_its_bound_actor_or_conversation
 
 
 @pytest.mark.parametrize("external_mode", ["none", "read_only", "complete"])
-def test_plan_edit_options_inject_the_actual_native_factory_only_for_saved_v2(runtime, monkeypatch, external_mode):
+def test_plan_edit_options_inject_the_actual_native_factory(runtime, monkeypatch, external_mode):
     record = {"conversation_id": "conversation", "plan": {"planner_contract_version": 2}}
     original = json.dumps(record, sort_keys=True)
     services = runtime.modules.bootstrap.build_orchestration_services(
@@ -477,13 +476,9 @@ def test_plan_edit_options_inject_the_actual_native_factory_only_for_saved_v2(ru
         )
         monkeypatch.setattr(owner, name, callback if active else None)
     factory = Mock(return_value=services)
-    monkeypatch.setattr(runtime.modules.route, "_harness_services", factory)
-    options = runtime.modules.route._plan_harness_options(record, "owner", runtime.settings)
+    monkeypatch.setattr(runtime.modules.route, "_orchestration_services", factory)
+    options = runtime.modules.route._plan_result_options(record, "owner", runtime.settings)
     current = json.dumps(record, sort_keys=True)
-    legacy = runtime.modules.route._plan_harness_options(
-        {"conversation_id": "conversation", "plan": {"planner_contract_version": 1}},
-        "owner", runtime.settings,
-    )
     assert options["native_bridge_for_step"] is runtime.modules.bootstrap.native_bridge_for_step
     assert options["rendering_service"] is services.rendering
     assert callable(options["result_alias_resolver"])
@@ -496,7 +491,6 @@ def test_plan_edit_options_inject_the_actual_native_factory_only_for_saved_v2(ru
             assert name not in options
         callback.assert_not_called()
     assert current == original
-    assert legacy == {}
     assert not runtime.runs.items
     assert not runtime.results.items
     factory.assert_called_once_with("owner", "conversation", settings=runtime.settings)
@@ -510,26 +504,25 @@ def test_native_discovery_rejects_noncallable_readiness(runtime, factory):
         )
 
 
-@pytest.mark.parametrize("gate", ["enable_chat_orchestration", "enable_chat_orchestration_harness"])
-def test_new_catalog_admission_requires_both_switches(runtime, gate):
+def test_new_catalog_requires_chat_orchestration(runtime):
     login(runtime)
-    runtime.settings[gate] = False
+    runtime.settings["enable_chat_orchestration"] = False
     response = catalog(runtime)
     assert response.status_code == 403
     assert response.get_json()["code"] == "disabled"
-
-
-def test_new_catalog_respects_server_rollback_even_with_both_admin_switches(runtime, monkeypatch):
-    login(runtime)
-    monkeypatch.setattr(runtime.modules.admission, "HARNESS_ADMISSION_READY", False)
-    response = catalog(runtime)
-    assert response.status_code == 403 and response.get_json()["code"] == "disabled"
     assert runtime.runs.items == {} and runtime.messages.items == {}
 
 
-def test_saved_v2_catalog_remains_readable_after_new_admission_is_disabled(runtime):
+def test_new_catalog_needs_no_other_switch(runtime):
     login(runtime)
-    runtime.settings["enable_chat_orchestration_harness"] = False
+    runtime.settings.pop("enable_chat_orchestration_harness", None)
+    response = catalog(runtime)
+    assert response.status_code == 200
+    assert response.get_json()["formats"]
+
+
+def test_saved_run_catalog_remains_readable(runtime):
+    login(runtime)
     record = {
         "id": "saved-run", "run_id": "saved-run", "record_type": "orchestration_run",
         "conversation_id": "conversation", "user_id": "owner",
@@ -542,9 +535,8 @@ def test_saved_v2_catalog_remains_readable_after_new_admission_is_disabled(runti
     assert stored["plan"] == record["plan"]
 
 
-def test_legacy_or_foreign_run_cannot_admit_harness_catalog(runtime):
+def test_legacy_or_foreign_run_cannot_admit_a_file_catalog(runtime):
     login(runtime)
-    runtime.settings["enable_chat_orchestration_harness"] = False
     runtime.runs.create_item({
         "id": "old-run", "run_id": "old-run", "record_type": "orchestration_run",
         "conversation_id": "conversation", "user_id": "owner",
@@ -557,13 +549,15 @@ def test_legacy_or_foreign_run_cannot_admit_harness_catalog(runtime):
     })
     legacy = catalog(runtime, run_id="old-run")
     foreign = catalog(runtime, run_id="foreign-run")
-    assert legacy.status_code == 404
+    assert legacy.status_code == 409
+    assert legacy.get_json() == {
+        "error": runtime.modules.route.LEGACY_PLAN_MESSAGE, "code": "legacy_plan",
+    }
     assert foreign.status_code == 404
 
 
-def test_saved_v2_execution_uses_the_headless_path_not_legacy_model_setup(runtime, monkeypatch):
+def test_saved_run_execution_uses_the_headless_path(runtime, monkeypatch):
     login(runtime)
-    runtime.settings["enable_chat_orchestration_harness"] = False
     plan = {
         "planner_contract_version": 2,
         "steps": [{"step_id": "answer", "capability_id": "compose", "enabled": True}],
@@ -581,16 +575,16 @@ def test_saved_v2_execution_uses_the_headless_path_not_legacy_model_setup(runtim
     monkeypatch.setattr(services, "native_bridge_for_step", native_factory)
     prepared = Mock(return_value=Response('{"harness":true}', status=202, mimetype="application/json"))
     available = Mock(return_value=["compose"])
-    legacy_models = Mock(side_effect=AssertionError("A v2 request entered legacy execution."))
+    route_models = Mock(side_effect=AssertionError("The run route must not set up models itself."))
     monkeypatch.setattr(route, "_conversation_context_for_run", lambda *args: {"messages": []})
-    monkeypatch.setattr(route, "_harness_services", lambda *args, **kwargs: services)
+    monkeypatch.setattr(route, "_orchestration_services", lambda *args, **kwargs: services)
     monkeypatch.setattr(route, "_request_identity", lambda *args, **kwargs: {"user_enable_agents": False})
     monkeypatch.setattr(route, "capture_execution_identity", lambda *args: None)
     monkeypatch.setattr(route, "resolve_action_catalog", lambda *args, **kwargs: [])
     monkeypatch.setattr(route, "apply_plan_edits", lambda *args, **kwargs: plan)
     monkeypatch.setattr(route, "resolve_available_capability_ids", available)
-    monkeypatch.setattr(route, "resolve_orchestration_model", legacy_models)
-    monkeypatch.setattr(route, "_prepare_harness_stream", prepared)
+    monkeypatch.setattr(route, "resolve_orchestration_model", route_models)
+    monkeypatch.setattr(route, "_prepare_execution_stream", prepared)
     response = runtime.client.post("/api/v2/orchestration/run", json={
         "run_id": "saved-run", "conversation_id": "conversation", "user_id": "forged",
     })
@@ -603,10 +597,10 @@ def test_saved_v2_execution_uses_the_headless_path_not_legacy_model_setup(runtim
     assert available.call_args.kwargs["request_context"]["native_bridge_for_step"] is native_factory
     assert available.call_args.kwargs["request_context"]["rendering_service"] is services.rendering
     native_factory.assert_not_called()
-    legacy_models.assert_not_called()
+    route_models.assert_not_called()
 
 
-def test_unknown_saved_contract_is_not_reinterpreted_as_legacy(runtime):
+def test_unknown_saved_contract_is_neither_run_nor_called_legacy(runtime):
     login(runtime)
     runtime.runs.create_item({
         "id": "unknown-run", "run_id": "unknown-run", "record_type": "orchestration_run",
@@ -624,35 +618,30 @@ def test_unknown_saved_contract_is_not_reinterpreted_as_legacy(runtime):
     ["compose"], ["render_file"], ["compose", "render_file"],
     ["document_analyze", "render_file"], [],
 ])
-def test_both_admin_normalizers_preserve_harness_selection_without_enabling_it(modules, selection):
+def test_both_admin_normalizers_store_exactly_the_selected_capabilities(modules, selection):
     admin = importlib.import_module("route_frontend_admin_settings")
     fields = importlib.import_module("admin_settings_fields")
     key = "chat_orchestration_enabled_capabilities"
     form = MultiDict((key, value) for value in selection)
     classic = admin.normalize_chat_orchestration_settings(form)
-    typed, errors, _warnings = fields.normalize_admin_settings_updates(
-        {key: selection}, {"enable_chat_orchestration_harness": False},
-    )
+    typed, errors, _warnings = fields.normalize_admin_settings_updates({key: selection}, {})
     assert errors == {}
     assert typed[key] == selection
-    assert set(classic[key]) == (set(selection) | {"respond"} if selection else set())
-    assert classic["enable_chat_orchestration_harness"] is False
+    assert set(classic[key]) == set(selection)
+    assert "enable_chat_orchestration_harness" not in classic
     assert "enable_chat_orchestration_harness" not in typed
 
 
-def test_admin_projection_unites_recorded_contracts_without_relabeling_legacy(modules):
+def test_admin_projection_lists_every_registered_capability(modules):
     admin = importlib.import_module("route_frontend_admin_settings")
     registry = importlib.import_module("functions_orchestration_registry")
     projection = admin.orchestration_admin_capabilities()
-    legacy = registry.build_capability_client_projection(registry.CAPABILITY_REGISTRY)
-    legacy_ids = registry.all_capability_ids()
-    harness_ids = registry.all_capability_ids(contract_version=2)
     identifiers = [capability["id"] for capability in projection]
     compose = next(capability for capability in projection if capability["id"] == "compose")
-    assert projection[:len(legacy)] == legacy
-    assert set(identifiers) == set(legacy_ids) | set(harness_ids)
-    assert len(identifiers) == len(set(identifiers))
-    assert compose["role"] == "reason" and compose["terminal"] is False
+    assert identifiers == registry.all_capability_ids()
+    assert "respond" not in identifiers and len(identifiers) == len(set(identifiers))
+    assert compose["role"] == "reason"
+    assert all(set(capability) == {"id", "label", "role", "summary", "cost"} for capability in projection)
     assert "native_bridge_for_step" not in json.dumps(projection)
 
 
@@ -687,15 +676,11 @@ def real_http_harness(modules, monkeypatch):
     return runtime
 
 
-def test_real_http_plans_then_executes_the_opted_in_harness_without_readiness_override(
-    real_http_harness, monkeypatch,
-):
+def test_real_http_plans_then_executes_without_any_admission_switch(real_http_harness, monkeypatch):
     runtime = real_http_harness
     harness = runtime.harness
-    harness.settings.update(
-        enable_chat_orchestration_harness=True, enable_user_workspace=False,
-        chat_orchestration_total_timeout_seconds=173,
-    )
+    harness.settings.pop("enable_chat_orchestration_harness", None)
+    harness.settings.update(enable_user_workspace=False, chat_orchestration_total_timeout_seconds=173)
     initial_claims = []
     prepare_execution = harness.execution.prepare_harness_execution
 
@@ -823,7 +808,7 @@ def test_read_only_retry_context_keeps_initialized_external_bindings_without_eff
         owner = services.results.access if name == "external_source_authorizer" else services
         monkeypatch.setattr(owner, name, callback)
     monkeypatch.setattr(services, "export_catalog", lambda: [])
-    monkeypatch.setattr(modules.route, "_harness_services", lambda *args, **kwargs: services)
+    monkeypatch.setattr(modules.route, "_orchestration_services", lambda *args, **kwargs: services)
     validator = Mock(return_value={"verified": True})
     monkeypatch.setattr(modules.route, "validate_resume", validator)
     with runtime.app.test_request_context():
@@ -843,10 +828,7 @@ def test_read_only_retry_context_keeps_initialized_external_bindings_without_eff
     assert all(client.closed for client in harness.clients)
 
 
-@pytest.mark.parametrize("admission_enabled", [True, False])
-def test_real_http_execution_renders_two_files_from_one_retained_result(
-    real_http_harness, modules, monkeypatch, admission_enabled,
-):
+def test_real_http_execution_renders_two_files_from_one_retained_result(real_http_harness):
     runtime = real_http_harness
     harness = runtime.harness
     content = "Complete caf\u00e9 findings.\nThe original last line."
@@ -858,9 +840,6 @@ def test_real_http_execution_renders_two_files_from_one_retained_result(
         ],
         replies=[content], final_response=input_binding("prepare"),
     )
-    if not admission_enabled:
-        harness.settings["enable_chat_orchestration_harness"] = False
-        monkeypatch.setattr(modules.admission, "HARNESS_ADMISSION_READY", False)
     response = runtime.client.post("/api/v2/orchestration/run", json={
         "run_id": record["id"], "conversation_id": "conversation-1",
     }, buffered=True)
@@ -934,17 +913,17 @@ def test_real_http_rejects_removed_render_pairs_before_claiming_or_generating(
             entry for entry in canonical
             if catalog_mode == "different" and entry["format_id"] == "pdf"
         ]
-    monkeypatch.setattr(modules.route, "_harness_services", lambda *args, **kwargs: services)
+    monkeypatch.setattr(modules.route, "_orchestration_services", lambda *args, **kwargs: services)
     if boundary == "validation":
         monkeypatch.setattr(services, "export_catalog", lambda: deepcopy(admitted))
     else:
-        prepare = modules.route._prepare_harness_stream
+        prepare = modules.route._prepare_execution_stream
 
         def narrowed_before_claim(*args, **kwargs):
             monkeypatch.setattr(services, "export_catalog", lambda: deepcopy(admitted))
             return prepare(*args, **kwargs)
 
-        monkeypatch.setattr(modules.route, "_prepare_harness_stream", narrowed_before_claim)
+        monkeypatch.setattr(modules.route, "_prepare_execution_stream", narrowed_before_claim)
     response = runtime.client.post("/api/v2/orchestration/run", json={
         "run_id": record["id"], "conversation_id": "conversation-1",
     }, buffered=True)
@@ -1125,7 +1104,7 @@ def retry_runtime(runtime, monkeypatch):
         ),
     )
     runtime.factory = Mock(return_value=runtime.service)
-    monkeypatch.setattr(runtime.modules.route, "_harness_services", runtime.factory)
+    monkeypatch.setattr(runtime.modules.route, "_orchestration_services", runtime.factory)
     return runtime
 
 
@@ -1147,7 +1126,6 @@ def test_retry_authentication_and_ownership_precede_output_lookup(retry_runtime)
 
 def test_file_retry_preserves_submission_and_never_retries_the_whole_run(retry_runtime, monkeypatch):
     login(retry_runtime)
-    retry_runtime.settings["enable_chat_orchestration_harness"] = False
     whole_run_retry = Mock(side_effect=AssertionError("File retry must not replay the plan."))
     monkeypatch.setattr(retry_runtime.modules.route, "prepare_retry", whole_run_retry)
     response = retry_file(retry_runtime)
@@ -1334,10 +1312,11 @@ def test_lean_v2_run_list_exposes_current_file_recovery_without_loading_plans_or
 
 
 @pytest.mark.parametrize("include_plan", ["false", "true"])
-def test_legacy_run_list_does_not_add_harness_reads_or_fields(retry_runtime, include_plan):
+@pytest.mark.parametrize("legacy_plan", [{"steps": []}, {"planner_contract_version": 1, "steps": []}])
+def test_legacy_runs_are_omitted_from_the_run_list(retry_runtime, include_plan, legacy_plan):
     login(retry_runtime)
     record = retry_runtime.runs.read_item("saved-run", "conversation")
-    record["plan"] = {"steps": []}
+    record["plan"] = legacy_plan
     record["artifacts"] = [{"artifact_message_id": "legacy-file"}]
     retry_runtime.runs.upsert_item(record)
     response = retry_runtime.client.get(
@@ -1346,9 +1325,8 @@ def test_legacy_run_list_does_not_add_harness_reads_or_fields(retry_runtime, inc
     )
     body = response.get_json()
     assert response.status_code == 200
-    row = body["runs"][0]
-    assert row["artifact_count"] == 1
-    assert "outputs" not in row and "generated_artifacts" not in row
+    assert body["runs"] == []
+    assert "legacy-file" not in json.dumps(body)
     retry_runtime.factory.assert_not_called()
 
 
@@ -1423,7 +1401,7 @@ def test_headless_stream_emits_progress_then_one_terminal_frame(modules):
         return [complete]
 
     execution.execute.side_effect = execute
-    response = modules.route._stream_harness_execution(
+    response = modules.route._stream_execution(
         execution, run_id="run", conversation_id="conversation",
     )
     frames = list(response.response)
@@ -1445,7 +1423,7 @@ def test_headless_stream_withholds_progress_until_the_checked_reply(modules):
         return [complete]
 
     execution.execute.side_effect = execute
-    response = modules.route._stream_harness_execution(
+    response = modules.route._stream_execution(
         execution, run_id="run", conversation_id="conversation", settings={
             "enable_content_screening": True, "enable_content_screening_chat_output": True,
             "chat_content_output_mode": "check_before_display",
@@ -1459,7 +1437,7 @@ def test_headless_stream_withholds_progress_until_the_checked_reply(modules):
 
 def test_headless_stream_close_before_start_releases_resources(modules):
     execution = Mock()
-    response = modules.route._stream_harness_execution(
+    response = modules.route._stream_execution(
         execution, run_id="run", conversation_id="conversation",
     )
     response.close()
@@ -1470,7 +1448,7 @@ def test_headless_stream_close_before_start_releases_resources(modules):
 def test_headless_stream_reports_unconfirmed_work_without_private_exception_text(modules):
     execution = Mock()
     execution.execute.side_effect = RuntimeError("private provider diagnostic")
-    response = modules.route._stream_harness_execution(
+    response = modules.route._stream_execution(
         execution, run_id="run", conversation_id="conversation",
     )
     frames = list(response.response)
@@ -1499,7 +1477,7 @@ def test_headless_worker_keeps_running_after_browser_disconnect(modules):
 
     execution.execute.side_effect = execute
     execution.close.side_effect = closed.set
-    response = modules.route._stream_harness_execution(
+    response = modules.route._stream_execution(
         execution, run_id="run", conversation_id="conversation",
     )
     iterator = iter(response.response)
@@ -1546,15 +1524,6 @@ with offline_app_imports() as environment:
     command = [sys.executable, *(["-O"] if optimized else []), "-c", script]
     completed = subprocess.run(command, cwd=ROOT, capture_output=True, text=True, timeout=180)
     assert completed.returncode == 0, completed.stdout + completed.stderr
-
-
-def test_auto_model_routing_keeps_new_plans_on_the_enforcing_executor(modules):
-    enabled = {"enable_chat_orchestration": True, "enable_chat_orchestration_harness": True}
-    assert modules.route._new_plan_contract_version(enabled, {}) == 2
-    assert modules.route._new_plan_contract_version(enabled, {"model_routing": "auto"}) == 1
-    assert modules.route._new_plan_contract_version(
-        {**enabled, "enable_chat_orchestration_harness": False}, {},
-    ) == 1
 
 
 def test_removed_harness_reply_hides_run_files_from_history(real_http_harness, monkeypatch):

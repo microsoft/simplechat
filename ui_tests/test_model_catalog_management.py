@@ -1,8 +1,10 @@
 # test_model_catalog_management.py
 """
 Classic and real React V2 catalog workflows on Azure Playwright or local Chromium.
-Version: 0.261.126
+Version: 0.261.139
 Implemented in: 0.261.126
+Orchestrate model picker under Manual controls, Auto by default, since: 0.261.137
+Single orchestration contract updated in: 0.261.139
 
 API fixtures use the real pure profile validator/transform. They do not establish
 tenant authentication, Cosmos availability, or live provider readiness.
@@ -171,6 +173,7 @@ def test_v2_catalog_save_refreshes_model_availability(catalog_page, refresh_fail
 
 
 def test_auto_is_orchestration_only_and_sends_no_model_identity(catalog_page):
+    """Auto is the Orchestrate default under Manual controls, and never reaches normal chat."""
     page, _settings = catalog_page
     plans = []
     page.route("**/api/user/settings", lambda route: route.fulfill(json={"settings": {}}))
@@ -183,13 +186,15 @@ def test_auto_is_orchestration_only_and_sends_no_model_identity(catalog_page):
     page.evaluate("""() => {
         const H = window.OrchHarness;
         H.reset();
+        const routable = { profile: { id: 'gpt-5-mini', archived: false, tasks: { general: 'suitable' } },
+                           capabilities: { processesText: true, generatesText: true }, auto_routing_available: true };
         H.stores.bootstrap.useBootstrapStore.setState({ data: {
             features: { enable_chat_orchestration: true },
             orchestration: { enabled: true, show_manual_controls: true, default_approval_mode: 'manual', allow_user_approval_override: false },
             settings: {}, user: { id: 'catalog-user', display_name: 'Tester' },
             catalogs: { prompts: [], agents: [], models: [
-                { selection_key: 'global::one:a', display_name: 'Model A', deployment_name: 'deployed-a', model_id: 'a', endpoint_id: 'one', provider: 'aoai' },
-                { selection_key: 'global::two:b', display_name: 'Model B', deployment_name: 'deployed-b', model_id: 'b', endpoint_id: 'two', provider: 'aoai' }
+                { selection_key: 'global::one:a', display_name: 'Model A', deployment_name: 'deployed-a', model_id: 'a', endpoint_id: 'one', provider: 'aoai', ...routable },
+                { selection_key: 'global::two:b', display_name: 'Model B', deployment_name: 'deployed-b', model_id: 'b', endpoint_id: 'two', provider: 'aoai', ...routable }
             ] }
         } });
         H.stores.chat.useChatStore.setState({
@@ -200,9 +205,11 @@ def test_auto_is_orchestration_only_and_sends_no_model_identity(catalog_page):
         H.mount('mount-a', 'Composer', {});
     }""")
     picker = page.locator('[title="Auto chooses by task, then admin priority and favorites. A specific model stays pinned."]')
+    # Folded under Manual controls with everything else, rather than above the input.
+    expect(picker).to_have_count(0)
+    page.get_by_title("Manual controls", exact=True).click()
     expect(picker).to_be_visible()
-    picker.click()
-    page.get_by_role("option", name="Auto - choose per step", exact=True).click()
+    expect(picker).to_contain_text("Auto - choose per step")
     page.get_by_role("textbox", name="Message", exact=True).fill("Summarize then write code.")
     with page.expect_response("**/api/v2/orchestration/plan"):
         page.get_by_role("button", name="Send message", exact=True).click()
@@ -222,9 +229,13 @@ def test_execution_model_attribution_survives_runtime_events(catalog_page):
         const store = H.stores.orchestration.useOrchestrationStore.getState();
         store.setPlan('catalog-conversation', 'catalog-turn', {
             plan_id: 'plan', conversation_id: 'catalog-conversation', turn_id: 'catalog-turn',
+            planner_contract_version: 2,
             intent: { summary: 'Model attribution', complexity: 'simple' },
-            steps: [{ step_id: 'answer', capability_id: 'respond', title: 'Answer',
+            steps: [{ step_id: 'answer', capability_id: 'compose', role: 'reason', title: 'Answer',
+                arguments: { instruction: 'Answer the request.' }, inputs: {},
+                outputs: [{ name: 'answer', kind: 'markdown-v1' }], depends_on: [],
                 model_binding: { label: 'Summary deployment', reason: 'Summarization; standard priority', profile_id: 'gpt-5-nano' } }],
+            final_response: { version: 'orchestration-input-binding-v1', step_id: 'answer', output_name: 'answer', existing_result: null },
             approval: { mode: 'manual', state: 'pending' }
         });
         H.mount('mount-a', 'OrchestrationRunView', { conversationId: 'catalog-conversation', turnId: 'catalog-turn' });

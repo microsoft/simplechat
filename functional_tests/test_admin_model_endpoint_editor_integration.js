@@ -1,8 +1,9 @@
 // test_admin_model_endpoint_editor_integration.js
 /**
  * Offline integration regressions for the combined classic AI Connections editor.
- * Version: 0.261.122
+ * Version: 0.261.137
  * Implemented in: 0.261.122
+ * The editor's catalog profile picker and planner model dropdown modules are linked since 0.261.137.
  *
  * Loads the real editor, shared modal markup, and capacity editor with a small DOM
  * fixture. Covers Custom auth, images, embeddings, capacity, and draft preservation.
@@ -20,6 +21,7 @@ const vm = require("node:vm");
 const appDirectory = path.resolve(__dirname, "..", "application", "single_app");
 const editorPath = path.join(appDirectory, "static", "js", "admin", "admin_model_endpoints.js");
 const budgetPath = path.join(appDirectory, "static", "js", "model_budget_editor.js");
+const plannerPath = path.join(appDirectory, "static", "js", "admin", "admin_orchestration_planner_model.js");
 const modalMarkup = fs.readFileSync(path.join(appDirectory, "templates", "_multiendpoint_modal.html"), "utf8");
 const paneMarkup = fs.readFileSync(path.join(appDirectory, "templates", "admin", "_panes", "model-endpoints.html"), "utf8");
 const apiTypes = [
@@ -333,6 +335,11 @@ async function createHarness(endpoint = endpointFixture(), { visionLookup, opera
         this.setExport("getIconPayload", element => element.iconPayload || {});
         this.setExport("setIconPayload", (element, payload) => { element.iconPayload = payload; });
     }, { context });
+    // The catalog profile picker is exercised by its own tests; the editor only mounts it.
+    const catalogUi = new vm.SyntheticModule(["mountProfilePicker"], function () {
+        this.setExport("mountProfilePicker", () => undefined);
+    }, { context });
+    const planner = new vm.SourceTextModule(fs.readFileSync(plannerPath, "utf8"), { context, identifier: plannerPath });
     const editor = new vm.SourceTextModule(`${fs.readFileSync(editorPath, "utf8")}
         export {
             init, openModalForEndpoint, collectModalModels, buildEndpointPayload,
@@ -347,6 +354,8 @@ async function createHarness(endpoint = endpointFixture(), { visionLookup, opera
         if (specifier === "../model_budget_editor.js") return budget;
         if (specifier === "../chat/chat-toast.js") return toast;
         if (specifier === "../agents_common.js") return icons;
+        if (specifier === "./model_catalog_ui.js") return catalogUi;
+        if (specifier === "./admin_orchestration_planner_model.js") return planner;
         throw new Error(`Unexpected import: ${specifier}`);
     });
     await editor.evaluate();

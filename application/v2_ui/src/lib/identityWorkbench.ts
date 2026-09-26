@@ -3,16 +3,17 @@
 //
 // The identities section shipped personal-only: it called the /api/workspace-identities/personal
 // functions in workspaceApi.ts directly. This module is the seam that lets the section serve a
-// group workspace natively, the way promptWorkbench.ts and actionWorkbench.ts became scope-aware.
-// An IdentityScope selects which URLs are used and which per-operation gates apply. The personal
-// adapter is a thin pass-through so its behaviour stays byte-identical in effect: same list URL,
-// same delete URL, same classic hand-off for creating one.
+// group workspace natively, the way promptWorkbench.ts and actionWorkbench.ts became scope-aware,
+// and from M10B a public workspace too. An IdentityScope selects which URLs are used and which
+// per-operation gates apply. The personal adapter is a thin pass-through so its behaviour stays
+// byte-identical in effect: same list URL, same delete URL, same classic hand-off for creating one.
 //
-// The group path never falls back to personal behaviour. An absent or unrecognised
+// The group and public paths never fall back to personal behaviour. An absent or unrecognised
 // identity_management hint yields an empty operation set, which leaves every write gate refusing --
 // a missing server hint must not become a silent authorization bypass on the client. Editing and
-// deleting a specific identity additionally require it to belong to this group and to carry the
-// operation in its own identity_actions, exactly as the group prompt gate does.
+// deleting a specific identity additionally require it to belong to this workspace (its group_id
+// for a group, its public_workspace_id for a public workspace) and to carry the operation in its
+// own identity_actions, exactly as the group prompt gate does.
 //
 // Group scope carries a conditional write: PATCH and DELETE send expected_etag in the JSON body
 // (missing is 400, stale is 409). A stale-etag 409 becomes an IdentityConflictError the section
@@ -31,7 +32,8 @@ import type { WorkspaceIdentity } from './types';
 
 export type IdentityScope =
     | { kind: 'personal' }
-    | { kind: 'group'; id: string; name: string };
+    | { kind: 'group'; id: string; name: string }
+    | { kind: 'public'; id: string; name: string };
 
 export const IDENTITY_OPERATIONS = ['create', 'edit', 'delete'] as const;
 export type IdentityOperation = typeof IDENTITY_OPERATIONS[number];
@@ -115,11 +117,12 @@ export function advertisedIdentityOperations(value: unknown): ReadonlySet<Identi
  * Whether an operation is allowed in a scope.
  *
  * Personal scope allows everything the personal section can do, which is delete; there is no
- * personal create or edit in this surface. Group scope requires the workspace-level
+ * personal create or edit in this surface. A group or public scope requires the workspace-level
  * `identity_management` hint to offer the operation, and edit/delete additionally require the
- * specific identity to belong to this group and to carry the operation in its own
+ * specific identity to belong to this workspace (its `group_id` for a group, its
+ * `public_workspace_id` for a public workspace) and to carry the operation in its own
  * `identity_actions`. There is deliberately no fallback that enables an action when the hint is
- * empty or absent.
+ * empty or absent, and no scope ever falls back to personal behaviour.
  */
 export function identityOperationAllowed(
     scope: IdentityScope,
@@ -136,7 +139,11 @@ export function identityOperationAllowed(
     if (operation === 'create') {
         return true;
     }
-    if (!identity || identity.group_id !== scope.id) {
+    if (!identity) {
+        return false;
+    }
+    const ownerId = scope.kind === 'public' ? identity.public_workspace_id : identity.group_id;
+    if (ownerId !== scope.id) {
         return false;
     }
     return Array.isArray(identity.identity_actions) && identity.identity_actions.includes(operation);
@@ -298,5 +305,72 @@ export function createGroupIdentityWorkbench(
             });
         },
         classicPath: '/group_workspaces',
+    };
+}
+
+function publicIdentitiesUrl(workspaceId: string, identityId?: string): string {
+    const base = `/api/public-workspaces/${encodeURIComponent(requireWorkspaceId(workspaceId))}/identities`;
+    return identityId ? `${base}/${encodeURIComponent(requireWorkspaceId(identityId))}` : base;
+}
+
+/** Prove a returned identity belongs to the requested public workspace, as the public document reader does. */
+function assertPublicIdentityScope(identity: WorkspaceIdentity, workspaceId: string, id?: string): void {
+    if (!identity || typeof identity.id !== 'string' || !identity.id
+        || (id !== undefined && identity.id !== id)
+        || identity.public_workspace_id !== workspaceId) {
+        throw new Error('The identity response does not match this workspace. Refresh and try again.');
+    }
+}
+
+export function createPublicIdentityWorkbench(
+    scope: Extract<IdentityScope, { kind: 'public' }>, management: unknown,
+): IdentityWorkbenchAdapter {
+    if (scope.kind !== 'public') {
+        throw new Error('Public identities require an explicit public scope.');
+    }
+    const workspaceId = requireWorkspaceId(scope.id);
+    const supported = advertisedIdentityOperations(management);
+    const allows = (operation: IdentityOperation, identity?: WorkspaceIdentity) =>
+        identityOperationAllowed(scope, supported, operation, identity);
+    return {
+        scope,
+        manageable: supported.has('create'),
+        supported,
+        allows,
+        list: async (signal) => {
+            const response = await api.get<unknown>(publicIdentitiesUrl(workspaceId), signal);
+            const identities = identitiesFromResponse(response);
+            identities.forEach((identity) => assertPublicIdentityScope(identity, workspaceId));
+            return identities;
+        },
+        create: async (write) => {
+            if (!allows('create')) {
+                throw new Error('Creating identities is not available in this workspace.');
+            }
+            const response = await api.post<unknown>(publicIdentitiesUrl(workspaceId), groupWriteBody(write));
+            const created = identityFromResponse(response);
+            assertPublicIdentityScope(created, workspaceId);
+            return created;
+        },
+        update: async (identity, write) => {
+            if (!allows('edit', identity)) {
+                throw new Error('Editing this identity is not available.');
+            }
+            const updated = await conditionalGroupWrite('PATCH', publicIdentitiesUrl(workspaceId, identity.id), {
+                ...groupWriteBody(write), expected_etag: requiredEtag(identity),
+            });
+            const record = identityFromResponse(updated);
+            assertPublicIdentityScope(record, workspaceId, identity.id);
+            return record;
+        },
+        remove: async (identity) => {
+            if (!allows('delete', identity)) {
+                throw new Error('Deleting this identity is not available.');
+            }
+            await conditionalGroupWrite('DELETE', publicIdentitiesUrl(workspaceId, identity.id), {
+                expected_etag: requiredEtag(identity),
+            });
+        },
+        classicPath: '/public_workspaces',
     };
 }

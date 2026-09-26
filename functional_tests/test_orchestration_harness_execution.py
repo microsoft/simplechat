@@ -1,10 +1,11 @@
 # test_orchestration_harness_execution.py
 """Real-boundary headless V2 preparation, execution and publication regressions.
 
-Version: 0.261.130
+Version: 0.261.139
 Implemented in: 0.261.127
 Invocation, catalog, and citation regressions implemented in: 0.261.129
 Direct initial-binding scope coverage implemented in: 0.261.130
+Single orchestration contract updated in: 0.261.139
 
 Production context, models, runtime, services, result store, checkpoint/lease and
 artifact adapters execute with external Azure/model I/O doubled. Cold imports run
@@ -1417,7 +1418,7 @@ def test_external_preparation_uses_complete_initialized_service_bindings(
     harness, monkeypatch, has_preflight, has_admission, has_authorizer, has_capture,
 ):
     sources = importlib.import_module("functions_orchestration_external_sources")
-    harness.settings.update({"enable_web_search": True, "enable_chat_orchestration_harness": False})
+    harness.settings.update({"enable_web_search": True})
     callbacks = {
         name: Mock(side_effect=AssertionError("Discovery must not acquire or authorize an external source."))
         for name in (
@@ -3842,7 +3843,6 @@ def test_actual_current_metadata_errors_survive_headless_boundaries(
 ):
     source = current_metadata
     configuration = source.configuration
-    harness.settings["enable_chat_orchestration_harness"] = False
     fault_entry_states = []
 
     def read_current_metadata():
@@ -3950,7 +3950,7 @@ def test_actual_current_metadata_errors_survive_headless_boundaries(
     assert saved["execution_lease"] is None and lease.stopped.is_set()
     assert not lease.thread.is_alive() and all(client.closed for client in harness.clients)
     assert len(harness.model_calls) == (0 if boundary in {"prepare", "source"} else 1)
-    assert harness.blobs.file_uploads == 0 and harness.settings["enable_chat_orchestration_harness"] is False
+    assert harness.blobs.file_uploads == 0
     assert "PRIVATE_" not in json.dumps([messages, saved.get("failure")])
 
 
@@ -4561,23 +4561,6 @@ def test_delivery_failure_does_not_publish_into_a_gone_or_superseded_context(har
     assert saved["status"] != "failed" and messages == []
     assert harness.model_calls == [] and harness.clients == [] and harness.blobs.file_uploads == 0
     assert lease.stopped.is_set()
-
-
-def test_saved_v2_is_not_reinterpreted_by_a_rollout_setting(harness, monkeypatch):
-    admission = importlib.import_module("functions_orchestration_admission")
-
-    def forbidden_new_admission(*args, **kwargs):
-        raise AssertionError("A saved V2 attempt must not run through new-plan admission.")
-
-    monkeypatch.setattr(admission, "HARNESS_ADMISSION_READY", False)
-    monkeypatch.setattr(admission, "get_new_plan_contract_version", forbidden_new_admission)
-    harness.create(replies=["Still V2."], final_response=input_binding("prepare"))
-    harness.settings["enable_chat_orchestration_harness"] = False
-    execution = harness.prepare()
-    frames = execution.execute()
-    done = decoded_frames(frames)[-1]
-    assert execution.context.plan_contract_version == 2
-    assert done["status"] == "completed" and done["full_content"] == "Still V2."
 
 
 EARLY_PROBE = r'''

@@ -1,17 +1,20 @@
 # Orchestration Checkpoint Recovery
 
-**Version: 0.261.130**
+**Version: 0.261.139**
 
 Implemented in version: **0.261.105**, recorded in
 `application/single_app/config.py`.
 
-Plan-contract v2 retained-reference recovery implemented in version:
+Gather / Reason / Render retained-reference recovery implemented in version:
 **0.261.127** (Refs #1509). Same-attempt waiting claims and native/result
-continuation were added in **0.261.127**. These are explicitly admitted internal
-runtime APIs used by the opt-in harness. Initial-claim recovery,
+continuation were added in **0.261.127**. Gather / Reason / Render became the
+only orchestration plan contract in **0.261.139**. Initial-claim recovery,
 output-acknowledgement handling, and default cleanup enrollment were hardened
 in **0.261.129**; see
 [runtime boundary hardening](../fixes/ORCHESTRATION_RUNTIME_BOUNDARY_HARDENING_FIX.md).
+Whole-run retries of plans with files and optional inputs were fixed in
+**0.261.134**; see the
+[deliverable planning fix](../fixes/ORCHESTRATION_DELIVERABLE_PLANNING_FIX.md).
 
 ## Overview
 
@@ -24,11 +27,12 @@ uses the saved search result instead of searching again. The failed agent step
 runs again, its dependents can proceed, and the answering step uses the combined
 results.
 
-Recovery applies to the V2 orchestration interface. New plans use contract 2
-only when both administrator orchestration settings are enabled; saved plans
-retain their recorded contract. These additions do not change ordinary-agent
-chat or select a replacement agent. The harness's per-file automatic attempts
-are separate from retrying a failed orchestration plan.
+Recovery applies to the V2 orchestration interface. New plans use
+Gather / Reason / Render whenever Chat Orchestration is enabled. Plans created
+by an earlier orchestration version fail closed and are not recovery candidates.
+These additions do not change ordinary-agent chat or select a replacement agent.
+Per-file automatic attempts are separate from retrying a failed orchestration
+plan.
 
 ## Dependencies and configuration
 
@@ -114,15 +118,30 @@ turning Retry into a full-plan restart.
 This also applies when a retry worker stops before copying inherited results:
 completed work remains bound to its saved checkpoint in an earlier attempt.
 
+Two kinds of completed step do run again in a Gather / Reason / Render retry, and the
+retry review lists them as work that will execute:
+
+- **Files.** A file belongs to the attempt that rendered it, and preparing a retry
+  supersedes that attempt's files, so a retry never reuses a render step. The new attempt
+  renders its files again from saved or newly prepared content, which calls no model, and
+  the earlier attempt's files are then shown as superseded. A restart of the same attempt
+  still reuses its completed files. React V2 offers **Retry from failed step** only for an
+  attempt without files. An attempt with files is recovered one file at a time with
+  **Retry file**, which never repeats plan steps or withdraws an available file. A
+  whole-run retry prepared through the retry API follows the rule above.
+- **Steps that completed without an optional input.** When the retry runs that input's
+  failed producer again, the steps that completed without it, and every step computed
+  from them, run again so they can use what the first attempt missed.
+
 ## Durable state and validation
 
-The [retained-result foundation](ORCHESTRATION_RENDERING_HARNESS.md), implemented
+The [retained-result foundation](ORCHESTRATION_GATHER_REASON_RENDER.md), implemented
 in **0.261.125** (Refs #1509), stores large original datasets in private result
-sections and exposes small immutable descriptors. M4 adds version-dispatched
-runtime/checkpoint consumers of these descriptors. Existing v1 state
-serialization, input fingerprints, source-bound Analyze references, phase
-repairs and terminal answering remain unchanged. A private result descriptor
-alone is still not proof that a step completion checkpoint was saved.
+sections and exposes small immutable descriptors. Gather / Reason / Render uses
+those descriptors for runtime and checkpoint recovery. Plans created by an
+earlier orchestration version are refused rather than repaired or interpreted.
+A private result descriptor alone is still not proof that a step completion
+checkpoint was saved.
 
 Legacy completed results include their evidence, notes, citations, artifact references,
 required context changes, and execution provenance. A summary alone cannot
@@ -156,7 +175,7 @@ recovery state.
 
 ### Initial claims and early interruptions
 
-Since **0.261.129**, approval of a v2 run saves its original `started_at`,
+Since **0.261.129**, approval of a run saves its original `started_at`,
 `execution_deadline_at`, and lease in one conditional write. The budget comes
 from the server's `chat_orchestration_total_timeout_seconds` setting using the
 same policy as execution, including the existing 600-second fallback.
@@ -179,7 +198,7 @@ initial claims; they are not same-attempt continuation.
 
 ### Durable retained-file cleanup
 
-Since **0.261.127** (Refs #1509), v2 conversation deletion also enrolls retained
+Since **0.261.127** (Refs #1509), conversation deletion also enrolls retained
 files using the run's authoritative `render_output_ids`, not visible message
 cards or the set of outputs already marked `cleanup_pending`. This covers
 completed files whose ordinary output scan would otherwise have no cleanup
@@ -246,7 +265,7 @@ instruction to reinterpret an old plan.
 | `execution_deadline_at` | The attempt's timezone-aware total deadline, preserved across same-attempt restart. |
 
 Large text, records, excerpts and provenance remain in the existing private
-result store. V2 checkpoints exclude incidental sibling evidence, notes and
+result store. Checkpoints exclude incidental sibling evidence, notes and
 message bodies, retaining compact source snapshots and typed references.
 The existing 8 MiB checkpoint limit, transactional lifecycle guard and
 immutable completed manifests still apply.
@@ -254,28 +273,25 @@ immutable completed manifests still apply.
 New step fingerprints include declared bindings and exact result digests,
 arguments, source versions, model/settings/memory bindings, the selected
 capability definition, including its string `result_contract_version`, and any
-selected prepared-content profile. A changed producer contract blocks v2 reuse;
-it never rewrites stored producer identities or changes legacy v1 fingerprints.
+selected prepared-content profile. A changed producer contract blocks reuse;
+it never rewrites stored producer identities or changes earlier-version fingerprints.
 Unrelated sibling notes, artifacts or task outputs are not step inputs. Whole-plan
 approval/context binding remains an additional guard.
 
-Since **0.261.127**, v2 context and step fingerprints exclude only
-`enable_chat_orchestration_harness`, the switch for admitting new plans.
-Disabling new-plan admission does not change the inputs of an already approved
-run or force its completed producers to run again. Actual execution settings,
-capability restrictions, source/model/memory bindings, and the original
-deadline remain enforced. Legacy v1 hashes are unchanged. Coverage in
-`test_orchestration_admission_fingerprints.py` includes exact legacy hashes,
-execution-policy changes and real same-attempt waiting continuation in both
-directions across the admission toggle.
+Since **0.261.139**, the retired contract switch is removed before settings
+are fingerprinted. Removing that obsolete value does not change the inputs of an
+already approved run or force its completed producers to run again. Actual
+execution settings, capability restrictions, source/model/memory bindings, and
+the original deadline remain enforced. Coverage includes execution-policy
+changes and real same-attempt waiting continuation.
 
-Since **0.261.127**, v2 execution saves an immutable
+Since **0.261.127**, execution saves an immutable
 `checkpoint-input:<step-digest>` manifest before invoking a producer. This uses
 the existing chunked checkpoint store and lifecycle fence, not a second store.
 Its payload contains the exact original `result_producer`, input fingerprint,
 and compact pre-execution state. A failure to save this input checkpoint stops
-the step before model or producer work. No input manifest is added to legacy
-v1 execution.
+the step before model or producer work. Plans created by an earlier orchestration version are refused before this
+execution path.
 
 Adapters obtain the declaration fingerprint through
 `context.result_input_fingerprint_for_step(step_id)`, not by hashing expanded
@@ -356,7 +372,7 @@ The result is `{"acquired": bool, "record": private_run_record}`. Only an
 and original expected version returns `acquired: false`; it does not create
 another worker. Do not send the private returned record directly to the browser.
 
-The claim requires an approved v2 plan, intact waiting checkpoints, a matching
+The claim requires an approved Gather / Reason / Render plan, intact waiting checkpoints, a matching
 revision, current ownership, and no cancellation, deletion, successor or live
 lease. An expired owner can be replaced through run-record compare-and-swap.
 Unknown in-flight producer work remains `result_commit_unconfirmed`, not
@@ -424,7 +440,7 @@ run summary or guessing a digest.
 ### Scheduler and headless integration API
 
 Implemented in version: **0.261.127** (Refs #1509). These are callable integration
-boundaries, not an instruction to enable new-plan admission. External Gather
+boundaries, not an instruction to loosen plan validation. External Gather
 availability is separately gated on its complete authorization/capture bindings.
 
 Render metadata is versioned. Use
@@ -432,8 +448,7 @@ Render metadata is versioned. Use
 `resolve_available_capabilities(..., contract_version=2,
 request_context={"rendering_service": service}, export_catalog=...)`.
 `service` must be the initialized `OrchestrationRenderingService`, not a Boolean,
-dictionary or factory. The default v1 catalog intentionally omits Render.
-`normalize_plan` and `plan_request` accept `contract_version=2`, authorized
+dictionary or factory. `normalize_plan` and `plan_request` accept `contract_version=2`, authorized
 `existing_results`, `composition_profiles` and `export_catalog`; validation and
 edits preserve the saved contract and recheck the same format/profile admission.
 An explicitly empty export catalog admits no files.
@@ -442,7 +457,7 @@ The executor uses `context.rendering_service`, sharing the exact initialized
 `context.result_service`, and its default versioned dispatch. Do not add Render
 to or force the legacy adapter table. Non-Render adapter selection delegates to
 the shared `get_adapter(name, contract_version=2)`, which resolves composition
-lazily and excludes legacy terminal `respond`. Render stays an executor-owned
+lazily and excludes the removed answer capability. Render stays an executor-owned
 extension. A Render step binds one complete named
 `source`, declares `outputs: []`, and returns file `outputs`/artifacts or a
 compact wait, never a fabricated typed data `TaskResult`.
@@ -530,7 +545,7 @@ covered by `test_orchestration_v2_plan_backend.py` and
 
 ### Verification failures
 
-Since **0.261.127**, v2 checkpoint verification distinguishes storage outages
+Since **0.261.127**, checkpoint verification distinguishes storage outages
 from missing proof and access changes. The error is a `CheckpointError`; its
 `.code` and `.failure` contain only application-owned safe text. The original
 exception remains server-side in `__cause__`.
@@ -553,22 +568,18 @@ Retrying verification never creates another producer, result, plan or attempt.
 If whole-run retry validation encounters this outage, `prepare_retry` raises
 `RecoveryError` with the same `checkpoint_storage_unavailable` code and
 `status_code: 503`; it does not publish a child attempt.
-V1 retains its existing error codes. `CheckpointStore` accepts an optional
-`plan_contract_version` defaulting to 1; the recovery factory supplies the
-record's actual contract without adding fields to persisted checkpoints.
-
 `test_orchestration_checkpoint_error_mapping.py` covers these distinctions
 using real checkpoint/recovery/result services and isolated storage faults.
 
 Source-authority and screening-service failures are not checkpoint denials.
-Since **0.261.127**, v2 dispatch, saved waits, final answer verification and
+Since **0.261.127**, dispatch, saved waits, final answer verification and
 receipt/reference recovery propagate non-hold `ScreeningError` instances
 unchanged. This preserves `SourceAuthorityUnavailableError` as retryable and
 `SourceAuthorityUnverifiedError` or screening configuration errors as
 non-retryable, without erasing pending work or discarding committed results.
 The caller uses their safe `public_message`, `code` and `retryable` fields;
 exception strings remain private. Known access denials and document holds
-retain their existing outcomes, and legacy v1 behavior is unchanged.
+retain their existing outcomes, and plans from the removed earlier contract stay closed.
 
 Composition applies this distinction inside its adapter, before ordinary
 model-error mapping. Typed directory and configuration failures use the existing
@@ -590,7 +601,7 @@ the failure does not create terminal checkpoint facts or grant a fresh budget.
 `test_orchestration_source_authority_runtime.py` covers both capture paths and
 the composition boundary without changing the control exception's constructor.
 
-V2 checkpoint reads distinguish `checkpoint_storage_unavailable` from a
+Checkpoint reads distinguish `checkpoint_storage_unavailable` from a
 missing or invalid checkpoint. Composition and initial/sticky capture preserve
 that operational code without recording a terminal producer result. Saved
 Render reads also preserve retryable storage uncertainty for actual cause-free
@@ -631,7 +642,7 @@ release, with unchanged references, attempt and deadline and no final message
 or file publication.
 
 Headless owners span source decisions and model work with the existing
-`strict_source_authority()` scope. V2 Gather/Reason dispatch checks that
+`strict_source_authority()` scope. Gather and Reason dispatch checks that
 scope's fence before entering an adapter and after it returns, so an adapter
 cannot turn a caught authority failure into a terminal result or allow another
 model step. Receipt lookup also checks the fence before accepting a cached
@@ -642,10 +653,11 @@ caught failures, actual composition model boundaries, typed metadata-service
 and cancellation errors, pending waits, final verification, exact recovery
 boundaries, and ordinary-model/known-denial controls.
 
-V2 run `result_outputs` is an internal retained-data availability projection;
+A run's `result_outputs` is an internal retained-data availability projection;
 `outputs` is reserved for actual public file outcomes. A prepared retry clears
-both projections so an unstarted child cannot inherit a parent's delivery
-claims. File cards and current file states are read from the initialized
+both projections, and the admitted file index `render_output_ids`, so an unstarted
+child cannot inherit a parent's delivery claims or list the parent's superseded
+files as its own. File cards and current file states are read from the initialized
 rendering service, not reconstructed from a typed result reference.
 
 An initial Render invocation can admit or commit its output before an
@@ -728,7 +740,7 @@ lease, then allow dependency execution to continue. Pending remains pending.
 This is not automatic scheduler admission or a new background worker.
 
 Native operational failures raise instead of becoming failed-step or denied-source
-outcomes. Both the producer bridge and the v2 executor's dispatch/saved-wait
+outcomes. Both the producer bridge and the executor's dispatch/saved-wait
 boundaries use the same
 `raise_native_orchestration_infrastructure_failure(error)` classifier.
 Recognized database, network, checkpoint and retained-storage outages, including
@@ -875,7 +887,7 @@ reuse and visible failures when answer-message storage is unavailable. Service
 boundaries are deterministic; tests do not depend on an unavailable production
 integration.
 
-The v2 runtime, planner and recovery suites use the real compiler, composition,
+The runtime, planner and recovery suites use the real compiler, composition,
 result facade/readers, private store, leases and checkpoints with isolated
 external I/O. They cover interleaved dependencies, multiple outputs,
 source-free structures, full collections, partial/pending/failure truth, denied

@@ -2762,6 +2762,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
                 ...event.metadata,
                 ...reasoningMetadataForEvent(event),
                 orchestration: {
+                    // The terminal frame lists the answer's saved images at the top level too,
+                    // so its image cards know them before the thread is read again.
+                    ...(Array.isArray(event.generated_images) ? { generated_images: event.generated_images } : {}),
                     ...(event.metadata?.orchestration && typeof event.metadata.orchestration === 'object'
                         ? event.metadata.orchestration : {}),
                     ...attempt,

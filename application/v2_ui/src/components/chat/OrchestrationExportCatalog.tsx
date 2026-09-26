@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from 'react';
 import type { OrchestrationExportFormat } from '../../lib/orchestrationExports';
 import { fetchOrchestrationExportCatalog } from '../../lib/orchestration';
+import { legacyPlanErrorMessage } from '../../lib/orchestrationErrors';
 import { useOrchestrationStore } from '../../stores/orchestrationStore';
 import { GlassButton } from '../ui/primitives';
 
@@ -29,9 +30,10 @@ export function OrchestrationExportCatalog({
             if (!request.signal.aborted) {
                 useOrchestrationStore.getState().updateRunRecovery(runId, { export_catalog: formats });
             }
-        } catch {
+        } catch (requestError) {
             if (!request.signal.aborted) {
-                setError('The server file format reference could not be loaded. No file options were changed.');
+                setError(legacyPlanErrorMessage(requestError)
+                    || 'The server file format reference could not be loaded. No file options were changed.');
             }
         } finally {
             if (!request.signal.aborted) setLoading(false);

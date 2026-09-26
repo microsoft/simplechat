@@ -16,6 +16,7 @@
 
 import { createConversation } from './endpoints';
 import { ApiError } from './apiClient';
+import { legacyPlanErrorMessage } from './orchestrationErrors';
 import {
     beginPlanEdit,
     cancelOrchestrationRun,
@@ -48,7 +49,9 @@ import {
     type PersistedRun,
     type PlanEdits,
 } from './orchestration';
-import { applyPlanEdits, isPlanApproved, isPlanAwaitingApproval, isPlanRunnable, normalizePlan } from './orchestrationPlan';
+import {
+    applyPlanEdits, doneFrameHasGeneratedImages, isPlanApproved, isPlanAwaitingApproval, isPlanRunnable, normalizePlan,
+} from './orchestrationPlan';
 import type { Json } from './types';
 import { normalizeReasoningAdjustments, type ReasoningResolution } from './reasoning';
 import { applyOrchestrationOutputEvent } from './orchestrationOutputController';
@@ -398,7 +401,7 @@ async function dispatchPlan(
                         ...reasoningAdjustments, ...(normalized.reasoning_adjustments ?? []),
                     ]),
                 });
-                if (normalized.planner_contract_version === 2 && Array.isArray(exportCatalog)) {
+                if (Array.isArray(exportCatalog)) {
                     useOrchestrationStore.getState().updateRunRecovery(normalized.run_id, {
                         export_catalog: exportCatalog,
                     });
@@ -793,6 +796,11 @@ async function executeSavedPlan(
                     pendingUserMessageId: context?.pendingUserMessageId ?? null,
                 });
                 useOrchestrationStore.getState().endRun(runId, status);
+                // Generated images are saved as their own conversation messages, which the
+                // answer's image cards show. Reading the saved thread brings them in.
+                if (doneFrameHasGeneratedImages(event)) {
+                    void useChatStore.getState().reloadMessages();
+                }
             },
             onCancelled: (event, accumulated) => {
                 settled = true;
@@ -844,13 +852,23 @@ async function executeSavedPlan(
         );
     }
     if (result.rejection) {
+        const legacyMessage = result.rejection.code === 'legacy_plan' ? result.rejection.message : null;
         const current = useOrchestrationStore.getState();
         current.releaseRunAttempt(runId);
         current.updateRunRecovery(runId, {
             run_id: runId, turn_id: turnId, plan, status: plan.status,
             transportUnknown: false,
-            error: 'The saved attempt was not started. Its saved progress or access may have changed. Review the current attempt; no steps were replayed.',
+            error: legacyMessage
+                || 'The saved attempt was not started. Its saved progress or access may have changed. Review the current attempt; no steps were replayed.',
+            ...(legacyMessage ? { legacyPlan: true } : {}),
         });
+        if (legacyMessage) {
+            // The server will never run this plan, so it is put away and the thread says why.
+            current.clearPlan(conversationId, turnId);
+            current.clearActiveTurn(conversationId);
+            useChatStore.getState().settleOrchestrationTurn(conversationId, { status: 'failed', error: legacyMessage });
+            return;
+        }
         useChatStore.getState().settleOrchestrationTurn(conversationId, { status: 'planned' });
         return;
     }
@@ -877,6 +895,29 @@ async function executeSavedPlan(
 const reconciliationTimers = new Map<string, ReturnType<typeof setTimeout>>();
 const recoverySubmissions = new Map<string, { id: string; version: string; confirmed: boolean; unresolved: boolean }>();
 const recoveryLocks = new Set<string>();
+
+/**
+ * Stop tracking a run the server refuses as an earlier orchestration version.
+ *
+ * Nothing else would settle it. The server leaves those runs out of the run history and refuses
+ * every read of one, so a tracked record would keep the conversation busy, with its retries
+ * disabled, until the tab closed. A plan this tab still holds for the run is ended, so its card
+ * settles and says why; a record restored from storage has no plan here and is only released,
+ * which matches the run history.
+ */
+function releaseLegacyRun(conversationId: string, runId: string, message: string): void {
+    const store = useOrchestrationStore.getState();
+    store.updateRunRecovery(runId, {
+        checking: false, transportUnknown: false, busy: false, error: message, legacyPlan: true,
+    });
+    const tracked = store.inFlight[runId];
+    if (!tracked) return;
+    if (selectPlan(store, conversationId, tracked.turnId)?.run_id === runId) {
+        store.endRun(runId, 'failed');
+    } else {
+        store.releaseRunAttempt(runId);
+    }
+}
 
 export async function loadOrchestrationRecovery(conversationId: string, runId: string): Promise<PersistedRun | null> {
     const outputRevision = useOrchestrationStore.getState().runRecovery[runId]?.outputRevision ?? 0;
@@ -963,7 +1004,12 @@ export async function reconcileOrchestrationRun(conversationId: string, runId: s
                 ? 'The server is saving the final response. Checking saved status; no retry will start.'
                 : 'The server has not confirmed a final result. Execution may still be running. Checking saved status; no retry will start.',
         });
-    } catch {
+    } catch (error) {
+        const legacyMessage = legacyPlanErrorMessage(error);
+        if (legacyMessage) {
+            releaseLegacyRun(conversationId, runId, legacyMessage);
+            return;
+        }
         useOrchestrationStore.getState().updateRunRecovery(runId, {
             checking: false, transportUnknown: true,
             error: 'The saved run status could not be reached. Execution may still be running. No retry will start until its status is confirmed.',
@@ -981,10 +1027,11 @@ export function openOrchestrationRecovery(conversationId: string, runId: string)
         if (record && isOrchestrationRunPending(record)) {
             return reconcileOrchestrationRun(conversationId, runId);
         }
-    }).catch(() => {
-        useOrchestrationStore.getState().updateRunRecovery(runId, {
-            error: 'The saved attempt could not be loaded. Your previous failure and progress have been kept.',
-        });
+    }).catch((error) => {
+        const legacyMessage = legacyPlanErrorMessage(error);
+        useOrchestrationStore.getState().updateRunRecovery(runId, legacyMessage
+            ? { error: legacyMessage, legacyPlan: true }
+            : { error: 'The saved attempt could not be loaded. Your previous failure and progress have been kept.' });
     });
 }
 
@@ -1070,6 +1117,11 @@ export async function retryOrchestrationRun(
         await executeSavedPlan(conversationId, plan.turn_id, plan);
         return {};
     } catch (error) {
+        const legacyMessage = legacyPlanErrorMessage(error);
+        if (legacyMessage) {
+            fail(legacyMessage);
+            return {};
+        }
         const info = error instanceof ApiError ? orchestrationErrorInfo(error.payload, error.status) : {};
         if (info.code) recoverySubmissions.delete(key);
         const payload = error instanceof ApiError && error.payload && typeof error.payload === 'object'
@@ -1123,8 +1175,13 @@ export async function runPreparedOrchestrationRetry(conversationId: string, runI
         current.setActiveTurn(conversationId, plan.turn_id);
         useOrchestrationStore.setState({ recoveryTarget: null });
         await executeSavedPlan(conversationId, plan.turn_id, plan);
-    } catch {
-        fail();
+    } catch (error) {
+        const legacyMessage = legacyPlanErrorMessage(error);
+        if (legacyMessage) {
+            useOrchestrationStore.getState().updateRunRecovery(runId, { error: legacyMessage });
+        } else {
+            fail();
+        }
     } finally {
         recoveryLocks.delete(key);
     }
@@ -1150,7 +1207,14 @@ export async function cancelOrchestration(conversationId: string, runId?: string
         await cancelOrchestrationRun(run.runId, conversationId);
         if (activeControllers.get(conversationId) === controller) controller?.abort();
         await reconcileOrchestrationRun(conversationId, run.runId);
-    } catch {
+    } catch (error) {
+        const legacyMessage = legacyPlanErrorMessage(error);
+        if (legacyMessage) {
+            // The server can neither stop nor report on this run, so this tab stops following it.
+            if (activeControllers.get(conversationId) === controller) controller?.abort();
+            releaseLegacyRun(conversationId, run.runId, legacyMessage);
+            return;
+        }
         useOrchestrationStore.getState().updateRunRecovery(run.runId, {
             error: 'Stop could not be confirmed by the server. Execution may still be running. Try Stop again or check saved status.',
         });
@@ -1544,10 +1608,14 @@ export async function previewPlanEditorRevision(target: PlanEditorTarget, runId:
         }
         useOrchestrationStore.getState().updatePlanEditor(conversationId, turnId,
             (editor) => ({ ...editor, previewPlan: plan }));
-    } catch {
+    } catch (error) {
         if (stillSelected()) {
+            const legacyMessage = legacyPlanErrorMessage(error);
             useOrchestrationStore.getState().updatePlanEditor(conversationId, turnId,
-                (editor) => ({ ...editor, error: 'This revision could not be previewed. The current plan is unchanged.' }));
+                (editor) => ({
+                    ...editor,
+                    error: legacyMessage || 'This revision could not be previewed. The current plan is unchanged.',
+                }));
         }
     } finally {
         if (stillSelected()) {

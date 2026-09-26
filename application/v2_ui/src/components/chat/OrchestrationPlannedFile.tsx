@@ -7,7 +7,7 @@ import { describeInputBinding } from '../../lib/orchestrationPlan';
 export function OrchestrationPlannedFile({
     plan, step,
 }: { plan: OrchestrationPlan; step: OrchestrationStep }) {
-    if (plan.planner_contract_version !== 2 || step.capability_id !== 'render_file' || step.role !== 'render') return null;
+    if (step.capability_id !== 'render_file' || step.role !== 'render') return null;
     const specification = plannedFileSpecification(step);
     const inputs = Object.entries(step.inputs ?? {});
     return (

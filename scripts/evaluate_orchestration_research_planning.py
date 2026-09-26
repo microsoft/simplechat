@@ -2,9 +2,10 @@
 """
 Small, opt-in paired evaluation of research-selection guidance and context.
 
-Version: 0.261.131
+Version: 0.261.139
 Implemented in: 0.261.099
 Planner keyword forwarding for plan contracts added in: 0.261.131
+Single orchestration contract updated in: 0.261.139
 
 Default invocation lists synthetic cases without network access. Capture BEFORE changing
 planner guidance; capture never imports the application or constructs Azure/Cosmos clients:
@@ -200,9 +201,9 @@ def _validate_comparison(baseline, candidate, suite, case_ids, call_cap, repetit
     if any(not _text(item.get(name)) for item in original for name in ("summary", "when_to_use")):
         raise EvaluationConfigurationError("The baseline capability guidance is incomplete.")
     # Planner-facing descriptions, outputs and newly exposed limits may change, not
-    # the executable capability identity, arguments, phase or cost.
+    # the executable capability identity, arguments, role or cost.
     without_guidance = lambda entries: [
-        {key: item.get(key) for key in ("id", "label", "phase", "inputs", "cost")}
+        {key: item.get(key) for key in ("id", "label", "role", "inputs", "cost")}
         for item in entries
     ]
     if without_guidance(original) != without_guidance(candidate["capabilities"]):
@@ -309,7 +310,6 @@ def _run_variant(runtime, suite, case, snapshot, client, deployment, variant, re
     validation = document.get("validation") or {}
     return {
         **client.labels,
-        "triage": planner["triage_request"](case["message"], context),
         "available_capabilities": [item["id"] for item in available],
         "kind": kind,
         "outcome": fallback or kind,

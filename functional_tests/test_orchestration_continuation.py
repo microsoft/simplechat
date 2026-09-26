@@ -1,8 +1,9 @@
 # test_orchestration_continuation.py
 """Real same-attempt claims, lifecycle rollover and retained checkpoint recovery.
 
-Version: 0.261.127
+Version: 0.261.139
 Implemented in: 0.261.127
+Single orchestration contract updated in: 0.261.139
 Only external storage/model I/O is doubled; real lease and result-store CAS paths run.
 """
 
@@ -510,13 +511,9 @@ def test_publication_guard_race_cannot_restore_a_stale_token(harness):
 @pytest.mark.parametrize("planning_usage", [
     {}, {"prompt_tokens": 19, "completion_tokens": 8, "total_tokens": 27},
 ])
-@pytest.mark.parametrize("admission_disabled", [False, True])
-def test_completed_checkpoint_recovery_never_calls_the_producer_again(harness, planning_usage, admission_disabled):
-    harness.settings["enable_chat_orchestration_harness"] = True
+def test_completed_checkpoint_recovery_never_calls_the_producer_again(harness, planning_usage):
     original, _ = saved_composition(harness, planning_token_usage=planning_usage)
     replace_record(harness.runs, "run-1", "conversation-1", status="waiting")
-    if admission_disabled:
-        harness.settings["enable_chat_orchestration_harness"] = False
     record, lease = claim(harness, mode="execute")
     execution = harness.execution.prepare_harness_execution(
         record, settings=harness.settings, lease=lease,

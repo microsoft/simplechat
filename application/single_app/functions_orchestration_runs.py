@@ -21,7 +21,10 @@ rather than trusting the key.
 Shaped and styled after ``functions_personal_workflows.py`` so the run/step CRUD reads the
 same as the workflow-run CRUD it sits beside.
 
-Version: 0.261.127
+Conversation listings omit runs from the removed legacy plan contract, so neither the
+planner's ledger nor the run history ever interprets one.
+
+Version: 0.261.139
 """
 
 import hashlib
@@ -43,6 +46,7 @@ from functions_orchestration_context import ConversationContextError, LEDGER_MAX
 from functions_orchestration_schema import (
     PLAN_STATUS_DRAFT,
     PlanValidationError,
+    is_legacy_plan,
     new_run_id,
     new_step_id,
     plan_contract_version,
@@ -579,6 +583,9 @@ def list_conversation_runs(conversation_id, user_id, limit=10, *, strict=False):
     recent ``limit`` runs (newest first, so the cap keeps the recent ones), then reverses,
     because trimming an oldest-first list would have thrown away the very runs a follow-up
     question is usually about.
+
+    Runs from the removed legacy plan contract are omitted: they are never listed, offered
+    to the planner, or reopened. Their conversation messages remain.
     """
     if not conversation_id or not user_id:
         return []
@@ -611,6 +618,7 @@ def list_conversation_runs(conversation_id, user_id, limit=10, *, strict=False):
     trimmed = [
         item for item in items if _is_current_run_record(item)
         and item.get('user_id') == user_id and item.get('conversation_id') == conversation_id
+        and not is_legacy_plan(item.get('plan'))
     ][:limit]
     trimmed.reverse()
     return [_strip_cosmos_metadata(item) for item in trimmed]

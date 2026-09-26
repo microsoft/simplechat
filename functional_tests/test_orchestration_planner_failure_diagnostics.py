@@ -1,14 +1,16 @@
 # test_orchestration_planner_failure_diagnostics.py
 """
 Functional regressions for planner selection constraints and safe diagnostics.
-Version: 0.261.115
+Version: 0.261.140
 Implemented in: 0.261.115
+Single orchestration contract updated in: 0.261.139
 
 The real planner, registry, request context, and validator use controlled provider
 responses. Tests distinguish missing selected work from malformed/provider output,
 without accepting empty plans, switching models, or logging provider secrets.
 """
 
+import hashlib
 import json
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -17,7 +19,7 @@ import httpx
 import pytest
 from openai import APIError, APITimeoutError
 
-from test_orchestration_research_selection import ScriptedClient, model_plan
+from test_orchestration_research_selection import ScriptedClient, model_plan, result_binding, result_input
 from test_support.orchestration_research import case_inputs, load_case_suite, planner_runtime
 
 
@@ -63,7 +65,7 @@ def test_three_pinned_documents_allow_analyze_but_explicit_search_stays_required
     fixture = planner_case
     fixture.settings.update({
         "enable_group_workspaces": True,
-        "chat_orchestration_enabled_capabilities": ["document_search", "document_analyze", "respond"],
+        "chat_orchestration_enabled_capabilities": ["document_search", "document_analyze", "compose"],
     })
     ids = ["supplier", "terms", "governance"]
     seeds = {"document_ids": ids}
@@ -76,11 +78,14 @@ def test_three_pinned_documents_allow_analyze_but_explicit_search_stays_required
         "step_id": "review", "capability_id": "document_analyze", "title": "Analyze the selected documents",
         "arguments": {"document_ids": ids, "analysis_prompt": PROMPT}, "depends_on": [],
     })
+    proposal["steps"][-1]["inputs"] = {"analysis": result_input("review", "findings")}
+    proposal["steps"][-1]["arguments"]["knowledge_basis"] = "sources"
     proposal["steps"][-1]["depends_on"] = ["review"]
+    proposal["final_response"] = result_binding("draft", "answer")
     client = ScriptedClient(proposal)
     kind, document = plan(fixture, client, seeds=seeds, context=context, authorized=ids)
     assert kind == "plan"
-    assert {step["capability_id"] for step in document["steps"]} == {"document_analyze", "respond"}
+    assert {step["capability_id"] for step in document["steps"]} == {"document_analyze", "compose"}
     assert set(fixture.runtime.schema["plan_document_ids"](document)) == set(ids)
     assert document["approval"]["mode"] == "manual"
     assert len(client.calls) == 1 and client.calls[0]["model"] == "gpt-4o"
@@ -91,8 +96,9 @@ def test_three_pinned_documents_allow_analyze_but_explicit_search_stays_required
     diagnostic = failure_log(fixture)
     assert diagnostic["reason"] == "invalid_plan_or_missing_requirement"
     assert diagnostic["stage"] == "selected_requirements"
-    assert diagnostic["conversation_id"] == "three-document-chat"
-    assert diagnostic["turn_id"] == "three-document-turn"
+    assert diagnostic["conversation_id_hash"] == hashlib.sha256(b"three-document-chat").hexdigest()
+    assert diagnostic["turn_id_hash"] == hashlib.sha256(b"three-document-turn").hexdigest()
+    assert "conversation_id" not in diagnostic and "turn_id" not in diagnostic
 
 
 @pytest.mark.parametrize("reply,reason", [

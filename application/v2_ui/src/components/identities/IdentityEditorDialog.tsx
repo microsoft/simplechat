@@ -35,6 +35,7 @@ export function IdentityEditorDialog({
     onSave,
     onCancel,
     onRefresh,
+    capabilities = GROUP_IDENTITY_CAPABILITIES,
 }: {
     draft: IdentityDraft;
     saving: boolean;
@@ -47,6 +48,12 @@ export function IdentityEditorDialog({
      * so the editor's next save carries the latest etag, without discarding the open draft.
      */
     onRefresh?: () => void;
+    /**
+     * Which SimpleChat capabilities the surrounding workspace actually feeds. Defaults to the full
+     * group set so group and personal editors stay byte-identical; a public workspace passes only
+     * the file-sync capability because it has no actions surface, keeping the picker honest.
+     */
+    capabilities?: readonly (typeof GROUP_IDENTITY_CAPABILITIES)[number][];
 }) {
     const nameRef = useRef<HTMLInputElement>(null);
     const [confirmingDiscard, setConfirmingDiscard] = useState(false);
@@ -161,7 +168,7 @@ export function IdentityEditorDialog({
                         Choose the SimpleChat capabilities that may use this identity.
                     </p>
                     <div className="flex flex-wrap gap-3">
-                        {GROUP_IDENTITY_CAPABILITIES.map((value) => {
+                        {capabilities.map((value) => {
                             const config = CAPABILITY_CONFIGS[value];
                             const checked = draft.capabilities.includes(value);
                             return (

@@ -2401,6 +2401,7 @@ def _attach_generated_image_proposal_assets(
     image_assets = _load_generated_image_proposal_assets(
         conversation_id=conversation_id,
         source_assistant_message_id=message_id,
+        listed_image_message_ids=_orchestration_generated_image_message_ids(message),
     )
     if not image_assets:
         return message
@@ -2410,13 +2411,28 @@ def _attach_generated_image_proposal_assets(
     return export_message
 
 
+def _orchestration_generated_image_message_ids(message: Dict[str, Any]) -> set:
+    """Image messages an orchestrated answer shows, including ones an earlier attempt generated."""
+    metadata = message.get('metadata') if isinstance(message.get('metadata'), dict) else {}
+    orchestration = metadata.get('orchestration') if isinstance(metadata.get('orchestration'), dict) else {}
+    entries = orchestration.get('generated_images')
+    if message.get('role') != 'assistant' or not isinstance(entries, list):
+        return set()
+    return {
+        str(entry.get('message_id')).strip() for entry in entries
+        if isinstance(entry, dict) and isinstance(entry.get('message_id'), str) and entry.get('message_id').strip()
+    }
+
+
 def _load_generated_image_proposal_assets(
     conversation_id: str,
     source_assistant_message_id: str,
+    listed_image_message_ids=None,
 ) -> List[Dict[str, Any]]:
     normalized_source_id = str(source_assistant_message_id or '').strip()
     if not normalized_source_id:
         return []
+    listed_ids = set(listed_image_message_ids or ())
 
     try:
         image_messages = list(cosmos_messages_container.query_items(
@@ -2439,7 +2455,7 @@ def _load_generated_image_proposal_assets(
         metadata = image_message.get('metadata') if isinstance(image_message.get('metadata'), dict) else {}
         proposal = metadata.get('image_proposal') if isinstance(metadata.get('image_proposal'), dict) else {}
         proposal_source_id = str(proposal.get('source_assistant_message_id') or '').strip()
-        if proposal_source_id != normalized_source_id:
+        if proposal_source_id != normalized_source_id and str(image_message.get('id') or '') not in listed_ids:
             continue
 
         image_asset = _build_export_image_asset_from_message(
