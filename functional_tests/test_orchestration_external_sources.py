@@ -1,8 +1,9 @@
 # test_orchestration_external_sources.py
 """
 Functional coverage for retained external Gather source admission and access.
-Version: 0.261.127
+Version: 0.261.139
 Implemented in: 0.261.127
+Single orchestration contract updated in: 0.261.139
 
 Real result contracts/store/readers, capability gates, scoped integration
 resolvers and memory authorization run with identity, configuration and storage
@@ -95,7 +96,7 @@ class ExternalSourceWorld:
         self.user_enable_agents = True
         self.settings = {
             **self.services.settings,
-            "enable_chat_orchestration": True, "enable_chat_orchestration_harness": False,
+            "enable_chat_orchestration": True,
             "enable_chat_orchestration_actions": True, "enable_web_search": True,
             "enable_url_access": True, "require_member_of_url_access_user": True,
             "enable_source_review": True, "require_member_of_deep_research_user": True,
@@ -596,14 +597,6 @@ class OrchestrationExternalSourceTests(unittest.TestCase):
                 world.settings["chat_orchestration_enabled_capabilities"] = ["document_search"]
                 with self.assertRaises(ResultUnavailableError):
                     world.service(world.provider()).open_result(reference)
-
-    def test_new_plan_rollout_rollback_does_not_revoke_saved_content(self):
-        with ExternalSourceWorld() as world:
-            world.settings["enable_chat_orchestration_harness"] = True
-            _provider, _catalog, reference = world.save()
-            world.settings["enable_chat_orchestration_harness"] = False
-            value = world.service(world.provider()).open_result(reference).read_value()
-            self.assertEqual(value, world.prepared)
 
     def test_configuration_admission_is_required_only_for_new_external_gathers(self):
         with ExternalSourceWorld() as world:

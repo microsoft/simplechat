@@ -182,7 +182,7 @@ def test_preselected_image_asks_orchestration_for_image_proposals_by_click_or_en
     message_box(page).fill("Draw an illustration.")
     page.get_by_title("Orchestrate", exact=True).click()
     expect(page.get_by_role("alert").filter(has_text="cannot generate images")).to_have_count(0)
-    status = page.get_by_role("status").filter(has_text="Orchestrate will include image proposals for you to approve.")
+    status = page.get_by_role("status").filter(has_text="Orchestrate will plan the images you ask for and generate them when the plan runs.")
     expect(status).to_be_visible()
     expect(send_button(page)).to_be_enabled()
     with page.expect_response(lambda response: urlsplit(response.url).path == PLAN_PATH):
@@ -297,9 +297,10 @@ def test_saved_plan_and_backend_default_notices_are_safe_and_do_not_make_revisio
         store.setPlan('approval-chat', 'saved-turn', {
             plan_id: 'saved-plan', run_id: 'saved-run', turn_id: 'saved-turn', revision: 4,
             conversation_id: 'approval-chat',
+            planner_contract_version: 2,
             intent: { summary: 'Saved plan', complexity: 'simple' },
             approval: { mode: 'manual', state: 'pending', timeout_seconds: 0 },
-            status: 'awaiting_approval', steps: [{step_id: 'answer', capability_id: 'respond'}],
+            status: 'awaiting_approval', steps: [{step_id: 'answer', capability_id: 'compose', role: 'reason'}],
             reasoning_adjustments: [{
                 requested_effort: 'minimal', effective_effort: null, mode: 'model_default',
                 adjustment_reason: '<img src=x onerror=alert(1)>', stage: 'planner',
@@ -503,10 +504,11 @@ def test_run_thought_corrections_appear_before_completion_and_latest_stage_wins(
         H.stores.orchestration.useOrchestrationStore.getState().setPlan('approval-chat', 'live-turn', {
             plan_id: 'live-plan', run_id: 'live-run', turn_id: 'live-turn',
             conversation_id: 'approval-chat', revision: 4, edit_version: 'unchanged-v4',
+            planner_contract_version: 2,
             intent: { summary: 'Saved plan', complexity: 'simple' },
             approval: { mode: 'manual', state: 'pending', timeout_seconds: 0 },
             status: 'awaiting_approval',
-            steps: [{step_id: 'answer', capability_id: 'respond', title: 'Answer'}],
+            steps: [{step_id: 'answer', capability_id: 'compose', role: 'reason', title: 'Answer'}],
             reasoning_adjustments: [{
                 requested_effort: 'minimal', effective_effort: 'low', mode: 'explicit',
                 adjustment_reason: 'unsupported_effort', stage: 'planner', model_name: 'gpt-5.6-luna',
@@ -588,12 +590,13 @@ def test_hydration_does_not_promote_model_selected_retrieval_to_manual_requireme
     plan = {
         "plan_id": "hydrated-plan", "run_id": "hydrated-run", "turn_id": "hydrated-turn",
         "conversation_id": "approval-chat", "revision": 2,
+        "planner_contract_version": 2,
         "intent": {"summary": "Research chosen by the model", "complexity": "complex"},
         "inputs": {"web": True, "documents": [], "required_capabilities": original_requirements},
         "steps": [
-            {"step_id": "web", "capability_id": "web_search", "title": "Search"},
-            {"step_id": "deep", "capability_id": "deep_research", "title": "Read sources"},
-            {"step_id": "answer", "capability_id": "respond", "title": "Answer"},
+            {"step_id": "web", "capability_id": "web_search", "role": "gather", "title": "Search"},
+            {"step_id": "deep", "capability_id": "deep_research", "role": "gather", "title": "Read sources"},
+            {"step_id": "answer", "capability_id": "compose", "role": "reason", "title": "Answer"},
         ],
         "approval": {"mode": "manual", "state": "pending", "timeout_seconds": 0},
         "status": "awaiting_approval",
@@ -650,6 +653,7 @@ def test_implicit_selected_documents_keep_user_provenance_without_widening_step_
         const H = window.OrchHarness;
         const plan = H.plan.normalizePlan({
             plan_id: 'implicit-plan', run_id: 'implicit-run', turn_id: 'implicit-turn',
+            planner_contract_version: 2,
             intent: {summary: 'Selected documents', complexity: 'simple'},
             inputs: {
                 required_capabilities: ['document_search'], web: false,
@@ -659,8 +663,8 @@ def test_implicit_selected_documents_keep_user_provenance_without_widening_step_
                     {document_id: 'model-doc', display_name: 'Model choice.pdf', selected_by_user: false},
                 ],
             },
-            steps: [{step_id: 'docs', capability_id: 'document_search', arguments: {query: 'Summarize'}},
-                {step_id: 'answer', capability_id: 'respond'}],
+            steps: [{step_id: 'docs', capability_id: 'document_search', role: 'gather', arguments: {query: 'Summarize'}},
+                {step_id: 'answer', capability_id: 'compose', role: 'reason'}],
             approval: {mode: 'manual', state: 'pending'}, status: 'awaiting_approval',
         });
         window.implicitDocumentPlan = plan;

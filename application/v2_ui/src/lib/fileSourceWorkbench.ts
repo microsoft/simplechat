@@ -4,11 +4,11 @@
 // The file sources section shipped personal-only: it called the /api/file-sync/personal
 // functions in workspaceApi.ts directly, and stayed list-and-delete. This module is the seam that
 // lets the section serve a group workspace natively, the way identityWorkbench.ts did for
-// identities. A FileSourceScope selects which URLs are used and which per-operation gates apply.
-// The personal adapter is a thin pass-through so its behaviour stays byte-identical in effect:
-// same list URL, same runs/sync/delete URLs.
+// identities, and from M10B a public workspace too. A FileSourceScope selects which URLs are used
+// and which per-operation gates apply. The personal adapter is a thin pass-through so its behaviour
+// stays byte-identical in effect: same list URL, same runs/sync/delete URLs.
 //
-// The group path never falls back to personal behaviour. An absent or unrecognised
+// The group and public paths never fall back to personal behaviour. An absent or unrecognised
 // file_source_management hint yields an empty operation set, which leaves every write gate refusing
 // -- a missing server hint must not become a silent authorization bypass on the client. Editing,
 // deleting, syncing and testing a specific source additionally require it to carry the operation in
@@ -16,14 +16,15 @@
 // check (§9), so the envelope is validated strictly instead: a malformed response throws rather
 // than rendering as empty.
 //
-// Group scope carries a conditional write over config_revision, not an etag: PATCH and DELETE send
-// expected_config_revision (missing is 400, stale is 409). A 409 becomes a typed error the section
-// turns into "your draft is kept, reload and retry". Delete is richer: the associated documents may
-// already be gone when the removal is refused, so a refusal carrying partial:true reports the
-// documents WERE deleted, and a delete_incomplete keeps the source but reports the counts.
+// Group and public scope carry a conditional write over config_revision, not an etag: PATCH and
+// DELETE send expected_config_revision (missing is 400, stale is 409). A 409 becomes a typed error
+// the section turns into "your draft is kept, reload and retry". Delete is richer: the associated
+// documents may already be gone when the removal is refused, so a refusal carrying partial:true
+// reports the documents WERE deleted, and a delete_incomplete keeps the source but reports the
+// counts.
 
 import { ApiError, api, requestWithStatus } from './apiClient';
-import { fetchScopedGroupDocumentTags } from './documentReadAdapter';
+import { fetchScopedGroupDocumentTags, fetchScopedPublicDocumentTags } from './documentReadAdapter';
 import { isRecord } from './workspaceAuthoring';
 import { requireWorkspaceId } from './workspaceContext';
 import {
@@ -43,7 +44,8 @@ import type {
 
 export type FileSourceScope =
     | { kind: 'personal' }
-    | { kind: 'group'; id: string; name: string };
+    | { kind: 'group'; id: string; name: string }
+    | { kind: 'public'; id: string; name: string };
 
 export const FILE_SOURCE_OPERATIONS = ['create', 'edit', 'delete', 'sync', 'test'] as const;
 export type FileSourceOperation = typeof FILE_SOURCE_OPERATIONS[number];
@@ -271,6 +273,21 @@ function groupFileSourcesUrl(groupId: string, sourceId?: string, suffix?: string
     const base = `/api/groups/${encodeURIComponent(requireWorkspaceId(groupId))}/file-sources`;
     const path = sourceId ? `${base}/${encodeURIComponent(requireWorkspaceId(sourceId))}` : base;
     return suffix ? `${path}/${suffix}` : path;
+}
+
+function publicFileSourcesUrl(workspaceId: string, sourceId?: string, suffix?: string): string {
+    const base = `/api/public-workspaces/${encodeURIComponent(requireWorkspaceId(workspaceId))}/file-sources`;
+    const path = sourceId ? `${base}/${encodeURIComponent(requireWorkspaceId(sourceId))}` : base;
+    return suffix ? `${path}/${suffix}` : path;
+}
+
+/** Prove a returned source belongs to the requested public workspace, as the public identity and
+ * document readers do; a source that does not identify this workspace must raise, never render. */
+function assertPublicFileSourceScope(source: WorkspaceSyncSource, workspaceId: string): void {
+    if (!source || typeof source.id !== 'string' || !source.id
+        || source.public_workspace_id !== workspaceId) {
+        throw new Error('The file source response does not match this workspace. Refresh and try again.');
+    }
 }
 
 /**
@@ -537,5 +554,114 @@ export function createGroupFileSourceWorkbench(
             return ignoreItemFromResponse(response);
         },
         classicPath: '/group_workspaces',
+    };
+}
+
+export function createPublicFileSourceWorkbench(
+    scope: Extract<FileSourceScope, { kind: 'public' }>, management: unknown,
+): FileSourceWorkbenchAdapter {
+    if (scope.kind !== 'public') {
+        throw new Error('Public file sources require an explicit public scope.');
+    }
+    const workspaceId = requireWorkspaceId(scope.id);
+    const supported = advertisedFileSourceOperations(management);
+    const allows = (operation: FileSourceOperation, source?: WorkspaceSyncSource) =>
+        fileSourceOperationAllowed(scope, supported, operation, source);
+    const identitiesUrl = `/api/public-workspaces/${encodeURIComponent(workspaceId)}/identities`;
+    const optionsUrl = `/api/public-workspaces/${encodeURIComponent(workspaceId)}/file-source-options`;
+    return {
+        scope,
+        manageable: supported.has('create'),
+        supported,
+        allows,
+        list: async (signal) => {
+            const response = await api.get<unknown>(publicFileSourcesUrl(workspaceId), signal);
+            const sources = sourcesFromResponse(response);
+            sources.forEach((source) => assertPublicFileSourceScope(source, workspaceId));
+            return sources;
+        },
+        read: async (source, signal) => {
+            const response = await api.get<unknown>(publicFileSourcesUrl(workspaceId, source.id), signal);
+            const read = sourceFromResponse(response);
+            assertPublicFileSourceScope(read, workspaceId);
+            return read;
+        },
+        create: async (write) => {
+            if (!allows('create')) {
+                throw new Error('Creating file sources is not available in this workspace.');
+            }
+            const response = await api.post<unknown>(publicFileSourcesUrl(workspaceId), groupWriteBody(write));
+            const created = sourceFromResponse(response);
+            assertPublicFileSourceScope(created, workspaceId);
+            return created;
+        },
+        update: async (source, write) => {
+            if (!allows('edit', source)) {
+                throw new Error('Editing this file source is not available.');
+            }
+            const updated = await conditionalGroupUpdate(publicFileSourcesUrl(workspaceId, source.id), {
+                ...groupWriteBody(write), expected_config_revision: requiredConfigRevision(source),
+            });
+            const saved = sourceFromResponse(updated);
+            assertPublicFileSourceScope(saved, workspaceId);
+            return saved;
+        },
+        remove: async (source, deleteAssociatedFiles) => {
+            if (!allows('delete', source)) {
+                throw new Error('Deleting this file source is not available.');
+            }
+            return deleteGroupSource(publicFileSourcesUrl(workspaceId, source.id), {
+                expected_config_revision: requiredConfigRevision(source),
+                delete_associated_files: deleteAssociatedFiles,
+            });
+        },
+        options: async (signal) => {
+            const response = await api.get<unknown>(optionsUrl, signal);
+            return optionsFromResponse(response);
+        },
+        identities: async (signal) => {
+            const response = await api.get<unknown>(identitiesUrl, signal);
+            return identitiesFromResponse(response);
+        },
+        tags: async (signal) => {
+            // The explicit-workspace tag read the public Documents and Tags sections use.
+            const response = await fetchScopedPublicDocumentTags(workspaceId, signal);
+            return [...response.tags ?? []]
+                .sort((left, right) => (Number(right.count) - Number(left.count)) || left.name.localeCompare(right.name))
+                .map((tag) => tag.name);
+        },
+        runs: async (sourceId, signal) => {
+            const response = await api.get<unknown>(publicFileSourcesUrl(workspaceId, sourceId, 'runs'), signal);
+            return runsFromResponse(response);
+        },
+        sync: async (sourceId) => {
+            const response = await api.post<unknown>(publicFileSourcesUrl(workspaceId, sourceId, 'sync'));
+            return isRecord(response) && isRecord(response.run) ? (response.run as WorkspaceSyncRun) : null;
+        },
+        testConnection: async (source, write) => {
+            const url = source
+                ? publicFileSourcesUrl(workspaceId, source.id, 'test-connection')
+                : publicFileSourcesUrl(workspaceId, undefined, 'test-connection');
+            const body = write ? groupWriteBody(write) : undefined;
+            const response = await api.post<unknown>(url, body);
+            return connectionFromResponse(response);
+        },
+        browse: async (source, write, browsePath) => {
+            const url = source
+                ? publicFileSourcesUrl(workspaceId, source.id, 'browse')
+                : publicFileSourcesUrl(workspaceId, undefined, 'browse');
+            const body: Record<string, unknown> = write ? groupWriteBody(write) : {};
+            body.browse_path = browsePath;
+            const response = await api.post<unknown>(url, body);
+            return browseFromResponse(response);
+        },
+        ignorePath: async (sourceId, remotePath, ignored) => {
+            const response = await api.post<unknown>(
+                publicFileSourcesUrl(workspaceId, sourceId, 'ignore-path'),
+                { remote_path: remotePath, ignored },
+            );
+            return ignoreItemFromResponse(response);
+        },
+        classicPath: '/public_workspaces',
     };
 }

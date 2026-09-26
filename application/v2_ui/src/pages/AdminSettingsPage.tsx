@@ -57,6 +57,7 @@ import { ScreeningPolicyEditor } from '../components/screening/ScreeningPolicyEd
 import { ResourceIdBuilder } from '../components/admin/ResourceIdBuilder';
 import { ModelSelectionPicker } from '../components/admin/ModelSelectionPicker';
 import { OrchestrationCard } from '../components/admin/OrchestrationCard';
+import { OrchestrationPlannerModelPicker } from '../components/admin/OrchestrationPlannerModelPicker';
 import { PromotedAgentsEditor } from '../components/admin/PromotedAgentsEditor';
 import { AgentDelegationManager } from '../components/agents/AgentDelegationManager';
 import { GLOBAL_DELEGATION_SCOPE } from '../lib/agentDelegation';
@@ -92,6 +93,7 @@ import {
 } from '../lib/adminFields';
 import { toast } from '../stores/toastStore';
 import { hasUnsavedDiscoveryEdits } from '../lib/modelSelection';
+import { PLANNER_MODEL_KEYS } from '../lib/orchestrationPlannerModel';
 import { modelConnectionsChanged } from '../stores/modelConnectionsStore';
 import type { AdminNavGroup, Json } from '../lib/types';
 
@@ -826,6 +828,25 @@ export function AdminSettingsPage() {
                             disabled={saving}
                             models={data?.model_catalog ?? []}
                             onChange={(next) => field.key && setValue(field.key, next)}
+                        />
+                    );
+                case 'orchestration-planner-model':
+                    // One control for the four planner keys, which only make sense together.
+                    return (
+                        <OrchestrationPlannerModelPicker
+                            key={key}
+                            field={field}
+                            connectionsEnabled={asBoolean(settings['enable_multi_model_endpoints'])}
+                            read={(settingKey) => readFieldValue(READ_ONLY_REF(settingKey), settings, draft)}
+                            error={Object.values(PLANNER_MODEL_KEYS)
+                                .map((plannerKey) => fieldErrors[plannerKey])
+                                .find(Boolean)}
+                            disabled={saving}
+                            onChange={(updates) => {
+                                for (const [plannerKey, next] of Object.entries(updates)) {
+                                    setValue(plannerKey, next);
+                                }
+                            }}
                         />
                     );
                 case 'resource-id-builder':

@@ -1,8 +1,9 @@
 # test_orchestration_research_pre_effect.py
 """
 Functional tests for deterministic research admission before acquisition.
-Version: 0.261.127
+Version: 0.261.139
 Implemented in: 0.261.127
+Single orchestration contract updated in: 0.261.139
 
 Canonical Source Review settings determine whether a captured research profile
 can make unattested LLM planner requests. Check current and actual settings
@@ -12,8 +13,6 @@ Refs microsoft/simplechat#1509.
 """
 
 from copy import deepcopy
-import json
-from types import SimpleNamespace
 from unittest.mock import Mock
 
 import pytest
@@ -272,25 +271,3 @@ def test_current_profile_change_after_preparation_stops_before_search(research):
     assert state.admissions == []
     assert state.runtime.state.web == state.runtime.state.pages == state.runtime.state.invocations == []
     state.planner_calls.assert_not_called()
-
-
-def test_v1_keeps_existing_llm_query_planning_without_new_capture_checks(research):
-    state = research
-    state.context.plan_contract_version = 1
-    state.runtime.settings.update(
-        enable_web_search=True, deep_research_enable_query_planning=True,
-        deep_research_max_search_queries_per_turn=2, enable_deep_source_review=False,
-    )
-    state.planner_calls.side_effect = None
-    state.planner_calls.return_value = SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(
-        content=json.dumps({"queries": [{"query": "Current source details", "reason": "Related facts"}]}),
-    ))])
-    forbidden = Mock(side_effect=AssertionError("V1 must not use v2 acquisition gates."))
-    state.context.capture_external_source_configuration = forbidden
-    before = deepcopy(state.runtime.settings)
-    _, result = run_gather(state.runtime, "deep_research")
-    assert result["status"] == "completed", result
-    assert state.planner_calls.call_count > 0
-    assert state.runtime.settings == before
-    assert state.events == state.captures == state.admissions == []
-    forbidden.assert_not_called()

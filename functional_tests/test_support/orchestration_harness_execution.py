@@ -116,6 +116,7 @@ class HarnessBlobIO(FakeBlobService):
     def __init__(self):
         super().__init__()
         self.file_uploads = 0
+        self.image_uploads = 0
         self.before_file_upload = None
 
     def get_blob_client(self, *, container, blob):
@@ -127,6 +128,16 @@ class HarnessBlobIO(FakeBlobService):
                 return original.key in service.records
 
             def upload_blob(self, stream=None, *, data=None, overwrite, **kwargs):
+                if isinstance(stream, (bytes, bytearray)):
+                    # Chat images upload their bytes directly and may replace their own blob,
+                    # unlike immutable retained results and streamed file artifacts.
+                    service.etag_counter += 1
+                    service.records[original.key] = {
+                        "data": bytes(stream), "metadata": dict(kwargs.get("metadata") or {}),
+                        "content_type": "application/octet-stream", "etag": f"etag-{service.etag_counter}",
+                    }
+                    service.image_uploads += 1
+                    return
                 is_artifact = stream is not None
                 if is_artifact:
                     if service.before_file_upload is not None:

@@ -1,19 +1,22 @@
 # public_workspace.py
 """
 Closed HTTP fixtures for the real V2 public workspace shell.
-Version: 0.261.179
+Version: 0.261.182
 Implemented in: 0.261.132
 Every context carries the server's document_management hint, as build_public_workspace_context
 sends it: 0.261.167
 Every context is the real builder's, held to it by
 functional_tests/test_public_context_fixture_parity.py: 0.261.168
-Its prompts section opens and every context carries the server's prompt_management hint: 0.261.177
+Its prompts section opens and every context carries the server's prompt_management hint: 0.261.178
+Its identities and sync sections and their management hints, gated on File Sync: 0.261.182
 The context carries the native membership hint and its Members manage section: 0.261.179
 
 The public surface mirrors the group shell. Its documents and prompts sections are open, and a
 manager role can be granted document management, the generated-artifact review and prompt
-management. It never advertises native delegation, and every document or prompt read or operation
-carries its workspace id in the request path rather than an active selection.
+management. From M10B, a File-Sync deployment also opens read-only identities and file sources that
+a manager of an active workspace manages. It never advertises native delegation, and every document,
+prompt or connection read or operation carries its workspace id in the request path rather than an
+active selection.
 """
 
 import copy
@@ -41,6 +44,10 @@ PUBLIC_DOCUMENT_OPERATIONS = (
 PUBLIC_DOCUMENT_COLLABORATION_OPERATIONS = ("inspect", "approve_artifact", "reject_artifact", "cancel_artifact")
 # functions_public_prompt_policy.PUBLIC_PROMPT_OPERATIONS, in the server's order.
 PUBLIC_PROMPT_OPERATIONS = ("create", "edit", "delete")
+# functions_public_identity_policy.PUBLIC_IDENTITY_OPERATIONS, in the server's order.
+PUBLIC_IDENTITY_OPERATIONS = ("create", "edit", "delete")
+# functions_public_file_source_policy.PUBLIC_FILE_SOURCE_OPERATIONS, in the server's order.
+PUBLIC_FILE_SOURCE_OPERATIONS = ("create", "edit", "delete", "sync", "test")
 # functions_public_membership_policy.PUBLIC_MEMBERSHIP_OPERATIONS, in the server's order.
 PUBLIC_MEMBERSHIP_OPERATIONS = ("add_member", "review_requests", "change_role", "remove_member", "transfer_ownership")
 # The statuses that let members be added or promoted (functions_public_membership_policy).
@@ -56,6 +63,13 @@ PUBLIC_MANAGE_SECTION_GROUP = "manage"
 PUBLIC_SECTION_UNAVAILABLE_REASON = "This section is not available for public workspaces yet."
 PUBLIC_INACTIVE_REASON = "This public workspace is inactive. Access is restricted to administrators."
 PUBLIC_STATUS_UNKNOWN_REASON = "This workspace's status is not recognized. Contact an administrator."
+# The connections reasons build_public_workspace_context sends for the identities and sync sections
+# (M10B): File Sync is the sole gate, so a manager sees the "requires File Sync" text and a reader the
+# manager-only text. functions_public_identity_policy.PUBLIC_IDENTITIES_UNAVAILABLE_REASON and
+# functions_public_file_source_policy.PUBLIC_FILE_SOURCES_UNAVAILABLE_REASON.
+PUBLIC_IDENTITIES_UNAVAILABLE_REASON = "Identities require File Sync."
+PUBLIC_FILE_SOURCES_UNAVAILABLE_REASON = "File sources require File Sync."
+PUBLIC_CONNECTIONS_MANAGER_REASON = "Your role does not permit managing this public workspace's connections."
 # The context route's refusals. The builder's access refusal is unreachable under today's role rules
 # (every authenticated caller reads a public workspace as at least a User); the fixture keeps it as a
 # client robustness scenario.
@@ -108,6 +122,28 @@ def public_prompt_management(role, status):
     return {"schema_version": 1, "operations": operations}
 
 
+def public_identity_management(role, status, file_sync):
+    """`public_identity_management_operations`: a manager of an active workspace creates, edits and
+    deletes identities, but only when File Sync is enabled for the workspace (its sole consumer). No
+    status but active permits a write, and a reader gets nothing. The server sends this hint in every
+    public context from M10B on."""
+    operations = []
+    if file_sync and role in PUBLIC_MANAGER_ROLES and status == "active":
+        operations = list(PUBLIC_IDENTITY_OPERATIONS)
+    return {"schema_version": 1, "operations": operations}
+
+
+def public_file_source_management(role, status, file_sync):
+    """`public_file_source_management_operations`: a manager of an active workspace creates, edits,
+    deletes, syncs and tests file sources, but only when File Sync is enabled for the workspace. No
+    status but active permits a write, and a reader gets nothing. The server sends this hint in every
+    public context from M10B on."""
+    operations = []
+    if file_sync and role in PUBLIC_MANAGER_ROLES and status == "active":
+        operations = list(PUBLIC_FILE_SOURCE_OPERATIONS)
+    return {"schema_version": 1, "operations": operations}
+
+
 def public_membership_management(role, status):
     """`public_membership_operations` for the modelled deployment (public workspaces on). A manager
     reviews requests and removes members in any status, and adds or changes roles only while the
@@ -126,24 +162,40 @@ def public_membership_management(role, status):
     }
 
 
-def public_context(identifier, name, *, status="active", role="User", viewer=OWNER_ID):
+def public_context(identifier, name, *, status="active", role="User", viewer=OWNER_ID, file_sync=False):
     """`build_public_workspace_context` for the modelled deployment: public workspaces, metadata
-    extraction and the administrator's public downloads on."""
+    extraction and the administrator's public downloads on. `file_sync` toggles File Sync for the
+    workspace, which is the sole gate on the identities and sync sections and their management hints
+    (M10B); it is off in the base deployment and turned on by the connection suites' fixtures."""
     status = status if status in PUBLIC_STATUSES else "unknown"
     readable = status in PUBLIC_VIEWABLE_STATUSES
     manager = role in PUBLIC_MANAGER_ROLES
     status_reason = None if readable else PUBLIC_INACTIVE_REASON if status == "inactive" else PUBLIC_STATUS_UNKNOWN_REASON
-    sections = {}
-    open_sections = ("documents", "prompts")
-    for section, group in SECTION_GROUPS.items():
-        # Documents and prompts open; a manager of an active workspace manages either, and every
-        # other section is listed but not yet available. Every write reauthorizes.
-        enabled = readable and section in open_sections
-        sections[section] = {
-            "group": group, "enabled": enabled,
+
+    def gate(enabled_flag, unavailable_reason):
+        """One section entry, mirroring the builder's `section()`: a status that closes viewing wins
+        over the section's own reason, and management needs an active workspace and a manager role."""
+        enabled = readable and bool(enabled_flag)
+        return {
+            "enabled": enabled,
             "can_manage": bool(enabled and status == "active" and manager),
-            "reason": None if enabled else status_reason or PUBLIC_SECTION_UNAVAILABLE_REASON,
+            "reason": None if enabled else (status_reason if not readable else unavailable_reason),
         }
+    # Documents and prompts open; a manager of an active workspace manages either. Identities and sync
+    # are gated solely on File Sync for the workspace and are manager-only; tags stay unavailable.
+    sections = {
+        "documents": {"group": "knowledge", **gate(True, PUBLIC_SECTION_UNAVAILABLE_REASON)},
+        "tags": {"group": "knowledge", **gate(False, PUBLIC_SECTION_UNAVAILABLE_REASON)},
+        "prompts": {"group": "knowledge", **gate(True, PUBLIC_SECTION_UNAVAILABLE_REASON)},
+        "identities": {"group": "connections", **gate(
+            manager and file_sync,
+            PUBLIC_IDENTITIES_UNAVAILABLE_REASON if manager else PUBLIC_CONNECTIONS_MANAGER_REASON,
+        )},
+        "sync": {"group": "knowledge", **gate(
+            manager and file_sync,
+            PUBLIC_FILE_SOURCES_UNAVAILABLE_REASON if manager else PUBLIC_CONNECTIONS_MANAGER_REASON,
+        )},
+    }
     # Members (M10A) opens in any viewable status; its can_manage is navigation only, gated on an
     # active workspace and a manager role like the server's section(True, manager).
     sections["members"] = {
@@ -178,6 +230,8 @@ def public_context(identifier, name, *, status="active", role="User", viewer=OWN
         "document_management": public_document_management(role, status),
         "document_collaboration": public_document_collaboration(role, status),
         "prompt_management": public_prompt_management(role, status),
+        "identity_management": public_identity_management(role, status, file_sync),
+        "file_source_management": public_file_source_management(role, status, file_sync),
         "membership_management": public_membership_management(role, status),
     }
 

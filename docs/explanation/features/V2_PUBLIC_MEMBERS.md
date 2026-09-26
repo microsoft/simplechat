@@ -25,7 +25,8 @@ It's the group Members section, driven by the public workspace's client and
 wording:
 - the member list, with search, a role filter and paging kept in the address;
 - **Add member** from the directory, as an Admin or DocumentManager;
-- **Import members** from a CSV;
+- **Import members** from a CSV, with the roles a public workspace assigns
+  (`admin` and `document_manager`; from version 0.261.180);
 - changing roles and removing members, one at a time or in bulk, with a result
   per member;
 - pending DocumentManager requests, to approve or reject;
@@ -73,7 +74,6 @@ and the creator becomes the Owner.
 
 ## Known limitations
 
-- The CSV import dialog's help text still names the group roles.
 - Asking to become a DocumentManager still happens on the classic page. V2
   shows and decides the requests.
 

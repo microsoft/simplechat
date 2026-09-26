@@ -4,7 +4,7 @@ title: "Chat interface controls"
 description: "Reference for every documented control in the SimpleChat chat interface."
 section: "Reference"
 audience: user
-version: "0.261.127"
+version: "0.261.139"
 ---
 
 ## How to use this reference
@@ -155,6 +155,11 @@ or the parameter is unsupported, the request uses **Model default** instead of
 advertising invented options. Explicit **None** is distinct from omitting the
 parameter. Plans and answer metadata retain compatibility adjustments.
 
+Since **0.261.137**, the V2 interface restores the model you last chose when you
+return to chat, rather than the model that was selected when the page first loaded.
+Orchestrate keeps its own model choice; see
+[Orchestration approval](#orchestration-approval-v2-interface).
+
 ## Grounded search and document scope
 
 {% include media.html src="reference/chat-controls-grounded-search.png" alt="Grounded Search panel with action, scope, document, tags, filters, and comparison controls visible." title="Grounded search and document scope" capture="Capture the Grounded Search panel with action, scope, document, tags, filters, and comparison controls visible." %}
@@ -286,7 +291,7 @@ for the complete workflow.
 
 ## Orchestration approval (V2 interface)
 
-Since **0.261.126**, Orchestrate has a visible **Orchestration model** picker.
+Since **0.261.126**, Orchestrate has an **Orchestration model** picker.
 **Auto - choose per step** asks the server to choose an authorized connected model
 for each model-backed step; a specific model remains pinned. Planned and completed
 steps show model attribution and the selection reason. This picker is distinct
@@ -294,15 +299,27 @@ from the **Auto** approval choice below. Ordinary V2 chat and classic chat remai
 manual-only, and switching modes retains the normal-chat model. See
 [Choose models for orchestration]({{ '/guides/model-catalog-routing/' | relative_url }}).
 
+Since **0.261.137**, the picker sits in the normal model picker's place under
+**Manual controls** instead of above the message box, so the toolbar keeps its shape
+when Orchestrate is switched on. **Auto - choose per step** is the default wherever a
+connected model has a catalog profile rated for general answering; otherwise a specific
+model is used and Auto is not offered. Your choice, Auto or a pinned model, is saved to your
+account, so it stays in place when you leave the chat, open a new chat, reload, or
+sign in elsewhere. A model pinned here does not change the model normal chat uses.
+When an administrator hides Manual controls, the picker is unavailable and Orchestrate
+uses Auto (or the default model when Auto cannot be used), ignoring any saved pin.
+Sending an orchestrated message waits until your saved choice has loaded.
+
 In Orchestrate, selected Document Search, Web Search, Deep Research, and eligible
 URL Access controls are positive requirements, not the complete list of permitted
 tools. Unchecked controls are neutral. The planner may choose other enabled,
 authorized capabilities, while selected documents, agents, workspaces, and filters
 retain their intended constraints. Deep Research can be selected without also
 selecting Web Search. Since **0.261.132**, **Image** works differently in Orchestrate:
-it asks the answer to include image proposal cards rather than sending your prompt to
-the image model, so it combines with every other control. Each card generates an image
-only when you approve it.
+rather than sending your prompt to the image model, it combines with every other
+control and shapes the plan. Since **0.261.138**, Image is treated as a request for
+images, which the plan generates as its own tasks when it runs. Suggested images
+remain approval cards that generate only when you approve them.
 
 Every Orchestrate request now invokes the planner, even a short question or
 acknowledgment. The planner may choose a direct answer; no topic rule forces
@@ -331,7 +348,7 @@ the request.
 
 | Control or output | What it does | Why you would use it | Enabled by |
 | --- | --- | --- | --- |
-| Image (in Orchestrate) | Asks the answer to include at least one image proposal card, and shows "Orchestrate will include image proposals for you to approve." while it is on. Nothing is generated until you approve a card. | Make sure a request that would benefit from pictures gets them, even when the wording does not say "image". | `enable_image_generation` and `enable_chat_orchestration` |
+| Image (in Orchestrate) | Asks the plan for images and shows "Orchestrate will plan the images you ask for and generate them when the plan runs." while it is on. Each requested image is generated as a planned task, shown in the answer, and embedded in DOCX, PDF, or PPTX files when the file source uses it. Suggested images remain approval cards generated only when you approve them. | Make sure a request that would benefit from pictures gets them, even when the wording does not say "image". | `enable_image_generation` and `enable_chat_orchestration` |
 | Inline charts | Charts numeric results. When data comes from an action, the chart is drawn from the exact retrieved rows; long series show up to 200 points and keep each segment's highest and lowest value. | Plot telemetry, metrics, or other series without copying values into a prompt. | `enable_chat_orchestration` |
 | Mermaid diagrams | Draws flows, architectures, sequences, and relationships the gathered information describes. | Get an editable, accessible diagram instead of a picture of one. | `enable_chat_orchestration` |
 
@@ -374,16 +391,15 @@ plan rather than editing the main chat message. See
 | Ask planner | Sends a change request to the planner for a validated revision, or answers its scoped clarification. | Add a permitted step, remove work, or refine the task without duplicating the main conversation. | Same as Edit; existing capability and source permissions apply |
 | History and restore | Shows previous plan versions and creates a newly validated current version when restoring one. | Return to an earlier approach without deleting later history. | Same as Edit |
 | Run after editing | Executes the saved current revision only after explicit approval. Closing the editor does not approve it. | Start the work once its steps and sources match your intent. | Same as Edit; no revision or clarification may be pending |
-| Run task switch (contract-v2 plans) | Skips or restores an eligible task without deleting its declared inputs or outputs. Required producers identify their consumers and cannot be silently disabled. | Remove independent work, or learn which consumers must change through Ask planner first. | A server-supplied contract-v2 plan that has not started |
-| Prepared output schema | Expands the server-declared schema for a named structured result. | Check the intended shape before approving composition; this is a retained result, not a download. | A contract-v2 task with an output schema |
-| Server file format reference | Shows only a supplied shared export catalog, including source kinds and profiles. Its option-rule and default-limit disclosures are read-only. | Check the server's format descriptions before requesting a validated planner revision. | A contract-v2 view with a server-provided catalog; absent otherwise |
-| Load server file format reference | Retrieves the shared catalog using the selected plan's authorized run context. A failed read leaves formats unadvertised. | Inspect available format descriptions when they were not included with the current view. | A contract-v2 plan view without a loaded catalog |
+| Run task switch (Gather / Reason / Render plans) | Skips or restores an eligible task without deleting its declared inputs or outputs. Required producers identify their consumers and cannot be silently disabled. | Remove independent work, or learn which consumers must change through Ask planner first. | A Gather / Reason / Render plan that has not started; the final-response step cannot be disabled |
+| Prepared output schema | Expands the server-declared schema for a named structured result. | Check the intended shape before approving composition; this is a retained result, not a download. | A Gather / Reason / Render task with an output schema |
+| Server file format reference | Shows only a supplied shared export catalog, including source kinds and profiles. Its option-rule and default-limit disclosures are read-only. | Check the server's format descriptions before requesting a validated planner revision. | A Gather / Reason / Render view with a server-provided catalog; absent otherwise |
+| Load server file format reference | Retrieves the shared catalog using the selected plan's authorized run context. A failed read leaves formats unadvertised. | Inspect available format descriptions when they were not included with the current view. | A Gather / Reason / Render plan view without a loaded catalog |
 
 Version-aware inspection was implemented in **0.261.127** (Refs:
 microsoft/simplechat#1509; `application/single_app/config.py`). Gather / Reason /
 Render are roles, not global phase buckets: consecutive groups preserve the
-server's actual dependency order, including repeated roles. Older saved plans
-keep their legacy interpretation. Named input descriptions identify the producer,
+server's actual dependency order, including repeated roles. Plans created by an earlier orchestration version show the stable message that they can't be opened or rerun. Named input descriptions identify the producer,
 output, and whether partial data is allowed. The server remains authoritative
 for binding compatibility, capability admission, source access, and limits.
 

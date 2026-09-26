@@ -2129,20 +2129,44 @@ export function getGeneratedImageProposalSourceMessageId(message) {
 
 export function groupGeneratedImageProposalMessages(messages = []) {
   const groupedMessages = new Map();
-  (Array.isArray(messages) ? messages : []).forEach((message) => {
+  const list = Array.isArray(messages) ? messages : [];
+  const imagesById = new Map();
+  const addToGroup = (assistantMessageId, message) => {
+    if (!groupedMessages.has(assistantMessageId)) {
+      groupedMessages.set(assistantMessageId, []);
+    }
+    const group = groupedMessages.get(assistantMessageId);
+    if (!group.includes(message)) {
+      group.push(message);
+    }
+  };
+  list.forEach((message) => {
     if (message?.role !== 'image') {
       return;
+    }
+    if (message.id) {
+      imagesById.set(String(message.id), message);
     }
 
     const sourceAssistantMessageId = getGeneratedImageProposalSourceMessageId(message);
     if (!sourceAssistantMessageId) {
       return;
     }
-
-    if (!groupedMessages.has(sourceAssistantMessageId)) {
-      groupedMessages.set(sourceAssistantMessageId, []);
+    addToGroup(sourceAssistantMessageId, message);
+  });
+  // An orchestrated answer lists the images it shows, including images an earlier attempt
+  // of the same request generated, which stay linked to that attempt's answer.
+  list.forEach((message) => {
+    const generatedImages = message?.metadata?.orchestration?.generated_images;
+    if (message?.role !== 'assistant' || !message.id || !Array.isArray(generatedImages)) {
+      return;
     }
-    groupedMessages.get(sourceAssistantMessageId).push(message);
+    generatedImages.forEach((entry) => {
+      const image = imagesById.get(String(entry?.message_id || ''));
+      if (image) {
+        addToGroup(String(message.id), image);
+      }
+    });
   });
   return groupedMessages;
 }

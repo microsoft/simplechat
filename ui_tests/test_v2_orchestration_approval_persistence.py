@@ -1,7 +1,7 @@
 # test_v2_orchestration_approval_persistence.py
 """
 Browser regressions for account-level orchestration approval persistence.
-Version: 0.261.101
+Version: 0.261.139
 Implemented in: 0.261.101
 
 Drive the real Composer, router and settings store. Only HTTP is replaced: the
@@ -137,10 +137,11 @@ class ApprovalApi:
                 "type": "orchestration_plan",
                 "plan": {
                     "plan_id": "fixture-plan", "run_id": "fixture-run", "turn_id": body["turn_id"],
+                    "planner_contract_version": 2,
                     "intent": {"summary": "Approval fixture", "complexity": "simple"},
                     "steps": [{
-                        "step_id": "answer", "capability_id": "respond", "title": "Answer",
-                        "arguments": {}, "estimated_cost": "low",
+                        "step_id": "answer", "capability_id": "compose", "title": "Answer",
+                        "arguments": {}, "role": "reason", "estimated_cost": "low",
                     }],
                     "approval": {"mode": "manual", "timeout_seconds": 0, "state": "pending"},
                     "status": "awaiting_approval",

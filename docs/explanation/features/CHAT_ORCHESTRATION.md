@@ -1,6 +1,6 @@
 # Chat Orchestration
 
-**Version: 0.261.132** (tracked in `application/single_app/config.py`)
+**Version: 0.261.139** (tracked in `application/single_app/config.py`)
 
 **Implemented in version: 0.261.086**
 **Knowledge phase added in version: 0.261.089**
@@ -19,6 +19,10 @@
 **Same-attempt waiting continuation and external Gather retention implemented in version: 0.261.127**
 **Runtime boundary hardening implemented in version: 0.261.129**
 **Charts, Mermaid diagrams, and image proposals implemented in version: 0.261.132**
+**Gather / Reason / Render answer parity implemented in version: 0.261.134**
+**Orchestrate model picker placement and remembered choice fixed in version: 0.261.137**
+**Deliverables contract and generated images in files implemented in version: 0.261.138**
+**Gather / Reason / Render made the only orchestration contract in version: 0.261.139**
 
 ## Overview
 
@@ -38,16 +42,15 @@ its required companions.
 
 This is a V2 interface feature. The classic interface is unchanged.
 
-Version **0.261.125** adds the internal
-[Gather / Reason / Render result foundation](ORCHESTRATION_RENDERING_HARNESS.md)
-(Refs #1509), plus an explicitly admitted plan-contract v2 runtime. This internal
-contract is separate from the **V2 chat interface**. The integrated runtime,
-introduced in **0.261.127**, admits new v2 plans only when both **Enable Chat
-Orchestration** and **Gather / Reason / Render harness (preview)** are enabled.
-Both settings remain off by default; saved legacy plans keep their original
-contract. [Runtime boundary hardening](../fixes/ORCHESTRATION_RUNTIME_BOUNDARY_HARDENING_FIX.md)
+Version **0.261.125** added the internal
+[Gather / Reason / Render result foundation](ORCHESTRATION_GATHER_REASON_RENDER.md)
+(Refs #1509). In **0.261.139**, Gather / Reason / Render became the only
+orchestration plan contract: new plans use it whenever **Enable Chat
+Orchestration** is on, and the separate preview/admission toggle was removed.
+Plans created by an earlier orchestration version fail closed with the standard
+message telling the user to start a new request. [Runtime boundary hardening](../fixes/ORCHESTRATION_RUNTIME_BOUNDARY_HARDENING_FIX.md)
 in **0.261.129** preserves pending results and strengthens invocation, catalog,
-and delivery checks without changing those admission settings.
+and delivery checks.
 
 ## Dependencies
 
@@ -61,18 +64,18 @@ and delivery checks without changing those admission settings.
 
 ## Internal dependency contract (M4)
 
-Plan-contract v2 treats **Gather**, **Reason**, and **Render** as server-owned
+Gather / Reason / Render treats **Gather**, **Reason**, and **Render** as server-owned
 purposes, not globally ordered phases. A reviewed finite plan can Gather, Reason,
 Gather again, then Reason. Named result bindings infer dependencies; stable
 topological execution preserves their order without adding an autonomous
 graph-mutation loop or another parallel-agent engine.
 
-Server callers must explicitly pass `contract_version=2` to `plan_request` or
-`normalize_plan`, and construct a matching `RunContext(plan_contract_version=2)`.
-The persisted marker is `planner_contract_version: 2`. Missing markers remain
-legacy v1, and a model cannot select or downgrade the admitted contract.
-Existing capability gates, source access, step/document limits, model budgets,
-and approval/revision ownership remain authoritative.
+The persisted marker remains `planner_contract_version: 2` for saved-data
+compatibility, but the UI never displays it and models cannot select another
+contract. Plans without the marker, or with the earlier marker, are treated as
+plans created by an earlier orchestration version and are refused rather than
+interpreted. Existing capability gates, source access, step/document limits,
+model budgets, and approval/revision ownership remain authoritative.
 
 ### Named inputs and prepared outputs
 
@@ -130,14 +133,14 @@ permissions cannot be supplied as bindings.
 | Server-bound external Gather | `prepared: structured-v1` with exact returned content and separately authorized external-source lineage. |
 
 Unknown or disabled producers, nonexistent output names, incompatible kinds,
-cycles, excess work and unavailable sources fail validation. V2 never repairs a
-plan by deleting edges, dropping documents, removing requested outputs or
-trimming steps. Requesting an optional Analyze/Compare output makes its actual
+cycles, excess work and unavailable sources fail validation. Validation never repairs a
+plan by deleting edges, dropping documents, removing requested outputs,
+trimming steps, reordering phases, or appending an answer step. Requesting an optional Analyze/Compare output makes its actual
 presence necessary for that step; the executor does not substitute a preview.
 
 ### Capability allowlists and existing settings
 
-In version **0.261.127**, admitted v2 plans enforce the saved
+Gather / Reason / Render plans enforce the saved
 `chat_orchestration_enabled_capabilities` selection even when a caller omits
 its own narrowing. A caller's selection can only narrow that saved selection,
 never broaden it. Missing, `null` or empty selections retain the existing
@@ -145,27 +148,25 @@ meaning of allowing everything that the other feature, authorization and
 initialized-service checks permit. Invalid selection types or blank/non-string
 entries fail explicitly instead of becoming unrestricted access.
 
-A nonempty saved list is an exact allowlist. This includes lists containing
-every legacy capability: there is no reliable way to distinguish an old list
-from an intentional restriction. Administrators must include **Prepare content**
-(`compose`) and **Create a file** (`render_file`) when they want those operations
-in restricted harness plans. The legacy `respond` identifier neither aliases
-nor forces either new operation. If file rendering is excluded, a requested
-file must be rejected rather than silently replaced by prepared text.
+A nonempty saved list is an exact allowlist. If a stored list still contains the
+removed `respond` identifier, settings migration changes it to **Prepare
+content** (`compose`) so narrowed deployments keep producing answers. That
+migration never adds **Create a file** (`render_file`) or **Generate images**
+(`generate_image`) to a narrowed list; administrators must include those when
+restricted plans should produce files or requested images. If file rendering is
+excluded, a requested file must be rejected rather than silently replaced by
+prepared text.
 
-The admin capability projection identifies the new operations with
-`plan_contract_version: 2` and their server-owned purpose labels.
-`describe_registry(contract_version=2)` describes this separate inventory with
-no mandatory terminal operation; the default registry metadata and legacy
-terminal-response behavior remain unchanged. Metadata alone grants no
-permission and does not enable rollout. The integrated runtime's
-`functions_orchestration_admission.HARNESS_ADMISSION_READY` is true in
-**0.261.127**, while both orchestration and harness-preview settings remain
-off by default. New v2 plans require both administrator opt-ins.
+The admin capability projection identifies operations with server-owned purpose
+labels and no mandatory terminal operation. Metadata alone grants no permission
+and does not enable rollout. New plans use Gather / Reason / Render whenever
+`enable_chat_orchestration` is on; the old preview/admission switch has been
+removed.
 
-`test_orchestration_dependency_allowlist.py` covers legacy-only saved lists,
-explicit opt-in, intersecting restrictions, malformed configuration, actual
-rendering-service readiness, versioned metadata and preservation of v1 behavior.
+`test_orchestration_dependency_allowlist.py` and the single-contract coverage
+exercise saved allowlists, a stored `respond` read as `compose` without rewriting
+the saved list, intersecting
+restrictions, malformed configuration, and actual rendering-service readiness.
 
 ### Explicit composition
 
@@ -214,7 +215,7 @@ be passed to a later renderer; it is not an implicit file request.
 
 ### Server-bound native computation
 
-Implemented in version: **0.261.127**. V2 native work uses the existing
+Implemented in version: **0.261.127**. Gather / Reason / Render native work uses the existing
 `NativeOrchestrationBridge` and persisted native `data_only` policy, not the
 legacy spreadsheet publication adapter. The owner must supply a callable
 `RunContext.native_bridge_for_step(step, context)` returning that bridge for
@@ -291,9 +292,9 @@ Retention-time admission remains mandatory but is too late to authorize acquisit
 The four callbacks are ephemeral and never enter checkpoint state or
 fingerprints. Factories must clear inherited preflight/capture/admission bindings when
 the current service has none, and discovery reads the authorizer from that
-current result service. Missing or noncallable bindings withhold v2 external
+current result service. Missing or noncallable bindings withhold external
 capabilities; merely supplying four callables is not proof of supported
-acquisition. Legacy v1 descriptors remain unchanged.
+acquisition. Saved descriptors from the removed earlier contract are not reinterpreted.
 `test_orchestration_external_gather_runtime.py` covers the four-callback gate,
 separate authorization/capture requirements, and unchanged checkpoint fingerprints.
 
@@ -375,7 +376,7 @@ revokes dependent prepared content; it is not relabeled as source-free content.
 
 ### Render admission boundary
 
-The central contract defines `render_file` only for explicit v2 admission.
+The current contract defines `render_file` as an explicit Render capability.
 It remains unavailable unless the owner injects the actual
 actor/conversation-bound `context.rendering_service`. The central
 adapter supplies the `execute_render_file` service-factory callback and returns
@@ -413,7 +414,7 @@ named bindings, prepared-output declarations and `final_response`, and a failed
 edit leaves the original plan unchanged. `validate_plan` and `apply_plan_edits`
 also accept an optional `contract_version` matching the saved marker; this is
 a version assertion, not an upgrade/downgrade operation. Composition profile
-schemas remain a separate `composition_profiles` input. Legacy v1 callers ignore
+schemas remain a separate `composition_profiles` input. Plans created by an earlier orchestration version are refused before using
 the additive export catalog.
 
 `test_orchestration_export_catalog_admission.py` covers these boundaries with the
@@ -492,7 +493,7 @@ the run SSE event emits only the latter. Routes must apply their authorized
 projection and refresh current file states through the real service rather
 than expose private references or rely on a persisted delivery snapshot.
 
-For durable v2 execution, each saved step updates the run's descriptor-only
+For durable execution, each saved step updates the run's descriptor-only
 `task_results`, `pending_results` and unchanged `execution_deadline_at` under
 the owning execution lease. This makes current retained references available
 to continuation and catalog readers before finalization. Updating one step
@@ -545,10 +546,10 @@ as ungrounded generated content. This runtime does not add implicit memory recal
 `tabular_analyze` stays unavailable unless its server bridge factory is
 injected. Its metadata, argument/output compilation and runtime path are
 directly usable with initialized services, but this does not enable route
-admission, durable scheduling or production rollout. Legacy catalog
+admission, durable scheduling or production rollout. Ordinary catalog
 availability is unchanged.
 
-Runtime factories, route admission, explicit continuation dispatch, output
+Runtime factories, explicit continuation dispatch, output
 resumption and Render/retry publication, scheduling and UI projection require
 the parent integration. See
 [checkpoint recovery](ORCHESTRATION_CHECKPOINT_RECOVERY.md) for reference-only
@@ -556,12 +557,12 @@ snapshots, reuse authorization and uncertain-commit handling.
 
 ## Architecture
 
-The default legacy plan-contract framework has four stages.
+The current plan framework has dependency-driven stages.
 
 ### Inputs
 
 `functions_orchestration_registry.py` holds the capability registry: one declarative
-descriptor per capability, carrying its identifier, label, phase, a one-line summary,
+descriptor per capability, carrying its identifier, label, role, a one-line summary,
 guidance on when it applies, its settings gates, a JSON Schema for its arguments, what it
 produces, a cost class and a per-plan cap. The registry is the only capability information
 the planner ever sees, and it is also what the validator checks a plan against, so a
@@ -609,7 +610,7 @@ retrieval, planning, and delegated tasks.
 
 Explicit changes take precedence over earlier constraints. A new topic does not inherit
 the old topic's location or subject. Reformatting an available answer can use a
-respond-only plan, while new factual questions still need evidence. An earlier
+one-step `compose` plan, while new factual questions still need evidence. An earlier
 recommendation is not proof that a business is open.
 
 The history window uses **Conversation History Limit** from Chat settings, rounded up
@@ -661,9 +662,17 @@ model setting or API version is required.
 
 #### Model selection
 
-The answer model comes from **Manual controls** when one is selected, otherwise from
-the administrator's default model connection. Classic single-endpoint or APIM settings
-remain the fallback only when no connection-based selection or default applies.
+With **Auto - choose per step**, the default wherever a connected model has a catalog
+profile rated for general answering, the server binds a model to each model-backed step, and the
+answer is attributed to the step that writes it, the task that `final_response` names. When
+no step in the run writes the reply, for example when it reuses an earlier turn's result
+or the plan only delivers files, the reply keeps the default model. See
+[Model catalog profiles and per-step Auto routing](MODEL_CATALOG_PROFILES_AND_AUTO_ROUTING.md).
+
+With a pinned model, the answer model comes from **Manual controls** when one is
+selected, otherwise from the administrator's default model connection. Classic
+single-endpoint or APIM settings remain the fallback only when no connection-based
+selection or default applies.
 The selected deployment, provider, endpoint ID and model ID are resolved together:
 changing only the deployment on a legacy client could send it to the wrong endpoint.
 
@@ -677,7 +686,10 @@ resolution, plan generation and research review as well as the answer. A configu
 planner deployment or endpoint remains separate and does not override the answer model.
 Planner endpoint selections use the existing planner model/endpoint/provider settings and
 the caller's normal model access checks. A deployment-only planner override retains the
-classic single-endpoint/APIM connection.
+classic single-endpoint/APIM connection. Since **0.261.137**, administrators choose the
+planner from a **Planner model** dropdown on both admin pages, which writes those settings
+from a listed model instead of typed identifiers; see
+[Orchestration settings](../../admin/orchestration.md#chat-orchestration-planner-model-section).
 
 Planning resolves its client on the request thread after restoring canonical turn state,
 with authenticated streaming context retained for endpoint authorization. Execution
@@ -737,38 +749,20 @@ recover what was just discarded.
 `document_ids` and nothing else, so a client that renamed a document mislabels its own plan
 card and reaches nothing new. `test_orchestration_context_picker.py` asserts this directly.
 
-#### Reading what an earlier step found
+#### Binding what an earlier step found
 
-Every step's documents used to be fixed when the plan was written, which meant a plan could
-not express the most natural shape of all: search for the relevant material, then analyse
-what turned up. The planner had to guess document ids from the candidate probe, or the plan
-simply could not say it.
+A step that needs material found by another step now consumes it through named
+outputs. For example, a document search exposes a `sources` output, and a later
+`document_analyze` step can bind its `sources` input to that output. The binding
+adds the dependency and preserves the producer/output identity; no separate
+`documents_from_step` field is available.
 
-A step may now set `documents_from_step` to an earlier step's `step_id` instead of naming
-documents. At run time the adapter resolves it from `RunContext.step_documents`, which
-records which documents each step reached.
-
-The reference is validated where the surviving step ids are known, because ids can be
-renamed during validation. It must name a step that exists, must not name the step itself,
-and must name a capability that *produces evidence* — pointing at a web search or at
-`respond` would resolve to nothing every time. A resolved reference is added to
-`depends_on`, and the topological pass is what guarantees ordering; positions are
-deliberately not checked here as well, since that would duplicate the cycle detection and
-disagree with it as soon as phase ordering moved a step.
-
-Two constraints are worth stating plainly:
-
-- **It widens nothing.** Documents arriving this way came from a search, which only returns
-  what the user can read, and the document functions resolve access again from the user id
-  and scope they are given.
-- **It does not dodge the administrator's ceiling.** The validator trims the documents a
-  plan *names*, but it cannot trim what a search has not run yet, so the limit is applied
-  again when the reference resolves.
-
-The cost is real and is the reason this is not the default: a plan that defers its
-documents cannot show the user which ones it will read. The approval card says "whatever
-the earlier step finds" rather than pretending to a list, and the planner is told to name
-documents directly whenever they are already known.
+This keeps the same safety properties the older deferred-document behavior was
+trying to protect: gathered documents came from authorized search results, and
+the consumer rechecks source access and configured limits before reading them.
+When documents are already known -- selected by the user or listed in the
+candidate documents -- the planner should name them directly so the user can
+review them before the run.
 
 ### Plan
 
@@ -789,13 +783,12 @@ reviewed edit can narrow them, with a visible warning. Planned Web use is kept s
 from original Web selection during restoration. Current access and feature gates are
 checked again before execution.
 
-`functions_orchestration_schema.py` holds both contracts and the validator. **Planner
+`functions_orchestration_schema.py` holds the plan contract and validator. **Planner
 output is treated as untrusted input.** A plan naming a capability that does not exist,
 using one an administrator disabled, referencing an unreadable document, or containing a
 dependency cycle is within the normal range of a generative system. Each is caught before
-an adapter is reached. The validator repairs where repair is honest and drops where it is
-not, and records what it did in `validation.repairs` so the card can show a plan that
-differs from the proposal and say why.
+an adapter is reached. Invalid plans are refused rather than repaired by dropping sources, trimming work,
+reordering steps, or adding an answer step.
 
 #### Choosing research depth
 
@@ -813,39 +806,18 @@ step explains why the selected depth fits the request.
 The planner makes this choice before execution. Ordinary search results are not graded
 by a new model call or automatically escalated into research.
 
-### Legacy phases
+### Dependency ordering
 
-Every capability declares a `phase`, and the phases are ordered:
+Every capability declares a server-owned role: Gather, Reason, or Render. These
+roles explain purpose, not a mandatory global order. Named input bindings and
+explicit `depends_on` edges determine execution order, so a valid plan can
+gather, reason, gather more context, and then reason again. Cycles, missing
+producers, disabled producers, and incompatible bindings are validation errors.
 
-```
-knowledge  ->  reasoning  ->  output
-```
-
-| Phase | Meaning | Capabilities |
-| --- | --- | --- |
-| `knowledge` | Produces something the answer can be based on | `document_search`, `document_analyze`, `document_compare`, `tabular_analyze`, `web_search`, `url_fetch`, `deep_research`, `agent_invoke`, `action_invoke` |
-| `reasoning` | Turns what was gathered into an answer | `respond` |
-| `output` | Declared, not yet populated | — |
-
-The boundary is drawn at *evidence*, not at effort: analysing and comparing documents are
-knowledge steps because they produce something to reason over, even though they involve a
-model call. Answering is the only reasoning step, because it is the only one that commits
-to a claim.
-
-`CAPABILITY_PHASES` is an ordered tuple, so a capability's phase is an index and "may this
-step follow that one" is an integer comparison rather than a table of special cases. The
-validator stably sorts by phase before the topological pass and drops a `depends_on` edge
-that points backwards across a phase boundary, recording a repair note.
-
-This replaced an earlier `kind` field (`retrieval` / `analysis` / `synthesis`) that was
-carried all the way to the browser and read by nothing. Two overlapping taxonomies where
-one is decorative is how a field comes to mean nothing, so `kind` was removed rather than
-kept alongside.
-
-**What enforcement buys.** A plan that searches after it has answered is not a plan, it is
-a mistake: it would run, and produce an answer written without the evidence the later step
-just found. That is a silent wrong answer rather than a visible failure, which is the worst
-kind.
+This keeps the important safety property from the old phase model: a step cannot
+consume evidence that has not run yet, and the chat answer selected by
+`final_response` is written from declared inputs rather than from incidental
+sibling notes.
 
 ### Knowledge capabilities that produce text rather than evidence
 
@@ -856,8 +828,8 @@ Neither can honestly produce evidence.
 
 So `agent_invoke`, `action_invoke`, `url_fetch` and `deep_research` produce `notes` and `citations` instead.
 This is not a workaround: `RunContext.merge_step_result` already accumulates notes, and the
-respond adapter already folds them into its prompt. A knowledge step that gathers *text*
-rather than *document evidence* reaches the answer through a path that already existed.
+`compose` step consumes them through named inputs. A Gather step that returns *text*
+rather than *document evidence* reaches the answer through explicit retained results.
 
 #### Self-contained deep research
 
@@ -977,27 +949,24 @@ pipeline all apply unchanged. Alongside it, a run record is written to the
 recorded on the assistant message so reopening a conversation shows what produced the
 answer.
 
-The registry reserves a future **knowledge -> reasoning -> output** progression,
-but as of **0.261.119** no capability is assigned to the output phase. The
-existing `respond` adapter's saved-Analyze formatting is not a general output
-workflow. A future output capability should use the same
+Gather / Reason / Render uses explicit Render capabilities for user-visible
+files and images. `render_file` uses the same
 [Generated File Export Framework](GENERATED_FILE_EXPORT_FRAMEWORK.md) as chat
 and workflows: an authorized source adapter, an explicit renderer, the existing
 private artifact transport and optional existing workspace publication.
-Knowledge and reasoning supply durable data or approved content; rendering
-does not repeat that work or turn prose into engine state.
+Gather and Reason steps supply durable data or approved content; rendering does
+not repeat that work or turn prose into engine state.
 
-Exact JSON for saved workflow records is the first new source mapping, not
-automatic orchestration output support. Generic CSV, Markdown, Word/DOCX, PDF
-and PowerPoint/PPTX mappings remain future extensions of that shared framework;
-existing XML/native formats are unchanged. This slice adds no output scheduling,
-workspace-placement or delivery capability.
+Exact JSON for saved workflow records remains one source mapping. CSV,
+Markdown, Word/DOCX, PDF and PowerPoint/PPTX mappings are available only through
+the shared export catalog and current render capability checks; existing
+XML/native formats keep their own behavior.
 
 ### Charts, diagrams, and image proposals
 
 Since **0.261.132**, an orchestrated answer can show the same visuals as ordinary chat:
 inline charts, Mermaid diagrams, and image proposal cards. These are part of presenting
-gathered knowledge, so they do not use the reserved output phase.
+gathered knowledge or prepared content, and are represented in the plan by explicit visuals or deliverables.
 
 - **Charts** are drawn where the raw data is. When the user's current message asks for a
   chart, or the planner asks for one in an action task, the action step runs a chart
@@ -1007,17 +976,112 @@ gathered knowledge, so they do not use the reserved output phase.
   subtitle states the sampling. The answer places each chart at its `[[chart:<id>]]` token;
   any it does not place is appended once.
 - **Diagrams** are written by the answer step in Mermaid, using ordinary chat's diagram
-  guidance. Gathering steps keep the entities and relationships the diagram needs.
+  guidance on a `compose` step. Gathering steps keep the entities and relationships the diagram needs.
 - **Image proposals** are `simpleimage` cards the user approves one at a time, through the
   existing approval route. They are offered only when `enable_image_generation` is on. The
   answer decides from the request type whether images help, including when the user did not
-  ask. Selecting **Image** in Orchestrate asks for at least one proposal.
+  ask. Since **0.261.138**, a Gather / Reason / Render plan generates the images the user asks
+  for as planned steps, and keeps proposal cards for images it only suggests (see
+  [Deliverables and generated images](#deliverables-and-generated-images)).
 
 Saved memory keeps its existing precedence: an explicit ask in the current message wins,
 otherwise a saved Instruction memory about visuals overrides proactive or suggested visuals,
 and style preferences apply to whichever step authors the visual. The chart sub-step
 receives saved instructions only, never recalled facts, and never the action's own
 functions. See the [visual outputs fix](../fixes/ORCHESTRATION_VISUAL_OUTPUTS_FIX.md).
+
+### Gather / Reason / Render answer parity
+
+Since **0.261.134**, a Gather / Reason / Render plan answers with the same memory, conversation, and source inputs
+the earlier answer path had, and the planner states what the answer may rely on. See the
+[deliverable planning fix](../fixes/ORCHESTRATION_DELIVERABLE_PLANNING_FIX.md).
+
+- **Auto model routing.** Each model-backed step, including `compose`, is bound to an
+  authorized connected model at planning time. The binding is checked again before
+  execution, and the step runs on that model. The answer model is the one bound to the
+  step that produces `final_response`; a reply that reuses an earlier turn's result keeps
+  the default selection. When no connected model is rated for a step's task, the step uses
+  the capable model best rated for general answering instead of failing the plan.
+- **Saved memory and follow-ups.** `compose` reads saved instruction and fact memory with
+  the same precedence as before, plus the conversation messages the resolver selected. A
+  follow-up can transform an earlier answer, but that answer is not treated as evidence.
+- **Knowledge basis.** Each compose step declares one of three bases:
+  - `general_knowledge`: stable, widely known facts that need no retrieval.
+  - `sources`: every claim must come from the named inputs. This is for private
+    documents, integration data, and current or local facts.
+  - `sources_and_general_knowledge`: inputs lead, and stable general knowledge may
+    fill gaps.
+
+  The plan panel shows the basis for each step.
+- **Optional inputs.**
+  - Only a compose step whose basis includes general knowledge can mark a named input
+    `optional`.
+  - A producer that feeds only optional inputs does not decide whether the plan
+    succeeds. If it fails, the answer is still written, says once what could not be
+    gathered, and does not present that content as sourced.
+  - A retry is offered when the run did not complete, for example when a required step
+    failed or a requested image was not delivered. It is not offered when it could only
+    send again a request a service declined, such as an image prompt refused under a
+    content policy; asking again plans a new request instead. A retry runs the failed
+    producer again, and also runs again the steps that completed without it and every
+    step computed from them, so the retried work can use what the first attempt missed.
+    Other completed steps are still reused.
+  - Required inputs still fail closed.
+- **Retrying a run with files.** Each attempt owns its files, and preparing a retry
+  supersedes the previous attempt's files. So a whole-run retry never reuses a render
+  step: it renders the files again, from reused content where possible, without calling
+  a model, and the previous attempt's files are shown as superseded. React V2 offers that
+  retry only for an attempt without files; an attempt with files is recovered per file.
+- **Visuals.** The planner names the visuals a Markdown answer should author, and a chart
+  over an action's rows, as structured `visuals` arguments. Keyword detection is not
+  used. Charts drawn during gathering are placed at their tokens.
+- **Web search.**
+  - Foundry citation placeholders become numbered links, and the answer receives the
+    source list.
+  - A failed search reports a specific reason, such as a timeout, an HTTP status, or a
+    service that is not configured.
+  - Read-only gathering retries once after a transient provider failure.
+- **Who planned it.** The plan records its planning model and how that model was
+  chosen, and the plan panel shows "Planned by ...".
+
+### Deliverables and generated images
+
+Since **0.261.138**, a Gather / Reason / Render plan lists what the user asked to receive
+before its steps, and the server checks that list. See
+[Orchestration deliverables](ORCHESTRATION_DELIVERABLES.md) for the full contract.
+
+- **Deliverables.** Each one is an answer, file, image, chart, or diagram, marked
+  `explicit` (the user asked for it) or `suggested` (the planner added it). Steps name the
+  deliverables they produce in `delivers`.
+- **Server truth.** The planner receives `capability_availability.deliverables`: which
+  kinds and file formats this caller's plan can produce, closed reason codes for those it
+  cannot, short recipes, and facts such as "web search returns only text and links".
+- **Validation.** A planned deliverable must come from a step that can produce it; a file
+  only from a `render_file` step in the same format. A deliverable that cannot be produced
+  is kept as `unavailable` with the server's own reason. It is never promised by a step
+  title or mentioned only in the plan's assumptions. A plan that fails these checks gets
+  one repair call, then fails with a clear message.
+- **Generated images.** An image the user asked for is generated by a `generate_image`
+  step when the plan runs. It is saved as a conversation image message tied to the
+  orchestrated answer and retained as an `image-asset-v1` result. The answer places it
+  with an `[[image:<step_id>]]` token, the chat shows it inline, and DOCX, PDF, and PPTX
+  files embed it. Images are captioned as AI-generated illustrations.
+- **Images in files.** A file embeds a rendition of each image that the Office renderers
+  accept: an image over 4 MB or in WEBP is re-encoded and, only if needed, scaled down.
+  The chat keeps the image exactly as generated, so an image never fails its file for its
+  size or format.
+- **Answers own their images.** The answer lists the image messages it shows in
+  `metadata.orchestration.generated_images`, and the run's terminal frame repeats that
+  list so the chat loads them with the answer. Images are never moved between answers: a
+  retry lists the images it reused, and the earlier answer keeps showing them. A card for
+  a planned image never offers approval, and approving one through the API returns the
+  saved image instead of generating another.
+- **Honest delivery.** A run in which an explicit image or file was not delivered is
+  reported as incomplete, and a deterministic **Delivery notes** list names each
+  undelivered or unavailable deliverable after the answer. A retry generates a missing
+  image again, unless it could only resend a prompt the image service declined.
+- **You asked for.** The plan panel and the approval card list each deliverable, its state,
+  the step that produces it, and the reason when it is unavailable.
 
 ## API
 
@@ -1182,7 +1246,7 @@ See [the Orchestration settings page](../../admin/orchestration.md) for the full
 | File | Responsibility |
 | --- | --- |
 | `functions_orchestration_registry.py` | Capability descriptors, gating, planner and client projections |
-| `functions_orchestration_schema.py` | Plan and elicitation contracts, validator, repair, step results |
+| `functions_orchestration_schema.py` | Plan and elicitation contracts, validator, final-response binding, step results |
 | `functions_orchestration_context.py` | Candidate documents, accessible agent/action metadata, seeds, bounded history snapshots, signals, run ledger |
 | `functions_action_catalog.py` | Metadata-only action discovery, scoped references and fresh authorization |
 | `functions_orchestration_actions.py` | Isolated, bounded execution of one selected action |
@@ -1210,7 +1274,8 @@ See [the Orchestration settings page](../../admin/orchestration.md) for the full
 3. Open a V2 chat. Where orchestration is enabled the composer opens in it, with the
    capability toggles and the model, agent and reasoning pickers folded behind **Manual
    controls**; file upload and voice input stay where they are. The **Orchestrate** toggle
-   turns it off again for anyone who wants the classic composer.
+   turns it off again for anyone who wants the classic composer. The model picker under
+   **Manual controls** starts on **Auto - choose per step** wherever Auto can be used.
 4. Ask a question. If an inline clarification appears, answer it using choices, text, references, or uploads, then select **Finish**.
 5. Review the resulting plan. Use **Edit** to discuss changes with the planner, then
    explicitly run the accepted version or cancel the plan.
@@ -1232,6 +1297,14 @@ loaded, the composer keeps the draft and offers **Retry loading approval prefere
 before orchestration can start. An unsuccessful save shows an error and rolls back
 to the last confirmed selection unless a newer choice is still pending. Choose the
 mode again to retry saving. Existing plans retain their own approval state.
+
+The Orchestrate model choice is saved the same way, since **0.261.137**:
+`orchestrationModelRouting` records Auto or a pinned model, and
+`orchestrationPreferredModelId` records the pinned model's catalog selection key.
+Both are separate from the normal chat model. A pin whose model is no longer in the
+catalog falls back to the default, and a pin is ignored while an administrator hides
+Manual controls. Sending waits until the saved choice has loaded; a failed load
+does not block sending, because the picker shows what will be used.
 
 See [the approval persistence fix](../fixes/V2_ORCHESTRATION_APPROVAL_PERSISTENCE_FIX.md)
 for the persistence contract and failure handling.
@@ -1258,11 +1331,10 @@ to the front.
 | `functional_tests/test_orchestration_invoke_prompt_contract.py` | The model-call convention: the route's closure must accept what the adapters and the document functions actually pass, and must count token usage |
 | `functional_tests/test_orchestration_model_selection.py` | Manual/default precedence, independent planner connections, authorization, unavailable models, legacy/APIM compatibility, protocol parameters and client ownership |
 | `functional_tests/test_orchestration_executor.py` | Step ordering, dependency skipping, cancellation, budget caps, re-authorization |
-| `functional_tests/test_orchestration_dependency_runtime.py` | Real v2 compilation, named-result execution, full retained readers, one-call composition, policy, budgets and truthful result states |
-| `functional_tests/test_orchestration_dependency_planner.py` | Explicit version admission, exact declarations, strict failures and legacy planner compatibility |
+| `functional_tests/test_orchestration_dependency_runtime.py` | Real Gather / Reason / Render compilation, named-result execution, full retained readers, one-call composition, policy, budgets and truthful result states |
+| `functional_tests/test_orchestration_dependency_planner.py` | Exact declarations, strict failures, and planner compatibility for named results |
 | `functional_tests/test_orchestration_dependency_recovery.py` | Actual leases, non-prefix DAG reuse, cross-attempt aliases, current access and uncertain commits |
 | `functional_tests/test_orchestration_dependency_imports.py` | Real cold runtime/composition imports, initialized web/scheduler bootstrap and optimized Python with external network access blocked |
-| `functional_tests/test_orchestration_phase_ordering.py` | Knowledge sorts before reasoning, a plan gathering after answering is repaired, a backwards dependency is dropped with a note |
 | `functional_tests/test_orchestration_adapter_contract.py` | Every capability resolves to an adapter, every adapter matches the executor's call signature, no adapter touches Flask state, and identity is captured on the request thread |
 | `functional_tests/test_orchestration_citation_persistence.py` | Cited documents reach the conversation's used-document list; document, web and tool citations use their respective message channels |
 | `functional_tests/test_orchestration_dependency_citations.py` | Actual authorized final-answer citations, source-free/sibling isolation, exact chunk metadata, immutable lineage after restart/retry, workspace scope, revoked sources and bounded citation metadata |
@@ -1272,7 +1344,12 @@ to the front.
 | `functional_tests/test_orchestration_action_planning.py` | Default-off action gating, short requests, validated action inputs, and retained agent selections |
 | `functional_tests/test_orchestration_action_runtime.py` | One-action loading, bounded function calls, model authorization, cancellation, usage and resource cleanup; the chart sub-step charts exact rows, cannot reach the action, and receives only saved instructions |
 | `functional_tests/test_orchestration_visual_outputs.py` | Visual intent, answer guidance and saved-memory precedence, exact-row downsampling, chart placement, untruncated chart citations, planner visual context, and the Image seed |
-| `functional_tests/test_orchestration_context_picker.py` | Picked tags reach the seeds and both search paths under the parameter `hybrid_search` really takes; a tag scopes the probe rather than replacing it; a picked document reaches the planner and the approval card by name; a browser-supplied name cannot widen access; search citations carry the workspace a document came from; a step can read what an earlier step found, an unusable reference is repaired or dropped, and a run-time document still respects the configured ceiling |
+| `functional_tests/test_orchestration_single_contract_parity.py` | Gather / Reason / Render parity in the real headless runner: Auto planning and bound execution, knowledge-basis policies, memory and conversation references, optional inputs with one transient retry and disclosure, retries that run again what completed without a retried producer, planner-named visuals and chart placement, the planner descriptor, web search failure classification, and citation links |
+| `functional_tests/test_v2_orchestration_planner_display.mjs` | Browser normalization of the planner descriptor, Auto routing, optional inputs, and answer-basis and visual labels |
+| `functional_tests/test_orchestration_deliverables.py` | Deliverables validation and the single repair call, server truth, `generate_image` gating, budget and persistence, images embedded in DOCX, PDF and PPTX only from the file's own source lineage and as renditions the renderers accept (a 4.7 MB PNG and WEBP), answers that own their images, a retry that generates a missing image and delivers it in the answer and the Word file, no retry when it could only resend a refused prompt, an approval route that never pays twice, export of reused images, and end-to-end scenarios for a CSV, a Word report with images, a report without a file, and failing search, image, and render steps |
+| `functional_tests/test_v2_orchestration_deliverables.mjs` | Browser normalization of deliverables and `delivers`, deliverable states that follow their steps, labels, generated-image helpers, a terminal frame read through the real run stream client, and a retry's image grouped under every answer that lists it, in React V2 and the classic client |
+| `ui_tests/test_v2_orchestration_generated_images.py` | The live chat loading an answer's generated images after the run, planned image cards that never offer Approve or Approve all while their image loads, and a reused image shown under both the earlier and the retried answer |
+| `functional_tests/test_orchestration_context_picker.py` | Picked tags reach the seeds and both search paths under the parameter `hybrid_search` really takes; a tag scopes the probe rather than replacing it; a picked document reaches the planner and the approval card by name; a browser-supplied name cannot widen access; search citations carry the workspace a document came from; a step can read what an earlier step found, an unusable binding is refused, and a run-time document still respects the configured ceiling |
 | `functional_tests/test_orchestration_conversation_context.py` | Message eligibility, bounds, snapshot validation, nullable unused clarifications, strict response validation, bounded repair, token accounting, provider/refusal handling, contextualized adapters, synthesis roles, and URL provenance |
 | `functional_tests/test_orchestration_conversation_context_routes.py` | New and existing conversations across HTTP/SSE planning and execution, all approval modes, null clarifications, bounded recovery, model selection and attribution, revocation, completion failures, stream cleanup, stale sources and legacy cutoffs |
 | `ui_tests/test_v2_orchestration_conversation_context.py` | Matching clarification/model transport, cancellation, original-turn continuity, all approval modes, visible answer model names and navigation |
@@ -1292,23 +1369,29 @@ research-selection rate is not itself a quality improvement.
 - **Recent transcript context only.** There is no orchestration rolling summary or
   cross-chat transcript lookup. A reference outside the retained window may need
   clarification. Enabled scoped fact memories are a separate, bounded source of context.
-- **Automatic per-step model routing is not implemented.** Planning and research use the
-  selected/default answer model unless a dedicated planner override is configured.
-  Direct action execution receives the answer selection. Models are not selected
-  dynamically by task capability or cost; configured agents retain their own model behavior.
-- **No output-phase workflow.** Existing MCP, OpenAPI and other action types can now
-  gather knowledge directly, but the `output` phase remains empty. There are no dedicated
-  output scheduling, workspace placement or delivery steps. Actions retain their existing
-  operations, so knowledge-phase placement is not a read-only guarantee.
+- **Auto routing binds steps to connected models by task.** Planning uses the selected or
+  default model unless a dedicated planner override is configured. With **Auto**, each
+  model-backed step is bound to an authorized connected model chosen by task suitability,
+  then priority. This applies to every orchestration plan.
+  Configured agents retain their own model behavior.
+- **No action output workflow.** Existing MCP, OpenAPI and other action types can
+  gather knowledge directly, but actions are not file-rendering or delivery
+  steps. Actions retain their existing operations, so Gather placement is not a
+  read-only guarantee.
 - **An agent step produces no file artifacts.** Generated files are written through the
   Flask-bound message-artifact pipeline, which the worker thread cannot reach. The adapter
   surfaces the agent's tool activity as citations instead. Since **0.261.132**, a chart an
   agent creates with its chart tool travels in those citations and is placed in the answer,
   and images are offered as proposal cards by the answer step. Agent steps do not receive
   saved memories.
-- **Visuals are limited to the legacy contract.** The Gather/Reason/Render harness does not
-  yet produce charts, diagrams, or image proposals. A chart renders at most 200 points per
-  series; longer series are reduced to each segment's highest and lowest values.
+- **Generated images are AI illustrations, and proposal images stay out of files.** Since
+  **0.261.138**, a Gather / Reason / Render plan generates each image the user asks for
+  and embeds it in DOCX, PDF, and PPTX files. Web search cannot retrieve existing pictures,
+  so a report links authentic sources and uses captioned AI illustrations. A plan generates
+  at most four images, one after another. Proposal images the planner only suggests are
+  generated after the user approves each card, so a file rendered during the run cannot
+  contain them. A chart renders at most 200 points per series; longer series are reduced
+  to each segment's highest and lowest values.
 - **One agent per plan.** Loading an agent resolves Key Vault secrets, hydrates every plugin
   it declares, and introspects SQL and Cosmos schemas. There is no working kernel cache, so
   each agent step pays that cost in full.
@@ -1322,6 +1405,7 @@ research-selection rate is not itself a quality improvement.
 
 ## Related
 
+- [Orchestration deliverables](ORCHESTRATION_DELIVERABLES.md)
 - [Orchestration settings](../../admin/orchestration.md)
 - [Chat Orchestration Action Access](CHAT_ORCHESTRATION_ACTIONS.md)
 - [Checkpoint recovery](ORCHESTRATION_CHECKPOINT_RECOVERY.md)

@@ -1,9 +1,10 @@
 # test_orchestration_dependency_runtime.py
-"""Real v2 compiler, executor, composition, retained readers and checkpoint contracts.
+"""Real Gather / Reason / Render compiler, executor, composition, retained readers and checkpoints.
 
-Version: 0.261.129
+Version: 0.261.139
 Implemented in: 0.261.127
 Pending-Gather regression implemented in: 0.261.129
+Single orchestration contract updated in: 0.261.139
 External model/search/storage I/O is isolated; no paid or provider calls.
 """
 
@@ -117,6 +118,12 @@ def compose(step_id='draft', *, inputs=None, outputs=None, depends_on=None):
 
 def source_input(step_id, output='prepared', *, partial=False):
     return {'binding': binding(step_id, output), 'allow_partial': partial}
+
+
+def set_result_contract(monkeypatch, registry, capability_id, contract):
+    """Simulate a server-side revision of one producer's result contract."""
+    descriptor = next(item for item in registry.CAPABILITY_REGISTRY if item['id'] == capability_id)
+    monkeypatch.setitem(descriptor, 'result_contract_version', contract)
 
 
 def execute(runtime, case, **kwargs):
@@ -548,7 +555,7 @@ def test_model_budget_refuses_required_inputs_without_clipping_or_calling(runtim
     assert case.model.calls == []
 
 
-def test_fingerprints_are_declaration_scoped_and_legacy_absence_is_preserved(runtime):
+def test_fingerprints_are_declaration_scoped_and_every_context_saves_the_single_contract(runtime):
     case = runtime.make([compose('a'), compose('b')], ['A', 'B'])
     binding_before = runtime.checkpoints.context_binding(case.context, case.plan, case.settings)
     before = runtime.checkpoints.step_input_fingerprint(case.plan['steps'][1], case.context, binding_before, settings=case.settings)
@@ -561,9 +568,11 @@ def test_fingerprints_are_declaration_scoped_and_legacy_absence_is_preserved(run
     changed['arguments']['instruction'] += ' Changed requirement.'
     different = runtime.checkpoints.step_input_fingerprint(changed, case.context, binding_before, settings=case.settings)
     assert different != before
-    legacy = runtime.executor.RunContext()
-    state = runtime.checkpoints.context_state(legacy)
-    assert 'task_results' not in state and 'result_aliases' not in state and 'plan_contract_version' not in state
+    default = runtime.executor.RunContext()
+    state = runtime.checkpoints.context_state(default)
+    assert default.plan_contract_version == 2
+    assert state['plan_contract_version'] == 2
+    assert state['task_results'] == {} and state['result_aliases'] == {}
     assert 'task_result' not in runtime.schema.build_step_result()
 
 
@@ -653,16 +662,23 @@ def test_current_access_and_cancellation_fail_closed(runtime, change):
     assert 'reference' not in result['result_outputs'][0]
 
 
-def test_default_registry_and_plan_admission_stay_legacy(runtime):
+def test_default_registry_and_plan_admission_use_the_single_contract(runtime):
     ids = runtime.registry.all_capability_ids()
-    assert 'compose' not in ids and 'render_file' not in ids and 'respond' in ids
-    assert runtime.registry.get_capability('document_analyze')['phase'] == 'knowledge'
-    assert runtime.registry.get_capability('document_analyze', contract_version=2)['role'] == 'reason'
-    assert runtime.registry.get_capability('respond', contract_version=2) is None
-    with pytest.raises(runtime.schema.PlanValidationError):
+    assert {'compose', 'render_file'} <= set(ids) and 'respond' not in ids
+    analyze = runtime.registry.get_capability('document_analyze')
+    assert analyze['role'] == 'reason' and 'phase' not in analyze
+    assert runtime.registry.get_capability('respond') is None
+    with pytest.raises(ValueError):
+        runtime.registry.get_capability('document_analyze', contract_version=1)
+    plan = runtime.schema.normalize_plan(
+        {'steps': [compose()], 'final_response': binding('draft')},
+        'conversation-1', 'owner', settings=SETTINGS, available_capability_ids=['compose'],
+    )
+    assert plan['planner_contract_version'] == 2
+    with pytest.raises(runtime.schema.LegacyPlanError):
         runtime.schema.normalize_plan(
-            {'planner_contract_version': 2, 'steps': [compose()]},
-            'conversation-1', 'owner', available_capability_ids=['compose'],
+            {'steps': [compose()]}, 'conversation-1', 'owner', available_capability_ids=['compose'],
+            contract_version=1,
         )
 
 
@@ -835,10 +851,11 @@ def test_unimplemented_retention_boundaries_are_not_offered_or_executed(runtime)
     assert 'tabular_analyze' not in {capability['id'] for capability in capabilities}
     assert unavailable['web_search'] == 'external_result_lineage_unavailable'
     assert unavailable['tabular_analyze'] == 'native_typed_result_bridge_unavailable'
-    legacy = runtime.registry.resolve_available_capability_ids(
-        {'enable_web_search': True, 'enable_user_workspace': True},
+    # Discovery asks only whether settings permit them; planning also needs the services.
+    permitted = runtime.registry.resolve_available_capability_ids(
+        {'enable_web_search': True, 'enable_user_workspace': True}, include_runtime_bindings=False,
     )
-    assert 'web_search' in legacy and 'tabular_analyze' in legacy
+    assert 'web_search' in permitted and 'tabular_analyze' in permitted
 
 
 def test_fixed_outputs_reject_nonstring_names_as_contract_errors(runtime):
@@ -985,12 +1002,10 @@ def test_producer_contract_comes_from_server_metadata_not_the_plan_version(runti
         'result_contract_version': 'model-supplied-contract', 'contract_version': 2,
         'user_id': 'different-owner', 'run_id': 'different-run',
     })
-    capability = runtime.registry.get_capability(capability_id, contract_version=2)
-    legacy = runtime.registry.get_capability(capability_id)
+    capability = runtime.registry.get_capability(capability_id)
     assert producer.contract_version == capability['result_contract_version'] == contract
     assert type(producer.contract_version) is str and context.plan_contract_version == 2
     assert (producer.user_id, producer.run_id, producer.attempt_index) == ('owner', 'run-1', 3)
-    assert legacy is None or 'result_contract_version' not in legacy
 
 
 @pytest.mark.parametrize('invalid_contract', [None, 2, '', ' '])
@@ -998,20 +1013,21 @@ def test_producer_rejects_invalid_result_contract_metadata(runtime, monkeypatch,
     context = runtime.executor.RunContext(
         user_id='owner', conversation_id='conversation-1', run_id='run-1', plan_contract_version=2,
     )
-    monkeypatch.setitem(runtime.registry._DEPENDENCY_RESULT_CONTRACTS, 'compose', invalid_contract)
+    set_result_contract(monkeypatch, runtime.registry, 'compose', invalid_contract)
     with pytest.raises(runtime.contracts.ResultContractError):
         context.result_producer(compose())
 
 
-def test_producer_contract_revision_changes_only_dependency_fingerprints(runtime, monkeypatch):
-    case = runtime.make([compose()])
-    step = case.plan['steps'][0]
+def test_producer_contract_revision_changes_only_that_producers_fingerprints(runtime, monkeypatch):
+    case = runtime.make([
+        compose(),
+        {'step_id': 'search', 'capability_id': 'document_search', 'arguments': {'query': 'Find a source.'}},
+    ])
+    step, search = case.plan['steps']
     before = runtime.checkpoints.step_input_fingerprint(step, case.context, None, settings=case.settings)
-    legacy = runtime.executor.RunContext()
-    legacy_step = {'step_id': 'answer', 'capability_id': 'respond', 'arguments': {}}
-    legacy_before = runtime.checkpoints.step_input_fingerprint(legacy_step, legacy, 'legacy-binding')
-    monkeypatch.setitem(runtime.registry._DEPENDENCY_RESULT_CONTRACTS, 'compose', 'compose-v2')
+    search_before = runtime.checkpoints.step_input_fingerprint(search, case.context, None, settings=case.settings)
+    set_result_contract(monkeypatch, runtime.registry, 'compose', 'compose-v2')
     after = runtime.checkpoints.step_input_fingerprint(step, case.context, None, settings=case.settings)
-    legacy_after = runtime.checkpoints.step_input_fingerprint(legacy_step, legacy, 'legacy-binding')
+    search_after = runtime.checkpoints.step_input_fingerprint(search, case.context, None, settings=case.settings)
     assert before != after
-    assert legacy_before == legacy_after
+    assert search_before == search_after

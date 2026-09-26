@@ -1,27 +1,27 @@
 # test_orchestration_registry_contract.py
 """
 Functional test for the chat orchestration capability registry.
-Version: 0.261.104
+Version: 0.261.139
 Implemented in: 0.261.085
+Single orchestration contract updated in: 0.261.139
 
-The registry is the only capability information the planner model ever sees, and it is
-also what the validator checks a plan against. Those two roles have to stay in agreement:
-a capability that is describable but not executable produces plans that always fail
-validation, and one that is executable but not gated can run work an administrator
-switched off.
-
-This test ensures every descriptor is well formed, that gating actually withholds
-capabilities, that the terminal capability survives an administrator's narrowing, and that
-internal fields never leak into what the planner is shown.
+The registry is the only capability information the planner model sees, and it is also
+what the validator checks a plan against. Gather / Reason / Render has one registry, one
+contract marker, server-owned roles, and no terminal/respond capability.
 """
 
 import os
 import sys
 
+import pytest
+
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
+from test_support.app_stubs import APP_ROOT  # noqa: E402
 from test_support.orchestration_research import stubbed_orchestration_imports  # noqa: E402
 from test_support.versioning import assert_app_version_at_least  # noqa: E402
+
+REGISTRY = 'functions_orchestration_registry.py'
 
 
 def _settings(**values):
@@ -33,185 +33,134 @@ def _settings(**values):
     }
 
 
-def test_descriptors_are_well_formed():
-    """Every descriptor carries the fields the planner and validator both rely on."""
-    print("Testing orchestration capability descriptors...")
-    try:
-        with stubbed_orchestration_imports():
-            import functions_orchestration_registry as registry
+def test_descriptors_are_well_formed_for_the_single_contract():
+    """Every static descriptor carries the fields the planner and validator both rely on."""
+    with stubbed_orchestration_imports():
+        import functions_orchestration_registry as registry
 
-            required_fields = (
-                'id', 'label', 'phase', 'summary', 'when_to_use', 'settings_gates',
-                'settings_gates_any', 'gate', 'request_gate', 'requires_scope', 'inputs',
-                'produces', 'cost_class', 'max_per_plan', 'adapter', 'terminal',
+        required = {
+            'id', 'label', 'role', 'summary', 'when_to_use', 'settings_gates',
+            'settings_gates_any', 'gate', 'requires_scope', 'inputs', 'produces',
+            'cost_class', 'max_per_plan', 'adapter', 'result_outputs',
+            'result_input_kinds', 'partial_inputs_supported', 'result_contract_version',
+        }
+        ids = [capability['id'] for capability in registry.CAPABILITY_REGISTRY]
+        assert len(ids) == len(set(ids))
+        assert 'respond' not in ids
+        assert registry.CAPABILITY_RENDER_FILE not in ids
+
+        for capability in registry.CAPABILITY_REGISTRY:
+            assert required <= set(capability), f"{capability.get('id')} missing {sorted(required - set(capability))}"
+            assert capability['role'] in (registry.ROLE_GATHER, registry.ROLE_REASON, registry.ROLE_RENDER)
+            assert capability['cost_class'] in registry.COST_CLASSES
+            schema = capability['inputs']
+            if capability['id'] == registry.CAPABILITY_TABULAR_ANALYZE:
+                assert schema is None
+                continue
+            assert schema.get('type') == 'object'
+            assert schema.get('additionalProperties') is False
+            for name in schema.get('required') or ():
+                assert name in (schema.get('properties') or {})
+
+        source = open(os.path.join(APP_ROOT, REGISTRY), encoding='utf-8').read()
+        assert 'def _render_file_descriptor' in source
+        assert 'capabilities.append(_render_file_descriptor())' in source
+        description = registry.describe_registry()
+        assert description['contract_version'] == 2
+        assert description['roles'] == ['gather', 'reason', 'render']
+
+        for unsupported in (1, 3, '2'):
+            with pytest.raises(ValueError):
+                registry.get_capability(registry.CAPABILITY_COMPOSE, contract_version=unsupported)
+
+def test_gates_withhold_capabilities_without_runtime_discovery_side_effects():
+    """Settings gates are checked separately from runtime service availability."""
+    with stubbed_orchestration_imports():
+        import functions_orchestration_registry as registry
+
+        bare = registry.resolve_available_capability_ids(_settings(), candidate_ids={'compose', 'document_search', 'web_search'}, include_runtime_bindings=False)
+        assert registry.CAPABILITY_COMPOSE in bare
+        assert registry.CAPABILITY_DOCUMENT_SEARCH not in bare
+        assert registry.CAPABILITY_WEB_SEARCH not in bare
+
+        with_web = registry.resolve_available_capability_ids(
+            _settings(enable_web_search=True), candidate_ids={'compose', 'document_search', 'web_search'}, include_runtime_bindings=False,
+        )
+        assert registry.CAPABILITY_WEB_SEARCH in with_web
+
+        for workspace_key in ('enable_user_workspace', 'enable_group_workspaces', 'enable_public_workspaces'):
+            ids = registry.resolve_available_capability_ids(
+                _settings(**{workspace_key: True}), candidate_ids={'compose', 'document_search', 'web_search'}, include_runtime_bindings=False,
             )
+            assert registry.CAPABILITY_DOCUMENT_SEARCH in ids
 
-            seen_ids = set()
-            for capability in registry.CAPABILITY_REGISTRY:
-                for field in required_fields:
-                    assert field in capability, (
-                        f"{capability.get('id')} is missing '{field}'"
-                    )
-
-                assert capability['id'] not in seen_ids, (
-                    f"Duplicate capability id {capability['id']}"
-                )
-                seen_ids.add(capability['id'])
-
-                assert capability['phase'] in registry.CAPABILITY_PHASES, (
-                    f"{capability['id']} has an unknown phase {capability['phase']}"
-                )
-                assert capability['cost_class'] in registry.COST_CLASSES, (
-                    f"{capability['id']} has an unknown cost class"
-                )
-
-                schema = capability['inputs']
-                assert schema.get('type') == 'object', (
-                    f"{capability['id']} inputs must be an object schema"
-                )
-                assert schema.get('additionalProperties') is False, (
-                    f"{capability['id']} must refuse undeclared arguments; otherwise a "
-                    f"planner-invented argument reaches an adapter"
-                )
-                for name in schema.get('required') or ():
-                    assert name in (schema.get('properties') or {}), (
-                        f"{capability['id']} requires '{name}' but never declares it"
-                    )
-
-            terminal = [c for c in registry.CAPABILITY_REGISTRY if c.get('terminal')]
-            assert len(terminal) == 1, "Exactly one capability may end a plan"
-            assert terminal[0]['id'] == registry.TERMINAL_CAPABILITY_ID
-
-        print("Test passed!")
-        return True
-    except Exception as e:
-        print(f"Test failed: {e}")
-        import traceback
-        traceback.print_exc()
-        return False
+        runtime_checked = registry.resolve_available_capability_ids(
+            _settings(enable_web_search=True), candidate_ids={'compose', 'document_search', 'web_search'}, include_runtime_bindings=True,
+        )
+        assert registry.CAPABILITY_WEB_SEARCH not in runtime_checked
 
 
-def test_gates_withhold_capabilities():
-    """A capability whose settings gate is off must not be offered."""
-    print("Testing orchestration capability gating...")
-    try:
-        with stubbed_orchestration_imports():
-            import functions_orchestration_registry as registry
+def test_administrator_narrowing_no_longer_adds_a_terminal_step():
+    """The enabled-capability list intersects the registry; no respond capability is forced in."""
+    with stubbed_orchestration_imports():
+        import functions_orchestration_registry as registry
 
-            # Nothing enabled: only the terminal capability survives, because a plan has
-            # to be able to end even in a deployment with everything switched off.
-            bare = registry.resolve_available_capability_ids(_settings())
-            assert bare == [registry.TERMINAL_CAPABILITY_ID], (
-                f"An empty deployment offered {bare}"
-            )
+        settings = _settings(enable_user_workspace=True, enable_web_search=True)
+        full = registry.resolve_available_capability_ids(settings, candidate_ids={'compose', 'document_search', 'web_search'}, include_runtime_bindings=False)
+        assert registry.resolve_available_capability_ids(settings, allowed_ids=[], candidate_ids={'compose', 'document_search', 'web_search'}, include_runtime_bindings=False) == full
+        assert registry.resolve_available_capability_ids(settings, allowed_ids=None, candidate_ids={'compose', 'document_search', 'web_search'}, include_runtime_bindings=False) == full
 
-            with_web = registry.resolve_available_capability_ids(_settings(enable_web_search=True))
-            assert registry.CAPABILITY_WEB_SEARCH in with_web
-            assert registry.CAPABILITY_DOCUMENT_SEARCH not in with_web, (
-                "Document search must need a workspace to search"
-            )
-
-            # Any one workspace is enough; the gate is an OR rather than an AND.
-            for workspace_key in (
-                'enable_user_workspace', 'enable_group_workspaces', 'enable_public_workspaces'
-            ):
-                ids = registry.resolve_available_capability_ids(_settings(**{workspace_key: True}))
-                assert registry.CAPABILITY_DOCUMENT_SEARCH in ids, (
-                    f"{workspace_key} alone should permit document search"
-                )
-
-        print("Test passed!")
-        return True
-    except Exception as e:
-        print(f"Test failed: {e}")
-        import traceback
-        traceback.print_exc()
-        return False
+        narrowed = registry.resolve_available_capability_ids(
+            settings, allowed_ids=[registry.CAPABILITY_WEB_SEARCH], candidate_ids={'compose', 'document_search', 'web_search'}, include_runtime_bindings=False,
+        )
+        assert narrowed == [registry.CAPABILITY_WEB_SEARCH]
+        assert 'respond' not in narrowed
 
 
-def test_administrator_narrowing():
-    """The enabled-capability list narrows the registry without breaking plans."""
-    print("Testing orchestration capability narrowing...")
-    try:
-        with stubbed_orchestration_imports():
-            import functions_orchestration_registry as registry
+def test_planner_and_client_projections_hide_internals():
+    """Gate internals stay private; role and output contracts describe feasible work."""
+    with stubbed_orchestration_imports():
+        import functions_orchestration_registry as registry
 
-            settings = _settings(enable_user_workspace=True, enable_web_search=True)
-            full = registry.resolve_available_capability_ids(settings)
+        settings = _settings(enable_user_workspace=True, enable_web_search=True)
+        available = registry.resolve_available_capabilities(settings, candidate_ids={'compose', 'document_search', 'web_search'}, include_runtime_bindings=False)
+        projection = registry.build_planner_capability_projection(available)
+        assert projection
+        leaked = {'gate', 'settings_gates', 'settings_gates_any', 'adapter', 'document_action_type', 'requires_scope'}
+        for entry in projection:
+            assert not leaked & set(entry)
+            assert entry['role'] in ('gather', 'reason', 'render')
+            assert entry['when_to_use']
+            assert 'produces' in entry and 'max_per_plan' in entry
+            assert 'phase' not in entry and 'terminal' not in entry
 
-            # No opinion means everything, not nothing. An administrator who has never
-            # touched the list must not thereby disable the feature.
-            assert registry.resolve_available_capability_ids(settings, allowed_ids=[]) == full
-            assert registry.resolve_available_capability_ids(settings, allowed_ids=None) == full
-
-            narrowed = registry.resolve_available_capability_ids(
-                settings, allowed_ids=[registry.CAPABILITY_WEB_SEARCH]
-            )
-            assert registry.CAPABILITY_WEB_SEARCH in narrowed
-            assert registry.CAPABILITY_DOCUMENT_SEARCH not in narrowed
-            assert registry.TERMINAL_CAPABILITY_ID in narrowed, (
-                "Narrowing must never remove the step that ends a plan"
-            )
-
-        print("Test passed!")
-        return True
-    except Exception as e:
-        print(f"Test failed: {e}")
-        import traceback
-        traceback.print_exc()
-        return False
+        client = registry.build_capability_client_projection(available)
+        for entry in client:
+            assert set(entry) == {'id', 'label', 'role', 'summary', 'cost'}
 
 
-def test_planner_projection_hides_internals():
-    """Gate internals stay private; outputs and limits help the model choose feasible work."""
-    print("Testing orchestration planner projection...")
-    try:
-        with stubbed_orchestration_imports():
-            import functions_orchestration_registry as registry
-
-            settings = _settings(enable_user_workspace=True, enable_web_search=True)
-            available = registry.resolve_available_capabilities(settings)
-            projection = registry.build_planner_capability_projection(available)
-
-            assert projection, "The projection was empty"
-            leaked = {'gate', 'settings_gates', 'settings_gates_any', 'adapter',
-                      'document_action_type', 'requires_scope'}
-            for entry in projection:
-                overlap = leaked & set(entry.keys())
-                assert not overlap, f"Planner projection leaked {sorted(overlap)}"
-                assert entry['when_to_use'], "Guidance is what the planner chooses on"
-                assert 'produces' in entry and 'max_per_plan' in entry
-
-            client = registry.build_capability_client_projection(available)
-            for entry in client:
-                assert 'when_to_use' not in entry, (
-                    "The card renders a chosen step and does not need the guidance that "
-                    "drove the choice"
-                )
-                assert {'id', 'label', 'cost'} <= set(entry.keys())
-
-        print("Test passed!")
-        return True
-    except Exception as e:
-        print(f"Test failed: {e}")
-        import traceback
-        traceback.print_exc()
-        return False
-
-
-if __name__ == "__main__":
-    assert_app_version_at_least("0.261.085")
-
+def _run_script():
+    assert_app_version_at_least('0.261.139')
     tests = [
-        test_descriptors_are_well_formed,
-        test_gates_withhold_capabilities,
-        test_administrator_narrowing,
-        test_planner_projection_hides_internals,
+        test_descriptors_are_well_formed_for_the_single_contract,
+        test_gates_withhold_capabilities_without_runtime_discovery_side_effects,
+        test_administrator_narrowing_no_longer_adds_a_terminal_step,
+        test_planner_and_client_projections_hide_internals,
     ]
-    results = []
+    passed = 0
     for test in tests:
         print(f"\nRunning {test.__name__}...")
-        results.append(test())
+        try:
+            test()
+            passed += 1
+            print('Test passed!')
+        except Exception as exc:
+            print(f'Test failed: {exc}')
+            import traceback
+            traceback.print_exc()
+    print(f"\nResults: {passed}/{len(tests)} tests passed")
+    return passed == len(tests)
 
-    print(f"\nResults: {sum(results)}/{len(results)} tests passed")
-    sys.exit(0 if all(results) else 1)
+
+if __name__ == '__main__':
+    sys.exit(0 if _run_script() else 1)

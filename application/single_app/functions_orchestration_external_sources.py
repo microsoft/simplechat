@@ -1,7 +1,7 @@
 # functions_orchestration_external_sources.py
 """Server admission and current access for retained external content.
 
-Version: 0.261.127
+Version: 0.261.139
 
 No fetch, recall, plugin invocation, settings discovery, or credential persistence
 occurs here. Content digests attest the exact retained payload, not a remote page
@@ -246,10 +246,12 @@ class OrchestrationExternalSourceProvider:
         )
         # Only retained reads may omit URL provenance. Invocation preflight
         # supplies server-owned user inputs and runs the normal request gate.
+        # This preflight is one of the runtime services the capability needs, so it checks
+        # the settings, allowlist and request gates rather than its own binding.
         available = resolve_available_capability_ids(
             settings, allowed_ids=allowed,
             request_context=None if source_type == "url" and invocation_user_urls is None else context,
-            candidate_ids=(producer.capability_id,),
+            candidate_ids=(producer.capability_id,), include_runtime_bindings=False,
         )
         if producer.capability_id not in available:
             raise ResultUnavailableError("result_external_capability_unavailable")

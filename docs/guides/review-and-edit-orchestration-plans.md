@@ -4,7 +4,7 @@ title: "Review and edit orchestration plans"
 description: "Refine proposed work with the planner before running it."
 section: "Guides"
 audience: user
-version: "0.261.127"
+version: "0.261.139"
 ---
 
 ## Decide what should run
@@ -30,10 +30,11 @@ requirement.
 Deep Research does not require selecting the Web button first. Its automatic
 source discovery still depends on the administrator enabling Web Search.
 Selected workspaces and document filters continue to bound document access.
-Since **0.261.132**, Image works in Orchestrate as a request for image proposal
-cards: the answer includes at least one card, and each image is generated only
-when you approve it. Without Image, the answer can still propose images when the
-request would benefit from them, and it can include charts and Mermaid diagrams.
+Since **0.261.138**, **Image** means you want images: the plan includes at least one
+image you asked for, generated as its own task when the plan runs. Without Image, a
+plan still generates images your request explicitly asks for, and it can suggest
+others as proposal cards that you approve one at a time. Plans can also include
+charts and Mermaid diagrams.
 Your saved Instruction memories, such as "I don't like charts", decide which
 visuals you get unless your current message explicitly asks for one.
 
@@ -66,14 +67,11 @@ already started cannot be edited.
 
 ## Read dependency-driven plans
 
-Version-aware plan inspection was implemented in version **0.261.127**, recorded
-in `application/single_app/config.py` (Refs: microsoft/simplechat#1509). It does
-not enable a new planning contract by itself. The following details appear when
-the server supplies a contract-v2 plan; older saved plans retain their original
-phase labels and meaning.
-
-A saved v1 step keeps its server-recorded phase even if the current capability
-catalog changes. A step whose phase cannot be resolved is still listed.
+Gather / Reason / Render plan inspection was implemented in version **0.261.127**
+and became the only plan view in **0.261.139**, recorded in
+`application/single_app/config.py` (Refs: microsoft/simplechat#1509). Plans
+created by an earlier orchestration version now show the message that they can't
+be opened or rerun, and should be replaced with a new request.
 
 **Gather**, **Reason**, and **Render** describe a task's purpose, not three
 mandatory stages. The preview follows the server's saved dependency/execution
@@ -104,6 +102,54 @@ retains its declared bindings: use **Ask planner** to change or remove the
 consumer and its requested outputs in a validated revision. A saved edit with
 an unavailable producer blocks approval and identifies the affected inputs.
 Restoring the producer clears that conflict; it does not discard any edges.
+
+### Check who planned the work and what the answer may rely on
+
+Since **0.261.134**, the plan panel's first line under the summary names the model
+that wrote the plan and how it was chosen: the model you selected, your
+administrator's planning model, or the default model. When the request used
+**Auto**, it also says that each step uses its own Auto-routed model. Each step still
+shows its own **Execution model**.
+
+An answer-writing task shows its **answer basis**:
+
+- **General knowledge**: stable, widely known facts such as state capitals or
+  historical dates, with no retrieval planned.
+- **Gathered sources only**: every claim must come from the named inputs. The
+  planner uses this for your documents, integration data, and current or local
+  facts.
+- **Gathered sources, plus general knowledge for stable facts**: gathered sources
+  lead, and well-established knowledge may fill gaps.
+
+A named input marked **Optional** means the answer is still written if that input
+cannot be gathered, for example when a web search service is temporarily
+unavailable. The answer then says what could not be gathered, and the failed task
+remains visible with its reason. Read-only gathering retries once on its own after
+a temporary service error.
+
+**Visuals** lists the charts, Mermaid diagrams, or image proposal cards the planner
+asked the answer to include.
+
+### Check what you asked for
+
+Since **0.261.138**, **You asked for** appears at the top of the plan panel and on the
+approval card. It lists what you asked to receive: the answer, each file with its
+format, images with their count, and any chart or diagram. Each item shows its state:
+
+- **Planned**, then **In progress**, **Delivered**, or **Not delivered** as its steps run.
+- **Turned off** when you switched off the only step that produces it.
+- **Not available**, in a warning color with the server's reason, when this plan cannot
+  produce it. The rest of the plan still runs, and the answer's **Delivery notes** name it
+  once instead of promising it.
+
+The plan panel also names the step that produces each item. **Also included** lists what
+the planner added without being asked, such as a suggested chart. Ask the planner for a
+revision if something you need is missing from the list.
+
+A **Generate image** step shows the image prompt and caption it will use. Each image is
+an AI-generated illustration, created when the plan runs and shown in the answer. When a
+report or deck binds an image, its input is optional: if the image cannot be generated,
+the content is still written and the delivery notes say what is missing.
 
 File-format reference information is optional and uses only the shared catalog
 supplied by the server. It is not a separate browser format list or permission

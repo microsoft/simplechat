@@ -2,6 +2,7 @@
 """Shared helpers for opt-in chat image generation proposals."""
 
 import base64
+import hashlib
 import mimetypes
 import random
 import re
@@ -641,6 +642,39 @@ def _build_image_proposal_metadata(proposal, source_assistant_message_id=None):
     return metadata
 
 
+def find_planned_proposal_image(source_message, proposal, read_image_message):
+    """The image an orchestrated answer already generated for this proposal, or None.
+
+    An orchestrated answer lists, in ``metadata.orchestration.generated_images``, the image
+    messages its planned steps generated. Approving one of its image cards again returns
+    that image instead of paying for another. ``read_image_message(message_id)`` returns
+    the saved message from the answer's own conversation, or None when it is missing.
+    """
+    metadata = source_message.get('metadata') if isinstance(source_message, dict) else None
+    orchestration = metadata.get('orchestration') if isinstance(metadata, dict) else None
+    entries = orchestration.get('generated_images') if isinstance(orchestration, dict) else None
+    visual_id = _normalize_visual_id((proposal or {}).get('visualId'))
+    if not visual_id or not isinstance(entries, list):
+        return None
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        message_id = entry.get('message_id')
+        if entry.get('visual_id') != visual_id or not isinstance(message_id, str) or not message_id:
+            continue
+        image = read_image_message(message_id)
+        image_metadata = image.get('metadata') if isinstance(image, dict) else None
+        planned = image_metadata.get('image_proposal') if isinstance(image_metadata, dict) else None
+        if (
+            isinstance(planned, dict) and image.get('role') == 'image'
+            and image.get('conversation_id') == source_message.get('conversation_id')
+            and image_metadata.get('is_deleted') is not True
+            and _normalize_visual_id(planned.get('visualId')) == visual_id
+        ):
+            return image
+    return None
+
+
 def generate_chat_image_message(
     *,
     settings,
@@ -653,14 +687,24 @@ def generate_chat_image_message(
     proposal=None,
     source_assistant_message_id=None,
     store_in_blob=False,
+    size='',
+    quality='',
+    background='',
 ):
-    """Generate an image, persist it as a chat image message, and return response data."""
+    """Generate an image, persist it as a chat image message, and return response data.
+
+    ``size``, ``quality`` and ``background`` are optional values the selected image model
+    declares; an unsupported value is rejected rather than changed. A blob-backed result
+    also reports the stored image's MIME type, byte size and SHA-256 digest.
+    """
     normalized_prompt = _trim_text(prompt, IMAGE_PROPOSAL_PROMPT_MAX_LENGTH)
     if not normalized_prompt:
         raise ValueError('Image generation prompt is required')
 
     image_gen_model = resolve_selected_image_deployment_name(settings)
-    generated_image_url = request_generated_image_source(settings, normalized_prompt)
+    generated_image_url = request_generated_image_source(
+        settings, normalized_prompt, size=size, quality=quality, background=background,
+    )
     if not generated_image_url or generated_image_url == 'null':
         raise ImageGenerationError('The image service returned no usable image.', 'image_output_missing')
 
@@ -699,11 +743,17 @@ def generate_chat_image_message(
     }
 
     response_image_url = generated_image_url
+    stored_image = {}
     if store_in_blob:
         # Lazy import keeps proposal-only helpers free of optional document processing dependencies.
         from functions_simplechat_operations import upload_chat_image_bytes_for_user
 
         image_mime_type, image_bytes = resolve_generated_image_bytes(generated_image_url)
+        stored_image = {
+            'mime_type': image_mime_type,
+            'image_size': len(image_bytes),
+            'image_sha256': hashlib.sha256(image_bytes).hexdigest(),
+        }
         visual_id = _normalize_visual_id((proposal or {}).get('visualId')) if proposal else ''
         image_file_stem = visual_id or image_message_id
         blob_image_info = upload_chat_image_bytes_for_user(
@@ -751,4 +801,5 @@ def generate_chat_image_message(
         'model_deployment_name': image_gen_model,
         'message_id': image_message_id,
         'image_message': image_doc,
+        **stored_image,
     }

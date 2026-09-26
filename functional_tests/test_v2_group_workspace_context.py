@@ -100,7 +100,14 @@ def environment(monkeypatch):
     )
     modules = {
         "functions_group": groups,
-        "functions_file_sync": module_stub("functions_file_sync", is_file_sync_enabled_for_group=sync_enabled),
+        "functions_file_sync": module_stub(
+            "functions_file_sync",
+            is_file_sync_enabled_for_group=sync_enabled,
+            # Public workspaces are out of scope for the group builder, but the context
+            # module imports this at load time (M10B). It stands in for the real predicate;
+            # the public context parity test replaces it with a settings-driven stub.
+            is_file_sync_enabled_for_public_workspace=Mock(return_value=False),
+        ),
         "functions_governance": module_stub(
             "functions_governance", is_governance_access_allowed=governance,
             is_action_scope_access_allowed=action_governance,

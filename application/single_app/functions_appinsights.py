@@ -1,5 +1,6 @@
 # functions_appinsights.py
 
+import hashlib
 import logging
 import os
 import re
@@ -115,12 +116,28 @@ LOGGER_SAFE_TEXT_KEYS = frozenset({
     "reason",
     "resource",
     "resourcename",
+    "responsetype",
     "service",
     "stage",
     "status",
     "step",
     "taskname",
 })
+LOGGER_WORKFLOW_HASH_KEYS = frozenset({"conversationidhash", "turnidhash", "runidhash"})
+LOGGER_WORKFLOW_CODE_KEYS = frozenset({
+    "validationcode", "validationrule", "responsefailure", "executioncode", "outputcode", "durablestatus",
+})
+
+
+def workflow_log_context(*, conversation_id=None, turn_id=None, run_id=None):
+    """Correlate workflow requests without recording their raw identifiers."""
+    return {
+        f"{name}_hash": hashlib.sha256(value.encode("utf-8", errors="replace")).hexdigest()
+        for name, value in (
+            ("conversation_id", conversation_id), ("turn_id", turn_id), ("run_id", run_id),
+        )
+        if isinstance(value, str) and value
+    }
 
 
 def _format_message(message: Any, message_args: Optional[Tuple[Any, ...]] = None) -> str:
@@ -246,7 +263,14 @@ def _build_logger_extra(
                 logger_extra[f"{normalized_key}_count"] = len(value)
             elif isinstance(value, str):
                 logger_extra[f"{normalized_key}_length"] = len(value)
-                if _is_safe_log_text_key(key):
+                diagnostic_key = _normalize_log_key(key)
+                if diagnostic_key in LOGGER_WORKFLOW_HASH_KEYS:
+                    if re.fullmatch(r"[0-9a-f]{64}", value):
+                        logger_extra[normalized_key] = value
+                elif diagnostic_key in LOGGER_WORKFLOW_CODE_KEYS:
+                    if re.fullmatch(r"[a-z][a-z0-9_]{0,79}", value):
+                        logger_extra[normalized_key] = value
+                elif _is_safe_log_text_key(key):
                     logger_extra[normalized_key] = (
                         sanitize_log_message(value)[:LOGGER_SAFE_TEXT_MAX_LENGTH]
                     )

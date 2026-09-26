@@ -5,6 +5,11 @@
 Fixed/Implemented in version: **0.261.131**, recorded in
 `application/single_app/config.py`. Refs #1509.
 
+> **Superseded in 0.261.134.** The harness now enforces per-step Auto bindings, so Auto
+> requests plan Gather / Reason / Render work and the contract-admission, dependency
+> planning and fail-closed rows below no longer apply. See
+> [Orchestration answers that miss what the user asked for](ORCHESTRATION_DELIVERABLE_PLANNING_FIX.md).
+
 ## Issue and root cause
 
 The target branch added two features while the Gather / Reason / Render harness
@@ -71,3 +76,8 @@ offline probe reaches the release checker. They are not caused by this merge.
 Per-step Auto routing is not yet available for dependency plans. Supporting it
 requires per-step model scopes in the dependency executor, recovery bindings for
 retained results, and planner guidance for Gather / Reason tasks.
+
+**Lifted in 0.261.134.** The dependency executor now installs each step's model scope,
+reauthorizes bindings before running or reusing work, and the dependency planner receives
+routing guidance. See
+[Orchestration answers that miss what the user asked for](ORCHESTRATION_DELIVERABLE_PLANNING_FIX.md).

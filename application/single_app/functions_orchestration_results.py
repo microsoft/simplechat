@@ -14,6 +14,7 @@ from dataclasses import dataclass
 from functions_analysis_access import analysis_source_snapshot
 from functions_orchestration_result_contracts import (
     EXTERNAL_LINEAGE_VERSION,
+    IMAGE_ASSET_KIND,
     MAX_EXTERNAL_SOURCES,
     MAX_DESCRIPTOR_BYTES,
     MAX_OUTPUTS,
@@ -36,6 +37,7 @@ from functions_orchestration_result_contracts import (
     integer,
     output_name,
     validate_columns,
+    validate_image_asset_value,
     validate_json,
     validate_record,
     validate_result_role,
@@ -56,6 +58,8 @@ MAX_UPSTREAM_RESULTS = 64
 MAX_LINEAGE_RESULTS = 256
 _COLLECTION_KINDS = frozenset({"records-v1", "evidence-set-v1", "source-set-v1"})
 _TEXT_KINDS = frozenset({"text-v1", "markdown-v1"})
+# Single JSON values streamed as encoded fragments.
+_VALUE_KINDS = frozenset({"structured-v1", "comparison-v1", IMAGE_ASSET_KIND})
 _MANIFEST_FIELDS = frozenset({"version", "producer", "role", "status", "lineage", "outputs"})
 _OUTPUT_FIELDS = frozenset({
     "kind", "columns", "completeness", "content_sha256", "size_bytes", "item_count", "character_count", "storage",
@@ -308,7 +312,7 @@ def _reference(producer, name, output, manifest_sha256):
     integer(storage["record_count"])
     if reference.kind in _COLLECTION_KINDS and storage["record_count"] != reference.item_count:
         raise ResultContractError("result_count_invalid")
-    if reference.kind in _TEXT_KINDS | {"structured-v1"} and reference.item_count != 1:
+    if reference.kind in _TEXT_KINDS | {"structured-v1", IMAGE_ASSET_KIND} and reference.item_count != 1:
         raise ResultContractError("result_count_invalid")
     if reference.kind == "comparison-v1" and reference.size_bytes > MAX_VALUE_BYTES:
         raise ResultContractError("result_comparison_too_large")
@@ -409,6 +413,9 @@ def _validate_value(kind, value, completeness, source_snapshots):
         ):
             raise ResultContractError("result_comparison_incomplete")
         count = len(completed)
+    elif kind == IMAGE_ASSET_KIND:
+        validate_image_asset_value(value)
+        count = 1
     else:
         count = 1
     if completeness.actual_count != count:
@@ -734,6 +741,11 @@ class OrchestrationResultReader:
             )
         return metadata
 
+    def upstream_references(self):
+        """The exact retained inputs this result was prepared from, after current access checks."""
+        self.recheck()
+        return tuple(ResultRef.from_dict(item) for item in self._manifest["lineage"]["upstream"])
+
     def _collection(self):
         output = self._manifest["outputs"][self.reference.output_name]
         return _collection_manifest(self.reference.producer, self.reference.output_name, output["storage"])
@@ -803,7 +815,7 @@ class OrchestrationResultReader:
         self._verify(content_digest, size, 1)
 
     def iter_value_bytes(self):
-        if self.result_kind not in {"structured-v1", "comparison-v1"}:
+        if self.result_kind not in _VALUE_KINDS:
             raise ResultContractError("result_kind_incompatible")
         content_digest, size = hashlib.sha256(), 0
         comparison = bytearray() if self.result_kind == "comparison-v1" else None

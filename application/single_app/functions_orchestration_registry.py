@@ -28,21 +28,45 @@ application are genuinely of three shapes:
   Document analysis and comparison are gated by ``is_document_action_enabled``, which
   reads a nested capability record rather than a flag.
 
-Version: 0.261.132
+Every capability belongs to one server-owned purpose (``role``): Gather acquires sources,
+Reason prepares content, and Render delivers a file. Purposes are not ordered phases; a
+plan can gather, reason, and gather again. Steps exchange typed, retained results named in
+their ``inputs`` and ``outputs``.
+
+Version: 0.261.139
 """
 
 import logging
 from copy import deepcopy
 
 from functions_appinsights import log_event
-from functions_orchestration_result_contracts import RESULT_KINDS, ResultContractError, canonical_bytes
+from functions_orchestration_result_contracts import (
+    IMAGE_ASSET_KIND, RESULT_KINDS, ResultContractError, canonical_bytes,
+)
 
-# Bumped when the descriptor shape changes in a way a stored plan could not survive.
-CAPABILITY_REGISTRY_CONTRACT_VERSION = 1
+# The schema marker every saved plan carries. A plan without it, or with the earlier value,
+# was written by the removed legacy contract and is never opened or run.
 DEPENDENCY_PLAN_CONTRACT_VERSION = 2
 ROLE_GATHER = 'gather'
 ROLE_REASON = 'reason'
 ROLE_RENDER = 'render'
+
+# Capability ids a saved allowlist may still name, and the capability that replaced each.
+# The removed answering step was kept in every narrowed list, and Prepare content now writes
+# the answer. The stored list is read through this map rather than rewritten, because a
+# saved run's execution binding hashes the settings it ran under.
+RETIRED_CAPABILITY_ALIASES = {'respond': 'compose'}
+
+
+def effective_capability_ids(values):
+    """A saved allowlist with each retired capability id read as its replacement.
+
+    Anything other than a list of strings is returned unchanged, so a malformed list still
+    fails closed wherever it is validated.
+    """
+    if type(values) is not list or any(type(value) is not str for value in values):
+        return values
+    return list(dict.fromkeys(RETIRED_CAPABILITY_ALIASES.get(value, value) for value in values))
 
 # Document action vocabulary, duplicated as literals rather than imported.
 #
@@ -55,49 +79,16 @@ DOCUMENT_ACTION_TYPE_ANALYZE = 'analyze'
 DOCUMENT_ACTION_TYPE_COMPARISON = 'comparison'
 DOCUMENT_ACTION_CONTEXT_CHAT = 'chat'
 
-PHASE_KNOWLEDGE = 'knowledge'
-PHASE_REASONING = 'reasoning'
-PHASE_OUTPUT = 'output'
-
-# Ordered, and the order is the point. A plan runs in phase order, so a capability's phase
-# is really its index: "may this step follow that one" becomes an integer comparison rather
-# than a table of special cases.
-#
-# This replaces the earlier `kind` (retrieval / analysis / synthesis), which was carried all
-# the way to the browser and read by nothing -- not the validator, not the executor, not one
-# React component. A second decorative taxonomy alongside this one is how a field ends up
-# meaning nothing, so `kind` is gone rather than kept.
-#
-# The boundary is drawn on what a capability *produces*, not on how hard it thinks. Analysing
-# and comparing documents emit the same evidence envelopes as searching them, and the answer
-# is the only step that consumes evidence -- so they are knowledge and it is reasoning.
-CAPABILITY_PHASES = (
-    PHASE_KNOWLEDGE,
-    PHASE_REASONING,
-    PHASE_OUTPUT,
-)
-
 COST_CLASS_LOW = 'low'
 COST_CLASS_MEDIUM = 'medium'
 COST_CLASS_HIGH = 'high'
 
 COST_CLASSES = (COST_CLASS_LOW, COST_CLASS_MEDIUM, COST_CLASS_HIGH)
 
-# What a step can leave behind in the run context for later steps to consume.
-PRODUCES_EVIDENCE = 'evidence'
-PRODUCES_CITATIONS = 'citations'
+# What a step leaves behind. Gather and Reason steps retain typed, named results for later
+# steps; Render delivers a file through the output service instead.
+PRODUCES_RETAINED_RESULTS = 'retained_results'
 PRODUCES_ARTIFACTS = 'artifacts'
-PRODUCES_MESSAGE = 'message'
-# Gathered text rather than document evidence.
-#
-# An agent, a URL read and a deep research crawl all return prose and citations tied to no
-# document id. `build_evidence_envelope` refuses that shape outright -- it requires a
-# non-empty `document_id`, a `source_kind` of tabular or narrative, and one of three named
-# engines. Calling their output evidence would mean either lying to that validator or
-# loosening it, and neither is worth it: `RunContext` already accumulates `notes`, and the
-# respond adapter already folds notes into its prompt. So they produce notes, and notes
-# reach the answer by the path that exists.
-PRODUCES_NOTES = 'notes'
 
 # Capability identifiers. Referenced by plans, adapters and tests, so they are constants
 # rather than repeated string literals.
@@ -110,8 +101,32 @@ CAPABILITY_URL_FETCH = 'url_fetch'
 CAPABILITY_DEEP_RESEARCH = 'deep_research'
 CAPABILITY_AGENT_INVOKE = 'agent_invoke'
 CAPABILITY_ACTION_INVOKE = 'action_invoke'
-CAPABILITY_RESPOND = 'respond'
 CAPABILITY_COMPOSE = 'compose'
+CAPABILITY_GENERATE_IMAGE = 'generate_image'
+CAPABILITY_RENDER_FILE = 'render_file'
+
+# Explicitly requested images are generated as planned steps. The executor is serial, so a
+# plan may generate at most this many images; a larger ask is reported, never silently cut.
+MAX_GENERATED_IMAGES_PER_PLAN = 4
+# Characters the planner may spend on an image prompt; named text inputs may add visual
+# details up to the image service's own prompt limit.
+GENERATE_IMAGE_PROMPT_MAX_LENGTH = 3000
+
+# What an answer-writing step may rely on. The planner declares one per compose step; the
+# step's policy follows it. Stable, widely established facts can come from the model's own
+# knowledge, while time-sensitive, local, private or source-specific facts need sources.
+KNOWLEDGE_BASIS_GENERAL = 'general_knowledge'
+KNOWLEDGE_BASIS_SOURCES = 'sources'
+KNOWLEDGE_BASIS_MIXED = 'sources_and_general_knowledge'
+KNOWLEDGE_BASES = (KNOWLEDGE_BASIS_GENERAL, KNOWLEDGE_BASIS_SOURCES, KNOWLEDGE_BASIS_MIXED)
+GENERAL_KNOWLEDGE_BASES = (KNOWLEDGE_BASIS_GENERAL, KNOWLEDGE_BASIS_MIXED)
+
+# Visual output kinds a planned step can be asked to author, named by the planner rather than
+# guessed from keywords in the request.
+VISUAL_CHART = 'chart'
+VISUAL_DIAGRAM = 'diagram'
+VISUAL_IMAGE_PROPOSAL = 'image_proposal'
+VISUAL_KINDS = (VISUAL_CHART, VISUAL_DIAGRAM, VISUAL_IMAGE_PROPOSAL)
 
 # Workspace scopes a capability may need at least one of.
 SCOPE_PERSONAL = 'personal'
@@ -247,468 +262,9 @@ def _action_request_gate(settings, context):
     return bool(context.get('action_catalog'))
 
 
-# The registry itself. Ordered as a plan tends to read: gather, then reason, then answer.
-#
-# `when_to_use` is the only free text the planner is shown per capability, so it is written
-# as guidance to a reader deciding between options rather than as a restatement of the
-# label. `inputs` is a JSON Schema fragment, and is what the validator enforces -- a plan
-# whose arguments do not satisfy it never reaches an adapter.
-CAPABILITY_REGISTRY = (
-    {
-        'id': CAPABILITY_DOCUMENT_SEARCH,
-        'label': 'Search documents',
-        'phase': PHASE_KNOWLEDGE,
-        'request_gate': None,
-        'summary': "Find relevant passages across the documents this user can read.",
-        'when_to_use': (
-            "The question asks about information likely held in the user's own documents, "
-            "and no particular document has been named. Prefer this over analysing a whole "
-            "document when a few passages would answer the question."
-        ),
-        'settings_gates': (),
-        'settings_gates_any': (
-            'enable_user_workspace',
-            'enable_group_workspaces',
-            'enable_public_workspaces',
-        ),
-        'gate': None,
-        'requires_scope': (SCOPE_PERSONAL, SCOPE_GROUP, SCOPE_PUBLIC),
-        'inputs': {
-            'type': 'object',
-            'properties': {
-                'query': {
-                    'type': 'string',
-                    'minLength': 1,
-                    'description': 'The search phrasing, which need not match the user wording.',
-                },
-                'document_ids': {
-                    'type': 'array',
-                    'items': {'type': 'string'},
-                    'description': 'Restrict to these documents. Omit to search everything in scope.',
-                },
-                'doc_scope': {
-                    'type': 'string',
-                    'enum': ['all', 'personal', 'group', 'public'],
-                    'default': 'all',
-                },
-                'top_n': {'type': 'integer', 'minimum': 1, 'maximum': 50, 'default': 12},
-            },
-            'required': ['query'],
-            'additionalProperties': False,
-        },
-        'produces': (PRODUCES_EVIDENCE, PRODUCES_CITATIONS),
-        'cost_class': COST_CLASS_LOW,
-        'max_per_plan': 3,
-        'adapter': CAPABILITY_DOCUMENT_SEARCH,
-        'terminal': False,
-    },
-    {
-        'id': CAPABILITY_DOCUMENT_ANALYZE,
-        'label': 'Analyse documents',
-        'phase': PHASE_KNOWLEDGE,
-        'request_gate': None,
-        'summary': "Read one or more documents end to end and answer a question about them.",
-        'when_to_use': (
-            "The question needs whole-document coverage rather than a few passages -- "
-            "summarising, extracting every instance of something, or answering where a "
-            "search would miss material. Considerably more expensive than searching."
-        ),
-        'settings_gates': (),
-        'settings_gates_any': (),
-        'gate': _document_action_gate(DOCUMENT_ACTION_TYPE_ANALYZE),
-        'requires_scope': (SCOPE_PERSONAL, SCOPE_GROUP, SCOPE_PUBLIC),
-        'inputs': {
-            'type': 'object',
-            'properties': {
-                'analysis_prompt': {
-                    'type': 'string',
-                    'minLength': 1,
-                    'description': 'What to determine from each document.',
-                },
-                'document_ids': {
-                    'type': 'array',
-                    'items': {'type': 'string'},
-                    'minItems': 1,
-                    'description': 'The documents to read. Must be named explicitly.',
-                },
-                'documents_from_step': {
-                    'type': 'string',
-                    'description': (
-                        'Instead of naming documents, read whichever ones an earlier '
-                        'step found. Give that step\'s step_id. Use this when the '
-                        'documents worth reading are not known until a search has run; '
-                        'name documents directly whenever they are already known.'
-                    ),
-                },
-                'doc_scope': {
-                    'type': 'string',
-                    'enum': ['all', 'personal', 'group', 'public'],
-                    'default': 'all',
-                },
-            },
-            'required': ['analysis_prompt'],
-            'additionalProperties': False,
-        },
-        'produces': (PRODUCES_EVIDENCE, PRODUCES_CITATIONS),
-        'cost_class': COST_CLASS_HIGH,
-        'max_per_plan': 2,
-        'adapter': CAPABILITY_DOCUMENT_ANALYZE,
-        'terminal': False,
-        # Enforced by the validator against the administrator's chat limit.
-        'document_action_type': DOCUMENT_ACTION_TYPE_ANALYZE,
-    },
-    {
-        'id': CAPABILITY_DOCUMENT_COMPARE,
-        'label': 'Compare documents',
-        'phase': PHASE_KNOWLEDGE,
-        'request_gate': None,
-        'summary': "Compare one document against one or more others.",
-        'when_to_use': (
-            "The question is explicitly comparative -- what changed, how two versions "
-            "differ, which of several documents says something. Needs a single left-hand "
-            "document and at least one to compare it against."
-        ),
-        'settings_gates': (),
-        'settings_gates_any': (),
-        'gate': _document_action_gate(DOCUMENT_ACTION_TYPE_COMPARISON),
-        'requires_scope': (SCOPE_PERSONAL, SCOPE_GROUP, SCOPE_PUBLIC),
-        'inputs': {
-            'type': 'object',
-            'properties': {
-                'comparison_prompt': {
-                    'type': 'string',
-                    'minLength': 1,
-                    'description': 'What the comparison should establish.',
-                },
-                'left_document_id': {
-                    'type': 'string',
-                    'minLength': 1,
-                    'description': 'The document the others are compared against.',
-                },
-                'right_document_ids': {
-                    'type': 'array',
-                    'items': {'type': 'string'},
-                    'minItems': 1,
-                },
-                'doc_scope': {
-                    'type': 'string',
-                    'enum': ['all', 'personal', 'group', 'public'],
-                    'default': 'all',
-                },
-            },
-            'required': ['comparison_prompt', 'left_document_id', 'right_document_ids'],
-            'additionalProperties': False,
-        },
-        'produces': (PRODUCES_EVIDENCE, PRODUCES_CITATIONS),
-        'cost_class': COST_CLASS_HIGH,
-        'max_per_plan': 1,
-        'adapter': CAPABILITY_DOCUMENT_COMPARE,
-        'terminal': False,
-        'document_action_type': DOCUMENT_ACTION_TYPE_COMPARISON,
-    },
-    {
-        'id': CAPABILITY_TABULAR_ANALYZE,
-        'label': 'Analyse spreadsheets',
-        'phase': PHASE_KNOWLEDGE,
-        'request_gate': None,
-        'summary': "Compute over CSV or Excel data rather than reading it as prose.",
-        'when_to_use': (
-            "The named documents are spreadsheets or CSV files and the question needs "
-            "counting, filtering, aggregating or per-row work. Reading a workbook as text "
-            "gives wrong numbers, so prefer this whenever the source is tabular."
-        ),
-        'settings_gates': (),
-        'settings_gates_any': (
-            'enable_user_workspace',
-            'enable_group_workspaces',
-            'enable_public_workspaces',
-        ),
-        'gate': None,
-        'requires_scope': (SCOPE_PERSONAL, SCOPE_GROUP, SCOPE_PUBLIC),
-        'inputs': {
-            'type': 'object',
-            'properties': {
-                'question': {'type': 'string', 'minLength': 1},
-                'document_ids': {
-                    'type': 'array',
-                    'items': {'type': 'string'},
-                    'minItems': 1,
-                },
-            },
-            'required': ['question', 'document_ids'],
-            'additionalProperties': False,
-        },
-        'produces': (PRODUCES_EVIDENCE, PRODUCES_CITATIONS, PRODUCES_ARTIFACTS),
-        'cost_class': COST_CLASS_MEDIUM,
-        'max_per_plan': 2,
-        'adapter': CAPABILITY_TABULAR_ANALYZE,
-        'terminal': False,
-    },
-    {
-        'id': CAPABILITY_WEB_SEARCH,
-        'label': 'Search the web',
-        'phase': PHASE_KNOWLEDGE,
-        'request_gate': None,
-        'summary': "Look the question up on the public web.",
-        'when_to_use': (
-            "Use for focused external lookups, current facts, or limited discovery that "
-            "search results can adequately support. One search can return several sources; "
-            "that alone does not require deep research. Do not use it to answer questions "
-            "about the user's own material."
-        ),
-        'settings_gates': ('enable_web_search',),
-        'settings_gates_any': (),
-        'gate': None,
-        'requires_scope': (),
-        'inputs': {
-            'type': 'object',
-            'properties': {
-                'query': {'type': 'string', 'minLength': 1},
-            },
-            'required': ['query'],
-            'additionalProperties': False,
-        },
-        'produces': (PRODUCES_NOTES, PRODUCES_CITATIONS),
-        'cost_class': COST_CLASS_LOW,
-        'max_per_plan': 2,
-        'adapter': CAPABILITY_WEB_SEARCH,
-        'terminal': False,
-    },
-    {
-        'id': CAPABILITY_URL_FETCH,
-        'label': 'Read linked pages',
-        'phase': PHASE_KNOWLEDGE,
-        'request_gate': _url_access_request_gate,
-        'summary': "Read the web pages the user linked to in their message.",
-        'when_to_use': (
-            "The user pasted one or more links and is asking about what they contain. This "
-            "reads those pages and nothing else -- it does not search, so use web search "
-            "when the question needs sources the user has not already named."
-        ),
-        'settings_gates': ('enable_url_access',),
-        'settings_gates_any': (),
-        'gate': None,
-        'requires_scope': (),
-        'inputs': {
-            'type': 'object',
-            'properties': {
-                'urls': {
-                    'type': 'array',
-                    'items': {'type': 'string'},
-                    'description': (
-                        'Restrict to these links. Omit to read every link in the message. '
-                        'Only links the user actually pasted can be read.'
-                    ),
-                },
-            },
-            'required': [],
-            'additionalProperties': False,
-        },
-        'produces': (PRODUCES_NOTES, PRODUCES_CITATIONS),
-        'cost_class': COST_CLASS_LOW,
-        'max_per_plan': 1,
-        'adapter': CAPABILITY_URL_FETCH,
-        'terminal': False,
-    },
-    {
-        'id': CAPABILITY_DEEP_RESEARCH,
-        'label': 'Research in depth',
-        'phase': PHASE_KNOWLEDGE,
-        'request_gate': _deep_research_request_gate,
-        'summary': "Discover sources with bounded web queries, then read and follow relevant pages.",
-        'when_to_use': (
-            "Use when exploring distinct perspectives or alternatives, reading sources in "
-            "detail, or reconciling evidence would materially improve the answer enough to "
-            "justify the added cost. Prefer focused web search when that coverage is "
-            "sufficient. Includes its own bounded multi-query discovery, so a separate web "
-            "search should not duplicate it. Discovery respects web-search settings; when "
-            "web search is disabled, only supplied or already discovered sources can be read."
-        ),
-        'settings_gates': ('enable_source_review',),
-        'settings_gates_any': (),
-        'gate': None,
-        'requires_scope': (),
-        'inputs': {
-            'type': 'object',
-            'properties': {
-                'query': {
-                    'type': 'string',
-                    'minLength': 1,
-                    'description': 'What to establish. Phrase it as the question to answer.',
-                },
-            },
-            'required': ['query'],
-            'additionalProperties': False,
-        },
-        'produces': (PRODUCES_NOTES, PRODUCES_CITATIONS),
-        'cost_class': COST_CLASS_HIGH,
-        'max_per_plan': 1,
-        'adapter': CAPABILITY_DEEP_RESEARCH,
-        'terminal': False,
-    },
-    {
-        'id': CAPABILITY_ACTION_INVOKE,
-        'label': 'Use an action',
-        'phase': PHASE_KNOWLEDGE,
-        'request_gate': _action_request_gate,
-        'summary': "Gather knowledge using one of this user's accessible actions.",
-        'when_to_use': (
-            "An action in the list reaches the information needed for this task. Prefer "
-            "using it directly when no agent-specific instructions or knowledge are needed. "
-            "The step can use the selected action's functions within execution limits. "
-            "Do not duplicate work delegated to an agent or use this to plan output tasks."
-        ),
-        'settings_gates': (
-            'enable_chat_orchestration',
-            'enable_semantic_kernel',
-            'enable_chat_orchestration_actions',
-        ),
-        'settings_gates_any': (),
-        'gate': None,
-        'requires_scope': (),
-        'inputs': {
-            'type': 'object',
-            'properties': {
-                'action_ref': {
-                    'type': 'string',
-                    'minLength': 1,
-                    'description': 'The exact scoped reference from the actions catalog.',
-                },
-                'task': {
-                    'type': 'string',
-                    'minLength': 1,
-                    'description': 'The knowledge to gather with this action.',
-                },
-            },
-            'required': ['action_ref', 'task'],
-            'additionalProperties': False,
-        },
-        'produces': (PRODUCES_NOTES, PRODUCES_CITATIONS, PRODUCES_ARTIFACTS),
-        'cost_class': COST_CLASS_MEDIUM,
-        'max_per_plan': None,
-        'adapter': CAPABILITY_ACTION_INVOKE,
-        'terminal': False,
-    },
-    {
-        'id': CAPABILITY_AGENT_INVOKE,
-        'label': 'Ask an agent',
-        'phase': PHASE_KNOWLEDGE,
-        'request_gate': _agent_request_gate,
-        'summary': "Hand the task to one of this user's configured agents.",
-        'when_to_use': (
-            "An agent in the list has tools or knowledge built for exactly this task -- "
-            "reaching a system none of the other capabilities can, or following a procedure "
-            "somebody configured deliberately. Name only an agent from the list. An agent "
-            "runs its own tools, so do not also plan the work it would do itself."
-        ),
-        'settings_gates': ('enable_semantic_kernel',),
-        'settings_gates_any': (),
-        'gate': None,
-        'requires_scope': (),
-        'inputs': {
-            'type': 'object',
-            'properties': {
-                'agent_name': {
-                    'type': 'string',
-                    'minLength': 1,
-                    'description': "The agent's name, exactly as it appears in the list.",
-                },
-                'task': {
-                    'type': 'string',
-                    'minLength': 1,
-                    'description': 'What to ask the agent to do, in a sentence or two.',
-                },
-            },
-            'required': ['agent_name', 'task'],
-            'additionalProperties': False,
-        },
-        'produces': (PRODUCES_NOTES, PRODUCES_CITATIONS, PRODUCES_ARTIFACTS),
-        'cost_class': COST_CLASS_HIGH,
-        # One per plan. Every agent step loads a kernel from scratch -- resolving Key Vault
-        # secrets, hydrating each plugin the agent declares, introspecting SQL and Cosmos
-        # schemas -- and there is no live kernel cache to amortise it. Two agent steps means
-        # paying all of that twice.
-        'max_per_plan': 1,
-        'adapter': CAPABILITY_AGENT_INVOKE,
-        'terminal': False,
-    },
-    {
-        'id': CAPABILITY_RESPOND,
-        'label': 'Answer',
-        'phase': PHASE_REASONING,
-        'request_gate': None,
-        'summary': "Write the answer from whatever the earlier steps gathered.",
-        'when_to_use': (
-            "Always the last step. Every plan ends with exactly one of these, including a "
-            "plan that gathers nothing and simply answers from the model's own knowledge. "
-            "Its instruction can ask for inline charts, Mermaid diagrams, or image proposals "
-            "when they would help the answer."
-        ),
-        'settings_gates': (),
-        'settings_gates_any': (),
-        'gate': None,
-        'requires_scope': (),
-        'inputs': {
-            'type': 'object',
-            'properties': {
-                'instruction': {
-                    'type': 'string',
-                    'description': (
-                        'How to shape the answer, including any chart, Mermaid diagram, or image '
-                        'proposals it should contain. Omit to answer the question directly.'
-                    ),
-                },
-            },
-            'required': [],
-            'additionalProperties': False,
-        },
-        'produces': (PRODUCES_MESSAGE,),
-        'cost_class': COST_CLASS_LOW,
-        'max_per_plan': 1,
-        'adapter': CAPABILITY_RESPOND,
-        'terminal': True,
-    },
-)
-
-CAPABILITY_BY_ID = {capability['id']: capability for capability in CAPABILITY_REGISTRY}
-
-_DEPENDENCY_OUTPUTS = {
-    CAPABILITY_DOCUMENT_SEARCH: {
-        'evidence': 'evidence-set-v1', 'sources': 'source-set-v1', 'prepared': 'structured-v1',
-    },
-    CAPABILITY_DOCUMENT_ANALYZE: {'findings': 'records-v1', 'coverage': 'structured-v1'},
-    CAPABILITY_DOCUMENT_COMPARE: {'comparison': 'comparison-v1', 'coverage': 'structured-v1'},
-    CAPABILITY_TABULAR_ANALYZE: {'records': 'records-v1'},
-    CAPABILITY_WEB_SEARCH: {'prepared': 'structured-v1'},
-    CAPABILITY_URL_FETCH: {'prepared': 'structured-v1'},
-    CAPABILITY_DEEP_RESEARCH: {'prepared': 'structured-v1'},
-    CAPABILITY_AGENT_INVOKE: {'prepared': 'structured-v1'},
-    CAPABILITY_ACTION_INVOKE: {'prepared': 'structured-v1'},
-}
-_DEPENDENCY_RESULT_CONTRACTS = {
-    CAPABILITY_DOCUMENT_SEARCH: 'orchestration-gathered-content-v1',
-    CAPABILITY_DOCUMENT_ANALYZE: 'analyze-final-v1',
-    CAPABILITY_DOCUMENT_COMPARE: 'comparison-v1',
-    CAPABILITY_TABULAR_ANALYZE: 'native-tabular-result-v1',
-    CAPABILITY_WEB_SEARCH: 'orchestration-gathered-content-v1',
-    CAPABILITY_URL_FETCH: 'orchestration-gathered-content-v1',
-    CAPABILITY_DEEP_RESEARCH: 'orchestration-gathered-content-v1',
-    CAPABILITY_AGENT_INVOKE: 'orchestration-gathered-content-v1',
-    CAPABILITY_ACTION_INVOKE: 'orchestration-gathered-content-v1',
-    CAPABILITY_COMPOSE: 'compose-v1',
-}
-_REASON_CAPABILITIES = {
-    CAPABILITY_DOCUMENT_ANALYZE, CAPABILITY_DOCUMENT_COMPARE, CAPABILITY_TABULAR_ANALYZE,
-}
-_EXTERNAL_GATHER_CAPABILITIES = {
-    CAPABILITY_WEB_SEARCH, CAPABILITY_URL_FETCH, CAPABILITY_DEEP_RESEARCH,
-    CAPABILITY_AGENT_INVOKE, CAPABILITY_ACTION_INVOKE,
-}
-
-
 def resolve_admitted_export_catalog(export_catalog=None):
     """Narrow real shared format/profile declarations without redefining a renderer."""
-    # Export metadata belongs to explicit v2 admission, not legacy registry bootstrap.
+    # The shared export registry is read only when render work is actually resolved.
     from functions_generated_export_registry import get_generated_file_export_catalog
 
     current = get_generated_file_export_catalog()
@@ -792,88 +348,503 @@ def render_file_arguments_schema(catalog):
     }
 
 
-def _dependency_capabilities():
-    """Opt-in descriptors; legacy phases and the default catalog remain unchanged."""
-    # Service metadata is needed only for explicit v2 discovery, not legacy bootstrap.
-    from functions_orchestration_native_results import (
-        native_orchestration_arguments_schema, native_orchestration_output_specs,
-    )
-    from functions_generated_export_registry import get_generated_file_export_catalog
-    from functions_orchestration_output_store import OUTPUT_CONTRACT_VERSION
-    import functions_orchestration_rendering as rendering
+def generate_image_arguments_schema(options=None):
+    """Image step arguments; options, when known, are the configured model's exact values."""
+    properties = {
+        'prompt': {
+            'type': 'string', 'minLength': 1, 'maxLength': GENERATE_IMAGE_PROMPT_MAX_LENGTH,
+            'description': (
+                'A self-contained image prompt: subject, setting, composition, style, and any text '
+                'the image shows. Ask for an illustration, not a photograph.'
+            ),
+        },
+        'title': {
+            'type': 'string', 'minLength': 1, 'maxLength': 120,
+            'description': 'A short caption naming what the illustration shows.',
+        },
+    }
+    for name, plural in (('size', 'sizes'), ('quality', 'qualities'), ('background', 'backgrounds')):
+        if options is None:
+            properties[name] = {'type': 'string', 'minLength': 1}
+        elif options.get(plural):
+            properties[name] = {'type': 'string', 'enum': list(options[plural])}
+    return {
+        'type': 'object', 'properties': properties,
+        'required': ['prompt', 'title'], 'additionalProperties': False,
+    }
 
-    capabilities = []
-    for legacy in CAPABILITY_REGISTRY:
-        if legacy['id'] == CAPABILITY_RESPOND:
-            continue
-        capability = deepcopy(legacy)
-        capability.pop('phase')
-        capability.update({
-            'plan_contract_version': DEPENDENCY_PLAN_CONTRACT_VERSION,
-            'result_contract_version': _DEPENDENCY_RESULT_CONTRACTS[capability['id']],
-            'role': ROLE_REASON if capability['id'] in _REASON_CAPABILITIES else ROLE_GATHER,
-            'result_outputs': dict(_DEPENDENCY_OUTPUTS[capability['id']]),
-            'result_input_kinds': {},
-            'partial_inputs_supported': False,
-            'produces': ('retained_results',),
-        })
-        if capability['id'] in _EXTERNAL_GATHER_CAPABILITIES:
-            capability.update({
-                'runtime_bindings': (
-                    'external_source_admission', 'external_source_preflight', 'capture_external_source_configuration',
-                    'external_source_authorizer',
-                ),
-                'runtime_binding_unavailable_reason': 'external_result_lineage_unavailable',
-            })
-        capability['inputs']['properties'].pop('documents_from_step', None)
-        if capability['id'] == CAPABILITY_DOCUMENT_ANALYZE:
-            capability['when_to_use'] += ' This contract currently accepts narrative documents; native tabular handoff is not admitted.'
-            capability['result_input_kinds'] = {'sources': ('source-set-v1',)}
-            capability['optional_result_outputs'] = {'records': 'records-v1', 'report': 'markdown-v1'}
-        elif capability['id'] == CAPABILITY_DOCUMENT_COMPARE:
-            capability['when_to_use'] += ' This contract currently accepts narrative documents; native tabular handoff is not admitted.'
-            capability['optional_result_outputs'] = {'report': 'markdown-v1'}
-        elif capability['id'] == CAPABILITY_TABULAR_ANALYZE:
-            capability.update({
-                'runtime_binding': 'native_bridge_for_step',
-                'runtime_binding_unavailable_reason': 'native_typed_result_bridge_unavailable',
-                'inputs': native_orchestration_arguments_schema(),
-                'result_outputs': {'coverage': 'structured-v1'},
-                'optional_result_outputs': {'records': 'records-v1', 'analysis': 'structured-v1'},
-                'result_output_variants': [
-                    {
-                        'native_operation': operation, 'task_type': task_type,
-                        'outputs': [
-                            {'name': spec.name, 'kind': spec.kind}
-                            for spec in native_orchestration_output_specs(operation, task_type=task_type)
-                        ],
-                    }
-                    for operation, task_type in (
-                        ('query', 'structured_export'), ('transform', 'structured_export'),
-                        ('analysis', 'hierarchical_analysis'), ('transform', 'combined'),
-                    )
-                ],
-                'when_to_use': (
-                    'Compute over exactly one authorized replayable CSV or workbook without publishing files. '
-                    'Query requires a row-local query_expression and explicit columns; transformations require '
-                    'an executable transformation_spec or explicit schema. Analysis-only returns analysis, '
-                    'not implicit source rows. Declare exactly the selected result_output_variants outputs. '
-                    'Mixed/multiple sources and bare prose aggregate plans are unsupported.'
-                ),
-            })
-        capabilities.append(capability)
-    capabilities.append({
+
+# Everything an external Gather step needs from the running application before it may run.
+# They are request-time callables, so a capability is offered only when all are present.
+_EXTERNAL_GATHER_BINDINGS = (
+    'external_source_admission', 'external_source_preflight', 'capture_external_source_configuration',
+    'external_source_authorizer',
+)
+_EXTERNAL_GATHER_UNAVAILABLE_REASON = 'external_result_lineage_unavailable'
+_GATHERED_CONTENT_CONTRACT = 'orchestration-gathered-content-v1'
+_NARRATIVE_ONLY_NOTE = (
+    ' This step reads narrative documents; native tabular handoff is not admitted.'
+)
+
+
+# The registry itself, in the order a plan tends to read: gather, then reason, then render.
+#
+# `when_to_use` is the free text the planner is shown per capability, so it is written as
+# guidance to a reader deciding between options rather than as a restatement of the label.
+# `inputs` is a JSON Schema fragment, and is what the validator enforces -- a plan whose
+# arguments do not satisfy it never reaches an adapter. `result_outputs` are the typed,
+# named results a step retains for later steps. The parts owned by other services -- the
+# native tabular argument contract and the export catalog -- are resolved by
+# `_build_capabilities` when the registry is read, so importing this module stays cheap.
+CAPABILITY_REGISTRY = (
+    {
+        'id': CAPABILITY_DOCUMENT_SEARCH,
+        'label': 'Search documents',
+        'role': ROLE_GATHER,
+        'request_gate': None,
+        'summary': "Find relevant passages across the documents this user can read.",
+        'when_to_use': (
+            "The question asks about information likely held in the user's own documents, "
+            "and no particular document has been named. Prefer this over analysing a whole "
+            "document when a few passages would answer the question."
+        ),
+        'settings_gates': (),
+        'settings_gates_any': (
+            'enable_user_workspace',
+            'enable_group_workspaces',
+            'enable_public_workspaces',
+        ),
+        'gate': None,
+        'requires_scope': (SCOPE_PERSONAL, SCOPE_GROUP, SCOPE_PUBLIC),
+        'inputs': {
+            'type': 'object',
+            'properties': {
+                'query': {
+                    'type': 'string',
+                    'minLength': 1,
+                    'description': 'The search phrasing, which need not match the user wording.',
+                },
+                'document_ids': {
+                    'type': 'array',
+                    'items': {'type': 'string'},
+                    'description': 'Restrict to these documents. Omit to search everything in scope.',
+                },
+                'doc_scope': {
+                    'type': 'string',
+                    'enum': ['all', 'personal', 'group', 'public'],
+                    'default': 'all',
+                },
+                'top_n': {'type': 'integer', 'minimum': 1, 'maximum': 50, 'default': 12},
+            },
+            'required': ['query'],
+            'additionalProperties': False,
+        },
+        'result_contract_version': _GATHERED_CONTENT_CONTRACT,
+        'result_outputs': {
+            'evidence': 'evidence-set-v1', 'sources': 'source-set-v1', 'prepared': 'structured-v1',
+        },
+        'result_input_kinds': {},
+        'partial_inputs_supported': False,
+        'produces': (PRODUCES_RETAINED_RESULTS,),
+        'cost_class': COST_CLASS_LOW,
+        'max_per_plan': 3,
+        'adapter': CAPABILITY_DOCUMENT_SEARCH,
+        # Read-only and idempotent: one bounded retry on a transient provider failure.
+        'retry_on_transient': True,
+    },
+    {
+        'id': CAPABILITY_DOCUMENT_ANALYZE,
+        'label': 'Analyse documents',
+        'role': ROLE_REASON,
+        'request_gate': None,
+        'summary': "Read one or more documents end to end and answer a question about them.",
+        'when_to_use': (
+            "The question needs whole-document coverage rather than a few passages -- "
+            "summarising, extracting every instance of something, or answering where a "
+            "search would miss material. Considerably more expensive than searching."
+            + _NARRATIVE_ONLY_NOTE
+        ),
+        'settings_gates': (),
+        'settings_gates_any': (),
+        'gate': _document_action_gate(DOCUMENT_ACTION_TYPE_ANALYZE),
+        'requires_scope': (SCOPE_PERSONAL, SCOPE_GROUP, SCOPE_PUBLIC),
+        'inputs': {
+            'type': 'object',
+            'properties': {
+                'analysis_prompt': {
+                    'type': 'string',
+                    'minLength': 1,
+                    'description': 'What to determine from each document.',
+                },
+                'document_ids': {
+                    'type': 'array',
+                    'items': {'type': 'string'},
+                    'minItems': 1,
+                    'description': 'The documents to read. Must be named explicitly.',
+                },
+                'doc_scope': {
+                    'type': 'string',
+                    'enum': ['all', 'personal', 'group', 'public'],
+                    'default': 'all',
+                },
+            },
+            'required': ['analysis_prompt'],
+            'additionalProperties': False,
+        },
+        'result_contract_version': 'analyze-final-v1',
+        'result_outputs': {'findings': 'records-v1', 'coverage': 'structured-v1'},
+        'optional_result_outputs': {'records': 'records-v1', 'report': 'markdown-v1'},
+        # Documents a search found can be read by binding its source set by name.
+        'result_input_kinds': {'sources': ('source-set-v1',)},
+        'partial_inputs_supported': False,
+        'produces': (PRODUCES_RETAINED_RESULTS,),
+        'cost_class': COST_CLASS_HIGH,
+        'max_per_plan': 2,
+        'adapter': CAPABILITY_DOCUMENT_ANALYZE,
+        # Enforced by the validator against the administrator's chat limit.
+        'document_action_type': DOCUMENT_ACTION_TYPE_ANALYZE,
+    },
+    {
+        'id': CAPABILITY_DOCUMENT_COMPARE,
+        'label': 'Compare documents',
+        'role': ROLE_REASON,
+        'request_gate': None,
+        'summary': "Compare one document against one or more others.",
+        'when_to_use': (
+            "The question is explicitly comparative -- what changed, how two versions "
+            "differ, which of several documents says something. Needs a single left-hand "
+            "document and at least one to compare it against."
+            + _NARRATIVE_ONLY_NOTE
+        ),
+        'settings_gates': (),
+        'settings_gates_any': (),
+        'gate': _document_action_gate(DOCUMENT_ACTION_TYPE_COMPARISON),
+        'requires_scope': (SCOPE_PERSONAL, SCOPE_GROUP, SCOPE_PUBLIC),
+        'inputs': {
+            'type': 'object',
+            'properties': {
+                'comparison_prompt': {
+                    'type': 'string',
+                    'minLength': 1,
+                    'description': 'What the comparison should establish.',
+                },
+                'left_document_id': {
+                    'type': 'string',
+                    'minLength': 1,
+                    'description': 'The document the others are compared against.',
+                },
+                'right_document_ids': {
+                    'type': 'array',
+                    'items': {'type': 'string'},
+                    'minItems': 1,
+                },
+                'doc_scope': {
+                    'type': 'string',
+                    'enum': ['all', 'personal', 'group', 'public'],
+                    'default': 'all',
+                },
+            },
+            'required': ['comparison_prompt', 'left_document_id', 'right_document_ids'],
+            'additionalProperties': False,
+        },
+        'result_contract_version': 'comparison-v1',
+        'result_outputs': {'comparison': 'comparison-v1', 'coverage': 'structured-v1'},
+        'optional_result_outputs': {'report': 'markdown-v1'},
+        'result_input_kinds': {},
+        'partial_inputs_supported': False,
+        'produces': (PRODUCES_RETAINED_RESULTS,),
+        'cost_class': COST_CLASS_HIGH,
+        'max_per_plan': 1,
+        'adapter': CAPABILITY_DOCUMENT_COMPARE,
+        'document_action_type': DOCUMENT_ACTION_TYPE_COMPARISON,
+    },
+    {
+        'id': CAPABILITY_TABULAR_ANALYZE,
+        'label': 'Analyse spreadsheets',
+        'role': ROLE_REASON,
+        'request_gate': None,
+        'summary': "Compute over CSV or Excel data rather than reading it as prose.",
+        'when_to_use': (
+            'Compute over exactly one authorized replayable CSV or workbook without publishing files. '
+            'Query requires a row-local query_expression and explicit columns; transformations require '
+            'an executable transformation_spec or explicit schema. Analysis-only returns analysis, '
+            'not implicit source rows. Declare exactly the selected result_output_variants outputs. '
+            'Mixed/multiple sources and bare prose aggregate plans are unsupported.'
+        ),
+        'settings_gates': (),
+        'settings_gates_any': (
+            'enable_user_workspace',
+            'enable_group_workspaces',
+            'enable_public_workspaces',
+        ),
+        'gate': None,
+        'requires_scope': (SCOPE_PERSONAL, SCOPE_GROUP, SCOPE_PUBLIC),
+        # The native computation contract owns these arguments; see `_build_capabilities`.
+        'inputs': None,
+        'runtime_binding': 'native_bridge_for_step',
+        'runtime_binding_unavailable_reason': 'native_typed_result_bridge_unavailable',
+        'result_contract_version': 'native-tabular-result-v1',
+        'result_outputs': {'coverage': 'structured-v1'},
+        'optional_result_outputs': {'records': 'records-v1', 'analysis': 'structured-v1'},
+        'result_input_kinds': {},
+        'partial_inputs_supported': False,
+        'produces': (PRODUCES_RETAINED_RESULTS,),
+        'cost_class': COST_CLASS_MEDIUM,
+        'max_per_plan': 2,
+        'adapter': CAPABILITY_TABULAR_ANALYZE,
+    },
+    {
+        'id': CAPABILITY_WEB_SEARCH,
+        'label': 'Search the web',
+        'role': ROLE_GATHER,
+        'request_gate': None,
+        'summary': "Look the question up on the public web.",
+        'when_to_use': (
+            "Use for focused external lookups, current facts, or limited discovery that "
+            "search results can adequately support. One search can return several sources; "
+            "that alone does not require deep research. Do not use it to answer questions "
+            "about the user's own material."
+        ),
+        'settings_gates': ('enable_web_search',),
+        'settings_gates_any': (),
+        'gate': None,
+        'requires_scope': (),
+        'inputs': {
+            'type': 'object',
+            'properties': {
+                'query': {'type': 'string', 'minLength': 1},
+            },
+            'required': ['query'],
+            'additionalProperties': False,
+        },
+        'runtime_bindings': _EXTERNAL_GATHER_BINDINGS,
+        'runtime_binding_unavailable_reason': _EXTERNAL_GATHER_UNAVAILABLE_REASON,
+        'result_contract_version': _GATHERED_CONTENT_CONTRACT,
+        'result_outputs': {'prepared': 'structured-v1'},
+        'result_input_kinds': {},
+        'partial_inputs_supported': False,
+        'produces': (PRODUCES_RETAINED_RESULTS,),
+        'cost_class': COST_CLASS_LOW,
+        'max_per_plan': 2,
+        'adapter': CAPABILITY_WEB_SEARCH,
+        'retry_on_transient': True,
+    },
+    {
+        'id': CAPABILITY_URL_FETCH,
+        'label': 'Read linked pages',
+        'role': ROLE_GATHER,
+        'request_gate': _url_access_request_gate,
+        'summary': "Read the web pages the user linked to in their message.",
+        'when_to_use': (
+            "The user pasted one or more links and is asking about what they contain. This "
+            "reads those pages and nothing else -- it does not search, so use web search "
+            "when the question needs sources the user has not already named."
+        ),
+        'settings_gates': ('enable_url_access',),
+        'settings_gates_any': (),
+        'gate': None,
+        'requires_scope': (),
+        'inputs': {
+            'type': 'object',
+            'properties': {
+                'urls': {
+                    'type': 'array',
+                    'items': {'type': 'string'},
+                    'description': (
+                        'Restrict to these links. Omit to read every link in the message. '
+                        'Only links the user actually pasted can be read.'
+                    ),
+                },
+            },
+            'required': [],
+            'additionalProperties': False,
+        },
+        'runtime_bindings': _EXTERNAL_GATHER_BINDINGS,
+        'runtime_binding_unavailable_reason': _EXTERNAL_GATHER_UNAVAILABLE_REASON,
+        'result_contract_version': _GATHERED_CONTENT_CONTRACT,
+        'result_outputs': {'prepared': 'structured-v1'},
+        'result_input_kinds': {},
+        'partial_inputs_supported': False,
+        'produces': (PRODUCES_RETAINED_RESULTS,),
+        'cost_class': COST_CLASS_LOW,
+        'max_per_plan': 1,
+        'adapter': CAPABILITY_URL_FETCH,
+        'retry_on_transient': True,
+    },
+    {
+        'id': CAPABILITY_DEEP_RESEARCH,
+        'label': 'Research in depth',
+        'role': ROLE_GATHER,
+        'request_gate': _deep_research_request_gate,
+        'summary': "Discover sources with bounded web queries, then read and follow relevant pages.",
+        'when_to_use': (
+            "Use when exploring distinct perspectives or alternatives, reading sources in "
+            "detail, or reconciling evidence would materially improve the answer enough to "
+            "justify the added cost. Prefer focused web search when that coverage is "
+            "sufficient. Includes its own bounded multi-query discovery, so a separate web "
+            "search should not duplicate it. Discovery respects web-search settings; when "
+            "web search is disabled, only supplied or already discovered sources can be read."
+        ),
+        'settings_gates': ('enable_source_review',),
+        'settings_gates_any': (),
+        'gate': None,
+        'requires_scope': (),
+        'inputs': {
+            'type': 'object',
+            'properties': {
+                'query': {
+                    'type': 'string',
+                    'minLength': 1,
+                    'description': 'What to establish. Phrase it as the question to answer.',
+                },
+            },
+            'required': ['query'],
+            'additionalProperties': False,
+        },
+        'runtime_bindings': _EXTERNAL_GATHER_BINDINGS,
+        'runtime_binding_unavailable_reason': _EXTERNAL_GATHER_UNAVAILABLE_REASON,
+        'result_contract_version': _GATHERED_CONTENT_CONTRACT,
+        'result_outputs': {'prepared': 'structured-v1'},
+        'result_input_kinds': {},
+        'partial_inputs_supported': False,
+        'produces': (PRODUCES_RETAINED_RESULTS,),
+        'cost_class': COST_CLASS_HIGH,
+        'max_per_plan': 1,
+        'adapter': CAPABILITY_DEEP_RESEARCH,
+        'retry_on_transient': True,
+    },
+    {
+        'id': CAPABILITY_ACTION_INVOKE,
+        'label': 'Use an action',
+        'role': ROLE_GATHER,
+        'request_gate': _action_request_gate,
+        'summary': "Gather knowledge using one of this user's accessible actions.",
+        'when_to_use': (
+            "An action in the list reaches the information needed for this task. Prefer "
+            "using it directly when no agent-specific instructions or knowledge are needed. "
+            "The step can use the selected action's functions within execution limits. "
+            "Do not duplicate work delegated to an agent or use this to plan output tasks."
+        ),
+        'settings_gates': (
+            'enable_chat_orchestration',
+            'enable_semantic_kernel',
+            'enable_chat_orchestration_actions',
+        ),
+        'settings_gates_any': (),
+        'gate': None,
+        'requires_scope': (),
+        'inputs': {
+            'type': 'object',
+            'properties': {
+                'action_ref': {
+                    'type': 'string',
+                    'minLength': 1,
+                    'description': 'The exact scoped reference from the actions catalog.',
+                },
+                'task': {
+                    'type': 'string',
+                    'minLength': 1,
+                    'description': 'The knowledge to gather with this action.',
+                },
+                'visuals': {
+                    'type': 'array', 'items': {'type': 'string', 'enum': [VISUAL_CHART]},
+                    'uniqueItems': True, 'maxItems': 1,
+                    'description': (
+                        'Include "chart" to have this step chart the exact rows its functions '
+                        'return. The chart is drawn from the retrieved data, not from the prose findings.'
+                    ),
+                },
+            },
+            'required': ['action_ref', 'task'],
+            'additionalProperties': False,
+        },
+        'runtime_bindings': _EXTERNAL_GATHER_BINDINGS,
+        'runtime_binding_unavailable_reason': _EXTERNAL_GATHER_UNAVAILABLE_REASON,
+        'result_contract_version': _GATHERED_CONTENT_CONTRACT,
+        'result_outputs': {'prepared': 'structured-v1'},
+        'result_input_kinds': {},
+        'partial_inputs_supported': False,
+        'produces': (PRODUCES_RETAINED_RESULTS,),
+        'cost_class': COST_CLASS_MEDIUM,
+        'max_per_plan': None,
+        'adapter': CAPABILITY_ACTION_INVOKE,
+    },
+    {
+        'id': CAPABILITY_AGENT_INVOKE,
+        'label': 'Ask an agent',
+        'role': ROLE_GATHER,
+        'request_gate': _agent_request_gate,
+        'summary': "Hand the task to one of this user's configured agents.",
+        'when_to_use': (
+            "An agent in the list has tools or knowledge built for exactly this task -- "
+            "reaching a system none of the other capabilities can, or following a procedure "
+            "somebody configured deliberately. Name only an agent from the list. An agent "
+            "runs its own tools, so do not also plan the work it would do itself."
+        ),
+        'settings_gates': ('enable_semantic_kernel',),
+        'settings_gates_any': (),
+        'gate': None,
+        'requires_scope': (),
+        'inputs': {
+            'type': 'object',
+            'properties': {
+                'agent_name': {
+                    'type': 'string',
+                    'minLength': 1,
+                    'description': "The agent's name, exactly as it appears in the list.",
+                },
+                'task': {
+                    'type': 'string',
+                    'minLength': 1,
+                    'description': 'What to ask the agent to do, in a sentence or two.',
+                },
+                'visuals': {
+                    'type': 'array', 'items': {'type': 'string', 'enum': list(VISUAL_KINDS)},
+                    'uniqueItems': True, 'maxItems': len(VISUAL_KINDS),
+                    'description': (
+                        'Visuals the answer will include, so the agent keeps the values, '
+                        'relationships or visual details they need.'
+                    ),
+                },
+            },
+            'required': ['agent_name', 'task'],
+            'additionalProperties': False,
+        },
+        'runtime_bindings': _EXTERNAL_GATHER_BINDINGS,
+        'runtime_binding_unavailable_reason': _EXTERNAL_GATHER_UNAVAILABLE_REASON,
+        'result_contract_version': _GATHERED_CONTENT_CONTRACT,
+        'result_outputs': {'prepared': 'structured-v1'},
+        'result_input_kinds': {},
+        'partial_inputs_supported': False,
+        'produces': (PRODUCES_RETAINED_RESULTS,),
+        'cost_class': COST_CLASS_HIGH,
+        # One per plan. Every agent step loads a kernel from scratch -- resolving Key Vault
+        # secrets, hydrating each plugin the agent declares, introspecting SQL and Cosmos
+        # schemas -- and there is no live kernel cache to amortise it. Two agent steps means
+        # paying all of that twice.
+        'max_per_plan': 1,
+        'adapter': CAPABILITY_AGENT_INVOKE,
+    },
+    {
         'id': CAPABILITY_COMPOSE,
         'label': 'Prepare content',
-        'plan_contract_version': DEPENDENCY_PLAN_CONTRACT_VERSION,
-        'result_contract_version': _DEPENDENCY_RESULT_CONTRACTS[CAPABILITY_COMPOSE],
         'role': ROLE_REASON,
+        'result_contract_version': 'compose-v1',
         'summary': 'Compose reusable text, Markdown, records, or structured content.',
         'when_to_use': (
             'Explicitly draft an answer or report, or prepare structured data. Bind every '
             'retained input by name. Source-free content is supported. This does not create '
             'files, infer a file format, retrieve sources, or call tools. Declare each output '
-            'and select final_response when its text should become the chat answer.'
+            'and select final_response when its text should become the chat answer. Set '
+            'knowledge_basis: general_knowledge for stable, widely known facts that need no '
+            'retrieval; sources when every claim must come from the named inputs (private '
+            'documents, current or local facts); sources_and_general_knowledge when named inputs '
+            'lead but stable general knowledge may fill gaps. Mark an input optional only when '
+            'the answer can still be written from general knowledge if that input fails. Name '
+            'the visuals the Markdown answer should author: chart, diagram (Mermaid), or '
+            'image_proposal (cards the user approves before generation). Place bound '
+            'generate_image outputs with [[image:<step_id>]] tokens in Markdown, or as '
+            '"asset:<step_id>" image sources in a prepared slide deck.'
         ),
         'settings_gates': (),
         'settings_gates_any': (),
@@ -882,27 +853,104 @@ def _dependency_capabilities():
         'requires_scope': (),
         'inputs': {
             'type': 'object',
-            'properties': {'instruction': {'type': 'string', 'minLength': 1}},
+            'properties': {
+                'instruction': {'type': 'string', 'minLength': 1},
+                'knowledge_basis': {'type': 'string', 'enum': list(KNOWLEDGE_BASES)},
+                'visuals': {
+                    'type': 'array', 'items': {'type': 'string', 'enum': list(VISUAL_KINDS)},
+                    'uniqueItems': True, 'maxItems': len(VISUAL_KINDS),
+                },
+            },
             'required': ['instruction'],
             'additionalProperties': False,
         },
         'result_input_kinds': {'*': tuple(sorted(RESULT_KINDS))},
         'partial_inputs_supported': True,
+        'optional_inputs_supported': True,
         'result_outputs': {},
         'result_output_kinds': ('text-v1', 'markdown-v1', 'records-v1', 'structured-v1'),
-        'produces': ('retained_results',),
+        'produces': (PRODUCES_RETAINED_RESULTS,),
         'cost_class': COST_CLASS_LOW,
         'max_per_plan': None,
         'adapter': CAPABILITY_COMPOSE,
-        'terminal': False,
-    })
-    catalog = get_generated_file_export_catalog()
-    source_kinds = {
-        'records-v1': 'records', 'text-v1': 'text', 'markdown-v1': 'markdown',
-        'structured-v1': 'structured_value', 'comparison-v1': 'structured_value',
-    }
+    },
+    {
+        'id': CAPABILITY_GENERATE_IMAGE,
+        'label': 'Generate image',
+        'role': ROLE_REASON,
+        'result_contract_version': 'generate-image-v1',
+        'summary': 'Generate one new AI illustration and keep it for the answer and for DOCX, PDF, or PPTX files.',
+        'when_to_use': (
+            'Use one step for each image the user explicitly asked for, including through the Image '
+            'control. The result is a new AI-generated illustration, never a photograph or a picture '
+            'found on the web: for a real person or historical figure, ask for an illustrated portrait '
+            'and caption it as an AI illustration. Bind the "image" output to the compose step that '
+            'writes the answer or file content, as an optional named input, so the answer and any '
+            'DOCX, PDF, or PPTX file include it. Named text inputs may add visual details to the '
+            'prompt. Images the user did not ask for stay image proposal cards on compose.'
+        ),
+        'settings_gates': ('enable_image_generation',),
+        'settings_gates_any': (),
+        'gate': None,
+        'request_gate': None,
+        'requires_scope': (),
+        'runtime_readiness': 'image_generation',
+        'inputs': generate_image_arguments_schema(),
+        'result_input_kinds': {'*': ('text-v1', 'markdown-v1')},
+        'partial_inputs_supported': False,
+        'result_outputs': {'image': IMAGE_ASSET_KIND},
+        'produces': (PRODUCES_RETAINED_RESULTS,),
+        'cost_class': COST_CLASS_HIGH,
+        'max_per_plan': MAX_GENERATED_IMAGES_PER_PLAN,
+        'adapter': CAPABILITY_GENERATE_IMAGE,
+        # Persisting the image is this step's approved output, so it may publish one chat
+        # image like Render publishes a file. It runs no tools; any other file fails closed.
+        'publishes_generated_images': True,
+    },
+)
+
+_RENDER_SOURCE_KINDS = {
+    'records-v1': 'records', 'text-v1': 'text', 'markdown-v1': 'markdown',
+    'structured-v1': 'structured_value', 'comparison-v1': 'structured_value',
+}
+
+
+def _resolve_descriptor(descriptor):
+    """One registered descriptor with the parts another service owns filled in."""
+    capability = deepcopy(descriptor)
+    capability['plan_contract_version'] = DEPENDENCY_PLAN_CONTRACT_VERSION
+    if capability['id'] == CAPABILITY_TABULAR_ANALYZE:
+        # The native computation contract is read only when a tabular step is considered.
+        from functions_orchestration_native_results import (
+            native_orchestration_arguments_schema, native_orchestration_output_specs,
+        )
+
+        capability['inputs'] = native_orchestration_arguments_schema()
+        capability['result_output_variants'] = [
+            {
+                'native_operation': operation, 'task_type': task_type,
+                'outputs': [
+                    {'name': spec.name, 'kind': spec.kind}
+                    for spec in native_orchestration_output_specs(operation, task_type=task_type)
+                ],
+            }
+            for operation, task_type in (
+                ('query', 'structured_export'), ('transform', 'structured_export'),
+                ('analysis', 'hierarchical_analysis'), ('transform', 'combined'),
+            )
+        ]
+    return capability
+
+
+def _render_file_descriptor():
+    """The Render capability, built from the shared export catalog and output service."""
+    # Export and output services are imported only when render work is considered.
+    from functions_generated_export_registry import get_generated_file_export_catalog
+    from functions_orchestration_output_store import OUTPUT_CONTRACT_VERSION
+    import functions_orchestration_rendering as rendering
+
     render_capability = {
-        'id': 'render_file',
+        'id': CAPABILITY_RENDER_FILE,
         'label': 'Render prepared file',
         'plan_contract_version': DEPENDENCY_PLAN_CONTRACT_VERSION,
         'result_contract_version': OUTPUT_CONTRACT_VERSION,
@@ -912,7 +960,8 @@ def _dependency_capabilities():
             'Bind exactly one complete retained source. Select an explicit file name, format, '
             'profile, and supported options. Draft content with Reason first when necessary; '
             'Render does not compose, retrieve, select a model, or infer a representation. '
-            'Its outputs are durable file deliveries, not named data results.'
+            'Its outputs are durable file deliveries, not named data results. DOCX, PDF, and '
+            'PPTX files embed the generated images their prepared source places.'
         ),
         'settings_gates': (),
         'settings_gates_any': (),
@@ -920,33 +969,53 @@ def _dependency_capabilities():
         'request_gate': None,
         'requires_scope': (),
         'runtime_service': 'rendering_service',
-        'inputs': render_file_arguments_schema(catalog),
-        'result_input_kinds': {'source': tuple(source_kinds)},
+        'inputs': render_file_arguments_schema(get_generated_file_export_catalog()),
+        'result_input_kinds': {'source': tuple(_RENDER_SOURCE_KINDS)},
         'required_result_inputs': ('source',),
-        'render_source_kinds': source_kinds,
+        'render_source_kinds': dict(_RENDER_SOURCE_KINDS),
         'partial_inputs_supported': False,
         'result_outputs': {},
-        'produces': ('artifacts',),
+        'produces': (PRODUCES_ARTIFACTS,),
         'cost_class': COST_CLASS_LOW,
         'max_per_plan': None,
-        'adapter': 'render_file',
-        'terminal': False,
+        'adapter': CAPABILITY_RENDER_FILE,
     }
     if not callable(getattr(rendering, 'resume_render_file', None)):
         render_capability['runtime_unavailable_reason'] = 'rendering_service_unavailable'
-    capabilities.append(render_capability)
+    return render_capability
+
+
+def _build_capabilities(candidate_ids=None):
+    """Registered descriptors in registry order, resolved; optionally only some of them.
+
+    The native tabular contract and the export catalog belong to other services and are
+    read only for the descriptors requested, so looking up one capability does not load
+    the rendering and native computation stacks.
+    """
+    capabilities = [
+        _resolve_descriptor(descriptor) for descriptor in CAPABILITY_REGISTRY
+        if candidate_ids is None or descriptor['id'] in candidate_ids
+    ]
+    if candidate_ids is None or CAPABILITY_RENDER_FILE in candidate_ids:
+        capabilities.append(_render_file_descriptor())
     return capabilities
 
 
-def capabilities_for_contract(contract_version=1):
-    if type(contract_version) is not int or contract_version not in (1, DEPENDENCY_PLAN_CONTRACT_VERSION):
+def _require_contract(contract_version):
+    """Only the Gather / Reason / Render contract exists; anything else is a caller error."""
+    if type(contract_version) is not int or contract_version != DEPENDENCY_PLAN_CONTRACT_VERSION:
         raise ValueError('Unsupported orchestration plan contract.')
-    return CAPABILITY_REGISTRY if contract_version == 1 else _dependency_capabilities()
+
+
+def capabilities_for_contract(contract_version=DEPENDENCY_PLAN_CONTRACT_VERSION):
+    """Every registered capability, resolved, regardless of whether it is enabled."""
+    _require_contract(contract_version)
+    return _build_capabilities()
 
 
 def get_capability_result_outputs(capability, arguments):
     """Resolve server-owned output requirements for an approved operation."""
-    if capability.get('plan_contract_version') == 2 and capability['id'] == CAPABILITY_TABULAR_ANALYZE:
+    if capability['id'] == CAPABILITY_TABULAR_ANALYZE:
         from functions_orchestration_native_results import native_orchestration_output_specs
 
         outputs = native_orchestration_output_specs(
@@ -956,48 +1025,22 @@ def get_capability_result_outputs(capability, arguments):
     return capability['result_outputs'], capability.get('optional_result_outputs', {})
 
 
-# Every plan ends with this, so the planner never has to be told to include it and a plan
-# that omits it is repaired rather than rejected.
-TERMINAL_CAPABILITY_ID = CAPABILITY_RESPOND
-
-
-def all_capability_ids(*, contract_version=1):
+def all_capability_ids(*, contract_version=DEPENDENCY_PLAN_CONTRACT_VERSION):
     """Every capability identifier, regardless of whether it is currently enabled."""
     return [capability['id'] for capability in capabilities_for_contract(contract_version)]
 
 
-def get_capability(capability_id, *, contract_version=1):
+def get_capability(capability_id, *, contract_version=DEPENDENCY_PLAN_CONTRACT_VERSION):
     """Look up one descriptor, or None when the id is not registered.
 
     Returning None rather than raising is deliberate: the caller is usually the validator
     checking planner output, where an unknown capability is an expected kind of bad input
     rather than a programming error.
     """
+    _require_contract(contract_version)
     if not isinstance(capability_id, str):
         return None
-    if contract_version != 1 or type(contract_version) is not int:
-        return next((
-            capability for capability in capabilities_for_contract(contract_version)
-            if capability['id'] == capability_id.strip()
-        ), None)
-    return CAPABILITY_BY_ID.get(capability_id.strip())
-
-
-def phase_index(capability_or_id):
-    """Where a capability sits in the run, as a sortable integer.
-
-    Accepts a descriptor or an id so callers do not have to look one up first. An unknown
-    capability sorts to the end rather than the front: whatever it is, running it before
-    everything that gathers would be the more damaging guess.
-    """
-    capability = capability_or_id
-    if isinstance(capability_or_id, str):
-        capability = get_capability(capability_or_id)
-    phase = (capability or {}).get('phase')
-    try:
-        return CAPABILITY_PHASES.index(phase)
-    except ValueError:
-        return len(CAPABILITY_PHASES)
+    return next(iter(_build_capabilities({capability_id.strip()})), None)
 
 
 def _gates_pass(capability, settings):
@@ -1043,7 +1086,7 @@ def _request_gate_passes(capability, settings, request_context):
         raise CapabilityResolutionError('Capability access could not be checked.') from exc
 
 
-def _dependency_allowed_ids(settings, allowed_ids):
+def _allowed_ids(settings, allowed_ids):
     narrowed = None
     for source, values in (
         ('settings', settings.get('chat_orchestration_enabled_capabilities')),
@@ -1055,20 +1098,23 @@ def _dependency_allowed_ids(settings, allowed_ids):
             type(value) is not str or not value.strip() for value in values
         ):
             log_event(
-                '[ORCHESTRATION_REGISTRY] Invalid harness capability allowlist.',
-                level=logging.WARNING, extra={'source': source, 'plan_contract_version': 2},
+                '[ORCHESTRATION_REGISTRY] Invalid orchestration capability allowlist.',
+                level=logging.WARNING, extra={'source': source},
             )
             raise CapabilityResolutionError('The orchestration capability configuration is invalid.')
         if not values:
             continue
-        identifiers = {value.strip() for value in values}
+        identifiers = {
+            RETIRED_CAPABILITY_ALIASES.get(value.strip(), value.strip()) for value in values
+        }
         narrowed = identifiers if narrowed is None else narrowed & identifiers
     return narrowed
 
 
 def resolve_available_capabilities(
     settings, allowed_ids=None, request_context=None, candidate_ids=None, unavailable=None,
-    *, contract_version=1, export_catalog=None,
+    *, contract_version=DEPENDENCY_PLAN_CONTRACT_VERSION, export_catalog=None,
+    include_runtime_bindings=True,
 ):
     """The capabilities this deployment currently permits, in registry order.
 
@@ -1080,11 +1126,15 @@ def resolve_available_capabilities(
     ``request_context`` narrows further to what *this caller, asking this question* may use
     -- app roles, whether they have any agents, whether their message contains a link.
     Omitted, the answer describes the deployment, which is what the admin surface needs.
+    Capabilities that need request-time services (external source bindings, the native
+    tabular bridge, the rendering service) are offered only when the context supplies them.
+    ``include_runtime_bindings=False`` skips only those service checks, for a caller asking
+    whether settings, the allowlist and request gates permit a capability at all -- catalog
+    discovery, the bootstrap payload, and the source preflight that is itself one of those
+    services. Planning and execution always keep them.
 
-    For v1, the terminal capability is never removed by the narrowing. For v2, the
-    saved settings and caller narrowing are intersected, with no mandatory capability
-    or aliases for legacy IDs. A nonempty legacy list does not opt into composition
-    or file rendering. Malformed v2 allowlists fail closed.
+    The saved settings and caller narrowing are intersected, with no mandatory capability.
+    A malformed allowlist fails closed.
 
     ``candidate_ids`` limits an internal lookup to specific descriptors, avoiding unrelated
     gates and their storage/import work when an executor checks one capability.
@@ -1092,32 +1142,21 @@ def resolve_available_capabilities(
     ``unavailable`` optionally receives stable reasons from the same checks. It never
     infers permissions from a manual control or from model-authored text.
 
-    An explicit v2 ``export_catalog`` narrows supported format/profile pairs. Empty
-    means no Render work, not the shared default. None preserves shared definitions.
+    An explicit ``export_catalog`` narrows supported format/profile pairs. Empty means no
+    Render work, not the shared default. None preserves shared definitions.
     """
+    _require_contract(contract_version)
     settings = settings if isinstance(settings, dict) else {}
-
-    if type(contract_version) is int and contract_version == DEPENDENCY_PLAN_CONTRACT_VERSION:
-        narrowed = _dependency_allowed_ids(settings, allowed_ids)
-        admitted_catalog = resolve_admitted_export_catalog(export_catalog) if export_catalog is not None else None
-    else:
-        narrowed = None
-        admitted_catalog = None
-        if isinstance(allowed_ids, (list, tuple, set)):
-            narrowed = {str(value).strip() for value in allowed_ids if str(value).strip()}
-            if not narrowed:
-                narrowed = None
+    narrowed = _allowed_ids(settings, allowed_ids)
+    admitted_catalog = resolve_admitted_export_catalog(export_catalog) if export_catalog is not None else None
 
     available = []
-    for capability in capabilities_for_contract(contract_version):
-        if candidate_ids is not None and capability['id'] not in candidate_ids:
-            continue
+    for capability in _build_capabilities(candidate_ids):
         if narrowed is not None and capability['id'] not in narrowed:
-            if contract_version != 1 or capability['id'] != TERMINAL_CAPABILITY_ID:
-                if unavailable is not None:
-                    unavailable[capability['id']] = 'not_enabled_for_orchestration'
-                continue
-        if capability['id'] == 'render_file' and admitted_catalog is not None:
+            if unavailable is not None:
+                unavailable[capability['id']] = 'not_enabled_for_orchestration'
+            continue
+        if capability['id'] == CAPABILITY_RENDER_FILE and admitted_catalog is not None:
             if not admitted_catalog:
                 if unavailable is not None:
                     unavailable[capability['id']] = 'export_catalog_unavailable'
@@ -1136,8 +1175,8 @@ def resolve_available_capabilities(
             if unavailable is not None:
                 unavailable[capability['id']] = capability['runtime_unavailable_reason']
             continue
-        if capability.get('runtime_service') == 'rendering_service':
-            # The legacy catalog must not import or initialize concrete output services.
+        if include_runtime_bindings and capability.get('runtime_service') == 'rendering_service':
+            # The concrete output service is imported only when render work is considered.
             from functions_orchestration_rendering import OrchestrationRenderingService
 
             if not isinstance((request_context or {}).get('rendering_service'), OrchestrationRenderingService):
@@ -1147,7 +1186,7 @@ def resolve_available_capabilities(
         bindings = capability.get('runtime_bindings') or (
             (capability['runtime_binding'],) if capability.get('runtime_binding') else ()
         )
-        if any(not callable((request_context or {}).get(name)) for name in bindings):
+        if include_runtime_bindings and any(not callable((request_context or {}).get(name)) for name in bindings):
             if unavailable is not None:
                 unavailable[capability['id']] = capability['runtime_binding_unavailable_reason']
             continue
@@ -1155,6 +1194,17 @@ def resolve_available_capabilities(
             if unavailable is not None:
                 unavailable[capability['id']] = 'feature_disabled'
             continue
+        if capability.get('runtime_readiness') == 'image_generation':
+            # Image service metadata is read only when image steps are actually considered.
+            from functions_orchestration_images import image_generation_readiness
+
+            readiness = image_generation_readiness(settings)
+            if readiness['status'] != 'available':
+                if unavailable is not None:
+                    unavailable[capability['id']] = readiness['reason']
+                continue
+            capability = deepcopy(capability)
+            capability['inputs'] = generate_image_arguments_schema(readiness)
         if not _request_gate_passes(capability, settings, request_context):
             if unavailable is not None:
                 reason = 'caller_access_required'
@@ -1175,8 +1225,9 @@ def resolve_available_capabilities(
 
 
 def resolve_available_capability_ids(
-    settings, allowed_ids=None, request_context=None, candidate_ids=None, *, contract_version=1,
-    export_catalog=None,
+    settings, allowed_ids=None, request_context=None, candidate_ids=None, *,
+    contract_version=DEPENDENCY_PLAN_CONTRACT_VERSION, export_catalog=None,
+    include_runtime_bindings=True,
 ):
     """Identifiers only, for the validator and for the bootstrap payload."""
     return [
@@ -1185,6 +1236,7 @@ def resolve_available_capability_ids(
             settings, allowed_ids=allowed_ids, request_context=request_context,
             candidate_ids=candidate_ids,
             contract_version=contract_version, export_catalog=export_catalog,
+            include_runtime_bindings=include_runtime_bindings,
         )
     ]
 
@@ -1200,28 +1252,27 @@ def build_planner_capability_projection(capabilities):
         projection.append({
             'id': capability['id'],
             'label': capability['label'],
-            **({'role': capability['role']} if 'role' in capability else {'phase': capability['phase']}),
+            'role': capability['role'],
             'summary': capability['summary'],
             'when_to_use': capability['when_to_use'],
             'inputs': capability['inputs'],
             'cost': capability['cost_class'],
             'produces': list(capability.get('produces') or ()),
             'max_per_plan': capability.get('max_per_plan'),
-            **({
-                'plan_contract_version': capability['plan_contract_version'],
-                'result_contract_version': capability['result_contract_version'],
-                'result_input_kinds': {
-                    name: list(kinds) for name, kinds in capability['result_input_kinds'].items()
-                },
-                'partial_inputs_supported': capability['partial_inputs_supported'],
-                **({'required_result_inputs': list(capability['required_result_inputs'])}
-                   if capability.get('required_result_inputs') else {}),
-                'result_outputs': capability['result_outputs'],
-                'optional_result_outputs': capability.get('optional_result_outputs', {}),
-                'result_output_kinds': list(capability.get('result_output_kinds') or ()),
-                **({'result_output_variants': capability['result_output_variants']}
-                   if 'result_output_variants' in capability else {}),
-            } if 'role' in capability else {}),
+            'plan_contract_version': capability['plan_contract_version'],
+            'result_contract_version': capability['result_contract_version'],
+            'result_input_kinds': {
+                name: list(kinds) for name, kinds in capability['result_input_kinds'].items()
+            },
+            'partial_inputs_supported': capability['partial_inputs_supported'],
+            **({'optional_inputs_supported': True} if capability.get('optional_inputs_supported') else {}),
+            **({'required_result_inputs': list(capability['required_result_inputs'])}
+               if capability.get('required_result_inputs') else {}),
+            'result_outputs': capability['result_outputs'],
+            'optional_result_outputs': capability.get('optional_result_outputs', {}),
+            'result_output_kinds': list(capability.get('result_output_kinds') or ()),
+            **({'result_output_variants': capability['result_output_variants']}
+               if 'result_output_variants' in capability else {}),
         })
     return projection
 
@@ -1230,18 +1281,16 @@ def build_capability_client_projection(capabilities):
     """What the browser is shown, so the plan card can label and cost a step.
 
     Narrower than the planner's view: the card renders a step the planner already chose,
-    so it needs naming and cost but not the guidance that drove the choice.
+    so it needs naming, purpose and cost but not the guidance that drove the choice.
     """
     projection = []
     for capability in capabilities or ():
         projection.append({
             'id': capability['id'],
             'label': capability['label'],
-            **({'role': capability['role']} if 'role' in capability else {'phase': capability['phase']}),
+            'role': capability['role'],
             'summary': capability['summary'],
             'cost': capability['cost_class'],
-            'terminal': bool(capability.get('terminal')),
-            **({'plan_contract_version': capability['plan_contract_version']} if 'role' in capability else {}),
         })
     return projection
 
@@ -1296,29 +1345,13 @@ def get_capability_document_limit(capability, settings=None):
             settings=settings,
         ))
     except Exception as exc:
-        if capability.get('plan_contract_version') == DEPENDENCY_PLAN_CONTRACT_VERSION:
-            raise CapabilityResolutionError('Document limits could not be checked.') from exc
-        log_event(
-            f"[ORCHESTRATION_REGISTRY] Could not resolve the document limit for "
-            f"{action_type}: {exc}",
-            level=logging.WARNING,
-        )
-        return None
+        raise CapabilityResolutionError('Document limits could not be checked.') from exc
 
 
-def describe_registry(*, contract_version=1):
+def describe_registry(*, contract_version=DEPENDENCY_PLAN_CONTRACT_VERSION):
     """A stable summary for tests and for the documentation inventory."""
-    capability_ids = all_capability_ids(contract_version=contract_version)
-    if contract_version == DEPENDENCY_PLAN_CONTRACT_VERSION:
-        return {
-            'contract_version': DEPENDENCY_PLAN_CONTRACT_VERSION,
-            'capability_ids': capability_ids,
-            'terminal_capability_id': None,
-            'roles': [ROLE_GATHER, ROLE_REASON, ROLE_RENDER],
-        }
     return {
-        'contract_version': CAPABILITY_REGISTRY_CONTRACT_VERSION,
-        'capability_ids': capability_ids,
-        'terminal_capability_id': TERMINAL_CAPABILITY_ID,
-        'phases': list(CAPABILITY_PHASES),
+        'contract_version': DEPENDENCY_PLAN_CONTRACT_VERSION,
+        'capability_ids': all_capability_ids(contract_version=contract_version),
+        'roles': [ROLE_GATHER, ROLE_REASON, ROLE_RENDER],
     }

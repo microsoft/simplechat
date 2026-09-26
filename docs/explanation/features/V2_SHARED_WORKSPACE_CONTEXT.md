@@ -276,6 +276,12 @@ The group context has no equivalent top-level field; the group Members section
 reads its operations from the member list. See
 [V2 Public Members](V2_PUBLIC_MEMBERS.md).
 
+From version **0.261.182**, the public context opens `identities` and `sync`
+for the Owner, Admins and DocumentManagers when File Sync is enabled for the
+workspace, and carries `identity_management` and `file_source_management`,
+the same hints the group context has. See
+[V2 Public Connections](V2_PUBLIC_CONNECTIONS.md).
+
 `ui_tests/test_v2_personal_document_scope.py` provides the personal-document
 integration baseline added in version **0.261.128**. It checks that an unrelated
 active group does not retarget personal reads, search/tag filters, action

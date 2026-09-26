@@ -1,5 +1,5 @@
 // test_v2_public_membership_logic.mjs
-// Version: 0.261.181
+// Version: 0.261.180
 // Implemented in: 0.261.179
 // Executes the real V2 public membership adapter (createPublicMembershipClient in
 // lib/groupMembership.ts): the public routes each call sends, the strict envelope readers reused

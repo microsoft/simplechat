@@ -543,6 +543,8 @@ def register_route_backend_users(bp):
                     'navbar_layout', 'chatLayout', 'showChatTitle', 'chatSplitSizes',
                     'deepResearchDefaultEnabled',
                     'orchestrationApprovalMode',
+                    # The Orchestrate model choice, used by the V2 interface only.
+                    'orchestrationModelRouting', 'orchestrationPreferredModelId',
                     'aiNoticeDismissal',
                     'sidebarToggleStyle', 'sidebarMenuState', 'fontSizePreference',
                     'conversationContentsDrawerEnabled',
@@ -604,6 +606,21 @@ def register_route_backend_users(bp):
                     approval_mode = settings_to_update["orchestrationApprovalMode"]
                     if not isinstance(approval_mode, str) or approval_mode not in APPROVAL_MODES:
                         return jsonify({"error": "Invalid orchestration approval mode"}), 400
+
+                # The Orchestrate model choice: Auto, or one pinned catalog selection key. The
+                # key only picks an option in the user's own picker; every request still
+                # authorizes the model it names, so this validates shape, not access.
+                if "orchestrationModelRouting" in settings_to_update:
+                    model_routing = settings_to_update["orchestrationModelRouting"]
+                    if not isinstance(model_routing, str) or model_routing not in ("auto", "manual"):
+                        return jsonify({"error": "Invalid orchestration model routing"}), 400
+
+                if "orchestrationPreferredModelId" in settings_to_update:
+                    pinned_model = settings_to_update["orchestrationPreferredModelId"]
+                    pinned_model = pinned_model.strip() if isinstance(pinned_model, str) else ""
+                    if not pinned_model or len(pinned_model) > 512 or not pinned_model.isprintable():
+                        return jsonify({"error": "Invalid orchestration model"}), 400
+                    settings_to_update["orchestrationPreferredModelId"] = pinned_model
 
                 if "sidebarToggleStyle" in settings_to_update:
                     sidebar_toggle_style = str(settings_to_update.get("sidebarToggleStyle") or "large").strip().lower()

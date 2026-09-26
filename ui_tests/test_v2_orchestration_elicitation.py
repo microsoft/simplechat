@@ -1,9 +1,10 @@
 # test_v2_orchestration_elicitation.py
 """
 UI test for the V2 chat orchestration elicitation card: paged schema form and the MCP answer shape.
-Version: 0.261.115
+Version: 0.261.139
 Implemented in: 0.261.085
 Rich answers implemented in: 0.261.096
+Single orchestration contract updated in: 0.261.139
 
 When the planner cannot plan without more from the user it returns an elicitation -- a flat
 JSON-Schema object of primitives -- instead of a plan. The card renders it as a short, paged
@@ -113,8 +114,17 @@ async (spec) => {
                           turn_id: parsed.turn_id,
                           conversation_id: parsed.conversation_id,
                           revision: 1,
+                          planner_contract_version: 2,
                           intent: { summary: 'Use the supplied answer', complexity: 'simple' },
-                          steps: [{ step_id: 'respond', capability_id: 'respond', title: 'Answer', arguments: {} }],
+                          steps: [{
+                              step_id: 'answer', capability_id: 'compose', role: 'reason', title: 'Answer',
+                              arguments: { instruction: 'Use the supplied answer.' },
+                              inputs: {}, outputs: [{ name: 'answer', kind: 'markdown-v1' }], depends_on: [],
+                          }],
+                          final_response: {
+                              version: 'orchestration-input-binding-v1', step_id: 'answer',
+                              output_name: 'answer', existing_result: null,
+                          },
                           approval: { mode: 'manual', state: 'pending', timeout_seconds: 0 },
                           status: 'awaiting_approval',
                       },

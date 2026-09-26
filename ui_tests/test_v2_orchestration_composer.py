@@ -1,8 +1,9 @@
 # test_v2_orchestration_composer.py
 """
 UI test for the V2 Composer's orchestration mode: the toggle, the manual-controls disclosure.
-Version: 0.261.132
-Implemented in: 0.261.085; Image requests orchestration image proposals since 0.261.132
+Version: 0.261.137
+Implemented in: 0.261.085; Image requests orchestration image proposals since 0.261.132;
+the Orchestrate model picker folds under Manual controls since 0.261.137
 
 Orchestration inverts the composer. The Orchestrate toggle appears only where the deployment ships
 the feature, is on by default wherever the deployment offers it, and -- while on -- folds the
@@ -33,6 +34,11 @@ from test_support.versioning import assert_app_version_at_least  # noqa: E402
 
 
 IMPLEMENTED_IN = "0.261.085"
+
+# The Orchestrate model picker's tooltip, which identifies it among the manual controls.
+_ORCHESTRATION_MODEL_TITLE = (
+    "Auto chooses by task, then admin priority and favorites. A specific model stays pinned."
+)
 
 _PAGE = None
 
@@ -201,11 +207,18 @@ def test_disclosure_restores_the_manual_controls():
         page.evaluate(_SEED_COMPOSER, {"features": _features(), "orchestration": _orchestration()})
 
         assert _has(page, '[title="Documents"]') is False, "the pickers start collapsed"
+        assert _has(page, f'[title="{_ORCHESTRATION_MODEL_TITLE}"]') is False, (
+            "the Orchestrate model picker folds away with the other pickers rather than "
+            "sitting above the input"
+        )
 
         page.click('#mount-a [title="Manual controls"]')
         page.wait_for_function(
             "() => Boolean(document.querySelector('#mount-a [title=\"Documents\"]'))",
             timeout=5000,
+        )
+        assert _has(page, f'[title="{_ORCHESTRATION_MODEL_TITLE}"]') is True, (
+            "the disclosure brings the Orchestrate model picker back in the model picker's slot"
         )
 
         # Still orchestrating -- the disclosure reveals, it does not leave the mode. Anything
@@ -242,7 +255,7 @@ def test_orchestration_image_control_requests_image_proposals():
         image.click()
         assert image.get_attribute("aria-pressed") == "true"
         status = page.get_by_role("status").filter(
-            has_text="Orchestrate will include image proposals for you to approve.",
+            has_text="Orchestrate will plan the images you ask for and generate them when the plan runs.",
         )
         status.wait_for(state="visible")
         assert page.get_by_title("Deep research", exact=True).is_enabled()

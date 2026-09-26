@@ -1,7 +1,7 @@
 # test_v2_public_members.py
 """
 Production-SPA coverage for the native V2 public workspace Members section (M10A).
-Version: 0.261.181
+Version: 0.261.180
 Implemented in: 0.261.179
 
 Exercises the real Members section -- the shared, scope-driven section (`MembersSection.tsx`) given

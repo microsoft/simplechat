@@ -28,6 +28,7 @@ import {
 import { orderStepsForDisplay } from '../../lib/orchestrationPlan';
 import { fetchConversationRuns, fetchRunSteps, isOrchestrationRunWaiting } from '../../lib/orchestration';
 import type { OrchestrationPlan, PersistedRunStep } from '../../lib/orchestration';
+import { legacyPlanErrorMessage } from '../../lib/orchestrationErrors';
 
 /** Mirror of the store's private scope key; the NUL separator must match `orchestrationStore`. */
 function scopeKey(conversationId: string, turnId: string): string {
@@ -90,6 +91,7 @@ export function OrchestrationMapView({
     const [expanded, setExpanded] = useState<Set<string>>(new Set());
     /** Steps fetched for rows whose plan is not in memory, by run id. */
     const [fetchedSteps, setFetchedSteps] = useState<Record<string, PersistedRunStep[]>>({});
+    const [stepErrors, setStepErrors] = useState<Record<string, string>>({});
     const [loadingSteps, setLoadingSteps] = useState<Set<string>>(new Set());
     /** Bumped by Retry so a failed hydration can be attempted again. */
     const [retryToken, setRetryToken] = useState(0);
@@ -138,6 +140,7 @@ export function OrchestrationMapView({
     useEffect(() => {
         setExpanded(new Set());
         setFetchedSteps({});
+        setStepErrors({});
         setLoadingSteps(new Set());
         setRetryToken(0);
     }, [conversationId]);
@@ -158,7 +161,7 @@ export function OrchestrationMapView({
                         || plan?.status === 'waiting' ? 'waiting' as const : 'running' as const,
                     live: true,
                     stepCount: plan?.steps.length ?? 0,
-                    artifactCount: plan?.planner_contract_version === 2 ? 0 : plan?.outputs?.length ?? 0,
+                    artifactCount: 0,
                 };
             });
         const settled: MapRow[] = (history as RunHistoryEntry[])
@@ -194,14 +197,23 @@ export function OrchestrationMapView({
         }
 
         setLoadingSteps((previous) => new Set(previous).add(runId));
+        setStepErrors((previous) => {
+            const next = { ...previous };
+            delete next[runId];
+            return next;
+        });
         fetchRunSteps(runId, { conversationId })
             .then((steps) => {
                 if (mountedRef.current) {
                     setFetchedSteps((previous) => ({ ...previous, [runId]: steps }));
                 }
             })
-            .catch(() => {
+            .catch((error) => {
                 if (mountedRef.current) {
+                    const legacyMessage = legacyPlanErrorMessage(error);
+                    if (legacyMessage) {
+                        setStepErrors((previous) => ({ ...previous, [runId]: legacyMessage }));
+                    }
                     setFetchedSteps((previous) => ({ ...previous, [runId]: [] }));
                 }
             })
@@ -256,7 +268,7 @@ export function OrchestrationMapView({
                 const isShown = row.turnId === shownTurnId;
                 const candidate = plansMap[scopeKey(conversationId, row.turnId)];
                 const plan: OrchestrationPlan | undefined = candidate?.run_id === row.runId ? candidate : undefined;
-                const planSteps = plan ? orderStepsForDisplay(plan.steps, plan.planner_contract_version) : [];
+                const planSteps = plan ? orderStepsForDisplay(plan.steps) : [];
                 // A plan in memory is authoritative; otherwise the stored step records stand in,
                 // which is what lets a row from another device expand to real titles.
                 const stepTitles: string[] = plan
@@ -266,9 +278,9 @@ export function OrchestrationMapView({
                           .sort((a, b) => (a.step_index ?? 0) - (b.step_index ?? 0))
                           .map((step, index) => step.title || `Step ${index + 1}`);
                 const stepCount = plan ? planSteps.length : row.stepCount || stepTitles.length;
-                const artifactCount = plan && plan.planner_contract_version !== 2
-                    ? (plan.outputs?.length ?? 0) : row.artifactCount;
+                const artifactCount = row.artifactCount;
                 const stepsLoading = loadingSteps.has(row.runId);
+                const stepError = stepErrors[row.runId];
 
                 return (
                     <li
@@ -339,6 +351,10 @@ export function OrchestrationMapView({
                                 <p className="flex items-center gap-1.5 px-3 pb-2 pl-9 text-xs text-text-3">
                                     <Loader2 size={12} className="animate-spin" />
                                     Loading steps&hellip;
+                                </p>
+                            ) : stepError ? (
+                                <p role="alert" className="alert px-3 pb-2 pl-9 text-xs text-warn">
+                                    {stepError}
                                 </p>
                             ) : stepTitles.length > 0 ? (
                                 <ol className="space-y-0.5 px-3 pb-2 pl-9">

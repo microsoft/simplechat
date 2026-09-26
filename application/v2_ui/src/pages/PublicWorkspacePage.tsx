@@ -32,6 +32,8 @@ import { WORKSPACE_SECTIONS_BY_ID } from './workspace/sections';
 import { PUBLIC_MANAGE_SECTIONS } from './workspace/publicManageSections';
 import { PublicDocumentsSection } from './workspace/DocumentsSection';
 import { PublicPromptsSection } from './workspace/PromptsSection';
+import { PublicIdentitiesSection } from './workspace/GroupIdentitiesSection';
+import { PublicFileSourcesSection } from './workspace/GroupFileSourcesSection';
 import { PublicMembersSection } from './workspace/PublicMembersSection';
 
 const CLASSIC_WORKSPACE_HREF = '/public_workspaces';
@@ -131,9 +133,12 @@ export function PublicWorkspacePage() {
     const basePath = workspaceId ? publicWorkspacePath(workspaceId) : '/public';
     const sections = useMemo(() => PUBLIC_WORKSPACE_SECTION_IDS.map((id) => {
         const { label, icon, group } = WORKSPACE_SECTIONS_BY_ID[id];
+        // Documents (M3), prompts (M9C) and connections -- identities and file sources (M10B) --
+        // render natively. Any remaining section still hands off to the classic surface.
+        const isNative = id === 'documents' || id === 'prompts' || id === 'identities' || id === 'sync';
         return {
             id, label, icon, group, blurb: PUBLIC_SECTION_BLURBS[id],
-            availabilityLabel: id === 'documents' || id === 'prompts' ? undefined : 'Classic',
+            availabilityLabel: isNative ? undefined : 'Classic',
         };
     }), []);
     const resolved = useMemo(() => resolveWorkspaceSections([...sections, ...PUBLIC_MANAGE_SECTIONS], context), [sections, context]);
@@ -270,6 +275,10 @@ export function PublicWorkspacePage() {
                                     : <EmptyState icon={<Lock size={28} />} title="Documents are not available" description={`You do not have access to this ${labels.lower_singular}'s documents.`} />
                             ) : section === 'prompts' && !resourceId ? (
                                 <div className="min-h-0 flex-1"><PublicPromptsSection context={context} /></div>
+                            ) : section === 'identities' && !resourceId ? (
+                                <PublicIdentitiesSection context={context} />
+                            ) : section === 'sync' && !resourceId ? (
+                                <PublicFileSourcesSection context={context} />
                             ) : (
                                 <GlassPanel elevation="flat" className="space-y-4 p-5">
                                     <SectionIntro title={selected.section.label} description={selected.section.blurb} />
