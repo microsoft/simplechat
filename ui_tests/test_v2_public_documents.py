@@ -2,7 +2,7 @@
 """
 Production-SPA coverage for native V2 public workspace document browsing (M3A),
 management (M3B) and generated-artifact approval (M3C).
-Version: 0.261.183
+Version: 0.261.184
 Implemented in: 0.261.132
 A coded failure shows the server's sentence (apiClient), and an archive takes the server's
 name: 0.261.164
@@ -13,6 +13,9 @@ Every scripted reply is the one the public routes send, held to them by
 functional_tests/test_public_document_fixture_parity.py: 0.261.179
 A generated artifact awaiting publication is shown, held, only to a workspace manager; a reader's
 rows, counts and places never include one: 0.261.183
+A link to a public document that no longer exists says so, and the header offers Classic tools for
+the legacy document upgrade rather than classic browsing: 0.261.184
+A coloured tag chip keeps readable text whatever colour the tag was given: 0.261.184
 
 Exercises real components, stores and navigation with closed synthetic HTTP.
 The read fixture never permits personal or group document requests, and never
@@ -130,6 +133,42 @@ def test_document_layout(public_documents_ui, theme, width, height):
         expect(ui.page.get_by_role("dialog", name="Document details", exact=True)).to_be_visible()
     ui.assert_no_overflow()
     ui.page.screenshot(path=str(SCREENSHOTS / f"{label}-details.png"), full_page=True)
+
+
+# The contrast between each coloured tag chip's text and its fill, from the computed styles.
+TAG_CHIP_CONTRAST = """() => {
+    const parse = (value) => (value.match(/[\\d.]+/g) || []).slice(0, 3).map(Number);
+    const channel = (value) => {
+        const unit = value / 255;
+        return unit <= 0.04045 ? unit / 12.92 : ((unit + 0.055) / 1.055) ** 2.4;
+    };
+    const luminance = ([red, green, blue]) => 0.2126 * channel(red) + 0.7152 * channel(green) + 0.0722 * channel(blue);
+    const chips = [...document.querySelectorAll('main span.rounded-full[style*="background-color"]')]
+        .filter((chip) => chip.textContent.trim());
+    return chips.map((chip) => {
+        const style = getComputedStyle(chip);
+        const text = luminance(parse(style.color));
+        const fill = luminance(parse(style.backgroundColor));
+        return {
+            name: chip.textContent.trim(), background: style.backgroundColor,
+            ratio: (Math.max(text, fill) + 0.05) / (Math.min(text, fill) + 0.05),
+        };
+    });
+}"""
+
+
+@pytest.mark.parametrize("theme", ["light", "dark"])
+def test_tag_chips_keep_readable_text_on_any_colour(public_documents_ui, theme):
+    """A tag's colour is user-chosen, so its chip takes black or white text by WCAG contrast: every
+    chip in the list reaches 4.5:1, including a mid-tone such as the team tag's green (M11)."""
+    ui = public_documents_ui
+    open_documents(ui, theme=theme)
+    chips = ui.page.evaluate(TAG_CHIP_CONTRAST)
+    assert any(chip["name"] == "team" and chip["background"] == "rgb(5, 150, 105)" for chip in chips), (
+        f"No team chip was listed: {chips}"
+    )
+    low = [chip for chip in chips if chip["ratio"] < 4.5]
+    assert not low, f"Tag chips below 4.5:1: {low}"
 
 
 def test_queries_use_whole_sets(public_documents_ui):
@@ -404,7 +443,14 @@ def test_refused_set_active_leaves_surface_functional(public_documents_ui):
 def test_classic_handoff(public_documents_ui):
     ui = public_documents_ui
     open_documents(ui)
-    ui.page.get_by_role("button", name="Open classic public workspace", exact=True).click()
+    # Public documents are fully native; the classic page remains only for the legacy document
+    # upgrade, so the header offers classic tools for that, as the group's does, never browsing.
+    link = ui.page.get_by_role("button", name="Open classic tools to upgrade legacy public workspace documents", exact=True)
+    expect(link).to_have_text("Classic tools")
+    expect(link).to_have_attribute("title", "Classic tools, including upgrading legacy documents")
+    expect(explorer(ui).get_by_role("button", name=re.compile(r"browse", re.IGNORECASE))).to_have_count(0)
+    expect(ui.page.get_by_role("main").get_by_text(re.compile(r"Browse in", re.IGNORECASE))).to_have_count(0)
+    link.click()
     expect(ui.page).to_have_url(f"{ORIGIN}/public_workspaces")
     assert ("/public_workspaces", "pub-a") in ui.classic_visits
 
@@ -1275,6 +1321,7 @@ def test_only_a_manager_is_shown_an_artifact_awaiting_publication(public_collabo
         if urlsplit(url).path == "/api/public-workspaces/pub-a/documents/pending-publication"
     ]
     assert detail and all(payload == {"error": PUBLIC_DOCUMENT_NOT_FOUND_ERROR} for payload in detail)
+    expect(dialog.get_by_role("alert")).to_contain_text(GONE_LINK_ERROR)
     expect(dialog).not_to_contain_text("Publishing colleague")
     expect(dialog.get_by_role("heading", name="Publication request", exact=True)).to_have_count(0)
     for label in ("Approve publication", "Reject publication", "Cancel publication request"):
@@ -1282,20 +1329,21 @@ def test_only_a_manager_is_shown_an_artifact_awaiting_publication(public_collabo
     assert not ui.operation_requests
 
 
-@pytest.mark.xfail(strict=True, reason=(
-    "Pre-existing product finding, surfaced by decision 27's tests: a link to a public document the "
-    "viewer cannot read (deleted, or a rejected or cancelled artifact, which a decision notice links "
-    "to) opens the review dialog on the public adapter's readRepair. That throws 'Public workspaces "
-    "have no access-removal cleanup to repair.', and the dialog shows that sentence instead of saying "
-    "the document is gone, as the group dialog does (DocumentCollaborationDialog.loadReview, "
-    "documentCollaboration.ts createPublicDocumentCollaboration.readRepair)."
-))
+GONE_LINK_ERROR = "The requested document or review no longer exists, or is not available in this workspace."
+GONE_LINK_STATUS = "This document or request is no longer available in this workspace."
+
+
 def test_a_link_to_a_public_document_that_no_longer_exists_says_so(public_collaboration_ui):
     ui = public_collaboration_ui
+    # A link to a public document the viewer can't read -- deleted, or a rejected or cancelled
+    # artifact, which a decision notice links to -- says the document is gone, as the group dialog
+    # does. A public workspace keeps no access-removal repair to fall back on.
     ui.open("/public/pub-a/documents?document_id=no-such-document")
-    expect(review_dialog(ui).get_by_role("alert")).to_contain_text(
-        "The requested document or review no longer exists, or is not available in this workspace.",
-    )
+    dialog = review_dialog(ui)
+    expect(dialog.get_by_role("alert")).to_contain_text(GONE_LINK_ERROR)
+    expect(dialog.get_by_role("status").filter(has_text=GONE_LINK_STATUS)).to_be_visible()
+    expect(dialog).not_to_contain_text("access-removal")
+    assert not ui.operation_requests
 
 
 def test_refused_set_active_leaves_a_publication_decision_working(public_collaboration_ui):

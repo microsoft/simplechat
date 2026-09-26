@@ -313,10 +313,12 @@ export function PromptWorkbench({
 
             <div className="flex min-h-0 flex-1 overflow-hidden">
                 {/* On a narrow screen the two panes take turns: showing an 80-character-wide
-                    list beside a rendered prompt would leave neither readable. */}
+                    list beside a rendered prompt would leave neither readable. The list never
+                    takes more than 45% of the width, so enlarged text can't push the details off
+                    the page. */}
                 <div
                     className={clsx(
-                        'min-h-0 w-full shrink-0 overflow-y-auto border-edge p-2 md:w-80 md:border-r lg:w-96',
+                        'min-h-0 w-full shrink-0 overflow-y-auto border-edge p-2 md:w-80 md:max-w-[45%] md:border-r lg:w-96',
                         selected && 'hidden md:block',
                     )}
                 >

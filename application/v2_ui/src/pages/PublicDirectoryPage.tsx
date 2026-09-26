@@ -217,7 +217,7 @@ export function PublicDirectoryPage() {
         <div className="flex h-full flex-col">
             {header}
             <div className="shrink-0 space-y-3 border-b border-edge px-4 py-3">
-                <div role="group" aria-label="Directory view" className="inline-flex rounded-xl border border-edge bg-surface-1 p-0.5">
+                <div role="group" aria-label="Directory view" className="inline-flex max-w-full flex-wrap rounded-xl border border-edge bg-surface-1 p-0.5">
                     {VIEWS.map((entry) => (
                         <button key={entry.id} type="button" aria-pressed={view === entry.id}
                             onClick={() => changeView(entry.id)}

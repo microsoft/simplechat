@@ -1,6 +1,7 @@
 // test_v2_group_document_collaboration.mjs
-// Version: 0.261.169
+// Version: 0.261.184
 // Implemented in: 0.261.130
+// A public document the viewer can no longer read is gone, with no repair request: 0.261.184
 // Executes scoped collaboration, receipt, repair and notification-link boundaries.
 
 import assert from 'node:assert/strict';
@@ -237,6 +238,13 @@ try {
         assert.equal(calls.filter((call) => call.method === 'POST').length, 3);
         assert.equal(bound.scope.id, 'pub-a');
         assert.throws(() => { bound.scope.id = 'retargeted'; }, TypeError);
+    });
+    await run('a public document the viewer can no longer read is gone, with no repair request', async () => {
+        // A public workspace keeps no access-removal repair, so the review dialog's fallback read answers
+        // as the group's does for a document that is gone: a 404, which the dialog shows as gone.
+        const bound = createPublicDocumentCollaboration({ kind: 'public', id: 'pub-a', name: 'Library' }, capability);
+        await assert.rejects(bound.readRepair('doc-1'), (cause) => cause.status === 404 && !/access-removal/.test(cause.message));
+        assert.equal(calls.length, 0);
     });
     await run('self targets, recipient overrides and forged document/state pairs never issue a request', async () => {
         const own = parseDocumentCollaborationState(state(), 'group-a', 'doc-1');

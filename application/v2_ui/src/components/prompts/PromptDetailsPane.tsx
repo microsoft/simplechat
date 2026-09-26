@@ -120,7 +120,10 @@ export function PromptDetailsPane({
                 ) : null}
             </div>
 
-            <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-4 py-3">
+            {/* Focusable so a keyboard user can scroll a long prompt: the details can hold no
+                other control to reach it by. */}
+            <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-4 py-3" tabIndex={0} role="region"
+                aria-label={`Details for ${name}`}>
                 {description ? (
                     <p className="text-sm leading-relaxed text-text-2">{description}</p>
                 ) : null}

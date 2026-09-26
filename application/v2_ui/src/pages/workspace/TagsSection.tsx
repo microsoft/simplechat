@@ -453,7 +453,7 @@ function ScopedTagsSection({
             {documentsEnabled ? (
                 <p className="text-xs text-text-3">
                     Apply tags from{' '}
-                    <Link to={reader.scope.kind === 'group' ? groupWorkspacePath(reader.scope.id, 'documents') : '/workspace/documents'} className="text-accent hover:underline">
+                    <Link to={reader.scope.kind === 'group' ? groupWorkspacePath(reader.scope.id, 'documents') : '/workspace/documents'} className="text-accent underline underline-offset-2">
                         Documents
                     </Link>
                     , where you can also drag files onto a tag to file them.

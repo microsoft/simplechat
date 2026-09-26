@@ -20,7 +20,7 @@ export const PUBLIC_SECTION_BLURBS: Record<GroupWorkspaceSectionId, string> = {
     agents: 'Assistants configured with this workspace\'s knowledge, models and tools.',
     actions: 'Tools for this workspace\'s agents, including calls to another agent.',
     workflows: 'Repeatable tasks using this workspace\'s agents and documents.',
-    identities: 'Saved sign-ins for this workspace\'s file sources and actions.',
+    identities: 'Saved sign-ins for this workspace\'s file sources.',
     endpoints: 'Model connections available to this workspace\'s agents and workflows.',
 };
 

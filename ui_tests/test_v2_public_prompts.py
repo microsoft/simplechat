@@ -1,8 +1,10 @@
 # test_v2_public_prompts.py
 """
 Production-SPA coverage for the native scope-aware V2 public prompts workbench.
-Version: 0.261.177
+Version: 0.261.184
 Implemented in: 0.261.177
+At the largest text size the details keep their room beside the list, and scroll from the
+keyboard: 0.261.184
 
 Exercises the real workbench and adapter against closed synthetic HTTP. The fixture only
 serves the immutable `/api/public-workspaces/<id>/prompts` family, never personal prompt
@@ -74,6 +76,23 @@ def test_prompt_layout(public_prompts_ui, theme, width, height):
     SCREENSHOTS.mkdir(parents=True, exist_ok=True)
     label = f'{"mobile" if width < 768 else "desktop"}-{theme}'
     ui.page.screenshot(path=str(SCREENSHOTS / f"{label}.png"), full_page=True)
+
+
+def test_the_details_keep_their_room_at_the_largest_text_size(public_prompts_ui):
+    """At the largest text size (200%) the list takes at most 45% of the workbench, so a selected
+    prompt's details stay on screen beside it rather than being squeezed to nothing, and the details
+    can be scrolled from the keyboard (M11, WCAG 1.4.4 and 2.1.1)."""
+    ui = public_prompts_ui
+    open_prompts(ui, width=1440, height=900)
+    ui.page.evaluate("() => document.documentElement.setAttribute('data-font-size', 'xl')")
+    row(ui, "Weekly status").click()
+    pane = ui.page.get_by_role("region", name="Details for Weekly status", exact=True)
+    expect(pane).to_be_visible()
+    expect(pane).to_have_attribute("tabindex", "0")
+    box = pane.bounding_box()
+    assert box and box["width"] >= 300, f"The details pane was squeezed to {box and box['width']}px."
+    assert box["x"] + box["width"] <= 1440
+    ui.assert_no_overflow()
 
 
 def test_list_reads_whole_public_set(public_prompts_ui):

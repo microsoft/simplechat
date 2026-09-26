@@ -1,8 +1,9 @@
 # test_v2_public_identities.py
 """
 Production-SPA coverage for the native V2 public workspace identities section (M10B).
-Version: 0.261.182
+Version: 0.261.184
 Implemented in: 0.261.182
+The overview says a public workspace's identities serve file sources only: 0.261.184
 
 Exercises the real identities section and its editor dialog against closed synthetic HTTP. The
 fixture serves only the immutable `/api/public-workspaces/<id>/identities` family and never a
@@ -109,6 +110,16 @@ def test_public_identity_layout(public_identities_ui, theme, width, height):
     # The native section renders, not the classic hand-off panel.
     expect(ui.page.get_by_text("available in the classic", exact=False)).to_have_count(0)
     ui.assert_no_overflow()
+
+
+def test_the_overview_says_identities_serve_file_sources_only(public_identities_ui):
+    """A public workspace has no actions, so its identities serve File Sync only (M10B). The overview's
+    Identities entry says so and never offers sign-ins for actions."""
+    ui = public_identities_ui
+    ui.open("/public/pub-a")
+    entry = ui.page.get_by_role("main").get_by_role("link", name=re.compile(r"^Identities\s+Saved sign-ins"))
+    expect(entry).to_contain_text("Saved sign-ins for this workspace's file sources.")
+    expect(entry).not_to_contain_text("actions")
 
 
 def test_public_identities_read_from_the_public_route_only(public_identities_ui):
