@@ -17,7 +17,7 @@ import {
     type StatsChartConfigBuilder,
 } from '../components/settings/StatsChart';
 import { isCustomWindow, type StatsExportAdapter, type StatsWindow } from './userStats';
-import type { GroupSettingsAdapter, GroupStatsPayload } from './groupSettings';
+import type { GroupStatsPayload, WorkspaceSettingsAdapter } from './groupSettings';
 import { statsWindowQuery } from './userStats';
 
 export const GROUP_STATS_DATE_RANGE_MESSAGE = 'Choose dates between 2000-01-01 and 9998-12-31.';
@@ -171,21 +171,25 @@ function classicCsvRow(values: unknown[]): string {
 
 /**
  * Build the group statistics CSV, column for column with classic `exportGroupStats`. Rows are joined
- * by `\n`, there is no BOM, and the "Formatted" storage column uses the classic byte formatter.
+ * by `\n`, there is no BOM, and the "Formatted" storage column uses the classic byte formatter. The
+ * public workspace export (M10C) writes the same columns under its own title, as classic
+ * `exportWorkspaceStats` does.
  */
 export function buildGroupStatsCsv({
     stats,
     sections,
     windowLabel,
     exportedAt = new Date(),
+    title = 'Group Stats Export',
 }: {
     stats: GroupStatsPayload;
     sections: Record<string, boolean>;
     windowLabel: string;
     exportedAt?: Date;
+    title?: string;
 }): string {
     const rows: string[] = [];
-    rows.push(classicCsvField('Group Stats Export'));
+    rows.push(classicCsvField(title));
     rows.push(classicCsvRow(['Export Date', exportedAt.toLocaleString()]));
     rows.push(classicCsvRow(['Data Period', windowLabel]));
     rows.push('');
@@ -246,7 +250,7 @@ export function groupStatsCsvFileName(exportedAt: Date = new Date()): string {
  * The group export adapter for the shared dialog. It loads the statistics for the chosen window and
  * assembles the classic CSV, so the dialog drives group export without knowing the group shape.
  */
-export function createGroupStatsExportAdapter(adapter: GroupSettingsAdapter): StatsExportAdapter {
+export function createGroupStatsExportAdapter(adapter: WorkspaceSettingsAdapter): StatsExportAdapter {
     return {
         title: 'Export group statistics',
         description: 'Download the group\u2019s statistics for the selected period as a CSV file.',

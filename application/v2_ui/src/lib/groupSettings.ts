@@ -14,6 +14,10 @@
 // logo already gone is a 409 `no_group_logo`, which a quiet reload resolves. Any other failure --
 // a 400 with the server's verbatim message, a 403 refusal carrying its reason code, or a 404 -- is
 // surfaced as the server phrased it.
+//
+// M10C gives public workspaces the same three views. Their client (publicSettings.ts) is built by the
+// same createSettingsClient below from its own routes, 409 codes and wording, so the two scopes share
+// every request, validation and error mapping and can never drift apart in behaviour.
 
 import { ApiError, api, apiUrl, CREDENTIALS_MODE, requestWithStatus } from './apiClient';
 import { isRecord } from './workspaceAuthoring';
@@ -21,6 +25,8 @@ import { requireWorkspaceId } from './workspaceContext';
 import type { GroupWorkspaceRole, GroupWorkspaceStatus, WorkspaceRef } from './workspaceContext';
 
 export type GroupSettingsScope = Extract<WorkspaceRef, { kind: 'group' }>;
+/** A workspace with native Settings, Activity and Statistics views: a group (M7C) or a public workspace (M10C). */
+export type WorkspaceSettingsRef = Extract<WorkspaceRef, { kind: 'group' | 'public' }>;
 
 /** A retention period as the server resolves it: whole days, no automatic deletion, or the org default. */
 export type GroupRetentionValue = number | 'none' | 'default';
@@ -67,9 +73,12 @@ export interface GroupSettingsManagement {
     reasons?: Record<string, string>;
 }
 
-export interface GroupSettings {
+/**
+ * The settings read every scope shares. The group read adds `group_id` and the public read
+ * `workspace_id`; nothing the shared views render depends on either.
+ */
+export interface WorkspaceSettings {
     schema_version: 1;
-    group_id: string;
     viewer_role: GroupWorkspaceRole;
     status: GroupWorkspaceStatus;
     profile: GroupProfileSettings;
@@ -79,9 +88,16 @@ export interface GroupSettings {
     retention?: GroupRetentionSettings;
 }
 
-/** One projected activity record. */
+export interface GroupSettings extends WorkspaceSettings {
+    group_id: string;
+}
+
+/**
+ * Who a projected activity record says acted. `former_member` is the group's (someone who has since
+ * left); `non_member` is the public workspace's (a signed-in reader who holds no role there).
+ */
 export interface GroupActivityActor {
-    kind: 'member' | 'former_member' | 'system';
+    kind: 'member' | 'former_member' | 'non_member' | 'system';
     display_name?: string;
 }
 
@@ -183,17 +199,36 @@ export function groupSettingsReasonText(code: string | undefined): string | unde
     return code ? REFUSAL_TEXT[code] : undefined;
 }
 
+/**
+ * The routes, 409 codes and wording that make one scope's native settings client (M10C). The group
+ * client and the public workspace client share every request, validation and error mapping in
+ * createSettingsClient; only these values differ.
+ */
+export interface SettingsClientProfile {
+    /** `/api/groups/<g>/settings` or `/api/public-workspaces/<w>/settings`. */
+    settingsBase: string;
+    /** `/api/groups/<g>/insights` or `/api/public-workspaces/<w>/insights`. */
+    insightsBase: string;
+    /** The 409 code of a write-guard exhaustion, which a plain retry resolves. */
+    writeConflictCode: string;
+    /** The 409 code of a logo that is already gone, which a quiet reload resolves. */
+    logoMissingCode: string;
+    malformedSettings: string;
+    malformedActivity: string;
+    malformedStats: string;
+}
+
 /** Map a write failure: the three 409 codes to their typed errors, everything else surfaced verbatim. */
-function mapWriteError(cause: unknown): never {
+function mapWriteError(cause: unknown, profile: SettingsClientProfile): never {
     if (cause instanceof ApiError && cause.status === 409) {
         const code = errorCode(cause.payload);
-        if (code === 'group_write_conflict') {
+        if (code === profile.writeConflictCode) {
             throw new GroupSettingsWriteConflictError(cause.message);
         }
-        if (code === 'no_group_logo') {
+        if (code === profile.logoMissingCode) {
             throw new GroupLogoMissingError(cause.message);
         }
-        // `group_settings_changed` and any other 409 are stale-revision conflicts a reload resolves.
+        // The settings-changed code and any other 409 are stale-revision conflicts a reload resolves.
         throw new GroupSettingsChangedError(cause.message);
     }
     // A 400 (verbatim), a 403 refusal carrying its reason code, or a 404 is surfaced as phrased.
@@ -209,9 +244,9 @@ function validateRevisionObject(value: unknown): value is Record<string, unknown
 }
 
 /** Validate the settings read strictly, per the contract's §8.2 rules. */
-function normalizeSettings(value: unknown): GroupSettings {
+function normalizeSettings<TSettings extends WorkspaceSettings>(value: unknown, malformed: string): TSettings {
     if (!isRecord(value) || !isRecord(value.settings)) {
-        throw new GroupSettingsResponseError(MALFORMED_SETTINGS);
+        throw new GroupSettingsResponseError(malformed);
     }
     const settings = value.settings;
     const management = settings.settings_management;
@@ -226,20 +261,20 @@ function normalizeSettings(value: unknown): GroupSettings {
         || (settings.downloads !== undefined && !validateRevisionObject(settings.downloads))
         || (settings.retention !== undefined && !validateRevisionObject(settings.retention))
     ) {
-        throw new GroupSettingsResponseError(MALFORMED_SETTINGS);
+        throw new GroupSettingsResponseError(malformed);
     }
-    return settings as unknown as GroupSettings;
+    return settings as unknown as TSettings;
 }
 
-function normalizeActivity(value: unknown): GroupActivityFeed {
+function normalizeActivity(value: unknown, malformed: string): GroupActivityFeed {
     if (!isRecord(value) || !Array.isArray(value.activity) || typeof value.limit !== 'number') {
-        throw new GroupSettingsResponseError(MALFORMED_ACTIVITY);
+        throw new GroupSettingsResponseError(malformed);
     }
     const activity = value.activity.map((item) => {
         if (!isRecord(item) || !requireString(item.summary) || !requireString(item.type) || !isRecord(item.actor)
             || (item.id !== null && !requireString(item.id))
             || (item.occurred_at !== null && !requireString(item.occurred_at))) {
-            throw new GroupSettingsResponseError(MALFORMED_ACTIVITY);
+            throw new GroupSettingsResponseError(malformed);
         }
         return item as unknown as GroupActivityRecord;
     });
@@ -254,9 +289,9 @@ function stringArray(value: unknown): value is string[] {
     return Array.isArray(value) && value.every((item) => typeof item === 'string');
 }
 
-function normalizeStats(value: unknown): GroupStatsPayload {
+function normalizeStats(value: unknown, malformed: string): GroupStatsPayload {
     if (!isRecord(value) || !isRecord(value.stats)) {
-        throw new GroupSettingsResponseError(MALFORMED_STATS);
+        throw new GroupSettingsResponseError(malformed);
     }
     const stats = value.stats;
     const documentActivity = stats.documentActivity;
@@ -273,17 +308,13 @@ function normalizeStats(value: unknown): GroupStatsPayload {
         || !isRecord(tokenUsage) || !stringArray(tokenUsage.labels) || !numberArray(tokenUsage.data)
         || !stringArray(stats.dateRange) || !isRecord(window) || !requireString(window.label)
     ) {
-        throw new GroupSettingsResponseError(MALFORMED_STATS);
+        throw new GroupSettingsResponseError(malformed);
     }
     return stats as unknown as GroupStatsPayload;
 }
 
-function settingsBase(groupId: string): string {
-    return `/api/groups/${encodeURIComponent(requireWorkspaceId(groupId))}/settings`;
-}
-
-function insightsUrl(groupId: string, resource: 'activity' | 'stats' | 'file-count', query = ''): string {
-    const base = `/api/groups/${encodeURIComponent(requireWorkspaceId(groupId))}/insights/${resource}`;
+function insightsUrl(profile: SettingsClientProfile, resource: 'activity' | 'stats' | 'file-count', query = ''): string {
+    const base = `${profile.insightsBase}/${resource}`;
     return query ? `${base}?${query}` : base;
 }
 
@@ -300,44 +331,49 @@ export interface GroupRetentionChanges {
     document_retention_days?: GroupRetentionValue;
 }
 
-export interface GroupSettingsAdapter {
-    scope: GroupSettingsScope;
+/** The scoped settings client the shared Settings, Activity and Statistics views drive. */
+export interface WorkspaceSettingsAdapter<TSettings extends WorkspaceSettings = WorkspaceSettings> {
+    scope: WorkspaceSettingsRef;
     /** Whether the viewer may perform a settings operation, from `settings_management.operations`. */
     allows: (operation: string) => boolean;
     /** The server's reason code for a withheld operation, for an honest explanation. */
     reason: (operation: string) => string | undefined;
-    readSettings: (signal?: AbortSignal) => Promise<GroupSettings>;
-    updateProfile: (changes: GroupProfileChanges, revision: string) => Promise<GroupSettings>;
-    replaceLogo: (file: File, revision: string) => Promise<GroupSettings>;
-    removeLogo: (revision: string) => Promise<GroupSettings>;
-    updateDownloads: (disableFileDownloads: boolean, revision: string) => Promise<GroupSettings>;
-    updateRetention: (changes: GroupRetentionChanges, revision: string) => Promise<GroupSettings>;
+    readSettings: (signal?: AbortSignal) => Promise<TSettings>;
+    updateProfile: (changes: GroupProfileChanges, revision: string) => Promise<TSettings>;
+    replaceLogo: (file: File, revision: string) => Promise<TSettings>;
+    removeLogo: (revision: string) => Promise<TSettings>;
+    updateDownloads: (disableFileDownloads: boolean, revision: string) => Promise<TSettings>;
+    updateRetention: (changes: GroupRetentionChanges, revision: string) => Promise<TSettings>;
     readActivity: (limit: number, signal?: AbortSignal) => Promise<GroupActivityFeed>;
     readStats: (query: string, signal?: AbortSignal) => Promise<GroupStatsPayload>;
     readFileCount: (signal?: AbortSignal) => Promise<number>;
 }
 
+export interface GroupSettingsAdapter extends WorkspaceSettingsAdapter<GroupSettings> {
+    scope: GroupSettingsScope;
+}
+
 /**
- * Build the scoped settings client for one group. `management` is the context's or the read's
+ * Build one scope's settings client. `management` is the context's or the read's
  * `settings_management` block; `allows`/`reason` read from it with no fallback, so an unavailable
  * control is explained by the server's own reason, never guessed.
  */
-export function createGroupSettingsAdapter(
-    scope: GroupSettingsScope,
+export function createSettingsClient<TSettings extends WorkspaceSettings>(
+    scope: WorkspaceSettingsRef,
     management: GroupSettingsManagement | undefined,
-): GroupSettingsAdapter {
-    const groupId = requireWorkspaceId(scope.id);
+    profile: SettingsClientProfile,
+): WorkspaceSettingsAdapter<TSettings> {
     const operations = new Set(Array.isArray(management?.operations) ? management!.operations : []);
     const reasons = isRecord(management?.reasons) ? (management!.reasons as Record<string, string>) : {};
 
     async function conditionalWrite(
         method: 'PATCH' | 'DELETE', url: string, body: Record<string, unknown>,
-    ): Promise<GroupSettings> {
+    ): Promise<TSettings> {
         try {
             const response = await requestWithStatus<unknown>(url, { method, body });
-            return normalizeSettings(response.data);
+            return normalizeSettings<TSettings>(response.data, profile.malformedSettings);
         } catch (cause) {
-            mapWriteError(cause);
+            mapWriteError(cause, profile);
         }
     }
 
@@ -345,14 +381,15 @@ export function createGroupSettingsAdapter(
         scope,
         allows: (operation) => operations.has(operation),
         reason: (operation) => reasons[operation],
-        readSettings: async (signal) => normalizeSettings(await api.get<unknown>(settingsBase(groupId), signal)),
+        readSettings: async (signal) =>
+            normalizeSettings<TSettings>(await api.get<unknown>(profile.settingsBase, signal), profile.malformedSettings),
         updateProfile: (changes, revision) =>
-            conditionalWrite('PATCH', `${settingsBase(groupId)}/profile`, { ...changes, revision }),
+            conditionalWrite('PATCH', `${profile.settingsBase}/profile`, { ...changes, revision }),
         replaceLogo: async (file, revision) => {
             const form = new FormData();
             form.append('logo_file', file);
             form.append('revision', revision);
-            const response = await fetch(`${apiUrl(settingsBase(groupId))}/logo`, {
+            const response = await fetch(`${apiUrl(profile.settingsBase)}/logo`, {
                 method: 'PUT',
                 credentials: CREDENTIALS_MODE,
                 headers: { Accept: 'application/json' },
@@ -368,27 +405,53 @@ export function createGroupSettingsAdapter(
                 const message = isRecord(payload) && typeof payload.error === 'string'
                     ? payload.error
                     : 'The logo could not be saved. Refresh and try again.';
-                mapWriteError(new ApiError(message, response.status, payload));
+                mapWriteError(new ApiError(message, response.status, payload), profile);
             }
-            return normalizeSettings(await response.json());
+            return normalizeSettings<TSettings>(await response.json(), profile.malformedSettings);
         },
-        removeLogo: (revision) => conditionalWrite('DELETE', `${settingsBase(groupId)}/logo`, { revision }),
+        removeLogo: (revision) => conditionalWrite('DELETE', `${profile.settingsBase}/logo`, { revision }),
         updateDownloads: (disableFileDownloads, revision) =>
-            conditionalWrite('PATCH', `${settingsBase(groupId)}/downloads`, {
+            conditionalWrite('PATCH', `${profile.settingsBase}/downloads`, {
                 disable_file_downloads: disableFileDownloads, revision,
             }),
         updateRetention: (changes, revision) =>
-            conditionalWrite('PATCH', `${settingsBase(groupId)}/retention`, { ...changes, revision }),
+            conditionalWrite('PATCH', `${profile.settingsBase}/retention`, { ...changes, revision }),
         readActivity: async (limit, signal) =>
-            normalizeActivity(await api.get<unknown>(insightsUrl(groupId, 'activity', `limit=${limit}`), signal)),
+            normalizeActivity(
+                await api.get<unknown>(insightsUrl(profile, 'activity', `limit=${limit}`), signal),
+                profile.malformedActivity,
+            ),
         readStats: async (query, signal) =>
-            normalizeStats(await api.get<unknown>(insightsUrl(groupId, 'stats', query), signal)),
+            normalizeStats(await api.get<unknown>(insightsUrl(profile, 'stats', query), signal), profile.malformedStats),
         readFileCount: async (signal) => {
-            const response = await api.get<unknown>(insightsUrl(groupId, 'file-count'), signal);
+            const response = await api.get<unknown>(insightsUrl(profile, 'file-count'), signal);
             if (!isRecord(response) || typeof response.file_count !== 'number') {
                 throw new GroupSettingsResponseError('The document count was malformed. Refresh and try again.');
             }
             return response.file_count;
         },
+    };
+}
+
+/**
+ * Build the scoped settings client for one group, on the named-group routes, answering the group's
+ * 409 codes with the group's wording.
+ */
+export function createGroupSettingsAdapter(
+    scope: GroupSettingsScope,
+    management: GroupSettingsManagement | undefined,
+): GroupSettingsAdapter {
+    const base = `/api/groups/${encodeURIComponent(requireWorkspaceId(scope.id))}`;
+    return {
+        ...createSettingsClient<GroupSettings>(scope, management, {
+            settingsBase: `${base}/settings`,
+            insightsBase: `${base}/insights`,
+            writeConflictCode: 'group_write_conflict',
+            logoMissingCode: 'no_group_logo',
+            malformedSettings: MALFORMED_SETTINGS,
+            malformedActivity: MALFORMED_ACTIVITY,
+            malformedStats: MALFORMED_STATS,
+        }),
+        scope,
     };
 }
