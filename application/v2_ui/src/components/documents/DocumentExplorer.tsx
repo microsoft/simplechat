@@ -993,7 +993,13 @@ function ScopedDocumentExplorer({
 
             const maxSizeMb = Number(settings?.max_file_size_mb ?? 0);
             const tooLarge = maxSizeMb > 0 ? files.filter((file) => file.size > maxSizeMb * 1024 * 1024) : [];
+            if (tooLarge.length) {
+                toast.error(`${tooLarge.map((file) => file.name).join(', ')} exceeds the ${maxSizeMb} MB limit.`);
+            }
             const accepted = files.filter((file) => !tooLarge.includes(file));
+            // Nothing left to send: the size refusal above already said why, so no request goes out
+            // and no "processing is queued" feedback is shown.
+            if (!accepted.length) return;
             const validationErrors = tooLarge.map((file) => ({
                 document_id: file.name, message: `Exceeds the ${maxSizeMb} MB upload limit.`,
             }));
