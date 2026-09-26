@@ -1,9 +1,11 @@
 # test_v2_group_workspace_shell.py
 """
 Real-SPA group selection, navigation, scope, and draft safety.
-Version: 0.261.178
+Version: 0.261.188
 Implemented in: 0.261.127
 Group workflow member run/cancel, status gates, delete, and search coverage: 0.261.178
+The workflow editor takes focus and hands it back to Edit on close: 0.261.188
+A failed workflow read offers a retry and never the empty state: 0.261.188
 """
 
 import copy
@@ -269,6 +271,41 @@ def test_group_workflow_search_filters_by_name_and_description(group_ui):
     expect(ui.page.get_by_text("Review group files", exact=True)).to_be_visible()
     expect(ui.page.get_by_text("Quarterly audit", exact=True)).to_be_visible()
     assert len([entry for entry in ui.requests if entry.method == "GET" and entry.path == "/api/group/workflows"]) == 1
+
+
+def test_the_workflow_editor_hands_focus_back_to_edit(group_ui):
+    """Edit disables itself while the editor's options load, so focus falls to the page before the
+    dialog opens; the editor still takes focus, and closing it returns focus to Edit (M11, WCAG 2.4.3)."""
+    ui = group_ui
+    ui.open("/groups/group-a/workflows")
+    edit = ui.page.get_by_role("button", name="Edit Review group files", exact=True)
+    edit.focus()
+    ui.page.keyboard.press("Enter")
+    dialog = ui.page.get_by_role("dialog")
+    expect(dialog).to_be_visible()
+    ui.page.wait_for_function(
+        "() => Boolean(document.activeElement && document.activeElement.closest('[role=\"dialog\"]'))"
+    )
+    ui.page.keyboard.press("Escape")
+    expect(dialog).to_have_count(0)
+    expect(edit).to_be_focused()
+
+
+def test_a_failed_workflow_read_offers_a_retry_and_never_the_empty_state(group_ui):
+    """A failed list read is not an empty list: the error is announced with a retry, and neither "No
+    workflows yet" nor its Create workflow stands in for workflows that couldn't be read (M11)."""
+    ui = group_ui
+    failure = "The service is temporarily unavailable."
+    ui.reject_next("GET", "/api/group/workflows", status=500, error=failure)
+    ui.open("/groups/group-a/workflows")
+    alert = ui.page.get_by_role("alert").filter(has_text=failure)
+    expect(alert).to_be_visible()
+    expect(ui.page.get_by_text("No workflows yet", exact=True)).to_have_count(0)
+    # Only the header's Create workflow remains: the empty state's invitation is gone with it.
+    expect(ui.page.get_by_role("button", name="Create workflow", exact=True)).to_have_count(1)
+    alert.get_by_role("button", name="Retry workflows", exact=True).click()
+    expect(ui.page.get_by_text("Review group files", exact=True)).to_be_visible()
+    expect(alert).to_have_count(0)
 
 
 def test_refocus_retains_dirty_draft_and_blocks_saving_until_access_is_confirmed(group_ui):

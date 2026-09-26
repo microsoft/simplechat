@@ -75,7 +75,7 @@ export function WorkflowsSection({
     const canCancel = offered ? offered.has('cancel') : allowManage;
     const scopeKey = workflowScopeKey(scope);
     const loadWorkflows = useCallback((signal?: AbortSignal) => fetchScopedWorkflows(scope, signal), [scopeKey]);
-    const { items, loading, error, refresh, setItems, setError } =
+    const { items, loading, error, loadFailed, refresh, setItems, setError } =
         useSectionResource<WorkflowDefinition>(loadWorkflows, 'Failed to load workflows.');
 
     const [query, setQuery] = useState('');
@@ -259,6 +259,9 @@ export function WorkflowsSection({
                 items={visible}
                 loading={loading}
                 error={error}
+                loadFailed={loadFailed}
+                onRetry={() => void refresh()}
+                retryLabel="Retry workflows"
                 emptyIcon={<Workflow size={28} />}
                 emptyTitle={
                     items.length === 0 ? 'No workflows yet' : 'No workflows match your search'

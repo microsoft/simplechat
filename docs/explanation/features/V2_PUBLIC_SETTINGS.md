@@ -60,9 +60,9 @@ classic file name.
 
 ## Known limitations
 
-- A profile that's read-only because the workspace's status isn't recognized is
-  explained with the "locked or inactive" sentence. A refused save shows the
-  server's own text.
+- A profile that's read-only because the workspace's status isn't recognized
+  was explained with the "locked or inactive" sentence until version
+  0.261.188; it now shows the server's own sentence.
 - Deleting a workspace happens on the classic page and removes only the
   workspace record (decision 10).
 

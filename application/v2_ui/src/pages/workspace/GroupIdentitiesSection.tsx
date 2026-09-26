@@ -77,7 +77,7 @@ export function GroupIdentitiesSection({
     identityCapabilities?: readonly (typeof GROUP_IDENTITY_CAPABILITIES)[number][];
 }) {
     const load = useCallback((signal: AbortSignal) => adapter.list(signal), [adapter]);
-    const { items, loading, error, refresh, setItems, setError } =
+    const { items, loading, error, loadFailed, refresh, setItems, setError } =
         useSectionResource<WorkspaceIdentity>(load, 'Failed to load identities.');
 
     const [query, setQuery] = useState('');
@@ -285,6 +285,9 @@ export function GroupIdentitiesSection({
                 items={visible}
                 loading={loading}
                 error={deleteBlock ? null : error}
+                loadFailed={loadFailed}
+                onRetry={() => void refresh()}
+                retryLabel="Retry identities"
                 emptyIcon={<KeyRound size={28} />}
                 emptyTitle={items.length === 0 ? 'No identities yet' : 'No identities match your search'}
                 emptyDescription={

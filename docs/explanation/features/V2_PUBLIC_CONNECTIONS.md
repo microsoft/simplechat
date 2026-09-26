@@ -58,11 +58,6 @@ Every operation is offered from the server's `file_source_management` hint and
 each source's `source_actions`, never from the viewer's role in the browser.
 Both sections check that each response names the workspace they asked about.
 
-## Known limitations
-
-- The Identities section's description mentions actions, which a public
-  workspace doesn't have.
-
 ## Testing and validation
 
 - `ui_tests/test_v2_public_identities.py` (23) and

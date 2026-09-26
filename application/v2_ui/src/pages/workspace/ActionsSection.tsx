@@ -187,7 +187,9 @@ export function ActionsSection({ agentsEnabled, adapter = PERSONAL_ACTION_WORKBE
                                     data-testid="workspace-action" data-action-id={action.id}
                                     data-action-scope={provided ? 'global' : isGroup ? 'group' : 'personal'} data-action-type={action.type}>
                                     <GlassPanel elevation="flat" className={`flex min-w-0 gap-3 p-4 ${filters.view === 'cards' ? 'h-full flex-col' : 'flex-wrap items-center'}`}>
-                                        <div className="flex min-w-0 flex-1 items-start gap-3">
+                                        {/* A 12rem basis, so on a narrow screen the type pills and actions wrap below
+                                            the title instead of squeezing it to a letter per line. */}
+                                        <div className="flex min-w-0 flex-[1_1_12rem] items-start gap-3">
                                             <Plug size={18} className="mt-0.5 shrink-0 text-text-3" />
                                             <div className="min-w-0">
                                                 {action.id ? <Link to={actionDetailPath(action, adapter.basePath)} className="break-words text-sm font-semibold text-text-1 hover:text-accent hover:underline">{label}</Link>

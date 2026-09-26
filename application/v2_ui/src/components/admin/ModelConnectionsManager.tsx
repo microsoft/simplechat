@@ -1398,6 +1398,9 @@ export function ModelConnectionsManager({ help, adapter = ADMIN_MODEL_CONNECTION
     const [connections, setConnections] = useState<ModelConnection[]>([]);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
+    // Whether the latest list read failed. A failed read is not an empty list: its error offers a
+    // retry, and "No connections yet" never stands in for connections that couldn't be read.
+    const [loadFailed, setLoadFailed] = useState(false);
     const [query, setQuery] = useState('');
     const [editing, setEditing] = useState<ModelConnection | null>(null);
     const [busyId, setBusyId] = useState<string | null>(null);
@@ -1424,15 +1427,24 @@ export function ModelConnectionsManager({ help, adapter = ADMIN_MODEL_CONNECTION
             setEmbeddingMigration(response.embedding_migration ?? null);
             setDefaultNotices(Object.values(response.default_notices ?? {}).filter((notice): notice is string => typeof notice === 'string' && Boolean(notice)));
             setError(null);
+            setLoadFailed(false);
         } catch (loadError) {
             if (signal?.aborted) {
                 return;
             }
             setError(errorMessage(loadError, 'AI Connections could not be loaded.'));
+            setLoadFailed(true);
         } finally {
             setLoading(false);
         }
     }, [adapter]);
+
+    const retryLoad = () => {
+        setError(null);
+        setLoadFailed(false);
+        setLoading(true);
+        void load();
+    };
 
     useEffect(() => {
         const controller = new AbortController();
@@ -1567,7 +1579,12 @@ export function ModelConnectionsManager({ help, adapter = ADMIN_MODEL_CONNECTION
                     className="mb-3 flex items-start gap-2 rounded-lg border border-edge bg-danger-soft p-3 text-xs text-danger"
                 >
                     <AlertCircle size={14} className="mt-0.5 shrink-0" />
-                    {error}
+                    {loadFailed ? <span className="min-w-0 flex-1">{error}</span> : error}
+                    {loadFailed ? (
+                        <GlassButton type="button" size="sm" className="shrink-0" disabled={loading} onClick={retryLoad}>
+                            Retry connections
+                        </GlassButton>
+                    ) : null}
                 </p>
             ) : null}
 
@@ -1593,7 +1610,7 @@ export function ModelConnectionsManager({ help, adapter = ADMIN_MODEL_CONNECTION
                     <Loader2 size={14} className="animate-spin" />
                     Loading connections…
                 </p>
-            ) : visible.length === 0 ? (
+            ) : loadFailed && connections.length === 0 ? null : visible.length === 0 ? (
                 <p className="rounded-lg border border-edge bg-surface-1 p-4 text-xs text-text-3">
                     {connections.length === 0
                         ? 'No connections yet. Add an Azure OpenAI, Foundry, Custom, or embedding-only OpenAI-compatible connection to publish models.'

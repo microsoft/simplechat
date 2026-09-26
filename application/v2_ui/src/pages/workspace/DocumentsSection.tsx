@@ -110,8 +110,8 @@ export function PublicDocumentsSection({
                 <div className="flex flex-wrap items-center justify-between gap-2">
                     <h2 className="text-base font-semibold text-text-1">Documents</h2>
                     <GlassButton size="sm" disabled={interactionDisabled} onClick={onOpenClassic}
-                        aria-label="Open classic public workspace" title="Browse public documents in classic">
-                        <span className="hidden sm:inline">Browse in</span> Classic<ArrowUpRight size={14} />
+                        aria-label="Open classic tools to upgrade legacy public workspace documents" title="Classic tools, including upgrading legacy documents">
+                        Classic tools<ArrowUpRight size={14} />
                     </GlassButton>
                 </div>
                 <p className="mt-0.5 text-sm text-text-3">{canChange

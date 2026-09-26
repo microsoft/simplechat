@@ -14,7 +14,10 @@
 import { useMemo } from 'react';
 import { Globe } from 'lucide-react';
 import type { GroupSettingsManagement } from '../../lib/groupSettings';
-import { publicSettingsReasonText, type PublicSettingsAdapter } from '../../lib/publicSettings';
+import {
+    PUBLIC_STATUS_UNAVAILABLE_REASON, PUBLIC_STATUS_UNRECOGNIZED_TEXT, publicSettingsReasonText,
+    type PublicSettingsAdapter,
+} from '../../lib/publicSettings';
 import { usePublicWorkspaceLabels } from '../../lib/publicWorkspaceLabels';
 import { WorkspaceSettingsSection, type WorkspaceSettingsSectionScope } from './WorkspaceSettingsSection';
 
@@ -40,6 +43,9 @@ export function PublicSettingsSection({
     const scope = useMemo<WorkspaceSettingsSectionScope>(() => ({
         testIdPrefix: 'public-settings',
         reasonText: publicSettingsReasonText,
+        // The server's own sentences, kept verbatim rather than relabelled with the configured workspace label.
+        statusReason: PUBLIC_STATUS_UNAVAILABLE_REASON,
+        statusUnrecognized: PUBLIC_STATUS_UNRECOGNIZED_TEXT,
         introTitle: `${singular} settings`,
         introDescription: `The ${lowerSingular}'s profile, logo and policies. A locked control shows why it's unavailable to you.`,
         loadFailed: `The ${lowerSingular} settings could not be loaded. Please retry.`,

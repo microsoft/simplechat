@@ -2,6 +2,23 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.188)**
+
+#### User Interface Enhancements
+
+*   **Dialogs Keep And Return Keyboard Focus**
+    *   Every V2 dialog now moves focus into itself when it opens, keeps Tab inside it, and returns focus to the control that opened it when it closes, including with Escape. Before, closing a dialog left focus on the page body.
+    *   (Ref: `Modal.tsx`, [V2 Workspace Presentation Fix](fixes/V2_WORKSPACE_PRESENTATION_FIX.md))
+
+*   **A Failed List Says So, With A Retry**
+    *   In the group and public Prompts, Identities, File sources, Endpoints and Workflows sections, a list that fails to load shows the error with a **Retry** button, announced to screen readers, instead of looking empty with a create button.
+    *   (Ref: `SectionList`, `useSectionResource`, the prompt workbench, [V2 Workspace Presentation Fix](fixes/V2_WORKSPACE_PRESENTATION_FIX.md))
+
+*   **Readable Tags, Phones And Larger Text**
+    *   Tag chips pick black or white text for contrast with the tag's colour; the prompt list leaves room for its details at 200% text; group Actions and narrow cards stay usable on a phone; locked overview entries are outlined rather than faded.
+    *   Public workspace wording no longer mentions groups, actions or classic browsing where they don't apply, and a link to a deleted public document says it's gone.
+    *   (Ref: [V2 Workspace Presentation Fix](fixes/V2_WORKSPACE_PRESENTATION_FIX.md))
+
 ### **(v0.261.187)**
 
 #### Bug Fixes

@@ -424,7 +424,9 @@ export function createPublicDocumentCollaboration(
             return parsePublicPublicationState(response.data, workspaceId, id, boundScope.name);
         },
         readRepair: async () => {
-            throw new Error('Public workspaces have no access-removal cleanup to repair.');
+            // A public workspace keeps no access-removal repair, so a document whose detail read
+            // found nothing is gone for this viewer, as a group's is once its repair read 404s.
+            throw new ApiError('The requested document is no longer available in this workspace.', 404, null);
         },
         targets: async () => {
             throw new Error('Public workspaces do not share revisions with recipient workspaces.');

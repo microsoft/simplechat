@@ -19,7 +19,7 @@ import { WorkspaceOverview } from '../components/workspace/WorkspaceOverview';
 import { WorkspaceShell } from '../components/workspace/WorkspaceShell';
 import { Pill, SectionIntro } from '../components/workspace/primitives';
 import {
-    PUBLIC_SECTION_BLURBS, PUBLIC_STATUS_LABELS, publicWorkspacePath,
+    PUBLIC_GROUP_BLURBS, PUBLIC_SECTION_BLURBS, PUBLIC_STATUS_LABELS, publicWorkspacePath,
     classicPublicSectionLabel, isPublicManageSection, readPublicDocumentTarget,
 } from '../lib/publicWorkspaceNavigation';
 import { PUBLIC_WORKSPACE_SECTION_IDS } from '../lib/workspaceContext';
@@ -308,7 +308,8 @@ export function PublicWorkspacePage() {
                                 <div><dt className="text-xs text-text-3">Owner</dt><dd className="break-words">{context.workspace.owner.display_name || 'Owner information unavailable'}{context.workspace.owner.email ? ` · ${context.workspace.owner.email}` : ''}</dd></div>
                             </dl>
                             <WorkspaceOverview basePath={basePath} resolved={resolved} showRelationships={false}
-                                description={`Published documents for this ${labels.lower_singular}. Sections marked Classic open in the existing interface while their V2 experience is being built.`} />
+                                groupBlurbs={PUBLIC_GROUP_BLURBS}
+                                description={`Published documents and prompts for this ${labels.lower_singular}, and how it's connected and run. A locked section shows why it's unavailable to you.`} />
                         </>
                     ) : !selected ? <EmptyState icon={<LayoutGrid size={28} />} title="Section not found" description="Choose a section from this workspace's navigation." />
                         : !selected.enabled ? <EmptyState icon={<Lock size={28} />} title={`${selected.section.label} is not available`} description={selected.reason ?? undefined} />

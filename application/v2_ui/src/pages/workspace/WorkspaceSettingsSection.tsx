@@ -41,6 +41,14 @@ export interface WorkspaceSettingsSectionScope {
     testIdPrefix: string;
     /** The reviewed text for a withheld operation's reason code. */
     reasonText: (code: string | undefined) => string | undefined;
+    /** The reason code of a status refusal: the workspace's status keeps its profile and logo read-only. */
+    statusReason: string;
+    /**
+     * That refusal's sentence when the workspace's status isn't one the server recognizes. The hint
+     * carries only the code, which alone reads as locked or inactive; the server swaps this sentence in
+     * when it refuses the write, so the section does too.
+     */
+    statusUnrecognized: string;
     introTitle: string;
     introDescription: string;
     /** The load error when a read fails without a message of its own. */
@@ -340,12 +348,17 @@ export function WorkspaceSettingsSection({
     const editorDirty = (canEditProfile && profileDirty) || (canEditRetention && retentionDirty);
     useEffect(() => { onDirtyChangeRef.current(editorDirty); }, [editorDirty]);
 
-    const profileReason = scope.reasonText(
+    // A status refusal names what caused it, as the server's refusal() does: a status the server doesn't
+    // recognize gets its own sentence rather than the locked-or-inactive one the code alone implies.
+    const explain = (code: string | undefined) => (
+        code === scope.statusReason && settings?.status === 'unknown' ? scope.statusUnrecognized : scope.reasonText(code)
+    );
+    const profileReason = explain(
         reason('edit_name') || reason('edit_description') || reason('edit_color'),
     );
-    const logoReason = scope.reasonText(reason('edit_logo'));
-    const downloadsReason = scope.reasonText(reason('edit_downloads'));
-    const retentionReason = scope.reasonText(reason('edit_retention'));
+    const logoReason = explain(reason('edit_logo'));
+    const downloadsReason = explain(reason('edit_downloads'));
+    const retentionReason = explain(reason('edit_retention'));
 
     /**
      * Bring a refusal or conflict to the state the server holds, per the code it carries, and report

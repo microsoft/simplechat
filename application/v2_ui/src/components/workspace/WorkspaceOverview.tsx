@@ -6,6 +6,7 @@ import { GlassPanel } from '../ui/primitives';
 import { SectionIntro } from './primitives';
 import type { WorkspaceNavigationSection } from './WorkspaceShell';
 import { groupWorkspaceSections, type ResolvedWorkspaceSection } from '../../lib/workspaceSections';
+import type { WorkspaceSectionGroup } from '../../lib/types';
 
 export interface WorkspaceOverviewSection extends WorkspaceNavigationSection {
     blurb: string;
@@ -13,13 +14,15 @@ export interface WorkspaceOverviewSection extends WorkspaceNavigationSection {
 }
 
 export function WorkspaceOverview({
-    resolved, basePath, description, counts = {}, showRelationships = true,
+    resolved, basePath, description, counts = {}, showRelationships = true, groupBlurbs = {},
 }: {
     resolved: ResolvedWorkspaceSection<WorkspaceOverviewSection>[];
     basePath: string;
     description: string;
     counts?: Record<string, number | undefined>;
     showRelationships?: boolean;
+    /** A scope's own wording for a group's blurb; a group not named here keeps the shared one. */
+    groupBlurbs?: Partial<Record<WorkspaceSectionGroup, string>>;
 }) {
     return (
         <div className="space-y-6">
@@ -28,13 +31,16 @@ export function WorkspaceOverview({
                 <section key={group.id} className="space-y-2">
                     <div>
                         <h3 className="text-sm font-semibold text-text-1">{group.label}</h3>
-                        <p className="text-xs text-text-3">{group.blurb}</p>
+                        <p className="text-xs text-text-3">{groupBlurbs[group.id] ?? group.blurb}</p>
                     </div>
                     <div className="grid gap-2 sm:grid-cols-2">
                         {sections.map(({ section, enabled, reason }) => {
                             const Icon = section.icon;
+                            // An unavailable section reads as unavailable through its dashed outline, its lock
+                            // and its reason, never through fading: dimmed with opacity, its text fell to
+                            // 2.8:1 in dark, too faint to read the reason it's there to give.
                             if (!enabled) return (
-                                <GlassPanel key={section.id} elevation="flat" className="flex gap-3 p-3 opacity-60"
+                                <GlassPanel key={section.id} elevation="flat" className="flex gap-3 border-dashed border-edge-strong p-3"
                                     aria-label={`${section.label} (unavailable)`}>
                                     <Icon size={17} className="mt-0.5 shrink-0 text-text-3" />
                                     <div className="min-w-0">

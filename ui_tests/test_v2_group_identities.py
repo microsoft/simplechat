@@ -1,10 +1,11 @@
 # test_v2_group_identities.py
 """
 Production-SPA coverage for the native scope-aware V2 group identities section.
-Version: 0.261.174
+Version: 0.261.188
 Implemented in: 0.261.139
 Managed identity client ID kept on edit: 0.261.170
 Search by name and sign-in: 0.261.174
+A failed read offers a retry and never the empty state: 0.261.188
 
 Exercises the real identities section and its editor dialog against closed synthetic
 HTTP. The fixture serves only the immutable `/api/groups/<id>/identities` family and
@@ -121,6 +122,25 @@ def test_group_identities_read_from_the_group_route_only(group_identities_ui):
         "The identities list route takes no query parameters."
     )
     assert_no_personal_reads(ui)
+
+
+# A failed read's message, chosen so it can't be mistaken for any copy the section writes itself.
+READ_FAILURE = "The service is temporarily unavailable."
+
+
+def test_a_failed_read_offers_a_retry_and_never_the_empty_state(group_identities_ui):
+    """A failed list read is not an empty list: the error is announced with a retry, and "No
+    identities yet" never stands in for identities that couldn't be read (M11)."""
+    ui = group_identities_ui
+    ui.reject_next("GET", "/api/groups/group-a/identities", status=500, error=READ_FAILURE)
+    open_manager(ui)
+    alert = ui.page.get_by_role("alert").filter(has_text=READ_FAILURE)
+    expect(alert).to_be_visible()
+    expect(ui.page.get_by_text("No identities yet", exact=True)).to_have_count(0)
+    alert.get_by_role("button", name="Retry identities", exact=True).click()
+    expect(row(ui, EDITABLE_NAME)).to_be_visible()
+    expect(alert).to_have_count(0)
+    assert len(identities_get(ui)) == 2
 
 
 def test_group_identity_response_identity_is_validated(group_identities_ui):

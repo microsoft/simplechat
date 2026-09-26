@@ -1,8 +1,9 @@
 # test_v2_group_agents.py
 """
 Production-SPA coverage for the native scope-aware V2 group agents workbench.
-Version: 0.261.157
+Version: 0.261.188
 Implemented in: 0.261.138
+A narrow agent card wraps its buttons below the title rather than overlapping it: 0.261.188
 
 Exercises the real agent collection and full-page editor against closed synthetic
 HTTP. The fixture serves only the immutable `/api/groups/<id>/agents` family, its
@@ -102,6 +103,33 @@ def test_group_agent_layout(group_agents_ui, theme, width, height):
     # The native collection renders, not the classic handoff.
     expect(ui.page.get_by_role("button", name="Open classic group workspace", exact=True)).to_have_count(0)
     ui.assert_no_overflow()
+
+
+# Whether the element's own centre is on top: nothing else is drawn over the point a tap lands on.
+ON_TOP = """(element) => {
+    const box = element.getBoundingClientRect();
+    const hit = document.elementFromPoint(box.left + box.width / 2, box.top + box.height / 2);
+    return Boolean(hit) && (element === hit || element.contains(hit));
+}"""
+
+
+def test_a_narrow_agent_card_wraps_its_actions_below_the_title(group_agents_ui):
+    """On a phone the card's buttons wrap onto their own line, so the title keeps its width and neither
+    it nor Edit is drawn over the other (M11)."""
+    ui = group_agents_ui
+    open_agents(ui, width=390, height=844)
+    card = item(ui, EDITABLE_AGENT_ID)
+    heading = card.get_by_role("heading", name=EDITABLE_NAME, exact=True)
+    title = heading.get_by_role("link", name=EDITABLE_NAME, exact=True)
+    edit = card.get_by_role("button", name="Edit", exact=True)
+    title.scroll_into_view_if_needed()
+    heading_box, title_box, edit_box = heading.bounding_box(), title.bounding_box(), edit.bounding_box()
+    assert heading_box and title_box and edit_box
+    assert edit_box["y"] >= title_box["y"] + title_box["height"], (title_box, edit_box)
+    assert heading_box["width"] >= 120, f"The title was squeezed to {heading_box['width']}px."
+    assert title.evaluate(ON_TOP), "Something is drawn over the agent's title."
+    edit.scroll_into_view_if_needed()
+    assert edit.evaluate(ON_TOP), "Something is drawn over the agent's Edit button."
 
 
 def test_group_agents_read_from_the_group_route_only(group_agents_ui):

@@ -1,11 +1,12 @@
 # test_v2_group_file_sources.py
 """
 Production-SPA coverage for the native scope-aware V2 group file sources section.
-Version: 0.261.172
+Version: 0.261.188
 Implemented in: 0.261.147
 Credential identifiers kept on edit: 0.261.156
 Selected paths, fixed tags, folder tags, remote delete policy and root-relative browse: 0.261.171
 Ignore and restore by each browsed file's canonical remote path: 0.261.172
+A failed read offers a retry and never the empty state: 0.261.188
 
 Exercises the real file sources section and its editor dialog against closed synthetic
 HTTP. The fixture serves only the immutable `/api/groups/<id>/file-sources` family and
@@ -166,6 +167,25 @@ def test_group_file_sources_read_from_the_group_route_only(group_file_sources_ui
         "The file sources list route takes no query parameters."
     )
     assert_no_personal_reads(ui)
+
+
+# A failed read's message, chosen so it can't be mistaken for any copy the section writes itself.
+READ_FAILURE = "The service is temporarily unavailable."
+
+
+def test_a_failed_read_offers_a_retry_and_never_the_empty_state(group_file_sources_ui):
+    """A failed list read is not an empty list: the error is announced with a retry, and "No file
+    sources yet" never stands in for sources that couldn't be read (M11)."""
+    ui = group_file_sources_ui
+    ui.reject_next("GET", "/api/groups/group-a/file-sources", status=500, error=READ_FAILURE)
+    open_manager(ui)
+    alert = ui.page.get_by_role("alert").filter(has_text=READ_FAILURE)
+    expect(alert).to_be_visible()
+    expect(ui.page.get_by_text("No file sources yet", exact=True)).to_have_count(0)
+    alert.get_by_role("button", name="Retry file sources", exact=True).click()
+    expect(row(ui, EDITABLE_NAME)).to_be_visible()
+    expect(alert).to_have_count(0)
+    assert len(sources_get(ui)) == 2
 
 
 def test_source_actions_gate_row_controls(group_file_sources_ui):

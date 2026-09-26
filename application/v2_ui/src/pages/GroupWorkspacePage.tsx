@@ -481,10 +481,14 @@ export function GroupWorkspacePage() {
                                 : section === 'actions' && resourceId && groupActionAdapter ? (
                                     <ActionEditorPage adapter={groupActionAdapter} />
                                 ) : section === 'actions' && !resourceId && groupActionAdapter ? (
-                                    <>
-                                        <div className="min-h-0 flex-1"><ActionsSection agentsEnabled={false} adapter={groupActionAdapter} /></div>
+                                    // On a phone the fixed workspace header leaves too little height to split
+                                    // between the action list and the Call agent tools, so both flow in one
+                                    // scrolling column there. From md up the list keeps its own scroller above a
+                                    // Call agent panel capped at 45% of the height.
+                                    <div className="min-h-0 flex-1 overflow-y-auto md:flex md:flex-col md:overflow-visible">
+                                        <div className="md:min-h-0 md:flex-1"><ActionsSection agentsEnabled={false} adapter={groupActionAdapter} /></div>
                                         {context.native_delegation?.enabled ? (
-                                            <div className="mt-4 max-h-[45%] shrink-0 space-y-3 overflow-y-auto border-t border-edge pt-4">
+                                            <div className="mt-4 space-y-3 border-t border-edge pt-4 md:max-h-[45%] md:shrink-0 md:overflow-y-auto">
                                                 <SectionIntro title="Call agent" description={context.native_delegation.can_manage
                                                     ? 'Choose which agents this group can call and which local actions may trigger them.'
                                                     : 'The agents this group can call and the local actions that may trigger them.'} />
@@ -493,7 +497,7 @@ export function GroupWorkspacePage() {
                                                     onDirtyChange={setDirty} onBusyChange={setResourceBusy} />
                                             </div>
                                         ) : null}
-                                    </>
+                                    </div>
                                 ) : section === 'actions' && context.native_delegation?.enabled && !resourceId ? (
                                     <>
                                         <SectionIntro title="Actions" description={context.native_delegation.can_manage
