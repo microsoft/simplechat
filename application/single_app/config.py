@@ -22,8 +22,6 @@ mimetypes.add_type('font/woff2', '.woff2')
 mimetypes.add_type('font/ttf', '.ttf')
 mimetypes.add_type('font/otf', '.otf')
 mimetypes.add_type('application/vnd.ms-outlook', '.msg')
-mimetypes.add_type('application/onenote', '.one')
-mimetypes.add_type('application/onenote', '.onepkg')
 mimetypes.add_type('application/xml', '.xsd')
 import openpyxl
 import xlrd
@@ -100,7 +98,7 @@ DOTENV_LOAD_RESULT = load_simplechat_dotenv()
 EXECUTOR_TYPE = 'thread'
 EXECUTOR_MAX_WORKERS = 30
 SESSION_TYPE = 'filesystem'
-VERSION = "0.261.045"
+VERSION = "0.261.046"
 IS_DEVELOPMENT = is_development_env_enabled()
 
 # Opt-out for deployments where App Service Easy Auth is active but the platform
@@ -190,7 +188,6 @@ TABULAR_EXTENSIONS = {'csv', 'xlsx', 'xls', 'xlsm'}
 SCHEMA_EXTENSIONS = {'xsd'}
 VISIO_EXTENSIONS = {'vsdx'}
 EMAIL_EXTENSIONS = {'msg'}
-ONENOTE_EXTENSIONS = {'one', 'onepkg'}
 
 # Updates to image, video, audio, or Visio extensions should also be made in static/js/chat/chat-enhanced-citations.js if the new file types can be natively rendered in the browser.
 IMAGE_EXTENSIONS = {'jpg', 'jpeg', 'png', 'bmp', 'tiff', 'tif', 'heif', 'heic'}
@@ -225,7 +222,6 @@ def get_allowed_extensions(enable_video=False, enable_audio=False):
     extensions.update(SCHEMA_EXTENSIONS)
     extensions.update(VISIO_EXTENSIONS)
     extensions.update(EMAIL_EXTENSIONS)
-    extensions.update(ONENOTE_EXTENSIONS)
 
     if enable_video:
         extensions.update(VIDEO_EXTENSIONS)
@@ -255,10 +251,6 @@ def get_allowed_extension_categories(enable_video=False, enable_audio=False, ena
         {
             'name': 'Email and diagrams',
             'extensions': EMAIL_EXTENSIONS | VISIO_EXTENSIONS,
-        },
-        {
-            'name': 'OneNote (typed text and tables)',
-            'extensions': ONENOTE_EXTENSIONS,
         },
     ]
 

@@ -6,7 +6,6 @@
 !application/single_app/**
 !docker-customization/
 !docker-customization/**
-!LICENSE
 
 .git/
 .github/
@@ -32,5 +31,3 @@ scripts/
 application/single_app/flask_session/
 application/single_app/uploaded_openapi_files/
 application/single_app/instance/
-application/single_app/native/onenote_extractor/target/
-application/single_app/native/onenote_extractor/bin/
