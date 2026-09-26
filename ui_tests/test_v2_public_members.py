@@ -1,7 +1,7 @@
 # test_v2_public_members.py
 """
 Production-SPA coverage for the native V2 public workspace Members section (M10A).
-Version: 0.261.179
+Version: 0.261.181
 Implemented in: 0.261.179
 
 Exercises the real Members section -- the shared, scope-driven section (`MembersSection.tsx`) given
@@ -361,8 +361,9 @@ def csv_file(text):
 
 
 def test_csv_import_reports_each_row_and_retries_only_the_failed_ones(public_members_ui):
-    """A public CSV import posts each row's submitted details. A `user` role -- valid to parse but
-    not a role a public workspace assigns -- is refused by the server, so it stays a failed row."""
+    """A public CSV import posts each row's submitted details, reports every row's outcome, and
+    retries only the failed rows. Every row here is a role a public workspace assigns: a `user`
+    row is refused when the file is parsed (see the refusal test), so it never reaches the server."""
     ui, page = public_members_ui, public_members_ui.page
     extra = {"id": guid(20), "displayName": "Quinn Csv", "email": "quinn.csv@example.test"}
     ui.directory[extra["id"]] = extra
@@ -375,22 +376,22 @@ def test_csv_import_reports_each_row_and_retries_only_the_failed_ones(public_mem
         f"{extra['id']},Quinn Csv,quinn.csv@example.test,document_manager",
         f"{NORA['userId']},Nora Newcomer,nora.newcomer@example.test,admin",
         f"{MAYA['userId']},Maya Manager,maya.manager@example.test,document_manager",
-        f"{NIA['userId']},Nia Unlisted,nia.unlisted@example.test,user",
+        f"{NIA['userId']},Nia Unlisted,nia.unlisted@example.test,document_manager",
     ])))
     expect(importer.get_by_text("4 members are ready to add.", exact=True)).to_be_visible()
     importer.get_by_role("button", name="Add 4 members", exact=True).click()
-    expect(importer.get_by_text("1 added, 1 already a member, 2 failed.", exact=True)).to_be_visible()
+    expect(importer.get_by_text("2 added, 1 already a member, 1 failed.", exact=True)).to_be_visible()
     results = importer.get_by_role("list", name="Import results", exact=True)
     expect(results.get_by_role("listitem").filter(has_text="Quinn Csv")).to_contain_text(WRITE_CONFLICT_MESSAGE)
     expect(results.get_by_role("listitem").filter(has_text="Nora Newcomer")).to_contain_text("Added")
     expect(results.get_by_role("listitem").filter(has_text="Maya Manager")).to_contain_text("Already a member")
-    expect(results.get_by_role("listitem").filter(has_text="Nia Unlisted")).to_contain_text("The role must be Admin or DocumentManager.")
+    expect(results.get_by_role("listitem").filter(has_text="Nia Unlisted")).to_contain_text("Added")
     posts = calls(ui, "POST", MEMBERS_PATH)
-    assert [entry.body["role"] for entry in posts] == ["DocumentManager", "Admin", "DocumentManager", "User"]
-    importer.get_by_role("button", name="Retry 2 failed rows", exact=True).click()
-    expect(importer.get_by_text("2 added, 1 already a member, 1 failed.", exact=True)).to_be_visible()
+    assert [entry.body["role"] for entry in posts] == ["DocumentManager", "Admin", "DocumentManager", "DocumentManager"]
+    importer.get_by_role("button", name="Retry 1 failed row", exact=True).click()
+    expect(importer.get_by_text("3 added, 1 already a member, 0 failed.", exact=True)).to_be_visible()
     retried = calls(ui, "POST", MEMBERS_PATH)[len(posts):]
-    assert [entry.body["userId"] for entry in retried] == [extra["id"], NIA["userId"]]
+    assert [entry.body["userId"] for entry in retried] == [extra["id"]]
     importer.get_by_role("button", name="Done", exact=True).click()
     expect(row(ui, "Quinn Csv").get_by_label("Role for Quinn Csv")).to_have_value("DocumentManager")
     expect(row(ui, "Nora Newcomer").get_by_label("Role for Nora Newcomer")).to_have_value("Admin")
@@ -401,15 +402,18 @@ def test_csv_import_refuses_a_file_the_classic_page_refuses(public_members_ui):
     open_members(ui)
     page.get_by_role("button", name="Import CSV", exact=True).click()
     importer = dialog(ui, "Import members from CSV")
+    expect(importer).to_contain_text("Roles are admin or document_manager.")
     importer.get_by_label("CSV file").set_input_files(csv_file("name,email\nNora,nora@example.test\n"))
     expect(importer.get_by_role("alert")).to_contain_text("Invalid header. Expected: userId,displayName,email,role")
     importer.get_by_label("CSV file").set_input_files(csv_file("\n".join([
         "userId,displayName,email,role", "not-a-guid,Nora,nora@example.test,document_manager",
         f"{NORA['userId']},Nora,nora@example.test,owner",
+        f"{NIA['userId']},Nia,nia@example.test,user",
     ])))
     refusal = importer.get_by_role("alert")
     expect(refusal).to_contain_text("Row 2: Invalid GUID format for userId")
-    expect(refusal).to_contain_text("Row 3: Invalid role 'owner'. Must be: user, admin, or document_manager")
+    expect(refusal).to_contain_text("Row 3: Invalid role 'owner'. Must be: admin or document_manager")
+    expect(refusal).to_contain_text("Row 4: Invalid role 'user'. Must be: admin or document_manager")
     expect(importer.get_by_role("button", name="Add members", exact=True)).to_be_disabled()
     assert not calls(ui, "POST", MEMBERS_PATH)
 

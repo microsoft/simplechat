@@ -913,7 +913,8 @@ export function MembersSection({
                     onClose={() => { setAddOpen(false); setAddError(''); }} />
             ) : null}
             {importOpen ? (
-                <ImportMembersDialog onAddRow={addCsvRow} onRunningChange={setImportRunning} onFinished={reloadAll}
+                <ImportMembersDialog roles={scope.assignableOptions.map((option) => option.value)}
+                    onAddRow={addCsvRow} onRunningChange={setImportRunning} onFinished={reloadAll}
                     onClose={() => setImportOpen(false)} />
             ) : null}
             {confirmationDialog}

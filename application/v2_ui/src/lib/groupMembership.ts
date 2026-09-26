@@ -462,6 +462,31 @@ const CSV_ROLES = new Map<string, AssignableMemberRole>([
     ['document_manager', 'DocumentManager'],
 ]);
 
+/**
+ * The lowercase CSV role tokens a scope accepts, in the classic file's canonical order
+ * (user, admin, document_manager), filtered to `roles`. The public scope never assigns `User`, so
+ * it drops `user`: a `user` row is then refused when the file is parsed rather than by the server.
+ * Passing no `roles` keeps every token, so the group import stays byte-for-byte unchanged.
+ */
+export function memberCsvRoleTokens(roles?: readonly AssignableMemberRole[]): string[] {
+    const allowed = roles ? new Set<string>(roles) : null;
+    return [...CSV_ROLES].filter(([, role]) => !allowed || allowed.has(role)).map(([token]) => token);
+}
+
+/** The import dialog's description phrasing, e.g. "user, admin or document_manager" (no serial comma). */
+export function describeMemberCsvRoles(roles?: readonly AssignableMemberRole[]): string {
+    const tokens = memberCsvRoleTokens(roles);
+    if (tokens.length <= 1) return tokens.join('');
+    return `${tokens.slice(0, -1).join(', ')} or ${tokens[tokens.length - 1]}`;
+}
+
+/** The row error's "Must be:" list, e.g. "user, admin, or document_manager" (serial comma for 3+). */
+function memberCsvRolesMustBe(tokens: string[]): string {
+    if (tokens.length <= 1) return tokens.join('');
+    if (tokens.length === 2) return `${tokens[0]} or ${tokens[1]}`;
+    return `${tokens.slice(0, -1).join(', ')}, or ${tokens[tokens.length - 1]}`;
+}
+
 export interface MemberCsvRow {
     /** The row number the classic page reports: blank lines are skipped, the header is row 1. */
     row: number;
@@ -477,7 +502,9 @@ export interface MemberCsvParse {
     errors: string[];
 }
 
-export function parseMemberCsv(text: string): MemberCsvParse {
+export function parseMemberCsv(text: string, roles?: readonly AssignableMemberRole[]): MemberCsvParse {
+    const allowedTokens = new Set(memberCsvRoleTokens(roles));
+    const mustBe = memberCsvRolesMustBe(memberCsvRoleTokens(roles));
     const lines = text.split(/\r?\n/).filter((line) => line.trim());
     if (lines.length < 2) {
         return { rows: [], errors: ['CSV must contain at least a header row and one data row'] };
@@ -515,8 +542,8 @@ export function parseMemberCsv(text: string): MemberCsvParse {
             return;
         }
         const role = CSV_ROLES.get(roleName);
-        if (!role) {
-            errors.push(`Row ${rowNumber}: Invalid role '${roleName}'. Must be: user, admin, or document_manager`);
+        if (!role || !allowedTokens.has(roleName)) {
+            errors.push(`Row ${rowNumber}: Invalid role '${roleName}'. Must be: ${mustBe}`);
             return;
         }
         rows.push({ row: rowNumber, userId, displayName, email, role });
