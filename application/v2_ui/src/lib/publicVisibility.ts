@@ -49,6 +49,22 @@ export function isChattableStatus(status: string): boolean {
     return CHATTABLE_STATUSES.includes(status);
 }
 
+/** A workspace reduced to what availability filtering needs: its id and status. */
+export interface WorkspaceAvailability {
+    id: string;
+    status: string;
+}
+
+/**
+ * The ids from a directory walk whose status lets a reader chat them; the unavailable are dropped.
+ *
+ * A bulk "show all" marks only these visible, so an unavailable workspace is never claimed for
+ * chat, and a saved list keeps only these so an unavailable member stays hidden (decision 32).
+ */
+export function chattableIds(workspaces: readonly WorkspaceAvailability[]): string[] {
+    return workspaces.filter((workspace) => isChattableStatus(workspace.status)).map((workspace) => workspace.id);
+}
+
 /**
  * The ids visible for chat right now, across the whole directory.
  *

@@ -1,7 +1,7 @@
 # test_v2_public_directory.py
 """
 Production-SPA coverage for the native V2 public workspace directory page.
-Version: 0.261.184
+Version: 0.261.186
 Implemented in: 0.261.175
 
 Exercises the real public directory surface -- the browse-and-curate page built on the My Workspace
@@ -358,6 +358,23 @@ def test_an_unavailable_workspace_is_dimmed_but_still_hideable(public_directory_
     assert ui.preferences.get("publicDirectorySettings") == {INACTIVE_WORKSPACE: False}, (
         "Hiding an unavailable workspace is a valid choice and must write its entry, never error."
     )
+
+
+def test_an_unavailable_hidden_workspace_cannot_be_shown(public_directory_ui):
+    """An unavailable workspace that is already hidden is locked off: it can never be turned on (decision 32)."""
+    ui, page = public_directory_ui, public_directory_ui.page
+    ui.seed_visibility({INACTIVE_WORKSPACE: False})
+    open_directory(ui)
+    search_for(ui, INACTIVE_WORKSPACE_NAME)
+    switch = visibility_switch(ui, INACTIVE_WORKSPACE_NAME)
+    expect(switch).to_be_visible()
+    expect(switch).not_to_be_checked()
+    expect(switch).to_be_disabled()
+    # A locked-off switch performs no write on load, and the seeded hidden entry is left untouched.
+    assert not visibility_writes(ui), "A locked-off unavailable workspace must not write any preference."
+    assert ui.preferences.get("publicDirectorySettings") == {INACTIVE_WORKSPACE: False}, (
+        "An unavailable, hidden workspace can never be turned on, so its entry stays hidden."
+    )
     expect(page.get_by_role("alert")).to_have_count(0)
 
 
@@ -579,6 +596,15 @@ def all_directory_ids(ui):
     return set(ui.directory_workspaces)
 
 
+# INACTIVE and UNKNOWN are the only seeded rows whose status a reader cannot chat, so a bulk "show"
+# skips exactly these and a saved list leaves exactly these hidden.
+UNAVAILABLE_WORKSPACES = {INACTIVE_WORKSPACE, UNKNOWN_WORKSPACE}
+
+
+def available_directory_ids(ui):
+    return all_directory_ids(ui) - UNAVAILABLE_WORKSPACES
+
+
 def visibility_map(ui):
     return ui.preferences.get("publicDirectorySettings")
 
@@ -611,19 +637,24 @@ def stub_chat_navigation(ui):
     )
 
 
-def test_show_all_makes_every_workspace_visible_and_reports_the_count(public_directory_ui):
-    """Show all in chat writes true for every workspace across all pages, and reports the true count."""
+def test_show_all_makes_available_workspaces_visible_and_skips_the_rest(public_directory_ui):
+    """Show all in chat marks every *available* workspace visible across all pages, skipping and counting the unavailable (decision 32)."""
     ui, page = public_directory_ui, public_directory_ui.page
     open_directory(ui)
-    ids = all_directory_ids(ui)
+    available = available_directory_ids(ui)
+    skipped = len(all_directory_ids(ui)) - len(available)
     with page.expect_response(wrote_key("publicDirectorySettings")):
         page.get_by_role("button", name="Show all in chat", exact=True).click()
     written = visibility_map(ui)
-    assert set(written) == ids and all(written.values()), (
-        "Show all must make every workspace in the directory visible, not just the page on screen."
+    assert set(written) == available and all(written.values()), (
+        "Show all must make every available workspace visible, and only those."
+    )
+    assert not (set(written) & UNAVAILABLE_WORKSPACES), (
+        "Show all must never mark an unavailable workspace visible for chat."
     )
     assert enumeration_gets(ui), "The bulk action must walk the directory at the server's largest page."
-    expect(page.get_by_text(f"Made {len(ids)} workspaces visible in chat.", exact=False)).to_be_visible()
+    expect(page.get_by_text(f"Made {len(available)} workspaces visible in chat.", exact=False)).to_be_visible()
+    expect(page.get_by_text(f"{skipped} unavailable workspaces were skipped", exact=False)).to_be_visible()
 
 
 def test_hide_all_hides_every_workspace_and_reports_the_count(public_directory_ui):
@@ -643,13 +674,14 @@ def test_a_bulk_action_preserves_entries_it_did_not_name(public_directory_ui):
     ui, page = public_directory_ui, public_directory_ui.page
     ui.seed_visibility({"ghost-ws": True})
     open_directory(ui)
-    ids = all_directory_ids(ui)
+    available = available_directory_ids(ui)
     with page.expect_response(wrote_key("publicDirectorySettings")):
         page.get_by_role("button", name="Show all in chat", exact=True).click()
     written = visibility_map(ui)
-    assert "ghost-ws" not in ids, "The stale id is genuinely absent from the directory."
+    assert "ghost-ws" not in all_directory_ids(ui), "The stale id is genuinely absent from the directory."
     assert written.get("ghost-ws") is True, "A bulk action must preserve entries it did not name (R2)."
-    assert all(written[identifier] is True for identifier in ids), "Every real workspace is visible."
+    assert all(written[identifier] is True for identifier in available), "Every available workspace is visible."
+    assert not (set(written) & UNAVAILABLE_WORKSPACES), "Show all never marks an unavailable workspace visible."
 
 
 def test_save_current_snapshots_the_whole_directory_by_default(public_directory_ui):
@@ -693,8 +725,26 @@ def test_use_this_list_replaces_the_map_with_only_the_list(public_directory_ui):
     assert visibility_map(ui) == {LOGO_WORKSPACE: True, REQUESTABLE_WORKSPACE: True}, (
         "Using a list replaces the whole map with exactly the list's workspaces."
     )
-    assert not enumeration_gets(ui), "A non-empty list needs no directory walk; the custom map hides the rest."
+    assert enumeration_gets(ui), (
+        "A non-empty list now walks the directory to learn each member's availability (decision 32)."
+    )
     expect(page.get_by_text("2 workspaces now visible in chat; the rest are hidden.", exact=False)).to_be_visible()
+
+
+def test_use_this_list_leaves_an_unavailable_member_hidden(public_directory_ui):
+    """A saved list that names an unavailable workspace leaves it hidden and says so (decision 32)."""
+    ui, page = public_directory_ui, public_directory_ui.page
+    ui.preferences["publicDirectorySavedLists"] = {"Mixed": [LOGO_WORKSPACE, INACTIVE_WORKSPACE]}
+    open_directory(ui)
+    page.get_by_label("Saved list", exact=True).select_option("Mixed")
+    with page.expect_response(wrote_key("publicDirectorySettings")):
+        page.get_by_role("button", name="Use this list", exact=True).click()
+    assert visibility_map(ui) == {LOGO_WORKSPACE: True}, (
+        "Only the list's available members are made visible; an unavailable member is left hidden."
+    )
+    assert enumeration_gets(ui), "Applying a list walks the directory to learn each member's availability."
+    expect(page.get_by_text("1 workspace now visible in chat; the rest are hidden.", exact=False)).to_be_visible()
+    expect(page.get_by_text("1 unavailable workspace in the list stayed hidden", exact=False)).to_be_visible()
 
 
 def test_use_an_empty_saved_list_hides_every_workspace(public_directory_ui):

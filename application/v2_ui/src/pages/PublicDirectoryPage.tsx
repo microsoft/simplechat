@@ -34,7 +34,7 @@ import {
 } from '../lib/publicDirectory';
 import {
     hasCustomVisibility, isVisibleForChat, setChatVisibility,
-    markEvery, mapForSavedList, visibleIdsFromMap,
+    markEvery, mapForSavedList, visibleIdsFromMap, chattableIds,
     type ChatVisibilityMap,
 } from '../lib/publicVisibility';
 import { useBootstrapStore } from '../stores/bootstrapStore';
@@ -73,6 +73,28 @@ function readPageNumber(value: string | null): number {
 
 function countLabel(count: number): string {
     return `${count} ${count === 1 ? 'workspace' : 'workspaces'}`;
+}
+
+function unavailableLabel(count: number): string {
+    return `${count} unavailable ${count === 1 ? 'workspace' : 'workspaces'}`;
+}
+
+// A bulk "show all" only ever makes *available* workspaces visible, so it reports both what it made
+// visible and how many it skipped -- never implying it touched the ones it deliberately left alone.
+function bulkVisibleNotice(visible: number, skipped: number): string {
+    const base = `Made ${countLabel(visible)} visible in chat.`;
+    if (skipped === 0) return base;
+    return `${base} ${unavailableLabel(skipped)} ${skipped === 1 ? 'was' : 'were'} skipped because `
+        + `${skipped === 1 ? 'it is' : 'they are'} not available for chat.`;
+}
+
+// Applying a saved list leaves an unavailable member hidden rather than claiming it for chat, so
+// its notice reports the visible count and, honestly, how many named workspaces stayed hidden.
+function useListNotice(visible: number, skipped: number): string {
+    const base = `${countLabel(visible)} now visible in chat; the rest are hidden.`;
+    if (skipped === 0) return base;
+    return `${base} ${unavailableLabel(skipped)} in the list stayed hidden because `
+        + `${skipped === 1 ? 'it is' : 'they are'} not available for chat.`;
 }
 
 // A bulk action either covers the whole directory or refuses; it never writes a partial set. The
@@ -188,18 +210,22 @@ export function PublicDirectoryPage() {
         [],
     );
 
-    // Show or hide every workspace in the directory. The ids are walked across the server's pages
-    // (bounded), then merged onto the live map so entries the walk did not name are preserved per
-    // the R2 additive rule. The reported count is exactly what was written -- never the page size.
+    // Show or hide every workspace in the directory. The workspaces are walked across the server's
+    // pages (bounded), then merged onto the live map so entries the walk did not name are preserved
+    // per the R2 additive rule. Showing marks only *available* workspaces -- making an unavailable
+    // one visible would claim it for chat when its status forbids it (decision 32) -- and reports
+    // both the count it made visible and the count it skipped. Hiding covers every workspace, since
+    // hiding one a reader cannot currently use is always a valid choice.
     const runBulkVisibility = useCallback(async (visible: boolean) => {
         setBulkBusy(true);
         setNotice('');
         try {
-            const ids = await adapter.listAllWorkspaceIds();
-            useUserSettingsStore.getState().update({ [VISIBILITY_KEY]: markEvery(readVisibilityMap(), ids, visible) });
+            const workspaces = await adapter.listAllWorkspaces();
+            const targets = visible ? chattableIds(workspaces) : workspaces.map((workspace) => workspace.id);
+            useUserSettingsStore.getState().update({ [VISIBILITY_KEY]: markEvery(readVisibilityMap(), targets, visible) });
             setNotice(visible
-                ? `Made ${countLabel(ids.length)} visible in chat.`
-                : `Hid ${countLabel(ids.length)} from chat.`);
+                ? bulkVisibleNotice(targets.length, workspaces.length - targets.length)
+                : `Hid ${countLabel(targets.length)} from chat.`);
         } catch (cause: unknown) {
             setNotice(bulkErrorMessage(cause));
         } finally {
@@ -243,9 +269,12 @@ export function PublicDirectoryPage() {
         }
     }, [adapter, readVisibilityMap]);
 
-    // Replace the whole visibility map with a saved list: exactly its workspaces are visible and the
-    // rest hidden. A non-empty list needs no enumeration (a custom map hides everything absent); an
-    // empty list must hide every id, so it walks the directory to build an all-hidden map.
+    // Replace the whole visibility map with a saved list: exactly its *available* workspaces are
+    // visible and the rest hidden. The list is walked against the directory so an unavailable member
+    // is left hidden rather than claimed for chat (decision 32); the rest hide because any custom map
+    // hides everything absent. An empty list, or a list whose members are all unavailable, hides
+    // every id, so it builds an explicit all-hidden map (an empty map would instead mean "all
+    // visible"). The count reported is exactly the available members made visible.
     const useList = useCallback(async (name: string) => {
         const lists = (useUserSettingsStore.getState().settings[SAVED_LISTS_KEY] as Record<string, string[]> | undefined) ?? {};
         const listIds = lists[name];
@@ -256,13 +285,21 @@ export function PublicDirectoryPage() {
         setBulkBusy(true);
         setNotice('');
         try {
-            const nextMap = listIds.length > 0
-                ? mapForSavedList(listIds)
-                : markEvery({}, await adapter.listAllWorkspaceIds(), false);
+            const workspaces = await adapter.listAllWorkspaces();
+            if (listIds.length === 0) {
+                useUserSettingsStore.getState().update({ [VISIBILITY_KEY]: markEvery({}, workspaces.map((workspace) => workspace.id), false) });
+                setNotice('All workspaces are now hidden from chat.');
+                return;
+            }
+            const available = new Set(chattableIds(workspaces));
+            const inDirectory = new Set(workspaces.map((workspace) => workspace.id));
+            const visibleIds = listIds.filter((id) => available.has(id));
+            const skipped = listIds.filter((id) => inDirectory.has(id) && !available.has(id)).length;
+            const nextMap = visibleIds.length > 0
+                ? mapForSavedList(visibleIds)
+                : markEvery({}, workspaces.map((workspace) => workspace.id), false);
             useUserSettingsStore.getState().update({ [VISIBILITY_KEY]: nextMap });
-            setNotice(listIds.length > 0
-                ? `${countLabel(listIds.length)} now visible in chat; the rest are hidden.`
-                : 'All workspaces are now hidden from chat.');
+            setNotice(useListNotice(visibleIds.length, skipped));
         } catch (cause: unknown) {
             setNotice(bulkErrorMessage(cause));
         } finally {
