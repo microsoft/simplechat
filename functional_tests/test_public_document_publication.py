@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """
 Functional tests for immutable-target public workspace generated-artifact decisions.
-Version: 0.261.182
+Version: 0.261.183
 Implemented in: 0.261.134
 Decision link opens the V2 public workspace route: 0.261.148
 A pending artifact is visible only to the hosting workspace's managers; a reader's review or cancel
-of one answers as a document that does not exist: 0.261.182
+of one answers as a document that does not exist: 0.261.183
 
 The scoped public collaboration routes, the public publication adapter, the
 shared canonical artifact-publication engine, the shared screening consume-latch

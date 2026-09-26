@@ -16,11 +16,9 @@ from functions_appinsights import log_event
 from functions_artifact_publication import decide_artifact_publication
 from functions_document_access_index import (
     DOCUMENT_ACCESS_SCOPE_PUBLIC,
-    build_document_access_scope_key,
     is_document_access_shadow_validation_enabled,
     query_document_access_index_documents,
     query_document_access_index_legacy_count,
-    query_document_access_index_tag_counts,
     query_items_with_cosmos_diagnostics,
     validate_document_access_index_shadow,
 )
@@ -30,6 +28,7 @@ from functions_file_sync import (
     build_synced_document_delete_guard,
 )
 from functions_notifications import create_notification, delete_notifications_by_metadata
+from functions_public_document_policy import public_document_approval_pending
 from functions_simplechat_operations import download_blob_content, queue_generated_document_processing
 from utils_cache import invalidate_public_workspace_search_cache
 from flask import current_app
@@ -127,6 +126,69 @@ def _save_public_tag_definitions(workspace_id, user_id, change):
     if saved is None:
         return jsonify({'error': 'Active public workspace not found'}), 404
     return None
+
+
+def _query_public_chat_documents(user_id, workspace_ids, *, context):
+    """The current documents of these public workspaces that a chat can use.
+
+    Read from the document access index, or from the source documents when the
+    index is not ready. A generated artifact awaiting publication is left out for
+    every caller: it has no content to chat with until its approval queues
+    processing, so listing it would only disclose it. The chat document list and
+    its tag counts are both taken from this one set.
+    """
+    workspace_conditions = " OR ".join([f"c.public_workspace_id = @ws_{i}" for i in range(len(workspace_ids))])
+    query = f'SELECT * FROM c WHERE {workspace_conditions} ORDER BY c._ts DESC'
+    params = [{'name': f'@ws_{i}', 'value': workspace_id} for i, workspace_id in enumerate(workspace_ids)]
+    index_read_result = query_document_access_index_documents(
+        source_scope=DOCUMENT_ACCESS_SCOPE_PUBLIC,
+        public_workspace_ids=workspace_ids,
+    )
+    if index_read_result.get('success'):
+        docs = sort_documents(index_read_result.get('documents', []))
+        if is_document_access_shadow_validation_enabled():
+            try:
+                source_docs, source_query_metrics = query_items_with_cosmos_diagnostics(
+                    cosmos_public_documents_container,
+                    diagnostics_label='source_documents',
+                    query=query,
+                    parameters=params,
+                    enable_cross_partition_query=True,
+                )
+                validate_document_access_index_shadow(
+                    sort_documents(select_current_documents(source_docs)),
+                    source_scope=DOCUMENT_ACCESS_SCOPE_PUBLIC,
+                    user_id=user_id,
+                    public_workspace_ids=workspace_ids,
+                    source_query_metrics=source_query_metrics,
+                    context=context,
+                )
+            except Exception as shadow_error:
+                log_event(
+                    '[DOCUMENT_ACCESS_INDEX] Shadow validation source query failed after DAI read succeeded.',
+                    extra={'source_scope': DOCUMENT_ACCESS_SCOPE_PUBLIC, 'error': str(shadow_error)},
+                    level=logging.WARNING,
+                    exceptionTraceback=True,
+                )
+    else:
+        source_docs, source_query_metrics = query_items_with_cosmos_diagnostics(
+            cosmos_public_documents_container,
+            diagnostics_label='source_documents',
+            collect_diagnostics=is_document_access_shadow_validation_enabled(),
+            query=query,
+            parameters=params,
+            enable_cross_partition_query=True,
+        )
+        docs = sort_documents(select_current_documents(source_docs))
+        validate_document_access_index_shadow(
+            docs,
+            source_scope=DOCUMENT_ACCESS_SCOPE_PUBLIC,
+            user_id=user_id,
+            public_workspace_ids=workspace_ids,
+            source_query_metrics=source_query_metrics,
+            context=context,
+        )
+    return [document for document in docs if not public_document_approval_pending(document)]
 
 
 def register_route_backend_public_documents(bp):
@@ -452,7 +514,8 @@ def register_route_backend_public_documents(bp):
     def api_list_public_workspace_documents():
         """
         Endpoint specifically for chat functionality to load public workspace documents
-        Returns documents from ALL visible public workspaces for the chat interface
+        Returns documents from ALL visible public workspaces for the chat interface,
+        never a generated artifact awaiting publication
         """
         user_id = get_current_user_id()
         if not user_id:
@@ -481,58 +544,10 @@ def register_route_backend_public_documents(bp):
             page_size = 1000
 
         # Query documents from all visible public workspaces
-        workspace_conditions = " OR ".join([f"c.public_workspace_id = @ws_{i}" for i in range(len(workspace_ids))])
-        query = f'SELECT * FROM c WHERE {workspace_conditions} ORDER BY c._ts DESC'
-        params = [{'name': f'@ws_{i}', 'value': workspace_id} for i, workspace_id in enumerate(workspace_ids)]
         try:
-            index_read_result = query_document_access_index_documents(
-                source_scope=DOCUMENT_ACCESS_SCOPE_PUBLIC,
-                public_workspace_ids=workspace_ids,
+            docs = _query_public_chat_documents(
+                user_id, workspace_ids, context='api_list_public_workspace_documents',
             )
-            if index_read_result.get('success'):
-                docs = sort_documents(index_read_result.get('documents', []))
-                if is_document_access_shadow_validation_enabled():
-                    try:
-                        source_docs, source_query_metrics = query_items_with_cosmos_diagnostics(
-                            cosmos_public_documents_container,
-                            diagnostics_label='source_documents',
-                            query=query,
-                            parameters=params,
-                            enable_cross_partition_query=True,
-                        )
-                        validate_document_access_index_shadow(
-                            sort_documents(select_current_documents(source_docs)),
-                            source_scope=DOCUMENT_ACCESS_SCOPE_PUBLIC,
-                            user_id=user_id,
-                            public_workspace_ids=workspace_ids,
-                            source_query_metrics=source_query_metrics,
-                            context='api_list_public_workspace_documents',
-                        )
-                    except Exception as shadow_error:
-                        log_event(
-                            '[DOCUMENT_ACCESS_INDEX] Shadow validation source query failed after DAI read succeeded.',
-                            extra={'source_scope': DOCUMENT_ACCESS_SCOPE_PUBLIC, 'error': str(shadow_error)},
-                            level=logging.WARNING,
-                            exceptionTraceback=True,
-                        )
-            else:
-                source_docs, source_query_metrics = query_items_with_cosmos_diagnostics(
-                    cosmos_public_documents_container,
-                    diagnostics_label='source_documents',
-                    collect_diagnostics=is_document_access_shadow_validation_enabled(),
-                    query=query,
-                    parameters=params,
-                    enable_cross_partition_query=True,
-                )
-                docs = sort_documents(select_current_documents(source_docs))
-                validate_document_access_index_shadow(
-                    docs,
-                    source_scope=DOCUMENT_ACCESS_SCOPE_PUBLIC,
-                    user_id=user_id,
-                    public_workspace_ids=workspace_ids,
-                    source_query_metrics=source_query_metrics,
-                    context='api_list_public_workspace_documents',
-                )
         except Exception as e:
             log_event(
                 '[PUBLIC_DOCUMENTS] Error fetching public workspace chat documents.',
@@ -1299,6 +1314,8 @@ def register_route_backend_public_documents(bp):
         Accepts optional `workspace_ids` query param (comma-separated).
         Falls back to all visible public workspaces from user settings if not provided.
         Permission: only workspaces the user has visibility to are included.
+        Counts are taken over exactly the documents the chat document list returns, so
+        a generated artifact awaiting publication is never counted.
         """
         user_id = get_current_user_id()
         if not user_id:
@@ -1312,26 +1329,35 @@ def register_route_backend_public_documents(bp):
             workspace_ids = get_user_visible_public_workspace_ids_from_settings(user_id)
 
         visible_ids = set(get_user_visible_public_workspace_ids_from_settings(user_id))
-        validated_ids = [wid for wid in workspace_ids if wid in visible_ids]
+        validated_ids = list(dict.fromkeys(wid for wid in workspace_ids if wid in visible_ids))
 
-        from functions_documents import build_workspace_tags_from_counts, get_workspace_tags
+        from functions_documents import build_workspace_tags_from_counts, normalize_tag
 
-        index_tag_result = query_document_access_index_tag_counts(
-            DOCUMENT_ACCESS_SCOPE_PUBLIC,
-            public_workspace_ids=validated_ids,
-        ) if validated_ids else {'success': False}
+        tag_counts = {wid: {} for wid in validated_ids}
+        if validated_ids:
+            try:
+                documents = _query_public_chat_documents(
+                    user_id, validated_ids, context='api_get_public_workspace_document_tags',
+                )
+            except Exception as e:
+                log_event(
+                    '[PUBLIC_DOCUMENTS] Error fetching public workspace chat tags.',
+                    extra={'workspace_count': len(validated_ids), 'error': str(e)},
+                    level=logging.ERROR,
+                )
+                return jsonify({'error': 'Error fetching tags'}), 500
+            for document in documents:
+                counts = tag_counts.get(document.get('public_workspace_id'))
+                if counts is None:
+                    continue
+                for tag in document.get('tags') or []:
+                    normalized_tag = normalize_tag(tag)
+                    if normalized_tag:
+                        counts[normalized_tag] = counts.get(normalized_tag, 0) + 1
 
         all_tags = {}
         for wid in validated_ids:
-            if index_tag_result.get('success'):
-                scope_key = build_document_access_scope_key(DOCUMENT_ACCESS_SCOPE_PUBLIC, wid)
-                tags = build_workspace_tags_from_counts(
-                    index_tag_result.get('tag_counts_by_scope_key', {}).get(scope_key, {}),
-                    user_id,
-                    public_workspace_id=wid,
-                )
-            else:
-                tags = get_workspace_tags(user_id, public_workspace_id=wid)
+            tags = build_workspace_tags_from_counts(tag_counts[wid], user_id, public_workspace_id=wid)
             for tag in tags:
                 if tag['name'] in all_tags:
                     all_tags[tag['name']]['count'] += tag['count']

@@ -1,13 +1,13 @@
 # public_document_collaboration.py
 """
 Closed M3C public generated-artifact approval HTTP fixtures for the real V2 SPA.
-Version: 0.261.182
+Version: 0.261.183
 Implemented in: 0.261.134
 A configured workspace carries the server's review handshake (public_context) unless a test scripts
 its own: 0.261.168
 The review states, pending rows, receipts, refusals and partial outcomes are the real collaboration
 routes', held to them by functional_tests/test_public_document_fixture_parity.py: 0.261.180
-A pending artifact is listed held, and its review served, only to a workspace manager: 0.261.182
+A pending artifact is listed held, and its review served, only to a workspace manager: 0.261.183
 
 Extend the M3B management boundary with the publication review surface. Public
 workspaces have no cross-workspace sharing in this milestone, so only generated

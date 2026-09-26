@@ -2,7 +2,7 @@
 """
 Production-SPA coverage for native V2 public workspace document browsing (M3A),
 management (M3B) and generated-artifact approval (M3C).
-Version: 0.261.182
+Version: 0.261.183
 Implemented in: 0.261.132
 A coded failure shows the server's sentence (apiClient), and an archive takes the server's
 name: 0.261.164
@@ -12,7 +12,7 @@ A manager who can't upload is told why when dropping files: 0.261.168
 Every scripted reply is the one the public routes send, held to them by
 functional_tests/test_public_document_fixture_parity.py: 0.261.180
 A generated artifact awaiting publication is shown, held, only to a workspace manager; a reader's
-rows, counts and places never include one: 0.261.182
+rows, counts and places never include one: 0.261.183
 
 Exercises real components, stores and navigation with closed synthetic HTTP.
 The read fixture never permits personal or group document requests, and never

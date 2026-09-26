@@ -1,10 +1,10 @@
 # test_public_document_fixture_parity.py
 """
 Per-route shape parity between the M9B public document UI fixtures and the real routes.
-Version: 0.261.182
+Version: 0.261.183
 Implemented in: 0.261.180
 A generated artifact awaiting publication is held for managers and absent for everyone else
-(decision 27): 0.261.182
+(decision 27): 0.261.183
 
 The V2 public Documents explorer mocks the network with three closed HTTP fixtures, which predate the
 per-route parity rule:
@@ -37,7 +37,7 @@ fixture's workspace, ``pub-a``, so each projection is compared with the server's
 same document; the publication harness publishes its own artifact into ``public-a``.
 
 One product finding was pinned here as a strict xfail at 0.261.180: a public generated artifact
-awaiting publication was listed to every reader with its full metadata. Decision 27 (0.261.182) makes
+awaiting publication was listed to every reader with its full metadata. Decision 27 (0.261.183) makes
 it visible only to the workspace's managers, who see it held as a group member does; to every other
 reader it does not exist. The rule is pinned against the real routes below, with the fixtures' copy of
 it held to the server's predicate.

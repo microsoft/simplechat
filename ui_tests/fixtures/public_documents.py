@@ -1,12 +1,15 @@
 # public_documents.py
 """
 Closed M3A public document HTTP fixtures for the real production V2 SPA.
-Version: 0.261.182
+Version: 0.261.183
 Implemented in: 0.261.132
 The served rows, read texts and refusals are the real read routes', held to them by
 functional_tests/test_public_document_fixture_parity.py: 0.261.180
 A generated artifact awaiting publication is shown, held, only to a workspace manager; to anyone
-else it does not exist: 0.261.182
+else it does not exist: 0.261.183
+chat_list is the public chat document list as its route answers it, pending artifacts left out for
+every caller, held to the route by functional_tests/test_public_chat_document_list_pending_artifacts.py:
+0.261.183
 
 Every document read is scoped by the workspace id in its request path and every
 returned record carries public_workspace_id. The fixture never permits personal
@@ -134,6 +137,16 @@ def awaiting_approval(record):
         "enhanced_citations": False,
     })
     return projected
+
+
+def chat_list(rows):
+    """GET /api/public_workspace_documents, the list the V2 and classic chat pickers read, as the route
+    answers it: every row a chat can use. A generated artifact awaiting publication is left out for
+    every caller, since it has no content until its approval queues processing (decision 27)."""
+    return {
+        "documents": [copy.deepcopy(row) for row in rows if not awaiting_publication(row)],
+        "workspace_name": "All Public Workspaces",
+    }
 
 
 def served(record):
