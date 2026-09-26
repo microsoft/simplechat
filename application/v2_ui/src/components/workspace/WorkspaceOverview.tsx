@@ -6,6 +6,7 @@ import { GlassPanel } from '../ui/primitives';
 import { SectionIntro } from './primitives';
 import type { WorkspaceNavigationSection } from './WorkspaceShell';
 import { groupWorkspaceSections, type ResolvedWorkspaceSection } from '../../lib/workspaceSections';
+import type { WorkspaceSectionGroup } from '../../lib/types';
 
 export interface WorkspaceOverviewSection extends WorkspaceNavigationSection {
     blurb: string;
@@ -13,13 +14,15 @@ export interface WorkspaceOverviewSection extends WorkspaceNavigationSection {
 }
 
 export function WorkspaceOverview({
-    resolved, basePath, description, counts = {}, showRelationships = true,
+    resolved, basePath, description, counts = {}, showRelationships = true, groupBlurbs = {},
 }: {
     resolved: ResolvedWorkspaceSection<WorkspaceOverviewSection>[];
     basePath: string;
     description: string;
     counts?: Record<string, number | undefined>;
     showRelationships?: boolean;
+    /** A scope's own wording for a group's blurb; a group not named here keeps the shared one. */
+    groupBlurbs?: Partial<Record<WorkspaceSectionGroup, string>>;
 }) {
     return (
         <div className="space-y-6">
@@ -28,7 +31,7 @@ export function WorkspaceOverview({
                 <section key={group.id} className="space-y-2">
                     <div>
                         <h3 className="text-sm font-semibold text-text-1">{group.label}</h3>
-                        <p className="text-xs text-text-3">{group.blurb}</p>
+                        <p className="text-xs text-text-3">{groupBlurbs[group.id] ?? group.blurb}</p>
                     </div>
                     <div className="grid gap-2 sm:grid-cols-2">
                         {sections.map(({ section, enabled, reason }) => {

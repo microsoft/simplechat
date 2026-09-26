@@ -6,6 +6,7 @@ Version: 0.261.187
 Implemented in: 0.261.185
 The classic handoff follows the Documents header's renamed Classic tools button: 0.261.187
 A locked overview entry is outlined, never faded, and its text stays readable: 0.261.187
+The overview describes what a public workspace offers, and its Manage group who manages it: 0.261.187
 
 These journeys are the public twin of test_v2_group_journeys.py. They ride one composite
 public store (public_journeys_ui) across the whole public surface in one session and assert
@@ -24,6 +25,7 @@ Coverage of M11 contract sec 2.3 (public role x status x feature):
     the File-Sync feature axis ...................... test_jp_file_sync_gates_the_connection_sections
     a reader's locked connection sections .......... test_jp_overview_lists_locked_connections_with_their_reason
     locked entries outlined, readable (2.4) ........ test_jp_locked_overview_entries_stay_readable
+    the overview's public wording (2.4) ............ test_jp_overview_describes_what_a_public_workspace_offers
     status revoked mid-session (2.2) ............... test_jp_status_locked_then_barred_mid_session
     access revoked mid-session, 403 (2.2) ......... test_jp_access_revoked_mid_session_is_surfaced
     Settings activation refresh (2.2) ............. test_jp_settings_activation_makes_the_surface_available
@@ -32,6 +34,7 @@ Coverage of M11 contract sec 2.3 (public role x status x feature):
 """
 
 import copy
+import re
 
 import pytest
 from playwright.sync_api import expect
@@ -240,6 +243,27 @@ def test_jp_locked_overview_entries_stay_readable(public_journeys_ui, theme):
         if theme == "dark":
             low = [line for line in lines if line["ratio"] < 4.5]
             assert not low, f"The {label} entry has text below 4.5:1 in dark: {low}"
+
+
+PUBLIC_OVERVIEW_DESCRIPTION = (
+    "Published documents and prompts for this public workspace, and how it's connected and run. "
+    "A locked section shows why it's unavailable to you."
+)
+PUBLIC_MANAGE_BLURB = "Who manages this workspace, and how it is run."
+
+
+def test_jp_overview_describes_what_a_public_workspace_offers(public_journeys_ui):
+    """The overview says what a public workspace holds, with no word of Classic sections it no longer has,
+    and its Manage group describes the people who manage it, not a group's members (M11)."""
+    ui = public_journeys_ui
+    ui.set_matrix("pub-a", role="User", status="active", file_sync=True)
+    ui.open("/public/pub-a")
+    main = ui.page.get_by_role("main")
+    expect(main.get_by_text(PUBLIC_OVERVIEW_DESCRIPTION, exact=True)).to_be_visible()
+    expect(main.get_by_text(re.compile("Classic"))).to_have_count(0)
+    manage = main.locator("section").filter(has=ui.page.get_by_role("heading", name="Manage", exact=True))
+    expect(manage.get_by_text(PUBLIC_MANAGE_BLURB, exact=True)).to_be_visible()
+    expect(main.get_by_text(re.compile("this group"))).to_have_count(0)
 
 
 # --- J-P: mid-session transitions ----------------------------------------------------------------

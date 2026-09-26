@@ -11,6 +11,7 @@ import {
 } from './workspaceContext';
 import { getPublicWorkspaceLabels } from './publicWorkspaceLabels';
 import { GROUP_ROLE_LABELS } from './groupWorkspaceNavigation';
+import type { WorkspaceSectionGroup } from './types';
 
 export const PUBLIC_SECTION_BLURBS: Record<GroupWorkspaceSectionId, string> = {
     documents: 'Published files anyone here can search and use in chat.',
@@ -22,6 +23,12 @@ export const PUBLIC_SECTION_BLURBS: Record<GroupWorkspaceSectionId, string> = {
     workflows: 'Repeatable tasks using this workspace\'s agents and documents.',
     identities: 'Saved sign-ins for this workspace\'s file sources.',
     endpoints: 'Model connections available to this workspace\'s agents and workflows.',
+};
+
+// The overview's group blurbs where a public workspace's differ from the shared ones. Nobody joins a
+// public workspace to read it: its members are the people who manage it.
+export const PUBLIC_GROUP_BLURBS: Partial<Record<WorkspaceSectionGroup, string>> = {
+    manage: 'Who manages this workspace, and how it is run.',
 };
 
 export function classicPublicSectionLabel(section: string, label: string): string {
