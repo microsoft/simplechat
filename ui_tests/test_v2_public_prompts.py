@@ -1,10 +1,11 @@
 # test_v2_public_prompts.py
 """
 Production-SPA coverage for the native scope-aware V2 public prompts workbench.
-Version: 0.261.184
+Version: 0.261.187
 Implemented in: 0.261.177
 At the largest text size the details keep their room beside the list, and scroll from the
 keyboard: 0.261.184
+A failed read offers a retry and never the empty state: 0.261.187
 
 Exercises the real workbench and adapter against closed synthetic HTTP. The fixture only
 serves the immutable `/api/public-workspaces/<id>/prompts` family, never personal prompt
@@ -109,6 +110,25 @@ def test_list_reads_whole_public_set(public_prompts_ui):
         if entry[0].endswith("/api/public-workspaces/pub-a/prompts?page=1&page_size=500")
     ][-1][1]["prompts"]
     assert listed and all(prompt["public_id"] == "pub-a" for prompt in listed)
+
+
+# A failed read's message, chosen so it can't be mistaken for any copy the section writes itself.
+READ_FAILURE = "The service is temporarily unavailable."
+
+
+def test_a_failed_read_offers_a_retry_and_never_the_empty_state(public_prompts_ui):
+    """A failed list read is not an empty list: the error is announced with a retry, and neither "No
+    prompts yet" nor the empty state's New prompt stands in for prompts that couldn't be read (M11)."""
+    ui = public_prompts_ui
+    ui.reject_next("GET", "/api/public-workspaces/pub-a/prompts", status=500, error=READ_FAILURE)
+    open_prompts(ui)
+    alert = ui.page.get_by_role("alert").filter(has_text=READ_FAILURE)
+    expect(alert).to_be_visible()
+    expect(ui.page.get_by_text("No prompts yet", exact=True)).to_have_count(0)
+    expect(ui.page.get_by_role("button", name="New prompt", exact=True)).to_have_count(1)
+    alert.get_by_role("button", name="Retry prompts", exact=True).click()
+    expect(row(ui, "Weekly status")).to_be_visible()
+    expect(alert).to_have_count(0)
 
 
 def test_manager_can_create(public_prompts_ui):

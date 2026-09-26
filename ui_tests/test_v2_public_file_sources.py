@@ -1,8 +1,9 @@
 # test_v2_public_file_sources.py
 """
 Production-SPA coverage for the native V2 public workspace file sources section (M10B).
-Version: 0.261.182
+Version: 0.261.187
 Implemented in: 0.261.182
+A failed read offers a retry and never the empty state: 0.261.187
 
 Exercises the real file sources section and its editor dialog against closed synthetic HTTP. The
 fixture serves only the immutable `/api/public-workspaces/<id>/file-sources` family, the
@@ -136,6 +137,25 @@ def test_public_file_sources_read_from_the_public_route_only(public_file_sources
         "The file sources list route takes no query parameters."
     )
     assert_no_personal_or_group_reads(ui)
+
+
+# A failed read's message, chosen so it can't be mistaken for any copy the section writes itself.
+READ_FAILURE = "The service is temporarily unavailable."
+
+
+def test_a_failed_read_offers_a_retry_and_never_the_empty_state(public_file_sources_ui):
+    """A failed list read is not an empty list: the error is announced with a retry, and "No file
+    sources yet" never stands in for sources that couldn't be read (M11)."""
+    ui = public_file_sources_ui
+    ui.reject_next("GET", "/api/public-workspaces/pub-a/file-sources", status=500, error=READ_FAILURE)
+    open_manager(ui)
+    alert = ui.page.get_by_role("alert").filter(has_text=READ_FAILURE)
+    expect(alert).to_be_visible()
+    expect(ui.page.get_by_text("No file sources yet", exact=True)).to_have_count(0)
+    alert.get_by_role("button", name="Retry file sources", exact=True).click()
+    expect(row(ui, EDITABLE_NAME)).to_be_visible()
+    expect(alert).to_have_count(0)
+    assert len(sources_get(ui)) == 2
 
 
 def test_public_file_source_response_scope_is_validated(public_file_sources_ui):

@@ -49,8 +49,11 @@ export function PromptWorkbench({
     adapter = PERSONAL_PROMPT_WORKBENCH,
 }: { adapter?: PromptWorkbenchAdapter } = {}) {
     const load = useCallback((signal: AbortSignal) => adapter.list(signal), [adapter]);
-    const { items, loading, error, refresh, setItems, setError } =
+    const { items, loading, error, loadFailed, refresh, setItems, setError } =
         useSectionResource<WorkspacePrompt>(load, 'Failed to load prompts.');
+    // A read that failed with nothing loaded has no list to describe: no count, no empty state and no
+    // invitation to create the first prompt, just the error and its retry.
+    const unread = loadFailed && items.length === 0;
 
     const [query, setQuery] = useState('');
     const [sort] = useState<PromptSort>('recent');
@@ -286,11 +289,13 @@ export function PromptWorkbench({
                     ) : null}
                 </div>
 
-                <p className="hidden text-xs text-text-3 md:block">
-                    {items.length === 0
-                        ? 'No prompts yet'
-                        : `${visible.length} of ${items.length}`}
-                </p>
+                {unread ? null : (
+                    <p className="hidden text-xs text-text-3 md:block">
+                        {items.length === 0
+                            ? 'No prompts yet'
+                            : `${visible.length} of ${items.length}`}
+                    </p>
+                )}
 
                 {canCreate ? (
                     <GlassButton
@@ -306,9 +311,13 @@ export function PromptWorkbench({
             </div>
 
             {error ? (
-                <p className="shrink-0 border-b border-edge bg-danger-soft px-4 py-2 text-xs text-danger">
-                    {error}
-                </p>
+                <div role="alert"
+                    className="flex shrink-0 flex-wrap items-center gap-x-3 gap-y-1 border-b border-edge bg-danger-soft px-4 py-2 text-xs text-danger">
+                    <p>{error}</p>
+                    {loadFailed ? (
+                        <GlassButton size="sm" disabled={loading} onClick={() => void refresh()}>Retry prompts</GlassButton>
+                    ) : null}
+                </div>
             ) : null}
 
             <div className="flex min-h-0 flex-1 overflow-hidden">
@@ -328,7 +337,7 @@ export function PromptWorkbench({
                                 <Skeleton key={index} className="h-14 w-full" />
                             ))}
                         </div>
-                    ) : visible.length === 0 ? (
+                    ) : unread ? null : visible.length === 0 ? (
                         <EmptyState
                             icon={<MessageSquareQuote size={24} />}
                             title={
@@ -390,7 +399,7 @@ export function PromptWorkbench({
                             onDelete={() => void onDelete(selected)}
                             onToggleFavorite={() => void onToggleFavorite(selected)}
                         />
-                    ) : (
+                    ) : unread ? null : (
                         <EmptyState
                             icon={<MessageSquareQuote size={28} />}
                             title="Nothing selected"

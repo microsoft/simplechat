@@ -1,10 +1,11 @@
 # test_v2_group_workspace_shell.py
 """
 Real-SPA group selection, navigation, scope, and draft safety.
-Version: 0.261.184
+Version: 0.261.187
 Implemented in: 0.261.127
 Group workflow member run/cancel, status gates, delete, and search coverage: 0.261.178
 The workflow editor takes focus and hands it back to Edit on close: 0.261.184
+A failed workflow read offers a retry and never the empty state: 0.261.187
 """
 
 import copy
@@ -288,6 +289,23 @@ def test_the_workflow_editor_hands_focus_back_to_edit(group_ui):
     ui.page.keyboard.press("Escape")
     expect(dialog).to_have_count(0)
     expect(edit).to_be_focused()
+
+
+def test_a_failed_workflow_read_offers_a_retry_and_never_the_empty_state(group_ui):
+    """A failed list read is not an empty list: the error is announced with a retry, and neither "No
+    workflows yet" nor its Create workflow stands in for workflows that couldn't be read (M11)."""
+    ui = group_ui
+    failure = "The service is temporarily unavailable."
+    ui.reject_next("GET", "/api/group/workflows", status=500, error=failure)
+    ui.open("/groups/group-a/workflows")
+    alert = ui.page.get_by_role("alert").filter(has_text=failure)
+    expect(alert).to_be_visible()
+    expect(ui.page.get_by_text("No workflows yet", exact=True)).to_have_count(0)
+    # Only the header's Create workflow remains: the empty state's invitation is gone with it.
+    expect(ui.page.get_by_role("button", name="Create workflow", exact=True)).to_have_count(1)
+    alert.get_by_role("button", name="Retry workflows", exact=True).click()
+    expect(ui.page.get_by_text("Review group files", exact=True)).to_be_visible()
+    expect(alert).to_have_count(0)
 
 
 def test_refocus_retains_dirty_draft_and_blocks_saving_until_access_is_confirmed(group_ui):

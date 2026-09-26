@@ -135,7 +135,7 @@ export function GroupFileSourcesSection({
     scopeNoun?: string;
 }) {
     const load = useCallback((signal: AbortSignal) => adapter.list(signal), [adapter]);
-    const { items, loading, error, refresh, setItems, setError } =
+    const { items, loading, error, loadFailed, refresh, setItems, setError } =
         useSectionResource<WorkspaceSyncSource>(load, 'Failed to load file sources.');
 
     const [query, setQuery] = useState('');
@@ -419,6 +419,9 @@ export function GroupFileSourcesSection({
                 items={visible}
                 loading={loading}
                 error={error}
+                loadFailed={loadFailed}
+                onRetry={() => void refresh()}
+                retryLabel="Retry file sources"
                 emptyIcon={<FolderSync size={28} />}
                 emptyTitle={items.length === 0 ? 'No file sources yet' : 'No sources match your search'}
                 emptyDescription={

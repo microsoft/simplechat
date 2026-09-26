@@ -1,10 +1,11 @@
 # test_v2_group_prompts.py
 """
 Production-SPA coverage for the native scope-aware V2 group prompts workbench.
-Version: 0.261.184
+Version: 0.261.187
 Implemented in: 0.261.136
 The editor keeps keyboard focus while its variable picker keeps its own, and each Escape closes one
 layer and returns focus: 0.261.184
+A failed read offers a retry and never the empty state: 0.261.187
 
 Exercises the real workbench, adapter and chat resolution against closed synthetic
 HTTP. The fixture only serves the immutable `/api/groups/<id>/prompts` family, never
@@ -90,6 +91,31 @@ def test_list_reads_whole_group_set(group_prompts_ui):
         if entry[0].endswith("/api/groups/group-a/prompts?page=1&page_size=500")
     ][-1][1]["prompts"]
     assert listed and all(prompt["group_id"] == "group-a" for prompt in listed)
+
+
+# A failed read's message, chosen so it can't be mistaken for any copy the section writes itself.
+READ_FAILURE = "The service is temporarily unavailable."
+
+
+def test_a_failed_read_offers_a_retry_and_never_the_empty_state(group_prompts_ui):
+    """A failed list read is not an empty list: the error is announced with a retry, and neither "No
+    prompts yet" nor the empty state's New prompt stands in for prompts that couldn't be read (M11)."""
+    ui = group_prompts_ui
+    ui.reject_next("GET", "/api/groups/group-a/prompts", status=500, error=READ_FAILURE)
+    open_prompts(ui)
+    alert = ui.page.get_by_role("alert").filter(has_text=READ_FAILURE)
+    expect(alert).to_be_visible()
+    expect(ui.page.get_by_text("No prompts yet", exact=True)).to_have_count(0)
+    expect(ui.page.get_by_text("Nothing selected", exact=True)).to_have_count(0)
+    # Only the header's New prompt remains: the empty state's invitation is gone with the empty state.
+    expect(ui.page.get_by_role("button", name="New prompt", exact=True)).to_have_count(1)
+    alert.get_by_role("button", name="Retry prompts", exact=True).click()
+    expect(row(ui, "Weekly status")).to_be_visible()
+    expect(alert).to_have_count(0)
+    assert len([
+        entry for entry in ui.requests
+        if entry.path == "/api/groups/group-a/prompts" and entry.method == "GET"
+    ]) == 2
 
 
 def test_manager_can_create(group_prompts_ui):

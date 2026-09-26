@@ -1,9 +1,10 @@
 # test_v2_public_identities.py
 """
 Production-SPA coverage for the native V2 public workspace identities section (M10B).
-Version: 0.261.184
+Version: 0.261.187
 Implemented in: 0.261.182
 The overview says a public workspace's identities serve file sources only: 0.261.184
+A failed read offers a retry and never the empty state: 0.261.187
 
 Exercises the real identities section and its editor dialog against closed synthetic HTTP. The
 fixture serves only the immutable `/api/public-workspaces/<id>/identities` family and never a
@@ -132,6 +133,25 @@ def test_public_identities_read_from_the_public_route_only(public_identities_ui)
         "The identities list route takes no query parameters."
     )
     assert_no_personal_or_group_reads(ui)
+
+
+# A failed read's message, chosen so it can't be mistaken for any copy the section writes itself.
+READ_FAILURE = "The service is temporarily unavailable."
+
+
+def test_a_failed_read_offers_a_retry_and_never_the_empty_state(public_identities_ui):
+    """A failed list read is not an empty list: the error is announced with a retry, and "No
+    identities yet" never stands in for identities that couldn't be read (M11)."""
+    ui = public_identities_ui
+    ui.reject_next("GET", "/api/public-workspaces/pub-a/identities", status=500, error=READ_FAILURE)
+    open_manager(ui)
+    alert = ui.page.get_by_role("alert").filter(has_text=READ_FAILURE)
+    expect(alert).to_be_visible()
+    expect(ui.page.get_by_text("No identities yet", exact=True)).to_have_count(0)
+    alert.get_by_role("button", name="Retry identities", exact=True).click()
+    expect(row(ui, EDITABLE_NAME)).to_be_visible()
+    expect(alert).to_have_count(0)
+    assert len(identities_get(ui)) == 2
 
 
 def test_public_identity_response_identity_is_validated(public_identities_ui):

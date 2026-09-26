@@ -1,8 +1,9 @@
 # test_v2_group_endpoints.py
 """
 Production-SPA coverage for the native scope-aware V2 group model endpoints section.
-Version: 0.261.152
+Version: 0.261.187
 Implemented in: 0.261.145
+A failed read offers a retry and never the empty state: 0.261.187
 
 Exercises the real Endpoints section -- the admin ModelConnectionsManager driven by a
 scope-aware group adapter, not a fork -- and its editor dialog against closed synthetic HTTP.
@@ -136,6 +137,26 @@ def test_malformed_list_is_a_hard_error_not_empty(group_endpoints_ui):
     expect(page.get_by_text(
         "The model endpoint list was malformed. Refresh and try again.", exact=True)).to_be_visible()
     expect(row(ui, EDITABLE_ENDPOINT_NAME)).to_have_count(0)
+    assert_no_admin_or_personal_reads(ui)
+
+
+# A failed read's message, chosen so it can't be mistaken for any copy the section writes itself.
+READ_FAILURE = "The service is temporarily unavailable."
+
+
+def test_a_failed_read_offers_a_retry_and_never_the_empty_state(group_endpoints_ui):
+    """A failed list read is not an empty list: the error is announced with a retry, and "No
+    connections yet" never stands in for connections that couldn't be read (M11)."""
+    ui = group_endpoints_ui
+    ui.reject_next("GET", "/api/groups/group-a/model-endpoints", status=500, error=READ_FAILURE)
+    open_manager(ui)
+    alert = ui.page.get_by_role("alert").filter(has_text=READ_FAILURE)
+    expect(alert).to_be_visible()
+    expect(ui.page.get_by_text(re.compile(r"^No connections yet"))).to_have_count(0)
+    alert.get_by_role("button", name="Retry connections", exact=True).click()
+    expect(row(ui, EDITABLE_ENDPOINT_NAME)).to_be_visible()
+    expect(alert).to_have_count(0)
+    assert len(endpoints_get(ui)) == 2
     assert_no_admin_or_personal_reads(ui)
 
 
