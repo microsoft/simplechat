@@ -2,7 +2,7 @@
 #!/usr/bin/env python3
 """
 Functional test for Cosmos Wave 5A/5B document access index read path.
-Version: 0.261.130
+Version: 0.261.183
 Implemented in: 0.250.022
 Public workspace UI coverage updated in: 0.250.023
 Tag listing coverage updated in: 0.250.024
@@ -11,6 +11,7 @@ Default read enablement updated in: 0.250.027
 Redis DAI cache updated in: 0.250.029
 Legacy tag family projection updated in: 0.250.030
 XSD schema metadata projection updated in: 0.261.023
+Public chat tags counted over the DAI-first chat document list: 0.261.183
 
 This test ensures the default DAI read path only serves document list reads
 when backfill is complete and repair backlog is clear. It also verifies
@@ -887,7 +888,9 @@ def test_wave5b_route_and_admin_contract_are_wired():
     assert "query_document_access_index_documents(" in backend_public_route
     assert "query_document_access_index_tag_counts(" in personal_route
     assert "query_document_access_index_tag_counts(" in group_route
-    assert "query_document_access_index_tag_counts(" in backend_public_route
+    # The public chat tags are counted over the chat document list itself (DAI first, source
+    # fallback), so a document that list leaves out, a pending generated artifact, is never counted.
+    assert "_query_public_chat_documents(" in backend_public_route
     assert "query_document_access_index_legacy_count(" in personal_route
     assert "query_document_access_index_legacy_count(" in group_route
     assert "query_document_access_index_legacy_count(" in public_route

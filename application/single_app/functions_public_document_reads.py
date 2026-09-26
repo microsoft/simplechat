@@ -5,10 +5,18 @@ Every read embeds the workspace in the caller's explicit target and revalidates
 membership and status independently, so a stale active-workspace preference can
 never redirect or widen a read. Public workspaces have no cross-workspace share
 relationship in this slice, so a document belongs to exactly one workspace.
+
+A generated artifact awaiting publication is visible only to the workspace's
+managers, who see it held; to every other reader it does not exist
+(``public_document_visible_to_role``).
 """
 
 from config import cosmos_public_documents_container
-from content_screening.access import public_document_payload
+from content_screening.access import (
+    GENERATED_ARTIFACT_REQUEST_FIELDS,
+    HELD_PUBLIC_FIELDS,
+    public_document_payload,
+)
 from functions_document_access_index import document_matches_list_filters
 from functions_document_queries import (
     build_document_facets,
@@ -33,7 +41,9 @@ from functions_public_document_collaboration import (
     get_public_document_collaboration_actions,
 )
 from functions_public_document_policy import (
+    public_document_approval_pending,
     public_document_collaboration_operations,
+    public_document_visible_to_role,
 )
 from functions_settings import get_settings
 
@@ -43,6 +53,9 @@ from functions_settings import get_settings
 PUBLIC_DOCUMENT_PLACE_FILTERS = frozenset({
     "all", "recent", "processing", "errors", "untagged",
 })
+# The status a manager sees on a generated artifact awaiting publication, as a
+# group member sees one.
+PUBLIC_ARTIFACT_AWAITING_APPROVAL_STATUS = "Awaiting generated artifact approval"
 
 PUBLIC_DOCUMENT_LIST_QUERY_PARAMS = frozenset({
     "place", "search", "tags", "classification", "page", "page_size",
@@ -80,14 +93,30 @@ def _query_public_document_records(workspace_id, *, document_ids=None):
 
 
 def _project_public_document(
-    document, workspace_id, *, query_timestamp=False, include_actions=False,
+    document, workspace_id, *, role, query_timestamp=False, include_actions=False,
     user_id=None, context=None, settings=None, collaboration_supported=None,
     current_revision=None,
 ):
-    if str(document.get("public_workspace_id")) != str(workspace_id):
+    # A pending generated artifact the caller's role may not see is refused
+    # exactly as a document that does not exist is.
+    if (
+        str(document.get("public_workspace_id")) != str(workspace_id)
+        or not public_document_visible_to_role(document, role)
+    ):
         raise PublicDocumentReadError("Document not found or access denied.", 404)
     normalized = select_current_documents([dict(document)])[0]
     payload = public_document_payload(normalized)
+    if public_document_approval_pending(document):
+        # A manager sees an artifact awaiting publication as the group read path
+        # shows one: its held fields and the request, never its content.
+        payload = {
+            key: value for key, value in payload.items()
+            if key in HELD_PUBLIC_FIELDS or key == "content_screening"
+            or key in GENERATED_ARTIFACT_REQUEST_FIELDS
+        }
+        payload["status"] = PUBLIC_ARTIFACT_AWAITING_APPROVAL_STATUS
+        payload["generated_artifact_promotion_status"] = "pending_approval"
+        payload["enhanced_citations"] = False
     payload["public_workspace_id"] = document["public_workspace_id"]
     if include_actions:
         # Compute both action-hint arrays fresh from current authorization on
@@ -114,20 +143,26 @@ def _project_public_document(
 
 
 def load_public_document_browser_documents(user_id, workspace_id):
+    """The current revisions the caller may see, projected. The list, its count,
+    the facets and the tag counts are all computed from this one set, so an
+    artifact the caller's role may not see is absent from every one of them."""
     require_public_document_read_context(user_id, workspace_id)
     records = _query_public_document_records(workspace_id)
-    require_public_document_read_context(user_id, workspace_id)
+    _workspace, role = require_public_document_read_context(user_id, workspace_id)
     current = [
         document
         for document in select_current_documents(records)
         if document.get("is_current_version") is not False
+        and public_document_visible_to_role(document, role)
     ]
     documents = [
-        _project_public_document(document, workspace_id, query_timestamp=True)
+        _project_public_document(document, workspace_id, role=role, query_timestamp=True)
         for document in current
     ]
-    require_public_document_read_context(user_id, workspace_id)
-    return documents
+    # Visibility follows the role the final revalidation finds, so a manager
+    # demoted during this read is not answered with the manager's set.
+    _workspace, current_role = require_public_document_read_context(user_id, workspace_id)
+    return [document for document in documents if public_document_visible_to_role(document, current_role)]
 
 
 def query_public_document_list(documents, workspace_id, args):
@@ -184,20 +219,20 @@ def get_public_document_read_tags(user_id, workspace_id):
 
 
 def get_public_document_read_metadata(user_id, workspace_id, document_id):
-    require_public_document_read_context(user_id, workspace_id)
+    _workspace, role = require_public_document_read_context(user_id, workspace_id)
     records = _query_public_document_records(workspace_id, document_ids=[document_id])
     if not records:
         raise PublicDocumentReadError("Document not found or access denied.", 404)
-    payload = _project_public_document(records[0], workspace_id)
+    payload = _project_public_document(records[0], workspace_id, role=role)
     payload["is_current_version"] = is_current_public_document(records[0])
     require_public_document_read_context(user_id, workspace_id)
     return payload
 
 
 def get_public_document_read_versions(user_id, workspace_id, document_id):
-    require_public_document_read_context(user_id, workspace_id)
+    _workspace, role = require_public_document_read_context(user_id, workspace_id)
     targets = _query_public_document_records(workspace_id, document_ids=[document_id])
-    if not targets:
+    if not targets or not public_document_visible_to_role(targets[0], role):
         raise PublicDocumentReadError("Document not found or access denied.", 404)
     target = targets[0]
     family = public_document_family_records(target)
@@ -213,9 +248,12 @@ def get_public_document_read_versions(user_id, workspace_id, document_id):
     for document in sorted(
         family, key=lambda item: (*_document_revision_sort_key(item), item["id"]), reverse=True,
     ):
-        if str(document.get("public_workspace_id")) != str(workspace_id):
+        if (
+            str(document.get("public_workspace_id")) != str(workspace_id)
+            or not public_document_visible_to_role(document, role)
+        ):
             continue
-        payload = _project_public_document(document, workspace_id)
+        payload = _project_public_document(document, workspace_id, role=role)
         payload["revision_family_id"] = family_id
         payload["is_current_version"] = document["id"] == current_id
         versions.append(payload)
@@ -252,7 +290,7 @@ def refresh_public_document_read_payloads(documents, user_id, workspace_id):
         if str(fresh.get("public_workspace_id")) != str(workspace_id) or version_changed:
             raise PublicDocumentReadError("Document changed while reading. Refresh and try again.", 409)
         payload = _project_public_document(
-            fresh, workspace_id, include_actions=True, user_id=user_id,
+            fresh, workspace_id, role=context[1], include_actions=True, user_id=user_id,
             context=context, settings=settings,
             collaboration_supported=collaboration_supported,
             current_revision=previous.get("is_current_version"),

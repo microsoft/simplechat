@@ -2,6 +2,16 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.183)**
+
+#### Bug Fixes
+
+*   **Unapproved Public Artifacts Are No Longer Shown To Every Reader**
+    *   A generated file waiting for approval to be published into a public workspace was shown to everyone who can read the workspace, which is every signed-in user: V2 listed it with its title, abstract and tags, counted it, and returned its details and its requester; chat's document picker listed it too.
+    *   Now only the workspace's Owner, Admins and DocumentManagers see it before approval, in a held form marked "Awaiting generated artifact approval". To everyone else it doesn't exist until it's approved.
+    *   The chat document list and its tag counts leave pending artifacts out for everyone, since none can be used in chat until it's approved. Classic chat and the classic workspace page's tag filter use the same routes, so they change too.
+    *   (Ref: `functions_public_document_policy.py`, `functions_public_document_reads.py`, `route_backend_public_documents.py`, [Public Pending Artifact Visibility Fix](fixes/PUBLIC_PENDING_ARTIFACT_VISIBILITY_FIX.md))
+
 ### **(v0.261.182)**
 
 #### New Features

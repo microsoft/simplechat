@@ -61,7 +61,9 @@ the workspace it is for.
 - **Review publish requests** (version **0.261.134**). When someone asks to
   publish a generated file into the workspace, the request waits in the
   explorer. A reviewer approves, rejects, or withdraws it without leaving the
-  workspace.
+  workspace. From version **0.261.183**, only the Owner, Admins and
+  DocumentManagers see a request before it's approved; other readers don't see
+  it at all, in V2 or in chat's document picker.
 
 From version **0.261.177**, a public workspace's **Prompts** are in V2 too.
 Everyone can read them and use them in chat. Owners, Admins and

@@ -220,8 +220,9 @@ export function createPublicDocumentReader(
             if (!capabilities.facets) {
                 throw new Error('Document counts are not supported by this workspace.');
             }
-            // Public facets deliberately omit `shared_with_me`; validating it would reject the
-            // contracted response and, absent, visiblePlaces() never offers a Shared place.
+            // Public facets send `shared_with_me` as 0: a public workspace owns every document it
+            // lists. It isn't validated here, and visiblePlaces() offers a Shared place only for a
+            // positive count.
             const response = await api.get<DocumentFacets>(publicReadUrl(workspaceId, '/facets'), signal);
             if (!response || !isRecord(response.by_tag) || !isRecord(response.by_classification)
                 || [

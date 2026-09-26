@@ -15,6 +15,14 @@ The endpoint reference is
 
 ## Purpose and boundaries
 
+From version **0.261.183**, a pending artifact is visible only to the
+workspace's Owner, Admins and DocumentManagers, who are the only people who can
+request or decide a public publication. They see it in the held form, with the
+status "Awaiting generated artifact approval". Every other reader of the
+workspace sees no trace of it until it's approved: no row, no count, no tag, and
+a detail, version or review read answers as if it doesn't exist. See the
+[Public Pending Artifact Visibility Fix](../fixes/PUBLIC_PENDING_ARTIFACT_VISIBILITY_FIX.md).
+
 This completes the public document experience for everything that happens
 inside a single public workspace: browsing (M3A), management (M3B), and now
 artifact approval.
