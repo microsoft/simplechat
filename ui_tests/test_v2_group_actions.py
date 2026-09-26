@@ -1,9 +1,10 @@
 # test_v2_group_actions.py
 """
 Production-SPA coverage for the native scope-aware V2 group actions workbench.
-Version: 0.261.178
+Version: 0.261.187
 Implemented in: 0.261.137
 Group retired MCP remote reconfiguration requirement: 0.261.178
+On a phone the actions and the Call agent tools share one scrolling column: 0.261.187
 
 Exercises the real action collection, editor and connection-test path against closed
 synthetic HTTP. The fixture only serves the immutable `/api/groups/<id>/actions`
@@ -115,6 +116,44 @@ def test_group_action_layout(group_actions_ui, theme, width, height):
     # The native collection carries the Call agent manager below it, not the classic fallback.
     expect(ui.page.get_by_role("heading", name="Call agent", exact=True).first).to_be_visible()
     expect(ui.page.get_by_role("button", name="Open classic group workspace", exact=True)).to_have_count(0)
+    ui.assert_no_overflow()
+
+
+# Whether the element's own centre is on top: nothing else is drawn over the point a tap lands on.
+ON_TOP = """(element) => {
+    const box = element.getBoundingClientRect();
+    const hit = document.elementFromPoint(box.left + box.width / 2, box.top + box.height / 2);
+    return Boolean(hit) && (element === hit || element.contains(hit));
+}"""
+
+
+def test_on_a_phone_the_actions_and_call_agent_share_one_scrolling_column(group_actions_ui):
+    """On a phone the fixed workspace header leaves too little room to split between the action list and
+    the Call agent tools, so they flow in one column: every filter and action row can be reached and
+    tapped, a row's title keeps its width, and the Call agent panel starts below the actions rather than
+    being drawn over them (M11)."""
+    ui = group_actions_ui
+    open_actions(ui, width=390, height=844)
+    page = ui.page
+    for control in (
+        page.get_by_role("combobox", name="Action scope filter", exact=True),
+        page.get_by_role("button", name="List view", exact=True),
+        page.get_by_role("button", name="Card view", exact=True),
+        page.get_by_role("button", name="Refresh actions", exact=True),
+        row(ui, EDITABLE_ACTION_ID),
+    ):
+        control.scroll_into_view_if_needed()
+        assert control.evaluate(ON_TOP), f"{control} is covered or clipped on a phone."
+    # A row's title keeps its width: its type pills and actions wrap below it rather than beside it.
+    title = row(ui, EDITABLE_ACTION_ID).get_by_role("link", name=EDITABLE_NAME, exact=True)
+    title_box = title.bounding_box()
+    assert title_box and title_box["width"] >= 100, f"The action title was squeezed to {title_box}."
+    actions = page.get_by_test_id("workspace-actions")
+    call_agent = page.get_by_role("heading", name="Call agent", exact=True).first
+    call_agent.scroll_into_view_if_needed()
+    actions_box, call_agent_box = actions.bounding_box(), call_agent.bounding_box()
+    assert actions_box and call_agent_box
+    assert call_agent_box["y"] >= actions_box["y"] + actions_box["height"] - 1, (actions_box, call_agent_box)
     ui.assert_no_overflow()
 
 
