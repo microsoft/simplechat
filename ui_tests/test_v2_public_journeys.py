@@ -5,6 +5,7 @@ transitions, Settings activation and the classic handoff, driven through the rea
 Version: 0.261.187
 Implemented in: 0.261.185
 The classic handoff follows the Documents header's renamed Classic tools button: 0.261.187
+A locked overview entry is outlined, never faded, and its text stays readable: 0.261.187
 
 These journeys are the public twin of test_v2_group_journeys.py. They ride one composite
 public store (public_journeys_ui) across the whole public surface in one session and assert
@@ -22,6 +23,7 @@ Coverage of M11 contract sec 2.3 (public role x status x feature):
     role x status matrix (rail + header + overview) . test_jp_rail_matches_the_pinned_context_matrix
     the File-Sync feature axis ...................... test_jp_file_sync_gates_the_connection_sections
     a reader's locked connection sections .......... test_jp_overview_lists_locked_connections_with_their_reason
+    locked entries outlined, readable (2.4) ........ test_jp_locked_overview_entries_stay_readable
     status revoked mid-session (2.2) ............... test_jp_status_locked_then_barred_mid_session
     access revoked mid-session, 403 (2.2) ......... test_jp_access_revoked_mid_session_is_surfaced
     Settings activation refresh (2.2) ............. test_jp_settings_activation_makes_the_surface_available
@@ -174,6 +176,70 @@ def test_jp_overview_lists_locked_connections_with_their_reason(public_journeys_
         expect(locked).to_contain_text(PUBLIC_CONNECTIONS_MANAGER_REASON)
     assert rail_enabled(context, "documents")
     expect(ui.page.get_by_label("Documents (unavailable)", exact=True)).to_have_count(0)
+
+
+# The contrast of each text line in an unavailable overview entry against what it's drawn on. The line's
+# colour comes from its computed style, blended toward the background by every ancestor's opacity (the
+# fading that caused 2.8:1); the background is the ancestors' colours composited on the theme's backdrop
+# base. The backdrop's faint radial tints are left out, which changes no verdict here.
+UNAVAILABLE_ENTRY_CONTRAST = """(entry) => {
+    const parse = (value) => {
+        const text = String(value).trim();
+        if (text.startsWith('#')) {
+            const hex = text.slice(1);
+            const full = hex.length === 3 ? hex.split('').map((digit) => digit + digit).join('') : hex;
+            return { r: parseInt(full.slice(0, 2), 16), g: parseInt(full.slice(2, 4), 16), b: parseInt(full.slice(4, 6), 16), a: 1 };
+        }
+        const parts = (text.match(/[\\d.]+/g) || []).map(Number);
+        return { r: parts[0] ?? 0, g: parts[1] ?? 0, b: parts[2] ?? 0, a: parts[3] ?? 1 };
+    };
+    const over = (top, bottom, alpha) => ({
+        r: top.r * alpha + bottom.r * (1 - alpha), g: top.g * alpha + bottom.g * (1 - alpha),
+        b: top.b * alpha + bottom.b * (1 - alpha), a: 1,
+    });
+    const channel = (value) => {
+        const unit = value / 255;
+        return unit <= 0.04045 ? unit / 12.92 : ((unit + 0.055) / 1.055) ** 2.4;
+    };
+    const luminance = (colour) => 0.2126 * channel(colour.r) + 0.7152 * channel(colour.g) + 0.0722 * channel(colour.b);
+    const base = parse(getComputedStyle(document.documentElement).getPropertyValue('--backdrop-base'));
+    return [...entry.querySelectorAll('p')].filter((line) => line.textContent.trim()).map((line) => {
+        const chain = [];
+        for (let node = line; node; node = node.parentElement) chain.unshift(node);
+        let background = base;
+        let opacity = 1;
+        for (const node of chain) {
+            const style = getComputedStyle(node);
+            opacity *= Number(style.opacity);
+            const colour = parse(style.backgroundColor);
+            background = over(colour, background, colour.a);
+        }
+        const colour = parse(getComputedStyle(line).color);
+        const text = over(colour, background, colour.a * opacity);
+        const [lighter, darker] = [luminance(text), luminance(background)].sort((a, b) => b - a);
+        return { text: line.textContent.trim(), opacity, ratio: (lighter + 0.05) / (darker + 0.05) };
+    });
+}"""
+
+
+@pytest.mark.parametrize("theme", ["dark", "light"])
+def test_jp_locked_overview_entries_stay_readable(public_journeys_ui, theme):
+    """A locked overview entry reads as locked through its dashed outline, its lock and its reason, never by
+    fading: in neither theme is it faded, and in dark every line of it reaches 4.5:1 (faded, its reason
+    fell to 2.8:1) (M11)."""
+    ui = public_journeys_ui
+    ui.set_matrix("pub-a", role="User", status="active", file_sync=True)
+    ui.open("/public/pub-a", theme=theme)
+    for sectionId in ("identities", "sync"):
+        label = PUBLIC_SECTION_LABELS[sectionId]
+        entry = ui.page.get_by_label(f"{label} (unavailable)", exact=True)
+        expect(entry).to_be_visible()
+        lines = entry.evaluate(UNAVAILABLE_ENTRY_CONTRAST)
+        assert len(lines) == 3, lines
+        assert all(line["opacity"] == 1 for line in lines), f"The {label} entry is faded: {lines}"
+        if theme == "dark":
+            low = [line for line in lines if line["ratio"] < 4.5]
+            assert not low, f"The {label} entry has text below 4.5:1 in dark: {low}"
 
 
 # --- J-P: mid-session transitions ----------------------------------------------------------------

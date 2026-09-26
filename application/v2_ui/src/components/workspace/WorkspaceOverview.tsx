@@ -33,8 +33,11 @@ export function WorkspaceOverview({
                     <div className="grid gap-2 sm:grid-cols-2">
                         {sections.map(({ section, enabled, reason }) => {
                             const Icon = section.icon;
+                            // An unavailable section reads as unavailable through its dashed outline, its lock
+                            // and its reason, never through fading: dimmed with opacity, its text fell to
+                            // 2.8:1 in dark, too faint to read the reason it's there to give.
                             if (!enabled) return (
-                                <GlassPanel key={section.id} elevation="flat" className="flex gap-3 p-3 opacity-60"
+                                <GlassPanel key={section.id} elevation="flat" className="flex gap-3 border-dashed border-edge-strong p-3"
                                     aria-label={`${section.label} (unavailable)`}>
                                     <Icon size={17} className="mt-0.5 shrink-0 text-text-3" />
                                     <div className="min-w-0">
