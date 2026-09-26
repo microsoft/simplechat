@@ -1,8 +1,8 @@
 # test_public_membership_apis.py
 """
 Functional tests for the immutable-target native public workspace membership APIs.
-Version: 0.261.179
-Implemented in: 0.261.179
+Version: 0.261.184
+Implemented in: 0.261.179 (requester-side request/cancel added in 0.261.184)
 
 The real public membership logic module, its route registrar, the pure policy and
 disclosure projectors, and the real ``get_user_role_in_public_workspace`` resolver run
@@ -13,6 +13,7 @@ Microsoft Graph are prohibited. The workspace identity is always taken from the 
 so a stale active-workspace preference can never redirect or widen a write.
 """
 
+import re
 import socket
 import sys
 from copy import deepcopy
@@ -195,12 +196,18 @@ def environment(monkeypatch):
 
         activity_container = SimpleNamespace(create_item=record_activity)
         scoped.setitem(sys.modules, "config", module_stub(
-            "config", cosmos_activity_logs_container=activity_container,
+            "config",
+            re=re,
+            cosmos_activity_logs_container=activity_container,
+            cosmos_public_workspaces_container=Mock(),
         ))
 
         load_real_module(scoped, "functions_public_membership_policy")
         load_real_module(scoped, "functions_public_membership_disclosure")
         load_real_module(scoped, "functions_public_membership_audit")
+        load_real_module(scoped, "functions_workspace_branding")
+        load_real_module(scoped, "functions_public_directory_policy")
+        load_real_module(scoped, "functions_public_directory")
         load_real_module(scoped, "functions_public_membership")
         route = load_real_module(scoped, "route_backend_public_membership")
 
@@ -230,6 +237,11 @@ def login(environment, oid, name="Signed In", email=None):
 
 def emails_in(members):
     return {row["userId"]: row["email"] for row in members}
+
+
+def _pending_id(entry):
+    """A pending-request entry as a bare string id, or a ``{userId, ...}`` dict."""
+    return entry if isinstance(entry, str) else entry["userId"]
 
 
 # ---------------------------------------------------------------------------
@@ -491,6 +503,183 @@ def test_owner_rejects_a_request_without_a_cache_bump(environment):
 def test_rejecting_without_a_pending_request_conflicts(environment):
     response = environment.client.post(f"{REQUESTS_PATH}/{OUTSIDER}/reject")
     assert response.status_code == 409
+
+
+# ---------------------------------------------------------------------------
+# Self-service requests (the requester side)
+# ---------------------------------------------------------------------------
+
+def test_reader_asks_to_manage_and_appears_pending(environment):
+    login(environment, OUTSIDER, name="Oscar Outsider", email="oscar@example.com")
+    response = environment.client.post(REQUESTS_PATH)
+    assert response.status_code == 201
+    row = response.get_json()["workspace"]
+    assert row["id"] == "ws-a"
+    assert row["membership"] == "pending"
+    assert row["userRole"] == "User"
+    assert "public_workspace_member_requested" in environment.cache_reasons
+    pending_ids = {_pending_id(entry) for entry in environment.store["ws-a"]["pendingDocumentManagers"]}
+    assert OUTSIDER in pending_ids
+    assert environment.notifications == []
+
+
+def test_request_stores_the_callers_identity(environment):
+    login(environment, OUTSIDER, name="Oscar Outsider", email="oscar@example.com")
+    environment.client.post(REQUESTS_PATH)
+    entry = next(
+        entry for entry in environment.store["ws-a"]["pendingDocumentManagers"]
+        if _pending_id(entry) == OUTSIDER
+    )
+    assert entry["displayName"] == "Oscar Outsider" and entry["email"] == "oscar@example.com"
+
+
+def test_requesting_when_already_a_manager_conflicts(environment):
+    login(environment, MANAGER)
+    response = environment.client.post(REQUESTS_PATH)
+    assert response.status_code == 409
+    assert response.get_json()["error_code"] == "already_member"
+
+
+def test_requesting_when_the_owner_conflicts(environment):
+    response = environment.client.post(REQUESTS_PATH)
+    assert response.status_code == 409
+    assert response.get_json()["error_code"] == "already_member"
+
+
+def test_requesting_when_already_pending_conflicts(environment):
+    login(environment, PENDING)
+    response = environment.client.post(REQUESTS_PATH)
+    assert response.status_code == 409
+    assert response.get_json()["error_code"] == "request_pending"
+
+
+def test_request_rejects_a_body(environment):
+    login(environment, OUTSIDER)
+    response = environment.client.post(REQUESTS_PATH, json={"role": "DocumentManager"})
+    assert response.status_code == 400
+
+
+def test_request_rejects_query_parameters(environment):
+    login(environment, OUTSIDER)
+    response = environment.client.post(REQUESTS_PATH, query_string={"role": "DocumentManager"})
+    assert response.status_code == 400
+
+
+def test_request_is_not_status_gated_and_is_allowed_when_locked(environment):
+    login(environment, OUTSIDER)
+    response = environment.client.post(
+        "/api/public-workspaces/locked-ws/membership/requests"
+    )
+    assert response.status_code == 201
+    assert response.get_json()["workspace"]["membership"] == "pending"
+
+
+def test_request_is_not_status_gated_and_is_allowed_when_inactive(environment):
+    login(environment, OUTSIDER)
+    response = environment.client.post(
+        "/api/public-workspaces/inactive-ws/membership/requests"
+    )
+    assert response.status_code == 201
+    assert response.get_json()["workspace"]["membership"] == "pending"
+
+
+def test_request_on_an_unknown_workspace_is_not_found(environment):
+    login(environment, OUTSIDER)
+    response = environment.client.post(
+        "/api/public-workspaces/ghost-ws/membership/requests"
+    )
+    assert response.status_code == 404
+
+
+def test_request_reports_a_write_conflict(environment):
+    login(environment, OUTSIDER)
+    environment.conflict["raise"] = True
+    response = environment.client.post(REQUESTS_PATH)
+    assert response.status_code == 409
+    assert response.get_json()["error_code"] == "public_workspace_write_conflict"
+
+
+def test_request_writes_one_audit_record_and_no_notification(environment):
+    login(environment, OUTSIDER, name="Oscar Outsider", email="oscar@example.com")
+    environment.client.post(REQUESTS_PATH)
+    records = _records_of(environment, "public_membership_requested")
+    assert len(records) == 1
+    record = records[0]
+    assert record["requested_by"]["user_id"] == OUTSIDER
+    assert record["requested_by"]["name"] == "Oscar Outsider"
+    assert record["requested_by"]["email"] == "oscar@example.com"
+    assert record["public_workspace"]["public_workspace_id"] == "ws-a"
+    assert environment.notifications == []
+
+
+def test_a_failed_audit_write_never_fails_a_committed_request(environment):
+    login(environment, OUTSIDER)
+    environment.audit_fault["raise"] = True
+    response = environment.client.post(REQUESTS_PATH)
+    assert response.status_code == 201
+    pending_ids = {_pending_id(entry) for entry in environment.store["ws-a"]["pendingDocumentManagers"]}
+    assert OUTSIDER in pending_ids
+
+
+# ---------------------------------------------------------------------------
+# Self-service cancel
+# ---------------------------------------------------------------------------
+
+def test_pending_requester_cancels_their_own_request(environment):
+    login(environment, PENDING)
+    response = environment.client.delete(REQUESTS_PATH)
+    assert response.status_code == 200
+    row = response.get_json()["workspace"]
+    assert row["id"] == "ws-a" and row["membership"] == "none"
+    pending_ids = {_pending_id(entry) for entry in environment.store["ws-a"]["pendingDocumentManagers"]}
+    assert PENDING not in pending_ids
+    assert "public_workspace_member_request_canceled" in environment.cache_reasons
+
+
+def test_cancel_only_removes_the_callers_own_request(environment):
+    login(environment, OUTSIDER)
+    environment.client.post(REQUESTS_PATH)
+    login(environment, PENDING)
+    environment.client.delete(REQUESTS_PATH)
+    pending_ids = {_pending_id(entry) for entry in environment.store["ws-a"]["pendingDocumentManagers"]}
+    assert OUTSIDER in pending_ids and PENDING not in pending_ids
+
+
+def test_cancel_removes_a_bare_string_pending_entry(environment):
+    environment.store["ws-a"]["pendingDocumentManagers"] = [OUTSIDER]
+    login(environment, OUTSIDER)
+    response = environment.client.delete(REQUESTS_PATH)
+    assert response.status_code == 200
+    assert environment.store["ws-a"]["pendingDocumentManagers"] == []
+
+
+def test_cancel_without_a_pending_request_conflicts(environment):
+    login(environment, OUTSIDER)
+    response = environment.client.delete(REQUESTS_PATH)
+    assert response.status_code == 409
+    assert response.get_json()["error_code"] == "no_pending_request"
+
+
+def test_cancel_rejects_a_body(environment):
+    login(environment, PENDING)
+    response = environment.client.delete(REQUESTS_PATH, json={"userId": PENDING})
+    assert response.status_code == 400
+
+
+def test_cancel_rejects_query_parameters(environment):
+    login(environment, PENDING)
+    response = environment.client.delete(REQUESTS_PATH, query_string={"userId": PENDING})
+    assert response.status_code == 400
+
+
+def test_cancel_writes_one_audit_record(environment):
+    login(environment, PENDING, name="Percy Pending", email="percy@example.com")
+    environment.client.delete(REQUESTS_PATH)
+    records = _records_of(environment, "public_membership_request_canceled")
+    assert len(records) == 1
+    record = records[0]
+    assert record["canceled_by"]["user_id"] == PENDING
+    assert record["public_workspace"]["public_workspace_id"] == "ws-a"
 
 
 # ---------------------------------------------------------------------------

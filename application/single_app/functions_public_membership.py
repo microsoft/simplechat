@@ -51,6 +51,11 @@ kept, and a workspace deleted mid-write is a 404 and is never recreated.
   (decision 17);
 - approve: moves the request into ``documentManagers`` and bumps
   ``public_workspace_member_request_approved``; reject: drops it, no bump;
+- request: a signed-in reader who isn't already a manager appends their own pending
+  document-manager request and bumps ``public_workspace_member_requested``; cancel:
+  drops the caller's own request and bumps ``public_workspace_member_request_canceled``.
+  Both are audited and send no notification (M10A §5), and neither is status-gated,
+  because approval is allowed in every status;
 - transfer: makes an existing Admin or DocumentManager the Owner and re-adds the old
   owner as a DocumentManager with their name and email (decision 21), and bumps
   ``public_workspace_ownership_transferred``.
@@ -74,10 +79,13 @@ from werkzeug.exceptions import HTTPException
 
 from functions_appinsights import log_event
 from functions_notifications import create_notification
+from functions_public_directory import build_public_directory_row
 from functions_public_membership_audit import (
     log_public_member_added,
     log_public_member_removed,
     log_public_member_role_change,
+    log_public_membership_request_canceled,
+    log_public_membership_requested,
 )
 from functions_public_membership_disclosure import project_member_rows
 from functions_public_membership_policy import (
@@ -124,7 +132,10 @@ OWNER_ONLY_MESSAGE = "Only the workspace's owner can transfer ownership."
 STATUS_UNAVAILABLE_MESSAGE = "Members can't be changed while this workspace is in its current status."
 MEMBER_NOT_FOUND_MESSAGE = "That person isn't a member of this public workspace."
 ALREADY_MEMBER_MESSAGE = "That person is already a member of this public workspace."
+ALREADY_MANAGING_MESSAGE = "You already manage this public workspace's documents."
+ALREADY_REQUESTED_MESSAGE = "You've already asked to manage this public workspace's documents."
 NO_PENDING_REQUEST_MESSAGE = "That person doesn't have a pending request to join this public workspace."
+NO_OWN_PENDING_REQUEST_MESSAGE = "You don't have a pending request to manage this public workspace's documents."
 OWNER_ROLE_MESSAGE = "Transfer ownership to change the owner's role."
 OWNER_REMOVAL_MESSAGE = "Transfer ownership before removing the owner."
 SELF_REMOVAL_MESSAGE = "You can't remove yourself from a public workspace."
@@ -787,6 +798,77 @@ def reject_public_request(user_info, workspace_id, member_id):
 
     _write(workspace_id, apply, cache_reason=None)
     return {"userId": member_id}, 200
+
+
+def _requester_identity(user_info):
+    """The requester's stored id, name and email from the session user info."""
+    source = user_info if isinstance(user_info, dict) else {}
+    return {
+        "userId": _actor_id(user_info),
+        "displayName": _text(source.get("displayName")),
+        "email": _text(source.get("email")),
+    }
+
+
+def request_public_membership(user_info, workspace_id):
+    """Ask to manage a public workspace's documents and return ``({"workspace": row}, 201)``.
+
+    A signed-in reader who isn't already a manager appends their own pending request. The
+    caller's role and pending state are re-checked on the fresh copy, so a request that
+    races an add or an earlier identical request refuses rather than duplicating an entry.
+    There is no status gate: approval moves the request into ``documentManagers`` in any
+    status, as the classic ``/requests`` route and the group request allow, so a locked or
+    inactive workspace can still take a request.
+    """
+    requester = _requester_identity(user_info)
+    actor_id = requester["userId"]
+    _identifier(workspace_id, "workspace identifier")
+
+    def apply(fresh):
+        if _stored_role(fresh, actor_id) is not None:
+            raise _error(ALREADY_MANAGING_MESSAGE, 409, "already_member")
+        if any(_entry_user_id(entry) == actor_id for entry in _pending_entries(fresh)):
+            raise _error(ALREADY_REQUESTED_MESSAGE, 409, "request_pending")
+        fresh["pendingDocumentManagers"] = [*_pending_entries(fresh), dict(requester)]
+        return fresh
+
+    committed = _write(workspace_id, apply, cache_reason="public_workspace_member_requested")
+    log_public_membership_requested(
+        workspace_id=workspace_id,
+        workspace_doc=committed,
+        requester_user_id=actor_id,
+        requester_email=requester["email"],
+        requester_name=requester["displayName"],
+    )
+    return {"workspace": build_public_directory_row(committed, actor_id)}, 201
+
+
+def cancel_public_membership_request(user_info, workspace_id):
+    """Cancel your own pending request and return ``({"workspace": row}, 200)``.
+
+    Only the caller's own pending entry is removed; a caller with no pending request is
+    refused with a 409, so a cancel that races an approval or a second cancel reports the
+    request is gone rather than silently succeeding.
+    """
+    requester = _requester_identity(user_info)
+    actor_id = requester["userId"]
+    _identifier(workspace_id, "workspace identifier")
+
+    def apply(fresh):
+        if not any(_entry_user_id(entry) == actor_id for entry in _pending_entries(fresh)):
+            raise _error(NO_OWN_PENDING_REQUEST_MESSAGE, 409, "no_pending_request")
+        _clear_pending(fresh, actor_id)
+        return fresh
+
+    committed = _write(workspace_id, apply, cache_reason="public_workspace_member_request_canceled")
+    log_public_membership_request_canceled(
+        workspace_id=workspace_id,
+        workspace_doc=committed,
+        requester_user_id=actor_id,
+        requester_email=requester["email"],
+        requester_name=requester["displayName"],
+    )
+    return {"workspace": build_public_directory_row(committed, actor_id)}, 200
 
 
 def transfer_public_ownership(user_info, workspace_id):

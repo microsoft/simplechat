@@ -25,8 +25,11 @@ own entries, so no other member's id leaves the database, and the caller's role 
 resolved from that reduced copy with ``get_user_role_in_public_workspace``, the same
 predicate the read routes use, which handles the old string and new dict member
 formats. ``membership`` is ``member`` when the caller holds a stored role (Owner,
-Admin or DocumentManager) and ``none`` otherwise; every authenticated caller reads a
-public workspace as at least a ``User``, so the directory never refuses a row.
+Admin or DocumentManager), ``pending`` when the caller has their own entry in the
+workspace's ``pendingDocumentManagers`` request list and no stored role, and ``none``
+otherwise; the pending flag is the caller's own and discloses no other reader's
+request. Every authenticated caller reads a public workspace as at least a ``User``, so
+the directory never refuses a row.
 
 ``view`` is ``all`` or ``mine`` (the caller holds a stored role). ``search`` is
 stripped and casefolded, and matches a substring of the name or the description, or
@@ -76,14 +79,15 @@ PUBLIC_DIRECTORY_STATUSES = ("active", "locked", "upload_disabled", "inactive")
 PUBLIC_DIRECTORY_MEMBER_ROLES = ("Owner", "Admin", "DocumentManager")
 
 MEMBERSHIP_MEMBER = "member"
+MEMBERSHIP_PENDING = "pending"
 MEMBERSHIP_NONE = "none"
 
 DIRECTORY_WHOLE_NUMBER = re.compile(r"[1-9][0-9]{0,5}")
 
-# Reduced to the caller on the server: only the caller's own entries in the admins
-# and document-manager arrays, and the owner's id, read only to decide the caller's
-# role and never returned. Public workspaces live in their own container, so no type
-# filter is needed.
+# Reduced to the caller on the server: only the caller's own entries in the admins,
+# document-manager and pending-request arrays, and the owner's id, read only to decide
+# the caller's role and membership and never returned. Public workspaces live in their
+# own container, so no type filter is needed.
 PUBLIC_DIRECTORY_QUERY = (
     "SELECT c.id, c.name, c.description, "
     "c.owner.userId AS ownerId, "
@@ -91,7 +95,9 @@ PUBLIC_DIRECTORY_QUERY = (
     "(IS_STRING(c.logoBase64) AND LENGTH(TRIM(c.logoBase64)) > 0) AS logoPresent, "
     "ARRAY(SELECT VALUE a FROM a IN c.admins WHERE a = @user_id OR a.userId = @user_id) AS callerAdmins, "
     "ARRAY(SELECT VALUE m FROM m IN c.documentManagers "
-    "WHERE m = @user_id OR m.userId = @user_id) AS callerDocumentManagers "
+    "WHERE m = @user_id OR m.userId = @user_id) AS callerDocumentManagers, "
+    "ARRAY(SELECT VALUE p FROM p IN c.pendingDocumentManagers "
+    "WHERE p = @user_id OR p.userId = @user_id) AS callerPending "
     "FROM c"
 )
 
@@ -214,6 +220,26 @@ def _caller_role(record, user_id):
     return get_user_role_in_public_workspace(caller_view, user_id)
 
 
+def _caller_pending(record):
+    """Whether the caller has an entry in this record's reduced pending-request list."""
+    pending = record.get("callerPending")
+    return isinstance(pending, list) and len(pending) > 0
+
+
+def _row_membership(role, record):
+    """The caller's relationship to this workspace: member, pending request, or none.
+
+    A stored role wins over a pending request, so a manager whose earlier request was
+    never cleared still reads as a member. The pending flag is the caller's own and
+    never discloses anyone else's request.
+    """
+    if role in PUBLIC_DIRECTORY_MEMBER_ROLES:
+        return MEMBERSHIP_MEMBER
+    if _caller_pending(record):
+        return MEMBERSHIP_PENDING
+    return MEMBERSHIP_NONE
+
+
 def _directory_row(record, user_id):
     role = _caller_role(record, user_id)
     stored_status = record.get("status")
@@ -226,7 +252,7 @@ def _directory_row(record, user_id):
         "hasLogo": record.get("logoPresent") is True,
         "logoVersion": get_workspace_logo_metadata({"logoVersion": record.get("logoVersion")})["logoVersion"],
         "userRole": role,
-        "membership": MEMBERSHIP_MEMBER if role in PUBLIC_DIRECTORY_MEMBER_ROLES else MEMBERSHIP_NONE,
+        "membership": _row_membership(role, record),
         "status": status,
     }
 
@@ -245,6 +271,7 @@ def build_public_directory_row(workspace, user_id):
         "logoPresent": isinstance(logo, str) and bool(logo.strip()),
         "callerAdmins": _caller_members(workspace.get("admins"), user_id),
         "callerDocumentManagers": _caller_members(workspace.get("documentManagers"), user_id),
+        "callerPending": _caller_members(workspace.get("pendingDocumentManagers"), user_id),
     }
     return _directory_row(record, user_id)
 

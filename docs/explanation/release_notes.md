@@ -2,6 +2,20 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.184)**
+
+#### New Features
+
+*   **Ask To Manage A Public Workspace's Documents From The V2 Directory**
+    *   A signed-in user who doesn't manage a public workspace can ask to manage its documents from the workspace's row in the V2 directory, and cancel the request while it's pending. The Owner and Admins decide in Members, as before.
+    *   New routes `POST` and `DELETE /api/public-workspaces/<id>/membership/requests` act only on the caller's own request. The directory row reports `membership: "pending"` for the caller, and nothing about anyone else.
+    *   (Ref: `functions_public_membership.py`, `route_backend_public_membership.py`, `functions_public_directory.py`, `PublicDirectoryList.tsx`, [V2 Public Directory](features/V2_PUBLIC_DIRECTORY.md), [Public Membership APIs](features/PUBLIC_MEMBERSHIP_APIS.md))
+
+*   **Public Directory Visibility Tools In V2**
+    *   **Show all in chat** and **Hide all from chat** set every workspace at once, and saved lists store and reuse a set of visible workspaces, in the classic directory's settings shape. They cover the whole directory, up to 1,000 workspaces, and report what they changed.
+    *   **Chat with visible (classic)** opens classic chat over the visible workspaces, since V2 chat scopes to one public workspace at a time.
+    *   (Ref: `PublicDirectoryVisibilityTools.tsx`, `publicDirectory.ts`, `publicVisibility.ts`, `PublicDirectoryPage.tsx`, [V2 Public Directory](features/V2_PUBLIC_DIRECTORY.md))
+
 ### **(v0.261.183)**
 
 #### Bug Fixes

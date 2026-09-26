@@ -76,7 +76,9 @@ EXPECTED_DIRECTORY_QUERY = (
     "(IS_STRING(c.logoBase64) AND LENGTH(TRIM(c.logoBase64)) > 0) AS logoPresent, "
     "ARRAY(SELECT VALUE a FROM a IN c.admins WHERE a = @user_id OR a.userId = @user_id) AS callerAdmins, "
     "ARRAY(SELECT VALUE m FROM m IN c.documentManagers "
-    "WHERE m = @user_id OR m.userId = @user_id) AS callerDocumentManagers "
+    "WHERE m = @user_id OR m.userId = @user_id) AS callerDocumentManagers, "
+    "ARRAY(SELECT VALUE p FROM p IN c.pendingDocumentManagers "
+    "WHERE p = @user_id OR p.userId = @user_id) AS callerPending "
     "FROM c"
 )
 
@@ -178,6 +180,10 @@ def project_directory_record(document, user_id):
     ]
     row["callerDocumentManagers"] = [
         copy.deepcopy(entry) for entry in _array(document, "documentManagers")
+        if _member_matches(entry, user_id)
+    ]
+    row["callerPending"] = [
+        copy.deepcopy(entry) for entry in _array(document, "pendingDocumentManagers")
         if _member_matches(entry, user_id)
     ]
     return row

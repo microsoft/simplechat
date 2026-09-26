@@ -10,6 +10,9 @@
   a member. There is no "leave": self-removal is refused;
 - ``GET /api/public-workspaces/<workspace_id>/membership/requests`` lists the pending
   document-manager requests;
+- ``POST /api/public-workspaces/<workspace_id>/membership/requests`` asks to manage the
+  workspace's documents (the caller's own request) and ``DELETE`` on the same path
+  cancels the caller's own pending request;
 - ``POST /api/public-workspaces/<workspace_id>/membership/requests/<user_id>/approve``
   and ``.../reject`` decide one;
 - ``PUT /api/public-workspaces/<workspace_id>/membership/owner`` transfers ownership.
@@ -30,6 +33,7 @@ from functions_authentication import get_current_user_id, get_current_user_info,
 from functions_public_membership import (
     add_public_member,
     approve_public_request,
+    cancel_public_membership_request,
     change_public_member_role,
     list_public_join_requests,
     list_public_members,
@@ -39,6 +43,7 @@ from functions_public_membership import (
     reject_query_parameters,
     reject_request_body,
     remove_public_member,
+    request_public_membership,
     transfer_public_ownership,
 )
 from functions_settings import enabled_required
@@ -121,6 +126,30 @@ def register_route_backend_public_membership(bp):
         reject_query_parameters()
         reject_request_body()
         return _no_store(*list_public_join_requests(get_current_user_id(), workspace_id))
+
+    @bp.route('/api/public-workspaces/<workspace_id>/membership/requests', methods=['POST'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    @enabled_required("enable_public_workspaces")
+    @_public_membership_boundary
+    def api_public_membership_request_create(workspace_id):
+        """Ask to manage this workspace's documents. The requester is the signed-in caller."""
+        reject_query_parameters()
+        reject_request_body()
+        return _no_store(*request_public_membership(get_current_user_info(), workspace_id))
+
+    @bp.route('/api/public-workspaces/<workspace_id>/membership/requests', methods=['DELETE'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    @enabled_required("enable_public_workspaces")
+    @_public_membership_boundary
+    def api_public_membership_request_cancel(workspace_id):
+        """Cancel your own pending request. Only the caller's own request is removed."""
+        reject_query_parameters()
+        reject_request_body()
+        return _no_store(*cancel_public_membership_request(get_current_user_info(), workspace_id))
 
     @bp.route('/api/public-workspaces/<workspace_id>/membership/requests/<user_id>/approve', methods=['POST'])
     @swagger_route(security=get_auth_security())

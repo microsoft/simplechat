@@ -85,10 +85,14 @@ browse connections, and start a sync while the workspace is active. Readers
 don't see either section. See
 [V2 Public Connections]({{ '/explanation/features/V2_PUBLIC_CONNECTIONS/' | relative_url }}).
 
+From version **0.261.184**, the directory lets you ask to manage a workspace's
+documents, and cancel the request, from its row. It also shows or hides every
+workspace for chat at once, saves and reuses lists of visible workspaces, and
+opens classic chat over the visible ones.
+
 Sharing a public document with other workspaces is not available. The
-workspace's settings, logo, statistics and activity still use the classic page,
-as do the directory's saved visibility lists and asking to become a
-DocumentManager.
+workspace's settings, logo, statistics and activity still use the classic
+page.
 
 From version **0.261.173**, the classic public workspace pages save changes
 conditionally. If someone else changes the same workspace at that moment, a

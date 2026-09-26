@@ -1,20 +1,25 @@
 # public_directory.py
 """
-Closed M9A public directory HTTP fixtures for the real production V2 SPA.
-Version: 0.261.179
+Closed M9A/M10A public directory HTTP fixtures for the real production V2 SPA.
+Version: 0.261.184
 Implemented in: 0.261.175
 
-The fixture serves the native public directory the directory page and the unified picker read --
+The fixture serves only the native routes the directory page reads and writes --
 `GET /api/public_workspaces/directory`, the classic `POST /api/public_workspaces` the M10A Create
-affordance reuses, and the public `GET /api/public_workspaces/<id>/logo` -- plus
-the shared `/api/user/settings` store the visibility toggle writes, and nothing else. It models the
-server's rules from ``functions_public_directory`` rather than a convenient shape: the strict query
-(only ``view``, ``search``, ``page`` and ``page_size``, each at most once, ``view`` in ``all|mine``),
-the casefolded search over name, description and exact id, the ``(casefolded name, id)`` sort, the
+affordance reuses, the public `GET /api/public_workspaces/<id>/logo`, the M10A
+`POST`/`DELETE /api/public-workspaces/<id>/membership/requests` the self-service request control
+drives -- plus the shared `/api/user/settings` store the visibility toggle writes, and nothing
+else. It models the server's rules from ``functions_public_directory`` and
+``functions_public_membership`` rather than a convenient shape: the strict query (only ``view``,
+``search``, ``page`` and ``page_size``, each at most once, ``view`` in ``all|mine``), the
+casefolded search over name, description and exact id, the ``(casefolded name, id)`` sort, the
 page cut after the filter, and the row shape ``{id, name, description, heroColor, hasLogo,
 logoVersion, userRole, membership, status}`` -- with no owner and no member count, which the public
-directory deliberately withholds, and ``hasLogo`` true whenever a logo is stored (a public logo is
-served to any authenticated caller, unlike a group's).
+directory deliberately withholds, ``hasLogo`` true whenever a logo is stored (a public logo is
+served to any authenticated caller, unlike a group's), and ``membership`` one of
+``member|pending|none`` where ``pending`` is the caller's own outstanding request. Each request or
+cancel returns the server's own ``{workspace}`` row, so the page renders exactly what the server
+committed and never an optimistic guess.
 
 It extends ``PublicWorkspaceFixture`` so the inherited bootstrap, the ``/api/v2/workspaces/public/<id>``
 context a row's Open lands on, the ``setActive`` courtesy, the classic-visit recorder and the
@@ -50,11 +55,15 @@ LOGO_WORKSPACE = "pub-logo"          # a none row whose stored logo is still ser
 INACTIVE_WORKSPACE = "pub-inactive"  # a row a reader cannot chat; hideable, never an error.
 UNKNOWN_WORKSPACE = "pub-unknown"    # a status outside the reader vocabulary, reported as unknown.
 LONG_WORKSPACE = "pub-long"          # an 80-char name and a 500-char description.
+REQUESTABLE_WORKSPACE = "pub-request"  # a none row the reader may ask to manage.
+PENDING_WORKSPACE = "pub-pending"    # a row the reader has already asked to manage.
 
 MEMBER_WORKSPACE_NAME = "Research library"     # matches the inherited pub-a context name.
 LOGO_WORKSPACE_NAME = "Atlas library"
 INACTIVE_WORKSPACE_NAME = "Retired archive"
 UNKNOWN_WORKSPACE_NAME = "Uncharted shelf"
+REQUESTABLE_WORKSPACE_NAME = "Open commons"
+PENDING_WORKSPACE_NAME = "Awaiting review"
 
 # Exactly 80 code points and a 500-code-point description, so the long-content layout case exercises
 # the real server maxima rather than a token stand-in.
@@ -96,6 +105,10 @@ class PublicDirectoryFixture(PublicWorkspaceFixture):
         self.create_refusal = None
         self.next_create_error = None
         self.created_public_counter = 0
+        # Forced, one-shot membership outcomes a test arranges before it drives the UI, each modelling
+        # a concurrent change the server saw first. A code is consumed on the next request/cancel to
+        # that id and reconciled so the reload shows the truth.
+        self.forced_conflicts = {}
         # The Open target is a member row whose id is an inherited context, so Open lands on a real
         # public workspace shell rather than a 404.
         self._seed_directory([
@@ -106,6 +119,8 @@ class PublicDirectoryFixture(PublicWorkspaceFixture):
                              status="inactive"),
             directory_record(UNKNOWN_WORKSPACE, UNKNOWN_WORKSPACE_NAME, membership="none",
                              status="archived"),
+            directory_record(REQUESTABLE_WORKSPACE, REQUESTABLE_WORKSPACE_NAME, membership="none"),
+            directory_record(PENDING_WORKSPACE, PENDING_WORKSPACE_NAME, membership="pending"),
         ])
         # Enough filler that the default page leaves a second page to prove paging.
         self._seed_directory([
@@ -139,11 +154,22 @@ class PublicDirectoryFixture(PublicWorkspaceFixture):
         if can_create is not None:
             self.can_create = can_create
 
+    def force_request_conflict(self, workspace_id, code):
+        """Arm a one-shot membership conflict the next request/cancel to this id answers.
+
+        ``code`` is ``already_member``, ``request_pending``, ``no_pending_request``,
+        ``public_workspace_write_conflict`` or ``workspace_not_found``. The stored row is
+        reconciled so the page's reload shows the true state.
+        """
+        self.forced_conflicts[workspace_id] = code
+
     # --- response shaping -----------------------------------------------------------------------
 
     @staticmethod
     def _is_directory_route(path):
         if path == "/api/public_workspaces/directory":
+            return True
+        if path.startswith("/api/public-workspaces/") and path.endswith("/membership/requests"):
             return True
         return path.startswith("/api/public_workspaces/") and path.endswith("/logo")
 
@@ -210,6 +236,10 @@ class PublicDirectoryFixture(PublicWorkspaceFixture):
             return
         if path.startswith("/api/public_workspaces/") and path.endswith("/logo") and method == "GET":
             self._logo(route, entry)
+            return
+        if (path.startswith("/api/public-workspaces/") and path.endswith("/membership/requests")
+                and method in ("POST", "DELETE")):
+            self._membership_request(route, entry)
             return
         super()._dispatch(route, entry)
 
@@ -313,6 +343,89 @@ class PublicDirectoryFixture(PublicWorkspaceFixture):
         # Register the created workspace so the 201's navigate-by-id lands on a real context load.
         self.workspaces[identifier] = public_context(identifier, name, role="Owner")
         self._json(route, {"id": identifier, "name": name}, 201)
+
+    # --- the caller's own document-manager request, ported from functions_public_membership -----
+
+    _REQUEST_MESSAGES = {
+        "already_member": "You already manage this public workspace's documents.",
+        "request_pending": "You've already asked to manage this public workspace's documents.",
+        "no_pending_request": "You don't have a pending request for this public workspace.",
+        "public_workspace_write_conflict": "The public workspace changed while your request was being saved. Try again.",
+        "workspace_not_found": "The public workspace was not found.",
+    }
+
+    def _membership_request(self, route, entry):
+        """POST asks to manage the caller's own documents; DELETE cancels the caller's own request.
+
+        The native route rejects a query string and a request body, refuses each incoherent state
+        with a coded 409, and answers success with the server's own ``{workspace}`` row -- never an
+        optimistic shape -- so the page always renders what the server just committed.
+        """
+        if entry.query:
+            self._json(route, {"error": "This request does not accept query parameters.",
+                               "error_code": "invalid_request"}, 400)
+            return
+        if entry.body not in (None, "", b""):
+            self._json(route, {"error": "This request does not accept a request body.",
+                               "error_code": "invalid_request"}, 400)
+            return
+        workspace_id = entry.path.split("/api/public-workspaces/", 1)[1].rsplit("/membership/requests", 1)[0]
+        forced = self.forced_conflicts.pop(workspace_id, None)
+        if forced is not None:
+            self._answer_forced_conflict(route, workspace_id, forced)
+            return
+        record = self.directory_workspaces.get(workspace_id)
+        if record is None:
+            self._json(route, {"error": self._REQUEST_MESSAGES["workspace_not_found"],
+                               "error_code": "workspace_not_found"}, 404)
+            return
+        if entry.method == "POST":
+            self._apply_request(route, record)
+        else:
+            self._apply_cancel(route, record)
+
+    def _apply_request(self, route, record):
+        membership = record["membership"]
+        if membership == "member":
+            self._json(route, {"error": self._REQUEST_MESSAGES["already_member"],
+                               "error_code": "already_member"}, 409)
+            return
+        if membership == "pending":
+            self._json(route, {"error": self._REQUEST_MESSAGES["request_pending"],
+                               "error_code": "request_pending"}, 409)
+            return
+        record["membership"] = "pending"
+        self._json(route, {"workspace": self._project(record)}, 201)
+
+    def _apply_cancel(self, route, record):
+        if record["membership"] != "pending":
+            self._json(route, {"error": self._REQUEST_MESSAGES["no_pending_request"],
+                               "error_code": "no_pending_request"}, 409)
+            return
+        record["membership"] = "none"
+        self._json(route, {"workspace": self._project(record)}, 200)
+
+    def _answer_forced_conflict(self, route, workspace_id, code):
+        """Answer a one-shot forced 409/404, reconciling the stored row for the page's reload."""
+        record = self.directory_workspaces.get(workspace_id)
+        if code == "public_workspace_write_conflict":
+            self._json(route, {"error": self._REQUEST_MESSAGES[code],
+                               "error_code": "public_workspace_write_conflict"}, 409)
+            return
+        if code == "workspace_not_found":
+            self.directory_workspaces.pop(workspace_id, None)
+            self._json(route, {"error": self._REQUEST_MESSAGES[code],
+                               "error_code": "workspace_not_found"}, 404)
+            return
+        if record is not None:
+            if code == "already_member":
+                record["membership"] = "member"
+                record["user_role"] = record["user_role"] or "DocumentManager"
+            elif code == "request_pending":
+                record["membership"] = "pending"
+            elif code == "no_pending_request":
+                record["membership"] = "none"
+        self._json(route, {"error": self._REQUEST_MESSAGES[code], "error_code": code}, 409)
 
     def _logo(self, route, entry):
         workspace_id = entry.path.split("/")[3]
