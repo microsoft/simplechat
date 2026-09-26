@@ -1,9 +1,10 @@
 # test_native_tabular_compute_service.py
 """
 Real native query, transformation, checkpoint and data-only service regressions.
-Version: 0.261.141
+Version: 0.261.143
 Implemented in: 0.261.127
 Replay-location revision identity check added in: 0.261.141
+Re-uploaded source revision replay added in: 0.261.143
 
 Provider, Cosmos, Blob and document metadata I/O are local doubles. The native
 plugin/query/transform/runner/readers and screening rules execute for real.
@@ -141,7 +142,7 @@ def _no_network(*args, **kwargs):
 
 
 @contextmanager
-def native_runtime(monkeypatch, row_count=25, scope="personal", filename="source.csv"):
+def native_runtime(monkeypatch, row_count=25, scope="personal", filename="source.csv", document_version=1):
     conversations = MemoryContainer("id")
     parents = MemoryContainer("conversation_id")
     jobs = MemoryContainer("user_id")
@@ -153,7 +154,7 @@ def native_runtime(monkeypatch, row_count=25, scope="personal", filename="source
     source_path = f"{scope_id}/{filename}"
     document = {
         "id": "source-1", "file_name": filename, "user_id": USER,
-        "version": 1, "_etag": "source-revision-1",
+        "version": document_version, "_etag": f"source-revision-{document_version}",
         "blob_container": source_container, "blob_path": source_path,
     }
     if scope != "personal":
@@ -456,6 +457,29 @@ def test_duplicate_submission_reuses_job_and_rejects_changed_request(monkeypatch
             submit(runtime, compute_plan(runtime, durable=True, query="amount > 10"))
         assert error.value.code == "native_compute_request_changed"
         assert runtime.jobs.created == 1
+
+
+def test_reuploaded_source_revision_computes_and_replays(monkeypatch):
+    # A same-name re-upload keeps a document version above the replay descriptor's schema version.
+    with native_runtime(monkeypatch, document_version=2) as runtime:
+        result = submit(runtime, compute_plan(runtime))
+        assert result["status"] == "completed"
+        foreground = list(result["reader"].iter_records())
+        assert len(foreground) == 25
+        assert foreground[-1] == {"Item_ID": "item-000025", "doubled": 50}
+        assert result["reader"].sources[0]["source_version"] == 2
+        current = open_result(runtime, result["handle"], require_current_sources=True)
+        current_rows = list(current["reader"].iter_records())
+        assert current_rows == foreground
+    with native_runtime(monkeypatch, document_version=2) as runtime:
+        result = submit(runtime, compute_plan(runtime, durable=True))
+        assert result["status"] == "pending"
+        finished = runtime.engine.process_tabular_generated_output_run(result["handle"]["job_id"], USER)
+        assert finished["status"] == "completed", finished.get("last_error")
+        resumed = open_result(runtime, result["handle"], require_current_sources=True)
+        resumed_rows = list(resumed["reader"].iter_records())
+        assert resumed_rows == foreground
+        assert runtime.publications == []
 
 
 def test_replay_location_owned_by_another_revision_is_refused_before_work(monkeypatch):

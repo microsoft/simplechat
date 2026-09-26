@@ -1,9 +1,10 @@
 # test_orchestration_source_access.py
 """
 Strict current-source authority errors for retained orchestration results.
-Version: 0.261.141
+Version: 0.261.143
 Implemented in: 0.261.127
 Authority check reason codes added in: 0.261.141
+Revision conflict reason codes added in: 0.261.143
 
 Exercise real screening, source resolution, retained facade and alias discovery.
 Only external storage, membership, model and telemetry I/O are doubled.
@@ -317,6 +318,52 @@ def test_legacy_malformed_authority_stays_a_quiet_hold(monkeypatch):
     with pytest.raises(DocumentHeldError) as raised:
         access.assert_document_available(source, "user-1", metadata_reader=no_network)
     assert events == [] and getattr(raised.value, "authority_reason", None) is None
+
+
+def _current_legacy_document():
+    return {"id": "document-1", "user_id": "user-1", "version": 2, "file_name": "PRIVATE-name.csv"}
+
+
+@pytest.mark.parametrize("source,reason", [
+    ({"document_id": "document-1", "version": "PRIVATE-1"}, "source_version_changed"),
+    ({"screening_provenance": {
+        "document_id": "document-1", "scope_type": "personal", "scope_id": "user-1",
+        "source_revision": "PRIVATE-1", "generation": None,
+    }}, "source_revision_changed"),
+    ({"screening_provenance": {
+        "document_id": "document-1", "scope_type": "personal", "scope_id": "PRIVATE-scope",
+        "source_revision": "2", "generation": None,
+    }}, "source_scope_changed"),
+])
+def test_revision_conflicts_log_which_check_failed_without_values(monkeypatch, source, reason):
+    events = _authority_events(monkeypatch)
+    with pytest.raises(ScreeningConflictError) as raised:
+        access.assert_document_available(
+            source, "user-1", metadata_reader=lambda **kwargs: _current_legacy_document(), strict_errors=True,
+        )
+    assert raised.value.authority_reason == reason
+    assert events and all(event["authority_reason"] == reason for event in events)
+    assert all(event["failure_code"] == "screening_revision_conflict" for event in events)
+    assert "PRIVATE" not in json.dumps(events)
+
+
+def test_current_provenance_beside_a_carrier_schema_version_is_not_a_conflict(monkeypatch):
+    events = _authority_events(monkeypatch)
+    descriptor = {"version": 1, "screening_provenance": access.document_provenance(_current_legacy_document())}
+    document = access.assert_document_available(
+        descriptor, "user-1", metadata_reader=lambda **kwargs: _current_legacy_document(), strict_errors=True,
+    )
+    assert document["version"] == 2 and events == []
+
+
+def test_cached_evidence_without_a_current_proof_logs_its_check(monkeypatch):
+    events = _authority_events(monkeypatch)
+    with authority_runtime(monkeypatch):
+        with pytest.raises(ScreeningConflictError) as raised:
+            access.assert_evidence_available({"document_id": "document-1"}, "user-1", cached=True, strict_errors=True)
+    assert raised.value.authority_reason == "cached_evidence_unproven"
+    assert events and events[-1]["authority_reason"] == "cached_evidence_unproven"
+    assert all(event["failure_code"] == "screening_revision_conflict" for event in events)
 
 
 def test_io_authority_failures_log_their_code_without_a_check_reason(monkeypatch):
