@@ -374,23 +374,43 @@ def document_provenance(document):
     }
 
 
+def _revision_conflict(reason):
+    error = ScreeningConflictError()
+    error.authority_reason = reason
+    return error
+
+
+def _provenance_conflict_reason(expected, current):
+    if expected.get("source_revision") != current.get("source_revision"):
+        return "source_revision_changed"
+    if expected.get("generation") != current.get("generation"):
+        return "screening_generation_changed"
+    if any(expected.get(key) != current.get(key) for key in ("document_id", "scope_type", "scope_id")):
+        return "source_scope_changed"
+    return "provenance_shape_invalid"
+
+
 def _check_source_revision(source, document, *, cached=False):
     if not isinstance(source, Mapping):
         return
     provenance = source.get(PROVENANCE_FIELD)
     if isinstance(provenance, Mapping):
-        if dict(provenance) != document_provenance(document):
-            raise ScreeningConflictError()
-    elif SCREENING_FIELD in source:
+        current = document_provenance(document)
+        if dict(provenance) != current:
+            raise _revision_conflict(_provenance_conflict_reason(provenance, current))
+        # Provenance already pins the source revision. A carrier's own
+        # ``version`` key (for example a descriptor schema version) is not one.
+        return
+    if SCREENING_FIELD in source:
         if document_provenance(source) != document_provenance(document):
-            raise ScreeningConflictError()
+            raise _revision_conflict("screened_record_changed")
     elif cached and SCREENING_FIELD in document:
         # Pre-enrollment caches have no generation and cannot prove that their
         # snippets survived a remediation performed without a version bump.
-        raise ScreeningConflictError()
+        raise _revision_conflict("cached_evidence_unproven")
     version = source.get("version")
     if version is not None and str(version) != str(document.get("version") or 1):
-        raise ScreeningConflictError()
+        raise _revision_conflict("source_version_changed")
 
 
 def _remember_document_use(document, user_id):
@@ -685,8 +705,14 @@ def assert_evidence_available(evidence, user_id=None, *, metadata_reader=None, c
         document = assert_document_available(source, user_id=user_id, purpose="evidence", metadata_reader=metadata_reader)
         if cached and SCREENING_FIELD in document and not isinstance(source.get(PROVENANCE_FIELD), Mapping):
             proofs = proven_sources.get(str(document.get("id")), [])
-            if not proofs or any(dict(proof) != document_provenance(document) for proof in proofs):
-                error = ScreeningConflictError()
+            current = document_provenance(document)
+            reason = "cached_evidence_unproven" if not proofs else next(
+                (_provenance_conflict_reason(proof, current) for proof in proofs if dict(proof) != current), None,
+            )
+            if reason:
+                error = _revision_conflict(reason)
+                if strict_source_authority_enabled():
+                    raise_source_authority_error(error)
                 _remember_screening_failure(error)
                 raise error
 

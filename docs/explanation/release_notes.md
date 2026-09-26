@@ -2,6 +2,16 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.143)**
+
+#### Bug Fixes
+
+*   **Tabular Steps Work With Re-uploaded CSV And Workbook Files**
+    *   Fixed orchestration runs, such as a PDF-and-CSV comparison, stalling on the tabular step when the CSV or workbook had been re-uploaded under the same name. The step stopped before reading any rows, the run later reported that the step's saved result could not be confirmed (`result_commit_unconfirmed`), and the step kept showing **Reasoning**.
+    *   The tabular step's replay descriptor carries its own schema version, which was compared with the file's revision even after the source's screening provenance had matched. A matching provenance is now authoritative. Sources without provenance keep their existing checks, and a source that really changed still conflicts.
+    *   Revision conflicts now log `sc_authority_reason`, naming the check that failed, without logging document values.
+    *   (Ref: `content_screening/access.py`, `docs/reference/logging-tags.md`, [Re-uploaded Tabular Source Revision Conflict Fix](fixes/REUPLOADED_TABULAR_SOURCE_REVISION_CONFLICT_FIX.md))
+
 ### **(v0.261.142)**
 
 #### New Features
