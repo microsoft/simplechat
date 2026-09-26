@@ -1,9 +1,11 @@
 # public_document_management.py
 """
 Closed M3B public document management responses for the real production V2 SPA.
-Version: 0.261.173
+Version: 0.261.180
 Implemented in: 0.261.133
 Server-verbatim propagation failure (`propagation_incomplete`): 0.261.164
+Every receipt builder, a manager's rows, the tag list and the download headers are the real
+management routes', held to them by functional_tests/test_public_document_fixture_parity.py: 0.261.180
 
 Reuse M3A public reads, local production assets, request recording, response gates
 and Azure Playwright connection options. Reads and operations share the immutable
@@ -22,9 +24,9 @@ from urllib.parse import quote, unquote, urlsplit
 
 import pytest
 
-from ui_tests.fixtures.public_documents import PublicDocumentsFixture, document
+from ui_tests.fixtures.public_documents import PublicDocumentsFixture, document, held, member_projection
 from ui_tests.fixtures.public_workspace import (  # noqa: F401
-    PUBLIC_MANAGER_ROLES, connect_options, public_context,
+    connect_options, public_context,
 )
 from ui_tests.fixtures.workspace_authoring import WorkspaceAuthoringFixture
 
@@ -53,22 +55,92 @@ def operation_path(resource, workspace_id="pub-a"):
     return f"/api/public-workspaces/{quote(workspace_id, safe='')}/documents/{resource}"
 
 
+# The receipts the real management routes send (functions_public_document_management.py and the
+# public document access checks), verbatim, so a browser test that renders a receipt's text renders
+# the server's; functional_tests/test_public_document_fixture_parity.py holds every builder below to
+# the real route. A coded failure carries its machine code in `error` and its sentence in `message`;
+# any other refusal carries its sentence in `error`, and a tag vocabulary conflict also names its code
+# in `error_code`.
+METADATA_UPDATED_MESSAGE = "Public document metadata updated."
+METADATA_QUEUED_MESSAGE = "Metadata saved and queued for content screening."
+DOCUMENT_DELETED_MESSAGE = "Public document deleted."
+TAG_CREATED_MESSAGE = "Public tag created."
+TAG_MESSAGES = {
+    "update": "Public tag updated.",
+    "rename": "Public tag renamed.",
+    "delete": "Public tag deleted.",
+}
+TAG_PARTIAL_MESSAGE = (
+    "Some tag changes are incomplete. The original vocabulary has been retained; refresh before retrying."
+)
+# Why one document of a batch was refused: a job or write that failed outright, a write that lost a
+# race with another change, and a tag change that found the document at a newer revision.
+DOCUMENT_OPERATION_FAILED_ERROR = "Unable to complete this public document operation."
+DOCUMENT_CHANGED_ERROR = "The resource changed. Refresh and retry the operation."
+TAG_REVISION_CHANGED_ERROR = "The current document revision changed. Refresh and retry."
+# An operation the workspace no longer offers the caller -- a download after the administrator or the
+# workspace turned downloads off, say -- is refused before any document is read.
+OPERATION_UNAVAILABLE_ERROR = "This operation is unavailable for the selected public workspace."
+
+
 def metadata_result(document_id, changes, *, public_workspace_id="pub-a", queued=False):
+    """The server names the fields in the order the request sent them."""
     return {
-        "message": "Metadata saved and queued for screening." if queued else "Metadata updated.",
+        "message": METADATA_QUEUED_MESSAGE if queued else METADATA_UPDATED_MESSAGE,
         "document_id": document_id, "public_workspace_id": public_workspace_id,
         "updated_fields": list(changes), "status": "queued" if queued else "updated",
     }
 
 
 def delete_result(*document_ids, errors=(), **revision_details):
-    return {
-        "message": "Requested document deletion results.",
+    """A delete receipt. A single-document DELETE also names its revisions and says what it did;
+    a bulk delete reports only what was deleted and what was refused."""
+    result = {
         "deleted": [{"document_id": identifier} for identifier in document_ids],
         "errors": copy.deepcopy(list(errors)),
         "deleted_count": len(document_ids), "error_count": len(errors),
-        **revision_details,
     }
+    if revision_details:
+        result["message"] = DOCUMENT_DELETED_MESSAGE
+        result.update(revision_details)
+    return result
+
+
+def batch_error(document_id, error=DOCUMENT_OPERATION_FAILED_ERROR, *, public_workspace_id="pub-a"):
+    """One document a batch could not change, with the server's sentence for why."""
+    return {"error": error, "document_id": document_id, "public_workspace_id": public_workspace_id}
+
+
+def bulk_tag_result(success, errors=()):
+    return {"success": copy.deepcopy(list(success)), "errors": copy.deepcopy(list(errors))}
+
+
+def queue_result(*document_ids, errors=(), extraction_mode=None):
+    """The receipt for queued metadata extraction or, given its `extraction_mode`, reprocessing."""
+    return {
+        "queued": [
+            {"document_id": identifier, **({"extraction_mode": extraction_mode} if extraction_mode else {})}
+            for identifier in document_ids
+        ],
+        "errors": copy.deepcopy(list(errors)),
+    }
+
+
+def upload_refusal(file_name, error=DOCUMENT_OPERATION_FAILED_ERROR):
+    """An upload names each refused file with the reason, as one sentence."""
+    return f"{file_name}: {error}"
+
+
+def upload_result(document_ids, processed_filenames, errors=()):
+    return {
+        "message": f"Queued {len(processed_filenames)} file(s) for processing.",
+        "document_ids": list(document_ids), "processed_filenames": list(processed_filenames),
+        "errors": list(errors),
+    }
+
+
+def tag_created(name, color):
+    return {"message": TAG_CREATED_MESSAGE, "tag": {"name": name, "color": color}}
 
 
 # A tag vocabulary write that finds the workspace changed answers this, whether its etag pre-check
@@ -78,12 +150,18 @@ VOCABULARY_CONFLICT_MESSAGE = "The workspace's tags or permissions changed. Refr
 VOCABULARY_CONFLICT_CODE = "vocabulary_conflict"
 
 
-def tag_result(*, tag=None, success=(), errors=(), retained=False):
+def tag_result(operation, *, tag=None, success=(), errors=()):
+    """A tag vocabulary receipt for what the request did: `update` a colour, `rename` (or merge)
+    the tag, or `delete` it. Only a delete names no tag, and only a rename or delete re-tags the
+    documents; the old vocabulary is retained exactly when a change is incomplete."""
+    assert operation in TAG_MESSAGES, operation
+    assert (tag is None) == (operation == "delete"), "Only a tag delete omits the resulting tag."
+    assert operation != "update" or not (success or errors), "A colour change re-tags no documents."
     result = {
-        "message": "Tag vocabulary update results.",
+        "message": TAG_PARTIAL_MESSAGE if errors else TAG_MESSAGES[operation],
         "documents_updated": len(success),
         "success": copy.deepcopy(list(success)), "errors": copy.deepcopy(list(errors)),
-        "vocabulary_retained": retained,
+        "vocabulary_retained": bool(errors),
     }
     if tag is not None:
         result["tag"] = copy.deepcopy(tag)
@@ -128,6 +206,19 @@ def propagation_incomplete(document_id, *, public_workspace_id="pub-a"):
     }
 
 
+# A download route sends each file with these protective headers (the Cache-Control as the browser
+# receives it), names it as an attachment, and names a multi-document archive this.
+DOWNLOAD_HEADERS = {
+    "Cache-Control": "no-store, private", "X-Content-Type-Options": "nosniff",
+    "Content-Security-Policy": "sandbox; default-src 'none'",
+}
+PUBLIC_ARCHIVE_NAME = "public-documents.zip"
+
+
+def attachment(file_name):
+    return {"Content-Disposition": f'attachment; filename="{file_name}"'}
+
+
 @dataclass
 class OperationReply:
     method: str
@@ -170,17 +261,22 @@ class PublicDocumentManagementFixture(PublicDocumentsFixture):
                 workspace_id, "notes-document", "Field notes", timestamp=self.now - 1,
                 tags=["team", "legacy/review"], document_actions=list(DOCUMENT_ACTIONS),
             )
-            withheld = document(
-                workspace_id, "withheld-document", "Withheld by server", timestamp=self.now - 2,
-                tags=[], document_actions=[],
-            )
-            self.documents[workspace_id] = [owned, notes, withheld]
-            previous = document(
+            # Content screening holds this document while it is scanned: every reader sees only its
+            # held fields, and a hold no one can clean up leaves even a manager no document operation.
+            withheld = held(document(
+                workspace_id, "withheld-document", "Withheld by server", timestamp=self.now - 2, tags=[],
+            ))
+            withheld["document_actions"] = []
+            self.documents[workspace_id] = [
+                member_projection(record) for record in (owned, notes, withheld)
+            ]
+            # A historical revision can still be downloaded or deleted, and only inspected.
+            previous = member_projection(document(
                 workspace_id, "previous-version", "Earlier research brief",
                 timestamp=self.now - 86400, version=2, is_current_version=False,
                 revision_family_id=owned["revision_family_id"], tags=["finance", "team"],
-                document_actions=[],
-            )
+                document_actions=["delete", "download"],
+            ))
             self.versions[(workspace_id, "same-document")] = [copy.deepcopy(owned), previous]
             self.vocabulary[workspace_id] = {
                 "finance": "#0078d4", "team": "#059669",
@@ -189,16 +285,10 @@ class PublicDocumentManagementFixture(PublicDocumentsFixture):
         page.on("requestfailed", self._request_failed)
 
     def set_policy(self, workspace_id="pub-a", *, role="DocumentManager", status="active"):
+        """Recompute a workspace's context for a role and status, exactly as the server builds it,
+        document management and review hints included."""
         name = self.workspaces[workspace_id]["workspace"]["name"]
-        context = public_context(workspace_id, name, role=role, status=status, viewer=self.viewer_id)
-        manager = role in PUBLIC_MANAGER_ROLES
-        operations = list(OPERATIONS) if manager and status == "active" else []
-        if manager and status == "locked":
-            operations = ["download"]
-        elif manager and status == "upload_disabled":
-            operations = ["delete", "download", "reprocess"]
-        context["document_management"] = {"schema_version": 1, "operations": operations}
-        self.workspaces[workspace_id] = context
+        self.workspaces[workspace_id] = public_context(workspace_id, name, role=role, status=status, viewer=self.viewer_id)
 
     def record(self, identifier, workspace_id="pub-a"):
         return next(record for record in self.documents[workspace_id] if record["id"] == identifier)
@@ -372,7 +462,7 @@ class PublicDocumentManagementFixture(PublicDocumentsFixture):
                 route.fulfill(
                     status=reply.status, body=reply.response,
                     content_type=reply.content_type or "application/octet-stream",
-                    headers={"Cache-Control": "no-store", "X-Content-Type-Options": "nosniff", **reply.headers},
+                    headers={**DOWNLOAD_HEADERS, **reply.headers},
                 )
             else:
                 self._json(route, reply.response, reply.status)
@@ -382,8 +472,9 @@ class PublicDocumentManagementFixture(PublicDocumentsFixture):
             workspace_id = match.group(1)
             assert entry.query == {}, entry
             assert workspace_id in self.workspaces, entry
-            if workspace_id in self.denied_workspaces or not self.workspaces[workspace_id]["document_permissions"]["can_view"]:
-                self._json(route, {"error": "Public workspace tags are unavailable."}, 403)
+            refusal = self._read_refusal(workspace_id)
+            if refusal:
+                self._json(route, {"error": refusal}, 403)
             else:
                 counts = self.facets(workspace_id)["by_tag"]
                 self._json(route, {"tags": [

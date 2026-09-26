@@ -2,13 +2,15 @@
 """
 Production-SPA coverage for native V2 public workspace document browsing (M3A),
 management (M3B) and generated-artifact approval (M3C).
-Version: 0.261.175
+Version: 0.261.180
 Implemented in: 0.261.132
 A coded failure shows the server's sentence (apiClient), and an archive takes the server's
 name: 0.261.164
 The empty explorer and a refused change name this public workspace and who can change its
 documents, never a group or classic: 0.261.167
 A manager who can't upload is told why when dropping files: 0.261.168
+Every scripted reply is the one the public routes send, held to them by
+functional_tests/test_public_document_fixture_parity.py: 0.261.180
 
 Exercises real components, stores and navigation with closed synthetic HTTP.
 The read fixture never permits personal or group document requests, and never
@@ -32,12 +34,14 @@ import pytest
 from playwright.sync_api import expect
 
 from ui_tests.fixtures.public_document_management import (
-    DOCUMENT_ACTIONS, OPERATIONS, PROPAGATION_INCOMPLETE_MESSAGE, delete_result, metadata_result,  # noqa: F401
-    operation_path, propagation_incomplete, public_management_ui, tag_result, tag_vocabulary_conflict,
+    DOCUMENT_ACTIONS, DOCUMENT_OPERATION_FAILED_ERROR, OPERATION_UNAVAILABLE_ERROR, OPERATIONS,  # noqa: F401
+    PROPAGATION_INCOMPLETE_MESSAGE, batch_error, bulk_tag_result, delete_result, metadata_result,
+    operation_path, propagation_incomplete, public_management_ui, queue_result, tag_result,
+    tag_vocabulary_conflict, upload_refusal, upload_result,
 )
 from ui_tests.fixtures.public_document_collaboration import (
-    COLLABORATION_OPERATIONS, collaboration_receipt, public_collaboration_ui,  # noqa: F401
-    publication,
+    COLLABORATION_OPERATIONS, FAILED_HANDOFF_ERRORS, STATE_CONFLICT, collaboration_receipt,  # noqa: F401
+    public_collaboration_ui, publication,
 )
 from ui_tests.fixtures.public_documents import (
     NUMERIC_SORT_FIELDS, SORT_FIELDS, connect_options, document,  # noqa: F401
@@ -138,20 +142,20 @@ def test_queries_use_whole_sets(public_documents_ui):
     expect(explorer(ui).get_by_text(f"1\u201350 of {total}", exact=True)).to_be_visible()
     assert last_list(ui).query["page_size"] == ["50"]
     counts = ui.facets("pub-a")
-    finance = filters(ui).get_by_role("button", name=re.compile(r"^Finance"))
-    expect(finance).to_contain_text(str(counts["by_tag"]["Finance"]))
+    finance = filters(ui).get_by_role("button", name=re.compile(r"^finance"))
+    expect(finance).to_contain_text(str(counts["by_tag"]["finance"]))
     finance.click()
-    filters(ui).get_by_role("button", name=re.compile(r"^Team")).click(modifiers=["Control"])
+    filters(ui).get_by_role("button", name=re.compile(r"^team")).click(modifiers=["Control"])
     filters(ui).get_by_role("button", name=re.compile(r"^Internal")).click()
     search(ui, "Team research 57")
     expect(ui.page.get_by_role("button", name="Details for Team research 57", exact=True)).to_be_visible()
     expect(explorer(ui).get_by_text("1\u20131 of 1", exact=True)).to_be_visible()
     query = last_list(ui).query
     assert query["search"] == ["Team research 57"]
-    assert query["tags"] == ["Finance,Team"]
+    assert query["tags"] == ["finance,team"]
     assert query["classification"] == ["Internal"]
     assert query["page"] == ["1"]
-    expect(finance).to_contain_text(str(counts["by_tag"]["Finance"]))
+    expect(finance).to_contain_text(str(counts["by_tag"]["finance"]))
     expect(filters(ui).get_by_role("button", name=re.compile(r"^All documents"))).to_contain_text(str(total))
     assert all(
         entry.query == {}
@@ -632,19 +636,24 @@ def test_a_public_manager_who_cannot_upload_is_told_why_when_dropping_files(publ
 def test_per_document_actions_gate_every_command(public_management_ui):
     ui = public_management_ui
     # document_management advertises the surface; per-document document_actions authorise each
-    # document. A withheld document (empty actions) must disable every command even for a manager,
-    # and a mixed selection must not borrow a sibling's permission.
+    # document. A readable document whose eligibility the server could not establish is offered no
+    # operation (get_public_document_actions' failure branch): every command stays disabled for it
+    # even for a manager, and a mixed selection must not borrow a sibling's permission.
+    ui.record("notes-document")["document_actions"] = []
     open_management(ui)
     select_documents(ui, "same-document")
     for label in ("Tag", "Edit", "Delete", "Extract", "Download", "Switch to Enhanced"):
         expect(command(ui, label)).to_be_enabled()
-    select_documents(ui, "withheld-document")
+    select_documents(ui, "notes-document")
     for label in ("Tag", "Edit", "Delete", "Extract", "Download", "Switch to Enhanced"):
         expect(command(ui, label)).to_be_disabled()
-    expect(document_row(ui, "withheld-document")).to_have_attribute("draggable", "false")
-    select_documents(ui, "same-document", "withheld-document")
+    expect(document_row(ui, "notes-document")).to_have_attribute("draggable", "false")
+    select_documents(ui, "same-document", "notes-document")
     for label in ("Tag", "Delete", "Extract", "Download", "Switch to Enhanced"):
         expect(command(ui, label)).to_be_disabled()
+    # A document content screening holds, with no operation anyone may take, cannot be selected.
+    expect(checkbox(ui, "withheld-document")).to_be_disabled()
+    expect(document_row(ui, "withheld-document")).to_have_attribute("draggable", "false")
     assert not ui.operation_requests
 
 
@@ -661,12 +670,10 @@ def test_upload_repeated_file_parts_partial_acceptance(public_management_ui):
         "pub-a", "uploaded-document", "Accepted upload", timestamp=ui.now + 1,
         file_name="accepted.txt", tags=[], document_actions=list(DOCUMENT_ACTIONS),
     )
+    # The server names each refused file with its reason, in one sentence, and queues the rest.
     reply = ui.queue_operation(
         "POST", "upload", files=files, status=207,
-        response={
-            "document_ids": ["uploaded-document"], "processed_filenames": ["accepted.txt"],
-            "errors": ["refused.txt: this file was not accepted."],
-        },
+        response=upload_result(["uploaded-document"], ["accepted.txt"], [upload_refusal("refused.txt")]),
         records=[uploaded],
     )
     ui.defer_next("POST", reply.path)
@@ -678,7 +685,7 @@ def test_upload_repeated_file_parts_partial_acceptance(public_management_ui):
     expect(command(ui, "Upload")).to_be_disabled()
     assert len(ui.pending_responses) == 1
     perform(ui, reply, ui.release_responses)
-    expect(ui.page.get_by_role("alert").filter(has_text="refused.txt: this file was not accepted.")).to_be_visible()
+    expect(ui.page.get_by_role("alert").filter(has_text=upload_refusal("refused.txt"))).to_be_visible()
     expect(details_button(ui, "uploaded-document")).to_be_visible()
     assert ui.multipart_uploads == [(reply.path, files)]
     assert len(ui.operation_requests) == 1
@@ -735,13 +742,10 @@ def test_bulk_tag_add_via_command_and_remove_via_chip(public_management_ui):
     added = ui.queue_operation(
         "POST", "bulk-tag",
         body={"document_ids": ["same-document", "notes-document"], "action": "add_tags", "tags": ["review"]},
-        response={
-            "success": [
-                {"document_id": "same-document", "tags": tagged["tags"]},
-                {"document_id": "notes-document", "tags": tagged_notes["tags"]},
-            ],
-            "errors": [],
-        },
+        response=bulk_tag_result([
+            {"document_id": "same-document", "tags": tagged["tags"]},
+            {"document_id": "notes-document", "tags": tagged_notes["tags"]},
+        ]),
         records=[tagged, tagged_notes],
     )
     perform(ui, added, dialog.get_by_role("button", name="Apply", exact=True).click)
@@ -754,13 +758,10 @@ def test_bulk_tag_add_via_command_and_remove_via_chip(public_management_ui):
     removed = ui.queue_operation(
         "POST", "bulk-tag",
         body={"document_ids": ["same-document", "notes-document"], "action": "remove_tags", "tags": ["review"]},
-        response={
-            "success": [
-                {"document_id": "same-document", "tags": untagged["tags"]},
-                {"document_id": "notes-document", "tags": untagged_notes["tags"]},
-            ],
-            "errors": [],
-        },
+        response=bulk_tag_result([
+            {"document_id": "same-document", "tags": untagged["tags"]},
+            {"document_id": "notes-document", "tags": untagged_notes["tags"]},
+        ]),
         records=[untagged, untagged_notes],
     )
     perform(ui, removed, ui.page.get_by_role("button", name="Remove tag review", exact=True).first.click)
@@ -871,9 +872,10 @@ def test_downloads_save_complete_bytes_and_refusals_never_become_files(public_ma
     downloads = []
     ui.page.on("download", lambda item: downloads.append(item))
     select_documents(ui, "same-document")
+    # A workspace that stopped offering downloads refuses the file as the server does.
     refused = ui.queue_operation(
         "GET", "same-document/download", status=403,
-        response={"error": "The public workspace no longer permits downloading."},
+        response={"error": OPERATION_UNAVAILABLE_ERROR, "document_id": "same-document", "public_workspace_id": "pub-a"},
     )
     response = perform(ui, refused, command(ui, "Download").click)
     assert "content-disposition" not in response.headers
@@ -892,21 +894,21 @@ def test_extract_and_reprocess_partial_then_retry(public_management_ui):
         ("reprocess_extraction", "Switch to Enhanced", {"extraction_mode": "layout"}),
     ):
         select_documents(ui, "same-document", "notes-document")
+        # The queue refuses one document with the server's sentence and names what it queued.
         partial = ui.queue_operation(
             "POST", resource, body={"document_ids": ["same-document", "notes-document"], **extra},
             status=207,
-            response={
-                "queued": [{"document_id": "same-document", "status": "queued"}],
-                "errors": [{"document_id": "notes-document", "error": "queue_unavailable", "message": "Field notes was not queued."}],
-            },
+            response=queue_result(
+                "same-document", errors=[batch_error("notes-document")], extraction_mode=extra.get("extraction_mode"),
+            ),
         )
         perform(ui, partial, command(ui, label).click)
-        expect(explorer(ui).get_by_role("alert")).to_contain_text("Field notes was not queued.")
+        expect(explorer(ui).get_by_role("alert")).to_contain_text(DOCUMENT_OPERATION_FAILED_ERROR)
         expect(checkbox(ui, "same-document")).not_to_be_checked()
         expect(checkbox(ui, "notes-document")).to_be_checked()
         retry = ui.queue_operation(
             "POST", resource, body={"document_ids": ["notes-document"], **extra}, status=202,
-            response={"queued": [{"document_id": "notes-document", "status": "queued"}], "errors": []},
+            response=queue_result("notes-document", extraction_mode=extra.get("extraction_mode")),
         )
         perform(ui, retry, command(ui, label).click)
         expect(explorer(ui).get_by_role("status").filter(has_text="queued: 1 of 1 confirmed")).to_be_visible()
@@ -1095,13 +1097,15 @@ def test_only_the_requester_can_cancel_a_pending_publication(public_collaboratio
     open_management(ui, "pub-a")
     # A non-requester sees approve and reject, never cancel.
     non_requester = open_review(ui, "pending-publication")
+    expect(non_requester.get_by_role("button", name="Approve publication", exact=True)).to_be_visible()
     expect(non_requester.get_by_role("button", name="Cancel publication request", exact=True)).to_have_count(0)
     non_requester.get_by_role("button", name="Done", exact=True).click()
     expect(non_requester).to_have_count(0)
-    # The requester may withdraw their own request, behind a confirmation.
+    # The requester may withdraw their own request, behind a confirmation. Only a hosting workspace's
+    # manager can request a publication, so the requester may also approve or reject it.
     dialog = open_review(ui, "requested-publication")
     expect(dialog).to_contain_text("(you)")
-    expect(dialog.get_by_role("button", name="Approve publication", exact=True)).to_have_count(0)
+    expect(dialog.get_by_role("button", name="Approve publication", exact=True)).to_be_visible()
     confirmation = confirm(ui, "Cancel publication request")
     reply = ui.queue_decision(
         "requested-publication", "cancel_artifact",
@@ -1132,12 +1136,13 @@ def test_approval_failed_is_recorded_approval_with_deliberate_resume(public_coll
         ui, "pending-publication", etag='"publication:handoff-failed"',
         publication=publication(status="approval_failed", actions=["approve_artifact"]),
     )
+    # The server records the approval, then reports that the handoff needs reconciliation, was not
+    # confirmed and sent no decision notice. The dialog shows each sentence with its stage.
     partial = ui.queue_decision(
         "pending-publication", "approve_artifact", expected_etag=initial["etag"], status=207,
         response=collaboration_receipt(
             "pending-publication", "approve_artifact", "approval_failed", status="partial",
-            errors=[{"stage": "queue", "code": "handoff_failed",
-                     "message": "Approval recorded; the processing handoff needs reconciliation."}],
+            errors=FAILED_HANDOFF_ERRORS,
         ),
         records=[changed_record(
             ui, "pending-publication", generated_artifact_promotion_status="approval_failed",
@@ -1146,7 +1151,9 @@ def test_approval_failed_is_recorded_approval_with_deliberate_resume(public_coll
         publication_after=failed_state,
     )
     perform(ui, partial, dialog.get_by_role("button", name="Approve publication", exact=True).click)
-    expect(dialog.get_by_role("alert").filter(has_text="processing handoff needs reconciliation")).to_be_visible()
+    outcome = dialog.get_by_role("alert").filter(has_text="Decision partly completed; follow-up is required.")
+    for entry in FAILED_HANDOFF_ERRORS:
+        expect(outcome).to_contain_text(f'{entry["stage"]}: {entry["message"]} ({entry["code"]})')
     expect(dialog.get_by_text("Approval was recorded, but its processing handoff needs reconciliation.", exact=True)).to_be_visible()
     expect(dialog.get_by_role("button", name="Approve publication", exact=True)).to_have_count(0)
     expect(dialog.get_by_role("button", name="Resume approved publication", exact=True)).to_be_disabled()
@@ -1175,11 +1182,12 @@ def test_stale_etag_keeps_the_dialog_and_requires_explicit_refresh_before_retry(
     newer = changed_state(ui, "pending-publication", etag='"publication:concurrent-change"')
     rejected = ui.queue_decision(
         "pending-publication", "approve_artifact", expected_etag=initial["etag"], status=409,
-        response={"error": "review_changed", "message": "Refresh the changed publication state."},
+        response=STATE_CONFLICT,
         publication_after=newer,
     )
     perform(ui, rejected, dialog.get_by_role("button", name="Approve publication", exact=True).click)
     expect(dialog.get_by_role("alert")).to_contain_text("Your input is kept")
+    expect(dialog.get_by_role("alert")).not_to_contain_text(STATE_CONFLICT["error"])
     expect(dialog.get_by_role("button", name="Approve publication", exact=True)).to_be_disabled()
     ui.page.clock.fast_forward(10000)
     assert len(ui.operation_requests) == 1
@@ -1215,12 +1223,14 @@ def test_missing_or_unknown_collaboration_handshake_hides_review(public_collabor
 
 def test_per_document_collaboration_actions_gate_the_review_affordance(public_collaboration_ui):
     ui = public_collaboration_ui
-    # withheld-document carries an empty inline document_collaboration_actions while the
-    # workspace context still advertises the operations. The gate is per document, so no
-    # review affordance appears for it even though the handshake is present.
-    assert ui.record("withheld-document")["document_collaboration_actions"] == []
+    # The server offers inspect on every document of a workspace that offers review. A client
+    # robustness scenario: a row whose inline document_collaboration_actions are empty (a server that
+    # withholds review from one document) shows no review affordance for it, even though the workspace
+    # context advertises the operations. The gate is per document.
+    ui.record("withheld-document")["document_collaboration_actions"] = []
     open_management(ui, "pub-a")
     expect(review_control(ui, "pending-publication")).to_be_visible()
+    expect(review_control(ui, "same-document")).to_be_visible()
     expect(review_control(ui, "withheld-document")).to_have_count(0)
     assert not ui.operation_requests
 
@@ -1265,9 +1275,10 @@ def test_refused_set_active_leaves_a_publication_decision_working(public_collabo
 def test_shared_place_stays_absent_while_publication_review_is_live(public_collaboration_ui):
     ui = public_collaboration_ui
     # The M3C invariant, pinned positively: enabling publication review must not resurrect a
-    # cross-workspace share relationship. Review is fully available, yet facets omit
-    # shared_with_me, so no Shared place, no Share and no personal Save view control appears,
-    # and the explorer never requests a shared place.
+    # cross-workspace share relationship. Review is fully available, and the facets count no document
+    # another workspace owns (shared_with_me is 0: a public workspace owns every document it lists),
+    # so no Shared place, no Share and no personal Save view control appears, and the explorer never
+    # requests a shared place.
     open_management(ui, "pub-a")
     expect(review_control(ui, "pending-publication")).to_be_visible()
     assert_no_shared_place(ui)
@@ -1281,7 +1292,7 @@ def test_shared_place_stays_absent_while_publication_review_is_live(public_colla
         payload for url, payload in ui.responses
         if urlsplit(url).path == "/api/public-workspaces/pub-a/documents/facets"
     )
-    assert "shared_with_me" not in facets_response
+    assert facets_response["shared_with_me"] == 0
     assert not ui.operation_requests
 
 
