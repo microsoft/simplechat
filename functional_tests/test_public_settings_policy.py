@@ -403,6 +403,12 @@ def test_every_reason_has_reviewed_refusal_text(env):
         assert message.endswith(".") and "{" not in message
 
 
+def test_the_routes_and_the_context_share_one_refusal_table(env):
+    """The routes refuse with the policy module's table, the same one the public workspace context
+    gives as a closed Manage section's reason (R5), so the two can never word a refusal differently."""
+    assert env.modules.settings.REFUSAL_MESSAGES is env.modules.policy.PUBLIC_SETTINGS_REFUSAL_MESSAGES
+
+
 def _function(file_name, name):
     tree = ast.parse((APP_ROOT / file_name).read_text(encoding="utf-8"))
     return next(node for node in ast.walk(tree) if isinstance(node, ast.FunctionDef) and node.name == name)

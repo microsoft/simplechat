@@ -79,7 +79,14 @@ from functions_public_membership_policy import (
     PUBLIC_MEMBERSHIP_MANAGER_ROLES,
     public_membership_operations,
 )
-from functions_public_settings_policy import build_public_settings_management
+from functions_public_settings_policy import (
+    PUBLIC_MANAGER_REQUIRED,
+    PUBLIC_MEMBER_REQUIRED,
+    PUBLIC_SETTINGS_MANAGER_ROLES,
+    PUBLIC_SETTINGS_REFUSAL_MESSAGES,
+    build_public_settings_management,
+    public_settings_decisions,
+)
 from functions_public_workspaces import (
     check_public_workspace_status_allows_operation,
     find_public_workspace_by_id,
@@ -427,6 +434,30 @@ def build_public_workspace_context(user_id, workspace_id, settings, *, user_info
     # sits in the shared "manage" group without touching the personal or group registries.
     sections["members"] = {
         **section(True, role in PUBLIC_MEMBERSHIP_MANAGER_ROLES),
+        "group": GROUP_MANAGE_SECTION_GROUP,
+    }
+    # Settings, Activity and Statistics (M10C) join Members in the "manage" group. Their
+    # availability is the native public settings decision, so the navigation, the settings read
+    # and the routes agree on one gate: Settings opens to the owner or an admin, Activity to the
+    # owner or an admin, and Statistics to any stored role, each in any status that lets the
+    # caller view the workspace. The controls each offers still come from settings_management,
+    # never from these entries.
+    settings_decisions = public_settings_decisions(role, workspace, settings)
+    settings_manager = role in PUBLIC_SETTINGS_MANAGER_ROLES
+    settings_manager_reason = PUBLIC_SETTINGS_REFUSAL_MESSAGES[PUBLIC_MANAGER_REQUIRED]
+    sections["settings"] = {
+        **section(settings_manager, settings_manager, settings_manager_reason),
+        "group": GROUP_MANAGE_SECTION_GROUP,
+    }
+    sections["activity"] = {
+        **section(settings_decisions["view_activity"] is None, reason=settings_manager_reason),
+        "group": GROUP_MANAGE_SECTION_GROUP,
+    }
+    sections["statistics"] = {
+        **section(
+            settings_decisions["view_stats"] is None,
+            reason=PUBLIC_SETTINGS_REFUSAL_MESSAGES[PUBLIC_MEMBER_REQUIRED],
+        ),
         "group": GROUP_MANAGE_SECTION_GROUP,
     }
 

@@ -73,6 +73,20 @@ PUBLIC_STATUS_UNAVAILABLE = "public_workspace_status_unavailable"
 PUBLIC_DOWNLOADS_NOT_ENABLED = "public_workspace_downloads_not_enabled"
 PUBLIC_RETENTION_DISABLED = "public_workspace_retention_disabled"
 
+# The reviewed text for each reason code. The routes refuse with it, and the public workspace
+# context gives it as the reason a Manage section is closed to the caller. It lives beside the
+# codes, in this pure module, so the context never needs the settings routes' boundary to read it.
+PUBLIC_SETTINGS_REFUSAL_MESSAGES = {
+    PUBLIC_OWNER_REQUIRED: "Only the workspace owner can do this.",
+    PUBLIC_MANAGER_REQUIRED: "Only the workspace owner or an admin can do this.",
+    PUBLIC_MEMBER_REQUIRED: "Only the workspace owner, an admin or a document manager can do this.",
+    PUBLIC_STATUS_UNAVAILABLE: (
+        "This workspace is locked or inactive, so its name, description, color and logo can't be changed."
+    ),
+    PUBLIC_DOWNLOADS_NOT_ENABLED: "An administrator hasn't turned on file downloads for this workspace.",
+    PUBLIC_RETENTION_DISABLED: "Retention policies aren't turned on for public workspaces.",
+}
+
 
 def public_retention_enabled(settings):
     """Whether public retention policies are on: public workspaces and the public retention switch."""
@@ -155,6 +169,7 @@ __all__ = [
     "PUBLIC_SETTINGS_MEMBER_ROLES",
     "PUBLIC_SETTINGS_OPERATIONS",
     "PUBLIC_SETTINGS_OWNER_ROLE",
+    "PUBLIC_SETTINGS_REFUSAL_MESSAGES",
     "PUBLIC_SETTINGS_WRITABLE_STATUSES",
     "PUBLIC_STATUS_UNAVAILABLE",
     "build_public_settings_management",

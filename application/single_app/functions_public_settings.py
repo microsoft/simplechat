@@ -86,12 +86,9 @@ from werkzeug.exceptions import HTTPException
 from functions_appinsights import log_event
 from functions_public_directory import PublicDirectoryError, _require_user_id
 from functions_public_settings_policy import (
-    PUBLIC_DOWNLOADS_NOT_ENABLED,
     PUBLIC_MANAGER_REQUIRED,
-    PUBLIC_MEMBER_REQUIRED,
-    PUBLIC_OWNER_REQUIRED,
-    PUBLIC_RETENTION_DISABLED,
     PUBLIC_SETTINGS_MANAGER_ROLES,
+    PUBLIC_SETTINGS_REFUSAL_MESSAGES,
     PUBLIC_STATUS_UNAVAILABLE,
     build_public_settings_management,
     public_retention_enabled,
@@ -146,16 +143,8 @@ NO_PUBLIC_LOGO_MESSAGE = "This workspace has no logo to remove."
 PUBLIC_STATUS_UNRECOGNIZED_MESSAGE = (
     "This workspace's status isn't recognized, so its name, description, color and logo can't be changed."
 )
-REFUSAL_MESSAGES = {
-    PUBLIC_OWNER_REQUIRED: "Only the workspace owner can do this.",
-    PUBLIC_MANAGER_REQUIRED: "Only the workspace owner or an admin can do this.",
-    PUBLIC_MEMBER_REQUIRED: "Only the workspace owner, an admin or a document manager can do this.",
-    PUBLIC_STATUS_UNAVAILABLE: (
-        "This workspace is locked or inactive, so its name, description, color and logo can't be changed."
-    ),
-    PUBLIC_DOWNLOADS_NOT_ENABLED: "An administrator hasn't turned on file downloads for this workspace.",
-    PUBLIC_RETENTION_DISABLED: "Retention policies aren't turned on for public workspaces.",
-}
+# The reviewed refusal text for each decision reason, from the policy module.
+REFUSAL_MESSAGES = PUBLIC_SETTINGS_REFUSAL_MESSAGES
 RETENTION_LABELS = {"conversation_retention_days": "Conversation", "document_retention_days": "Document"}
 
 
