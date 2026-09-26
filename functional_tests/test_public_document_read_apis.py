@@ -1,8 +1,10 @@
 # test_public_document_read_apis.py
 """
 Functional tests for immutable-target, read-only public workspace document APIs.
-Version: 0.261.132
+Version: 0.261.186
 Implemented in: 0.261.132
+Reader downloads: the list flag and per-document actions surface download for a reader
+when downloads are enabled for the workspace: 0.261.186
 
 The real public read module, route registrar, public workspace membership and
 status helpers, document query helpers, and the screening response guard run in
@@ -506,13 +508,38 @@ def test_single_document_is_top_level_and_actionable(environment):
     assert payload["id"] == "doc-b"
     # A plain reader (role User) gets no management verbs, but collaboration
     # inspect is a live per-request hint — never the M3A-era hardcoded [].
+    # Downloads are off by default in this environment, so no download verb either.
     assert payload["document_actions"] == []
     assert payload["document_collaboration_actions"] == ["inspect"]
     assert "documents" not in payload
 
 
+def test_reader_download_action_follows_the_workspace_download_switch(environment):
+    """A reader's per-document actions surface `download` -- and nothing else -- when downloads
+    are enabled for the workspace, and drop it when they are off. This is the reader-level
+    capability that mirrors classic public downloads, computed fresh from real authorization.
+
+    This read fixture leaves the blob-location helper unstubbed (read paths never invoke it), so
+    wire a valid non-private reference here to let source-availability -- a download precondition --
+    be established, exactly as the management fixture does for the write routes.
+    """
+    login(environment, "reader")
+    sys.modules["functions_documents"].get_document_blob_storage_info = (
+        lambda document, prefer_archived=False: ("public-documents", document.get("blob_path"))
+    )
+
+    environment.downloads = True
+    enabled = get(environment, f"{LIST_PATH}/doc-b").get_json()
+    assert enabled["document_actions"] == ["download"]
+
+    environment.downloads = False
+    disabled = get(environment, f"{LIST_PATH}/doc-b").get_json()
+    assert disabled["document_actions"] == []
+
+
 @pytest.mark.parametrize("oid, downloads, expected", [
-    ("reader", True, False),    # ordinary members never download, whatever the setting
+    ("reader", True, True),     # a plain reader may download when the workspace allows it
+    ("reader", False, False),   # the workspace setting gates the reader too
     ("manager", True, True),    # a manager in a download-enabled workspace
     ("manager", False, False),  # the workspace setting still gates managers
     ("owner", True, True),
@@ -523,8 +550,9 @@ def test_list_file_downloads_flag_is_derived_from_policy(environment, oid, downl
 
     M3A hardcoded this to False because there was no download route. M3B added
     downloads but the constant stayed, so the list said downloads were off even
-    where policy allowed them. The V2 explorer happens not to read this field for
-    public scope, but any other consumer of the API would be misled.
+    where policy allowed them. Downloads are a reader-level capability (mirroring
+    classic public downloads), so any reader of a download-enabled workspace sees
+    the flag on, and it follows the workspace's own download switch for everyone.
     """
     login(environment, oid)
     environment.downloads = downloads

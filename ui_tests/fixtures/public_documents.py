@@ -20,7 +20,7 @@ from pathlib import Path
 
 import pytest
 
-from ui_tests.fixtures.public_workspace import PublicWorkspaceFixture, connect_options  # noqa: F401
+from ui_tests.fixtures.public_workspace import PublicWorkspaceFixture, connect_options, public_context  # noqa: F401
 
 
 APP_ROOT = Path(__file__).resolve().parents[2] / "application" / "single_app"
@@ -113,6 +113,15 @@ class PublicDocumentsFixture(PublicWorkspaceFixture):
     def __init__(self, page):
         super().__init__(page)
         self.active_workspace = "pub-a"
+        # The M3A read surface models a public workspace whose file downloads are turned off, so an
+        # ordinary reader sees no Download control here and the list reports file_downloads_enabled
+        # false, exactly as the real read routes do for a downloads-off workspace
+        # (test_public_document_fixture_parity's reader env runs with downloads off). Reader downloads,
+        # a downloads-on capability whose bytes must be served, are exercised on the management fixture.
+        self.workspaces = {
+            "pub-a": public_context("pub-a", "Research library", disable_file_downloads=True),
+            "pub-b": public_context("pub-b", "Read-only library", disable_file_downloads=True),
+        }
         self.now = int(datetime.now(timezone.utc).timestamp())
         self.documents = {}
         self.versions = {}

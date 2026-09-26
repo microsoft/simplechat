@@ -78,9 +78,12 @@ TAG_PARTIAL_MESSAGE = (
 DOCUMENT_OPERATION_FAILED_ERROR = "Unable to complete this public document operation."
 DOCUMENT_CHANGED_ERROR = "The resource changed. Refresh and retry the operation."
 TAG_REVISION_CHANGED_ERROR = "The current document revision changed. Refresh and retry."
-# An operation the workspace no longer offers the caller -- a download after the administrator or the
-# workspace turned downloads off, say -- is refused before any document is read.
+# An operation the workspace no longer offers the caller is refused before any document is read.
+# A management verb the workspace no longer offers a manager gives the management refusal, while a
+# download the workspace has turned off gives the reader-path download refusal, since downloads now
+# revalidate through require_public_document_download_context rather than the management context.
 OPERATION_UNAVAILABLE_ERROR = "This operation is unavailable for the selected public workspace."
+DOWNLOADS_UNAVAILABLE_ERROR = "Downloads are unavailable for the selected public workspace."
 
 
 def metadata_result(document_id, changes, *, public_workspace_id="pub-a", queued=False):
@@ -284,11 +287,15 @@ class PublicDocumentManagementFixture(PublicDocumentsFixture):
             }
         page.on("requestfailed", self._request_failed)
 
-    def set_policy(self, workspace_id="pub-a", *, role="DocumentManager", status="active"):
+    def set_policy(self, workspace_id="pub-a", *, role="DocumentManager", status="active", download_enabled=True):
         """Recompute a workspace's context for a role and status, exactly as the server builds it,
-        document management and review hints included."""
+        document management and review hints included. ``download_enabled`` models the workspace's
+        own download switch, which classic public downloads and V2 reader downloads both gate on."""
         name = self.workspaces[workspace_id]["workspace"]["name"]
-        self.workspaces[workspace_id] = public_context(workspace_id, name, role=role, status=status, viewer=self.viewer_id)
+        self.workspaces[workspace_id] = public_context(
+            workspace_id, name, role=role, status=status, viewer=self.viewer_id,
+            disable_file_downloads=not download_enabled,
+        )
 
     def record(self, identifier, workspace_id="pub-a"):
         return next(record for record in self.documents[workspace_id] if record["id"] == identifier)

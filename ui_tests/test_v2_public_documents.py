@@ -2,7 +2,7 @@
 """
 Production-SPA coverage for native V2 public workspace document browsing (M3A),
 management (M3B) and generated-artifact approval (M3C).
-Version: 0.261.179
+Version: 0.261.186
 Implemented in: 0.261.132
 A coded failure shows the server's sentence (apiClient), and an archive takes the server's
 name: 0.261.164
@@ -11,6 +11,8 @@ documents, never a group or classic: 0.261.167
 A manager who can't upload is told why when dropping files: 0.261.168
 Every scripted reply is the one the public routes send, held to them by
 functional_tests/test_public_document_fixture_parity.py: 0.261.179
+Reader downloads: a reader may download when downloads are enabled and sees no Download when
+they are off; the read surface offers no management affordance either way: 0.261.186
 
 Exercises real components, stores and navigation with closed synthetic HTTP.
 The read fixture never permits personal or group document requests, and never
@@ -94,14 +96,23 @@ def last_list(ui):
     return list_requests(ui)[-1]
 
 
-def assert_read_only(ui):
+def assert_read_only(ui, *, downloads=False):
+    """The read surface offers no write or management affordance. Download is a reader-level
+    capability gated on the workspace's own download switch, not a management affordance, so it is
+    asserted separately: absent when the workspace has downloads off (the M3A read fixture), and
+    present when they are on, where a reader may download exactly as classic public downloads allow."""
     for label in (
         "Upload", "Upload a document", "Tag", "Edit", "Extract", "Share",
-        "Delete", "Download", "Save view", "Enhanced",
+        "Delete", "Save view", "Enhanced",
     ):
         expect(explorer(ui).get_by_role("button", name=label, exact=True)).to_have_count(0)
     expect(explorer(ui).locator('input[type="file"]')).to_have_count(0)
     expect(ui.page.get_by_role("button", name=re.compile(r"^Remove tag "))).to_have_count(0)
+    download = explorer(ui).get_by_role("button", name="Download", exact=True)
+    if downloads:
+        expect(download.first).to_be_visible()
+    else:
+        expect(download).to_have_count(0)
 
 
 @pytest.mark.parametrize("theme,width,height", [
@@ -553,8 +564,10 @@ def test_missing_or_unknown_handshake_keeps_public_management_read_only(public_m
 
 def test_user_role_leaves_the_public_surface_read_only(public_management_ui):
     ui = public_management_ui
-    # A non-manager role advertises no operations, so management affordances never appear.
-    ui.set_policy("pub-a", role="User")
+    # A non-manager role advertises no management operation, so no write affordance appears. This
+    # workspace also has downloads off, so the surface is entirely read-only; a reader's Download,
+    # a downloads-on reader capability, is exercised by the reader-download tests below.
+    ui.set_policy("pub-a", role="User", download_enabled=False)
     open_management(ui)
     select_documents(ui, "same-document")
     expect(command(ui, "Chat")).to_be_enabled()
@@ -602,11 +615,13 @@ def test_an_empty_public_workspace_says_who_can_add_documents(public_management_
 
 def test_a_reader_who_drops_files_is_told_who_manages_public_documents(public_management_ui):
     ui = public_management_ui
+    # A reader holds the download operation but no upload, so a dropped file is answered with the
+    # upload-specific refusal (who can add documents), not the generic manage-nothing sentence.
     ui.set_policy("pub-a", role="User")
     open_management(ui)
     drop_file(ui)
     expect(ui.page.get_by_text(
-        "Only this public workspace's owner, admins and document managers can manage its documents.", exact=True,
+        "This public workspace's owner, admins and document managers can add documents.", exact=True,
     ).first).to_be_visible()
     expect(ui.page.get_by_text(
         "This operation is not currently permitted for every selected document. Refresh access or adjust the selection.",
@@ -884,6 +899,41 @@ def test_downloads_save_complete_bytes_and_refusals_never_become_files(public_ma
     )).to_be_visible()
     assert downloads == []
     assert len(ui.operation_requests) == 3
+
+
+def test_a_reader_downloads_a_document_when_the_workspace_enables_downloads(public_management_ui, tmp_path):
+    ui = public_management_ui
+    # Mirroring classic public downloads, an ordinary reader (role User) may download a document
+    # they can see when the workspace has downloads on. The bytes are the server's, and nothing
+    # else widens: only Download appears, no management affordance.
+    ui.set_policy("pub-a", role="User")
+    ui.record("same-document")["file_name"] = "brief.txt"
+    owned_bytes = b"Published public research source.\n"
+    open_management(ui)
+    select_documents(ui, "same-document")
+    assert_read_only(ui, downloads=True)
+    single = ui.queue_operation(
+        "GET", "same-document/download", response=owned_bytes, content_type="text/plain",
+        headers={"Content-Disposition": 'attachment; filename="brief.txt"'},
+    )
+    with ui.page.expect_download() as download:
+        perform(ui, single, command(ui, "Download").click)
+    assert download.value.suggested_filename == "brief.txt"
+    saved = tmp_path / "reader.txt"
+    download.value.save_as(saved)
+    assert saved.read_bytes() == owned_bytes and download.value.failure() is None
+    assert len(ui.operation_requests) == 1
+
+
+def test_a_reader_sees_no_download_when_the_workspace_disables_downloads(public_management_ui):
+    ui = public_management_ui
+    # With the workspace's downloads off, the reader capability is withdrawn just as classic hides
+    # Download when downloads are disabled: no Download control appears and none is offered.
+    ui.set_policy("pub-a", role="User", download_enabled=False)
+    open_management(ui)
+    select_documents(ui, "same-document")
+    assert_read_only(ui)
+    assert not ui.operation_requests
 
 
 def test_extract_and_reprocess_partial_then_retry(public_management_ui):

@@ -73,7 +73,7 @@ from functions_workspace_branding import get_workspace_logo_metadata, normalize_
 from functions_workspace_sections import WORKSPACE_SECTION_GROUPS
 from functions_public_document_policy import (
     public_document_collaboration_operations,
-    public_document_management_operations,
+    public_document_capabilities,
 )
 from functions_public_prompt_policy import (
     public_prompt_management_operations,
@@ -530,12 +530,12 @@ def build_public_workspace_context(user_id, workspace_id, settings, *, user_info
                 and check_public_workspace_status_allows_operation(workspace, "delete")[0]
             ),
             "can_download": bool(
-                manager and view_allowed and is_public_workspace_file_download_enabled(settings, workspace)
+                view_allowed and is_public_workspace_file_download_enabled(settings, workspace)
             ),
         },
         "document_management": {
             "schema_version": 1,
-            "operations": public_document_management_operations(
+            "operations": public_document_capabilities(
                 workspace, role, settings,
                 download_enabled=is_public_workspace_file_download_enabled(settings, workspace),
             ),

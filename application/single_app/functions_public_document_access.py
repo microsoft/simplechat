@@ -26,7 +26,10 @@ from functions_public_document_policy import (
     PUBLIC_DOCUMENT_MUTABLE_SCREENING_STATES,
     public_document_actions,
     public_document_approval_pending,
+    public_document_capabilities,
+    public_document_download_allowed,
     public_document_management_operations,
+    public_document_visible_to_role,
 )
 from functions_public_workspaces import (
     check_public_workspace_status_allows_operation,
@@ -127,6 +130,24 @@ def require_public_document_management_context(user_id, workspace_id, operation)
     return workspace, role, settings
 
 
+def require_public_document_download_context(user_id, workspace_id):
+    """Revalidate reader access and status, then confirm downloads are enabled for this
+    workspace. Downloads are a reader-level capability (mirroring classic public
+    downloads), so this deliberately never requires a management role: it is the
+    reader-side twin of require_public_document_management_context.
+    """
+    workspace, role = require_public_document_read_context(user_id, workspace_id)
+    settings = get_settings()
+    if not public_document_download_allowed(
+        workspace, role, settings,
+        download_enabled=is_public_workspace_file_download_enabled(settings, workspace),
+    ):
+        raise PublicDocumentReadError(
+            "Downloads are unavailable for the selected public workspace.", 403,
+        )
+    return workspace, role, settings
+
+
 def read_public_document_record(document_id):
     try:
         document = cosmos_public_documents_container.read_item(item=document_id, partition_key=document_id)
@@ -173,7 +194,7 @@ def get_public_document_actions(
     workspace, role = context or require_public_document_read_context(user_id, workspace_id)
     settings = settings if settings is not None else get_settings()
     download_enabled = is_public_workspace_file_download_enabled(settings, workspace)
-    operations = public_document_management_operations(workspace, role, settings, download_enabled=download_enabled)
+    operations = public_document_capabilities(workspace, role, settings, download_enabled=download_enabled)
     if not operations:
         return []
     if document.get("public_workspace_id") != workspace_id:
@@ -235,18 +256,44 @@ def authorize_public_document_operation(user_id, workspace_id, document_id, oper
     return document
 
 
+def authorize_public_document_download(user_id, workspace_id, document_id, *, expected_version=None):
+    """Reader-level twin of authorize_public_document_operation for downloads: a reader who
+    can see the document may download it when downloads are enabled for the workspace. Every
+    other guard (workspace match, revision, per-document eligibility incl. pending artifacts
+    and screening holds) stays identical, so nothing but the manager requirement is relaxed.
+    """
+    workspace, role, settings = require_public_document_download_context(user_id, workspace_id)
+    document = read_public_document_record(document_id)
+    if document.get("public_workspace_id") != workspace_id:
+        raise PublicDocumentReadError("Document not found or access denied.", 404)
+    if expected_version is not None and str(document.get("version")) != str(expected_version):
+        raise PublicDocumentReadError("The document revision changed. Refresh and try again.", 409)
+    if not public_document_visible_to_role(document, role):
+        # A reader must not learn that a pending artifact exists: answer 404 as
+        # for a missing document (decision 27), not the 409 the actions check
+        # below would raise. Managers stay visible and fall through to that 409.
+        raise PublicDocumentReadError("Document not found or access denied.", 404)
+    actions = get_public_document_actions(
+        document, user_id, workspace_id, context=(workspace, role), settings=settings,
+    )
+    if "download" not in actions:
+        raise PublicDocumentReadError("This operation is unavailable for the selected document.", 409)
+    require_public_document_download_context(user_id, workspace_id)
+    return document
+
+
 def read_public_download_metadata(
     document_id, user_id, group_id=None, public_workspace_id=None, *, actor_id, target_workspace_id,
 ):
     """A download reader bound to the recipient even during source-provenance refresh."""
     if user_id != actor_id or group_id:
         raise PermissionError("Document not found or access denied.")
-    document = authorize_public_document_operation(actor_id, target_workspace_id, document_id, "download")
+    document = authorize_public_document_download(actor_id, target_workspace_id, document_id)
     fresh = _read_authorized_document(document_id, actor_id, public_workspace_id=target_workspace_id)
     if (
         fresh.get("public_workspace_id") != document["public_workspace_id"]
         or fresh.get("version") != document.get("version")
     ):
         raise PublicDocumentReadError("The document revision changed. Refresh and try again.", 409)
-    require_public_document_management_context(actor_id, target_workspace_id, "download")
+    require_public_document_download_context(actor_id, target_workspace_id)
     return fresh

@@ -50,6 +50,7 @@ from functions_file_sync import (
 from functions_public_document_access import (
     PublicDocumentReadError,
     _validate_public_read_id,
+    authorize_public_document_download,
     authorize_public_document_operation,
     public_document_family_records,
     read_public_document_record,
@@ -525,7 +526,7 @@ def delete_public_documents(user_id, workspace_id, payload):
 def download_public_documents(user_id, workspace_id, document_ids):
     document_ids = validate_document_ids(document_ids)
     documents = [
-        authorize_public_document_operation(user_id, workspace_id, document_id, "download")
+        authorize_public_document_download(user_id, workspace_id, document_id)
         for document_id in document_ids
     ]
     reader = partial(read_public_download_metadata, actor_id=user_id, target_workspace_id=workspace_id)
