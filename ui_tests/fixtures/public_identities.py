@@ -111,6 +111,10 @@ class PublicIdentitiesFixture(PublicWorkspaceFixture):
         self.identities = {}
         self.identity_policy = {}
         self.identity_references = {}
+        # Identifiers removed to stage a "deleted while editing" conflict: a stale PATCH on one of
+        # these still answers the etag 409 (never a bare 404), so the editor rebases and shows the
+        # deleted notice, exactly as the group family does.
+        self.deleted_identity_conflicts = set()
         # pub-a: a manager workspace with File Sync available, so the Identities section opens.
         self.set_identity_policy("pub-a", name="Connections library", role="Owner", status="active")
         self.identities["pub-a"] = [
@@ -161,11 +165,38 @@ class PublicIdentitiesFixture(PublicWorkspaceFixture):
     def record(self, workspace_id, identifier):
         return next(row for row in self.identities[workspace_id] if row["id"] == identifier)
 
+    def _identity_validation_error(self, body, prior):
+        """The reviewed field message the scoped public identity route raises as a validation error,
+        served verbatim so a test proves the editor renders the server's own text rather than a
+        client-invented string. Only the case a strict client can still reach is modelled: a required
+        password blank with nothing stored to keep."""
+        credentials = body.get("credentials") if isinstance(body.get("credentials"), dict) else {}
+        auth_type = str(credentials.get("auth_type") or "")
+        stored = False
+        if prior is not None:
+            prior_credentials = prior.get("credentials") or {}
+            stored = bool(prior_credentials.get("password_stored") or prior_credentials.get("secret_stored"))
+        if auth_type == "username_password":
+            if not str(credentials.get("password") or "") and not stored:
+                return "Username/password identities require a password"
+        elif auth_type not in ("anonymous", "managed_identity"):
+            if not str(credentials.get("secret") or "") and not stored:
+                return "This identity type requires a secret value"
+        return None
+
+    def touch_identity(self, workspace_id, identifier):
+        """Simulate a concurrent edit by another manager: the stored identity etag moves on."""
+        record = self.record(workspace_id, identifier)
+        self.etag_counter[identifier] = self.etag_counter.get(identifier, 0) + 1
+        record["etag"] = f'"etag-{identifier}-moved-{self.etag_counter[identifier]}"'
+        return record["etag"]
+
     def drop_identity_for_conflict(self, workspace_id, identifier):
         """Remove an identity while making the next stale save look like a conditional conflict."""
         self.identities[workspace_id] = [
             row for row in self.identities[workspace_id] if row["id"] != identifier
         ]
+        self.deleted_identity_conflicts.add((workspace_id, identifier))
 
     def _dispatch(self, route, entry):
         if entry.path.startswith("/api/public-workspaces/") and "/identities" in entry.path:
@@ -203,6 +234,10 @@ class PublicIdentitiesFixture(PublicWorkspaceFixture):
             if method == "POST":
                 assert "create" in allowed, f"Create reached a read-only workspace: {entry}"
                 assert "auth" not in entry.body, "A create must not smuggle an auth block."
+                validation = self._identity_validation_error(entry.body, None)
+                if validation is not None:
+                    self._json(route, {"error": validation}, 400)
+                    return
                 self.created_counter += 1
                 new_id = f"public-created-{self.created_counter}"
                 credentials = entry.body.get("credentials") if isinstance(entry.body.get("credentials"), dict) else {}
@@ -219,6 +254,11 @@ class PublicIdentitiesFixture(PublicWorkspaceFixture):
         else:
             record = next((row for row in self.identities.get(workspace_id, []) if row["id"] == identifier), None)
             if record is None:
+                # A stale write on an identity another manager just deleted answers the etag 409 so
+                # the editor rebases to "deleted"; any other missing identity is a plain 404.
+                if method in ("PATCH", "DELETE") and (workspace_id, identifier) in self.deleted_identity_conflicts:
+                    self._json(route, copy.deepcopy(IDENTITY_ETAG_CONFLICT_BODY), 409)
+                    return
                 self._json(route, copy.deepcopy(IDENTITY_NOT_FOUND_BODY), 404)
                 return
             if method == "GET":
@@ -230,6 +270,10 @@ class PublicIdentitiesFixture(PublicWorkspaceFixture):
                 assert "auth" not in entry.body, "An edit must not smuggle an auth block."
                 if entry.body["expected_etag"] != record["etag"]:
                     self._json(route, copy.deepcopy(IDENTITY_ETAG_CONFLICT_BODY), 409)
+                    return
+                validation = self._identity_validation_error(entry.body, record)
+                if validation is not None:
+                    self._json(route, {"error": validation}, 400)
                     return
                 self.etag_counter[identifier] = self.etag_counter.get(identifier, 0) + 1
                 record["etag"] = f'"etag-{identifier}-{self.etag_counter[identifier]}"'

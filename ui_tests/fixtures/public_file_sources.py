@@ -33,6 +33,7 @@ import pytest
 from ui_tests.fixtures.public_workspace import (
     PublicWorkspaceFixture, public_context,  # noqa: F401
 )
+from ui_tests.fixtures.public_identities import public_identity
 
 
 MANAGER_ROLES = ("Owner", "Admin", "DocumentManager")
@@ -86,8 +87,8 @@ def _file_source_credentials(*, auth_type, username="", domain="", identity="", 
 
 def public_file_source(workspace_id, identifier, name, *, source_type="smb", enabled=True,
                        recursive=True, connection=None, filters=None, identity_id="",
-                       auth_type="username_password", secret_stored=True, username="",
-                       domain="", tenant_id="", managed_identity_client_id="",
+                       identity_name="", auth_type="username_password", secret_stored=True,
+                       username="", domain="", tenant_id="", managed_identity_client_id="",
                        schedule_enabled=False, interval_minutes=60,
                        actions=FILE_SOURCE_ITEM_ACTIONS, remote_delete_policy="ignore",
                        config_revision=None):
@@ -107,7 +108,7 @@ def public_file_source(workspace_id, identifier, name, *, source_type="smb", ena
         "fixed_tags": list((filters or {}).get("fixed_tags", [])),
         "folder_tag_mode": (filters or {}).get("folder_tag_mode", "none"),
     }
-    return {
+    record = {
         "id": identifier,
         "name": name,
         "public_workspace_id": workspace_id,
@@ -130,6 +131,11 @@ def public_file_source(workspace_id, identifier, name, *, source_type="smb", ena
         "config_revision": config_revision or f"rev-{identifier}-0",
         "source_actions": list(actions),
     }
+    # The server projection only carries `identity_name` when the source is identity-bound, so the
+    # fixture matches: a non-identity source omits the key, keeping the per-route parity pin valid.
+    if identity_id:
+        record["identity_name"] = identity_name or ""
+    return record
 
 
 class PublicFileSourcesFixture(PublicWorkspaceFixture):
@@ -142,6 +148,26 @@ class PublicFileSourcesFixture(PublicWorkspaceFixture):
         self.file_sources = {}
         self.file_source_policy = {}
         self.busy_sources = set()
+        # The reusable identity the editor's picker offers for pub-a, so opening the editor resolves
+        # the identity list and the identity-bound source can be authored. pub-b has none. The editor
+        # reads it from the same immutable public identities route; the list is manager-gated.
+        self.picker_identities = {
+            "pub-a": [public_identity(
+                "pub-a", FILE_SYNC_IDENTITY_ID, "Archive file share account",
+                auth_type="username_password", usage=("file_sync",), username="svc-archive",
+                domain="CORP", secret_stored=True,
+            )],
+            "pub-b": [],
+        }
+        # Existing public workspace document tags the editor offers as fixed-tag suggestions, most
+        # used first once sorted, read through the explicit-workspace tag route.
+        self.document_tags = {
+            "pub-a": [
+                {"name": "finance", "count": 4, "color": "#2563eb"},
+                {"name": "reports", "count": 2, "color": "#16a34a"},
+            ],
+            "pub-b": [],
+        }
         # pub-a: a manager workspace with File Sync available, so the File Sources section opens.
         self.set_file_source_policy("pub-a", name="Connections library", role="Owner", status="active")
         self.file_sources["pub-a"] = [
@@ -158,6 +184,7 @@ class PublicFileSourcesFixture(PublicWorkspaceFixture):
             # Bound to a reusable public workspace identity: the list row shows the identity binding.
             public_file_source("pub-a", IDENTITY_SOURCE_ID, "Shared drive via identity",
                                source_type="smb", identity_id=FILE_SYNC_IDENTITY_ID,
+                               identity_name="Archive file share account",
                                secret_stored=False,
                                connection={"unc_path": "\\\\files.example.test\\shared"}),
         ]
@@ -195,16 +222,26 @@ class PublicFileSourcesFixture(PublicWorkspaceFixture):
         """Make the next delete of this source look like an active-run refusal."""
         self.busy_sources.add((workspace_id, identifier))
 
+    def touch_file_source(self, workspace_id, identifier):
+        """Simulate a concurrent manager's save so the next conditional write sees a stale revision."""
+        self._bump_revision(self.record(workspace_id, identifier))
+
     def _bump_revision(self, record):
         identifier = record["id"]
         self.revision_counter[identifier] = self.revision_counter.get(identifier, 0) + 1
         record["config_revision"] = f"rev-{identifier}-{self.revision_counter[identifier]}"
 
     def _options_payload(self, workspace_id):
-        identity_ids = [FILE_SYNC_IDENTITY_ID] if workspace_id == "pub-a" else []
+        source_types = ["smb", "azure_files", "azure_blob"]
+        # The picker keys eligibility per source type, exactly like the group options route: a File
+        # Sync identity is offered for every type it supports. pub-a carries one; pub-b none.
+        eligible_id = FILE_SYNC_IDENTITY_ID if workspace_id == "pub-a" else None
+        eligible_identity_ids = {
+            source_type: ([eligible_id] if eligible_id else []) for source_type in source_types
+        }
         return {
-            "source_types": ["smb", "azure_files", "azure_blob"],
-            "eligible_identity_ids": identity_ids,
+            "source_types": source_types,
+            "eligible_identity_ids": eligible_identity_ids,
             "schedule": {"min_interval_minutes": 15, "default_interval_minutes": 60},
             "limits": {"max_sources": 10, "current_count": len(self.file_sources.get(workspace_id, []))},
             "recursive_allowed": True,
@@ -218,7 +255,34 @@ class PublicFileSourcesFixture(PublicWorkspaceFixture):
         if path.startswith("/api/public-workspaces/") and "/file-sources" in path:
             self._file_sources(route, entry)
             return
+        if path.startswith("/api/public-workspaces/") and path.endswith("/identities") and entry.method == "GET":
+            self._picker_identities(route, entry)
+            return
+        if path.startswith("/api/public-workspaces/") and path.endswith("/documents/tags") and entry.method == "GET":
+            self._document_tags(route, entry)
+            return
         super()._dispatch(route, entry)
+
+    def _picker_identities(self, route, entry):
+        """The editor's reusable-identity picker reads the immutable public identities route. It is
+        manager-gated exactly like the file source routes; a reader never reaches it."""
+        parts = entry.path.split("/")
+        workspace_id = parts[3]
+        policy = self._guard(route, entry, workspace_id)
+        if policy is None:
+            return
+        self._json(route, {
+            "identities": copy.deepcopy(self.picker_identities.get(workspace_id, [])),
+            "identity_management": {"schema_version": 1, "operations": list(policy["operations"])},
+        })
+
+    def _document_tags(self, route, entry):
+        """The editor's fixed-tag suggestions read the explicit-workspace document tags route."""
+        parts = entry.path.split("/")
+        workspace_id = parts[3]
+        if self._guard(route, entry, workspace_id) is None:
+            return
+        self._json(route, {"tags": copy.deepcopy(self.document_tags.get(workspace_id, []))})
 
     def _guard(self, route, entry, workspace_id):
         """Refuse an unknown scope, a non-manager reader, or a non-readable status, exactly as

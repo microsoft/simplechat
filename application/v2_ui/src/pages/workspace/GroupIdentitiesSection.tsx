@@ -28,6 +28,7 @@ import { IdentityEditorDialog } from '../../components/identities/IdentityEditor
 import {
     IdentityConflictError,
     IdentityInUseError,
+    createPublicIdentityWorkbench,
     type IdentityReference,
     type IdentityWorkbenchAdapter,
 } from '../../lib/identityWorkbench';
@@ -38,6 +39,7 @@ import {
     identityAuthType,
     identityCapabilityLabels,
     identityPrincipalText,
+    GROUP_IDENTITY_CAPABILITIES,
     IDENTITY_REBASE_FIELDS,
     type IdentityDraft,
 } from '../../lib/identityFields';
@@ -45,6 +47,7 @@ import { rebaseDraft, rebaseNotice, REBASE_DELETED_NOTICE } from '../../lib/reba
 import { authTypeLabel } from './IdentitiesSection';
 import { toast } from '../../stores/toastStore';
 import type { WorkspaceIdentity } from '../../lib/types';
+import type { PublicWorkspaceContext } from '../../lib/workspaceContext';
 
 interface DeleteBlock {
     name: string;
@@ -55,10 +58,23 @@ export function GroupIdentitiesSection({
     adapter,
     syncEnabled,
     actionsEnabled,
+    scopeNoun = 'group',
+    connectorSurfaces = 'file sources and actions',
+    identityCapabilities = GROUP_IDENTITY_CAPABILITIES,
 }: {
     adapter: IdentityWorkbenchAdapter;
     syncEnabled: boolean;
     actionsEnabled: boolean;
+    // Scope-specific copy so a public workspace reuses this section verbatim: 'group' keeps the
+    // shipped group wording byte-identical, while a public workspace passes 'workspace' and the
+    // narrower connector surface it actually feeds. Everything else -- reads, gates, dialogs and
+    // conflict handling -- is scope-agnostic and comes from the adapter.
+    scopeNoun?: string;
+    connectorSurfaces?: string;
+    // Which capabilities the editor's "Used for" picker offers. Defaults to the full group set so
+    // the group editor stays byte-identical; a public workspace passes only 'file_sync' because it
+    // has no actions surface, so the picker never offers a capability the workspace cannot feed.
+    identityCapabilities?: readonly (typeof GROUP_IDENTITY_CAPABILITIES)[number][];
 }) {
     const load = useCallback((signal: AbortSignal) => adapter.list(signal), [adapter]);
     const { items, loading, error, refresh, setItems, setError } =
@@ -90,10 +106,10 @@ export function GroupIdentitiesSection({
             surfaces.push('actions');
         }
         if (surfaces.length === 0) {
-            return 'Saved for this group’s connectors.';
+            return `Saved for this ${scopeNoun}’s connectors.`;
         }
-        return `Used by ${surfaces.join(' and ')} in this group.`;
-    }, [syncEnabled, actionsEnabled]);
+        return `Used by ${surfaces.join(' and ')} in this ${scopeNoun}.`;
+    }, [syncEnabled, actionsEnabled, scopeNoun]);
 
     const visible = useMemo(() => {
         const needle = query.trim().toLowerCase();
@@ -108,7 +124,17 @@ export function GroupIdentitiesSection({
     const openEditor = (identity: WorkspaceIdentity | null) => {
         setSaveError(null);
         setSaveConflict(false);
-        setDraft(identity ? draftFromIdentity(identity) : emptyIdentityDraft());
+        const next = identity ? draftFromIdentity(identity) : emptyIdentityDraft();
+        if (!identity) {
+            // Constrain a new draft to the capabilities this workspace actually feeds. The group set
+            // keeps the shipped 'action' default; a public workspace's 'file_sync'-only set replaces
+            // it so the create never proposes a capability the workspace has no surface for.
+            const allowed = next.capabilities.filter((capability) =>
+                (identityCapabilities as readonly string[]).includes(capability),
+            );
+            next.capabilities = allowed.length ? allowed : [...identityCapabilities];
+        }
+        setDraft(next);
         setBaseline(identity ? draftFromIdentity(identity) : null);
     };
 
@@ -216,7 +242,7 @@ export function GroupIdentitiesSection({
             <div className="flex flex-wrap items-start justify-between gap-3">
                 <SectionIntro
                     title="Identities"
-                    description="Sign-in details this group saves once and reuses. These are credentials for the systems the group connects to, not a member's own account. Secrets are held server-side and never sent back to the browser."
+                    description={`Sign-in details this ${scopeNoun} saves once and reuses. These are credentials for the systems the ${scopeNoun} connects to, not a member's own account. Secrets are held server-side and never sent back to the browser.`}
                 />
                 {canCreate ? (
                     <GlassButton variant="primary" size="sm" onClick={() => openEditor(null)}>
@@ -229,7 +255,7 @@ export function GroupIdentitiesSection({
             <p className="text-xs text-text-3">
                 {usedByText}
                 {canCreate
-                    ? ' Create one here to reuse it across the group’s file sources and actions.'
+                    ? ` Create one here to reuse it across the ${scopeNoun}’s ${connectorSurfaces}.`
                     : ' A workspace manager can add one.'}
             </p>
 
@@ -264,8 +290,8 @@ export function GroupIdentitiesSection({
                 emptyDescription={
                     items.length === 0
                         ? canCreate
-                            ? 'Save a credential here to reuse it across the group’s file sources and actions.'
-                            : 'This group has no shared identities yet. A workspace manager can add one.'
+                            ? `Save a credential here to reuse it across the ${scopeNoun}’s ${connectorSurfaces}.`
+                            : `This ${scopeNoun} has no shared identities yet. A workspace manager can add one.`
                         : undefined
                 }
                 getKey={(identity, index) => String(identity.id ?? index)}
@@ -321,8 +347,40 @@ export function GroupIdentitiesSection({
                     onSave={() => void onSave()}
                     onRefresh={saveConflict ? () => void onConflictRefresh() : undefined}
                     onCancel={closeEditor}
+                    capabilities={identityCapabilities}
                 />
             ) : null}
         </div>
+    );
+}
+
+/**
+ * The identities workbench bound to a public workspace (M10B).
+ *
+ * Mirrors the way GroupWorkspacePage builds the group identity adapter, but for public scope: the
+ * adapter is memoised on the workspace identity and its management hint so switching workspaces or
+ * receiving a fresh hint re-gates the write affordances. The public adapter reads and writes the
+ * immutable-target `/api/public-workspaces/<id>/identities` family and never falls back to personal
+ * or group behaviour. A public workspace has no actions surface, so identities feed file sources
+ * only; the copy says so through the shared section's scope-aware props.
+ */
+export function PublicIdentitiesSection({ context }: { context: PublicWorkspaceContext }) {
+    const adapter = useMemo(
+        () =>
+            createPublicIdentityWorkbench(
+                { kind: 'public', id: context.scope.id, name: context.workspace.name },
+                context.identity_management,
+            ),
+        [context.scope.id, context.workspace.name, context.identity_management],
+    );
+    return (
+        <GroupIdentitiesSection
+            adapter={adapter}
+            syncEnabled={context.sections.sync.enabled}
+            actionsEnabled={false}
+            scopeNoun="workspace"
+            connectorSurfaces="file sources"
+            identityCapabilities={['file_sync']}
+        />
     );
 }
