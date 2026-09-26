@@ -10,10 +10,12 @@ import hashlib
 import io
 import math
 import random
+import time
 import uuid
 from contextlib import contextmanager
 from copy import deepcopy
 from dataclasses import asdict
+from datetime import timedelta
 
 from azure.core.exceptions import AzureError, ResourceNotFoundError
 from azure.cosmos.exceptions import CosmosResourceNotFoundError
@@ -72,6 +74,9 @@ from functions_workflow_result_store import AnalysisWorkUnitConflictError, Workf
 
 
 MAX_OUTPUT_BYTES = 500 * 1024 * 1024
+# A render re-proves its claim, run state, capability admission and source access on this
+# cadence rather than on every block it writes. Publication boundaries still check in full.
+RENDER_FULL_CHECK_INTERVAL_SECONDS = 5.0
 _REQUEST_FIELDS = frozenset({"output_format", "profile", "columns", "title", "sheet_name"})
 _STOP_CODES = frozenset({
     "output_cancelled", "output_deleted", "output_superseded", "output_plan_changed",
@@ -96,6 +101,20 @@ _SOURCE_READ_FAILURES = (
     WorkflowResultIntegrityError, ResultContractError, ResourceNotFoundError,
     CosmosResourceNotFoundError, OutputError,
 )
+
+
+class OutputStepTimeLimitError(RuntimeError):
+    """The owning step's time budget ended this attempt before its file was staged.
+
+    Deliberately not a ValueError: the bounded serializers turn a ValueError raised by an
+    execution check into a value-limit failure.
+    """
+
+    retryable = False
+    code = "output_step_time_limit"
+
+    def __init__(self):
+        super().__init__("The generated file's step reached its time limit.")
 
 
 def raise_output_read_infrastructure_failure(error):
@@ -164,6 +183,8 @@ def _source_visibility_code(error):
 
 def output_failure(exc):
     """Classify once without persisting or exposing provider exception messages."""
+    if isinstance(exc, OutputStepTimeLimitError):
+        return exc.code, False
     authority = external_authority_failure(exc)
     if authority is not None:
         return authority[1], authority[2]
@@ -309,6 +330,148 @@ def document_image_bytes(content, *, max_bytes, max_pixels):
         scale *= _DOCUMENT_IMAGE_SCALE_STEP
 
 
+class _RenderAttempt:
+    """Pace one claimed attempt's execution checks and time its phases.
+
+    Renderers, digest verification and upload hashing call their check per record or
+    block. Re-running the full claim check (owner row, parent run, capability admission
+    and source access) on every call made large files spend most of their time
+    re-authorizing. A full check still runs first, right before the intent is prepared,
+    at least once per ``interval`` while work continues, and whenever the lease needs
+    renewing or the deadline arrives. The calls in between do no I/O. The intent, staging
+    writes and commit keep their own fenced checks.
+
+    ``stop()`` is consulted only on full checks, until the file is staged. A stop the
+    claim check does not explain (a user cancellation or the run deadline surface there
+    first) ends the attempt with ``OutputStepTimeLimitError``.
+    """
+
+    def __init__(self, service, *, stop=None):
+        self.service = service
+        self.store = service.store
+        self.stop = stop
+        self.interval = min(service.full_check_interval, self.store.lease_seconds / 4)
+        self.claim = None
+        self.full_checks = 0
+        self.light_checks = 0
+        self.source_rechecks = 0
+        self.paced_source_rechecks = 0
+        self.stop_observed = False
+        self.phases = {}
+        self.started = service.monotonic()
+        self._last_full = None
+        self._last_recheck = None
+        self._due_at = None
+
+    def bind(self, claim):
+        self.claim = claim
+
+    def release_stop(self):
+        """Staged bytes are always committed; a later budget overrun is the owner's to report."""
+        self.stop = None
+
+    @contextmanager
+    def phase(self, name):
+        started = self.service.monotonic()
+        try:
+            yield
+        finally:
+            elapsed = max(0.0, self.service.monotonic() - started)
+            self.phases[name] = self.phases.get(name, 0.0) + elapsed
+
+    def _stop_requested(self):
+        if self.stop is None:
+            return False
+        if not self.stop_observed:
+            try:
+                self.stop_observed = bool(self.stop())
+            except Exception:
+                # A failing owner probe is not a render outcome. The claim check that
+                # follows fences this attempt on the output's own ownership evidence.
+                return False
+        return self.stop_observed
+
+    def full(self, operation="render"):
+        stopping = self._stop_requested()
+        self.full_checks += 1
+        record = self.service._check_claim(self.claim, operation)
+        self._last_full = self.service.monotonic()
+        lease_expires = parse_time(record["lease"]["expires_at"])
+        deadline = parse_time(record["deadline_at"])
+        self._due_at = (
+            lease_expires - timedelta(seconds=self.store.lease_seconds / 2)
+            if lease_expires < deadline else deadline
+        )
+        if stopping:
+            raise OutputStepTimeLimitError()
+        return record
+
+    def __call__(self):
+        if (
+            self._last_full is None
+            or self.service.monotonic() - self._last_full >= self.interval
+            or self.store.clock() > self._due_at
+        ):
+            self.full()
+        else:
+            self.light_checks += 1
+
+    def paced_recheck(self, recheck):
+        now = self.service.monotonic()
+        if self._last_recheck is not None and now - self._last_recheck < self.interval:
+            self.paced_source_rechecks += 1
+            return
+        self.source_rechecks += 1
+        recheck()
+        self._last_recheck = self.service.monotonic()
+
+    def facts(self, outcome=None, failure=None):
+        """Identifier-free timing, check counts and outcome for diagnostics."""
+        facts = {f"{name}_ms": int(seconds * 1000) for name, seconds in self.phases.items()}
+        facts.update({
+            "total_ms": int(max(0.0, self.service.monotonic() - self.started) * 1000),
+            "full_checks": self.full_checks,
+            "light_checks": self.light_checks,
+            "source_rechecks": self.source_rechecks,
+            "paced_source_rechecks": self.paced_source_rechecks,
+            "stop_observed": self.stop_observed,
+        })
+        if type(outcome) is dict:
+            facts.update({
+                "status": outcome.get("state"),
+                "output_code": outcome.get("error_code"),
+                "output_format": outcome.get("output_format"),
+                "size_bytes": outcome.get("size_bytes"),
+            })
+        else:
+            facts.update({
+                "status": "raised",
+                "output_code": output_failure(failure)[0] if failure is not None else None,
+            })
+        return facts
+
+
+class _PacedSource:
+    """The renderer's view of its source: frequent rechecks share the attempt's cadence.
+
+    Only the renderer receives this view. The source's own rechecks at the start and end of
+    every read, digest verification and the complete-consumption receipt use the real
+    source, so a changed or revoked source is still refused before anything is published.
+    """
+
+    def __init__(self, source, attempt):
+        self._source = source
+        self._attempt = attempt
+
+    def recheck(self):
+        self._attempt.paced_recheck(self._source.recheck)
+
+    def __getattr__(self, name):
+        if name in {"_source", "_attempt"}:
+            raise AttributeError(name)
+        return getattr(self._source, name)
+
+
 class OrchestrationRenderingService:
     """One actor/conversation, no implicit source resolution or client construction.
 
@@ -322,12 +485,14 @@ class OrchestrationRenderingService:
         self, store, results, transport, *, authorize_execution,
         max_output_bytes, limits=None, office_limits=None, image_resolver=None,
         image_asset_reader=None, renderer=build_generated_file_export, jitter=random.random,
+        full_check_interval=RENDER_FULL_CHECK_INTERVAL_SECONDS, monotonic=time.monotonic,
     ):
         if (
             not isinstance(store, OrchestrationOutputStore)
             or not isinstance(results, OrchestrationResults)
             or not isinstance(transport, OrchestrationArtifactTransport)
             or not callable(authorize_execution) or not callable(renderer) or not callable(jitter)
+            or not callable(monotonic)
             or results.access.user_id != store.user_id
             or results.access.conversation_id != store.conversation_id
             or (image_asset_reader is not None and not callable(image_asset_reader))
@@ -336,6 +501,11 @@ class OrchestrationRenderingService:
         if type(max_output_bytes) is not int or not 1 <= max_output_bytes <= MAX_OUTPUT_BYTES:
             raise OutputError("output_limit_invalid")
         if limits is not None and type(limits) is not GeneratedFileExportLimits:
+            raise OutputError("output_limit_invalid")
+        if (
+            type(full_check_interval) not in (int, float)
+            or not math.isfinite(full_check_interval) or full_check_interval <= 0
+        ):
             raise OutputError("output_limit_invalid")
         self.store = store
         self.results = results
@@ -351,6 +521,8 @@ class OrchestrationRenderingService:
         self.image_asset_reader = image_asset_reader
         self.renderer = renderer
         self.jitter = jitter
+        self.full_check_interval = full_check_interval
+        self.monotonic = monotonic
 
     def _image_resolver_for(self, record, entry):
         """Resolve only the generated images the rendered source was prepared from.
@@ -742,8 +914,33 @@ class OrchestrationRenderingService:
             raise
         self.store.rearm_staging_cleanup(claim, intent_id)
 
-    def render_attempt(self, output_id, *, claim=None, worker_id=None):
-        """Run at most one admitted attempt; duplicate/live workers only observe."""
+    def render_attempt(self, output_id, *, claim=None, worker_id=None, stop=None, observe=None):
+        """Run at most one admitted attempt; duplicate/live workers only observe.
+
+        ``stop()`` is the owning step's stop probe. Once it reports a stop before the file
+        is staged, the attempt ends as a non-retryable ``output_step_time_limit`` failure
+        unless the claim check reports a more specific stop. ``observe(facts)`` receives the
+        identifier-free timing and check counts of a claimed attempt.
+        """
+        if (stop is not None and not callable(stop)) or (observe is not None and not callable(observe)):
+            raise OutputError("output_service_required")
+        attempt = _RenderAttempt(self, stop=stop)
+        outcome = failure = None
+        try:
+            outcome = self._render_attempt(output_id, claim, worker_id, attempt)
+            return outcome
+        except Exception as exc:
+            failure = exc
+            raise
+        finally:
+            if observe is not None and attempt.claim is not None:
+                try:
+                    observe(attempt.facts(outcome, failure))
+                except Exception:
+                    # Diagnostics never change the attempt's durable outcome.
+                    pass
+
+    def _render_attempt(self, output_id, claim, worker_id, attempt):
         record = self.store.get(output_id)
         if record["state"] in {"completed", "failed"}:
             return self.read(output_id)
@@ -756,8 +953,9 @@ class OrchestrationRenderingService:
             if claim is None:
                 observing = True
                 return self.read(output_id)
-            record = self._check_claim(claim)
-            check = lambda: self._check_claim(claim)
+            attempt.bind(claim)
+            record = attempt.full()
+            check = attempt
             if claim.recovering:
                 skip_commit_reconciliation = True
                 if record.get("intent"):
@@ -767,13 +965,16 @@ class OrchestrationRenderingService:
                     output_id, interrupted, claim, skip_commit_reconciliation=True,
                 )
             if record.get("intent"):
-                recovered = self.transport.reconcile(
-                    record, check=check, restore_message=True,
-                    stage=lambda current, stream, **checks: self._stage(claim, current, stream, **checks),
-                )
+                with attempt.phase("stage"):
+                    recovered = self.transport.reconcile(
+                        record, check=check, restore_message=True,
+                        stage=lambda current, stream, **checks: self._stage(claim, current, stream, **checks),
+                    )
                 if recovered:
                     skip_commit_reconciliation = True
-                    return self._commit(claim)
+                    attempt.release_stop()
+                    with attempt.phase("commit"):
+                        return self._commit(claim)
             source = open_orchestration_export_source(
                 self.results, ResultRef.from_dict(record["source_ref"]),
                 columns=record["render_spec"]["columns"],
@@ -791,24 +992,31 @@ class OrchestrationRenderingService:
                 name: min(value, record["render_spec"]["limits"][name])
                 for name, value in asdict(self.limits).items()
             })
-            rendered = self.renderer(
-                source=source, export_request=request,
-                max_output_bytes=min(self.max_output_bytes, record["render_spec"]["max_output_bytes"]),
-                check=check, limits=bounded_limits, office_limits=self.office_limits,
-                image_resolver=self._image_resolver_for(record, entry),
-            )
+            with attempt.phase("render"):
+                rendered = self.renderer(
+                    source=_PacedSource(source, attempt), export_request=request,
+                    max_output_bytes=min(self.max_output_bytes, record["render_spec"]["max_output_bytes"]),
+                    check=check, limits=bounded_limits, office_limits=self.office_limits,
+                    image_resolver=self._image_resolver_for(record, entry),
+                )
             with ClosingExportResource(rendered):
-                self._verify_rendered(rendered, source, record, check)
+                with attempt.phase("verify"):
+                    self._verify_rendered(rendered, source, record, check)
                 descriptor = self.transport.descriptor(record, rendered)
+                # The last stop consultation and full claim check before anything is staged.
+                attempt.full()
                 prepared = self.store.prepare_intent(
                     claim, descriptor, check=lambda current: self._authorize(current, "prepare").recheck(),
                 )
-                self._stage(claim, prepared, rendered.file_content, check=check)
+                with attempt.phase("stage"):
+                    self._stage(claim, prepared, rendered.file_content, check=check)
+                attempt.release_stop()
                 source.require_complete_consumption()
                 if not self.transport.reconcile(prepared, check=check):
                     raise OutputError("output_artifact_missing")
                 skip_commit_reconciliation = True
-                return self._commit(claim)
+                with attempt.phase("commit"):
+                    return self._commit(claim)
         except Exception as exc:
             if observing:
                 raise
@@ -984,9 +1192,11 @@ def _render_step_result(output, record, *, build_step_result, build_failure):
     elif output["state"] == "cancelled":
         result = build_step_result(status="cancelled", summary=output["message"])
     else:
+        # A file its step's time budget stopped reports that budget, with its admin hint.
+        failure_code = "step_timeout" if output.get("error_code") == OutputStepTimeLimitError.code else "step_failed"
         result = build_step_result(
             status="failed", summary=output["message"],
-            failure=build_failure("step_failed"), error=output["message"],
+            failure=build_failure(failure_code), error=output["message"],
         )
     result["outputs"] = [output]
     return result
@@ -1131,9 +1341,13 @@ def resume_render_file(
 
 def execute_render_file(
     step, context, *, service_factory, resolve_inputs, build_step_result,
-    build_failure, settings, user_id, cancel_requested=None,
+    build_failure, settings, user_id, cancel_requested=None, observe_render=None,
 ):
-    """Injected adapter seam returning the real shared StepResult, without cycles."""
+    """Injected adapter seam returning the real shared StepResult, without cycles.
+
+    ``cancel_requested`` also bounds the attempt: it is consulted on the attempt's paced full
+    checks until the file is staged. ``observe_render(facts)`` receives its diagnostics.
+    """
     output = None
     try:
         if getattr(context, "plan_contract_version", None) != 2:
@@ -1159,7 +1373,9 @@ def execute_render_file(
             approved_work_id=getattr(context, "approved_work_id", None) or producer.run_id,
             deadline_at=context.execution_deadline_at,
         )
-        output = service.render_attempt(output["output_id"])
+        output = service.render_attempt(
+            output["output_id"], stop=cancel_requested, observe=observe_render,
+        )
         record = service.store.get(output["output_id"]) if output["state"] == "completed" else None
         return _render_step_result(
             output, record, build_step_result=build_step_result, build_failure=build_failure,

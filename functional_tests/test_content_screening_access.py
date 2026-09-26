@@ -1,8 +1,9 @@
 # test_content_screening_access.py
 """
 Behavioral regression tests for authoritative document quarantine access.
-Version: 0.261.127
+Version: 0.261.141
 Implemented in: 0.261.106
+Same-name revision location ownership added in: 0.261.141
 
 Uses fake Cosmos/Blob containers, injected canonical storage, and a local Flask
 test client. No Azure resources, credentials, or application startup are used.
@@ -484,6 +485,95 @@ class AuthoritativeAvailabilityTests(ScreeningAccessFixture):
         with self.assertRaises(DocumentHeldError):
             asyncio.run(service._inner_get_chat_message_contents())
         self.assertEqual(len(calls), 1)
+
+
+class BlobLocationRevisionTests(ScreeningAccessFixture):
+    """A shared file name must never resolve a stored location to another revision."""
+
+    MISSING = object()
+
+    def setUp(self):
+        super().setUp()
+        self.documents.clear()
+
+    def revision(self, document_id, version, *, current=MISSING, blob_path=None, archived_blob_path=None, **changes):
+        row = {
+            "id": document_id, "user_id": "user-1", "file_name": "report.csv", "version": version,
+            "revision_family_id": "family-1", "blob_container": "user-documents", **changes,
+        }
+        if current is not self.MISSING:
+            row["is_current_version"] = current
+        if blob_path:
+            row["blob_path"] = blob_path
+        if archived_blob_path:
+            row["archived_blob_path"] = archived_blob_path
+        self.documents[document_id] = row
+        return row
+
+    def resolve(self, path, container="user-documents"):
+        return access.assert_blob_available(container, path, user_id="user-1")["id"]
+
+    def test_current_alias_is_not_claimed_by_an_archived_same_name_revision(self):
+        # The archived row is returned first, as the production query did.
+        archived = "user-1/family-1/revision-1/report.csv"
+        self.revision(
+            "revision-1", 1, current=False, blob_path=archived, archived_blob_path=archived,
+            blob_path_mode="archived_revision",
+        )
+        self.revision("revision-2", 2, current=True, blob_path="user-1/report.csv")
+        self.assertEqual(self.resolve("user-1/report.csv"), "revision-2")
+        self.assertEqual(self.resolve(archived), "revision-1")
+
+    def test_promoted_revision_owns_the_alias_and_keeps_its_archived_path(self):
+        own_archive = "user-1/family-1/revision-1/report.csv"
+        newer_archive = "user-1/family-1/revision-2/report.csv"
+        self.revision("revision-2", 2, current=False, blob_path=newer_archive, archived_blob_path=newer_archive)
+        self.revision(
+            "revision-1", 1, current=True, blob_path="user-1/report.csv", archived_blob_path=own_archive,
+        )
+        self.assertEqual(self.resolve("user-1/report.csv"), "revision-1")
+        self.assertEqual(self.resolve(own_archive), "revision-1")
+        self.assertEqual(self.resolve(newer_archive), "revision-2")
+
+    def test_archived_revision_alone_cannot_claim_the_current_alias(self):
+        archived = "user-1/family-1/revision-1/report.csv"
+        self.revision("revision-1", 1, current=False, blob_path=archived, archived_blob_path=archived)
+        with self.assertRaises(DocumentHeldError):
+            access.assert_blob_available("user-documents", "user-1/report.csv", user_id="user-1")
+
+    def test_legacy_rows_without_stored_paths_keep_resolving(self):
+        self.revision("legacy-1", 1)
+        self.assertEqual(self.resolve("user-1/report.csv"), "legacy-1")
+        self.revision("legacy-2", 2, blob_path="user-1/family-1/legacy-2/report.csv")
+        self.assertEqual(self.resolve("user-1/report.csv"), "legacy-1")
+
+    def test_unarchived_older_revision_sharing_the_alias_yields_to_the_current_one(self):
+        self.revision("revision-1", 1, current=False, blob_path="user-1/report.csv")
+        self.revision("revision-2", 2, current=True, blob_path="user-1/report.csv")
+        self.assertEqual(self.resolve("user-1/report.csv"), "revision-2")
+
+    def test_unnormalized_legacy_family_resolves_the_newest_revision(self):
+        self.revision("legacy-2", 2, upload_date="2024-02-01T00:00:00")
+        self.revision("legacy-1", 1, upload_date="2024-01-01T00:00:00")
+        self.assertEqual(self.resolve("user-1/report.csv"), "legacy-2")
+
+    def test_indistinguishable_owners_of_one_location_are_denied(self):
+        self.revision("revision-a", 1, current=True, blob_path="user-1/report.csv", revision_family_id="family-a")
+        self.revision("revision-b", 1, current=True, blob_path="user-1/report.csv", revision_family_id="family-b")
+        with self.assertRaises(DocumentHeldError):
+            access.assert_blob_available("user-documents", "user-1/report.csv", user_id="user-1")
+
+    def test_group_revisions_use_the_group_scope(self):
+        archived = "group-1/family-1/revision-1/report.csv"
+        for row in (
+            self.revision("revision-1", 1, current=False, blob_path=archived, archived_blob_path=archived),
+            self.revision("revision-2", 2, current=True, blob_path="group-1/report.csv"),
+        ):
+            row["group_id"] = "group-1"
+            row["blob_container"] = "group-documents"
+            self.groups.documents[row["id"]] = self.documents.pop(row["id"])
+        self.assertEqual(self.resolve("group-1/report.csv", "group-documents"), "revision-2")
+        self.assertEqual(self.resolve(archived, "group-documents"), "revision-1")
 
 
 class DocumentApiBoundaryTests(ScreeningAccessFixture):

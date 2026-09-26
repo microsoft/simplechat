@@ -272,6 +272,11 @@ A browser disconnect does not mean the server stopped. Let the interface check
 the existing attempt before retrying. A live attempt cannot be retried, and a
 lost retry response is recovered without starting a second copy.
 
+Since **0.261.141**, reopening a conversation whose run already completed,
+failed, or was cancelled shows that outcome and its recovery options, such as
+**Retry from failed step**. The plan's approval controls are not offered again
+for a run that has finished.
+
 The Run view can finish before its final conversation message has been saved.
 The interface keeps checking during that interval instead of prematurely
 reporting a missing message. If saving fails, or the server stops before saving
@@ -312,9 +317,12 @@ Implemented in version **0.261.127**, recorded in
 appear only when the server publishes individual output states. They do not
 enable a new planner, renderer, or scheduler on their own.
 
-**Files** appears beside the response and in the Run view. Each requested file
-keeps its own name, format, profile, status, attempt count, and server-reported
-automatic-attempt limit. Waiting and Rendering are unfinished work, not download
+**Files** appears beside the response and in the Run view. Since **0.261.141**,
+each file card shows the file's name, type, and status, plus its row count and
+size once it is completed. A failed, cancelled, or unavailable file also shows the
+server's explanation, such as a step that reached its time limit. Attempt counts,
+automatic-attempt limits, and failure codes stay in the saved run and the server
+logs rather than on the card. Waiting and Rendering are unfinished work, not download
 links. **Automatic retry scheduled** shows the server's next retry time; the
 browser does not start a retry when that time arrives.
 
@@ -340,7 +348,7 @@ remain valid downloads; a zero row, character, or byte count is not a failure.
 can be retried. It requests that file again from retained results, not another
 plan, producer task, or sibling output. An exhausted automatic-attempt count
 does not by itself authorize a manual retry. Non-retryable failures keep their
-status and reason instead of offering a whole-plan replay.
+status and the server's explanation instead of offering a whole-plan replay.
 
 If a retry response is lost, **Retry same request** keeps the original action
 identity. The identity is saved in this browser tab before the request and

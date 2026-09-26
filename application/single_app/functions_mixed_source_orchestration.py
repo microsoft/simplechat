@@ -611,7 +611,7 @@ def _build_authorized_manifest_entry(document_id, user_id, document_context):
             or document_context["document"].get("id") != document_id
             or document_context.get("scope") not in SOURCE_SCOPES
         ):
-            raise_source_authority_error(SourceAuthorityUnverifiedError())
+            raise_source_authority_error(SourceAuthorityUnverifiedError(), reason="manifest_context_invalid")
     if not isinstance(document_context, dict):
         return _unresolved_manifest_entry(document_id)
 
@@ -661,7 +661,7 @@ def _build_authorized_manifest_entry(document_id, user_id, document_context):
 
     if not scope_id:
         if strict_source_authority_enabled():
-            raise_source_authority_error(SourceAuthorityUnverifiedError())
+            raise_source_authority_error(SourceAuthorityUnverifiedError(), reason="manifest_scope_missing")
         return _unresolved_manifest_entry(document_id)
 
     if scope != SOURCE_SCOPE_CHAT:
@@ -688,7 +688,7 @@ def _build_authorized_manifest_entry(document_id, user_id, document_context):
         )
         for value in (source_version, source_revision)
     ):
-        raise_source_authority_error(SourceAuthorityUnverifiedError())
+        raise_source_authority_error(SourceAuthorityUnverifiedError(), reason="manifest_revision_invalid")
     if source_version is not None and not isinstance(source_version, (str, int, float)):
         source_version = str(source_version)
 
@@ -888,7 +888,7 @@ def resolve_authorized_source_manifest(
             or len(resolved_contexts) != len(unique_document_ids)
         ):
             if strict_source_authority_enabled():
-                raise_source_authority_error(SourceAuthorityUnverifiedError())
+                raise_source_authority_error(SourceAuthorityUnverifiedError(), reason="manifest_batch_invalid")
             resolved_contexts = [None] * len(unique_document_ids)
             resolution_error_count = len(unique_document_ids)
 

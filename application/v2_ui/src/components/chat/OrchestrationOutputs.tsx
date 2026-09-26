@@ -1,12 +1,20 @@
 // OrchestrationOutputs.tsx
+// The files a plan was asked to produce, one card each, under the answer that promised them.
+//
+// A card answers three questions and stops: which file, where it stands, and what can be done
+// with it. The server's bookkeeping -- attempt counters, retry budgets, failure codes -- is
+// kept in the saved projection and the server logs rather than printed here, because none of it
+// changes what the reader can do next.
 
 import { useEffect, useId, useLayoutEffect, useMemo, useRef } from 'react';
 import { clsx } from 'clsx';
 import { GlassButton } from '../ui/primitives';
 import { GeneratedArtifactCard } from './GeneratedArtifactCard';
 import { normalizeOrchestrationAttempt } from '../../lib/orchestration';
+import { formatFileSize } from '../../lib/documentExplorer';
 import {
-    committedOrchestrationArtifact, type OrchestrationOutput, type OrchestrationOutputRetry,
+    committedOrchestrationArtifact, orchestrationOutputTypeLabel,
+    type OrchestrationOutput, type OrchestrationOutputRetry,
 } from '../../lib/orchestrationOutputs';
 import {
     observeOrchestrationOutputs, refreshOrchestrationOutputs, retryOrchestrationOutput,
@@ -23,6 +31,16 @@ const STATE_LABELS = {
     failed: 'Failed',
     cancelled: 'Cancelled',
 };
+const STATUS_FALLBACK = 'Check saved file status for the latest progress.';
+
+function rowLabel(rows: number): string {
+    return `${rows.toLocaleString()} ${rows === 1 ? 'row' : 'rows'}`;
+}
+
+function sizeLabel(bytes: number): string {
+    // An empty file is still a finished file; the shared formatter reserves its dash for unknown sizes.
+    return bytes === 0 ? '0 B' : formatFileSize(bytes);
+}
 
 function OutputCard({
     output, artifacts, conversationId, runId, action, checking, accessDenied,
@@ -50,13 +68,34 @@ function OutputCard({
     const retryDate = output.next_retry_at ? new Date(output.next_retry_at) : null;
     const validRetryDate = retryDate && !Number.isNaN(retryDate.getTime());
     const fileName = output.file_name || 'Unnamed file';
-    const exhausted = output.state === 'failed' && output.automatic_attempts !== null
-        && output.max_automatic_attempts !== null && output.automatic_attempts >= output.max_automatic_attempts;
+    const completed = output.state === 'completed' && !unavailable;
+    const details = [
+        orchestrationOutputTypeLabel(output.output_format),
+        completed && output.row_count !== null ? rowLabel(output.row_count) : '',
+        completed && output.size_bytes !== null ? sizeLabel(output.size_bytes) : '',
+    ].filter(Boolean).join(' · ');
+    // Waiting, rendering and completed say everything in the badge. Only an outcome the reader
+    // could act on, or a scheduled time they could not otherwise see, earns a sentence.
+    const note = accessDenied ? 'Current access could not be verified. Downloads and retries are withheld.'
+        : output.available === false && !output.error_code && output.state !== 'cancelled'
+            ? 'This file is unavailable under current source access or screening. Other ready files remain available.'
+        : output.available === false || output.state === 'failed' || output.state === 'cancelled'
+            ? output.message || STATUS_FALLBACK
+        : output.state === null ? STATUS_FALLBACK : '';
+    const retryNote = output.state === 'retry_scheduled' && !unavailable && validRetryDate ? (
+        <>Retrying automatically at <time dateTime={output.next_retry_at ?? undefined}>
+            {retryDate.toLocaleString()}
+        </time>.</>
+    ) : null;
+    const describedBy = note || retryNote ? descriptionId : undefined;
     return (
-        <article ref={cardRef} tabIndex={-1} aria-label={`File ${fileName}`} aria-describedby={descriptionId}
+        <article ref={cardRef} tabIndex={-1} aria-label={`File ${fileName}`} aria-describedby={describedBy}
             className="min-w-0 space-y-2 rounded-xl border border-edge bg-surface-2 p-3 text-xs">
             <div className="flex min-w-0 flex-wrap items-start justify-between gap-2">
-                <h4 className="min-w-0 break-all font-medium text-text-1">{fileName}</h4>
+                <div className="min-w-0">
+                    <h4 className="break-all font-medium text-text-1">{fileName}</h4>
+                    <p className="mt-0.5 break-words text-text-3">{details}</p>
+                </div>
                 <p role="status" className={clsx('rounded px-2 py-0.5 font-medium',
                     unavailableStatus ? 'bg-warn-soft text-warn'
                         : output.state === 'completed' ? 'bg-ok-soft text-ok'
@@ -65,41 +104,15 @@ function OutputCard({
                     {unavailableStatus ? 'Unavailable' : output.state ? STATE_LABELS[output.state] : 'Status unavailable'}
                 </p>
             </div>
-            <p className="break-words text-text-3">
-                {output.output_format}{output.profile ? ` / ${output.profile}` : ''}
-            </p>
-            <div id={descriptionId} className="space-y-1 break-words text-text-2">
-                <p>{accessDenied ? 'Current access could not be verified. Downloads and retries are withheld.'
-                    : output.available === false && !output.error_code && output.state !== 'cancelled'
-                        ? 'This file is unavailable under current source access or screening. Other ready files remain available.'
-                    : output.message || 'Check saved file status for the latest progress.'}</p>
-                {output.attempt_count !== null ? <p>Attempt {output.attempt_count}</p> : null}
-                {output.automatic_attempts !== null && output.max_automatic_attempts !== null ? (
-                    <p>Automatic attempts: {output.automatic_attempts} of {output.max_automatic_attempts}</p>
-                ) : null}
-                {output.state === 'retry_scheduled' && !unavailable ? (
-                    <p>{validRetryDate ? (
-                        <>Next automatic retry: <time dateTime={output.next_retry_at ?? undefined}>
-                            {retryDate.toLocaleString()}
-                        </time>. Waiting for the server; reloading does not start a retry.</>
-                    ) : 'Waiting for the server to schedule the next automatic retry.'}</p>
-                ) : null}
-                {exhausted && !unavailable ? <p>Automatic attempts exhausted.</p> : null}
-                {output.error_code ? <p className="break-all">Reason: <code>{output.error_code}</code></p> : null}
-                {!unavailable && output.state === 'completed' ? (
-                    <p className="flex flex-wrap gap-x-3">
-                        {output.row_count !== null ? <span>{output.row_count.toLocaleString()} rows</span> : null}
-                        {output.character_count !== null ? <span>{output.character_count.toLocaleString()} characters</span> : null}
-                        {output.size_bytes !== null ? <span>{output.size_bytes.toLocaleString()} bytes</span> : null}
-                    </p>
-                ) : null}
-            </div>
+            {describedBy ? (
+                <p id={descriptionId} className="break-words text-text-2">{note || retryNote}</p>
+            ) : null}
             {action?.error ? (
                 <p role="alert" className="alert break-words rounded-lg bg-warn-soft p-2 text-warn">{action.error}</p>
             ) : null}
             {output.can_retry && !unavailable ? (
                 <GlassButton size="sm" variant="subtle"
-                    aria-label={`Retry file ${fileName}`} aria-describedby={descriptionId}
+                    aria-label={`Retry file ${fileName}`} aria-describedby={describedBy}
                     disabled={Boolean(action?.submitting || action?.blocked || checking)}
                     onClick={(event) => {
                         retainFocus.current = document.activeElement === event.currentTarget;
@@ -108,12 +121,10 @@ function OutputCard({
                     {action?.submitting ? 'Requesting file retry...' : action?.uncertain ? 'Retry same request' : 'Retry file'}
                 </GlassButton>
             ) : null}
-            {output.state === 'failed' && !output.can_retry && !unavailable ? (
-                <p className="text-text-3">The server is not offering a retry for this file.</p>
-            ) : null}
             {artifact ? (
-                <GeneratedArtifactCard key={artifact.artifact_message_id} artifact={artifact} conversationId={conversationId} />
-            ) : output.state === 'completed' && !unavailable ? (
+                <GeneratedArtifactCard key={artifact.artifact_message_id} artifact={artifact}
+                    conversationId={conversationId} embedded />
+            ) : completed ? (
                 <p className="text-text-3">Download details are not available in this response. Check saved file status.</p>
             ) : null}
         </article>
@@ -151,9 +162,6 @@ export function OrchestrationOutputs({
                     {saved?.outputChecking ? 'Checking file status...' : 'Check saved file status'}
                 </GlassButton>
             </div>
-            <p className="text-xs text-text-3">
-                Each file keeps its own progress. Retrying a file does not repeat producer tasks or other files.
-            </p>
             {saved?.outputError ? (
                 <p role="alert" className="alert rounded-lg bg-warn-soft p-2 text-xs text-warn">{saved.outputError}</p>
             ) : null}

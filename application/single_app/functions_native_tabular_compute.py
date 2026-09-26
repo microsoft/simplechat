@@ -15,7 +15,7 @@ import uuid
 
 from azure.cosmos.exceptions import CosmosResourceNotFoundError
 
-from content_screening.access import assert_evidence_available
+from content_screening.access import PROVENANCE_FIELD, assert_evidence_available
 from functions_analysis_access import (
     AnalysisResultUnavailable,
     analysis_source_snapshot,
@@ -272,6 +272,10 @@ def _prepare_native_source(engine, source, request, user_id):
         raise NativeTabularComputeError("native_compute_source_invalid")
     if descriptor.get("expected_row_count") != count or descriptor.get("query_expression") != query:
         raise NativeTabularComputeError("native_compute_source_invalid")
+    provenance = descriptor.get(PROVENANCE_FIELD)
+    if isinstance(provenance, dict) and str(provenance.get("document_id")) != str(source["document_id"]):
+        # The replay location resolved to another document or revision than the approved source.
+        raise NativeTabularComputeError("native_compute_source_identity_mismatch")
     descriptor["document_id"] = source["document_id"]
     candidate = {
         "filename": filename, "selected_sheet": descriptor.get("selected_sheet"),

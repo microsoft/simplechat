@@ -172,6 +172,13 @@ Last inventoried: 2026-08-10
 - `[NEW_FOUNDRY_AGENT]`
 - `[NOTIFICATIONS]`
 - `[OPEN_API_PLUGIN]`
+- `[ORCHESTRATION]`
+- `[ORCHESTRATION_ADAPTERS]`
+- `[ORCHESTRATION_CONTEXT]`
+- `[ORCHESTRATION_EXECUTOR]`
+- `[ORCHESTRATION_PLANNER]`
+- `[ORCHESTRATION_REGISTRY]`
+- `[ORCHESTRATION_RUNS]`
 - `[ORCHESTRATOR_AGENT_EVENT]`
 - `[ORCHESTRATOR_EVENT]`
 - `[PLUGIN]`
@@ -285,22 +292,29 @@ Last inventoried: 2026-08-10
 ## Orchestration failure diagnostics
 
 Implemented in version **0.261.140**, recorded in
-`application/single_app/config.py`.
+`application/single_app/config.py`. Step, file-render and content-preparation
+events were added in version **0.261.141**.
 
-The `[ORCHESTRATION_CONTEXT]`, `[ORCHESTRATION_PLANNER]`, `[ORCHESTRATION_RUNS]`, and `[ORCHESTRATION]`
-failure events distinguish planning validation, execution admission, saved-status
-projection, and scheduler recovery. Their safe properties appear in Application
+The `[ORCHESTRATION_CONTEXT]`, `[ORCHESTRATION_PLANNER]`, `[ORCHESTRATION_RUNS]`, `[ORCHESTRATION]`,
+`[ORCHESTRATION_EXECUTOR]`, and `[ORCHESTRATION_ADAPTERS]` failure events distinguish
+planning validation, execution admission, step execution, saved-status projection, and
+scheduler recovery. `[CONTENT_SCREENING]` events record why a source's current authority
+could not be verified. Their safe properties appear in Application
 Insights `customDimensions` or Log Analytics `AppTraces.Properties`.
 
 | Property | Meaning |
 | --- | --- |
-| `sc_conversation_id_hash`, `sc_turn_id_hash`, `sc_run_id_hash` | SHA-256 of the exact workflow identifier encoded as UTF-8. Only applicable identifiers are present; these hashes do not grant access to the underlying records. |
+| `sc_conversation_id_hash`, `sc_turn_id_hash`, `sc_run_id_hash`, `sc_step_id_hash` | SHA-256 of the exact workflow identifier encoded as UTF-8. Only applicable identifiers are present; these hashes do not grant access to the underlying records. Step IDs repeat across runs, so narrow by the run hash before the step hash. |
 | `sc_stage` | The failing boundary, such as `plan_normalization`, `claim_validation`, `settings`, `context`, `identity`, `result_binding`, `model_binding`, `run_detail`, or `scheduler_item`. |
 | `sc_validation_code` | Validation category, including `deliverables_invalid`, `source_kind_invalid`, or `source_binding_required`. |
 | `sc_validation_rule` | Specific application-owned rejection, such as `invalid_quantity`, `non_file_format`, `answer_producer_mismatch`, `missing_final_response`, `file_format_mismatch`, `narrative_source_required`, or `document_sources_required`. |
 | `sc_response_failure` | A missing, incomplete, or refused planner completion, when applicable. |
 | `sc_attempt` | Planner proposal number: 1 for the initial proposal and 2 for its single correction. Present on deliverables correction/failure events. |
 | `sc_execution_code`, `sc_output_code` | Safe execution or output-store failure category, where available. |
+| `sc_failure_code` | On step and adapter events, a step failure category, such as `step_timeout`, `run_timeout`, or `context_unavailable`. On `[CONTENT_SCREENING]` events, the source-authority code, such as `source_authority_unverified` or `source_authority_unavailable`. |
+| `sc_authority_reason` | Which check could not verify a source's current authority: `document_record_invalid`, `screening_marker_invalid`, `screening_state_unknown`, `screening_marker_incomplete`, `document_scope_invalid`, `workspace_record_invalid`, `scan_record_invalid`, `provenance_mismatch`, `document_id_invalid`, `manifest_context_invalid`, `manifest_scope_missing`, `manifest_revision_invalid`, or `manifest_batch_invalid`. |
+| `sc_capability_id` | The capability the step ran, such as `compose`, `render_file`, `generate_image`, or `document_compare`. |
+| `sc_output_format` | The file format of a render attempt, such as `csv`, `xlsx`, or `docx`. |
 | `sc_error_type`, `sc_response_type` | Exception class and, on runner admission/preparation failures, the record's Python type. |
 | `sc_durable_status` | The terminal status confirmed by execution preparation, if one was recorded. Absence is not proof that the run stopped. |
 
@@ -350,6 +364,67 @@ AppTraces
     durableStatus = tostring(Properties.sc_durable_status)
 | order by TimeGenerated asc
 | take 200
+```
+
+### Step, render and content-preparation events
+
+Since **0.261.141**, these events explain a slow or failed step without logging
+file names, file content, prompts, or model responses.
+
+| Event message | Severity | Properties |
+| --- | --- | --- |
+| `[ORCHESTRATION_EXECUTOR] A file render attempt finished.` | Information when the file completed; otherwise Warning | `sc_status`, `sc_output_code`, `sc_output_format`, `sc_size_bytes`, and the timing and check counts described below. |
+| `[ORCHESTRATION_EXECUTOR] A step finished after its time budget; its finished result was kept.` | Warning | `sc_failure_code` (`step_timeout` or `run_timeout`), `sc_elapsed_ms`, `sc_step_timeout_seconds`. |
+| `[ORCHESTRATION_EXECUTOR] Prepared content did not match its declared outputs; asking once more.` | Information | `sc_reason` (`compose_output_retry`), `sc_error_type`, and `sc_execution_code` when the mismatch has one. |
+| `[ORCHESTRATION_EXECUTOR] Content preparation could not complete.` | Warning | `sc_failure_code`, `sc_execution_code`, `sc_error_type`. |
+| `[ORCHESTRATION] Retrying the answer model without a JSON response format.` | Information | `sc_reason` (`json_format_retry`), `sc_stage`, `sc_error_type`. Content preparation asks the endpoint for a JSON object; an endpoint that refuses that option is asked again without it. |
+| `[ORCHESTRATION_ADAPTERS] Native result bridge did not complete.` | Warning | `sc_stage`, `sc_failure_code`, `sc_execution_code`, such as `native_compute_source_identity_mismatch` when a saved spreadsheet location now points at a different revision. |
+| `[CONTENT_SCREENING] Current source authority could not be verified.` | Warning | `sc_failure_code`, `sc_authority_reason`, `sc_error_type`. |
+
+Every `[ORCHESTRATION_EXECUTOR]` and `[ORCHESTRATION_ADAPTERS]` event in this table
+carries `sc_run_id_hash`, `sc_conversation_id_hash`, and `sc_step_id_hash`; the
+executor events also carry `sc_capability_id`. The `[ORCHESTRATION]` and
+`[CONTENT_SCREENING]` events in this table have no workflow hashes, so match them by
+time to the step event that follows them.
+
+A render attempt records how its time was spent:
+
+- `sc_render_ms`, `sc_verify_ms`, `sc_stage_ms`, and `sc_commit_ms` are the time
+  spent producing, verifying, staging, and committing the file. Only the phases the
+  attempt reached are present. `sc_total_ms` covers the whole attempt.
+- `sc_full_checks` counts full ownership, run, capability, and source-access checks.
+  `sc_light_checks` counts the calls in between, which do no I/O. A long render
+  shows roughly one full check every five seconds; a much higher ratio of full to
+  light checks means the renderer is spending its time re-authorizing.
+- `sc_source_rechecks` counts source rechecks performed for the renderer, and
+  `sc_paced_source_rechecks` counts the ones skipped because a recheck had just run.
+- `sc_stop_observed` is `true` when the step asked the attempt to stop, because of
+  a cancellation or a time limit, before the file was staged.
+- `sc_status` is the file's resulting state, such as `completed`, `failed`,
+  `retry_scheduled`, or `cancelled`, or `raised` when the attempt ended with an
+  exception. `sc_output_code` carries the output failure category when there is
+  one; a render stopped by the step time limit reports `failed` with
+  `output_step_time_limit`.
+
+To see where a run's file rendering spent its time:
+
+```kusto
+let runHash = hash_sha256("<run-id>");
+AppTraces
+| where TimeGenerated > ago(2h)
+| where tostring(Properties.sc_run_id_hash) == runHash
+| where tostring(Properties.sc_message) contains "A file render attempt finished"
+| project TimeGenerated,
+    format = tostring(Properties.sc_output_format),
+    status = tostring(Properties.sc_status),
+    outputCode = tostring(Properties.sc_output_code),
+    totalMs = toint(Properties.sc_total_ms),
+    renderMs = toint(Properties.sc_render_ms),
+    verifyMs = toint(Properties.sc_verify_ms),
+    fullChecks = toint(Properties.sc_full_checks),
+    lightChecks = toint(Properties.sc_light_checks),
+    stopObserved = tobool(Properties.sc_stop_observed)
+| order by TimeGenerated asc
 ```
 
 Planning may fail inside a successful HTTP streaming response. Correlate these
