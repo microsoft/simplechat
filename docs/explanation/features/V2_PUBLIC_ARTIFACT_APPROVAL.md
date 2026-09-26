@@ -89,8 +89,8 @@ in its own path.
 
 ## Testing and validation
 
-`ui_tests/test_v2_public_documents.py` covers the public surface with 54 cases,
-including 11 for artifact approval: a queued approval, confirmation-gated
+At this milestone, `ui_tests/test_v2_public_documents.py` covered the public
+surface with 54 cases, including 11 for artifact approval: a queued approval, confirmation-gated
 rejection and cancellation, recovery from `approval_failed`, a stale version
 followed by refresh and retry, missing or unknown capability, per-document
 gating, a refused activation during a decision, the Shared place staying absent,

@@ -150,5 +150,7 @@ refused unless the link names the group, so they can't skip the group reads
 described under Chat handoff.
 
 No live Azure deployment, live model execution, or large-workspace latency
-benchmark is claimed. Group sharing/approval, previews, group-specific saved-view
-persistence, and public workspace migration remain later milestones.
+benchmark is claimed. Previews and group-specific saved-view persistence aren't
+included. Group sharing and approval followed in versions 0.261.130-0.261.131
+(see [V2 Group Document Collaboration](V2_GROUP_DOCUMENT_COLLABORATION.md)), and
+public workspaces have their own pages.
