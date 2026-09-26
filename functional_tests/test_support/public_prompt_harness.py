@@ -1,8 +1,8 @@
 # public_prompt_harness.py
 """
 Extracted backend harness for the immutable-target public prompt API suite (M9C).
-Version: 0.261.178
-Implemented in: 0.261.178
+Version: 0.261.177
+Implemented in: 0.261.177
 
 Mirrors ``group_prompt_harness.py``: it drives the real public prompt policy,
 access, projection and route modules over an ETag-enforcing Cosmos stub, so the

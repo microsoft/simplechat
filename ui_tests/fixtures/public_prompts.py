@@ -1,8 +1,8 @@
 # public_prompts.py
 """
 Closed M9C public prompt HTTP fixtures for the real production V2 SPA.
-Version: 0.261.178
-Implemented in: 0.261.178
+Version: 0.261.177
+Implemented in: 0.261.177
 
 The fixture serves the immutable `/api/public-workspaces/<workspace_id>/prompts[...]` family,
 gated by the `prompt_management` context hint the shared public context carries exactly as the

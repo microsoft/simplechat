@@ -9,6 +9,7 @@ Every context is the real builder's, held to it by
 functional_tests/test_public_context_fixture_parity.py: 0.261.168
 Its prompts section opens and every context carries the server's prompt_management hint: 0.261.178
 Its identities and sync sections and their management hints, gated on File Sync: 0.261.179
+The context carries the native membership hint and its Members manage section: 0.261.179
 
 The public surface mirrors the group shell. Its documents and prompts sections are open, and a
 manager role can be granted document management, the generated-artifact review and prompt
@@ -47,10 +48,16 @@ PUBLIC_PROMPT_OPERATIONS = ("create", "edit", "delete")
 PUBLIC_IDENTITY_OPERATIONS = ("create", "edit", "delete")
 # functions_public_file_source_policy.PUBLIC_FILE_SOURCE_OPERATIONS, in the server's order.
 PUBLIC_FILE_SOURCE_OPERATIONS = ("create", "edit", "delete", "sync", "test")
+# functions_public_membership_policy.PUBLIC_MEMBERSHIP_OPERATIONS, in the server's order.
+PUBLIC_MEMBERSHIP_OPERATIONS = ("add_member", "review_requests", "change_role", "remove_member", "transfer_ownership")
+# The statuses that let members be added or promoted (functions_public_membership_policy).
+PUBLIC_MEMBER_ADD_STATUSES = ("active", "upload_disabled")
 SECTION_GROUPS = {
     "documents": "knowledge", "tags": "knowledge", "sync": "knowledge", "prompts": "knowledge",
     "identities": "connections",
 }
+# Members joins the content sections in the shared "manage" group (M10A).
+PUBLIC_MANAGE_SECTION_GROUP = "manage"
 # The texts build_public_workspace_context sends: a section public workspaces don't offer, and why a
 # workspace's status closes every section (check_public_workspace_status_allows_operation's "view").
 PUBLIC_SECTION_UNAVAILABLE_REASON = "This section is not available for public workspaces yet."
@@ -137,6 +144,24 @@ def public_file_source_management(role, status, file_sync):
     return {"schema_version": 1, "operations": operations}
 
 
+def public_membership_management(role, status):
+    """`public_membership_operations` for the modelled deployment (public workspaces on). A manager
+    reviews requests and removes members in any status, and adds or changes roles only while the
+    workspace takes members; the owner also transfers ownership. A reader gets nothing. Only the
+    Owner and Admins manage membership -- a DocumentManager is a member, not a manager, here."""
+    operations = set()
+    if role in ("Owner", "Admin"):
+        operations.update({"review_requests", "remove_member"})
+        if status in PUBLIC_MEMBER_ADD_STATUSES:
+            operations.update({"add_member", "change_role"})
+    if role == "Owner":
+        operations.add("transfer_ownership")
+    return {
+        "schema_version": 1,
+        "operations": [operation for operation in PUBLIC_MEMBERSHIP_OPERATIONS if operation in operations],
+    }
+
+
 def public_context(identifier, name, *, status="active", role="User", viewer=OWNER_ID, file_sync=False):
     """`build_public_workspace_context` for the modelled deployment: public workspaces, metadata
     extraction and the administrator's public downloads on. `file_sync` toggles File Sync for the
@@ -156,7 +181,6 @@ def public_context(identifier, name, *, status="active", role="User", viewer=OWN
             "can_manage": bool(enabled and status == "active" and manager),
             "reason": None if enabled else (status_reason if not readable else unavailable_reason),
         }
-
     # Documents and prompts open; a manager of an active workspace manages either. Identities and sync
     # are gated solely on File Sync for the workspace and are manager-only; tags stay unavailable.
     sections = {
@@ -171,6 +195,13 @@ def public_context(identifier, name, *, status="active", role="User", viewer=OWN
             manager and file_sync,
             PUBLIC_FILE_SOURCES_UNAVAILABLE_REASON if manager else PUBLIC_CONNECTIONS_MANAGER_REASON,
         )},
+    }
+    # Members (M10A) opens in any viewable status; its can_manage is navigation only, gated on an
+    # active workspace and a manager role like the server's section(True, manager).
+    sections["members"] = {
+        "group": PUBLIC_MANAGE_SECTION_GROUP, "enabled": readable,
+        "can_manage": bool(readable and status == "active" and role in ("Owner", "Admin")),
+        "reason": None if readable else status_reason,
     }
     return {
         "schema_version": 1, "enabled": True, "viewer_id": viewer,
@@ -201,6 +232,7 @@ def public_context(identifier, name, *, status="active", role="User", viewer=OWN
         "prompt_management": public_prompt_management(role, status),
         "identity_management": public_identity_management(role, status, file_sync),
         "file_source_management": public_file_source_management(role, status, file_sync),
+        "membership_management": public_membership_management(role, status),
     }
 
 

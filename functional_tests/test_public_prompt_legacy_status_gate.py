@@ -2,8 +2,8 @@
 """
 Pin the M9C behaviour change on the legacy /api/public_prompts write routes.
 
-Version: 0.261.178
-Implemented in: 0.261.178
+Version: 0.261.177
+Implemented in: 0.261.177
 
 Before M9C the active-scoped public prompt writes (POST create, PATCH update and
 DELETE) ran with no workspace-status check, so a ``locked``, ``upload_disabled``,

@@ -2,8 +2,8 @@
 """
 Ensure new explicit-workspace public prompt operations cannot match legacy routes.
 
-Version: 0.261.178
-Implemented in: 0.261.178
+Version: 0.261.177
+Implemented in: 0.261.177
 
 A mixed deployment must reject an unsupported workspace-bound prompt URL rather
 than silently execute an old route against the user's active public workspace.

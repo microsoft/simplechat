@@ -28,6 +28,8 @@ from functions_file_sync import (
 from functions_global_agents import get_global_agents
 from functions_group import assert_group_role, get_group_model_endpoints
 from functions_group_agents import get_group_agents
+# Defined in the pure policy module so the workspace context's workflow hint reads the same roles.
+from functions_group_workflow_policy import GROUP_WORKFLOW_MEMBER_ROLES
 from functions_m365_workflow_binding import normalize_workflow_run_as
 from functions_personal_workflows import (
     WORKFLOW_FILE_SYNC_CONTINUE_MODES,
@@ -71,7 +73,6 @@ from functions_workflow_definitions import (
 from functions_workflow_runtime_store import workflow_runtime_store
 
 
-GROUP_WORKFLOW_MEMBER_ROLES = ("Owner", "Admin", "DocumentManager", "User")
 WORKFLOW_CONVERSATION_ACCESS_ERROR = 'Workflow conversation not found or access denied.'
 
 

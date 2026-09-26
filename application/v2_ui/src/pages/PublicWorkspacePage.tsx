@@ -20,7 +20,7 @@ import { WorkspaceShell } from '../components/workspace/WorkspaceShell';
 import { Pill, SectionIntro } from '../components/workspace/primitives';
 import {
     PUBLIC_SECTION_BLURBS, PUBLIC_STATUS_LABELS, publicWorkspacePath,
-    classicPublicSectionLabel, readPublicDocumentTarget,
+    classicPublicSectionLabel, isPublicManageSection, readPublicDocumentTarget,
 } from '../lib/publicWorkspaceNavigation';
 import { PUBLIC_WORKSPACE_SECTION_IDS } from '../lib/workspaceContext';
 import { usePublicWorkspaceLabels } from '../lib/publicWorkspaceLabels';
@@ -29,10 +29,12 @@ import { PUBLIC_WORKSPACES } from '../lib/workspaces';
 import { useBootstrapStore } from '../stores/bootstrapStore';
 import { usePublicWorkspaceStore, PublicWorkspaceRequestSuperseded } from '../stores/publicWorkspaceStore';
 import { WORKSPACE_SECTIONS_BY_ID } from './workspace/sections';
+import { PUBLIC_MANAGE_SECTIONS } from './workspace/publicManageSections';
 import { PublicDocumentsSection } from './workspace/DocumentsSection';
 import { PublicPromptsSection } from './workspace/PromptsSection';
 import { PublicIdentitiesSection } from './workspace/GroupIdentitiesSection';
 import { PublicFileSourcesSection } from './workspace/GroupFileSourcesSection';
+import { PublicMembersSection } from './workspace/PublicMembersSection';
 
 const CLASSIC_WORKSPACE_HREF = '/public_workspaces';
 
@@ -75,6 +77,13 @@ export function PublicWorkspacePage() {
             navigate(`${publicWorkspacePath(workspaceId, 'documents')}${location.search}`, { replace: true });
         }
     }, [workspaceId, enabled, activeWorkspaceId, section, location.search, navigate, hasDocumentLink]);
+
+    // The Manage sections (M10A Members) have no item route, so a stray trailing segment opens the
+    // section itself rather than leaving the reader on a URL that renders nothing it understands.
+    useEffect(() => {
+        if (!workspaceId || !section || !resourceId || !isPublicManageSection(section)) return;
+        navigate(publicWorkspacePath(workspaceId, section), { replace: true });
+    }, [workspaceId, section, resourceId, navigate]);
 
     useEffect(() => {
         if (!workspaceId || !viewerId || !enabled) {
@@ -132,7 +141,7 @@ export function PublicWorkspacePage() {
             availabilityLabel: isNative ? undefined : 'Classic',
         };
     }), []);
-    const resolved = useMemo(() => resolveWorkspaceSections(sections, context), [sections, context]);
+    const resolved = useMemo(() => resolveWorkspaceSections([...sections, ...PUBLIC_MANAGE_SECTIONS], context), [sections, context]);
     const selected = resolved.find((entry) => entry.section.id === section);
     const nativeDocuments = Boolean(ready && section === 'documents' && !resourceId
         && selected?.enabled && context.document_permissions.can_view);
@@ -252,6 +261,11 @@ export function PublicWorkspacePage() {
                         </>
                     ) : !selected ? <EmptyState icon={<LayoutGrid size={28} />} title="Section not found" description="Choose a section from this workspace's navigation." />
                         : !selected.enabled ? <EmptyState icon={<Lock size={28} />} title={`${selected.section.label} is not available`} description={selected.reason ?? undefined} />
+                            : section === 'members' && !resourceId ? (
+                                <PublicMembersSection workspaceId={context.scope.id} workspaceName={context.workspace.name}
+                                    viewerId={context.viewer_id} interactionDisabled={false}
+                                    onBusyChange={reportDocumentBusy} onAccessChanged={revalidate} />
+                            )
                             : section === 'documents' && !resourceId ? (
                                 context.document_permissions.can_view ? <PublicDocumentsSection context={context}
                                     interactionDisabled={false} onOpenClassic={() => openClassic(CLASSIC_WORKSPACE_HREF)}

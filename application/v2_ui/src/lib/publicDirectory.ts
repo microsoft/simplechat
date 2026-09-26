@@ -17,7 +17,7 @@
 // shared directory constants so the page never sends a request the server would answer with
 // a 400 whose Retry could only repeat it.
 
-import { api, ApiError, apiUrl } from './apiClient';
+import { api, ApiError, apiUrl, requestWithStatus } from './apiClient';
 import { isRecord } from './workspaceAuthoring';
 import { requireWorkspaceId } from './workspaceContext';
 import {
@@ -47,6 +47,14 @@ export interface PublicDirectoryWorkspace {
 
 export interface PublicDirectoryHints {
     schemaVersion: number;
+    /** Whether this caller may create a public workspace, mirroring the classic create gate. */
+    canCreate: boolean;
+}
+
+/** The classic ``POST /api/public_workspaces`` reply the Create affordance opens on. */
+export interface PublicWorkspaceCreated {
+    id: string;
+    name: string;
 }
 
 export interface PublicDirectoryPage {
@@ -102,10 +110,19 @@ function readRow(value: unknown): PublicDirectoryWorkspace {
 }
 
 function readHints(value: unknown): PublicDirectoryHints {
-    if (!isRecord(value) || value.schema_version !== 1) {
+    if (!isRecord(value) || value.schema_version !== 1 || typeof value.can_create !== 'boolean') {
         throw new Error('The public directory returned invalid data. Please retry.');
     }
-    return { schemaVersion: value.schema_version };
+    return { schemaVersion: value.schema_version, canCreate: value.can_create };
+}
+
+function readCreatedWorkspace(value: unknown): PublicWorkspaceCreated {
+    // The classic route replies { id, name }; anything else means the workspace exists but the
+    // directory cannot open it by id, so the caller is told to refresh rather than navigate blind.
+    if (!isRecord(value) || typeof value.id !== 'string' || !value.id || typeof value.name !== 'string') {
+        throw new Error('The public workspace was created but could not be opened. Please refresh the directory.');
+    }
+    return { id: value.id, name: value.name };
 }
 
 export function readPublicDirectoryPage(response: unknown, page: number, pageSize: number): PublicDirectoryPage {
@@ -147,6 +164,8 @@ function listQuery(view: PublicDirectoryView, search: string, page: number, page
 export interface PublicDirectoryAdapter {
     scope: 'public';
     list: (view: PublicDirectoryView, search: string, page: number, pageSize: number, signal?: AbortSignal) => Promise<PublicDirectoryPage>;
+    /** Create a public workspace via the classic route the directory reuses unchanged. */
+    create: (name: string, description: string) => Promise<PublicWorkspaceCreated>;
     /** The logo URL for a row, or null when it carries no loadable logo. */
     logoUrl: (workspace: PublicDirectoryWorkspace) => string | null;
     /** Where Open navigates for a row, by immutable id and with no activate handshake. */
@@ -160,6 +179,13 @@ export const PUBLIC_DIRECTORY: PublicDirectoryAdapter = {
     list: async (view, search, page, pageSize, signal) => {
         const response = await api.get<unknown>(`/api/public_workspaces/directory?${listQuery(view, search, page, pageSize)}`, signal);
         return readPublicDirectoryPage(response, page, pageSize);
+    },
+    create: async (name, description) => {
+        // Reuses the classic POST /api/public_workspaces unchanged: 201 { id, name } on success;
+        // 400 "Enable Public Workspaces is disabled." when the feature is off; 403 { error, message }
+        // when the CreatePublicWorkspaces role is required. None of those carry an error_code.
+        const { data } = await requestWithStatus<unknown>('/api/public_workspaces', { method: 'POST', body: { name, description } });
+        return readCreatedWorkspace(data);
     },
     logoUrl: (workspace) => {
         // A logo is requested only when the server says one is stored for this workspace.

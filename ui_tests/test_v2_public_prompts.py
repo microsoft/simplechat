@@ -1,8 +1,8 @@
 # test_v2_public_prompts.py
 """
 Production-SPA coverage for the native scope-aware V2 public prompts workbench.
-Version: 0.261.178
-Implemented in: 0.261.178
+Version: 0.261.177
+Implemented in: 0.261.177
 
 Exercises the real workbench and adapter against closed synthetic HTTP. The fixture only
 serves the immutable `/api/public-workspaces/<id>/prompts` family, never personal prompt

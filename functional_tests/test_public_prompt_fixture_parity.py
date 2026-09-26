@@ -1,8 +1,8 @@
 # test_public_prompt_fixture_parity.py
 """
 Per-route shape parity between the M9C public prompt UI fixture and the real routes.
-Version: 0.261.178
-Implemented in: 0.261.178
+Version: 0.261.177
+Implemented in: 0.261.177
 
 The V2 public Prompts section mocks the network with the closed HTTP fixture
 ``ui_tests/fixtures/public_prompts.py`` (its base dispatch lives in the shared

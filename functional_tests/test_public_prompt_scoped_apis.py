@@ -1,8 +1,8 @@
 # test_public_prompt_scoped_apis.py
 """
 Functional tests for immutable-target, workspace-bound public prompt APIs (M9C).
-Version: 0.261.178
-Implemented in: 0.261.178
+Version: 0.261.177
+Implemented in: 0.261.177
 
 The real public prompt policy, access, projection and route modules run in an
 isolated Flask app over an ETag-enforcing Cosmos stub (``public_prompt_harness``).

@@ -1,8 +1,8 @@
 # test_public_prompt_policy_logic.py
 """Logic pins for the public-workspace prompt policy and access layer (M9C commit 1).
 
-Version: 0.261.178
-Implemented in: 0.261.178
+Version: 0.261.177
+Implemented in: 0.261.177
 
 The two new modules are executed unchanged from their source with
 ``run_definitions``: the policy module has no imports, and the access module's

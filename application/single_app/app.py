@@ -106,6 +106,7 @@ from route_backend_public_documents import *
 from route_backend_public_document_reads import register_route_backend_public_document_reads
 from route_backend_public_document_management import register_route_backend_public_document_management
 from route_backend_public_document_collaboration import register_route_backend_public_document_collaboration
+from route_backend_public_membership import register_route_backend_public_membership
 from route_backend_public_prompts import *
 from route_backend_public_prompts_scoped import register_route_backend_public_prompts_scoped
 from route_backend_public_identities_scoped import register_route_backend_public_identities_scoped
@@ -1547,6 +1548,9 @@ register_route_blueprint('backend_public_document_management', register_route_ba
 
 # ------------------- API Public Document Collaboration (immutable-target) ---
 register_route_blueprint('backend_public_document_collaboration', register_route_backend_public_document_collaboration, user_required_blueprint)
+
+# ------------------- API Public Membership Routes (immutable-target) ---
+register_route_blueprint('backend_public_membership', register_route_backend_public_membership, user_required_blueprint)
 
 # ------------------- API Public Prompts Routes ----------
 register_route_blueprint('backend_public_prompts', register_route_backend_public_prompts, user_required_blueprint)

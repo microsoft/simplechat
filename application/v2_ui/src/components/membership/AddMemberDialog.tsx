@@ -26,12 +26,16 @@ function directoryName(user: DirectoryUser): string {
 }
 
 export function AddMemberDialog({
-    submitting, serverError, onSubmit, onClose,
+    submitting, serverError, onSubmit, onClose, roleOptions = ASSIGNABLE_ROLE_OPTIONS, defaultRole = 'User',
 }: {
     submitting: boolean;
     serverError: string;
     onSubmit: (user: DirectoryUser, role: AssignableMemberRole) => void;
     onClose: () => void;
+    /** The assignable roles offered, defaulting to the group's (User, Document manager, Admin). */
+    roleOptions?: readonly { value: AssignableMemberRole; label: string }[];
+    /** The role selected first, defaulting to the group's plain User. */
+    defaultRole?: AssignableMemberRole;
 }) {
     const [query, setQuery] = useState('');
     const [results, setResults] = useState<DirectoryUser[]>([]);
@@ -39,7 +43,7 @@ export function AddMemberDialog({
     const [searched, setSearched] = useState('');
     const [searchError, setSearchError] = useState('');
     const [selected, setSelected] = useState<DirectoryUser | null>(null);
-    const [role, setRole] = useState<AssignableMemberRole>('User');
+    const [role, setRole] = useState<AssignableMemberRole>(defaultRole);
     const controller = useRef<AbortController | null>(null);
 
     // A debounced search. Each new term aborts the one before it, so a slow earlier answer can
@@ -137,7 +141,7 @@ export function AddMemberDialog({
                     <span>Role</span>
                     <select className={INPUT_CLASS} value={role} disabled={submitting}
                         aria-label="Role for the new member" onChange={(event) => setRole(event.target.value as AssignableMemberRole)}>
-                        {ASSIGNABLE_ROLE_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+                        {roleOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
                     </select>
                 </label>
                 {serverError ? <p role="alert" className="text-sm text-danger">{serverError}</p> : null}

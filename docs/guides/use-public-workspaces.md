@@ -63,10 +63,23 @@ the workspace it is for.
   explorer. A reviewer approves, rejects, or withdraws it without leaving the
   workspace.
 
-Sharing a public document with other workspaces is not available. Public
-prompts and workspace administration (members, roles, ownership, settings,
-logo, requests, statistics, and activity) still use the classic page, as do the
-directory's saved visibility lists.
+From version **0.261.177**, a public workspace's **Prompts** are in V2 too.
+Everyone can read them and use them in chat. Owners, Admins and
+DocumentManagers can create, edit and delete them while the workspace is
+active. **Use in chat** works even for a workspace you've hidden from chat. The
+classic page's prompt changes also need an active workspace from this version.
+
+From version **0.261.179**, the Owner and Admins manage the workspace's
+**Members** in V2, under **Manage**: add Admins and DocumentManagers, change
+roles, remove members, decide DocumentManager requests, and, for the Owner,
+transfer ownership. Nobody can remove themselves. DocumentManagers see members'
+names but not their emails. The directory offers **Create** to people allowed
+to create public workspaces.
+
+Sharing a public document with other workspaces is not available. The
+workspace's settings, logo, statistics and activity still use the classic page,
+as do the directory's saved visibility lists and asking to become a
+DocumentManager.
 
 From version **0.261.173**, the classic public workspace pages save changes
 conditionally. If someone else changes the same workspace at that moment, a
