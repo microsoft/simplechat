@@ -1,10 +1,13 @@
 # test_public_document_fixture_parity.py
 """
 Per-route shape parity between the M9B public document UI fixtures and the real routes.
-Version: 0.261.183
+Version: 0.261.186
 Implemented in: 0.261.179
 A generated artifact awaiting publication is held for managers and absent for everyone else
 (decision 27): 0.261.183
+Reader downloads: the read fixture models a downloads-off workspace, so a reader's
+file_downloads_enabled is False and a download the workspace no longer offers is refused
+with the server's downloads-unavailable sentence: 0.261.186
 
 The V2 public Documents explorer mocks the network with three closed HTTP fixtures, which predate the
 per-route parity rule:
@@ -64,7 +67,7 @@ from ui_tests.fixtures.public_documents import (  # noqa: E402
     document,
 )
 from ui_tests.fixtures.public_document_management import (  # noqa: E402
-    DOCUMENT_ACTIONS, DOWNLOAD_HEADERS, OPERATION_UNAVAILABLE_ERROR, PUBLIC_ARCHIVE_NAME,
+    DOCUMENT_ACTIONS, DOWNLOAD_HEADERS, DOWNLOADS_UNAVAILABLE_ERROR, OPERATION_UNAVAILABLE_ERROR, PUBLIC_ARCHIVE_NAME,
     PublicDocumentManagementFixture, attachment, batch_error, bulk_tag_result, delete_result, metadata_result,
     operation_path, propagation_incomplete, queue_result, tag_created, tag_result, tag_vocabulary_conflict,
     tag_vocabulary_refusal, upload_refusal, upload_result,
@@ -703,7 +706,7 @@ def test_a_download_the_workspace_no_longer_offers_is_refused_as_the_server_refu
     real = env.client.get(f"{READS}/same-document/download")
     served = fixture_receipt(
         env.fixture, "GET", "same-document/download", status=403,
-        response={"error": OPERATION_UNAVAILABLE_ERROR, "document_id": "same-document", "public_workspace_id": WORKSPACE},
+        response={"error": DOWNLOADS_UNAVAILABLE_ERROR, "document_id": "same-document", "public_workspace_id": WORKSPACE},
     )
     assert_receipt_parity("download refused", served, real)
 
@@ -902,7 +905,8 @@ def test_a_readers_review_or_decision_of_a_pending_public_artifact_is_a_missing_
 def test_a_reader_is_served_no_pending_artifact_by_the_fixture(publication):  # noqa: F811
     """The collaboration fixture, viewed as a reader, holds to the server: no pending artifact in its
     list, count or facets, and a detail or review read of one answers as the server answers a reader's.
-    Every row offers a reader no document operation, as the server's do."""
+    Every row offers a reader no management operation; the real env runs downloads on, so a reader's
+    downloadable rows may carry `download`, and the downloads-off fixture reader carries none."""
     env = publication
     publication_suite.submit(env)
     publication_suite.set_actor(env, READER)
@@ -920,7 +924,7 @@ def test_a_reader_is_served_no_pending_artifact_by_the_fixture(publication):  # 
     for identifier in ("pending-publication", "requested-publication"):
         assert fixture_read(fixture, f"{READS}/{identifier}") == (real_detail.status_code, real_detail.get_json())
         assert fixture_review(fixture, identifier) == (real_review.status_code, real_review.get_json())
-    assert all(row["document_actions"] == [] for row in real_rows.values())
+    assert all(set(row["document_actions"]) <= {"download"} for row in real_rows.values())
     assert all(row["document_actions"] == [] for row in served_rows.values())
 
 

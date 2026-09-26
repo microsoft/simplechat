@@ -11,6 +11,11 @@ from functions_artifact_publication_readiness import PUBLICATION_BINDING
 
 
 PUBLIC_DOCUMENT_MANAGER_ROLES = ("Owner", "Admin", "DocumentManager")
+# Every reader of a public workspace, mirroring classic public downloads, which admit
+# the plain User alongside the managers. Kept local to this adapter-free policy layer so
+# it never imports the access layer that imports it.
+PUBLIC_DOCUMENT_READER_ROLES = (*PUBLIC_DOCUMENT_MANAGER_ROLES, "User")
+PUBLIC_DOCUMENT_VIEWABLE_STATUSES = frozenset({"active", "locked", "upload_disabled"})
 PUBLIC_DOCUMENT_OPERATIONS = (
     "upload", "edit_metadata", "tag_documents", "manage_tags",
     "delete", "download", "extract_metadata", "reprocess",
@@ -97,7 +102,34 @@ def public_document_management_operations(workspace, role, settings, *, download
             operations.add("extract_metadata")
     if status in {"active", "upload_disabled"}:
         operations.update({"delete", "reprocess"})
-    if download_enabled:
+    return [operation for operation in PUBLIC_DOCUMENT_OPERATIONS if operation in operations]
+
+
+def public_document_download_allowed(workspace, role, settings, *, download_enabled):
+    """Downloads are a reader-level capability: any reader of a viewable public workspace
+    may download its documents when the deployment and the workspace both allow file
+    downloads. This mirrors the classic public download rule and never grants any
+    management operation, so it stays independent of the manager gate above.
+    """
+    return bool(
+        download_enabled
+        and role in PUBLIC_DOCUMENT_READER_ROLES
+        and settings.get("enable_public_workspaces", False)
+        and workspace.get("status", "active") in PUBLIC_DOCUMENT_VIEWABLE_STATUSES
+    )
+
+
+def public_document_capabilities(workspace, role, settings, *, download_enabled):
+    """The full set of document operations a caller's role commands: the manager
+    operations plus the reader-level download. A plain reader receives download alone
+    while managers keep everything, so this is the single source the context hint, the
+    list flag and the per-document actions all consume. Returned in the canonical
+    PUBLIC_DOCUMENT_OPERATIONS order.
+    """
+    operations = set(public_document_management_operations(
+        workspace, role, settings, download_enabled=download_enabled,
+    ))
+    if public_document_download_allowed(workspace, role, settings, download_enabled=download_enabled):
         operations.add("download")
     return [operation for operation in PUBLIC_DOCUMENT_OPERATIONS if operation in operations]
 
@@ -108,7 +140,7 @@ def public_document_actions(
     current_revision,
 ):
     """Intersect workspace policy with freshly established resource eligibility."""
-    operations = public_document_management_operations(workspace, role, settings, download_enabled=download_enabled)
+    operations = public_document_capabilities(workspace, role, settings, download_enabled=download_enabled)
     if document.get("public_workspace_id") != workspace["id"]:
         return []
     if public_document_approval_pending(document):

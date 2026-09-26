@@ -79,9 +79,9 @@ for a count above zero — so the Shared place stays hidden either way.
 
 `file_downloads_enabled` in the list response reports whether this user may
 download from this workspace. It is derived from the same policy that decides
-whether the workspace context advertises `download`: a manager role, a
-workspace status that permits downloads, and the workspace download setting.
-Ordinary members always receive `false`.
+whether the workspace context advertises `download`: a workspace status that
+permits viewing, and the workspace download setting. From version
+**0.261.186** any reader qualifies, as in classic; before, only managers did.
 
 ## Authorization
 

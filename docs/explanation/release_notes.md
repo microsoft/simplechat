@@ -2,6 +2,15 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.186)**
+
+#### Bug Fixes
+
+*   **Readers Can Download Public Workspace Documents In V2**
+    *   When downloads are turned on for a public workspace, classic lets every reader download its documents, but V2 offered downloads only to its Owner, Admins and DocumentManagers. V2 now follows classic: anyone who can read the workspace can download, individually or in a batch.
+    *   Changing documents stays with the Owner, Admins and DocumentManagers, and a reader never learns of a generated file still awaiting approval.
+    *   (Ref: `functions_public_document_policy.py`, `functions_public_document_access.py`, `functions_workspace_context.py`, [Public Reader Downloads Fix](fixes/PUBLIC_READER_DOWNLOADS_FIX.md))
+
 ### **(v0.261.185)**
 
 #### New Features

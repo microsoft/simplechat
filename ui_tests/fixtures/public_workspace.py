@@ -33,6 +33,9 @@ from ui_tests.fixtures.workspace_authoring import (
 
 
 PUBLIC_MANAGER_ROLES = ("Owner", "Admin", "DocumentManager")
+# Every reader of a public workspace, mirroring the server's PUBLIC_DOCUMENT_READER_ROLES:
+# the managers plus the plain User, all of whom may download when downloads are enabled.
+PUBLIC_READER_ROLES = (*PUBLIC_MANAGER_ROLES, "User")
 # The statuses the builder recognizes; it reports any other as "unknown". A workspace is viewable in
 # the first three.
 PUBLIC_STATUSES = ("active", "locked", "upload_disabled", "inactive")
@@ -91,17 +94,19 @@ PUBLIC_SETTINGS_MEMBER_REASON = "Only the workspace owner, an admin or a documen
 
 
 def public_document_management(role, status, *, download_enabled=True):
-    """`public_document_management_operations` for a deployment that extracts metadata. The server
-    sends this hint in every public context, with no operations for a reader; `download` needs file
-    downloads enabled, exactly as the server threads `download_enabled=` into the helper."""
+    """`public_document_capabilities` for a deployment that extracts metadata. The server sends
+    this hint in every public context: a manager commands the management operations, and any reader
+    -- including a plain User, mirroring classic public downloads -- may `download` when file
+    downloads are enabled, exactly as the server threads `download_enabled=` into the helper."""
     operations = set()
-    if role in PUBLIC_MANAGER_ROLES and status in PUBLIC_VIEWABLE_STATUSES:
-        if download_enabled:
+    if status in PUBLIC_VIEWABLE_STATUSES:
+        if download_enabled and role in PUBLIC_READER_ROLES:
             operations.add("download")
-        if status == "active":
-            operations.update({"upload", "edit_metadata", "tag_documents", "manage_tags", "extract_metadata"})
-        if status in ("active", "upload_disabled"):
-            operations.update({"delete", "reprocess"})
+        if role in PUBLIC_MANAGER_ROLES:
+            if status == "active":
+                operations.update({"upload", "edit_metadata", "tag_documents", "manage_tags", "extract_metadata"})
+            if status in ("active", "upload_disabled"):
+                operations.update({"delete", "reprocess"})
     return {
         "schema_version": 1,
         "operations": [operation for operation in PUBLIC_DOCUMENT_OPERATIONS if operation in operations],
@@ -295,7 +300,7 @@ def public_context(identifier, name, *, status="active", role="User", viewer=OWN
             "can_upload": manager and status == "active",
             "can_edit": manager and status == "active",
             "can_delete": manager and status in ("active", "upload_disabled"),
-            "can_download": manager and readable and downloads_enabled,
+            "can_download": readable and downloads_enabled,
         },
         "document_queries": {
             "sort_fields": [

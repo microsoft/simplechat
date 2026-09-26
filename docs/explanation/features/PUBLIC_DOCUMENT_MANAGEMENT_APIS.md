@@ -139,7 +139,8 @@ definitions before any document, so such a refusal saves nothing. See the
 ## Authorization
 
 Manager roles are `Owner`, `Admin`, and `DocumentManager`. Ordinary `User`
-membership grants reads only and acquires no mutation or download.
+membership grants reads, and from version **0.261.186** downloads when they're
+enabled for the workspace, as classic allows. It acquires no mutation.
 
 Workspace status is enforced identically to groups:
 
@@ -151,7 +152,11 @@ Workspace status is enforced identically to groups:
 | `inactive` | no | no | no | no |
 
 Downloads are independently gated by
-`is_public_workspace_file_download_enabled`.
+`is_public_workspace_file_download_enabled`. The single and batch download
+routes authorize a reader through `require_public_document_download_context`,
+and answer a reader's request for a generated artifact awaiting publication as
+a missing document (404, decision 27). Upload, metadata, tags, deletion,
+extraction and reprocessing stay manager-only.
 
 Every request revalidates role, workspace status, revision, screening state,
 and feature policy. Queued jobs revalidate when they run. A stored active

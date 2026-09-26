@@ -53,9 +53,10 @@ the workspace it is for.
   upload files, edit metadata, and tag documents one at a time or in bulk. They
   can also extract metadata, reprocess a document (including changing its
   extraction mode), and delete the current revision or every version.
-  Downloads are available to them when the administrator allows downloads for
-  the workspace. Ordinary members can read documents but cannot change or
-  download them. From version **0.261.167**, an empty workspace tells them who
+  Ordinary members can read documents but cannot change them. From version
+  **0.261.186**, everyone who can read the workspace can download its documents
+  when the administrator allows downloads for it, as in classic; before, only
+  Owners, Admins and DocumentManagers could. From version **0.261.167**, an empty workspace tells them who
   can add documents, or why no one can right now, rather than sending them to
   the classic page.
 - **Review publish requests** (version **0.261.134**). When someone asks to

@@ -25,7 +25,7 @@ from functions_public_document_access import (
     PublicDocumentReadError,
     require_public_document_read_context,
 )
-from functions_public_document_policy import public_document_management_operations
+from functions_public_document_policy import public_document_capabilities
 from functions_public_document_reads import (
     PUBLIC_DOCUMENT_LIST_QUERY_PARAMS,
     PUBLIC_DOCUMENT_NO_QUERY_PARAMS,
@@ -120,7 +120,7 @@ def register_route_backend_public_document_reads(bp):
         # Derived from the same policy the workspace context advertises, so the
         # list flag and `document_management.operations` cannot disagree.
         settings = get_settings()
-        payload["file_downloads_enabled"] = "download" in public_document_management_operations(
+        payload["file_downloads_enabled"] = "download" in public_document_capabilities(
             workspace, role, settings,
             download_enabled=is_public_workspace_file_download_enabled(settings, workspace),
         )

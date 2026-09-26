@@ -1,10 +1,12 @@
 # test_public_context_fixture_parity.py
 """
 Parity between the public workspace context the V2 browser fixtures serve and the real builder.
-Version: 0.261.185
+Version: 0.261.186
 Implemented in: 0.261.168
 settings_management, the public settings decision (M10C): 0.261.185
 the Settings, Activity and Statistics manage sections and the settings switches (M10C R5): 0.261.185
+Reader downloads: the M3A read fixture models a downloads-off workspace, so its seeded context is
+held against the server's for that same per-workspace switch (a reader gets no download): 0.261.186
 
 Every public browser suite builds its selected-workspace context from
 `ui_tests/fixtures/public_workspace.py::public_context`, directly or through the per-suite fixtures
@@ -445,22 +447,26 @@ def built(fixture_class, *steps):
     return fixture
 
 
-# Every seeded context, as the role it serves, in an active workspace.
+# Every seeded context, as the role it serves, in an active workspace. The M3A read fixture models a
+# downloads-off public workspace (its reader sees no Download and its list reports downloads off), so
+# the server side is fed the same per-workspace switch and must agree that a reader gets no download
+# capability. The other suites model the deployment's default, downloads on.
 SEEDED = [
-    pytest.param(fixture_module.PublicWorkspaceFixture, "pub-a", "User", id="shell-pub-a"),
-    pytest.param(fixture_module.PublicWorkspaceFixture, "pub-b", "User", id="shell-pub-b"),
-    pytest.param(PublicDocumentsFixture, "pub-a", "User", id="documents-pub-a"),
-    pytest.param(PublicDocumentsFixture, "pub-b", "User", id="documents-pub-b"),
-    pytest.param(PublicDocumentManagementFixture, "pub-a", "DocumentManager", id="management-pub-a"),
-    pytest.param(PublicDocumentManagementFixture, "pub-b", "DocumentManager", id="management-pub-b"),
-    pytest.param(PublicDocumentCollaborationFixture, "pub-a", "DocumentManager", id="collaboration-pub-a"),
-    pytest.param(PublicDocumentCollaborationFixture, "pub-b", "DocumentManager", id="collaboration-pub-b"),
+    pytest.param(fixture_module.PublicWorkspaceFixture, "pub-a", "User", {}, id="shell-pub-a"),
+    pytest.param(fixture_module.PublicWorkspaceFixture, "pub-b", "User", {}, id="shell-pub-b"),
+    pytest.param(PublicDocumentsFixture, "pub-a", "User", {"disable_file_downloads": True}, id="documents-pub-a"),
+    pytest.param(PublicDocumentsFixture, "pub-b", "User", {"disable_file_downloads": True}, id="documents-pub-b"),
+    pytest.param(PublicDocumentManagementFixture, "pub-a", "DocumentManager", {}, id="management-pub-a"),
+    pytest.param(PublicDocumentManagementFixture, "pub-b", "DocumentManager", {}, id="management-pub-b"),
+    pytest.param(PublicDocumentCollaborationFixture, "pub-a", "DocumentManager", {}, id="collaboration-pub-a"),
+    pytest.param(PublicDocumentCollaborationFixture, "pub-b", "DocumentManager", {}, id="collaboration-pub-b"),
 ]
 
 
-@pytest.mark.parametrize("fixture_class,workspace_id,role", SEEDED)
-def test_every_seeded_per_suite_context_is_the_servers(public, fixture_class, workspace_id, role):
+@pytest.mark.parametrize("fixture_class,workspace_id,role,workspace_changes", SEEDED)
+def test_every_seeded_per_suite_context_is_the_servers(public, fixture_class, workspace_id, role, workspace_changes):
     served = built(fixture_class).workspaces[workspace_id]
+    public.public_records[WORKSPACE_ID].update(workspace_changes)
     found = differences(real_context(public, role, "active"), served)
     assert not found, describe(found)
 

@@ -183,9 +183,11 @@ class PublicDocumentCollaborationFixture(PublicDocumentManagementFixture):
             self.workspaces[workspace_id]["document_collaboration"] = {"schema_version": 1, "operations": list(operations)}
 
     def view_as_reader(self, workspace_id="pub-a"):
-        """Serve the workspace as an ordinary reader is served it: the reader's context, no document
-        operation on any row (get_public_document_actions), and no artifact awaiting publication."""
-        self.configure_workspace(workspace_id, role="User")
+        """Serve the workspace as an ordinary reader is served it: the reader's context on a
+        downloads-off workspace (so no Download control and no operation on any row --
+        get_public_document_actions), and no artifact awaiting publication. Reader downloads,
+        the downloads-on capability, are exercised on the management fixture."""
+        self.set_policy(workspace_id, role="User", download_enabled=False)
         for (versions_workspace, _identifier), rows in self.versions.items():
             if versions_workspace == workspace_id:
                 for row in rows:

@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 """
 Functional tests for immutable-target public workspace document management.
-Version: 0.261.179
+Version: 0.261.186
 Implemented in: 0.261.133
 Guarded tag vocabulary (R5.8): the lost patch answers one coded conflict: 0.261.173
 The revision delete double returns the real delete_document_revision's shape, deleted_mode included: 0.261.179
+Reader downloads: a reader may download when downloads are enabled; management stays manager-only: 0.261.186
 
 The real public management/access/policy modules and the scoped management route
 family run in the isolated Flask app built by the M3A read fixture. The workspace
@@ -353,11 +354,89 @@ def test_every_operation_requires_a_content_manager(management, operation, oid):
     env = management
     actor(env, oid)
     response = invoke(env, operation)
-    if oid in {"owner", "admin", "manager"}:
+    # Downloads are a reader-level capability that mirrors classic public downloads. Public
+    # workspaces are open-read: every authenticated user resolves to at least role "User"
+    # (functions_public_workspaces.get_user_role_in_public_workspace), so the explicit reader
+    # AND any other signed-in user ("stranger") may download when downloads are enabled. Every
+    # management verb still requires a content manager, so both are refused those.
+    reader_download = operation in {"download", "batch_download"} and oid in {"reader", "stranger"}
+    if oid in {"owner", "admin", "manager"} or reader_download:
         assert response.status_code in {200, 201, 202}, response.get_data(as_text=True)
     else:
         assert response.status_code == 403, response.get_data(as_text=True)
         assert env.source.writes == [] and env.workspace_container.writes == [] and env.queue.jobs == []
+
+
+@pytest.mark.parametrize("path,method,payload", [
+    ("/document-a/download", "get", None),
+    ("/download", "post", {"document_ids": ["document-a"]}),
+])
+def test_a_reader_downloads_when_downloads_are_enabled(management, path, method, payload):
+    """A reader (role User) downloads a document they can see when the workspace's downloads are
+    on -- the classic public rule -- through the same immutable-target routes managers use."""
+    env = management
+    env.downloads = True
+    actor(env, "reader")
+    response = getattr(env.client, method)(f"{ROOT}{path}", **({"json": payload} if payload else {}))
+    assert response.status_code == 200, response.get_data(as_text=True)
+    env.user_settings.assert_not_called()
+
+
+@pytest.mark.parametrize("path,method,payload", [
+    ("/document-a/download", "get", None),
+    ("/download", "post", {"document_ids": ["document-a"]}),
+])
+def test_a_reader_cannot_download_when_downloads_are_disabled(management, path, method, payload):
+    """With the workspace's downloads off, no download route serves anyone -- reader or manager."""
+    env = management
+    env.downloads = False
+    actor(env, "reader")
+    response = getattr(env.client, method)(f"{ROOT}{path}", **({"json": payload} if payload else {}))
+    assert response.status_code == 403, response.get_data(as_text=True)
+
+
+def test_a_reader_cannot_download_a_pending_artifact(management):
+    """A pending generated artifact is invisible to a reader (decision 27), so the reader's
+    download is the same 404 as a missing document -- it must never confirm the artifact
+    exists. A manager, who can see it to decide it, gets the 409 that says it is not yet
+    downloadable."""
+    env = management
+    env.downloads = True
+    env.source.records["document-a"]["generated_artifact_promotion_status"] = "pending_approval"
+
+    actor(env, "reader")
+    reader_response = env.client.get(f"{ROOT}/document-a/download")
+    assert reader_response.status_code == 404, reader_response.get_data(as_text=True)
+
+    actor(env, "manager")
+    manager_response = env.client.get(f"{ROOT}/document-a/download")
+    assert manager_response.status_code == 409, manager_response.get_data(as_text=True)
+
+
+def test_a_reader_cannot_download_a_held_document(management):
+    """A content-screening hold makes the source unavailable, so the reader's download is refused
+    at per-document eligibility, the same boundary that refuses a manager."""
+    from content_screening.contracts import SCREENING_FIELD
+
+    env = management
+    env.downloads = True
+    env.source.records["document-a"][SCREENING_FIELD] = {
+        "state": "pending_review", "available": False, "scan_id": "scan-held",
+    }
+    actor(env, "reader")
+    response = env.client.get(f"{ROOT}/document-a/download")
+    assert response.status_code == 409, response.get_data(as_text=True)
+
+
+def test_a_reader_cannot_perform_management_operations(management):
+    """The download carve-out is download-only: every management verb still refuses a reader."""
+    env = management
+    env.downloads = True
+    actor(env, "reader")
+    for operation in ("upload", "edit_metadata", "delete", "extract_metadata", "reprocess", "create_tag"):
+        response = invoke(env, operation)
+        assert response.status_code == 403, (operation, response.get_data(as_text=True))
+    assert env.source.writes == [] and env.workspace_container.writes == [] and env.queue.jobs == []
 
 
 @pytest.mark.parametrize("operation", OPERATIONS)
