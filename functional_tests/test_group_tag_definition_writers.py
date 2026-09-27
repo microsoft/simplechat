@@ -1,7 +1,7 @@
 # test_group_tag_definition_writers.py
 """
 Functional test for the group tag definition writers on the etag guard.
-Version: 0.261.160
+Version: 0.261.189
 Implemented in: 0.261.160
 
 The classic group tag routes (create, rename or recolour, delete) and
@@ -26,6 +26,9 @@ real ``functions_group`` over the etag-enforcing groups container from
 - ``get_or_create_tag_definition`` adds a definition only while the current copy
   lacks it, answers one added meanwhile, and, for a group that keeps changing,
   answers the tag's default colour and logs a data-free warning.
+
+Updated in 0.261.189: that warning carries the standard ``[CREATE_TAG]`` logging
+tag, which replaced the nonstandard ``[Tags]`` in 0.261.173.
 """
 
 import copy
@@ -585,5 +588,5 @@ def test_a_group_that_keeps_changing_answers_the_default_colour_with_a_data_free
     assert get_or_create(env) == {"color": default_color(env)}
     assert definitions(env) == {} and env.bumps == []
     assert env.logs == [(
-        "[Tags] A group tag definition was not saved because the group kept changing.", logging.WARNING, {},
+        "[CREATE_TAG] A group tag definition was not saved because the group kept changing.", logging.WARNING, {},
     )]
