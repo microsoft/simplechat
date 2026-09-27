@@ -1,8 +1,9 @@
 # test_content_screening_pipeline.py
 """
 Functional integration tests for workspace admission and reviewed publication.
-Version: 0.261.130
+Version: 0.261.189
 Implemented in: 0.261.106
+The exec namespace carries ONENOTE_EXTENSIONS, which the upload path reads from 0.261.189: 0.261.189
 Enabled-empty upload admission implemented in: 0.261.114
 Publication processing evidence implemented in: 0.261.118
 
@@ -281,7 +282,7 @@ def pipeline(monkeypatch):
         "TABULAR_EXTENSIONS": {"csv"}, "IMAGE_EXTENSIONS": {"png"},
         "DOCUMENT_EXTENSIONS": {"pdf", "docx"}, "VIDEO_EXTENSIONS": {"mp4"},
         "AUDIO_EXTENSIONS": {"mp3"}, "VISIO_EXTENSIONS": {"vsdx"},
-        "EMAIL_EXTENSIONS": {"msg"},
+        "EMAIL_EXTENSIONS": {"msg"}, "ONENOTE_EXTENSIONS": {"one", "onepkg"},
         "hold_data_management_search_write_slot": search_write_slot,
         "hold_group_document_projection": hold_group_document_projection,
         "GroupDocumentProjectionConflict": GroupDocumentProjectionConflict,
