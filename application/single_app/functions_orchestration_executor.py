@@ -302,6 +302,7 @@ class RunContext:
         elicitation_references=None,
         selected_document_ids=None,
         original_seeds=None,
+        seeds=None,
         resolved_message=None,
         conversation_context=None,
         context_message_ids=None,
@@ -397,6 +398,7 @@ class RunContext:
         self.user_request = build_elicitation_user_request(self.resolved_message, self.answered_questions)
         self.elicitation_references = list(elicitation_references or [])
         self.selected_document_ids = list(selected_document_ids or [])
+        self.seeds = dict(seeds or {})
         self.original_seeds = dict(original_seeds or {})
         self.user_message_id = user_message_id
         self.conversation_context = deepcopy(conversation_context or {})
@@ -520,7 +522,7 @@ def _collect_plan_document_ids(steps):
     ids = []
     for step in steps:
         arguments = step.get('arguments') if isinstance(step.get('arguments'), dict) else {}
-        for key in ('document_ids', 'right_document_ids', 'target_document_ids'):
+        for key in ('document_ids', 'right_document_ids', 'target_document_ids', 'reference_document_ids'):
             for document_id in _string_list(arguments.get(key)):
                 if document_id not in ids:
                     ids.append(document_id)
@@ -1125,6 +1127,7 @@ def _execute_dependency_plan(
         action_refs=[action.get('action_ref') for action in context.action_catalog],
         existing_results=context.result_aliases, composition_profiles=context.composition_profiles,
         export_catalog=context.export_catalog, contract_version=DEPENDENCY_PLAN_CONTRACT_VERSION,
+        seeds=getattr(context, 'seeds', None),
     )
     steps = plan['steps']
     resolver = get_adapter or _dependency_adapter

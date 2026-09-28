@@ -121,6 +121,7 @@ def resolve_image_edit_capability(settings):
         'provider_label': '', 'cloud_label': '', 'availability': 'unknown',
         'availability_reason': '', 'sizes': [], 'qualities': [], 'backgrounds': [],
         'input_formats': [], 'output_formats': [],
+        'max_reference_images': 0, 'input_fidelity': False,
     }
     if not settings.get('enable_image_generation'):
         return {**unavailable, 'reason': 'Image generation is not enabled.'}
@@ -138,6 +139,7 @@ def resolve_image_edit_capability(settings):
     ):
         capability.update(
             mode=IMAGE_EDIT_MODE_REGENERATE, editing=False, masking=False,
+            max_reference_images=0, input_fidelity=False,
             reason=f'Source-image editing requires Images API version {MIN_IMAGE_EDIT_API_VERSION} or newer.',
         )
     elif capability['editing'] and not capability['masking']:

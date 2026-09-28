@@ -38,12 +38,24 @@ import {
     type ContextOrigin,
     type ContextScopeRef,
 } from './chatContext';
-import type { WorkspaceDocument, WorkspaceRef, WorkspaceTag } from './types';
+import type {
+    DocumentListResponse,
+    DocumentQuery,
+    WorkspaceDocument,
+    WorkspaceRef,
+    WorkspaceTag,
+} from './types';
 
 /** How many rows of each kind a query offers before the menu starts to feel like a list. */
 const DOCUMENTS_PER_SCOPE = 6;
 const TAG_LIMIT = 5;
 const SCOPE_LIMIT = 3;
+
+// A filtered search reads further back than one short page, because most recent documents may
+// not qualify. It stops at the first of: enough matches, the end of the list, or the page cap.
+const FILTERED_DOCUMENTS_PER_SCOPE = 12;
+const FILTERED_DOCUMENT_PAGE_SIZE = 50;
+const FILTERED_DOCUMENT_MAX_PAGES = 4;
 
 /** How long a fetched tag vocabulary stays good for. */
 const TAG_CACHE_MS = 60_000;
@@ -69,6 +81,10 @@ export interface ContextSearchOptions {
     signal?: AbortSignal;
     /** The document picker can explain held rows; mention menus omit them. */
     includeUnavailable?: boolean;
+    /** Offer only documents that pass, paging further back through each workspace to find them. */
+    documentFilter?: (document: WorkspaceDocument) => boolean;
+    /** Leave out tags and whole workspaces, for pickers that can only use a document. */
+    documentsOnly?: boolean;
 }
 
 /** Build the item a chosen candidate becomes. */
@@ -149,6 +165,50 @@ async function settled<T>(work: Promise<T>, fallback: T): Promise<T> {
         // an empty one with no explanation.
         return fallback;
     }
+}
+
+type DocumentPageFetcher = (query: Partial<DocumentQuery>) => Promise<DocumentListResponse>;
+
+/**
+ * The documents one workspace route offers for a query.
+ *
+ * Unfiltered, this is a single short page. Filtered, it pages back until it has enough
+ * matches, so a workspace whose latest uploads are all PDFs still offers its older images.
+ * A failed page keeps what was already found.
+ */
+export async function collectScopeDocuments(
+    fetchPage: DocumentPageFetcher,
+    search: string,
+    filter?: (document: WorkspaceDocument) => boolean,
+    signal?: AbortSignal,
+): Promise<WorkspaceDocument[]> {
+    if (!filter) {
+        const response = await settled(
+            fetchPage({ search, page: 1, pageSize: DOCUMENTS_PER_SCOPE }),
+            { documents: [] } as DocumentListResponse,
+        );
+        return response.documents ?? [];
+    }
+
+    const found: WorkspaceDocument[] = [];
+    for (let page = 1; page <= FILTERED_DOCUMENT_MAX_PAGES && !signal?.aborted; page += 1) {
+        const response = await settled(
+            fetchPage({ search, page, pageSize: FILTERED_DOCUMENT_PAGE_SIZE }),
+            null as DocumentListResponse | null,
+        );
+        const documents = response?.documents ?? [];
+        found.push(...documents.filter(filter));
+        const total = Number(response?.total_count);
+        // A route that reports no total does not page (the public list ignores `page`), so
+        // asking again would only re-read the same rows.
+        if (found.length >= FILTERED_DOCUMENTS_PER_SCOPE
+            || documents.length < FILTERED_DOCUMENT_PAGE_SIZE
+            || !Number.isFinite(total)
+            || page * FILTERED_DOCUMENT_PAGE_SIZE >= total) {
+            break;
+        }
+    }
+    return found.slice(0, FILTERED_DOCUMENTS_PER_SCOPE);
 }
 
 /* -------------------------------------------------------------------------- */
@@ -248,21 +308,36 @@ export async function searchContextCandidates(
             .filter(([id]) => Boolean(id)),
     );
 
-    const listQuery = { search: needle, page: 1, pageSize: DOCUMENTS_PER_SCOPE };
+    const filter = options.documentFilter;
+    const signal = options.signal;
+    const noDocuments = Promise.resolve([] as WorkspaceDocument[]);
 
-    const [personal, groupDocs, publicDocs, tags] = await Promise.all([
-        settled(fetchPersonalDocuments(listQuery, options.signal), { documents: [] }),
+    const [personalDocs, groupDocs, publicDocs, tags] = await Promise.all([
+        collectScopeDocuments(
+            (query) => fetchPersonalDocuments(query, signal),
+            needle,
+            filter,
+            signal,
+        ),
         options.groupsEnabled && groupIds.length > 0
-            ? settled(fetchGroupDocuments(groupIds, listQuery, options.signal), {
-                  documents: [],
-              })
-            : Promise.resolve({ documents: [] as WorkspaceDocument[] }),
+            ? collectScopeDocuments(
+                  (query) => fetchGroupDocuments(groupIds, query, signal),
+                  needle,
+                  filter,
+                  signal,
+              )
+            : noDocuments,
         options.publicEnabled
-            ? settled(fetchPublicWorkspaceDocuments(listQuery, options.signal), {
-                  documents: [],
-              })
-            : Promise.resolve({ documents: [] as WorkspaceDocument[] }),
-        settled(loadTags(options), [] as ScopedTag[]),
+            ? collectScopeDocuments(
+                  (query) => fetchPublicWorkspaceDocuments(query, signal),
+                  needle,
+                  filter,
+                  signal,
+              )
+            : noDocuments,
+        options.documentsOnly
+            ? Promise.resolve([] as ScopedTag[])
+            : settled(loadTags(options), [] as ScopedTag[]),
     ]);
 
     const candidates: ContextCandidate[] = [];
@@ -275,7 +350,7 @@ export async function searchContextCandidates(
         }
     };
 
-    for (const document of personal.documents ?? []) {
+    for (const document of personalDocs) {
         push(documentCandidate(document, PERSONAL_SCOPE, options.includeUnavailable));
     }
 
@@ -286,7 +361,7 @@ export async function searchContextCandidates(
         ? publicScope(publicWorkspaces[0])
         : PERSONAL_SCOPE;
 
-    for (const document of groupDocs.documents ?? []) {
+    for (const document of groupDocs) {
         push(
             documentCandidate(
                 document,
@@ -295,7 +370,7 @@ export async function searchContextCandidates(
             ),
         );
     }
-    for (const document of publicDocs.documents ?? []) {
+    for (const document of publicDocs) {
         push(
             documentCandidate(
                 document,
@@ -303,6 +378,10 @@ export async function searchContextCandidates(
                 options.includeUnavailable,
             ),
         );
+    }
+
+    if (options.documentsOnly) {
+        return candidates;
     }
 
     // Tags and workspaces are filtered here rather than server-side: both are short lists

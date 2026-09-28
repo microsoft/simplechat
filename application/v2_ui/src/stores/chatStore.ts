@@ -124,6 +124,11 @@ import { useBootstrapStore } from './bootstrapStore';
 import { useCollaborationStore, participantName } from './collaborationStore';
 import type { MaskAction, MaskSelection } from '../lib/masking';
 import type { VisualStyle } from '../lib/visualPalettes';
+import {
+    effectiveReferenceImageLimit,
+    normalizeImageReferences,
+    type ImageReferenceRequest,
+} from '../lib/imageReferences';
 import type {
     AgentOption,
     AnalysisResultContext,
@@ -227,6 +232,14 @@ export interface ComposerOptions {
      * everything downstream that already reads `selected_document_ids` is unchanged.
      */
     contextItems: ContextItem[];
+    imageReferences?: ImageReferenceRequest[];
+}
+
+export interface GenerateImageFromReferenceRequest {
+    prompt: string;
+    references: ImageReferenceRequest[];
+    mask?: string;
+    maskRegions?: number;
 }
 
 interface ChatState {
@@ -308,6 +321,7 @@ interface ChatState {
      * reports the full set, so what it returns is remembered here.
      */
     attemptsByThread: Record<string, number[]>;
+    composerImageReferences: ImageReferenceRequest[];
 
     loadConversations: (options?: { reset?: boolean; search?: string }) => Promise<void>;
     loadMore: () => Promise<void>;
@@ -374,6 +388,9 @@ interface ChatState {
     bulkHideSelectedConversations: () => Promise<void>;
 
     sendMessage: (text: string, options: ComposerOptions) => Promise<void>;
+    generateImageFromReference: (request: GenerateImageFromReferenceRequest) => Promise<string | null>;
+    addComposerImageReference: (reference: ImageReferenceRequest) => void;
+    consumeComposerImageReferences: () => ImageReferenceRequest[];
     stopStreaming: () => void;
 
     /**
@@ -1609,6 +1626,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     metadataLoading: false,
     metadataError: null,
     attemptsByThread: {},
+    composerImageReferences: [],
 
     loadConversations: async (options = {}) => {
         const { reset = true, search } = options;
@@ -2259,6 +2277,21 @@ export const useChatStore = create<ChatState>((set, get) => ({
         }
     },
 
+    addComposerImageReference: (reference) => set((state) => ({
+        composerImageReferences: normalizeImageReferences(
+            [...state.composerImageReferences, reference],
+            effectiveReferenceImageLimit(useBootstrapStore.getState().data?.capabilities?.image_edit),
+        ),
+    })),
+
+    consumeComposerImageReferences: () => {
+        const references = get().composerImageReferences;
+        if (references.length > 0) {
+            set({ composerImageReferences: [] });
+        }
+        return references;
+    },
+
     sendMessage: async (text, options) => {
         const trimmed = text.trim();
         if (!trimmed || get().streaming) {
@@ -2360,6 +2393,12 @@ export const useChatStore = create<ChatState>((set, get) => ({
         const taggedModelSelection =
             invocationTarget?.target_type === 'model' ? invocationTarget.selection_key : undefined;
 
+        const optimisticImageReferences = options.imageGeneration && !collaborative
+            ? normalizeImageReferences(
+                  options.imageReferences ?? [],
+                  effectiveReferenceImageLimit(bootstrap?.capabilities?.image_edit),
+              )
+            : [];
         const pendingUserMessageId = `pending-user-${Date.now()}`;
         const optimisticUserMessage: ChatMessage = {
             id: pendingUserMessageId,
@@ -2370,10 +2409,15 @@ export const useChatStore = create<ChatState>((set, get) => ({
             // Carried locally so the bubble can draw the prompt as a collapsed block straight
             // away. Without it the message would render as one blob until the server echo
             // arrived and then silently rearrange itself.
-            ...(options.promptInfo
+            ...(options.promptInfo || optimisticImageReferences.length > 0
                 ? {
                       metadata: {
-                          prompt_selection: promptSelectionMetadata(options.promptInfo),
+                          ...(options.promptInfo
+                              ? { prompt_selection: promptSelectionMetadata(options.promptInfo) }
+                              : {}),
+                          ...(optimisticImageReferences.length > 0
+                              ? { image_references: optimisticImageReferences }
+                              : {}),
                       },
                   }
                 : {}),
@@ -2448,10 +2492,13 @@ export const useChatStore = create<ChatState>((set, get) => ({
         // Derived once here rather than at each field: the chip row is the single source of
         // truth for what this message is pointed at, and the request is three views of it.
         const contextItems = options.contextItems ?? [];
-        const contextDocuments = contextDocumentIds(contextItems);
-        const contextTagNames = contextTags(contextItems);
-        const contextWorkspaces = contextScopes(contextItems);
-        const filterMode = contextFilterMode(contextItems);
+        const directImageMode = Boolean(options.imageGeneration && !collaborative);
+        const imageReferences = directImageMode ? optimisticImageReferences : [];
+        const searchContextItems = directImageMode ? [] : contextItems;
+        const contextDocuments = contextDocumentIds(searchContextItems);
+        const contextTagNames = contextTags(searchContextItems);
+        const contextWorkspaces = contextScopes(searchContextItems);
+        const filterMode = contextFilterMode(searchContextItems);
 
         const scope = resolveDocumentScope({
             activeGroupId: bootstrap?.scope?.active_group_id,
@@ -2472,7 +2519,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
             chat_type: 'user',
             // Choosing context is itself a request to search: a chip the user added while
             // the toggle happened to be off would otherwise be collected, sent, and ignored.
-            hybrid_search: options.documentSearch || contextItems.length > 0,
+            hybrid_search: directImageMode ? false : options.documentSearch || searchContextItems.length > 0,
             web_search_enabled: options.webSearch,
             image_generation: options.imageGeneration,
             selected_document_ids: contextDocuments,
@@ -2487,6 +2534,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
             deep_research_enabled: options.deepResearch,
             url_access_enabled: options.urlAccess,
         };
+        if (imageReferences.length > 0) {
+            requestBody.image_references = imageReferences;
+        }
 
         if (contextTagNames.length > 0) {
             requestBody.tags = contextTagNames;
@@ -2554,6 +2604,92 @@ export const useChatStore = create<ChatState>((set, get) => ({
                   }
                 : undefined,
         });
+    },
+
+    generateImageFromReference: async ({ prompt, references, mask, maskRegions }) => {
+        const trimmed = prompt.trim();
+        if (!trimmed) {
+            return 'Describe the image you want to create.';
+        }
+        if (get().streaming) {
+            return 'Wait for the current response to finish, then try again.';
+        }
+        if (get().activeConversationKind === 'collaborative') {
+            return 'Reference image editing is not available in collaborative conversations.';
+        }
+
+        const limit = effectiveReferenceImageLimit(
+            useBootstrapStore.getState().data?.capabilities?.image_edit,
+        );
+        const imageReferences = normalizeImageReferences(references, limit);
+        if (imageReferences.length === 0) {
+            return 'Choose a reference image before creating a new image.';
+        }
+
+        let conversationId = get().activeConversationId;
+        const isNewConversation = !conversationId;
+        if (!conversationId) {
+            try {
+                const created = await createConversation(trimmed);
+                conversationId = created.conversation_id;
+                if (get().activeConversationId === null) {
+                    set({ activeConversationId: conversationId, activeConversationKind: 'personal' });
+                    useCollaborationStore.getState().setActiveConversation(conversationId);
+                }
+            } catch (error) {
+                return error instanceof Error ? error.message : 'Could not start a new conversation.';
+            }
+        }
+
+        const pendingUserMessageId = `pending-user-${Date.now()}`;
+        if (get().activeConversationId === conversationId) {
+            set((state) => ({
+                messages: [
+                    ...state.messages,
+                    {
+                        id: pendingUserMessageId,
+                        conversation_id: conversationId,
+                        role: 'user',
+                        content: trimmed,
+                        timestamp: new Date().toISOString(),
+                        metadata: { image_references: imageReferences },
+                    },
+                ],
+                streaming: true,
+                streamingContent: '',
+                thoughts: [],
+                streamingReasoningAdjustments: [],
+                streamError: null,
+                streamAuthUrl: null,
+                reconnectPhase: null,
+            }));
+        }
+
+        const requestBody: ChatStreamRequest = {
+            message: trimmed,
+            conversation_id: conversationId,
+            chat_type: 'user',
+            hybrid_search: false,
+            image_generation: true,
+            image_references: imageReferences,
+            ...(mask ? { image_mask: mask } : {}),
+            ...(maskRegions ? { image_mask_regions: maskRegions } : {}),
+        };
+
+        // Not awaited: the editor closes once the request is on its way, so the reader watches
+        // the new image arrive in the conversation. Stream failures are reported there.
+        void runChatStream(requestBody, conversationId, {
+            isNewConversation,
+            kind: 'personal',
+            pendingUserMessageId,
+            reloadOnDone: true,
+        }).catch((error: unknown) => {
+            set({
+                streaming: false,
+                streamError: error instanceof Error ? error.message : 'Could not create the image.',
+            });
+        });
+        return null;
     },
 
     stopStreaming: () => {

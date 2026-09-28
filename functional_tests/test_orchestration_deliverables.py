@@ -1,7 +1,7 @@
 # test_orchestration_deliverables.py
 """The deliverables contract and planned image generation in Gather / Reason / Render plans.
 
-Version: 0.261.141
+Version: 0.261.192
 Implemented in: 0.261.138
 Single orchestration contract updated in: 0.261.139
 Planner kind-specific fields and absent answer bindings updated in: 0.261.140
@@ -57,7 +57,7 @@ REPORT_TEXT = (
 
 
 def test_version_includes_the_deliverables_contract():
-    assert_app_version_at_least("0.261.138")
+    assert_app_version_at_least("0.261.192")
 
 
 # ------------------------------------------------------------------------------------------
@@ -127,7 +127,7 @@ def _image_step(step_id, title, *, delivers=("portraits",), **arguments):
     return {
         "step_id": step_id, "capability_id": "generate_image", "title": f"Illustrate {title}",
         "arguments": {
-            "prompt": f"An illustrated portrait of {title}, painted in a late 18th-century style.",
+            "prompt": f"A photorealistic studio portrait of {title}, painted in a late 18th-century style.",
             "title": title, **arguments,
         },
         **({"delivers": list(delivers)} if delivers else {}),
@@ -641,10 +641,27 @@ def test_the_image_control_asks_the_planner_for_explicit_images(harness, monkeyp
     }}
     kind, plan = _plan_request(harness, [reply], seeds={"image_generation": True})
     context = json.loads(harness.model_calls[0]["messages"][1]["content"])
+    system = harness.model_calls[0]["messages"][0]["content"]
+    normalized_system = " ".join(system.split())
     assert kind == "plan"
+    assert "Follow the visual style the user asks for" in normalized_system
+    assert "including photorealistic images" in normalized_system
+    assert "captioned as such" in normalized_system
+    assert "depiction of a real event" in normalized_system
+    assert "never call one a photograph" not in normalized_system
+    assert "illustrated portrait" not in normalized_system
     assert context["user_selected"]["images"] is True
     assert "image_proposals" not in context["user_selected"]
     assert context["capability_availability"]["deliverables"]["image"]["explicit"]["status"] == "available"
+    image_fact = next(
+        fact for fact in context["capability_availability"]["deliverables"]["facts"]
+        if "generate_image follows the visual style" in fact
+    )
+    assert "including photorealistic images" in image_fact
+    assert "captioned as such" in image_fact
+    assert "depiction of a real event" in image_fact
+    assert "not a photograph" not in image_fact
+    assert "illustrated portrait" not in image_fact
     assert [step["capability_id"] for step in plan["steps"]] == ["generate_image"]
 
 
@@ -667,6 +684,19 @@ def test_image_generation_is_gated_by_the_image_settings(harness, monkeypatch):
         item for item in registry.resolve_available_capabilities(harness.settings, contract_version=2)
         if item["id"] == "generate_image"
     )
+    prompt_description = capability["inputs"]["properties"]["prompt"]["description"]
+    title_description = capability["inputs"]["properties"]["title"]["description"]
+    assert "Follow the visual style the user asked for" in prompt_description
+    assert "including photorealistic" in prompt_description
+    assert "illustration, not a photograph" not in prompt_description
+    assert "AI-generated image" in title_description
+    assert "AI-generated image" in capability["summary"]
+    assert "including photorealistic images" in capability["when_to_use"]
+    assert "not a real photograph" in capability["when_to_use"]
+    assert "depiction of a real event" in capability["when_to_use"]
+    assert "found on the web" in capability["when_to_use"]
+    assert "never a photograph" not in capability["when_to_use"]
+    assert "illustrated portrait" not in capability["when_to_use"]
     assert capability["inputs"]["properties"]["size"]["enum"] == ["1024x1024", "1536x1024", "1024x1536"]
     assert capability["max_per_plan"] == registry.MAX_GENERATED_IMAGES_PER_PLAN
     # Only Render and planned images may publish; every other Gather or Reason step stays unable to.
@@ -711,7 +741,7 @@ def test_a_generated_image_is_saved_with_the_answer_that_shows_it(harness, monke
     assert value["message_id"] == image["id"] and value["ai_generated"] is True
     assert value["content_sha256"] == hashlib.sha256(stored).hexdigest()
     assert '"visualId": "lighthouse"' in answer["content"] and "```simpleimage" in answer["content"]
-    assert "*AI-generated illustration: A lighthouse at dusk*" in answer["content"]
+    assert "*AI-generated image: A lighthouse at dusk*" in answer["content"]
     assert answer["metadata"]["orchestration"]["generated_images"] == [
         {"visual_id": "lighthouse", "message_id": image["id"]},
     ]
@@ -732,7 +762,9 @@ def test_image_prompts_pass_the_chat_output_check_before_generation(harness, mon
 
     def check(text, checkpoint, **kwargs):
         # Only the planned image prompt is refused; the published reply is checked as usual.
-        return blocked if "illustrated portrait of A lighthouse" in text else original(text, checkpoint, **kwargs)
+        return blocked if "photorealistic studio portrait of A lighthouse" in text else original(
+            text, checkpoint, **kwargs
+        )
 
     monkeypatch.setattr(checks, "check_chat_content", check)
     _create(harness, {

@@ -77,8 +77,9 @@ function Fixture() {
     }, [revisions.revise]);
     return <>
         <button type="button" onClick={() => setOpen(true)}>Open image editor</button>
-        {open && <ImageEditor title="Generated mountain" imageSrc={imageSrc}
-            revisions={revisions} capability={capability} onClose={() => setOpen(false)} />}
+        {open && <ImageEditor mode={initial.mode || 'revise'} title="Generated mountain" imageSrc={imageSrc}
+            revisions={revisions} capability={capability} reference={initial.reference}
+            onClose={() => setOpen(false)} />}
     </>;
 }
 createRoot(document.getElementById('root')).render(<Fixture />);
@@ -217,6 +218,7 @@ class ImageEditorFixture:
         self.page = page
         self.assets = assets
         self.requests = []
+        self.chat_stream_requests = []
         self.restores = []
         self.errors = []
         self.unexpected_requests = []
@@ -251,7 +253,7 @@ class ImageEditorFixture:
             return
         self.errors.append(message.text)
 
-    def open(self, capability=None, width=1440, shared=False, unresolved=False):
+    def open(self, capability=None, width=1440, shared=False, unresolved=False, mode="revise", reference=None):
         self.image_endpoint = (
             "/api/collaboration/conversations/conversation-1/images/image-1"
             if shared else "/api/image/image-1"
@@ -269,12 +271,15 @@ class ImageEditorFixture:
             "imageEndpoint": self.image_endpoint,
             "imageUrl": f"{self.image_endpoint}?rev=revision-1",
             "entry": self.entry,
+            "mode": mode,
+            "reference": reference,
         }
         self.page.set_viewport_size({"width": width, "height": 1000})
         self.page.add_init_script(f"window.imageEditorInitial = {json.dumps(self.initial)};")
         self.page.goto(f"{ORIGIN}/image-editor", wait_until="networkidle")
         self.page.get_by_role("button", name="Open image editor", exact=True).click()
-        expect(self.page.get_by_role("dialog", name="Edit image", exact=True)).to_be_visible()
+        dialog_name = "Create image from reference" if mode == "derive" else "Edit image"
+        expect(self.page.get_by_role("dialog", name=dialog_name, exact=True)).to_be_visible()
 
     def set_capability(self, capability):
         self.page.evaluate("(value) => window.imageEditorFixture.setCapability(value)", capability)
@@ -295,6 +300,35 @@ class ImageEditorFixture:
             route.fulfill(content_type="image/png", body=_fixture_png())
         elif request.method == "GET" and path == "/favicon.ico":
             route.fulfill(status=204)
+        elif request.method == "GET" and path == "/api/get_messages":
+            route.fulfill(json={"messages": [{
+                "id": self.initial["messageId"],
+                "role": "image",
+                "content": self.initial["imageUrl"],
+                "metadata": {"image_revisions": self.initial["entry"]},
+            }]})
+        elif request.method == "POST" and path == "/api/chat/stream":
+            body = copy.deepcopy(request.post_data_json)
+            self.chat_stream_requests.append({"path": path, "body": body})
+            frames = [
+                {"type": "thought", "content": "Using 1 reference image(s)"},
+                {
+                    "type": "user_message_persisted",
+                    "user_message_id": "derive-user-message",
+                },
+                {
+                    "done": True,
+                    "role": "image",
+                    "message_id": "derive-image-message",
+                    "user_message_id": "derive-user-message",
+                    "content": "/api/image/derive-image-message",
+                },
+            ]
+            route.fulfill(
+                status=200,
+                content_type="text/event-stream",
+                body="".join(f"data: {json.dumps(frame)}\n\n" for frame in frames),
+            )
         elif request.method == "POST" and path == self.revision_endpoint:
             body = copy.deepcopy(request.post_data_json)
             self.requests.append({"path": path, "body": body})

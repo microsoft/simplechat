@@ -16,6 +16,8 @@ import {
 } from 'lucide-react';
 import { GlassPanel } from '../ui/primitives';
 import { ImageMaskCanvas, type MaskSelection } from './ImageMaskCanvas';
+import { useChatStore } from '../../stores/chatStore';
+import type { ImageReferenceRequest } from '../../lib/imageReferences';
 import {
     describePromptProblem,
     imageOptionsForCapability,
@@ -29,6 +31,7 @@ import {
 } from '../../lib/imageRevisions';
 
 type EditorTab = 'ask' | 'prompt' | 'controls' | 'history';
+type ImageEditorMode = 'revise' | 'derive';
 
 const TABS: { id: EditorTab; label: string; icon: typeof Sparkles }[] = [
     { id: 'ask', label: 'Ask AI', icon: Sparkles },
@@ -76,32 +79,42 @@ function ChoiceButton({
 }
 
 export function ImageEditor({
+    mode = 'revise',
     title,
     imageSrc,
     revisions,
     capability,
+    reference,
     onClose,
 }: {
+    mode?: ImageEditorMode;
     title: string;
     /** The image currently showing, already carrying its revision. */
     imageSrc: string;
     revisions: ImageRevisionState;
     capability: ImageEditCapability;
+    reference?: ImageReferenceRequest;
     onClose: () => void;
 }) {
     const [tab, setTab] = useState<EditorTab>('ask');
     const [instruction, setInstruction] = useState('');
     const [promptDraft, setPromptDraft] = useState(revisions.prompt);
     const [comparing, setComparing] = useState(false);
+    const [deriveBusy, setDeriveBusy] = useState(false);
+    const [deriveError, setDeriveError] = useState<string | null>(null);
     const closeRef = useRef<HTMLButtonElement>(null);
+    const generateImageFromReference = useChatStore((state) => state.generateImageFromReference);
+    const deriveMode = mode === 'derive';
 
     const inferenceEnabled = capability.enabled && capability.mode !== 'unavailable'
         && capability.availability !== 'unavailable';
-    const inferenceDisabled = revisions.busy || !revisions.canPersist || !inferenceEnabled;
+    const inferenceDisabled = deriveMode
+        ? deriveBusy || !inferenceEnabled || !capability.editing || !reference
+        : revisions.busy || !revisions.canPersist || !inferenceEnabled;
     const masked = inferenceEnabled && capability.mode === 'masked' && capability.masking;
     const editing = inferenceEnabled && capability.editing
         && (capability.mode === 'masked' || capability.mode === 'edit');
-    const contextKey = JSON.stringify([imageSrc, capability]);
+    const contextKey = JSON.stringify([mode, imageSrc, capability, reference]);
     const [selectionState, setSelectionState] = useState({ key: contextKey, value: EMPTY_SELECTION });
     const [optionState, setOptionState] = useState<{ key: string; value: ImageRenderingOptions }>({
         key: contextKey,
@@ -162,6 +175,32 @@ export function ImageEditor({
         if (inferenceDisabled || !instruction.trim()) {
             return;
         }
+        if (deriveMode) {
+            if (!reference) {
+                setDeriveError('Choose a reference image before creating a new image.');
+                return;
+            }
+            setDeriveBusy(true);
+            setDeriveError(null);
+            try {
+                const error = await generateImageFromReference({
+                    prompt: instruction,
+                    references: [reference],
+                    ...(masked && selection.dataUrl ? {
+                        mask: selection.dataUrl,
+                        maskRegions: selection.regions,
+                    } : {}),
+                });
+                if (error) {
+                    setDeriveError(error);
+                } else {
+                    onClose();
+                }
+            } finally {
+                setDeriveBusy(false);
+            }
+            return;
+        }
         const ok = await revisions.revise({
             origin: 'ai',
             operation: editing ? 'edit' : 'regenerate',
@@ -204,7 +243,7 @@ export function ImageEditor({
             className="fixed inset-0 z-50 flex items-center justify-center p-4"
             role="dialog"
             aria-modal="true"
-            aria-label="Edit image"
+            aria-label={deriveMode ? 'Create image from reference' : 'Edit image'}
         >
             <div className="absolute inset-0 bg-black/60" aria-hidden="true" onClick={onClose} />
 
@@ -217,7 +256,7 @@ export function ImageEditor({
                     <h2 className="min-w-0 flex-1 truncate text-sm font-semibold text-text-1">
                         {title}
                     </h2>
-                    {revisions.busy && (
+                    {(deriveBusy || revisions.busy) && (
                         <span className="shrink-0 text-xs text-text-3">Generating…</span>
                     )}
                     <button
@@ -269,7 +308,7 @@ export function ImageEditor({
 
                     <div className="flex min-h-0 min-w-0 flex-col">
                         <div className="flex shrink-0 flex-wrap gap-1 border-b border-edge px-3 py-2">
-                            {TABS.map(({ id, label, icon: Icon }) => (
+                            {(deriveMode ? TABS.filter((item) => item.id === 'ask') : TABS).map(({ id, label, icon: Icon }) => (
                                 <button
                                     key={id}
                                     type="button"
@@ -319,13 +358,13 @@ export function ImageEditor({
                                     Generation and editing are unavailable. You can still restore saved versions in History.
                                 </p>
                             )}
-                            {revisions.error && (
+                            {(deriveError || revisions.error) && (
                                 <div role="alert" className="mb-3 flex items-start gap-2 rounded-lg border border-danger/40 bg-danger/10 px-3 py-2 text-xs text-text-1">
                                     <AlertTriangle size={14} className="mt-0.5 shrink-0" />
-                                    <span className="flex-1">{revisions.error}</span>
+                                    <span className="flex-1">{deriveError || revisions.error}</span>
                                     <button
                                         type="button"
-                                        onClick={revisions.clearError}
+                                        onClick={() => deriveError ? setDeriveError(null) : revisions.clearError()}
                                         aria-label="Dismiss the error"
                                         className="shrink-0 text-text-3 hover:text-text-1"
                                     >
@@ -386,14 +425,16 @@ export function ImageEditor({
                                         className="inline-flex items-center justify-center gap-1.5 rounded-lg bg-accent px-3 py-2 text-xs font-semibold text-white transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
                                     >
                                         <Send size={13} />
-                                        {revisions.busy
+                                        {deriveBusy || revisions.busy
                                             ? 'Generating…'
+                                            : deriveMode
+                                              ? 'Create new image'
                                             : masked
                                               ? selection.dataUrl ? 'Edit selected region' : 'Edit image'
                                               : editing ? 'Edit using source image' : 'Regenerate whole image'}
                                     </button>
 
-                                    {revisions.chat.length > 0 && (
+                                    {!deriveMode && revisions.chat.length > 0 && (
                                         <div className="mt-2 flex flex-col gap-2 border-t border-edge pt-3">
                                             <p className="text-[11px] font-medium text-text-3">
                                                 Earlier changes to this image
@@ -414,7 +455,7 @@ export function ImageEditor({
                                 </div>
                             )}
 
-                            {tab === 'prompt' && (
+                            {!deriveMode && tab === 'prompt' && (
                                 <div className="flex flex-col gap-3">
                                     <label
                                         htmlFor="image-edit-prompt"
@@ -468,7 +509,7 @@ export function ImageEditor({
                                 </div>
                             )}
 
-                            {tab === 'controls' && (
+                            {!deriveMode && tab === 'controls' && (
                                 <div className="flex flex-col gap-4">
                                     <p className="text-[11px] leading-relaxed text-text-3">
                                         These settings apply to whole-image regeneration from this version&apos;s
@@ -537,7 +578,7 @@ export function ImageEditor({
                                 </div>
                             )}
 
-                            {tab === 'history' && (
+                            {!deriveMode && tab === 'history' && (
                                 <div className="flex flex-col gap-2">
                                     {revisions.revisions.length === 0 && (
                                         <p className="text-xs text-text-3">

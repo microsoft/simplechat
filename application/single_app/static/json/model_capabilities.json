@@ -10494,6 +10494,7 @@
         "openai": "deprecated",
         "azure_openai": "limited_access_preview"
       },
+      "inputFidelity": true,
       "provider": "openai",
       "displayName": "GPT Image 1.5",
       "aliases": [],
@@ -10535,6 +10536,7 @@
         "openai": "deprecated",
         "azure_openai": "limited_access_preview"
       },
+      "inputFidelity": true,
       "provider": "openai",
       "displayName": "GPT Image 1",
       "aliases": [],
@@ -11334,6 +11336,7 @@
         "image/jpeg",
         "image/webp"
       ],
+      "maxReferenceImages": 16,
       "availability": {
         "commercial": "documented",
         "government": "unknown",
@@ -11372,6 +11375,7 @@
         "image/jpeg",
         "image/webp"
       ],
+      "maxReferenceImages": 16,
       "availability": {
         "commercial": "documented",
         "government": "unknown",
@@ -11408,6 +11412,7 @@
         "image/jpeg"
       ],
       "maxMaskBytes": 4194304,
+      "maxReferenceImages": 16,
       "availability": {
         "commercial": "documented",
         "government": "unknown",
@@ -11439,6 +11444,7 @@
       ],
       "minDimension": 768,
       "maxPixels": 1048576,
+      "maxReferenceImages": 1,
       "availability": {
         "commercial": "documented",
         "government": "unknown",

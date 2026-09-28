@@ -1,7 +1,7 @@
 # test_image_chat_route_integration.py
 """
 Functional test for the actual /api/chat Image-mode request path.
-Version: 0.261.107
+Version: 0.261.192
 Implemented in: 0.261.105
 
 Registers the complete production chat handler with its original Flask route decorator.
@@ -20,6 +20,7 @@ import re
 import sys
 import time
 import traceback
+import types
 import unittest
 import uuid
 from datetime import datetime
@@ -48,8 +49,14 @@ from test_ai_connection_image_runtime import (  # noqa: E402
     responses_image_response,
     shared_image_settings,
 )
+import functions_chat_image_references as chat_refs  # noqa: E402
+import functions_image_references as reference_helpers  # noqa: E402
 from functions_image_messages import build_image_message_documents  # noqa: E402
 from functions_prompt_metadata import build_prompt_selection_metadata  # noqa: E402
+from test_support.versioning import assert_app_version_at_least  # noqa: E402
+
+
+assert_app_version_at_least("0.261.192")
 
 
 class MemoryContainer:
@@ -68,6 +75,11 @@ class MemoryContainer:
         if document.get("conversation_id") != partition_key:
             raise PermissionError("Wrong test partition")
         return copy.deepcopy(document)
+
+    def replace_item(self, item, body):
+        saved = copy.deepcopy(body)
+        self.documents[item] = saved
+        return copy.deepcopy(saved)
 
     def query_items(self, **kwargs):
         return []
@@ -170,6 +182,14 @@ class ImageChatRouteIntegrationTests(ImageRuntimeTestCase):
             "json": json, "logging": logging, "traceback": traceback, "re": re,
             "Any": Any, "Dict": Dict, "List": List,
             "FoundryAgentUserAuthenticationRequired": type("TestFoundryAuthenticationRequired", (Exception,), {}),
+            "M365ApprovalRequired": type("TestM365ApprovalRequired", (Exception,), {}),
+            "M365SignInRequired": type("TestM365SignInRequired", (Exception,), {}),
+            "M365PolicyError": type("TestM365PolicyError", (Exception,), {}),
+            "ModelTokenBudgetError": type("TestModelTokenBudgetError", (Exception,), {}),
+            "ScreeningError": type("TestScreeningError", (Exception,), {}),
+            "_with_m365_pending_action_cards": lambda function: function,
+            "check_chat_content": Mock(return_value=types.SimpleNamespace(decision="allow", blocked=False)),
+            "attach_chat_check": Mock(),
             "CLIENTS": {},
             "DEFAULT_CONVERSATION_TITLE": "New Conversation",
             "DOCUMENT_ACTION_TYPE_NONE": "none",
@@ -193,6 +213,7 @@ class ImageChatRouteIntegrationTests(ImageRuntimeTestCase):
                 "effective_document_scope": None, "effective_selected_document_ids": [],
                 "auto_linked_chat_upload_document_ids": [], "task_resolution": {},
             }),
+            "_exclude_xsd_contract_document_ids_from_search": lambda document_ids, _contract: document_ids,
             "_read_recent_assistant_messages": Mock(return_value=[]),
             "cosmos_messages_container": self.message_store,
             "cosmos_conversations_container": self.conversation_store,
@@ -214,12 +235,18 @@ class ImageChatRouteIntegrationTests(ImageRuntimeTestCase):
             "build_model_endpoint_identity_headers": generation.build_model_endpoint_identity_headers,
             "resolve_selected_image_deployment_name": image_route.resolve_selected_image_deployment_name,
             "request_generated_image_source": generation.request_generated_image_source,
+            "request_edited_image_source": generation.request_edited_image_source,
             "resolve_generated_image_bytes": generation.resolve_generated_image_bytes,
             "build_image_message_documents": build_image_message_documents,
             "ImageGenerationError": image_route.ImageGenerationError,
             "AIConnectionError": connections.AIConnectionError,
             "image_generation_error_log_context": generation.image_generation_error_log_context,
             "image_generation_error_response": generation.image_generation_error_response,
+            "read_chat_image_reference_request": chat_refs.read_chat_image_reference_request,
+            "prepare_chat_image_references": chat_refs.prepare_chat_image_references,
+            "compose_chat_reference_prompt": chat_refs.compose_chat_reference_prompt,
+            "chat_reference_thoughts": chat_refs.chat_reference_thoughts,
+            "references_from_metadata": reference_helpers.references_from_metadata,
             "build_json_error_response": lambda message="Chat request failed", status_code=500, **extra: (
                 jsonify({"error": message, **extra}), status_code,
             ),
@@ -333,6 +360,76 @@ class ImageChatRouteIntegrationTests(ImageRuntimeTestCase):
         self.secret_helper.assert_not_called()
         for forbidden in self.forbidden_chat_calls.values():
             forbidden.assert_not_called()
+
+    def test_actual_chat_image_mode_uses_prepared_reference_sources(self):
+        prepared = {
+            "sources": [{
+                "bytes": b"reference-bytes",
+                "mime_type": "image/png",
+                "file_name": "reference.png",
+                "width": 16,
+                "height": 12,
+            }],
+            "provenance": [{
+                "type": "message",
+                "message_id": "conversation-1_image_1",
+                "file_name": "reference.png",
+                "width": 16,
+                "height": 12,
+            }],
+            "mask": None,
+            "mask_metadata": None,
+            "input_fidelity": "high",
+        }
+        self.namespace["prepare_chat_image_references"] = Mock(return_value=prepared)
+        self.namespace["request_edited_image_source"] = Mock(return_value=IMAGE_SOURCE)
+        self.namespace["request_generated_image_source"] = Mock(
+            side_effect=AssertionError("Reference image requests must use the edit source helper")
+        )
+
+        response = self.post_image(image_references=[
+            {"type": "message", "message_id": "conversation-1_image_1"},
+        ])
+
+        self.assertEqual(response.status_code, 200, response.get_json())
+        self.assertEqual(self.requests, [])
+        self.namespace["prepare_chat_image_references"].assert_called_once()
+        self.namespace["request_edited_image_source"].assert_called_once()
+        edit_args, edit_kwargs = self.namespace["request_edited_image_source"].call_args
+        self.assertEqual(edit_args[0], self.settings)
+        self.assertIn("Use the attached reference image", edit_args[1])
+        self.assertEqual(edit_args[2], prepared["sources"])
+        self.assertIsNone(edit_kwargs["mask"])
+        self.assertEqual(edit_kwargs["input_fidelity"], "high")
+
+        payload = response.get_json()
+        user = self.message_store.documents[payload["user_message_id"]]
+        image = self.message_store.documents[payload["message_id"]]
+        self.assertEqual(user["metadata"]["image_references"], prepared["provenance"])
+        self.assertEqual(image["metadata"]["image_references"], prepared["provenance"])
+        self.assertEqual(image["prompt"], "A mountain at sunrise")
+
+    def test_chat_reference_route_wiring_contracts_are_present(self):
+        chat_source = (TEST_ROOT.parent / "application" / "single_app" / "route_backend_chats.py").read_text(encoding="utf-8-sig")
+        chat_api_start = chat_source.index("def chat_api():")
+        resolve_index = chat_source.index("prepared_chat_image_references = prepare_chat_image_references", chat_api_start)
+        first_user_upsert = chat_source.index("cosmos_messages_container.upsert_item(user_message_doc)", resolve_index)
+        self.assertLess(resolve_index, first_user_upsert)
+
+        generation_block = chat_source[chat_source.index("# Image Generation", chat_api_start):]
+        self.assertIn("request_edited_image_source(", generation_block)
+        self.assertIn("compose_chat_reference_prompt(user_message, len(reference_sources), reference_mask)", generation_block)
+        self.assertIn("request_generated_image_source(settings, user_message)", generation_block)
+        self.assertIn("user_metadata['image_references'] = prepared_chat_image_references['provenance']", chat_source)
+        self.assertIn("image_doc['metadata']['image_references'] = prepared_chat_image_references['provenance']", chat_source)
+        self.assertIn("raw_image_references = references_from_metadata", chat_source)
+        self.assertIn("for thought in chat_reference_thoughts(data):", chat_source)
+
+        conversations_source = (
+            TEST_ROOT.parent / "application" / "single_app" / "route_backend_conversations.py"
+        ).read_text(encoding="utf-8-sig")
+        self.assertGreaterEqual(conversations_source.count("chat_request['image_references'] = image_references"), 2)
+        self.assertGreaterEqual(conversations_source.count("chat_request['image_mask_dropped'] = True"), 2)
 
 
 if __name__ == "__main__":

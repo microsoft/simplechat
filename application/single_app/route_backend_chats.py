@@ -303,10 +303,26 @@ from functions_image_generation import (
     image_generation_error_response,
     image_generation_is_enabled,
     normalize_image_proposal,
+    request_edited_image_source,
     request_generated_image_source,
     resolve_generated_image_bytes,
     user_request_supports_image_proposals,
 )
+from functions_chat_image_references import (
+    chat_reference_thoughts,
+    compose_chat_reference_prompt,
+    prepare_chat_image_references,
+    read_chat_image_reference_request,
+)
+from functions_chat_vision import (
+    attach_images_to_last_user_message,
+    build_vision_image_parts,
+    collect_current_turn_image_references,
+    explicitly_selected_documents,
+    should_include_current_turn_images,
+    vision_thought_text,
+)
+from functions_image_references import references_from_metadata
 from functions_appinsights import log_event
 from functions_debug import debug_print
 from functions_governance import ensure_governance_access
@@ -17569,6 +17585,25 @@ def register_route_backend_chats(bp):
                 deep_research_enabled = deep_research_enabled.lower() == 'true'
             if isinstance(image_gen_enabled, str):
                 image_gen_enabled = image_gen_enabled.lower() == 'true'
+            chat_image_reference_request = {
+                'raw_references': None,
+                'image_mask': None,
+                'mask_regions': 0,
+                'image_mask_dropped': False,
+            }
+            prepared_chat_image_references = {
+                'sources': [],
+                'provenance': [],
+                'mask': None,
+                'mask_metadata': None,
+                'input_fidelity': '',
+            }
+            if image_gen_enabled:
+                try:
+                    chat_image_reference_request = read_chat_image_reference_request(data)
+                except ImageGenerationError as exc:
+                    error_payload, status_code = image_generation_error_response(exc)
+                    return jsonify(error_payload), status_code
             try:
                 document_context_contract = _normalize_chat_document_context_contract(
                     settings,
@@ -17991,6 +18026,40 @@ def register_route_backend_chats(bp):
             if input_check.blocked:
                 return jsonify(_reject_chat_submission(conversation_item, user_id, input_check)), 200
 
+            if image_gen_enabled:
+                raw_image_references = chat_image_reference_request.get('raw_references')
+                if raw_image_references is None and is_retry:
+                    raw_image_references = references_from_metadata(
+                        (retry_input or {}).get('metadata', {})
+                    )
+                try:
+                    prepared_chat_image_references = prepare_chat_image_references(
+                        settings,
+                        user_id,
+                        conversation_id,
+                        raw_image_references,
+                        chat_image_reference_request.get('image_mask'),
+                        chat_image_reference_request.get('mask_regions'),
+                    )
+                except ImageGenerationError as exc:
+                    error_payload, status_code = image_generation_error_response(exc)
+                    return jsonify(error_payload), status_code
+                if prepared_chat_image_references.get('provenance'):
+                    log_event(
+                        '[CHAT_IMAGE_REFERENCES] Prepared chat image references.',
+                        extra={
+                            'conversation_id': conversation_id,
+                            'user_id': user_id,
+                            'reference_count': len(prepared_chat_image_references.get('provenance') or []),
+                            'reference_ids': [
+                                reference.get('message_id') or reference.get('document_id')
+                                for reference in prepared_chat_image_references.get('provenance') or []
+                            ],
+                            'mask_applied': bool(prepared_chat_image_references.get('mask_metadata')),
+                        },
+                        debug_only=True,
+                    )
+
             auto_linked_chat_upload_document_ids = []
             auto_merge_chat_upload_workspace_context = (
                 not mixed_source_explicit_selection
@@ -18303,6 +18372,14 @@ def register_route_backend_chats(bp):
                     previous_thread_id = user_message_doc.get('metadata', {}).get('thread_info', {}).get('previous_thread_id')
                     # Extract user_metadata from existing message for later use
                     user_metadata = user_message_doc.get('metadata', {})
+                    if prepared_chat_image_references.get('provenance'):
+                        user_metadata['image_references'] = prepared_chat_image_references['provenance']
+                    elif image_gen_enabled and chat_image_reference_request.get('raw_references') is not None:
+                        user_metadata.pop('image_references', None)
+                    if prepared_chat_image_references.get('mask_metadata'):
+                        user_metadata['image_reference_mask'] = prepared_chat_image_references['mask_metadata']
+                    elif image_gen_enabled and chat_image_reference_request.get('image_mask') is None:
+                        user_metadata.pop('image_reference_mask', None)
                     attach_chat_check(user_message_doc, input_check)
                     cosmos_messages_container.upsert_item(user_message_doc)
 
@@ -18528,6 +18605,11 @@ def register_route_backend_chats(bp):
                     'active_thread': True,
                     'thread_attempt': 1
                 }
+
+                if prepared_chat_image_references.get('provenance'):
+                    user_metadata['image_references'] = prepared_chat_image_references['provenance']
+                if prepared_chat_image_references.get('mask_metadata'):
+                    user_metadata['image_reference_mask'] = prepared_chat_image_references['mask_metadata']
 
                 user_message_doc = {
                     'id': user_message_id,
@@ -19448,10 +19530,21 @@ def register_route_backend_chats(bp):
                         debug_only=True,
                     )
 
-                    # Route selection, the request itself and the response shape all
-                    # differ between the images endpoint and the Responses image tool,
-                    # so they live in one helper rather than being repeated here.
-                    generated_image_url = request_generated_image_source(settings, user_message)
+                    reference_sources = prepared_chat_image_references.get('sources') or []
+                    reference_mask = prepared_chat_image_references.get('mask')
+                    if reference_sources:
+                        generated_image_url = request_edited_image_source(
+                            settings,
+                            compose_chat_reference_prompt(user_message, len(reference_sources), reference_mask),
+                            reference_sources,
+                            mask=reference_mask,
+                            input_fidelity=prepared_chat_image_references.get('input_fidelity') or '',
+                        )
+                    else:
+                        # Route selection, the request itself and the response shape all
+                        # differ between the images endpoint and the Responses image tool,
+                        # so they live in one helper rather than being repeated here.
+                        generated_image_url = request_generated_image_source(settings, user_message)
 
                     # Validate we have a valid image source
                     if not generated_image_url or generated_image_url == 'null':
@@ -19484,6 +19577,10 @@ def register_route_backend_chats(bp):
                             }
                         }
                     }
+                    if prepared_chat_image_references.get('provenance'):
+                        image_doc['metadata']['image_references'] = prepared_chat_image_references['provenance']
+                    if prepared_chat_image_references.get('mask_metadata'):
+                        image_doc['metadata']['image_reference_mask'] = prepared_chat_image_references['mask_metadata']
 
                     if settings.get('enable_enhanced_citations', False):
                         image_mime_type, image_bytes = _resolve_generated_image_bytes(generated_image_url)
@@ -20998,11 +21095,46 @@ def register_route_backend_chats(bp):
                     raise Exception('Internal error: Conversation history improperly formed.')
                 debug_print(f"--- Sending to GPT ({gpt_model}) ---")
                 debug_print(f"Total messages in API call: {len(conversation_history_for_api)}")
+                model_call_messages = conversation_history_for_api
+                current_turn_images_attached = False
+                include_current_turn_images = should_include_current_turn_images(
+                    image_generation_enabled=image_gen_enabled,
+                    agent_active=bool(selected_agent),
+                    orchestration_active=bool(enable_multi_agent_orchestration and selected_agent),
+                    model=gpt_reasoning_model_name or gpt_model,
+                    endpoint=gpt_endpoint,
+                    provider_kind=gpt_api_type or gpt_provider,
+                )
+                if include_current_turn_images:
+                    current_turn_image_references = collect_current_turn_image_references(
+                        all_messages,
+                        user_message_id,
+                        selected_documents=explicitly_selected_documents(
+                            combined_documents,
+                            requested_selected_document_ids,
+                        ),
+                    )
+                    current_turn_image_parts = build_vision_image_parts(
+                        settings,
+                        user_id,
+                        conversation_id,
+                        current_turn_image_references,
+                    )
+                    if current_turn_image_parts:
+                        model_call_messages = attach_images_to_last_user_message(
+                            conversation_history_for_api,
+                            current_turn_image_parts,
+                        )
+                        current_turn_images_attached = True
+                        thought_tracker.add_thought(
+                            'generation',
+                            vision_thought_text(len(current_turn_image_parts)),
+                        )
 
                 # Prepare API call parameters
                 api_params = {
                     'model': gpt_model,
-                    'messages': conversation_history_for_api,
+                    'messages': model_call_messages,
                 }
                 _apply_response_length_for_model(
                     api_params,
@@ -21013,9 +21145,28 @@ def register_route_backend_chats(bp):
                 )
 
                 api_params['reasoning_effort'] = reasoning_effort
-                response, reasoning_resolution = _create_chat_completion_with_reasoning(
-                    gpt_client.chat.completions.create, api_params, gpt_reasoning_model_name,
-                )
+                try:
+                    response, reasoning_resolution = _create_chat_completion_with_reasoning(
+                        gpt_client.chat.completions.create, api_params, gpt_reasoning_model_name,
+                    )
+                except Exception as vision_call_error:
+                    if not current_turn_images_attached:
+                        raise
+                    log_event(
+                        '[CHAT_API] Current-turn vision payload failed; retrying the model call without images.',
+                        extra={
+                            'conversation_id': conversation_id,
+                            'user_id': user_id,
+                            'model': gpt_model,
+                            'error_type': type(vision_call_error).__name__,
+                        },
+                        level=logging.WARNING,
+                        debug_only=True,
+                    )
+                    api_params['messages'] = conversation_history_for_api
+                    response, reasoning_resolution = _create_chat_completion_with_reasoning(
+                        gpt_client.chat.completions.create, api_params, gpt_reasoning_model_name,
+                    )
 
                 msg = response.choices[0].message.content
                 notice = None
@@ -21724,6 +21875,13 @@ def register_route_backend_chats(bp):
                         'content': 'Preparing image model request'
                     }
                     yield f"data: {json.dumps(image_request_event)}\n\n"
+                    for thought in chat_reference_thoughts(data):
+                        reference_event = {
+                            'type': 'thought',
+                            'step_type': 'generation',
+                            'content': thought,
+                        }
+                        yield f"data: {json.dumps(reference_event)}\n\n"
 
                 g.chat_publish_background_event = publish_background_event
                 legacy_result = chat_api()
@@ -25229,11 +25387,46 @@ def register_route_backend_chats(bp):
                         if stream_cancel_requested():
                             yield finalize_cancelled_stream_response()
                             return
+                        stream_model_messages = conversation_history_for_api
+                        current_turn_images_attached = False
+                        include_current_turn_images = should_include_current_turn_images(
+                            image_generation_enabled=image_gen_enabled,
+                            agent_active=bool(selected_agent),
+                            orchestration_active=False,
+                            model=gpt_reasoning_model_name or gpt_model,
+                            endpoint=gpt_endpoint,
+                            provider_kind=gpt_api_type or gpt_provider,
+                        )
+                        if include_current_turn_images:
+                            current_turn_image_references = collect_current_turn_image_references(
+                                all_messages,
+                                user_message_id,
+                                selected_documents=explicitly_selected_documents(
+                                    combined_documents,
+                                    requested_selected_document_ids,
+                                ),
+                            )
+                            current_turn_image_parts = build_vision_image_parts(
+                                settings,
+                                user_id,
+                                conversation_id,
+                                current_turn_image_references,
+                            )
+                            if current_turn_image_parts:
+                                stream_model_messages = attach_images_to_last_user_message(
+                                    conversation_history_for_api,
+                                    current_turn_image_parts,
+                                )
+                                current_turn_images_attached = True
+                                yield emit_thought(
+                                    'generation',
+                                    vision_thought_text(len(current_turn_image_parts)),
+                                )
 
                         # Prepare stream parameters
                         stream_params = {
                             'model': gpt_model,
-                            'messages': conversation_history_for_api,
+                            'messages': stream_model_messages,
                             'stream': True,
                             'stream_options': {'include_usage': True}  # Request token usage in final chunk
                         }
@@ -25249,9 +25442,28 @@ def register_route_backend_chats(bp):
 
                         final_model_used = gpt_model
 
-                        stream, reasoning_resolution = _create_chat_completion_with_reasoning(
-                            gpt_client.chat.completions.create, stream_params, gpt_reasoning_model_name,
-                        )
+                        try:
+                            stream, reasoning_resolution = _create_chat_completion_with_reasoning(
+                                gpt_client.chat.completions.create, stream_params, gpt_reasoning_model_name,
+                            )
+                        except Exception as vision_stream_error:
+                            if not current_turn_images_attached:
+                                raise
+                            log_event(
+                                '[CHAT_API] Current-turn vision payload failed; retrying the streaming model call without images.',
+                                extra={
+                                    'conversation_id': conversation_id,
+                                    'user_id': user_id,
+                                    'model': gpt_model,
+                                    'error_type': type(vision_stream_error).__name__,
+                                },
+                                level=logging.WARNING,
+                                debug_only=True,
+                            )
+                            stream_params['messages'] = conversation_history_for_api
+                            stream, reasoning_resolution = _create_chat_completion_with_reasoning(
+                                gpt_client.chat.completions.create, stream_params, gpt_reasoning_model_name,
+                            )
                         reasoning_metadata = _build_chat_reasoning_metadata(
                             reasoning_resolution, reasoning_effort, gpt_reasoning_model_name,
                         )

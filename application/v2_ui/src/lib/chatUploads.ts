@@ -20,6 +20,23 @@ export const CHAT_UPLOAD_ACCEPT = [
     'jpg', 'jpeg', 'png', 'bmp', 'tiff', 'tif', 'heif', 'heic',
 ].map((extension) => `.${extension}`).join(',');
 
+const IMAGE_FILE_EXTENSIONS = new Set(['jpg', 'jpeg', 'png', 'bmp', 'tiff', 'tif', 'heif', 'heic']);
+const BROWSER_RENDERABLE_IMAGE_EXTENSIONS = new Set(['jpg', 'jpeg', 'png', 'bmp']);
+
+function fileExtension(fileName: string): string {
+    const value = fileName.trim().toLowerCase();
+    const index = value.lastIndexOf('.');
+    return index >= 0 ? value.slice(index + 1) : '';
+}
+
+export function isImageFileName(fileName: string): boolean {
+    return IMAGE_FILE_EXTENSIONS.has(fileExtension(fileName));
+}
+
+export function isBrowserRenderableImageFileName(fileName: string): boolean {
+    return BROWSER_RENDERABLE_IMAGE_EXTENSIONS.has(fileExtension(fileName));
+}
+
 export function chatUploadValidationError(
     file: File,
     enabled: boolean,
@@ -38,6 +55,143 @@ export function chatUploadValidationError(
     }
     return null;
 }
+
+interface LocalPreviewEntry {
+    url: string;
+    keys: Set<string>;
+    lastUsed: number;
+}
+
+const MAX_LOCAL_PREVIEWS = 24;
+const localPreviewByKey = new Map<string, LocalPreviewEntry>();
+const localPreviewListeners = new Set<() => void>();
+let localPreviewClock = 0;
+
+function cleanPreviewKey(key: unknown): string {
+    return String(key ?? '').trim();
+}
+
+function notifyLocalPreviewListeners(): void {
+    for (const listener of localPreviewListeners) {
+        listener();
+    }
+}
+
+function revokeLocalPreview(entry: LocalPreviewEntry): void {
+    URL.revokeObjectURL(entry.url);
+    for (const key of entry.keys) {
+        if (localPreviewByKey.get(key) === entry) {
+            localPreviewByKey.delete(key);
+        }
+    }
+}
+
+function touchLocalPreview(entry: LocalPreviewEntry): LocalPreviewEntry {
+    localPreviewClock += 1;
+    entry.lastUsed = localPreviewClock;
+    return entry;
+}
+
+function enforceLocalPreviewLimit(): void {
+    const entries = [...new Set(localPreviewByKey.values())];
+    if (entries.length <= MAX_LOCAL_PREVIEWS) {
+        return;
+    }
+    entries
+        .sort((left, right) => left.lastUsed - right.lastUsed)
+        .slice(0, entries.length - MAX_LOCAL_PREVIEWS)
+        .forEach(revokeLocalPreview);
+}
+
+export function subscribeChatUploadLocalPreviews(listener: () => void): () => void {
+    localPreviewListeners.add(listener);
+    return () => localPreviewListeners.delete(listener);
+}
+
+export function getChatUploadLocalPreview(...keys: unknown[]): string | null {
+    for (const key of keys.map(cleanPreviewKey).filter(Boolean)) {
+        const entry = localPreviewByKey.get(key);
+        if (entry) {
+            touchLocalPreview(entry);
+            return entry.url;
+        }
+    }
+    return null;
+}
+
+export function addChatUploadLocalPreview(file: File, keys: readonly unknown[]): string | null {
+    const normalizedKeys = keys.map(cleanPreviewKey).filter(Boolean);
+    if (!normalizedKeys.length || !isBrowserRenderableImageFileName(file.name)) {
+        return null;
+    }
+    for (const key of normalizedKeys) {
+        removeChatUploadLocalPreview(key);
+    }
+    const entry: LocalPreviewEntry = touchLocalPreview({
+        url: URL.createObjectURL(file),
+        keys: new Set(normalizedKeys),
+        lastUsed: 0,
+    });
+    for (const key of entry.keys) {
+        localPreviewByKey.set(key, entry);
+    }
+    enforceLocalPreviewLimit();
+    notifyLocalPreviewListeners();
+    return entry.url;
+}
+
+export function linkChatUploadLocalPreview(sourceKey: unknown, keys: readonly unknown[]): void {
+    const entry = localPreviewByKey.get(cleanPreviewKey(sourceKey));
+    if (!entry) {
+        return;
+    }
+    for (const key of keys.map(cleanPreviewKey).filter(Boolean)) {
+        const existing = localPreviewByKey.get(key);
+        if (existing && existing !== entry) {
+            revokeLocalPreview(existing);
+        }
+        entry.keys.add(key);
+        localPreviewByKey.set(key, entry);
+    }
+    touchLocalPreview(entry);
+    enforceLocalPreviewLimit();
+    notifyLocalPreviewListeners();
+}
+
+export function removeChatUploadLocalPreview(...keys: unknown[]): void {
+    const entries = new Set<LocalPreviewEntry>();
+    for (const key of keys.map(cleanPreviewKey).filter(Boolean)) {
+        const entry = localPreviewByKey.get(key);
+        if (entry) {
+            entries.add(entry);
+        }
+    }
+    for (const entry of entries) {
+        revokeLocalPreview(entry);
+    }
+    if (entries.size) {
+        notifyLocalPreviewListeners();
+    }
+}
+
+export function clearChatUploadLocalPreviews(): void {
+    const entries = new Set(localPreviewByKey.values());
+    for (const entry of entries) {
+        revokeLocalPreview(entry);
+    }
+    if (entries.size) {
+        notifyLocalPreviewListeners();
+    }
+}
+
+export const chatUploadLocalPreviewStore = {
+    add: addChatUploadLocalPreview,
+    link: linkChatUploadLocalPreview,
+    get: getChatUploadLocalPreview,
+    remove: removeChatUploadLocalPreview,
+    clear: clearChatUploadLocalPreviews,
+    subscribe: subscribeChatUploadLocalPreviews,
+};
 
 type UploadStatus = Pick<ComposerUpload, 'state' | 'progress' | 'error'>;
 
@@ -69,13 +223,14 @@ export function chatUploadDocumentStatus(document: WorkspaceDocument): UploadSta
 export function normalizeChatUpload(
     response: ChatUploadResponse,
     fileName: string,
-): Pick<ComposerUpload, 'reference' | 'conversationId' | 'state' | 'progress' | 'error'> {
+): Pick<ComposerUpload, 'reference' | 'conversationId' | 'fileMessageId' | 'state' | 'progress' | 'error'> {
     if (response.error || response.success === false) {
         throw new Error(response.error || 'The upload did not succeed.');
     }
     const document = response.workspace_document;
     const id = String(response.workspace_document_id || document?.document_id || '').trim();
     const conversationId = String(response.conversation_id ?? '').trim();
+    const fileMessageId = String(response.file_message_id ?? '').trim();
     if (id) {
         const kind = String(response.workspace_scope || document?.scope || '');
         if (kind !== 'personal' && kind !== 'group') {
@@ -99,10 +254,11 @@ export function normalizeChatUpload(
                 },
             },
             conversationId: conversationId || undefined,
+            fileMessageId: fileMessageId || undefined,
             ...chatUploadDocumentStatus(document ?? {}),
         };
     }
-    const messageId = String(response.file_message_id ?? '').trim();
+    const messageId = fileMessageId;
     if (!messageId || !conversationId) {
         throw new Error('The upload did not return an attachment identity. Reload the conversation before choosing it.');
     }

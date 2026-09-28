@@ -1,7 +1,7 @@
 # test_ai_connection_image_runtime.py
 """
 Functional tests for shared image bindings, persistence, proposals, editing, and admin tests.
-Version: 0.261.107
+Version: 0.261.192
 Implemented in: 0.261.105
 
 Application storage, secret retrieval, and credentials are isolated before runtime imports.
@@ -38,6 +38,7 @@ sys.path.insert(0, str(APP_ROOT))
 
 # Application paths and import seams must be installed before loading runtime modules.
 from test_support.app_stubs import import_app_module, stubbed_config  # noqa: E402
+from test_support.versioning import assert_app_version_at_least  # noqa: E402
 import functions_ai_connections as connections  # noqa: E402
 import functions_image_api_route as image_route  # noqa: E402
 import functions_image_edit as image_edit  # noqa: E402
@@ -52,6 +53,7 @@ with stubbed_config(cognitive_services_scope="https://cognitiveservices.azure.co
 
 
 generation = import_app_module("functions_image_generation")
+assert_app_version_at_least("0.261.192")
 IMAGE_BASE64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP4z8DwHwAFAAH/iZk9HQAAAABJRU5ErkJggg=="
 IMAGE_BYTES = base64.b64decode(IMAGE_BASE64)
 IMAGE_SOURCE = f"data:image/png;base64,{IMAGE_BASE64}"
@@ -311,8 +313,8 @@ class SharedImageRuntimeTests(ImageRuntimeTestCase):
         namespace["settings"]["enable_multi_model_endpoints"] = True
         namespace["resolve_streaming_multi_endpoint_gpt_config"].return_value = (
             "shared-text-client", "text-deployment", "aoai", "https://chat.example.test",
-            {"type": "api_key"}, "2025-04-01-preview", "text-endpoint", "text-model",
-            None, None, None, "gpt-5.6-luna",
+            {"type": "api_key"}, "2025-04-01-preview", "aoai", None,
+            "text-endpoint", "text-model", None, None, None, "gpt-5.6-luna",
         )
         self.assertEqual(
             namespace["run_setup"](),
@@ -471,7 +473,7 @@ class SharedImageRuntimeTests(ImageRuntimeTestCase):
                     for key in (
                         "enabled", "mode", "model_name", "reason", "provider_label", "cloud_label",
                         "availability", "availability_reason", "editing", "masking",
-                        "sizes", "qualities", "backgrounds",
+                        "sizes", "qualities", "backgrounds", "max_reference_images", "input_fidelity",
                     )
                 })
                 self.assertEqual(projection["model_name"], "")
@@ -663,6 +665,41 @@ class SharedImageRuntimeTests(ImageRuntimeTestCase):
         self.assertEqual(stored["metadata"]["thread_info"]["previous_thread_id"], "thread-0")
         self.assertEqual(stored["metadata"]["user_info"], {"user_id": "user-1"})
 
+    def test_persistence_can_generate_from_reference_sources_and_safe_extra_metadata(self):
+        settings = shared_image_settings(provider="custom")
+        sources = [{
+            "bytes": IMAGE_BYTES,
+            "mime_type": "image/png",
+            "file_name": "reference.png",
+            "width": 1,
+            "height": 1,
+        }]
+        extra_metadata = {
+            "image_references": [{"type": "message", "message_id": "conversation-1_image_1"}],
+            "thread_info": {"thread_id": "attacker"},
+            "binary": b"do-not-store",
+            "nested_binary": {"content": b"do-not-store"},
+        }
+        with (
+            patch.object(generation, "request_edited_image_source", return_value=IMAGE_SOURCE) as edit,
+            patch.object(generation, "request_generated_image_source") as generate,
+        ):
+            result = generation.generate_chat_image_message(
+                settings=settings, user_id="user-1", conversation_id="conversation-1",
+                prompt="A mountain", user_info={"user_id": "user-1"},
+                reference_sources=sources, extra_metadata=extra_metadata, input_fidelity="high",
+            )
+        edit.assert_called_once_with(
+            settings, "A mountain", sources, size="", quality="", background="", input_fidelity="high",
+        )
+        generate.assert_not_called()
+        stored = self.messages.upsert_item.call_args.args[0]
+        self.assertEqual(result["message_id"], stored["id"])
+        self.assertEqual(stored["metadata"]["image_references"], extra_metadata["image_references"])
+        self.assertEqual(stored["metadata"]["thread_info"]["thread_id"], None)
+        self.assertNotIn("binary", stored["metadata"])
+        self.assertNotIn("nested_binary", stored["metadata"])
+
     def test_persistence_resolves_deployment_before_generation(self):
         settings = shared_image_settings(provider="custom")
         settings[connections.IMAGE_SELECTION_KEY] = None
@@ -760,9 +797,12 @@ class SharedImageRuntimeTests(ImageRuntimeTestCase):
             "mode", "enabled", "supported", "model_name", "reason", "api", "editing", "masking",
             "provider_label", "cloud_label", "availability", "availability_reason",
             "sizes", "qualities", "backgrounds", "input_formats", "output_formats",
+            "max_reference_images", "input_fidelity",
         })
         for field in ("sizes", "qualities", "backgrounds", "input_formats", "output_formats"):
             self.assertEqual(capability[field], [])
+        self.assertEqual(capability["max_reference_images"], 0)
+        self.assertFalse(capability["input_fidelity"])
         self.assertTrue(capability["reason"])
         with self.assertRaises(connections.AIConnectionError):
             image_edit.request_image_edit(settings, {}, "New mountain")

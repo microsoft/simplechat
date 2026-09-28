@@ -64,7 +64,7 @@ MAX_DELIVERABLES = 12
 MAX_DELIVERABLE_QUANTITY = 12
 MAX_DESCRIPTION_LENGTH = 300
 MAX_FORMAT_LENGTH = 40
-AI_ILLUSTRATION_LABEL = 'AI-generated illustration'
+AI_ILLUSTRATION_LABEL = 'AI-generated image'
 
 # The closed set of reasons a deliverable can be unavailable. Each one is a condition the
 # server can check; the text is application-owned and is what users see.
@@ -239,8 +239,9 @@ def build_deliverable_availability(settings, *, capabilities, unavailable=None, 
         ])
     if explicit_images['status'] == 'available':
         facts.extend([
-            'generate_image creates a new AI-generated illustration, not a photograph. Title every '
-            'generated image as an illustration, especially for real people and historical figures.',
+            'generate_image follows the visual style the user asks for, including photorealistic '
+            'images. Every generated image is AI-generated and captioned as such; never present it '
+            'as a real photograph, as a depiction of a real event, or as something found on the web.',
             'DOCX, PDF, and PPTX files embed the generated images their prepared content places. '
             'Other formats do not contain images.',
         ])
@@ -863,11 +864,12 @@ def compose_deliverable_guidance(step, images):
     if images:
         tokens = ', '.join(f"[[image:{image['asset_id']}]] ({image['title']})" for image in images)
         lines.append(
-            f'These AI-generated illustrations were created for this answer: {tokens}. Put each token '
+            f'These AI-generated images were created for this answer: {tokens}. Put each token '
             'on its own line where that image belongs in Markdown content, at most once. A caption '
-            'labelling it as an AI-generated illustration is added automatically. In a prepared slide '
-            'deck, use an image shape whose source is "asset:<step_id>". Do not describe an image as a '
-            'photograph, and do not refer to images other than these.'
+            'labelling it as an AI-generated image is added automatically. In a prepared slide '
+            'deck, use an image shape whose source is "asset:<step_id>". Do not present an image as a '
+            'real photograph, as a depiction of a real event, or as something found on the web, and do '
+            'not refer to images other than these.'
         )
     unavailable = [entry for entry in brief if entry['relation'] == 'unavailable']
     for entry in unavailable:

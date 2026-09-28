@@ -73,12 +73,13 @@ images; CSV, XLSX, JSON, YAML, XML, Markdown, and text files do not. A file embe
 of each image in a format and size the document accepts, so a large or WEBP image is
 converted for the file while the chat keeps the original.
 
-Generated images are AI illustrations, captioned as such, not photographs. Web search
-returns text and links only, so a report links authentic sources rather than copying
-their pictures. A plan generates at most four images; when you ask for more, the rest are
-listed as not available. Images the planner only suggests stay approval cards, which
-never appear in a file. An image the plan generated never shows an **Approve** button, so
-it is never paid for twice.
+Generated images follow the visual style you ask for, including photorealistic images,
+and are captioned as AI-generated. Web search returns text and links only, so a report
+links authentic sources rather than copying their pictures or presenting generated images
+as web-sourced photographs. A plan generates at most four images; when you ask for more,
+the rest are listed as not available. Images the planner only suggests stay approval
+cards, which never appear in a file. An image the plan generated never shows an
+**Approve** button, so it is never paid for twice.
 
 If an image cannot be generated, the report and file are still produced without it, the
 run is reported as incomplete, and the delivery notes say how many images were created.

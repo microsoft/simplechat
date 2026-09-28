@@ -1,7 +1,7 @@
 # test_image_edit_provider_operations.py
 """
 Functional tests for selected-provider image editing and explicit regeneration.
-Version: 0.261.107
+Version: 0.261.192
 Implemented in: 0.261.107
 
 Run the real binding, capability, generation and edit helpers with isolated
@@ -33,6 +33,11 @@ from test_ai_connection_image_runtime import (  # noqa: E402
     load_route_functions,
     shared_image_settings,
 )
+from test_support.versioning import assert_app_version_at_least  # noqa: E402
+import functions_image_adapters as image_adapters  # noqa: E402
+
+
+assert_app_version_at_least("0.261.192")
 
 
 def settings_for(name, provider="new_foundry"):
@@ -59,9 +64,122 @@ SOURCE = {
     "width": 1,
     "height": 1,
 }
+SOURCE_TWO = {
+    **SOURCE,
+    "file_name": "source-two.png",
+}
 
 
 class ImageEditProviderOperationTests(ImageRuntimeTestCase):
+    def test_adapter_responses_supports_multiple_reference_parts_and_input_fidelity(self):
+        client = Mock()
+        capability = {
+            "api": "responses", "editing": True, "masking": True,
+            "input_formats": ["image/png"], "sizes": [], "qualities": [], "backgrounds": [],
+            "max_reference_images": 2, "input_fidelity": True,
+        }
+        image_adapters.edit_image(
+            client, "gpt-image-1", capability, "Blend these", [SOURCE, SOURCE_TWO], input_fidelity="high",
+        )
+        content = client.responses.create.call_args.kwargs["input"][0]["content"]
+        self.assertEqual([part["type"] for part in content], ["input_text", "input_image", "input_image"])
+        self.assertEqual(content[0]["text"], "Blend these")
+        tool = client.responses.create.call_args.kwargs["tools"][0]
+        self.assertEqual(tool["action"], "edit")
+        self.assertEqual(tool["input_fidelity"], "high")
+        self.assertNotIn("input_image_mask", tool)
+
+        mask = {"bytes": png()}
+        image_adapters.edit_image(
+            client, "gpt-image-1", capability, "Change this area", SOURCE, mask=mask, input_fidelity="high",
+        )
+        masked_tool = client.responses.create.call_args.kwargs["tools"][0]
+        self.assertIn("input_image_mask", masked_tool)
+        self.assertEqual(len(client.responses.create.call_args.kwargs["input"][0]["content"]), 2)
+
+        capability["input_fidelity"] = False
+        image_adapters.edit_image(client, "gpt-image-1-mini", capability, "Blend these", [SOURCE, SOURCE_TWO], input_fidelity="high")
+        self.assertNotIn("input_fidelity", client.responses.create.call_args.kwargs["tools"][0])
+
+    def test_adapter_images_edit_uses_tuple_for_single_and_list_for_multiple_sources(self):
+        client = Mock()
+        capability = {
+            "api": "images", "editing": True, "masking": True,
+            "input_formats": ["image/png"], "sizes": ["1024x1024"], "qualities": [], "backgrounds": [],
+            "max_reference_images": 16, "input_fidelity": True,
+        }
+        image_adapters.edit_image(client, "gpt-image-1", capability, "Change one", SOURCE, input_fidelity="high")
+        single = client.images.edit.call_args.kwargs
+        self.assertEqual(single["image"], (SOURCE["file_name"], SOURCE["bytes"], SOURCE["mime_type"]))
+        self.assertEqual(single["extra_body"], {"input_fidelity": "high"})
+
+        image_adapters.edit_image(client, "gpt-image-1", capability, "Use both", [SOURCE, SOURCE_TWO], input_fidelity="high")
+        multiple = client.images.edit.call_args.kwargs
+        self.assertIsInstance(multiple["image"], list)
+        self.assertEqual(len(multiple["image"]), 2)
+        self.assertEqual(multiple["extra_body"], {"input_fidelity": "high"})
+
+    def test_adapter_flux_maps_references_to_numbered_input_fields(self):
+        client = Mock()
+        capability = {
+            "api": "flux", "model_path": "flux-2-pro", "editing": True, "masking": False,
+            "input_formats": ["image/png"], "sizes": [], "qualities": [], "backgrounds": [],
+            "max_reference_images": 8, "input_fidelity": False,
+        }
+        image_adapters.edit_image(client, "flux-2-pro", capability, "Combine them", [SOURCE, SOURCE_TWO])
+        body = client.post.call_args.kwargs["body"]
+        self.assertEqual(body["input_image"], IMAGE_BASE64)
+        self.assertEqual(body["input_image_2"], IMAGE_BASE64)
+
+    def test_adapter_rejects_provider_reference_limit_and_mask_mismatches(self):
+        for capability, expected in (
+            ({
+                "api": "mai", "editing": True, "masking": False,
+                "input_formats": ["image/png"], "sizes": [], "qualities": [], "backgrounds": [],
+                "max_reference_images": 1, "input_fidelity": False,
+            }, "at most 1"),
+            ({
+                "api": "images", "editing": True, "masking": False,
+                "input_formats": ["image/png"], "sizes": [], "qualities": [], "backgrounds": [],
+                "max_reference_images": 1, "input_fidelity": False,
+            }, "at most 1"),
+        ):
+            with self.subTest(api=capability["api"]):
+                with self.assertRaisesRegex(ValueError, expected):
+                    image_adapters.edit_image(Mock(), "model", capability, "Use both", [SOURCE, SOURCE_TWO])
+
+        capability = {
+            "api": "responses", "editing": True, "masking": True,
+            "input_formats": ["image/png"], "sizes": [], "qualities": [], "backgrounds": [],
+            "max_reference_images": 2, "input_fidelity": False,
+        }
+        with self.assertRaisesRegex(ValueError, "single reference image"):
+            image_adapters.edit_image(Mock(), "model", capability, "Mask both", [SOURCE, SOURCE_TWO], mask={"bytes": png()})
+
+    def test_generation_request_rejects_too_many_references_and_masked_multi_source(self):
+        with self.assertRaises(generation.ImageGenerationError) as too_many:
+            generation.request_edited_image_source(
+                settings_for("MAI-Image-2.6"), "Use both", [SOURCE, SOURCE_TWO],
+            )
+        self.assertEqual(too_many.exception.code, "too_many_reference_images")
+        self.assertEqual(too_many.exception.status_code, 400)
+
+        with self.assertRaises(generation.ImageGenerationError) as masked:
+            generation.request_edited_image_source(
+                settings_for("gpt-image-1", "aoai"), "Mask both", [SOURCE, SOURCE_TWO], mask={"bytes": png()},
+            )
+        self.assertEqual(masked.exception.code, "unsupported_image_operation")
+        self.assertEqual(masked.exception.status_code, 400)
+
+    def test_old_images_api_version_downgrades_reference_limits_and_input_fidelity(self):
+        settings = settings_for("gpt-image-1", "aoai")
+        settings["model_endpoints"][0]["connection"]["operation_settings"]["image_generation"]["api_version"] = "2024-12-01-preview"
+        capability = image_edit.resolve_image_edit_capability(settings)
+        self.assertEqual(capability["mode"], "regenerate")
+        self.assertFalse(capability["editing"])
+        self.assertEqual(capability["max_reference_images"], 0)
+        self.assertFalse(capability["input_fidelity"])
+
     def test_bootstrap_exposes_complete_safe_image_capabilities(self):
         namespace = {"resolve_image_edit_capability": image_edit.resolve_image_edit_capability}
         load_route_functions("route_backend_v2.py", ("_build_capabilities",), namespace)
@@ -72,6 +190,8 @@ class ImageEditProviderOperationTests(ImageRuntimeTestCase):
         self.assertFalse(projection["masking"])
         self.assertEqual(projection["sizes"], ["1024x1024", "1024x768", "768x1024"])
         self.assertEqual(projection["qualities"], [])
+        self.assertEqual(projection["max_reference_images"], 1)
+        self.assertFalse(projection["input_fidelity"])
         for private_field in ("endpoint", "auth", "api_key", "model_path", "transport"):
             self.assertNotIn(private_field, projection)
         self.assertNotIn("images.services.ai.azure.com", repr(projection))

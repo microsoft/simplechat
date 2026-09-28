@@ -13,7 +13,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { clsx } from 'clsx';
-import { Download, ExternalLink, Maximize2, Minimize2, PenLine, X } from 'lucide-react';
+import { Download, ExternalLink, Image as ImageIcon, Maximize2, Minimize2, PenLine, X } from 'lucide-react';
 import { GlassPanel } from '../ui/primitives';
 import { toast } from '../../stores/toastStore';
 import {
@@ -30,6 +30,7 @@ export function ImageLightbox({
     title,
     naming,
     onEdit,
+    onUseAsReference,
     onClose,
 }: {
     source: ResolvedImageSource;
@@ -39,6 +40,7 @@ export function ImageLightbox({
     naming: { filename?: unknown; prompt?: unknown; id?: unknown };
     /** Offered only for a generated image the deployment can rework. */
     onEdit?: () => void;
+    onUseAsReference?: () => void;
     onClose: () => void;
 }) {
     const [zoom, setZoom] = useState<ZoomMode>('fit');
@@ -121,6 +123,20 @@ export function ImageLightbox({
                             className="shrink-0 rounded-lg p-1.5 text-text-3 transition-colors hover:bg-surface-2 hover:text-text-1"
                         >
                             <PenLine size={16} />
+                        </button>
+                    )}
+                    {onUseAsReference && (
+                        <button
+                            type="button"
+                            onClick={() => {
+                                onUseAsReference();
+                                onClose();
+                            }}
+                            title="Use this image as a reference"
+                            aria-label="Use this image as a reference"
+                            className="shrink-0 rounded-lg p-1.5 text-text-3 transition-colors hover:bg-surface-2 hover:text-text-1"
+                        >
+                            <ImageIcon size={16} />
                         </button>
                     )}
                     <button

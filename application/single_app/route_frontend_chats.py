@@ -42,6 +42,7 @@ from functions_group import (
     require_active_group,
 )
 from functions_governance import ensure_governance_access
+from functions_image_formats import to_browser_image
 from functions_image_messages import build_image_message_documents
 from functions_prompts import list_all_prompts_for_scope
 from functions_public_workspaces import (
@@ -1493,6 +1494,7 @@ def register_route_frontend_chats(bp):
         image_base64_url = None  # For storing base64-encoded images
         image_bytes = None
         image_mime_type = None
+        image_display_filename = None
 
         try:
             # Check if this is an image file
@@ -1525,6 +1527,26 @@ def register_route_frontend_chats(bp):
                         image_mime_type = mimetypes.guess_type(filename)[0] or 'image/png'
                         with open(temp_file_path, 'rb') as img_file:
                             image_bytes = img_file.read()
+                        image_display_filename = filename
+
+                        if file_ext_nodot in {'tif', 'tiff'}:
+                            # Browsers can't render TIFF; store a PNG display copy. OCR and
+                            # vision analysis still read the original file from temp_file_path.
+                            browser_image = to_browser_image(image_bytes, 'display')
+                            image_bytes = browser_image['bytes']
+                            image_mime_type = browser_image['mime_type']
+                            base_name = os.path.splitext(filename)[0] or 'image'
+                            image_display_filename = f"{base_name}.png"
+                            log_event(
+                                "[CHAT_UPLOAD] Converted TIFF upload to browser display image",
+                                {
+                                    "conversation_id": conversation_id,
+                                    "filename": filename,
+                                    "display_content_type": image_mime_type,
+                                    "display_image_size": len(image_bytes),
+                                },
+                                debug_only=True,
+                            )
 
                         if settings.get('enable_enhanced_citations', False):
                             log_event(
@@ -1540,9 +1562,26 @@ def register_route_frontend_chats(bp):
                         else:
                             base64_image = base64.b64encode(image_bytes).decode('utf-8')
                             image_base64_url = f"data:{image_mime_type};base64,{base64_image}"
-                            print(f"Converted image to base64: {filename}, size: {len(image_base64_url)} bytes")
+                            log_event(
+                                "[CHAT_UPLOAD] Encoded image upload for inline display",
+                                {
+                                    "conversation_id": conversation_id,
+                                    "filename": filename,
+                                    "display_content_type": image_mime_type,
+                                    "content_length": len(image_base64_url),
+                                },
+                                debug_only=True,
+                            )
                     except Exception as b64_error:
-                        print(f"Warning: Failed to convert image to base64: {b64_error}")
+                        log_event(
+                            "[CHAT_UPLOAD] Failed to prepare image upload for inline display",
+                            {
+                                "conversation_id": conversation_id,
+                                "filename": filename,
+                                "exception_type": type(b64_error).__name__,
+                            },
+                            level=logging.WARNING,
+                        )
                 
                 # Perform vision analysis for images if enabled
                 if is_image_file and settings.get('enable_multimodal_vision', False):
@@ -1660,7 +1699,7 @@ def register_route_frontend_chats(bp):
                 image_message = {
                     'id': file_message_id,
                     'conversation_id': conversation_id,
-                    'filename': filename,
+                    'filename': image_display_filename or filename,
                     'prompt': f"User uploaded: {filename}",
                     'created_at': datetime.utcnow().isoformat(),
                     'timestamp': datetime.utcnow().isoformat(),
@@ -1688,7 +1727,7 @@ def register_route_frontend_chats(bp):
                         user_id=user_id,
                         conversation_id=conversation_id,
                         message_id=file_message_id,
-                        file_name=filename,
+                        file_name=image_display_filename or filename,
                         image_bytes=image_bytes,
                         content_type=image_mime_type or 'image/png',
                         image_source='upload',

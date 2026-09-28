@@ -27,6 +27,7 @@ import type { ComposerReference } from './composerDraft';
 import type { ChatStreamEvent, Json } from './types';
 import { normalizeReasoningAdjustments, type ReasoningResolution } from './reasoning';
 import { readGeneratedArtifacts, type GeneratedArtifact } from './generatedArtifacts';
+import type { ImageReferenceRequest, ImageReferenceScope } from './imageReferences';
 import type { OrchestrationExportFormat } from './orchestrationExports';
 import {
     hasPendingOrchestrationOutputs, normalizeOrchestrationOutputs, type OrchestrationOutput,
@@ -368,6 +369,19 @@ export interface OrchestrationPlanDocument {
     selected_by_user: boolean;
 }
 
+export interface OrchestrationImageReferenceDocument {
+    document_id: string;
+    scope: ImageReferenceScope;
+    scope_id: string | null;
+    file_name: string;
+}
+
+export interface OrchestrationImageReferenceMessage {
+    message_id: string;
+    file_name: string;
+    label: string;
+}
+
 /** Server-resolved action identity; never an executable manifest or connection settings. */
 export interface OrchestrationPlanAction {
     action_ref: string;
@@ -382,6 +396,8 @@ export interface OrchestrationPlanInputs {
     documents: OrchestrationPlanDocument[];
     /** Older plans do not carry action metadata. Match steps by action_ref, not by name. */
     actions?: OrchestrationPlanAction[];
+    image_reference_documents?: OrchestrationImageReferenceDocument[];
+    image_reference_messages?: OrchestrationImageReferenceMessage[];
     web: boolean;
     agent?: Json;
     model?: Json;
@@ -607,6 +623,9 @@ export const MAX_PLAN_INSTRUCTION_LENGTH = 2000;
  */
 export interface OrchestrationSeeds {
     required_capabilities?: string[];
+    image_references?: ImageReferenceRequest[];
+    image_reference_documents?: OrchestrationImageReferenceDocument[];
+    image_reference_messages?: OrchestrationImageReferenceMessage[];
     [key: string]: unknown;
 }
 

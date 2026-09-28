@@ -22,9 +22,10 @@ answers, and the configured model's own option limits apply.
 import logging
 
 from content_screening.contracts import ScreeningError
+from functions_analysis_access import AnalysisResultUnavailable, analysis_source_snapshot
 from functions_appinsights import log_event
 from functions_image_proposals import IMAGE_PROPOSAL_PROMPT_MAX_LENGTH, image_generation_is_enabled
-from functions_mixed_source_orchestration import MixedSourceCancellationError
+from functions_mixed_source_orchestration import AUTHORIZATION_STATUS_AUTHORIZED, MixedSourceCancellationError
 from functions_orchestration_checkpoints import orchestration_answer_message_id
 from functions_orchestration_deliverables import AI_ILLUSTRATION_LABEL, image_alt_text
 from functions_orchestration_execution_policy import OrchestrationFilePolicyError
@@ -70,10 +71,29 @@ def image_generation_readiness(settings):
             level=logging.WARNING, debug_only=True, extra={'error_type': type(exc).__name__},
         )
         return {'status': 'unavailable', 'reason': 'image_generation_unavailable'}
+    # Reference images need the edit operation; without it, images are still generated from prompts.
+    try:
+        from functions_image_edit import resolve_image_edit_capability
+        from functions_image_references import effective_max_reference_images
+
+        edit_capability = resolve_image_edit_capability(settings)
+        if not isinstance(edit_capability, dict) or edit_capability.get('enabled') is False:
+            edit_capability = {}
+        max_reference_images = effective_max_reference_images(edit_capability)
+    except Exception as exc:
+        log_event(
+            '[IMAGE_GENERATION] Reference images are unavailable for planned images.',
+            level=logging.WARNING, debug_only=True, extra={'error_type': type(exc).__name__},
+        )
+        edit_capability, max_reference_images = {}, 0
     return {
         'status': 'available',
         **{plural: [value for value in capability.get(plural) or () if isinstance(value, str)]
            for _name, plural in _OPTION_NAMES},
+        'editing': bool(edit_capability.get('editing')) and max_reference_images > 0,
+        'max_reference_images': max_reference_images,
+        'input_fidelity': edit_capability.get('input_fidelity') is True,
+        'input_formats': [value for value in edit_capability.get('input_formats') or () if isinstance(value, str)],
     }
 
 
@@ -103,6 +123,11 @@ def _selected_options(arguments, readiness):
 def _failure(exc):
     """Only application-owned failure codes; never provider or policy text."""
     code = getattr(exc, 'code', None)
+    if type(exc).__name__ == 'ImageReferenceError':
+        failure = build_failure('image_request_invalid')
+        failure['message'] = getattr(exc, 'public_message', None) or failure['message']
+        failure['reference_error_code'] = code
+        return failure
     if isinstance(exc, OrchestrationFilePolicyError):
         return build_failure('file_publication_not_allowed')
     if isinstance(exc, (ResultUnavailableError, ScreeningError)):
@@ -130,6 +155,73 @@ def _failed(failure):
     )
 
 
+def _string_list(value):
+    if not isinstance(value, list):
+        return []
+    out = []
+    seen = set()
+    for item in value:
+        if not isinstance(item, str):
+            continue
+        text = item.strip()
+        if not text or text in seen:
+            continue
+        seen.add(text)
+        out.append(text)
+    return out
+
+
+def _reference_arguments(arguments, seeds):
+    """Resolver references for ids the run's server-computed candidates offered, and no others."""
+    seeds = seeds if isinstance(seeds, dict) else {}
+    documents = {
+        item.get('document_id'): item for item in seeds.get('image_reference_documents') or []
+        if isinstance(item, dict) and item.get('document_id')
+    }
+    messages = {
+        item.get('message_id'): item for item in seeds.get('image_reference_messages') or []
+        if isinstance(item, dict) and item.get('message_id')
+    }
+    references = []
+    document_ids = _string_list(arguments.get('reference_document_ids'))
+    for document_id in document_ids:
+        candidate = documents.get(document_id)
+        if candidate is None:
+            raise ValueError('A reference image is unavailable.')
+        references.append({
+            'type': 'document',
+            'document_id': document_id,
+            'scope': candidate.get('scope') or 'personal',
+            'scope_id': candidate.get('scope_id'),
+        })
+    for message_id in _string_list(arguments.get('reference_message_ids')):
+        if message_id not in messages:
+            raise ValueError('A reference image is unavailable.')
+        references.append({'type': 'message', 'message_id': message_id})
+    return references, document_ids
+
+
+def _reference_lineage(context, document_ids):
+    """Reference documents become result sources, taken from the step's authorized manifest."""
+    if not document_ids:
+        return []
+    manifest = {
+        source.get('document_id'): source
+        for source in getattr(context, 'execution_manifest', None) or ()
+        if isinstance(source, dict)
+    }
+    sources = []
+    for document_id in document_ids:
+        source = manifest.get(document_id)
+        if source is None or source.get('authorization_status') != AUTHORIZATION_STATUS_AUTHORIZED:
+            raise ResultUnavailableError('result_source_unavailable')
+        sources.append(source)
+    try:
+        return analysis_source_snapshot(sources)
+    except AnalysisResultUnavailable as exc:
+        raise ResultUnavailableError('result_source_unavailable') from exc
+
+
 def adapter_generate_image(step, context, *, settings, user_id, emit=None, cancel_requested=None):
     """Generate one approved image, persist it with the answer, and retain its descriptor."""
     service = require_result_service(context)
@@ -140,6 +232,7 @@ def adapter_generate_image(step, context, *, settings, user_id, emit=None, cance
     input_fingerprint = context.result_input_fingerprint_for_step(step['step_id'])
     readers = resolve_step_inputs(step, context)
     arguments = step['arguments']
+    seeds = getattr(context, 'seeds', None) or getattr(context, 'original_seeds', {}) or {}
 
     def recheck():
         if callable(cancel_requested) and cancel_requested():
@@ -156,6 +249,8 @@ def adapter_generate_image(step, context, *, settings, user_id, emit=None, cance
         if readiness['status'] != 'available':
             return _failed(build_failure('image_generation_unavailable'))
         options = _selected_options(arguments, readiness)
+        reference_request, reference_document_ids = _reference_arguments(arguments, seeds)
+        reference_lineage = _reference_lineage(context, reference_document_ids)
         prompt = build_image_prompt(arguments['prompt'], [
             (name, read_complete_input(reader)) for name, reader in readers.items()
         ])
@@ -166,6 +261,20 @@ def adapter_generate_image(step, context, *, settings, user_id, emit=None, cance
         if check_chat_content(prompt, 'chat_output', user_id=user_id, settings=settings).decision == 'block':
             return _failed(build_failure('image_content_refused'))
         recheck()
+        reference_sources = None
+        reference_metadata = None
+        if reference_request:
+            from functions_image_edit import resolve_image_edit_capability
+            from functions_image_references import resolve_image_references, reference_prompt
+
+            resolved = resolve_image_references(
+                settings, user_id, context.conversation_id, reference_request,
+                resolve_image_edit_capability(settings),
+            )
+            reference_sources = resolved['sources']
+            reference_metadata = {'image_references': resolved['provenance']}
+            prompt = reference_prompt(prompt, len(reference_sources))
+            recheck()
         # Image clients and chat persistence are loaded only when an image is generated.
         from functions_image_generation import generate_chat_image_message
 
@@ -179,7 +288,9 @@ def adapter_generate_image(step, context, *, settings, user_id, emit=None, cance
                 'orchestration': {'run_id': context.run_id, 'step_id': step['step_id']},
             },
             source_assistant_message_id=orchestration_answer_message_id(context.run_id),
-            store_in_blob=True, **options,
+            store_in_blob=True, reference_sources=reference_sources,
+            extra_metadata=reference_metadata, input_fidelity='high' if reference_sources else '',
+            **options,
         )
         recheck()
         message = generated.get('image_message') or {}
@@ -199,7 +310,8 @@ def adapter_generate_image(step, context, *, settings, user_id, emit=None, cance
                     'complete', 1, 1, Coverage(1, 1, 'items'), 'valid', ('generated_image_digest',), (),
                 ),
             )],
-            sources=[], origin='grounded' if readers else 'generated', guard_token=guard_token,
+            sources=reference_lineage,
+            origin='grounded' if readers or reference_lineage else 'generated', guard_token=guard_token,
             upstream=tuple(dict.fromkeys(reader.reference for reader in readers.values())),
             input_fingerprint=input_fingerprint,
         )
@@ -211,7 +323,7 @@ def adapter_generate_image(step, context, *, settings, user_id, emit=None, cance
             },
         )
         return build_step_result(
-            status=STEP_STATUS_COMPLETED, summary=f'Generated an {AI_ILLUSTRATION_LABEL.lower()}.',
+            status=STEP_STATUS_COMPLETED, summary=f'Generated an {AI_ILLUSTRATION_LABEL}.',
             task_result=task,
         )
     except MixedSourceCancellationError:
