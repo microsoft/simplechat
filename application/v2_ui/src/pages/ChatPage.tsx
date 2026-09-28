@@ -36,7 +36,9 @@ import { ParticipantsPanel } from '../components/chat/ParticipantsPanel';
 import { InviteBanner } from '../components/chat/InviteBanner';
 import { FileApprovals } from '../components/chat/FileApprovals';
 import { panelTargetForConversation, canShareConversation } from '../lib/sharing';
-import { readWorkspaceAgentLaunch, workspaceAgentForLaunch } from '../lib/workspaceAgentLaunch';
+import {
+    readWorkspaceAgentLaunch, workspaceAgentForLaunch, workspaceAgentLaunchUnavailableMessage,
+} from '../lib/workspaceAgentLaunch';
 import { agentSelectionKey } from '../lib/agents';
 import { toast } from '../stores/toastStore';
 import type { BootstrapPayload } from '../lib/types';
@@ -110,7 +112,7 @@ function useConversationUrlSync() {
             agentLinkConsumed.current = true;
             const agent = workspaceAgentForLaunch(fresh.catalogs?.agents, agentLaunch);
             if (!agent) {
-                toast.error('That agent is no longer available in this workspace.');
+                toast.error(workspaceAgentLaunchUnavailableMessage(agentLaunch, fresh.scope?.groups, fresh.catalogs?.agents));
             } else {
                 useChatStore.getState().startNewConversation();
                 setLaunchAgentSelection(agentSelectionKey(agent));

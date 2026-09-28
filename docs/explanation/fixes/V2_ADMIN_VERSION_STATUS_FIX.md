@@ -69,6 +69,8 @@ status and preserve editable settings when GitHub is unavailable.
 
 ## Follow-up in 0.261.133
 
+On the V2 shared workspaces branch, this follow-up arrives in 0.261.158.
+
 The V2 release check no longer runs inside the settings GET. It is served by
 `GET /api/v2/admin/update-status` and requested alongside the settings, so a
 slow or unreachable releases page delays only the version banner. See

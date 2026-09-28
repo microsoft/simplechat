@@ -4,6 +4,8 @@
 
 The application version is tracked in `application/single_app/config.py`.
 
+This fix shipped in the React V2 branch as 0.261.143. On the V2 shared workspaces branch, which had already assigned 0.261.143 to its group details projection fix, it arrives with the React V2 base merge in version **0.261.190**.
+
 ## Issue
 
 After the 0.261.141 compare fix (see `ORCHESTRATION_EXECUTION_FAILURES_FIX.md`),

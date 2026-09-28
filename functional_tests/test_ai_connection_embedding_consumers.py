@@ -1,7 +1,7 @@
 # test_ai_connection_embedding_consumers.py
 """
 Functional coverage for embedding consumer wiring and persistence boundaries.
-Version: 0.261.106
+Version: 0.261.163
 Implemented in: 0.261.106
 
 Load the actual consumer functions/classes against isolated collaborators to
@@ -15,7 +15,7 @@ import sys
 import types
 import unittest
 import uuid
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -138,6 +138,8 @@ class EmbeddingConsumerTests(unittest.TestCase):
             "hold_data_management_search_write_slot": slot,
             "cosmos_data_management_jobs_container": object(),
             "prepare_embedding_search_documents": prepare,
+            # A non-group write holds no projection fence: `nullcontext(None)` stands in for it.
+            "nullcontext": nullcontext,
         }
         load_nodes("functions_documents.py", {"_execute_document_search_write", "_search_indexing_results_succeeded"}, namespace)
         namespace["_execute_document_search_write"](client, "upload_documents", documents=[{"id": "chunk", "embedding": self.vector}])

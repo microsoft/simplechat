@@ -50,6 +50,8 @@ Refs [#1509](https://github.com/microsoft/simplechat/issues/1509).
 This documents the retained-result contracts, shared ten-format exports,
 dependency execution, durable recovery, and the single orchestration plan contract.
 
+The single-contract rollout and this page's version are the React V2 branch's 0.261.139 and 0.261.140. The V2 shared workspaces branch had already assigned those numbers to its native group identities and its group model endpoint APIs, so there both arrive with the React V2 base merge in version **0.261.181**.
+
 ## Purpose and availability
 
 The foundation gives orchestration adapters a common way to retain exact

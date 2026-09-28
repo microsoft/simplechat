@@ -2,7 +2,16 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
-### **(v0.261.143)**
+### **(v0.261.190)**
+
+#### New Features
+
+*   **Group And Public Workspaces Are Native In V2**
+    *   Group and public workspaces now work in the React V2 interface, on the design of My Workspace. Choosing a workspace on its V2 page selects it, as the classic interface does, and loads its details, your role and the sections you can use without leaving V2.
+    *   Group workspaces cover documents, prompts, actions, agents, connections (identities, file sources and endpoints), workflows, and management: the directory, members, settings, activity and statistics.
+    *   Public workspaces cover the directory, where you choose which workspaces chat uses and save visibility lists, and documents, prompts and management: members, identities and file sources, settings, activity and statistics. Every reader can browse a public workspace's documents, and download them when downloads are enabled; the Owner, Admins and DocumentManagers manage them and approve generated artifacts.
+    *   The workspaces were built in stages from 0.261.127, and each version's entries describe what it added. Deleting a group or public workspace, the legacy document upgrade, managing an inactive group, and chatting with every visible public workspace at once stay in the classic interface.
+    *   (Ref: #1542, #1541, [Use group workspaces in V2](../guides/manage-group-workspaces.md), [Use public workspaces](../guides/use-public-workspaces.md), [V2 Shared Workspace Context and Group Shell](features/V2_SHARED_WORKSPACE_CONTEXT.md))
 
 #### Bug Fixes
 
@@ -10,41 +19,139 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
     *   Fixed orchestration runs, such as a PDF-and-CSV comparison, stalling on the tabular step when the CSV or workbook had been re-uploaded under the same name. The step stopped before reading any rows, the run later reported that the step's saved result could not be confirmed (`result_commit_unconfirmed`), and the step kept showing **Reasoning**.
     *   The tabular step's replay descriptor carries its own schema version, which was compared with the file's revision even after the source's screening provenance had matched. A matching provenance is now authoritative. Sources without provenance keep their existing checks, and a source that really changed still conflicts.
     *   Revision conflicts now log `sc_authority_reason`, naming the check that failed, without logging document values.
+    *   Merged from the React V2 branch at `01c728bf`, where it shipped as 0.261.143. This branch had already used 0.261.143 for its group details fix, so here the fix carries the merge's version. Its own documentation and tests keep the React V2 branch's number.
     *   (Ref: `content_screening/access.py`, `docs/reference/logging-tags.md`, [Re-uploaded Tabular Source Revision Conflict Fix](fixes/REUPLOADED_TABULAR_SOURCE_REVISION_CONFLICT_FIX.md))
 
-### **(v0.261.142)**
+### **(v0.261.189)**
+
+Merged from the React V2 branch at `c9faeae0`. These changes shipped there as 0.261.141 and 0.261.142. This branch had already used those numbers for its own changes, so here they carry the merge's version. The version numbers inside their own documentation and tests are the React V2 branch's.
 
 #### New Features
 
 *   **Native OneNote Workspace Uploads In React V2**
     *   Upload `.one` sections and `.onepkg` notebooks to personal, group, or public workspaces to search and chat with their typed notes and table contents.
-    *   React v2's personal document explorer shows the shared supported-format catalog and validates both file selection and drag-and-drop. Group and public document uploads retain their existing workspace pages.
+    *   React v2's document explorer shows the shared supported-format catalog and validates both file selection and drag-and-drop.
     *   Keeps each notebook package as one workspace document while preserving section names, page titles, and subpage context in searchable text and citations.
     *   Uses a bounded local extractor, with explicit errors for incomplete, unsafe, unsupported, or oversized files. Handwriting, image OCR, embedded attachments, and direct chat attachment uploads are not included.
     *   **Deployment requirement:** Rebuild the application container, or build the native extractor when running from source. Existing upload limits still apply; larger notebooks may require a higher configured limit, up to the extractor's 128 MiB input ceiling. Updating this source branch does not deploy the application.
+    *   On this branch the V2 group and public document explorers share the personal explorer, so they also show the supported-format catalog and check file types on selection and drag-and-drop.
+    *   Shipped in the React V2 branch as 0.261.142.
     *   (Ref: #1525, `config.py`, `functions_onenote.py`, `functions_documents.py`, `route_backend_v2.py`, `DocumentExplorer.tsx`, `native/onenote_extractor/`, `Dockerfile`, [Native OneNote Ingestion](features/ONENOTE_INGESTION.md))
-
-### **(v0.261.140)**
 
 #### Bug Fixes
 
-*   **Orchestration Execution And Saved Status Accept Cosmos SDK Responses**
-    *   Fixed valid plans failing before their first step with `context_unavailable`, followed by missing-run responses and repeated **Checking execution status** notices.
-    *   Storage boundaries now normalize Cosmos SDK dictionary responses while retaining ownership checks, conditional ETags, execution leases, and deletion guards. Scheduler recovery can read the saved attempt without resetting its original deadline or silently creating another execution.
-    *   (Ref: `functions_orchestration_bootstrap.py`, `functions_orchestration_plan_revisions.py`, `functions_orchestration_recovery.py`, `functions_orchestration_output_store.py`, `ORCHESTRATION_COSMOS_RESPONSE_COMPATIBILITY_FIX.md`)
+*   **Orchestration Compare, CSV And Word Runs Complete**
+    *   Comparing a PDF with a CSV, creating a CSV from a model's answer, and turning an illustrated report into a Word file each produced a correct plan and then failed while running it. They now complete, and their failures are recorded with their reasons.
+    *   Shipped in the React V2 branch as 0.261.141.
+    *   (Ref: [Orchestration Execution Failures Fix](fixes/ORCHESTRATION_EXECUTION_FAILURES_FIX.md))
 
-*   **Planner And Execution Failures Have Specific, Safe Diagnostics**
-    *   Planner rejection events now retain the exact deliverables rule and correction-attempt number. Admission and recovery events identify the failing stage, response type, and whether a durable outcome was recorded.
-    *   Application Insights preserves these diagnostic fields and hashed workflow identifiers without logging raw prompts, document content, or provider responses. Required source/output checks and the existing single repair budget remain in place.
-    *   (Ref: `functions_orchestration_deliverables.py`, `functions_orchestration_planner.py`, `functions_orchestration_execution.py`, `functions_appinsights.py`, `docs/reference/logging-tags.md`)
+### **(v0.261.188)**
 
-*   **Writing, Comparison, And File-Only Plans Match Their Deliverable Contract**
-    *   Fixed ambiguous planning guidance that produced answer declarations with both a file format and a quantity. One repair removed the format but then failed on the remaining quantity; the prompt now specifies fields by deliverable kind and asks corrections to check the whole declaration.
-    *   File-only plans can omit `final_response` or use null without inventing an extra answer step. Malformed bindings and declared answers without a valid text producer are still rejected.
-    *   Selected sources now carry server-resolved file types, so a PDF/CSV comparison can use compatible narrative and tabular steps rather than send the CSV to narrative-only comparison. Type mismatches and missing Analyze source bindings are caught during planning and share the existing single correction budget.
-    *   (Ref: `functions_orchestration_planner.py`, `functions_orchestration_schema.py`, `functions_orchestration_context.py`, `functions_orchestration_plan_editing.py`, `ORCHESTRATION_PLANNER_DELIVERABLE_FIELDS_FIX.md`)
+#### User Interface Enhancements
 
-### **(v0.261.139)**
+*   **Dialogs Keep And Return Keyboard Focus**
+    *   Every V2 dialog now moves focus into itself when it opens, keeps Tab inside it, and returns focus to the control that opened it when it closes, including with Escape. Before, closing a dialog left focus on the page body.
+    *   (Ref: `Modal.tsx`, [V2 Workspace Presentation Fix](fixes/V2_WORKSPACE_PRESENTATION_FIX.md))
+
+*   **A Failed List Says So, With A Retry**
+    *   In the group and public Prompts, Identities, File sources, Endpoints and Workflows sections, a list that fails to load shows the error with a **Retry** button, announced to screen readers, instead of looking empty with a create button.
+    *   (Ref: `SectionList`, `useSectionResource`, the prompt workbench, [V2 Workspace Presentation Fix](fixes/V2_WORKSPACE_PRESENTATION_FIX.md))
+
+*   **Readable Tags, Phones And Larger Text**
+    *   Tag chips pick black or white text for contrast with the tag's colour; the prompt list leaves room for its details at 200% text; group Actions and narrow cards stay usable on a phone; locked overview entries are outlined rather than faded.
+    *   Public workspace wording no longer mentions groups, actions or classic browsing where they don't apply, and a link to a deleted public document says it's gone.
+    *   (Ref: [V2 Workspace Presentation Fix](fixes/V2_WORKSPACE_PRESENTATION_FIX.md))
+
+### **(v0.261.187)**
+
+#### Bug Fixes
+
+*   **The V2 Directory No Longer Makes Unavailable Workspaces Visible For Chat**
+    *   An inactive public workspace, or one whose status isn't recognized, shouldn't be searched in chat, but public chat checks only which workspaces you've made visible. The V2 directory's switch, **Show all in chat** and **Use this list** could all make such a workspace visible.
+    *   Now the switch can only turn an unavailable workspace off, and the bulk and saved-list actions leave it hidden and say how many they skipped. The server-side check in public chat is a follow-up.
+    *   (Ref: `PublicDirectoryList.tsx`, `PublicDirectoryPage.tsx`, `publicVisibility.ts`, `publicDirectory.ts`, [V2 Public Directory](features/V2_PUBLIC_DIRECTORY.md))
+
+### **(v0.261.186)**
+
+#### Bug Fixes
+
+*   **Readers Can Download Public Workspace Documents In V2**
+    *   When downloads are turned on for a public workspace, classic lets every reader download its documents, but V2 offered downloads only to its Owner, Admins and DocumentManagers. V2 now follows classic: anyone who can read the workspace can download, individually or in a batch.
+    *   Changing documents stays with the Owner, Admins and DocumentManagers, and a reader never learns of a generated file still awaiting approval.
+    *   (Ref: `functions_public_document_policy.py`, `functions_public_document_access.py`, `functions_workspace_context.py`, [Public Reader Downloads Fix](fixes/PUBLIC_READER_DOWNLOADS_FIX.md))
+
+### **(v0.261.185)**
+
+#### New Features
+
+*   **Public Workspace Settings, Activity And Statistics In V2**
+    *   A public workspace's Owner and Admins now manage its settings in V2, under **Manage**: the Owner edits the name, description, color and logo, and the Owner and Admins edit file downloads and retention. They also read its recent activity, and chart and export its statistics, which DocumentManagers can see too.
+    *   New routes name the workspace in the path, under `/api/public-workspaces/<id>/settings` and `/insights`. Writes carry a per-section revision and go through the public workspace guard; a failed read says so instead of returning an empty list. The classic routes are unchanged.
+    *   The group Settings, Activity and Statistics sections are now shared with public workspaces; the group's behaviour and text are unchanged.
+    *   Deleting the workspace still happens on the classic page. Settings explains that it removes only the workspace record, and quotes V2's own count of the workspace's current documents.
+    *   (Ref: `route_backend_public_settings.py`, `functions_public_settings.py`, `functions_public_settings_policy.py`, `functions_public_insights.py`, `WorkspaceSettingsSection.tsx`, [V2 Public Settings](features/V2_PUBLIC_SETTINGS.md), [Public Settings APIs](features/PUBLIC_SETTINGS_APIS.md))
+
+#### Bug Fixes
+
+*   **Classic Public Statistics Show Storage Correctly**
+    *   The classic manage public workspace page read "2 undefined" for storage past a terabyte, and "NaN undefined" for a missing size, in its statistics and exported CSV. It now writes B to TB, capped at TB, and "0 B" for no size.
+    *   (Ref: `manage_public_workspace.js`, [Classic Public Stats Export Fix](fixes/CLASSIC_PUBLIC_STATS_EXPORT_FIX.md))
+
+*   **A Malformed Timestamp No Longer Hides The Group Activity Feed**
+    *   One activity record whose timestamp couldn't be converted to UTC made the whole V2 group Activity feed fail. That record now shows without a time, and the rest of the feed is shown.
+    *   (Ref: `functions_group_insights.py`, [Group Activity Timestamp Overflow Fix](fixes/GROUP_ACTIVITY_TIMESTAMP_OVERFLOW_FIX.md))
+
+### **(v0.261.184)**
+
+#### New Features
+
+*   **Ask To Manage A Public Workspace's Documents From The V2 Directory**
+    *   A signed-in user who doesn't manage a public workspace can ask to manage its documents from the workspace's row in the V2 directory, and cancel the request while it's pending. The Owner and Admins decide in Members, as before.
+    *   New routes `POST` and `DELETE /api/public-workspaces/<id>/membership/requests` act only on the caller's own request. The directory row reports `membership: "pending"` for the caller, and nothing about anyone else.
+    *   (Ref: `functions_public_membership.py`, `route_backend_public_membership.py`, `functions_public_directory.py`, `PublicDirectoryList.tsx`, [V2 Public Directory](features/V2_PUBLIC_DIRECTORY.md), [Public Membership APIs](features/PUBLIC_MEMBERSHIP_APIS.md))
+
+*   **Public Directory Visibility Tools In V2**
+    *   **Show all in chat** and **Hide all from chat** set every workspace at once, and saved lists store and reuse a set of visible workspaces, in the classic directory's settings shape. They cover the whole directory, up to 1,000 workspaces, and report what they changed.
+    *   **Chat with visible (classic)** opens classic chat over the visible workspaces, since V2 chat scopes to one public workspace at a time.
+    *   (Ref: `PublicDirectoryVisibilityTools.tsx`, `publicDirectory.ts`, `publicVisibility.ts`, `PublicDirectoryPage.tsx`, [V2 Public Directory](features/V2_PUBLIC_DIRECTORY.md))
+
+### **(v0.261.183)**
+
+#### Bug Fixes
+
+*   **Unapproved Public Artifacts Are No Longer Shown To Every Reader**
+    *   A generated file waiting for approval to be published into a public workspace was shown to everyone who can read the workspace, which is every signed-in user: V2 listed it with its title, abstract and tags, counted it, and returned its details and its requester; chat's document picker listed it too.
+    *   Now only the workspace's Owner, Admins and DocumentManagers see it before approval, in a held form marked "Awaiting generated artifact approval". To everyone else it doesn't exist until it's approved.
+    *   The chat document list and its tag counts leave pending artifacts out for everyone, since none can be used in chat until it's approved. Classic chat and the classic workspace page's tag filter use the same routes, so they change too.
+    *   (Ref: `functions_public_document_policy.py`, `functions_public_document_reads.py`, `route_backend_public_documents.py`, [Public Pending Artifact Visibility Fix](fixes/PUBLIC_PENDING_ARTIFACT_VISIBILITY_FIX.md))
+
+### **(v0.261.182)**
+
+#### New Features
+
+*   **Manage Public Workspace Identities And File Sources In V2**
+    *   A public workspace's Owner, Admins and DocumentManagers now keep its identities and File Sync sources in V2, in the **Identities** and **Sync** sections, when File Sync is enabled for the workspace. They're the group sections, with public rules: writes only while the workspace is active, read-only in locked and upload-disabled workspaces, and nothing for readers.
+    *   New routes name the workspace in the path, `/api/public-workspaces/<id>/identities` and `/file-sources`. Their writes are conditional, stored secrets are never returned, and a source's documents are deleted only when asked, as public documents. The classic routes are unchanged.
+    *   The identity editor offers only the File Sync use, and the source editor says "Use a saved workspace identity".
+    *   (Ref: `route_backend_public_identities_scoped.py`, `route_backend_public_file_sources_scoped.py`, `functions_public_identity_policy.py`, `functions_public_file_source_policy.py`, `identityWorkbench.ts`, `fileSourceWorkbench.ts`, [V2 Public Connections](features/V2_PUBLIC_CONNECTIONS.md), [Public Connection APIs](features/PUBLIC_CONNECTION_APIS.md))
+
+### **(v0.261.181)**
+
+Merged from the React V2 branch at `d243b0ca`. These changes shipped there as 0.261.134, 0.261.137, 0.261.138, 0.261.139 and 0.261.140. This branch had already used those numbers for its own changes, so here they carry the merge's version. The version numbers inside their own documentation and tests are the React V2 branch's.
+
+#### New Features
+
+*   **Orchestration Plans Deliver What You Asked For**
+    *   A Gather / Reason / Render plan now lists what you asked to receive before its steps: the answer, each file with its format, images with their count, charts, and diagrams. The server checks the list against what it can actually produce. A file must come from a Render task in the same format, so "create a csv of states and capitals" produces the CSV file itself instead of rows in the chat.
+    *   Something that cannot be produced here stays on the list as unavailable, with the server's own reason, such as "This file format is not available for this plan." The planner cannot promise it in a step title, mention it only in an assumption, or call something unavailable that the server can produce. A plan that breaks these rules gets one correction attempt, then fails with a clear message.
+    *   Shipped in the React V2 branch as 0.261.138.
+    *   (Ref: `functions_orchestration_deliverables.py`, `functions_orchestration_planner.py`, `functions_orchestration_schema.py`, [Orchestration Deliverables](features/ORCHESTRATION_DELIVERABLES.md))
+
+*   **Generated Images In Orchestrated Answers And Files**
+    *   Images you ask for, such as "an image of each president", are generated as planned tasks when the plan runs. Approving the plan is the consent, and in Run automatically mode your request is. Each image appears inline in the answer with the usual viewer and editor, is captioned as an AI-generated illustration, and is embedded in DOCX, PDF, and PowerPoint files. A plan generates at most four images.
+    *   A file can embed only images its own content was prepared from, with bytes checked against what was generated. Images the planner only suggests remain approval cards.
+    *   Shipped in the React V2 branch as 0.261.138.
+    *   (Ref: `functions_orchestration_images.py`, `functions_orchestration_rendering.py`, `functions_orchestration_bootstrap.py`, `functions_image_generation.py`, [Create files with orchestration](../guides/create-files-with-orchestration.md))
 
 #### Breaking Changes
 
@@ -54,14 +161,85 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
     *   Plans saved by the earlier contract no longer open or rerun. Opening, editing, retrying, running or cancelling one shows "This plan was created by an earlier orchestration version and can't be opened or rerun. Start a new request." Such runs are left out of the conversation's run list and the planner's history of earlier runs; deleting the conversation still removes their saved data.
     *   Orchestrated agent steps now always run under the acquisition checks that previously applied only to Gather / Reason / Render plans. They admit Azure AI Foundry (classic) agents without local actions, workspace knowledge or web sources; other agents, including local Semantic Kernel agents, are refused with a safe failure instead of running unchecked.
     *   **Migration**: Start a new request for any conversation whose earlier orchestration plan no longer opens. Administrators who narrowed the capability list and want files or images in plans should select **Create a file** and **Generate images**.
+    *   Shipped in the React V2 branch as 0.261.139.
     *   (Ref: `functions_settings.py`, `functions_orchestration_schema.py`, `functions_orchestration_registry.py`, `route_backend_orchestration.py`, `templates/admin/_panes/chat-orchestration.html`, [Deliverable Planning Fix](fixes/ORCHESTRATION_DELIVERABLE_PLANNING_FIX.md), [Orchestration settings](../admin/orchestration.md))
 
 #### Bug Fixes
 
+*   **Orchestration Execution And Saved Status Accept Cosmos SDK Responses**
+    *   Fixed valid plans failing before their first step with `context_unavailable`, followed by missing-run responses and repeated **Checking execution status** notices.
+    *   Storage boundaries now normalize Cosmos SDK dictionary responses while retaining ownership checks, conditional ETags, execution leases, and deletion guards. Scheduler recovery can read the saved attempt without resetting its original deadline or silently creating another execution.
+    *   Shipped in the React V2 branch as 0.261.140.
+    *   (Ref: `functions_orchestration_bootstrap.py`, `functions_orchestration_plan_revisions.py`, `functions_orchestration_recovery.py`, `functions_orchestration_output_store.py`, `ORCHESTRATION_COSMOS_RESPONSE_COMPATIBILITY_FIX.md`)
+
+*   **Planner And Execution Failures Have Specific, Safe Diagnostics**
+    *   Planner rejection events now retain the exact deliverables rule and correction-attempt number. Admission and recovery events identify the failing stage, response type, and whether a durable outcome was recorded.
+    *   Application Insights preserves these diagnostic fields and hashed workflow identifiers without logging raw prompts, document content, or provider responses. Required source/output checks and the existing single repair budget remain in place.
+    *   Shipped in the React V2 branch as 0.261.140.
+    *   (Ref: `functions_orchestration_deliverables.py`, `functions_orchestration_planner.py`, `functions_orchestration_execution.py`, `functions_appinsights.py`, `docs/reference/logging-tags.md`)
+
+*   **Writing, Comparison, And File-Only Plans Match Their Deliverable Contract**
+    *   Fixed ambiguous planning guidance that produced answer declarations with both a file format and a quantity. One repair removed the format but then failed on the remaining quantity; the prompt now specifies fields by deliverable kind and asks corrections to check the whole declaration.
+    *   File-only plans can omit `final_response` or use null without inventing an extra answer step. Malformed bindings and declared answers without a valid text producer are still rejected.
+    *   Selected sources now carry server-resolved file types, so a PDF/CSV comparison can use compatible narrative and tabular steps rather than send the CSV to narrative-only comparison. Type mismatches and missing Analyze source bindings are caught during planning and share the existing single correction budget.
+    *   Shipped in the React V2 branch as 0.261.140.
+    *   (Ref: `functions_orchestration_planner.py`, `functions_orchestration_schema.py`, `functions_orchestration_context.py`, `functions_orchestration_plan_editing.py`, `ORCHESTRATION_PLANNER_DELIVERABLE_FIELDS_FIX.md`)
+
 *   **One Planner Carries All Of The Planning Guidance**
     *   The planner's single prompt now includes the earlier prompt's guidance on choosing agents and actions, searching before analyzing and passing the found sources on, choosing between web search and deep research by cost and need, using conversation, saved memory and earlier runs, writing self-contained step tasks, visuals, and when and how to ask clarifying or file questions.
     *   A plan the planner writes incorrectly is refused instead of being silently repaired, so an approved plan is exactly the work that runs. The step that writes the chat answer cannot be disabled while editing a plan.
+    *   Shipped in the React V2 branch as 0.261.139.
     *   (Ref: `functions_orchestration_planner.py`, `functions_orchestration_plan_revisions.py`, [Chat Orchestration](features/CHAT_ORCHESTRATION.md), [Gather / Reason / Render orchestration](features/ORCHESTRATION_GATHER_REASON_RENDER.md))
+
+*   **Missing Files And Images Are Never Reported As Delivered**
+    *   Fixed orchestrated answers that said "I can't attach a .docx", left "[Insert Image here]" placeholders, or reported success without the requested file. The answer step is told when a later task saves its output as a file, so it writes the finished content.
+    *   A run in which a requested image or file was not produced is reported as incomplete. A deterministic **Delivery notes** list after the answer names what was not delivered or is not available, such as "2 of 3 images were generated."
+    *   A missing image makes the run retryable. The retry reuses the images that were generated, generates the missing one, and writes the answer again with every image. A retry is not offered when it could only send again an image prompt the image service declined; ask again with a different description instead. The chat recovers an attempt that already delivered a file one file at a time, so ask again to regenerate a missing image there.
+    *   Shipped in the React V2 branch as 0.261.138.
+    *   (Ref: `functions_orchestration_composition.py`, `functions_orchestration_execution.py`, `functions_orchestration_executor.py`, `functions_orchestration_recovery.py`, [Deliverable Planning Fix](fixes/ORCHESTRATION_DELIVERABLE_PLANNING_FIX.md))
+
+*   **A Large Or WEBP Image No Longer Fails The Whole File**
+    *   Fixed a Word, PDF, or PowerPoint file failing because one generated image was over 4 MB, such as a detailed 1536x1024 illustration, or was a WEBP image. The file now embeds a copy the document format accepts, re-encoded and scaled down only as needed, and the chat keeps the original image.
+    *   Shipped in the React V2 branch as 0.261.138.
+    *   (Ref: `functions_orchestration_rendering.py`, `functions_orchestration_result_contracts.py`, [Orchestration Deliverables](features/ORCHESTRATION_DELIVERABLES.md))
+
+*   **Generated Images Never Offer A Paid Second Approval**
+    *   Fixed a planned image showing as an **Approve** card, which bought a duplicate image when clicked, until the chat loaded it, and fixed an earlier answer losing its images after a retry. Each answer now lists the images it shows, the chat loads them when the run finishes, and a planned image's card shows the image or says it is loading. Approving one through the API returns the saved image instead of generating another. Conversation exports and the classic chat show the same images.
+    *   Shipped in the React V2 branch as 0.261.138.
+    *   (Ref: `functions_orchestration_execution.py`, `functions_orchestration_events.py`, `functions_image_generation.py`, `route_backend_chats.py`, `route_backend_conversation_export.py`, `InlineImageProposal.tsx`, `MessageList.tsx`, `imageProposalSpec.ts`)
+
+*   **Orchestrate Remembers Auto And Pinned Models**
+    *   Fixed the Orchestrate model choice resetting to a specific model whenever you left the chat or opened a new chat, which meant choosing **Auto - choose per step** again on every visit.
+    *   The choice is now saved to your account, so Auto or a pinned model stays selected across chats, reloads, and devices. A model pinned for Orchestrate does not change the model normal chat uses.
+    *   Fixed the normal chat model sometimes snapping back to the model that was selected when the page loaded after you left the chat and returned.
+    *   Shipped in the React V2 branch as 0.261.137.
+    *   (Ref: `Composer.tsx`, `orchestrationModelRouting.ts`, `route_backend_users.py`, [Model Picker Persistence Fix](fixes/ORCHESTRATION_MODEL_PICKER_PERSISTENCE_FIX.md))
+
+*   **Gather / Reason / Render Answers Match What Orchestration Could Already Do**
+    *   Fixed orchestrated requests quietly falling back to legacy plans when **Auto - choose per step** was selected. Legacy plans cannot create files, so "create a csv" or "create a word file" produced inline text instead. With the Gather / Reason / Render harness enabled, Auto requests now plan that work, and each step runs on its own authorized model, which is checked again before the run. Editing or restoring an Auto plan now keeps Auto routing instead of silently dropping it.
+    *   The answer step now receives saved memory and the relevant earlier messages, so follow-ups such as "put those in a table" work. It also includes the charts, Mermaid diagrams, and image proposal cards the planner asks for, and places charts drawn from an action's exact rows.
+    *   Fixed answers refusing well-known facts ("I don't have source evidence... to provide an accurate CSV") and filling reports with "Verify with a reputable source". The planner now declares what each answer may rely on: general knowledge, gathered sources only, or both. When an optional search fails, the answer is still written and says what could not be checked. If another step also fails, retrying the run from its failed step now searches again and rewrites the answer with the results, instead of stopping with "Saved step inputs changed".
+    *   Shipped in the React V2 branch as 0.261.134.
+    *   (Ref: `functions_orchestration_composition.py`, `functions_orchestration_execution.py`, `functions_orchestration_executor.py`, `functions_orchestration_planner.py`, `functions_orchestration_schema.py`, [Deliverable Planning Fix](fixes/ORCHESTRATION_DELIVERABLE_PLANNING_FIX.md))
+
+*   **Web Search Failures Explain Themselves, Retry Once, And Link Their Sources**
+    *   A failed web search now reports a specific reason, such as a timeout, an HTTP status, or a service that isn't configured, instead of "This operation could not complete." Read-only gathering retries once after a temporary service error.
+    *   Web search results no longer pass raw citation markers such as 【3:1†source】 into answers. Each marker becomes a numbered link to its source, in both ordinary chat and orchestration.
+    *   Shipped in the React V2 branch as 0.261.134.
+    *   (Ref: `functions_web_search_results.py`, `route_backend_chats.py`, `functions_orchestration_adapters.py`, [Deliverable Planning Fix](fixes/ORCHESTRATION_DELIVERABLE_PLANNING_FIX.md))
+
+*   **Auto Model Routing Plans Data Analysis, Research, And Actions On Common Deployments**
+    *   Fixed Auto refusing whole plans with "No eligible connected model for Structured data analysis" (or Reasoning) when models such as gpt-4o or gpt-4.1 were connected. Few catalog profiles rate those tasks, so when no connected model is rated for a step's task, the step now runs on the capable model best rated for general answering, and its reason says so. Rated models still win, and a model rated unsuitable for the task, an archived profile, or a model without a required capability such as tool calling is never used.
+    *   Fixed every Auto-routed action and deep research step in a Gather / Reason / Render plan being refused by the external-source check, which rebuilt the step's model from the run's empty Auto selection instead of the step's approved binding.
+    *   The answer is now credited to the model that wrote it. A reply that reuses an earlier turn's result keeps the default model rather than borrowing another step's. An Ask-planner revision that cannot be assigned models now reports that no eligible model is available and keeps the previous plan.
+    *   Shipped in the React V2 branch as 0.261.134.
+    *   (Ref: `functions_orchestration_model_routing.py`, `functions_orchestration_external_metadata.py`, `functions_orchestration_plan_editing.py`, [Choose models for orchestration](../guides/model-catalog-routing.md), [Deliverable Planning Fix](fixes/ORCHESTRATION_DELIVERABLE_PLANNING_FIX.md))
+
+*   **Whole-Run Retries Of Plans With Files Render Their Own Files**
+    *   Fixed a whole-run retry of a Gather / Reason / Render plan ending as failed whenever the new attempt had to render a file that the previous attempt had already created or admitted. The new attempt listed the previous attempt's withdrawn file as its own, tried to reuse a file that was no longer available, or was refused when rendering the same content again.
+    *   Each attempt now owns its files. A retry renders them again from saved content, without calling a model, and the previous attempt's files are shown as superseded. React V2 still offers **Retry from failed step** only for an attempt without files, and **Retry file** for a single failed file is unchanged.
+    *   Shipped in the React V2 branch as 0.261.134.
+    *   (Ref: `functions_orchestration_recovery.py`, `functions_orchestration_services.py`, [Create files with orchestration](../guides/create-files-with-orchestration.md), [Deliverable Planning Fix](fixes/ORCHESTRATION_DELIVERABLE_PLANNING_FIX.md))
 
 #### User Interface Enhancements
 
@@ -70,101 +248,308 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
     *   A finished run's steps show their real status, such as **Completed** or **Failed**, instead of **Will run**. Opening a plan saved by the earlier contract shows the message above instead of a spinner.
     *   A run from the earlier contract that a tab was still following, including one restored after a reload, no longer stays **running** and blocks Stop and retries in its conversation. Its recovery notice shows the message above without offering to check or review it.
     *   Admin capability help now explains that plans need **Prepare content** to write an answer or a file's content and **Create a file** to deliver files.
+    *   Shipped in the React V2 branch as 0.261.139.
     *   (Ref: `OrchestrationRunView.tsx`, `OrchestrationPlanCard.tsx`, `OrchestrationMapView.tsx`, `OrchestrationRecoveryNotice.tsx`, `orchestrationPlan.ts`, `orchestrationController.ts`, `orchestrationResume.ts`, `orchestrationErrors.ts`, [Review and edit orchestration plans](../guides/review-and-edit-orchestration-plans.md), [Chat controls](../reference/chat-controls.md))
-
-### **(v0.261.138)**
-
-#### New Features
-
-*   **Orchestration Plans Deliver What You Asked For**
-    *   A Gather / Reason / Render plan now lists what you asked to receive before its steps: the answer, each file with its format, images with their count, charts, and diagrams. The server checks the list against what it can actually produce. A file must come from a Render task in the same format, so "create a csv of states and capitals" produces the CSV file itself instead of rows in the chat.
-    *   Something that cannot be produced here stays on the list as unavailable, with the server's own reason, such as "This file format is not available for this plan." The planner cannot promise it in a step title, mention it only in an assumption, or call something unavailable that the server can produce. A plan that breaks these rules gets one correction attempt, then fails with a clear message.
-    *   (Ref: `functions_orchestration_deliverables.py`, `functions_orchestration_planner.py`, `functions_orchestration_schema.py`, [Orchestration Deliverables](features/ORCHESTRATION_DELIVERABLES.md))
-
-*   **Generated Images In Orchestrated Answers And Files**
-    *   Images you ask for, such as "an image of each president", are generated as planned tasks when the plan runs. Approving the plan is the consent, and in Run automatically mode your request is. Each image appears inline in the answer with the usual viewer and editor, is captioned as an AI-generated illustration, and is embedded in DOCX, PDF, and PowerPoint files. A plan generates at most four images.
-    *   A file can embed only images its own content was prepared from, with bytes checked against what was generated. Images the planner only suggests remain approval cards.
-    *   (Ref: `functions_orchestration_images.py`, `functions_orchestration_rendering.py`, `functions_orchestration_bootstrap.py`, `functions_image_generation.py`, [Create files with orchestration](../guides/create-files-with-orchestration.md))
-
-#### Bug Fixes
-
-*   **Missing Files And Images Are Never Reported As Delivered**
-    *   Fixed orchestrated answers that said "I can't attach a .docx", left "[Insert Image here]" placeholders, or reported success without the requested file. The answer step is told when a later task saves its output as a file, so it writes the finished content.
-    *   A run in which a requested image or file was not produced is reported as incomplete. A deterministic **Delivery notes** list after the answer names what was not delivered or is not available, such as "2 of 3 images were generated."
-    *   A missing image makes the run retryable. The retry reuses the images that were generated, generates the missing one, and writes the answer again with every image. A retry is not offered when it could only send again an image prompt the image service declined; ask again with a different description instead. The chat recovers an attempt that already delivered a file one file at a time, so ask again to regenerate a missing image there.
-    *   (Ref: `functions_orchestration_composition.py`, `functions_orchestration_execution.py`, `functions_orchestration_executor.py`, `functions_orchestration_recovery.py`, [Deliverable Planning Fix](fixes/ORCHESTRATION_DELIVERABLE_PLANNING_FIX.md))
-
-*   **A Large Or WEBP Image No Longer Fails The Whole File**
-    *   Fixed a Word, PDF, or PowerPoint file failing because one generated image was over 4 MB, such as a detailed 1536x1024 illustration, or was a WEBP image. The file now embeds a copy the document format accepts, re-encoded and scaled down only as needed, and the chat keeps the original image.
-    *   (Ref: `functions_orchestration_rendering.py`, `functions_orchestration_result_contracts.py`, [Orchestration Deliverables](features/ORCHESTRATION_DELIVERABLES.md))
-
-*   **Generated Images Never Offer A Paid Second Approval**
-    *   Fixed a planned image showing as an **Approve** card, which bought a duplicate image when clicked, until the chat loaded it, and fixed an earlier answer losing its images after a retry. Each answer now lists the images it shows, the chat loads them when the run finishes, and a planned image's card shows the image or says it is loading. Approving one through the API returns the saved image instead of generating another. Conversation exports and the classic chat show the same images.
-    *   (Ref: `functions_orchestration_execution.py`, `functions_orchestration_events.py`, `functions_image_generation.py`, `route_backend_chats.py`, `route_backend_conversation_export.py`, `InlineImageProposal.tsx`, `MessageList.tsx`, `imageProposalSpec.ts`)
-
-#### User Interface Enhancements
 
 *   **You Asked For**
     *   The plan panel and approval card list what you asked for, each item's state, and the task that produces it. Unavailable items appear in a warning color with their reason. Generate image tasks show their prompt, and the chat loads generated images as soon as the run finishes.
     *   The Image control's notice now reads "Orchestrate will plan the images you ask for and generate them when the plan runs."
+    *   Shipped in the React V2 branch as 0.261.138.
     *   (Ref: `OrchestrationDeliverables.tsx`, `OrchestrationRunView.tsx`, `OrchestrationPlanCard.tsx`, `orchestrationPlan.ts`, `Composer.tsx`, [Review and edit orchestration plans](../guides/review-and-edit-orchestration-plans.md), [Chat controls](../reference/chat-controls.md))
-
-### **(v0.261.137)**
-
-#### Bug Fixes
-
-*   **Orchestrate Remembers Auto And Pinned Models**
-    *   Fixed the Orchestrate model choice resetting to a specific model whenever you left the chat or opened a new chat, which meant choosing **Auto - choose per step** again on every visit.
-    *   The choice is now saved to your account, so Auto or a pinned model stays selected across chats, reloads, and devices. A model pinned for Orchestrate does not change the model normal chat uses.
-    *   Fixed the normal chat model sometimes snapping back to the model that was selected when the page loaded after you left the chat and returned.
-    *   (Ref: `Composer.tsx`, `orchestrationModelRouting.ts`, `route_backend_users.py`, [Model Picker Persistence Fix](fixes/ORCHESTRATION_MODEL_PICKER_PERSISTENCE_FIX.md))
-
-#### User Interface Enhancements
 
 *   **Orchestrate Model Picker Under Manual Controls**
     *   The Orchestrate model picker now sits in the normal model picker's place under **Manual controls**, instead of appearing above the message box, so the toolbar keeps its shape when Orchestrate is switched on.
     *   **Auto - choose per step** is the default wherever a connected model has a catalog profile rated for general answering. Auto is not offered when no model qualifies, and when an administrator hides Manual controls, Orchestrate uses Auto without a picker.
+    *   Shipped in the React V2 branch as 0.261.137.
     *   (Ref: `Composer.tsx`, [Chat controls](../reference/chat-controls.md), [Choose models for orchestration](../guides/model-catalog-routing.md))
 
 *   **Planner Model Dropdown In Admin Settings**
     *   Orchestration → Planner model is now one dropdown on both the V2 and classic Admin Settings pages, replacing four text boxes for the deployment name, model ID, endpoint ID, and provider.
     *   It lists the same models as the default chat model picker, or the classic deployments when AI Connections are off, and writes the four settings for you. **Use the answer model (default)** keeps planning on whichever model answers.
     *   A saved planner model that is no longer listed stays selected and is labelled as missing rather than being cleared, and V2 refuses saves the runtime could never resolve.
+    *   Shipped in the React V2 branch as 0.261.137.
     *   (Ref: `OrchestrationPlannerModelPicker.tsx`, `admin_orchestration_planner_model.js`, `chat-orchestration.html`, `admin_settings_fields.py`, [Orchestration settings](../admin/orchestration.md#chat-orchestration-planner-model-section))
-
-### **(v0.261.134)**
-
-#### Bug Fixes
-
-*   **Gather / Reason / Render Answers Match What Orchestration Could Already Do**
-    *   Fixed orchestrated requests quietly falling back to legacy plans when **Auto - choose per step** was selected. Legacy plans cannot create files, so "create a csv" or "create a word file" produced inline text instead. With the Gather / Reason / Render harness enabled, Auto requests now plan that work, and each step runs on its own authorized model, which is checked again before the run. Editing or restoring an Auto plan now keeps Auto routing instead of silently dropping it.
-    *   The answer step now receives saved memory and the relevant earlier messages, so follow-ups such as "put those in a table" work. It also includes the charts, Mermaid diagrams, and image proposal cards the planner asks for, and places charts drawn from an action's exact rows.
-    *   Fixed answers refusing well-known facts ("I don't have source evidence... to provide an accurate CSV") and filling reports with "Verify with a reputable source". The planner now declares what each answer may rely on: general knowledge, gathered sources only, or both. When an optional search fails, the answer is still written and says what could not be checked. If another step also fails, retrying the run from its failed step now searches again and rewrites the answer with the results, instead of stopping with "Saved step inputs changed".
-    *   (Ref: `functions_orchestration_composition.py`, `functions_orchestration_execution.py`, `functions_orchestration_executor.py`, `functions_orchestration_planner.py`, `functions_orchestration_schema.py`, [Deliverable Planning Fix](fixes/ORCHESTRATION_DELIVERABLE_PLANNING_FIX.md))
-
-*   **Web Search Failures Explain Themselves, Retry Once, And Link Their Sources**
-    *   A failed web search now reports a specific reason, such as a timeout, an HTTP status, or a service that isn't configured, instead of "This operation could not complete." Read-only gathering retries once after a temporary service error.
-    *   Web search results no longer pass raw citation markers such as 【3:1†source】 into answers. Each marker becomes a numbered link to its source, in both ordinary chat and orchestration.
-    *   (Ref: `functions_web_search_results.py`, `route_backend_chats.py`, `functions_orchestration_adapters.py`, [Deliverable Planning Fix](fixes/ORCHESTRATION_DELIVERABLE_PLANNING_FIX.md))
-
-*   **Auto Model Routing Plans Data Analysis, Research, And Actions On Common Deployments**
-    *   Fixed Auto refusing whole plans with "No eligible connected model for Structured data analysis" (or Reasoning) when models such as gpt-4o or gpt-4.1 were connected. Few catalog profiles rate those tasks, so when no connected model is rated for a step's task, the step now runs on the capable model best rated for general answering, and its reason says so. Rated models still win, and a model rated unsuitable for the task, an archived profile, or a model without a required capability such as tool calling is never used.
-    *   Fixed every Auto-routed action and deep research step in a Gather / Reason / Render plan being refused by the external-source check, which rebuilt the step's model from the run's empty Auto selection instead of the step's approved binding.
-    *   The answer is now credited to the model that wrote it. A reply that reuses an earlier turn's result keeps the default model rather than borrowing another step's. An Ask-planner revision that cannot be assigned models now reports that no eligible model is available and keeps the previous plan.
-    *   (Ref: `functions_orchestration_model_routing.py`, `functions_orchestration_external_metadata.py`, `functions_orchestration_plan_editing.py`, [Choose models for orchestration](../guides/model-catalog-routing.md), [Deliverable Planning Fix](fixes/ORCHESTRATION_DELIVERABLE_PLANNING_FIX.md))
-
-*   **Whole-Run Retries Of Plans With Files Render Their Own Files**
-    *   Fixed a whole-run retry of a Gather / Reason / Render plan ending as failed whenever the new attempt had to render a file that the previous attempt had already created or admitted. The new attempt listed the previous attempt's withdrawn file as its own, tried to reuse a file that was no longer available, or was refused when rendering the same content again.
-    *   Each attempt now owns its files. A retry renders them again from saved content, without calling a model, and the previous attempt's files are shown as superseded. React V2 still offers **Retry from failed step** only for an attempt without files, and **Retry file** for a single failed file is unchanged.
-    *   (Ref: `functions_orchestration_recovery.py`, `functions_orchestration_services.py`, [Create files with orchestration](../guides/create-files-with-orchestration.md), [Deliverable Planning Fix](fixes/ORCHESTRATION_DELIVERABLE_PLANNING_FIX.md))
-
-#### User Interface Enhancements
 
 *   **See Who Planned The Work**
     *   The plan panel and approval card now name the model that wrote the plan and how it was chosen. Each answer task shows its answer basis and requested visuals, and optional inputs are labeled.
+    *   Shipped in the React V2 branch as 0.261.134.
     *   (Ref: `OrchestrationRunView.tsx`, `OrchestrationPlanCard.tsx`, `orchestrationPlan.ts`, [Review and edit orchestration plans](../guides/review-and-edit-orchestration-plans.md))
 
-### **(v0.261.133)**
+### **(v0.261.180)**
+
+#### Bug Fixes
+
+*   **Public Member Import Lists Only Public Roles**
+    *   The V2 public Members section's CSV import said roles could be user, admin or document_manager, and accepted `user` rows that the server then refused one by one. A public workspace assigns only Admins and DocumentManagers.
+    *   The dialog now says "Roles are admin or document_manager.", and a `user` row is refused when the file is read, before anything is sent. The group import is unchanged.
+    *   (Ref: `groupMembership.ts`, `ImportMembersDialog.tsx`, `MembersSection.tsx`, [Public Member CSV Roles Fix](fixes/PUBLIC_MEMBER_CSV_ROLES_FIX.md))
+
+### **(v0.261.179)**
+
+#### New Features
+
+*   **Manage Public Workspace Members In V2**
+    *   A public workspace's Owner and Admins now manage its Admins and DocumentManagers in V2, in a **Members** section under **Manage**. They can add members, change roles, remove members, and decide DocumentManager requests, and the Owner can transfer ownership. It's the group Members section, with public rules.
+    *   New routes name the workspace in the path, `/api/public-workspaces/<id>/membership/...`, write conditionally, and record adds, role changes and removals in the activity log.
+    *   The V2 public directory offers **Create** to people allowed to create public workspaces.
+    *   (Ref: `route_backend_public_membership.py`, `functions_public_membership_policy.py`, `MembersSection.tsx`, `PublicMembersSection.tsx`, `functions_public_directory_policy.py`, [V2 Public Members](features/V2_PUBLIC_MEMBERS.md), [Public Membership APIs](features/PUBLIC_MEMBERSHIP_APIS.md))
+
+#### Breaking Changes
+
+*   **DocumentManagers No Longer See Members' Emails In V2**
+    *   Classic shows every member's email to every member. In V2's public Members section, the Owner and Admins see emails and a DocumentManager sees names and roles only. The server withholds the emails (decision 18). The classic page is unchanged.
+    *   **Migration**: none.
+
+### **(v0.261.178)**
+
+#### User Interface Enhancements
+
+*   **Group Members Can Run Group Workflows In V2**
+    *   Classic, and the server, let every group member run and cancel a group workflow, but V2 offered **Run** and **Cancel** only to workflow managers. Every member of an active group now gets them; creating, editing and deleting stay with the workflow manager roles.
+    *   The workspace context publishes each member's workflow operations from the same policy the routes use, so V2 never offers an action the server would refuse.
+    *   (Ref: `functions_group_workflow_policy.py`, `functions_workspace_context.py`, `WorkflowsSection.tsx`, [V2 Group Workflows](features/V2_GROUP_WORKFLOWS.md))
+
+### **(v0.261.177)**
+
+#### New Features
+
+*   **Public Workspace Prompts In V2**
+    *   A public workspace's prompts now open in the V2 prompt workbench. Every signed-in user can read and use them. Owners, Admins and DocumentManagers can create, edit and delete them in an active workspace, and a conflicting edit keeps your draft.
+    *   New routes name the workspace in the path, `/api/public-workspaces/<id>/prompts`, so a change can't land in a different workspace from the one on screen.
+    *   **Use in chat** works for a prompt in a public workspace you've hidden from chat. It fetches just that prompt and changes no setting.
+    *   (Ref: `route_backend_public_prompts_scoped.py`, `functions_public_prompt_policy.py`, `lib/promptWorkbench.ts`, `Composer.tsx`, [V2 Public Prompts](features/V2_PUBLIC_PROMPTS.md), [Public Prompt APIs](features/PUBLIC_PROMPT_APIS.md))
+
+#### Breaking Changes
+
+*   **Classic Public Prompt Changes Need An Active Workspace**
+    *   The classic `/api/public_prompts` create, update and delete routes wrote in any workspace status. They now answer 403 "This public workspace is not accepting prompt changes right now." unless the workspace is active, matching the new routes. Reading is unchanged.
+    *   **Migration**: none. Make the workspace active before changing its prompts.
+
+### **(v0.261.176)**
+
+#### Bug Fixes
+
+*   **Statistics Date Ranges Are Limited To 366 Days**
+    *   The classic group, public workspace and profile statistics accepted any custom range between 2000 and 9998, and the profile route had no bound at all. A range of millions of days made one request take seconds of processing and over a gigabyte of memory, and return a very large response.
+    *   Every statistics route now refuses a custom range longer than 366 days with "Choose a date range of 366 days or fewer.", as the V2 group statistics already did. The profile statistics also refuse dates outside 2000-01-01 to 9998-12-31.
+    *   (Ref: `functions_stats_windows.py`, `route_backend_groups.py`, `route_backend_public_workspaces.py`, `route_frontend_profile.py`, [Statistics Window Span Limit Fix](fixes/STATS_WINDOW_SPAN_LIMIT_FIX.md))
+
+*   **Public Workspace Role Changes Check Permission First**
+    *   A public workspace role change or ownership transfer looked the member up in the directory before checking that the caller could make the change. It now checks first. A transfer to an older member entry keeps the member's name and email, and Control Center's ownership approvals keep every member.
+    *   (Ref: `route_backend_public_workspaces.py`, `route_backend_control_center.py`, [Public Workspace Writer Safety Fix](fixes/PUBLIC_WORKSPACE_WRITER_SAFETY_FIX.md))
+
+### **(v0.261.175)**
+
+#### New Features
+
+*   **A Public Workspace Directory In V2**
+    *   **Public Workspaces** in V2 now opens a directory of every public workspace you can discover, with **All** and **My workspaces** views, search, and paging kept in the address. Open a workspace, or choose which ones your public chat searches with **Visible for chat**, the same setting the classic directory uses.
+    *   It reads a new route, `GET /api/public_workspaces/directory`, which the V2 public workspace picker now uses too. Its rows carry no owner email, unlike the classic list route.
+    *   The directory, public workspace pages, the picker and the chat handoffs use the public workspace names an administrator configures.
+    *   (Ref: `route_backend_public_directory.py`, `functions_public_directory.py`, `PublicDirectoryPage.tsx`, `lib/publicVisibility.ts`, `lib/publicWorkspaceLabels.ts`, [V2 Public Workspace Directory](features/V2_PUBLIC_DIRECTORY.md), [Public Directory APIs](features/PUBLIC_DIRECTORY_APIS.md))
+
+### **(v0.261.174)**
+
+#### User Interface Enhancements
+
+*   **Content Screening Scans From A Group's Documents**
+    *   A group's Owner, Admins and DocumentManagers now get **Screening scans** in the V2 group Documents section, the same modal personal documents offer. They can scan the group, follow recent scans with cancel, resume and retry, see the policy additions, and open Content review.
+    *   The server decides who sees it: the workspace context publishes the members the screening routes accept, so a member is never offered a control the server would refuse.
+    *   (Ref: `DocumentsSection.tsx`, `ScreeningWorkspaceControls.tsx`, `functions_workspace_context.py`, [V2 Group Document Management](features/V2_GROUP_DOCUMENT_MANAGEMENT.md))
+
+### **(v0.261.173)**
+
+#### Bug Fixes
+
+*   **Public Workspace Changes No Longer Overwrite Each Other**
+    *   Every classic writer of a public workspace, 27 in all, saved a copy it had read earlier. They covered members, requests, roles, ownership, settings, logo, downloads, retention, tags and seven Control Center actions. So one change could undo another made at the same moment, and a save could bring back a deleted workspace. They now write conditionally, keep unrelated changes, never recreate a deleted workspace, and answer "The public workspace changed while your request was being saved. Try again." when a workspace keeps changing.
+    *   Admins promoted in classic can now see and decide document manager requests, add members and receive ownership. A legacy member entry no longer breaks the members routes, and a role change or ownership transfer keeps the member's name and email.
+    *   Unknown workspace statuses now get the inactive permissions instead of the active ones. Statistics refuse out-of-range dates with a reviewed message instead of failing. The update, download and logo routes answer reviewed messages instead of raw error text, including for an oversized image. Invalid download and retention settings are refused.
+    *   A tag change that loses to a concurrent change answers the coded vocabulary conflict, and metadata edits and bulk tagging save nothing when refused.
+    *   (Ref: `functions_public_workspaces.py`, `route_backend_public_workspaces.py`, `route_backend_public_documents.py`, `route_backend_control_center.py`, `route_backend_retention_policy.py`, [Public Workspace Writer Safety Fix](fixes/PUBLIC_WORKSPACE_WRITER_SAFETY_FIX.md))
+
+### **(v0.261.172)**
+
+#### Bug Fixes
+
+*   **Ignoring A Browsed File Takes Effect**
+    *   In the V2 group file source editor, **Ignore** sent the file's path under the source's root, but the sync engine tracks each file by its full remote path, so the ignore never matched and the file kept syncing. Folders were also offered Ignore, which the engine can't honour.
+    *   Browse now gives every file its full remote path, built the way the engine builds it for SMB, Azure Files, Azure Blob and OneDrive. **Ignore** and **Restore** send it, and appear on files only.
+    *   (Ref: `functions_file_sync.py`, `FileSourceEditorDialog.tsx`, [File Source Browse Ignore Fix](fixes/FILE_SOURCE_BROWSE_IGNORE_FIX.md))
+
+### **(v0.261.171)**
+
+#### New Features
+
+*   **Choose What A Group File Source Syncs, In V2**
+    *   The V2 group file source editor now sets the four remaining classic options: the folders and files to sync under the root (picked with Browse or typed), fixed tags for every synced file (with the group's existing tags as suggestions), how folders become tags, and what happens to the SimpleChat copy when a source file is deleted.
+    *   Editing a source keeps all four unless you change them, and a conflict reload merges them like the other fields.
+    *   (Ref: `FileSourceEditorDialog.tsx`, `lib/fileSourceFields.ts`, [V2 Group File Sources](features/V2_GROUP_FILE_SOURCES.md))
+
+#### Bug Fixes
+
+*   **Browsing A Group File Source Works For SMB Sources**
+    *   V2 Browse sent the source's root as the folder to list, which the server resolves under the root, so every SMB source answered an error. Choosing an entry also overwrote the root.
+    *   Browse now starts at the root, opens folders by their path under it, and never changes the root.
+    *   (Ref: `FileSourceEditorDialog.tsx`, [File Source Browse Path Fix](fixes/FILE_SOURCE_BROWSE_PATH_FIX.md))
+
+### **(v0.261.170)**
+
+#### Bug Fixes
+
+*   **Editing A Workspace Identity Keeps Its Managed Identity Client ID**
+    *   Editing a workspace identity that signs in with a user-assigned managed identity erased its client ID, in the classic editor and the V2 group editor, so it silently fell back to the default managed identity. Only identities whose client ID was set through the API were affected, since neither editor can set it.
+    *   The identity details now carry the client ID and a service principal's tenant, both non-secret, and both editors send the client ID back unchanged. The classic editor serves personal, group and public workspaces and the admin global identities, so all of them are fixed.
+    *   (Ref: `functions_workspace_identities.py`, `lib/identityFields.ts`, `workspace-identities.js`, [Identity Credential Round Trip Fix](fixes/IDENTITY_CREDENTIAL_ROUND_TRIP_FIX.md))
+
+### **(v0.261.169)**
+
+#### Bug Fixes
+
+*   **Sharing And Publication Decisions Stay Bound To Their Workspace**
+    *   The V2 document collaboration adapters built their requests for the workspace they were created for, but checked the server's receipt against the caller's scope as it was when the receipt arrived. A caller that changed its scope object in between would see a confirmed decision rejected as unconfirmed.
+    *   Each adapter now keeps one frozen copy of its scope for the request, the receipt check and the public review's workspace name. The V2 Documents sections already created a new scope for each workspace, so nothing changes for users today.
+    *   Found by the full comparison of the React V2 base branch's tests against this branch, which also aligned three tests that had gone stale on this branch.
+    *   (Ref: `lib/documentCollaboration.ts`, `test_v2_group_document_collaboration.mjs`, [Document Collaboration Bound Scope Fix](fixes/DOCUMENT_COLLABORATION_BOUND_SCOPE_FIX.md))
+
+### **(v0.261.168)**
+
+#### Bug Fixes
+
+*   **Refused Group Tag Edits Save Nothing**
+    *   A metadata edit or bulk tag in a group saved the documents before it checked the group's tag definitions. If someone changed the group's tags at that moment, the request was refused with "Refresh and retry", although the documents had already been saved.
+    *   The definitions are now written first, so a refused edit saves nothing, and a refused bulk tag reports one conflict for the whole batch.
+    *   (Ref: `functions_group_document_management.py`, [Group Tag Definitions First Fix](fixes/GROUP_TAG_DEFINITIONS_FIRST_FIX.md))
+
+#### User Interface Enhancements
+
+*   **A Refused Upload Says Why**
+    *   A group or public workspace manager who drops files where uploads are disabled, or into a locked workspace, is now told why instead of getting a generic message.
+    *   (Ref: `lib/documentAccessCopy.ts`, `DocumentExplorer.tsx`, [Shared Workspace Document Access Copy Fix](fixes/SHARED_WORKSPACE_DOCUMENT_ACCESS_COPY_FIX.md))
+
+### **(v0.261.167)**
+
+#### Bug Fixes
+
+*   **A Lost Group Tag Change Says What Happened**
+    *   When a group's tags changed while someone was creating, recolouring or renaming a tag, the answer depended on timing. A change caught early said "The group's tags or permissions changed. Refresh and retry." A change that landed during the write said "The resource changed. Refresh and retry the operation.", with no code.
+    *   Both now answer 409 with the first sentence and `error_code: vocabulary_conflict`. The final vocabulary step of a rename or delete, and bulk tagging, report the same sentence and code.
+    *   (Ref: `functions_group_document_management.py`, [Group Tag Vocabulary Conflict Code Fix](fixes/GROUP_TAG_VOCABULARY_CONFLICT_CODE_FIX.md))
+
+#### User Interface Enhancements
+
+*   **Shared Workspaces Say Who Can Add Documents**
+    *   An empty group or public Documents section no longer tells a viewer who can't upload to "Use the classic workspace to manage files", which couldn't help them either. It says who can add documents, or why no one can right now: uploads disabled, a locked workspace, or a status that doesn't allow it.
+    *   A viewer with no document operations who tries a change is told the same way, rather than being sent to classic. Public workspaces now say "public workspace" instead of "group".
+    *   (Ref: `lib/documentAccessCopy.ts`, `DocumentExplorer.tsx`, `DocumentsSection.tsx`, [Shared Workspace Document Access Copy Fix](fixes/SHARED_WORKSPACE_DOCUMENT_ACCESS_COPY_FIX.md))
+
+### **(v0.261.166)**
+
+#### User Interface Enhancements
+
+*   **Call Agent Copy Matches What You Can Do**
+    *   In a group's **Actions** section, the **Call agent** introduction promised a choice even when the manager below it was read-only, as it is for members and when group actions are off. It now describes the agents and triggers instead, and offers the choice only when you can make it.
+    *   (Ref: `GroupWorkspacePage.tsx`, [Group Call Agent Read-Only Copy Fix](fixes/GROUP_CALL_AGENT_READ_ONLY_COPY_FIX.md))
+
+### **(v0.261.165)**
+
+#### New Features
+
+*   **Group Settings, Activity And Statistics In V2**
+    *   Group owners and admins can manage a group's profile, logo, file downloads and retention, read its recent activity, and chart and export its statistics in the V2 group workspace, under **Manage** beside Members.
+    *   The server decides who sees what and which controls work, and a locked control says why. Unsaved edits survive switching browser tabs and conflicting saves, a failed save keeps them, and **Discard changes** puts an editor back to the saved settings.
+    *   Statistics reuse the personal charts and export dialog. The export writes the classic group CSV column for column.
+    *   Deleting a group is still finished on the classic page, from a **Delete this group** section in Settings that shows how many documents remain.
+    *   (Ref: `GroupSettingsSection.tsx`, `GroupActivitySection.tsx`, `GroupStatisticsSection.tsx`, `lib/groupSettings.ts`, `lib/groupStats.ts`, `functions_workspace_context.py`, [V2 Group Settings, Activity and Statistics](features/V2_GROUP_SETTINGS.md))
+
+#### User Interface Enhancements
+
+*   **Manage Group (Classic) Only Where It's Still Needed**
+    *   The group header's **Manage group (classic)** button now appears only in an inactive group or one whose status isn't recognized. Everything else it offered is native in V2.
+    *   (Ref: `GroupWorkspacePage.tsx`, [V2 Group Settings, Activity and Statistics](features/V2_GROUP_SETTINGS.md))
+
+### **(v0.261.164)**
+
+#### Bug Fixes
+
+*   **V2 Shows A Failure's Sentence, Not Its Code**
+    *   When a request failed with a code and a sentence, V2 showed the code, for example `document_propagation_incomplete`. It now shows the sentence, such as "The operation changed stored data, but required cleanup or propagation is incomplete. Refresh before retrying."
+    *   This covers document management, File Sync and collaboration refusals, the Microsoft 365 pending actions, the terms-of-use gate and CI bearer authentication. Failures whose message is already a sentence are unchanged.
+    *   (Ref: `lib/apiClient.ts`, [V2 Fixture Parity Findings Fix](fixes/V2_FIXTURE_PARITY_FINDINGS_FIX.md))
+
+*   **Deleting A Document Names The Conversation That Needs It**
+    *   When a conversation depends on a document, the V2 delete confirmation now names the conversation and links to it in V2 chat, in a new tab.
+    *   Only the conversation's id or a link to this site is used, never a link to another site or to classic chat, and the title is always shown as text.
+    *   (Ref: `lib/documentOperations.ts`, `DocumentDialogs.tsx`, [V2 Fixture Parity Findings Fix](fixes/V2_FIXTURE_PARITY_FINDINGS_FIX.md))
+
+*   **Batch Downloads Keep The Server's Archive Name**
+    *   Downloading several group or public documents at once saved `documents.zip`. It now saves `group-documents.zip` or `public-documents.zip`, the names the server gives.
+    *   A single document keeps its own file name, and personal downloads are unchanged.
+    *   (Ref: `lib/documentOperations.ts`, `DocumentExplorer.tsx`, [V2 Fixture Parity Findings Fix](fixes/V2_FIXTURE_PARITY_FINDINGS_FIX.md))
+
+*   **Group Agents Offer Only Group Knowledge**
+    *   The V2 group agent editor offered public knowledge sources, which a group agent never keeps. It now offers only the group's own knowledge. Personal agents are unchanged.
+    *   (Ref: `lib/agentWorkbench.ts`, [V2 Fixture Parity Findings Fix](fixes/V2_FIXTURE_PARITY_FINDINGS_FIX.md))
+
+### **(v0.261.163)**
+
+#### Bug Fixes
+
+*   **Classic Group Statistics Export Downloads Again**
+    *   On the classic **Manage group** page, exporting statistics showed "Failed to export group stats." and downloaded nothing whenever **Storage Usage** was ticked, which it is by default. The export called a byte formatter the page never had.
+    *   The export now downloads its CSV. Storage sizes read like the public workspace export's, for example "1.5 KB", and nothing else in the file changes.
+    *   (Ref: `static/js/group/manage_group.js` `exportGroupStats`, [Classic Group Stats Export Fix](fixes/CLASSIC_GROUP_STATS_EXPORT_FIX.md))
+
+### **(v0.261.162)**
+
+#### Bug Fixes
+
+*   **Searching Your Groups Ignores Case And Matches Descriptions**
+    *   Searching your own groups was case-sensitive and matched names only, so "research" didn't find "Research Group" and a word from a group's description found nothing. It affected the V2 group picker, the V2 Settings **Groups** tab, the classic **My Groups** page and the profile page's **Groups** tab.
+    *   The search now ignores case and matches a group's name or description, as the group directory and the admin group search already did. An empty search still lists all your groups, and paging is unchanged.
+    *   (Ref: `functions_group.py` `search_groups`, `GET /api/groups`, [Group Picker Search Casefold Fix](fixes/GROUP_PICKER_SEARCH_CASEFOLD_FIX.md))
+
+### **(v0.261.161)**
+
+#### Bug Fixes
+
+*   **SimpleChat Agent Tools Explain A Group That Keeps Changing**
+    *   When adding a group member or marking a group inactive couldn't be saved because the group kept changing, the agent got a generic "unexpected" error and the application logged an error with a traceback.
+    *   The tools now answer with the same message every group route uses, "The group changed while your request was being saved. Try again.", and the code `group_write_conflict`. Nothing was saved, so the request can be repeated. The log entry is a warning with no group data.
+    *   (Ref: `simplechat_plugin.py`, [SimpleChat Agent Group Output Fix](fixes/SIMPLECHAT_AGENT_GROUP_OUTPUT_FIX.md))
+
+### **(v0.261.160)**
+
+#### Bug Fixes
+
+*   **The Last Group Writers No Longer Overwrite Concurrent Changes**
+    *   Control Center's activity refresh, group status change, add member and ownership approvals, the classic tag routes, the SimpleChat agent's inactive marker, and the legacy bulk model endpoint save each saved a copy of the group read earlier. Any of them could undo a change made in between, and one that saved after a deletion brought the group back. Control Center's refresh, which runs nightly by default, did this to every group.
+    *   Each now applies its change to the group as it currently is, never recreates a deleted group, and refuses a group that keeps changing with one shared message: "The group changed while your request was being saved. Try again."
+    *   Ownership approvals are re-checked when approved: a request whose owner has since changed is refused, and approving the same request twice no longer marks it failed. An approval that can't be applied because the group keeps changing asks for a new request, since a failed approval can't be approved again.
+    *   The bulk endpoint save deletes superseded Key Vault secrets only after the save commits, and never one the saved endpoints still use. A failed Key Vault delete no longer fails the save.
+    *   (Ref: `route_backend_control_center.py`, `route_backend_group_documents.py`, `functions_documents.py`, `functions_simplechat_operations.py`, `functions_group.py`, `route_backend_models.py`, [Group Residual Writers Write Safety Fix](fixes/GROUP_RESIDUAL_WRITERS_WRITE_SAFETY_FIX.md))
+
+*   **SimpleChat Agent Tools No Longer Return The Stored Group**
+    *   The create group, add member and mark inactive tools answered the model with the whole stored group, including member emails, pending requests and, with Key Vault storage off, inline model endpoint credentials.
+    *   They now answer only the group's ID, name and status.
+    *   (Ref: `simplechat_plugin.py`, [SimpleChat Agent Group Output Fix](fixes/SIMPLECHAT_AGENT_GROUP_OUTPUT_FIX.md))
+
+*   **Classic Group Requests Refuse Malformed Input Cleanly**
+    *   The group download setting treated the string "false" as true, a retention save with a non-JSON body answered 500, and a statistics date at the calendar's edge failed the request.
+    *   Each now answers 400 with a clear message and changes nothing.
+    *   (Ref: `route_backend_groups.py`, `route_backend_retention_policy.py`, `functions_stats_windows.py`, [Group Classic Request Gaps Fix](fixes/GROUP_CLASSIC_REQUEST_GAPS_FIX.md))
+
+### **(v0.261.159)**
+
+#### Bug Fixes
+
+*   **Held Documents No Longer Offer Ordinary Actions In Their Details**
+    *   The V2 documents Details pane showed Chat, Download, Tag, Edit, Extract, Share and Delete for a document held by content screening. Most were disabled, but Share was live, so a held file in My Workspace could be shared from the pane.
+    *   A held document's details now explain the hold and offer only the cleanup its workspace allows: Delete where a group or public workspace permits it for that document, and the group sharing review where it's available. A personal held document offers no action; the hold is resolved in Content review.
+    *   Documents that are only blocked from chat, such as a shared group document awaiting approval, keep their other permitted actions.
+    *   (Ref: `DocumentDetailsPane.tsx`, [Held Document Details Actions Fix](fixes/V2_HELD_DOCUMENT_DETAILS_ACTIONS_FIX.md))
+
+### **(v0.261.158)**
 
 #### Bug Fixes
 
@@ -172,9 +557,459 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
     *   Fixed V2 Admin Settings showing only loading placeholders, with the version banner reading "Checking for updates...", until the server finished checking GitHub for a newer release. When the daily cached check had expired, the settings response waited for the releases page to download and be parsed, and an unreachable GitHub held the page for at least the full timeout.
     *   The update check is now its own admin-only request, `GET /api/v2/admin/update-status`, sent at the same time as the settings. Settings appear and can be edited and saved as soon as they load, and only the version banner waits for the check. A failed check still shows "Unable to check for application updates." without affecting the settings.
     *   Classic Admin Settings is unchanged.
+    *   Merged from the React V2 branch, where it shipped as 0.261.133. This branch had already assigned 0.261.133 to native public document management, so here the fix carries the merge's version.
     *   (Ref: `route_backend_v2.py`, `AdminSettingsPage.tsx`, `adminFields.ts`, [Administration](../admin/index.md), [Update Check Non-Blocking Fix](fixes/V2_ADMIN_UPDATE_CHECK_NON_BLOCKING_FIX.md))
 
+### **(v0.261.157)**
+
+#### Bug Fixes
+
+*   **Group Profile And Logo Edits Refused When The Group's Status Isn't Recognized**
+    *   The native group settings routes let the owner of a group with an unrecognized status change its name, description, color and logo, although the rest of the workspace treats such a group as unavailable. Those edits are now refused unless the group is active or has uploads disabled, with a message that says the status isn't recognized.
+    *   Downloads, retention and the settings, activity and statistics reads are unchanged.
+    *   (Ref: `functions_group_settings_policy.py`, `functions_group_settings.py`, [Group Settings Unknown Status Fix](fixes/GROUP_SETTINGS_UNKNOWN_STATUS_FIX.md))
+
+### **(v0.261.156)**
+
+#### Bug Fixes
+
+*   **Editing A File Source No Longer Erases Its Tenant**
+    *   Saving a group file source in V2 that signs in with a service principal, even just to rename it, removed its stored tenant ID, so the next sync signed in to the wrong tenant. The editor also showed **Tenant ID** empty. The tenant is now shown and kept.
+    *   Editing a source in either the V2 or the classic editor also removed a managed identity's client ID set through the API. It's now kept too.
+    *   If a source was affected, open it, enter the tenant ID again, and save.
+    *   (Ref: `sanitize_file_sync_source`, `fileSourceFields.ts`, [File Source Credential Round Trip Fix](fixes/FILE_SOURCE_CREDENTIAL_ROUND_TRIP_FIX.md))
+
+### **(v0.261.155)**
+
+#### New Features
+
+*   **V2 Group Members**
+    *   Group workspaces in V2 have a **Members** section, under a new **Manage** group in the navigation. Everyone in the group can see who belongs to it and leave; owners and admins manage it there.
+    *   Owners and admins can add members from the directory, import them from a CSV file in the classic format, change roles, remove members, and approve or reject requests to join. Several members can be changed or removed together, with each member's result shown. The owner can transfer ownership.
+    *   The page offers only what the server allows each person, and shows the server's message when a change is refused. A request someone else already handled is reported as handled, not as an error.
+    *   Members isn't available in inactive groups; **Manage group (classic)** still covers them, and group settings.
+    *   (Ref: `GroupMembersSection.tsx`, `groupMembership.ts`, `sections.members` in `functions_workspace_context.py`, [V2 Group Members](features/V2_GROUP_MEMBERS.md))
+
+### **(v0.261.154)**
+
+#### New Features
+
+*   **Group Settings, Activity and Statistics APIs**
+    *   New server routes under `/api/groups/<group_id>/settings` read and change a named group's name, description, color, logo, download setting and retention periods. Routes under `/api/groups/<group_id>/insights` read its activity feed, statistics and document count.
+    *   Each settings section carries a revision, so a save made from an out-of-date copy is refused with a reload instead of overwriting someone else's change. Every write applies to the group as it currently is.
+    *   One policy decides what the caller may do, matching the classic rules. It is published as `settings_management` in the settings read and in the V2 group context. A locked or inactive group's name, description, color and logo can't be changed, as on the classic page.
+    *   The activity feed shows reviewed summaries and members' display names only, never document titles, file names, emails or error text. The statistics match the classic figures, refuse custom ranges over 366 days, and report a storage failure instead of zeros.
+    *   The V2 Settings, Activity and Statistics views that use these routes arrive in a later release.
+    *   (Ref: `functions_group_settings.py`, `functions_group_settings_policy.py`, `functions_group_insights.py`, `route_backend_group_settings.py`, [Group Settings APIs](features/GROUP_SETTINGS_APIS.md))
+
+#### Bug Fixes
+
+*   **Group Settings Saves No Longer Undo Membership Changes**
+    *   Classic renames and the color, logo, download and retention saves, as well as the administrator's retention force push, saved the whole group without a condition. A save landing just after a membership change could undo it, and a late save could recreate a deleted group. Each now applies to the group as it currently is.
+    *   (Ref: `route_backend_groups.py`, `route_backend_retention_policy.py`, [Group Settings Write Safety Fix](fixes/GROUP_SETTINGS_WRITE_SAFETY_FIX.md))
+
+*   **Delete Group Asks For The Group's Documents To Be Removed First**
+    *   The classic manage page's document count always came back as 0, so **Delete group** never asked the owner to remove the group's documents, and they were left behind. The count is now the group's current documents, as its document list shows them.
+    *   (Ref: `get_group_file_count`, `count_current_group_documents`, [Group Document Count Fix](fixes/GROUP_DOCUMENT_COUNT_FIX.md))
+
+*   **Group Retention Settings Save Correctly**
+    *   **Using organization default** can be saved again, and saving one retention period keeps the other. Values that aren't a number of days get the existing message instead of being stored as 1 day or failing.
+    *   The route now follows the group workspaces and group retention policy switches.
+    *   (Ref: `update_group_retention_settings`, [Group Retention Settings Fix](fixes/GROUP_RETENTION_SETTINGS_FIX.md))
+
+*   **Group Settings Errors No Longer Show Internal Details**
+    *   A failed rename, download or logo save showed the raw Cosmos DB or image library message. It now shows a plain message and logs only the error type. A logo that decompresses to an enormous image is refused instead of failing.
+    *   (Ref: `route_backend_groups.py`, [Group Settings Error Text Fix](fixes/GROUP_SETTINGS_ERROR_TEXT_FIX.md))
+
+### **(v0.261.153)**
+
+#### User Interface Enhancements
+
+*   **V2 Group Workspace No Longer Points To Classic For Native Sections**
+    *   Every group workspace section is native, so the navigation and overview no longer label unavailable sections "Classic". An unavailable section shows why it's unavailable instead.
+    *   The Tags classic button and the classic hand-off panel are gone. A section link with an item the section doesn't support, such as `/v2/groups/<id>/prompts/<prompt>`, now opens the section, and a workflow link opens that workflow.
+    *   When group actions are off, **Actions** says so and keeps the Call agent manager, with no classic link.
+    *   Documents' classic link is now **Classic tools**, for upgrading legacy documents, the one classic tool with no V2 equivalent yet.
+    *   (Ref: `GroupWorkspacePage.tsx`, `DocumentsSection.tsx`, `TagsSection.tsx`, [V2 Shared Workspace Context](features/V2_SHARED_WORKSPACE_CONTEXT.md))
+
+### **(v0.261.152)**
+
+#### Bug Fixes
+
+*   **Group Editors Keep Other People's Changes After A Conflict**
+    *   Fixed the group prompt, identity, endpoint and file source editors re-sending your whole draft after a save conflict. That silently undid the other person's changes to fields you never touched.
+    *   Reloading now merges: their changes fill the fields you didn't touch, your edits are kept, and any field you both changed is named, never its value. Secrets are never compared or shown.
+    *   If the item was deleted meanwhile, the editor says so and saves nothing.
+    *   (Ref: `lib/rebaseDraft.ts`, `PromptWorkbench.tsx`, `GroupIdentitiesSection.tsx`, `ModelConnectionsManager.tsx`, `GroupFileSourcesSection.tsx`, [Group Editor Conflict Rebase Fix](fixes/GROUP_EDITOR_CONFLICT_REBASE_FIX.md))
+
+### **(v0.261.151)**
+
+#### New Features
+
+*   **Group Membership APIs**
+    *   New server routes under `/api/groups/<group_id>/membership/` list a group's members, paged and searchable, and add, re-role, remove and let members leave. They also list, approve and reject join requests, and transfer ownership, all for a named group rather than the account's active one.
+    *   The member list says what the caller may do: `membership_management` for the group, and `member_actions` on each member. Both come from one policy module that matches the classic rules.
+    *   The owner's role changes only by transfer, and the owner can't be removed or leave. Members can't be added to locked or inactive groups. A new member is looked up in the directory by ID.
+    *   The V2 Members view that uses these routes arrives in a later release.
+    *   (Ref: `functions_group_membership.py`, `functions_group_membership_policy.py`, `route_backend_group_membership.py`, [Group Membership APIs](features/GROUP_MEMBERSHIP_APIS.md))
+
+#### Bug Fixes
+
+*   **Group Membership Changes No Longer Overwrite Each Other**
+    *   Classic join requests, approvals, adds, removals, role changes and ownership transfers saved the whole group without a condition. So two changes at once could lose one, and a late change could recreate a deleted group. Each now applies to the group as it currently is, and a deleted group stays deleted.
+    *   Joining a group with no pending-request list no longer fails.
+    *   (Ref: `update_group_document_with_etag_guard`, `route_backend_groups.py`, [Group Membership Write Safety Fix](fixes/GROUP_MEMBERSHIP_WRITE_SAFETY_FIX.md))
+
+*   **Classic Membership Edge Cases**
+    *   Approving someone who was already a member no longer adds them twice, and every pending request from a user is settled in one decision.
+    *   The owner's role can no longer be changed except by transfer, and a transfer keeps the old owner's name and email.
+    *   The classic bulk remove now reports its successes, and the members list no longer fails on malformed entries.
+    *   (Ref: `route_backend_groups.py`, `add_group_member_for_current_user`, [Group Membership Edge Cases Fix](fixes/GROUP_MEMBERSHIP_EDGE_CASES_FIX.md))
+
+*   **User Search Errors No Longer Expose Graph Details**
+    *   `/api/userSearch` returned Microsoft Graph's error body to the browser and had no timeout. Failures now return a fixed message, time out after 20 seconds, and log only the status code.
+    *   (Ref: `route_backend_users.py`, [User Search Error Hardening Fix](fixes/USER_SEARCH_ERROR_HARDENING_FIX.md))
+
+### **(v0.261.150)**
+
+#### New Features
+
+*   **V2 Group Directory**
+    *   Find, join and create groups in V2 at `/v2/groups/directory`, reached from **Browse all groups** in the group workspaces header or from the screen shown when no group is selected. The **All**, **My groups** and **Discover** views, the search and the page stay in the address.
+    *   Each group shows its name, description, member count, owner's name, and your role or pending request. **Open** goes to a group you belong to. **Request to join** and **Cancel request** update the row from the server's answer, and a conflicting change reloads the list rather than guessing.
+    *   **Create group** appears only when the server allows it, including the **CreateGroups** role rule. It checks the name and description limits the way the server counts them, and then opens the new group.
+    *   (Ref: `GroupDirectoryPage.tsx`, `DirectoryList.tsx`, `CreateGroupDialog.tsx`, `groupDirectory.ts`, [V2 Group Directory](features/V2_GROUP_DIRECTORY.md))
+
+### **(v0.261.149)**
+
+#### Bug Fixes
+
+*   **Workflow Saves After A Deletion Keep The Draft**
+    *   Fixed a File Sync source deleted while the V2 editor was open. A group workflow's save failed with a 404, which the editor treated as lost access, losing the draft. A personal workflow's save failed with a server error. Both now get a 400 naming the problem, with the draft kept, and a group editor marks the source so it can be removed.
+    *   Fixed a V2 save of a workflow deleted after the editor opened it. The save silently recreated the workflow; it's now refused with a 409 that writes nothing, and the draft stays open to copy.
+    *   (Ref: `WorkflowSourceUnavailableError`, `WorkflowDeletedConflict`, `refuse_save_of_deleted_workflow`, [Workflow Save After Deletion Fix](fixes/WORKFLOW_SAVE_AFTER_DELETION_FIX.md))
+
+*   **Workflow Settings Refusals Name The Rule**
+    *   File Sync, schedule and trigger refusals used to share one generic message. Each now has a reviewed message with the code `invalid_workflow_settings`, on both save routes and in the classic editor.
+    *   The V2 editor checks the same rules, with the same messages, before saving personal and group workflows. When File Sync is off for a group, the editor says so, from a new `file_sync_enabled` field on the group File Sync sources route.
+    *   A non-finite schedule value no longer causes a server error.
+    *   (Ref: `lib/workflowSettings.ts`, `WorkflowPublicValidationError`, `route_backend_workflows.py`, [Workflow Settings Reviewed Messages Fix](fixes/WORKFLOW_SETTINGS_REVIEWED_MESSAGES_FIX.md))
+
+*   **Read-Only Workflow Editors No Longer Request Run As Accounts**
+    *   A group member's read-only workflow editor asked for the run-as accounts, which only workflow managers may list, and showed a load error. It now shows only whether an account is selected, and requests nothing.
+    *   (Ref: `WorkflowMicrosoft365RunAs.tsx`, [Workflow Run As Read-Only View Fix](fixes/WORKFLOW_RUN_AS_READ_ONLY_VIEW_FIX.md))
+
+### **(v0.261.148)**
+
+#### Bug Fixes
+
+*   **Public Publication Decisions Open The Document**
+    *   Fixed the notification a member gets when a public workspace manager approves or rejects their generated file. It linked to `/v2/public-workspaces/<id>/documents`, a path the V2 app doesn't serve, so it opened the V2 home page. It now opens `/v2/public/<id>/documents` with the document named.
+    *   A new check fails if any backend link points to a V2 path that the V2 router doesn't serve. Notifications sent before the fix keep their old link.
+    *   (Ref: `functions_public_document_publication.py`, `test_public_workspace_notification_links_fix.py`, [Public Document Decision Link Fix](fixes/PUBLIC_DOCUMENT_DECISION_LINK_FIX.md))
+
+### **(v0.261.147)**
+
+#### New Features
+
+*   **Native Group File Sources In V2**
+    *   The group workspace's **File sources** section is native in V2. Owners, Admins and DocumentManagers list the group's SMB, Azure Files and Azure Blob Storage sources, and in an active group create, edit, delete and sync them.
+    *   The editor tests the connection and browses the remote location before saving. It can bind one of the group's reusable identities, and while browsing a saved source it can ignore or restore a path.
+    *   Deleting asks whether to keep the documents the source brought in. The section reports the counts, and says plainly when documents were deleted even though the source couldn't be removed.
+    *   A save made after someone else changed the source keeps your draft. Refusals such as a sync that's already running show the server's reviewed message.
+    *   (Ref: `GroupFileSourcesSection.tsx`, `FileSourceEditorDialog.tsx`, `fileSourceWorkbench.ts`, [V2 Group File Sources](features/V2_GROUP_FILE_SOURCES.md))
+
+### **(v0.261.146)**
+
+#### New Features
+
+*   **Group Directory APIs**
+    *   New server routes back the native V2 group directory:
+        *   `GET /api/groups/directory` lists every group you can discover, paged, sorted and searchable, with your membership in each and whether you may create a group;
+        *   `POST /api/groups/directory` creates a group;
+        *   `POST` and `DELETE /api/groups/<group_id>/join-request` ask to join a group, and cancel that request. Cancelling is new.
+    *   The listing never returns an owner's email or ID, or any member's entry. The membership arrays are reduced to the caller's own entries in the database.
+    *   Group creation is decided by one policy that the directory also reports, so the page can't offer Create to someone the server would refuse. Names are limited to 80 characters and descriptions to 500, with reviewed messages.
+    *   Join requests are written conditionally: a concurrent change is kept, and a group deleted meanwhile is reported as missing, never recreated. Every group status still accepts requests, as before.
+    *   The directory page itself arrives in a later release. The classic Find Group and Create Group flows are unchanged.
+    *   (Ref: `functions_group_directory.py`, `functions_group_directory_policy.py`, `route_backend_group_directory.py`, [Group Directory APIs](features/GROUP_DIRECTORY_APIS.md))
+
+#### Bug Fixes
+
+*   **Workspace Notification Links Open The Management Page**
+    *   Fixed six notifications that led to a 404. The group created, member added and role changed notifications linked to `/manage_group/<id>`, and the public workspace member added and role changed notifications linked to `/manage_public_workspace`. Neither path is served.
+    *   They now link to `/groups/<group_id>` and `/public_workspaces/<workspace_id>`. Notifications created before the fix keep their old link.
+    *   (Ref: `_build_group_manage_url`, `route_backend_groups.py`, `route_backend_public_workspaces.py`, [Workspace Notification Links Fix](fixes/WORKSPACE_NOTIFICATION_LINKS_FIX.md))
+
+### **(v0.261.145)**
+
+#### New Features
+
+*   **Native Group Endpoints In V2**
+    *   The group workspace's **Endpoints** section is native in V2. It lists the model connections a group owns for its own agents and workflows. Owners and Admins add, edit, enable or disable, and delete them in an active group, and can discover models and test chat before saving. Everyone else in the group sees a read-only list.
+    *   It reuses the administrator's connection manager through a scope-aware adapter, and talks only to the group's own routes. The administrator-only tests, network policy and notices are not shown in group scope.
+    *   A save made after someone else changed the connection keeps your draft and offers **Reload latest**. A delete refused because an agent or workflow still uses the connection names what uses it.
+    *   Foundry discovery in the group agent editor now works for group-scoped connections, through `POST /api/groups/<group_id>/models/foundry/agents`.
+    *   (Ref: `GroupEndpointsSection.tsx`, `ModelConnectionsManager.tsx`, `createGroupModelConnectionsAdapter`, [V2 Group Endpoints](features/V2_GROUP_ENDPOINTS.md))
+
+### **(v0.261.144)**
+
+#### New Features
+
+*   **Native Workflow Alert Editing**
+    *   Personal and group workflows can have their alerts set up and changed in the V2 workflow editor: when to alert, a pop-up priority, and up to 20 rules. The rules cover seven kinds of condition, each with a scope, a severity and a delivery.
+    *   Before this, a workflow created or saved in V2 could never get alerts, because the classic editor can't open V2 definitions. The group editor's link to the classic alert editor is removed.
+    *   The editor checks the settings with the server's own rules and messages before saving, and a workflow whose alerts you didn't touch is saved with them unchanged.
+    *   (Ref: `WorkflowAlertEditor.tsx`, `workflowAlerts.ts`, `functions_workflow_alerts.py`, [V2 Workflow Alert Editing](features/V2_WORKFLOW_ALERT_EDITING.md))
+
+#### Bug Fixes
+
+*   **A Removed Task No Longer Blocks Every Save**
+    *   Fixed V2 refusing every save, with a generic "Invalid workflow settings" message, after a task watched by an alert rule was deleted. The editor now marks the rule and says which one to fix.
+    *   Invalid alert settings now get a specific message naming the rule, on both save routes and in the classic editor. Other invalid settings keep the generic message.
+    *   (Ref: `WorkflowPublicValidationError`, `route_backend_workflows.py`, [Removed-Task Save Fix](fixes/WORKFLOW_ALERT_REMOVED_TASK_SAVE_FIX.md))
+
+*   **Personal Workflows That Analyze Changed Files Can Be Saved In V2**
+    *   Fixed V2 refusing to save a personal workflow whose Analyze task uses the files File Sync changed, a setup the server accepts. It already worked for group workflows from 0.261.141.
+    *   (Ref: `workflowFileSyncProvidesAnalyzeTargets`, [Analyze Changed Files Fix](fixes/V2_GROUP_WORKFLOW_ANALYZE_CHANGED_FILES_FIX.md))
+
+### **(v0.261.143)**
+
+#### Bug Fixes
+
+*   **Group Details No Longer Expose The Stored Group Document**
+    *   Fixed `GET /api/groups/<group_id>` returning the stored group document to every member. When Key Vault secret storage is off, that included the plaintext credentials of the group's model endpoints. It also included pending join requests and internal fields.
+    *   The route now returns only what the group management page uses, plus the caller's role. The retention policy is limited to Owners and Admins, as the public workspace details route already does.
+    *   Endpoints, join requests and members remain available from their own routes, with their own permissions.
+    *   (Ref: `route_backend_groups.py`, `build_group_details_payload`, [Group Details Payload Disclosure Fix](fixes/GROUP_DETAILS_PAYLOAD_DISCLOSURE_FIX.md))
+
+### **(v0.261.142)**
+
+#### New Features
+
+*   **Group File Source APIs**
+    *   New routes manage a group's File Sync sources for a named group, at `/api/groups/<group_id>/file-sources`. They cover list, create, edit, delete, connection tests, folder browsing, Sync now, run history and ignored paths, without depending on the account's active group.
+    *   If two managers edit the same source, the second save is refused instead of silently overwriting the first. A sync finishing never counts as a change.
+    *   A delete asks explicitly whether to delete the documents the source produced, and reports how many were deleted. It is refused while a sync is running. If the source changes after its documents were already deleted, the response says so instead of claiming nothing happened.
+    *   New credentials only take effect when a save succeeds, and deleting a source removes its stored secrets. The editor options list only the identities a source can actually use.
+    *   The native V2 editor for group file sources arrives in a later release. Until then, group sources are still managed in the classic group workspace.
+    *   (Ref: `route_backend_group_file_sources_scoped.py`, `functions_group_file_source_access.py`, `functions_group_file_source_policy.py`, `functions_file_sync.py`, [Group File Source APIs](features/GROUP_FILE_SOURCE_APIS.md))
+
+#### Bug Fixes
+
+*   **Sync Now Explains Why It Didn't Start**
+    *   **Sync now** used to answer "Verify the source configuration and try again" when a sync was already queued or running, or when the File Sync concurrent-run limit was reached. It now says which of those happened, in the classic and native workspaces.
+    *   (Ref: `queue_file_sync_source_run`, `FileSyncPublicValidationError`)
+
+### **(v0.261.141)**
+
+#### New Features
+
+*   **File Sync Triggers In V2 Group Workflows**
+    *   Group workflows can use the **Monitor File Sync changes** trigger in the native V2 editor. On a schedule, it syncs the chosen group File Sync sources and runs only when files changed. A manual or interval workflow can also sync its sources first before each run.
+    *   The editor applies the server's rules before saving: one to ten of the group's own sources, and waiting for the sync before continuing only on changes. It flags a source the group no longer offers so it can be removed. The source list is requested for the page's own group, so another tab changing the active group can't swap it.
+    *   An Analyze task can work on the files each sync changed instead of selected documents.
+    *   (Ref: `WorkflowFileSyncFields.tsx`, `workflowEditor.ts`, `route_backend_workflows.py`, [V2 Group Workflows](features/V2_GROUP_WORKFLOWS.md))
+
+#### User Interface Enhancements
+
+*   **Group Workflow Alert Summary**
+    *   Group workflows show their stored alert settings read-only: when to alert, the pop-up priority and the number of rules. Saving in V2 keeps them unchanged.
+    *   A workflow the classic editor can still open links there to edit its alerts, and warns that saving in V2 converts it. Native alert editing arrives in a later release.
+    *   (Ref: `WorkflowAlertSummary.tsx`, [V2 Group Workflows](features/V2_GROUP_WORKFLOWS.md))
+
+#### Bug Fixes
+
+*   **Group Workflows That Analyze Changed Files Can Be Saved In V2**
+    *   Fixed V2 refusing to save a group workflow whose Analyze task has no selected documents because File Sync supplies the changed files, a setup the server accepts and the classic editor creates.
+    *   (Ref: `workflowFileSyncProvidesAnalyzeTargets`, `WorkflowTaskFields.tsx`, [Analyze Changed Files Fix](fixes/V2_GROUP_WORKFLOW_ANALYZE_CHANGED_FILES_FIX.md))
+
+### **(v0.261.140)**
+
+#### New Features
+
+*   **Group Model Endpoint APIs**
+    *   New routes manage one group model endpoint at a time for a named group, at `/api/groups/<group_id>/model-endpoints`. They also run model discovery, model tests and Foundry agent discovery for that group. They don't depend on the account's active group, so switching groups in another tab can't redirect a save.
+    *   Saves change only the one endpoint and write the group document conditionally. A membership change made at the same moment is kept rather than overwritten, and a deleted group is never recreated. If two people edit the same endpoint, the second save is refused.
+    *   A delete is refused while a group agent or workflow still uses the endpoint, and the response lists what uses it. Disabling an endpoint is always allowed.
+    *   The native V2 editor for group endpoints arrives in a later release. Until then, group endpoints are still edited in the classic group workspace.
+    *   (Ref: `route_backend_group_endpoints_scoped.py`, `functions_group_endpoint_access.py`, `functions_group_endpoint_policy.py`, `update_group_document_with_etag_guard`, [Group Model Endpoint APIs](features/GROUP_MODEL_ENDPOINT_APIS.md))
+
+#### Bug Fixes
+
+*   **Model Endpoint Credentials Stay With Their Own Endpoint**
+    *   Fixed a flaw where a group owner who knew another group's endpoint ID could make their own endpoint use that group's stored key, or overwrite it. Personal endpoints had the same flaw.
+    *   Root cause: these Key Vault secret names are built from the endpoint ID alone, and the save accepted any reference with the right shape.
+    *   A stored reference is now accepted only if it is the endpoint's own, and new keys are always stored under fresh names. Existing keys keep working.
+    *   (Ref: `functions_keyvault.py`, `save_scoped_endpoint_secrets`, [Secret Reference Scope Fix](fixes/MODEL_ENDPOINT_SECRET_REFERENCE_SCOPE_FIX.md))
+
+*   **Personal And Group Endpoints Can No Longer Redirect The Application's Identity**
+    *   Fixed personal and group model endpoints that use managed identity being able to send the application's own token to any host, for any audience, from any of the application's identities. This applied to model discovery and tests, and to saved endpoints used in chat, agents and workflows.
+    *   The endpoint must now be an Azure AI service host in the deployment's cloud, it uses the deployment's own token audience, authority and identity, and the rule is checked when the endpoint is saved and each time it's used.
+    *   Endpoints that use an API key or a service principal, custom connections, and admin-managed global endpoints are unchanged.
+    *   (Ref: `functions_model_endpoint_app_identity.py`, `functions_azure_endpoint_validation.py`, [Application Identity Fix](fixes/MODEL_ENDPOINT_APPLICATION_IDENTITY_FIX.md))
+
+*   **Malformed Catalog Profile ID No Longer Causes A Server Error**
+    *   Fixed saving a model endpoint with a malformed catalog profile ID failing with a server error instead of "Choose a valid catalog profile." This affected every endpoint save, including Admin Settings.
+    *   Root cause: the error the check raises was never imported where it's raised.
+    *   (Ref: `functions_settings.py`, [Catalog Profile Validation Fix](fixes/MODEL_ENDPOINT_CATALOG_PROFILE_VALIDATION_FIX.md))
+
+#### Breaking Changes
+
+*   **Managed Identity On Personal And Group Endpoints**
+    *   A personal or group endpoint that uses managed identity stops working if any of these apply:
+        *   Its host isn't an Azure AI service host in the deployment's cloud, such as an APIM gateway or a proxy.
+        *   It stores a Foundry scope, custom authority or custom cloud.
+        *   The deployment runs in a custom cloud, where no host qualifies.
+    *   A stored managed identity client ID is ignored, and the deployment's default identity is used.
+    *   **Migration**: switch affected endpoints to an API key or a service principal, or ask an administrator to add a global endpoint. For endpoints that relied on a user-assigned identity, grant the deployment's default identity access instead.
+    *   (Ref: [Configure model endpoint identity](../guides/model-endpoint-identity-setup.md), [Application Identity Fix](fixes/MODEL_ENDPOINT_APPLICATION_IDENTITY_FIX.md))
+
+### **(v0.261.139)**
+
+#### New Features
+
+*   **Native Group Identities**
+    *   Group workspace identities can now be listed, created, edited and deleted from the native group workspace. These are the reusable credentials that group File Sync sources and group actions use. Previously the group Identities section sent users to the classic interface.
+    *   Owners, admins and document managers manage identities while the group is active. Ordinary members don't see them, as in the classic workspace.
+    *   If two managers edit the same identity, the second save is refused and the draft is kept. A delete is refused while a File Sync source or an action still uses the identity, and the editor lists what uses it.
+    *   Stored secrets are never shown. A new secret value only takes effect when the save commits, so a refused save never changes the credential in use.
+    *   The group action editor can now use a reusable group identity. Someone who can't list the group's identities sees an existing binding as kept, without an error.
+    *   (Ref: `route_backend_group_identities_scoped.py`, `functions_group_identity_access.py`, `functions_group_identity_policy.py`, `identityWorkbench.ts`, [V2 Group Identities](features/V2_GROUP_IDENTITIES.md), [Group Identity APIs](features/GROUP_IDENTITY_APIS.md))
+
+### **(v0.261.138)**
+
+#### New Features
+
+*   **Native Group Agents**
+    *   Group agents can now be listed, opened, created, edited and deleted from the native group workspace, in the same collection and editor as personal agents. Previously the group Agents section sent users to the classic interface.
+    *   Owners and admins can change group agents while the group is active; with the owner-only setting, only the owner can. Everyone else in the group sees read-only details and can use the group's agents in chat.
+    *   Everything the editor loads is resolved for the group: the model list (the global connections the member may use, and the group's own when allowed), the group's documents for assigned knowledge, the group's actions, Call agent targets, and instruction drafting. A group page never reads the member's personal agents, endpoints, knowledge or identities.
+    *   "Use in chat" opens the agent in its own group, whichever group the account last selected. A stale link names the group instead of silently choosing another agent.
+    *   Agents created in the classic group workspace keep their stored credentials when edited in V2, and the reverse.
+    *   If two managers edit the same agent, the second save is refused rather than silently overwriting the first, and the editor keeps the draft.
+    *   When group agents are turned off or restricted, the section is left out of the group's navigation, as in the classic workspace.
+    *   The template gallery's submit button on a group agent follows the same rule as the template service, so it is offered only when a submission would be accepted.
+    *   Foundry discovery is not offered for group-scoped Foundry connections yet; global connections discover as before, and project fields can be entered manually.
+    *   (Ref: `route_backend_group_agents_scoped.py`, `functions_group_agent_access.py`, `functions_group_agent_policy.py`, `agentWorkbench.ts`, [V2 Group Agents](features/V2_GROUP_AGENTS.md), [Group Agent APIs](features/GROUP_AGENT_APIS.md))
+
+#### Bug Fixes
+
+*   **Native Group Action Changes Were Missing From the Activity Log**
+    *   Creating, editing or deleting a group action from the native V2 group workspace (0.261.137) recorded no activity event, while the classic workspace records one for every change.
+    *   Native group action changes now record the same events, with the group, as the classic routes do. The new native group agent routes do the same.
+    *   (Ref: `functions_workspace_authoring.py` `log_committed_group_editor_change`, `functions_group_action_access.py`, [Group Action APIs](features/GROUP_ACTION_APIS.md))
+
+*   **File Sync Runs Undid Changes Made While They Were Running**
+    *   Fixed a File Sync run overwriting a manager's changes made while it was running. When the run finished, an edit to the source was lost, a source or schedule that had been turned off was turned back on, a deleted source was recreated and kept syncing, and an ignored path was un-ignored.
+    *   Runs now record only their own results (last run status, counts and the next scheduled time) on the source as it is stored, and the next run follows the schedule as it is now. A deleted source stays deleted, and the run still reports how it went.
+    *   A path ignored while a run was processing it stays ignored, and still records the document the run produced.
+    *   The reverse race is closed too: saving a source no longer erases the result of a run that finished meanwhile, and ignoring a path no longer drops a file's new document, which could make the next run import it again as a duplicate.
+    *   Two managers editing the same source at once are still last-writer-wins. A save that keeps colliding with other writes is refused with a message to reload rather than applied from an outdated copy.
+    *   This affects every File Sync interface, including the classic pages.
+    *   (Ref: `functions_file_sync.py`, `route_backend_file_sync.py`, [File Sync Concurrent Write Fix](fixes/FILE_SYNC_CONCURRENT_WRITE_FIX.md))
+
+### **(v0.261.137)**
+
+#### New Features
+
+*   **Native Group Actions**
+    *   Group actions can now be listed, opened, created, edited, tested and deleted from the native group workspace, in the same collection and editor as personal actions. Previously the group Actions section offered only the Call agent manager and sent every other action to the classic interface.
+    *   Owners and admins can change and test group actions while the group is active; with the owner-only setting, only the owner can. Everyone else in the group sees a read-only collection and read-only details, with each action's configuration fields shown.
+    *   If two managers edit the same action, the second save is refused rather than silently overwriting the first, and the editor keeps the draft.
+    *   Connection tests from a group editor run in that group, never in whichever group the account last selected.
+    *   Provided (global) actions appear read-only when the administrator merges them into workspaces.
+    *   Unsaved drafts are kept per workspace, so a draft started in one group never appears in another group or in My Workspace.
+    *   Reusable group identities cannot be chosen in the V2 editor yet, and saved MCP preconfigurations are not offered for group actions yet. An action already bound to a group identity keeps that binding.
+    *   The group workspace shows the native collection only when group actions are enabled. A tenant with group agents but not group actions keeps the Call agent manager.
+    *   (Ref: `route_backend_group_actions_scoped.py`, `functions_group_action_access.py`, `functions_group_action_policy.py`, `actionWorkbench.ts`, [V2 Group Actions](features/V2_GROUP_ACTIONS.md), [Group Action APIs](features/GROUP_ACTION_APIS.md))
+
+#### Bug Fixes
+
+*   **Group Members Could Use a Group's Stored Credentials in Connection Tests**
+    *   Fixed group connection tests and MCP discovery accepting requests from any group member. Testing a saved group action loads its stored credentials, and an unsaved test that names a group identity resolves that identity's secrets. Either way, a member could use the group's stored credentials against a destination they chose.
+    *   These requests now need the same roles as editing a group action: Owner or Admin, or Owner alone under the owner-only setting. The group MCP preconfiguration list shares the same check.
+    *   The classic interface only ever offered these actions inside the action editor, which only those roles can open, so no supported flow changes.
+    *   Scripts or integrations that run group connection tests must use an account with one of those roles.
+    *   (Ref: `route_backend_plugins.py`, [Group Action Test Role Alignment Fix](fixes/GROUP_ACTION_TEST_ROLE_ALIGNMENT_FIX.md))
+
+### **(v0.261.136)**
+
+#### New Features
+
+*   **Native Group Prompts**
+    *   Group prompts can now be read, written, and used from the native group workspace, in the same workbench as personal prompts. The group Prompts section previously sent users to the classic interface.
+    *   Owners, admins, and document managers can create, edit, duplicate, and delete group prompts while the group is active. Everyone else in the group can read prompts, use them in chat, and reword them in the chat composer for a single message; that rewording is never saved to the group's prompt.
+    *   If two managers edit the same prompt, the second save is refused rather than silently overwriting the first, and the editor keeps what was typed.
+    *   "Use in chat" links for group prompts name the group, so a prompt that has been deleted or is no longer accessible is reported clearly instead of silently attaching something else. Existing prompt links keep working.
+    *   Group prompts have no favorites, because a favorite is stored on the prompt and would be shared by everyone in the group. Personal favorites are unchanged.
+    *   (Ref: `route_backend_group_prompts_scoped.py`, `functions_group_prompt_access.py`, `functions_group_prompt_policy.py`, `promptWorkbench.ts`, [V2 Group Prompts](features/V2_GROUP_PROMPTS.md), [Group Prompt APIs](features/GROUP_PROMPT_APIS.md))
+
+#### Bug Fixes
+
+*   **Ordinary Group Members Could Change Shared Prompts Through the API**
+    *   Fixed the group prompt create, edit, and delete routes accepting requests from any group member. The classic interface only ever offered those actions to owners, admins, and document managers, but the server did not enforce the same rule, so a member calling the API directly could change or delete the group's shared prompts.
+    *   Those routes now refuse ordinary members, matching the rule public workspace prompts already enforced. Reading and using prompts is unchanged for everyone.
+    *   A refused member is told the change needs an owner, admin, or document manager, rather than being told they are not a member.
+    *   Scripts or integrations that create group prompts must use an account with one of those roles.
+    *   (Ref: `route_backend_group_prompts.py`, [Group Prompt Write Access Fix](fixes/GROUP_PROMPT_WRITE_ACCESS_FIX.md))
+
+### **(v0.261.135)**
+
+#### Bug Fixes
+
+*   **Public Workspace Download Flag Reported Downloads as Disabled**
+    *   Fixed the public workspace document list reporting `file_downloads_enabled: false` for every user, including managers of workspaces where downloads are enabled. The value was fixed at `false` in the read-only browsing release, when there was nothing to download, and was not updated when downloads were added.
+    *   The native explorer was not affected, because it decides whether to offer downloads from the workspace's advertised operations and each document's own action list. Other consumers of the API would have been told downloads were off.
+    *   The flag is now derived from the same policy that decides whether the workspace advertises downloads, so the two cannot disagree.
+    *   (Ref: `route_backend_public_document_reads.py`, `public_document_management_operations`, `test_public_document_read_apis.py`)
+
+### **(v0.261.134)**
+
+#### New Features
+
+*   **Native Public Workspace Artifact Approval**
+    *   When someone asks to publish a generated artifact into a public workspace, reviewers can now approve, reject, or withdraw the request in the native explorer instead of switching to the classic page.
+    *   Each decision is tied to the version of the request the reviewer actually saw. If the document changed in the meantime, the reviewer's input is kept and they are asked to refresh before deciding.
+    *   Only the original requester can withdraw a request, and doing so grants no authority over anyone else's.
+    *   Content screening holds are never released early by an approval; approval only starts screening on the new document.
+    *   (Ref: `functions_public_document_publication.py`, `route_backend_public_document_collaboration.py`, `documentCollaboration.ts`, `DocumentCollaborationDialog.tsx`, [V2 Public Artifact Approval](features/V2_PUBLIC_ARTIFACT_APPROVAL.md), [Artifact Approval APIs](features/PUBLIC_DOCUMENT_ARTIFACT_APPROVAL_APIS.md))
+
+#### Bug Fixes
+
+*   **Public Workspace Document Actions Were Unavailable**
+    *   Fixed public workspace documents offering no per-document actions against a real backend. Delete, download, metadata editing, extraction, reprocessing, and bulk tagging were all unavailable, although upload and tag management worked.
+    *   The server returned an empty action list left over from the read-only browsing release, and the explorer only offers actions that list contains. It now computes each document's actions from the user's current permissions.
+    *   The failure blocked actions rather than allowing them, so no data was exposed and every operation was still authorized on the server.
+    *   (Ref: `functions_public_document_reads.py`, `get_public_document_actions`, `test_document_action_hint_seam.py`)
+
+#### Known Limitations
+
+*   **Public Workspace Sharing Is Not Yet Available**
+    *   Public workspace documents cannot yet be shared into other workspaces. The search index used by public workspaces has no field for shared access, so adding it requires an index schema change and a migration for existing deployments. Public workspaces show no share controls until that work is done.
+
+### **(v0.261.133)**
+
+#### New Features
+
+*   **Native Public Workspace Document Management**
+    *   Public workspace documents can now be managed in the native explorer, not just browsed: upload, metadata editing, tags and bulk tagging, permitted downloads, metadata extraction, reprocessing, and revision-aware deletion. Previously every one of these required switching to the classic page.
+    *   Each operation names its workspace directly rather than depending on the account's stored selection, so changing workspaces mid-operation cannot redirect an upload, edit, or deletion, and an older server rejects the request instead of acting in the wrong place.
+    *   Every operation receipt is checked against the workspace that was asked for, so a late or misrouted response cannot be shown as a successful change to the wrong workspace.
+    *   Manager roles keep the content-manager boundary, ordinary members retain read access only, and locked or upload-disabled workspaces keep their existing restrictions. Queued work revalidates permission when it runs rather than trusting the moment it was requested.
+    *   Sharing and generated-artifact approval remain on the classic page and arrive natively in a later release.
+    *   (Ref: `functions_public_document_management.py`, `functions_public_document_policy.py`, `route_backend_public_document_management.py`, `documentOperations.ts`, [V2 Public Document Management](features/V2_PUBLIC_DOCUMENT_MANAGEMENT.md), [Management APIs](features/PUBLIC_DOCUMENT_MANAGEMENT_APIS.md))
+
 ### **(v0.261.132)**
+
+#### New Features
+
+*   **Native Public Workspace Document Browsing**
+    *   Public workspace documents can be browsed in the same native explorer used for My Workspace and group workspaces, instead of only on the classic page. Filtering, sorting, pagination, facets, tags, document details, and version history all behave the way they already do elsewhere.
+    *   Selecting a public workspace navigates by its identifier, and every document request names that workspace directly rather than depending on the account's stored selection. Returned documents are checked against the workspace that was asked for, so a late or misrouted response cannot populate the wrong workspace.
+    *   The workspace is still recorded as the active selection, because chat document scoping and the classic page both read it. That step is deliberately non-blocking: if it fails, browsing still works, because nothing on the page depends on it.
+    *   This release covers browsing only. Upload, metadata editing, tags, downloads, extraction, reprocessing, deletion, and approval remain on the classic page and arrive natively in later releases.
+    *   (Ref: `functions_public_document_reads.py`, `functions_public_document_access.py`, `route_backend_public_document_reads.py`, `documentReadAdapter.ts`, `PublicWorkspacePage.tsx`, [V2 Public Document Browsing](features/V2_PUBLIC_DOCUMENT_BROWSING.md), [Public Document Read APIs](features/PUBLIC_DOCUMENT_READ_APIS.md))
 
 #### Bug Fixes
 
@@ -191,6 +1026,30 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
     *   The composer's Image control now works in Orchestrate, where it asks the answer for at least one image proposal card instead of blocking the message. A status line explains that the images wait for approval.
     *   (Ref: `Composer.tsx`, [Chat controls](../reference/chat-controls.md))
 
+### **(v0.261.131)**
+
+#### New Features
+
+*   **Native Group Document Sharing And Approval Review**
+    *   Share a group document with another group, accept or remove a received share, and approve, reject, or withdraw a pending generated artifact — all inside the native workspace explorer, without switching to the legacy group workspace page.
+    *   A notification opens the exact group and document it refers to, including when that document is not on the current page. A notification that does not match has no navigation or activation side effect, and a link to a denied or deleted document does not silently fall back to another document.
+    *   Decisions are bound to the document revision the reviewer actually saw. A conflicting change keeps the entered target and asks for an explicit refresh instead of resolving itself, and a partial outcome is repaired rather than replayed as a new decision.
+    *   Sharing calls name the group in the URL rather than relying on the account's current selection, so changing groups mid-decision cannot redirect one, and an older server rejects the call instead of acting in the wrong group.
+    *   Approving a generated artifact can start screening on a brand-new destination without that approval being blocked by the destination's own not-yet-started screening reservation. Admission requires recorded proof rather than the absence of evidence, so a scan that ran and was later removed cannot restore eligibility, and the screening hold itself is never released early.
+    *   Removing a share can't be undone by a document update that was already writing the document's search entries. Sharing changes and those updates coordinate on the document itself, and an update carrying an older share list is limited to the document's current shares (0.261.130).
+    *   (Ref: `functions_group_document_collaboration.py`, `functions_group_document_publication.py`, `functions_artifact_publication.py`, `functions_group_document_projection_fence.py`, `route_backend_group_documents.py`, `documentCollaboration.ts`, `DocumentCollaborationDialog.tsx`, [V2 Group Document Collaboration](features/V2_GROUP_DOCUMENT_COLLABORATION.md), [Collaboration APIs](features/GROUP_DOCUMENT_COLLABORATION_APIS.md), [Projection Coordination](features/GROUP_DOCUMENT_PROJECTION_COORDINATION.md), #1542)
+
+#### Bug Fixes
+
+*   **Document Payload Redaction No Longer Depends On The Screening Toggle**
+    *   Fixed document list and detail responses returning storage internals when content screening was disabled or a document was never enrolled. Affected values included blob paths and containers, SAS and download URLs, canonical source references, screening provenance, and Cosmos system fields.
+    *   The same document was already redacted correctly whenever screening was enabled, so exposure depended on an unrelated administrative setting rather than on the sensitivity of the field.
+    *   Root cause was a duplicated redaction rule: the unscreened path carried a hand-maintained three-field literal that had fallen behind the full private-field set. Both paths now share one predicate, so they cannot drift apart as new private fields are added.
+    *   The generated-artifact request allow-list was duplicated the same way across the payload serializer and the group projection, where drift would silently drop requester attribution from pending artifact reviews. It is now a single shared constant.
+    *   Group collaboration internals — the sharing ledger, the publication receipt id, and the generated artifact source conversation, message, container, and blob path — are redacted for every caller rather than only in the group browser projection.
+    *   No caller loses a field it could rely on, because every newly redacted field was already absent in screening-enabled deployments. Share rosters remain serialized, because the surfaces that render share status and counts read them directly.
+    *   (Ref: `content_screening/access.py`, `functions_group_document_reads.py`, `is_public_document_field`, `PRIVATE_DOCUMENT_FIELDS`, `GENERATED_ARTIFACT_REQUEST_FIELDS`, [Payload Redaction Fix](fixes/DOCUMENT_PAYLOAD_REDACTION_SCREENING_TOGGLE_FIX.md))
+
 ### **(v0.261.129)**
 
 #### New Features
@@ -201,6 +1060,13 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
     *   No new Microsoft Graph permission is required. Reads stay limited to the primary mailbox and default calendar, and items removed by retention can't be returned.
     *   (Ref: `msgraph_plugin.py`, `functions_msgraph_operations.py`, [Microsoft 365 Email](../reference/actions/m365-email.md), [Microsoft 365 Calendar](../reference/actions/m365-calendar.md), #1523)
 
+*   **Manage Group Documents In V2**
+    *   Group Owners, Admins and DocumentManagers can upload documents and follow their progress, edit metadata and tags, manage the group's tag vocabulary, download when downloads are enabled, extract metadata, reprocess, and delete revisions, in the same explorer. Ordinary members keep read access, without these operations or downloads.
+    *   The server checks each operation against your current role, the group's status, the document's revision and its content screening state. Locked groups are read-only, with downloads controlled separately. Upload-disabled groups allow deletion and reprocessing, but not uploads, edits or metadata extraction. Inactive groups allow none.
+    *   Edits, extraction and reprocessing apply only to a document's current revision, and an edit made against an older copy is refused rather than applied to a newer one. Earlier revisions can only be downloaded or deleted.
+    *   Operations use `/api/groups/<group_id>/documents/...` rather than the account's active group, and queued processing keeps the group it started in. The classic group document routes are unchanged.
+    *   (Ref: `route_backend_group_documents.py`, `functions_group_document_management.py`, `DocumentExplorer.tsx`, [V2 Group Document Management](features/V2_GROUP_DOCUMENT_MANAGEMENT.md), [Group Document Management APIs](features/GROUP_DOCUMENT_MANAGEMENT_APIS.md), #1542)
+
 #### Bug Fixes
 
 *   **Microsoft 365 Agent Replies Survive Stream Failures**
@@ -208,6 +1074,29 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
     *   A reply that fails after streaming text is now saved as an incomplete message and appears when the conversation is reopened. Approval and sign-in waits still resume as before.
     *   The error banner says the partial content was saved only when the server saved it.
     *   (Ref: `agent_delegation_runtime.py`, `route_backend_chats.py`, `chat-streaming.js`, [Stream Context And Persistence Fix](fixes/M365_AGENT_STREAM_CONTEXT_PERSISTENCE_FIX.md), #1523)
+
+### **(v0.261.128)**
+
+#### New Features
+
+*   **Browse Group Documents In V2**
+    *   Group Documents uses the same explorer as My Workspace. Search, sort, filter by tag, classification and place, see whole-workspace counts, open a document's details and the revisions you can access, and pass eligible documents to chat, without leaving V2.
+    *   Every read names the group, so the page never shows the documents of a group selected in another tab. Switching groups resets the search and selection, and a slower earlier response can't replace newer details.
+    *   The explorer offers only the sorts, filters and views the server says the group supports. Your display preferences are shared with My Workspace; personal saved views aren't shown as group views.
+    *   The group document list, facets, tags, details and revisions accept one explicit `group_id`. A malformed or repeated one is refused rather than replaced by your active group, a missing group returns 404, and a group you can't view returns 403. Requests without `group_id` behave as before.
+    *   (Ref: `route_backend_group_documents.py`, `functions_group_document_reads.py`, `documentReadAdapter.ts`, `DocumentExplorer.tsx`, [V2 Group Document Browsing](features/V2_GROUP_DOCUMENT_BROWSING.md), [Group Document Read APIs](features/GROUP_DOCUMENT_READ_APIS.md), #1542)
+
+### **(v0.261.127)**
+
+#### New Features
+
+*   **Group Workspaces In V2**
+    *   Open your group workspaces in V2 at `/v2/groups`, with the rail and layout of My Workspace. Choosing a group from the picker makes it your active group, as the classic interface does, and loads its details, your role, its status and the sections your role can use. The page opens your active group if you can still view it, and otherwise asks you to choose one.
+    *   Links to a group, or to one of its sections such as `/v2/groups/<group_id>/workflows`, are checked before the page shows that group. The picker keeps your choice while you search or page through your groups.
+    *   Switching groups asks before discarding unsaved edits. A switch you cancel sends nothing, a refused switch keeps the group you had, and an interrupted switch is checked with the server instead of being assumed to have failed. A conversation you already have open keeps its workspace.
+    *   Group workflows and Call agent tools open inside the group page. Sections that weren't native yet linked to their classic pages; every section is native from 0.261.153.
+    *   The page reads its group from `GET /api/v2/workspaces/group/<group_id>` (0.261.126). It requires current membership in that group (being an application admin isn't enough) and never reads or changes your active group. It returns an allow-listed summary of the group, your role and status, and the sections and operations your role allows, with no settings, membership lists, pending requests, endpoint configurations or credentials. A failure is reported as an error, never as an empty workspace.
+    *   (Ref: `route_backend_v2.py`, `functions_workspace_context.py`, `workspaceContext.ts`, `groupWorkspaceStore.ts`, `GroupWorkspacePage.tsx`, `WorkspaceShell.tsx`, [V2 Shared Workspace Context and Group Shell](features/V2_SHARED_WORKSPACE_CONTEXT.md), #1542)
 
 ### **(v0.261.123)**
 

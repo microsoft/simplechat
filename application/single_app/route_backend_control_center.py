@@ -25,11 +25,23 @@ from functions_m365_approvals import is_m365_approval
 from functions_m365_pending_delivery import cancel_m365_conversation_deliveries
 from route_backend_m365 import m365_approval_decision_response
 from functions_documents import update_document, delete_document, delete_document_chunks
-from functions_group import delete_group
+from functions_group import (
+    GROUP_WRITE_CONFLICT_CODE,
+    GROUP_WRITE_CONFLICT_MESSAGE,
+    GroupDocumentWriteConflict,
+    delete_group,
+    update_group_document_with_etag_guard,
+)
 from functions_safety_remediation import (
     execute_safety_violation_action,
     get_safety_log_item,
     update_safety_log_action_state,
+)
+from functions_public_workspaces import (
+    PUBLIC_WORKSPACE_WRITE_CONFLICT_CODE,
+    PUBLIC_WORKSPACE_WRITE_CONFLICT_MESSAGE,
+    PublicWorkspaceDocumentWriteConflict,
+    update_public_workspace_document_with_etag_guard,
 )
 from utils_cache import invalidate_group_search_cache
 from swagger_wrapper import swagger_route, get_auth_security
@@ -42,6 +54,57 @@ ACTIVITY_LOGS_DEFAULT_PER_PAGE = 50
 ACTIVITY_LOGS_MAX_PER_PAGE = 200
 CONTROL_CENTER_MANAGEMENT_DEFAULT_PER_PAGE = 25
 CONTROL_CENTER_MANAGEMENT_MAX_PER_PAGE = 250
+
+# The answers an approved ownership change gives when the group's current copy no
+# longer matches the request. Each is stored on the approval as its failure reason.
+GROUP_OWNERSHIP_CHANGED_MESSAGE = (
+    "The group's owner changed after this request was made, so it wasn't applied. Submit a new request."
+)
+GROUP_NO_LONGER_EXISTS_MESSAGE = "The group no longer exists."
+# A failed approval can't be approved again, so a group that keeps changing asks for a new
+# request rather than the routes' "Try again".
+GROUP_APPROVAL_CONFLICT_MESSAGE = (
+    "The group kept changing while this request was being applied, so it wasn't applied. Submit a new request."
+)
+
+
+class _GroupChangeAnswer(Exception):
+    """The answer a guarded group change gives from the copy being written, with nothing written.
+
+    ``update_group_document_with_etag_guard`` abandons a write when its change raises,
+    so a writer that finds, on the current copy, that the change is already made or no
+    longer applies raises this with the answer to return instead.
+    """
+
+    def __init__(self, answer):
+        super().__init__()
+        self.answer = answer
+
+
+# The answers an approved ownership change gives when the public workspace's current copy
+# no longer matches the request. Each is stored on the approval as its failure reason.
+PUBLIC_OWNERSHIP_CHANGED_MESSAGE = (
+    "The workspace's owner changed after this request was made, so it wasn't applied. Submit a new request."
+)
+PUBLIC_NO_LONGER_EXISTS_MESSAGE = "The public workspace no longer exists."
+# A failed approval can't be approved again, so a workspace that keeps changing asks for a
+# new request rather than the routes' "Try again".
+PUBLIC_APPROVAL_CONFLICT_MESSAGE = (
+    "The workspace kept changing while this request was being applied, so it wasn't applied. Submit a new request."
+)
+
+
+class _PublicChangeAnswer(Exception):
+    """The answer a guarded public workspace change gives from the copy being written.
+
+    ``update_public_workspace_document_with_etag_guard`` abandons a write when its change
+    raises, so a writer that finds, on the current copy, that the change is already made
+    or no longer applies raises this with the answer to return instead.
+    """
+
+    def __init__(self, answer):
+        super().__init__()
+        self.answer = answer
 
 
 def parse_control_center_management_pagination(request_args):
@@ -1341,7 +1404,11 @@ def enhance_public_workspace_with_activity(workspace, force_refresh=False):
                     enhanced['activity']['document_metrics']['storage_account_size'] = 0
                     enhanced['storage_size'] = 0
         
-        # Cache the computed metrics in the workspace document
+        # Cache the computed metrics in the workspace document. The figures are computed
+        # above, so the guarded write only sets them on the copy it reads: membership and
+        # every other field come from that copy, even when the caller listed the workspace
+        # long before, and a workspace deleted meanwhile is skipped, never recreated. No
+        # chat bootstrap payload reads the metrics, so nothing is bumped.
         if force_refresh:
             try:
                 metrics_cache = {
@@ -1351,10 +1418,17 @@ def enhance_public_workspace_with_activity(workspace, force_refresh=False):
                     'calculated_at': datetime.now(timezone.utc).isoformat()
                 }
                 
-                # Update workspace document with cached metrics
+                # The caller's copy keeps the figures too, as before
                 workspace['metrics'] = metrics_cache
-                cosmos_public_workspaces_container.upsert_item(workspace)
-                debug_print(f"Successfully cached metrics for workspace {workspace_id}")
+
+                def apply_metrics(fresh):
+                    fresh['metrics'] = metrics_cache
+                    return fresh
+
+                if update_public_workspace_document_with_etag_guard(workspace_id, apply_metrics, cache_reason=None) is None:
+                    debug_print(f"Skipped caching metrics for workspace {workspace_id}: the workspace no longer exists")
+                else:
+                    debug_print(f"Successfully cached metrics for workspace {workspace_id}")
                     
             except Exception as cache_save_e:
                 debug_print(f"Error saving metrics cache for workspace {workspace_id}: {cache_save_e}")
@@ -1684,7 +1758,11 @@ def enhance_group_with_activity(group, force_refresh=False):
                     enhanced['activity']['document_metrics']['storage_account_size'] = 0
                     enhanced['storage_size'] = 0
                 
-        # Cache the computed metrics in the group document
+        # Cache the computed metrics in the group document. The figures are computed
+        # above, so the guarded write only sets them on the copy it reads: membership and
+        # every other field come from that copy, even when the caller listed the group
+        # long before, and a group deleted meanwhile is skipped, never recreated. No
+        # chat bootstrap payload reads the metrics, so nothing is bumped.
         if force_refresh:
             try:
                 metrics_cache = {
@@ -1692,10 +1770,17 @@ def enhance_group_with_activity(group, force_refresh=False):
                     'calculated_at': datetime.now(timezone.utc).isoformat()
                 }
                 
-                # Update group document with cached metrics
+                # The caller's copy keeps the figures too, as before
                 group['metrics'] = metrics_cache
-                cosmos_groups_container.upsert_item(group)
-                debug_print(f"Successfully cached metrics for group {group_id}")
+
+                def apply_metrics(fresh):
+                    fresh['metrics'] = metrics_cache
+                    return fresh
+
+                if update_group_document_with_etag_guard(group_id, apply_metrics, cache_reason=None) is None:
+                    debug_print(f"Skipped caching metrics for group {group_id}: the group no longer exists")
+                else:
+                    debug_print(f"Successfully cached metrics for group {group_id}")
                     
             except Exception as cache_save_e:
                 debug_print(f"Error saving metrics cache for group {group_id}: {cache_save_e}")
@@ -3250,65 +3335,79 @@ def register_route_backend_control_center(bp):
             admin_user_id = admin_user.get('oid', 'unknown')
             admin_email = admin_user.get('preferred_username', 'unknown')
             
-            # Get old status for logging
-            old_status = group.get('status', 'active')  # Default to 'active' if not set
-            
-            # Only update and log if status actually changed
-            if old_status != new_status:
+            # The change is decided and applied on the copy being written, so a status
+            # or membership change made meanwhile is kept, and the old status logged is
+            # the one actually replaced.
+            transition = {}
+
+            def apply_status(fresh):
+                # Get old status for logging
+                old_status = fresh.get('status', 'active')  # Default to 'active' if not set
+                # Only update and log if status actually changed
+                if old_status == new_status:
+                    raise _GroupChangeAnswer(({'message': 'Group status unchanged', 'status': new_status}, 200))
+                changed_at = datetime.utcnow().isoformat()
                 # Update group status
-                group['status'] = new_status
-                group['modifiedDate'] = datetime.utcnow().isoformat()
+                fresh['status'] = new_status
+                fresh['modifiedDate'] = changed_at
                 
                 # Add status change metadata
-                if 'statusHistory' not in group:
-                    group['statusHistory'] = []
+                if 'statusHistory' not in fresh:
+                    fresh['statusHistory'] = []
                 
-                group['statusHistory'].append({
+                fresh['statusHistory'].append({
                     'old_status': old_status,
                     'new_status': new_status,
                     'changed_by_user_id': admin_user_id,
                     'changed_by_email': admin_email,
-                    'changed_at': datetime.utcnow().isoformat(),
+                    'changed_at': changed_at,
                     'reason': reason
                 })
-                
-                # Update in database
-                cosmos_groups_container.upsert_item(group)
-                bump_chat_bootstrap_global_cache_version(reason="group_status_updated")
-                
-                # Log to activity_logs container for audit trail
-                from functions_activity_logging import log_group_status_change
-                log_group_status_change(
-                    group_id=group_id,
-                    group_name=group.get('name', 'Unknown'),
-                    old_status=old_status,
-                    new_status=new_status,
-                    changed_by_user_id=admin_user_id,
-                    changed_by_email=admin_email,
-                    reason=reason
+                transition['old_status'] = old_status
+                return fresh
+
+            # Update in database
+            try:
+                group = update_group_document_with_etag_guard(
+                    group_id, apply_status, cache_reason="group_status_updated",
                 )
-                
-                # Log admin action (legacy logging)
-                log_event("[CONTROL_CENTER] Group Status Update", {
-                    "admin_user": admin_email,
-                    "admin_user_id": admin_user_id,
-                    "group_id": group_id,
-                    "group_name": group.get('name'),
-                    "old_status": old_status,
-                    "new_status": new_status,
-                    "reason": reason
-                })
-                
-                return jsonify({
-                    'message': 'Group status updated successfully',
-                    'old_status': old_status,
-                    'new_status': new_status
-                }), 200
-            else:
-                return jsonify({
-                    'message': 'Group status unchanged',
-                    'status': new_status
-                }), 200
+            except _GroupChangeAnswer as answer:
+                payload, status_code = answer.answer
+                return jsonify(payload), status_code
+            except GroupDocumentWriteConflict:
+                return jsonify({'error': GROUP_WRITE_CONFLICT_MESSAGE, 'error_code': GROUP_WRITE_CONFLICT_CODE}), 409
+            if group is None:
+                return jsonify({'error': 'Group not found'}), 404
+            old_status = transition['old_status']
+            
+            # Log to activity_logs container for audit trail
+            from functions_activity_logging import log_group_status_change
+            log_group_status_change(
+                group_id=group_id,
+                group_name=group.get('name', 'Unknown'),
+                old_status=old_status,
+                new_status=new_status,
+                changed_by_user_id=admin_user_id,
+                changed_by_email=admin_email,
+                reason=reason
+            )
+            
+            # Log admin action (legacy logging)
+            log_event("[CONTROL_CENTER] Group Status Update", {
+                "admin_user": admin_email,
+                "admin_user_id": admin_user_id,
+                "group_id": group_id,
+                "group_name": group.get('name'),
+                "old_status": old_status,
+                "new_status": new_status,
+                "reason": reason
+            })
+            
+            return jsonify({
+                'message': 'Group status updated successfully',
+                'old_status': old_status,
+                'new_status': new_status
+            }), 200
             
         except Exception as e:
             debug_print(f"Error updating group status: {e}")
@@ -3685,40 +3784,47 @@ def register_route_backend_control_center(bp):
             except Exception as ex:
                 return jsonify({'error': 'Group not found'}), 404
             
-            # Check if user already exists (skip duplicate)
-            existing_user = False
-            for member in group.get('users', []):
-                if member.get('userId') == user_id:
-                    existing_user = True
-                    break
-            
-            if existing_user:
-                return jsonify({
-                    'message': f'User {email} already exists in group',
-                    'skipped': True
-                }), 200
-            
-            # Add user to users array
-            group.setdefault('users', []).append({
-                'userId': user_id,
-                'email': email,
-                'displayName': name
-            })
-            
-            # Add to appropriate role array
-            if role == 'admin':
-                if user_id not in group.get('admins', []):
-                    group.setdefault('admins', []).append(user_id)
-            elif role == 'document_manager':
-                if user_id not in group.get('documentManagers', []):
-                    group.setdefault('documentManagers', []).append(user_id)
-            
-            # Update modification timestamp
-            group['modifiedDate'] = datetime.utcnow().isoformat()
+            # The member is added to the copy being written, so a membership change
+            # made meanwhile is kept, and "already a member" is decided on that copy.
+            def apply_member(fresh):
+                # Check if user already exists (skip duplicate)
+                if any(member.get('userId') == user_id for member in fresh.get('users', [])):
+                    raise _GroupChangeAnswer(({
+                        'message': f'User {email} already exists in group',
+                        'skipped': True
+                    }, 200))
+                
+                # Add user to users array
+                fresh.setdefault('users', []).append({
+                    'userId': user_id,
+                    'email': email,
+                    'displayName': name
+                })
+                
+                # Add to appropriate role array
+                if role == 'admin':
+                    if user_id not in fresh.get('admins', []):
+                        fresh.setdefault('admins', []).append(user_id)
+                elif role == 'document_manager':
+                    if user_id not in fresh.get('documentManagers', []):
+                        fresh.setdefault('documentManagers', []).append(user_id)
+                
+                # Update modification timestamp
+                fresh['modifiedDate'] = datetime.utcnow().isoformat()
+                return fresh
             
             # Save group
-            cosmos_groups_container.upsert_item(group)
-            bump_chat_bootstrap_global_cache_version(reason="group_member_added")
+            try:
+                group = update_group_document_with_etag_guard(
+                    group_id, apply_member, cache_reason="group_member_added",
+                )
+            except _GroupChangeAnswer as answer:
+                payload, status_code = answer.answer
+                return jsonify(payload), status_code
+            except GroupDocumentWriteConflict:
+                return jsonify({'error': GROUP_WRITE_CONFLICT_MESSAGE, 'error_code': GROUP_WRITE_CONFLICT_CODE}), 409
+            if group is None:
+                return jsonify({'error': 'Group not found'}), 404
             
             # Determine the action source (single add vs bulk CSV)
             source = data.get('source', 'csv')  # Default to 'csv' for backward compatibility
@@ -4126,65 +4232,82 @@ def register_route_backend_control_center(bp):
             admin_user_id = admin_user.get('oid', 'unknown')
             admin_email = admin_user.get('preferred_username', 'unknown')
             
-            # Get old status for logging
-            old_status = workspace.get('status', 'active')  # Default to 'active' if not set
-            
-            # Only update and log if status actually changed
-            if old_status != new_status:
+            # The change is decided and applied on the copy being written, so a status
+            # or membership change made meanwhile is kept, and the old status logged is
+            # the one actually replaced.
+            transition = {}
+
+            def apply_status(fresh):
+                # Get old status for logging
+                old_status = fresh.get('status', 'active')  # Default to 'active' if not set
+                # Only update and log if status actually changed
+                if old_status == new_status:
+                    raise _PublicChangeAnswer(({'message': 'Status unchanged', 'status': new_status}, 200))
+                changed_at = datetime.utcnow().isoformat()
                 # Update workspace status
-                workspace['status'] = new_status
-                workspace['modifiedDate'] = datetime.utcnow().isoformat()
+                fresh['status'] = new_status
+                fresh['modifiedDate'] = changed_at
                 
                 # Add status change metadata
-                if 'statusHistory' not in workspace:
-                    workspace['statusHistory'] = []
+                if 'statusHistory' not in fresh:
+                    fresh['statusHistory'] = []
                 
-                workspace['statusHistory'].append({
+                fresh['statusHistory'].append({
                     'old_status': old_status,
                     'new_status': new_status,
                     'changed_by_user_id': admin_user_id,
                     'changed_by_email': admin_email,
-                    'changed_at': datetime.utcnow().isoformat(),
+                    'changed_at': changed_at,
                     'reason': reason
                 })
-                
-                # Update in database
-                cosmos_public_workspaces_container.upsert_item(workspace)
-                bump_chat_bootstrap_global_cache_version(reason="public_workspace_status_updated")
-                
-                # Log to activity_logs container for audit trail
-                from functions_activity_logging import log_public_workspace_status_change
-                log_public_workspace_status_change(
-                    workspace_id=workspace_id,
-                    workspace_name=workspace.get('name', 'Unknown'),
-                    old_status=old_status,
-                    new_status=new_status,
-                    changed_by_user_id=admin_user_id,
-                    changed_by_email=admin_email,
-                    reason=reason
+                transition['old_status'] = old_status
+                return fresh
+
+            # Update in database
+            try:
+                workspace = update_public_workspace_document_with_etag_guard(
+                    workspace_id, apply_status, cache_reason="public_workspace_status_updated",
                 )
-                
-                # Log admin action (legacy logging)
-                log_event("[CONTROL_CENTER] Public Workspace Status Update", {
-                    "admin_user": admin_email,
-                    "admin_user_id": admin_user_id,
-                    "workspace_id": workspace_id,
-                    "workspace_name": workspace.get('name'),
-                    "old_status": old_status,
-                    "new_status": new_status,
-                    "reason": reason
-                })
-                
+            except _PublicChangeAnswer as answer:
+                payload, status_code = answer.answer
+                return jsonify(payload), status_code
+            except PublicWorkspaceDocumentWriteConflict:
                 return jsonify({
-                    'message': 'Public workspace status updated successfully',
-                    'old_status': old_status,
-                    'new_status': new_status
-                }), 200
-            else:
-                return jsonify({
-                    'message': 'Status unchanged',
-                    'status': new_status
-                }), 200
+                    'error': PUBLIC_WORKSPACE_WRITE_CONFLICT_MESSAGE,
+                    'error_code': PUBLIC_WORKSPACE_WRITE_CONFLICT_CODE,
+                }), 409
+            if workspace is None:
+                return jsonify({'error': 'Public workspace not found'}), 404
+            old_status = transition['old_status']
+            
+            # Log to activity_logs container for audit trail
+            from functions_activity_logging import log_public_workspace_status_change
+            log_public_workspace_status_change(
+                workspace_id=workspace_id,
+                workspace_name=workspace.get('name', 'Unknown'),
+                old_status=old_status,
+                new_status=new_status,
+                changed_by_user_id=admin_user_id,
+                changed_by_email=admin_email,
+                reason=reason
+            )
+            
+            # Log admin action (legacy logging)
+            log_event("[CONTROL_CENTER] Public Workspace Status Update", {
+                "admin_user": admin_email,
+                "admin_user_id": admin_user_id,
+                "workspace_id": workspace_id,
+                "workspace_name": workspace.get('name'),
+                "old_status": old_status,
+                "new_status": new_status,
+                "reason": reason
+            })
+            
+            return jsonify({
+                'message': 'Public workspace status updated successfully',
+                'old_status': old_status,
+                'new_status': new_status
+            }), 200
                 
         except Exception as e:
             debug_print(f"Error updating public workspace status: {e}")
@@ -4286,31 +4409,55 @@ def register_route_backend_control_center(bp):
                         })
                         
                     else:
-                        # Status change action
+                        # Status change action. The change is decided and applied on the
+                        # copy being written, so a status or membership change made
+                        # meanwhile is kept, and a workspace deleted meanwhile is reported
+                        # as failed rather than recreated. A conflict on one workspace is
+                        # recorded per item and never aborts the rest of the batch.
                         new_status = action_to_status[action]
-                        old_status = workspace.get('status', 'active')
-                        
-                        if old_status != new_status:
-                            workspace['status'] = new_status
-                            workspace['modifiedDate'] = datetime.utcnow().isoformat()
-                            
+                        transition = {}
+
+                        def apply_bulk_status(fresh):
+                            old_status = fresh.get('status', 'active')
+                            transition['old_status'] = old_status
+                            if old_status == new_status:
+                                raise _PublicChangeAnswer(None)
+                            changed_at = datetime.utcnow().isoformat()
+                            fresh['status'] = new_status
+                            fresh['modifiedDate'] = changed_at
+
                             # Add status history
-                            if 'statusHistory' not in workspace:
-                                workspace['statusHistory'] = []
-                            
-                            workspace['statusHistory'].append({
+                            if 'statusHistory' not in fresh:
+                                fresh['statusHistory'] = []
+
+                            fresh['statusHistory'].append({
                                 'old_status': old_status,
                                 'new_status': new_status,
                                 'changed_by_user_id': admin_user_id,
                                 'changed_by_email': admin_email,
-                                'changed_at': datetime.utcnow().isoformat(),
+                                'changed_at': changed_at,
                                 'reason': reason,
                                 'bulk_action': True
                             })
-                            
-                            cosmos_public_workspaces_container.upsert_item(workspace)
-                            bump_chat_bootstrap_global_cache_version(reason="public_workspace_bulk_status_updated")
-                            
+                            return fresh
+
+                        try:
+                            updated = update_public_workspace_document_with_etag_guard(
+                                workspace_id, apply_bulk_status,
+                                cache_reason="public_workspace_bulk_status_updated",
+                            )
+                            changed = True
+                        except _PublicChangeAnswer:
+                            updated = workspace
+                            changed = False
+
+                        if updated is None:
+                            raise Exception('Public workspace not found')
+
+                        old_status = transition['old_status']
+                        workspace = updated
+
+                        if changed:
                             # Log activity
                             from functions_activity_logging import log_public_workspace_status_change
                             log_public_workspace_status_change(
@@ -4504,43 +4651,58 @@ def register_route_backend_control_center(bp):
             except Exception as ex:
                 return jsonify({'error': 'Public workspace not found'}), 404
             
-            # Check if user already exists
-            owner = workspace.get('owner', {})
-            owner_id = owner.get('userId') if isinstance(owner, dict) else owner
-            admins = workspace.get('admins', [])
-            doc_managers = workspace.get('documentManagers', [])
-            
-            # Extract user IDs from arrays (handle both object and string formats)
-            admin_ids = [a.get('userId') if isinstance(a, dict) else a for a in admins]
-            doc_manager_ids = [dm.get('userId') if isinstance(dm, dict) else dm for dm in doc_managers]
-            
-            if user_id == owner_id or user_id in admin_ids or user_id in doc_manager_ids:
-                return jsonify({
-                    'message': f'User {email} already exists in workspace',
-                    'skipped': True
-                }), 200
-            
-            # Create full user object
-            user_obj = {
-                'userId': user_id,
-                'displayName': name,
-                'email': email
-            }
-            
-            # Add to appropriate role array with full user object
-            if role == 'admin':
-                workspace.setdefault('admins', []).append(user_obj)
-            elif role == 'document_manager':
-                workspace.setdefault('documentManagers', []).append(user_obj)
-            # Note: 'user' role doesn't have a separate array in public workspaces
-            # They are implicit members through document access
-            
-            # Update modification timestamp
-            workspace['modifiedDate'] = datetime.utcnow().isoformat()
-            
+            # The member is added to the copy being written, so a membership change
+            # made meanwhile is kept, and "already a member" is decided on that copy.
+            def apply_member(fresh):
+                owner = fresh.get('owner', {})
+                owner_id = owner.get('userId') if isinstance(owner, dict) else owner
+                admins = fresh.get('admins', [])
+                doc_managers = fresh.get('documentManagers', [])
+
+                # Extract user IDs from arrays (handle both object and string formats)
+                admin_ids = [a.get('userId') if isinstance(a, dict) else a for a in admins]
+                doc_manager_ids = [dm.get('userId') if isinstance(dm, dict) else dm for dm in doc_managers]
+
+                if user_id == owner_id or user_id in admin_ids or user_id in doc_manager_ids:
+                    raise _PublicChangeAnswer(({
+                        'message': f'User {email} already exists in workspace',
+                        'skipped': True
+                    }, 200))
+
+                # Create full user object
+                user_obj = {
+                    'userId': user_id,
+                    'displayName': name,
+                    'email': email
+                }
+
+                # Add to appropriate role array with full user object
+                if role == 'admin':
+                    fresh.setdefault('admins', []).append(user_obj)
+                elif role == 'document_manager':
+                    fresh.setdefault('documentManagers', []).append(user_obj)
+                # Note: 'user' role doesn't have a separate array in public workspaces
+                # They are implicit members through document access
+
+                # Update modification timestamp
+                fresh['modifiedDate'] = datetime.utcnow().isoformat()
+                return fresh
+
             # Save workspace
-            cosmos_public_workspaces_container.upsert_item(workspace)
-            bump_chat_bootstrap_global_cache_version(reason="public_workspace_member_added")
+            try:
+                workspace = update_public_workspace_document_with_etag_guard(
+                    workspace_id, apply_member, cache_reason="public_workspace_member_added",
+                )
+            except _PublicChangeAnswer as answer:
+                payload, status_code = answer.answer
+                return jsonify(payload), status_code
+            except PublicWorkspaceDocumentWriteConflict:
+                return jsonify({
+                    'error': PUBLIC_WORKSPACE_WRITE_CONFLICT_MESSAGE,
+                    'error_code': PUBLIC_WORKSPACE_WRITE_CONFLICT_CODE,
+                }), 409
+            if workspace is None:
+                return jsonify({'error': 'Public workspace not found'}), 404
             
             # Determine the action source
             source = data.get('source', 'csv')
@@ -4549,7 +4711,7 @@ def register_route_backend_control_center(bp):
             # Log to activity logs
             activity_record = {
                 'id': str(uuid.uuid4()),
-                'activity_type': activity_type,
+                'activity_type': action_type,
                 'timestamp': datetime.utcnow().isoformat(),
                 'admin_user_id': admin_user.get('oid') or admin_user.get('sub'),
                 'admin_email': admin_email,
@@ -4618,39 +4780,54 @@ def register_route_backend_control_center(bp):
             except Exception as ex:
                 return jsonify({'error': 'Public workspace not found'}), 404
             
-            # Check if user already exists
-            owner = workspace.get('owner', {})
-            owner_id = owner.get('userId') if isinstance(owner, dict) else owner
-            admins = workspace.get('admins', [])
-            doc_managers = workspace.get('documentManagers', [])
-            
-            # Extract user IDs from arrays (handle both object and string formats)
-            admin_ids = [a.get('userId') if isinstance(a, dict) else a for a in admins]
-            doc_manager_ids = [dm.get('userId') if isinstance(dm, dict) else dm for dm in doc_managers]
-            
-            if user_id == owner_id or user_id in admin_ids or user_id in doc_manager_ids:
-                return jsonify({
-                    'error': f'User {email} already exists in workspace'
-                }), 400
-            
-            # Add to appropriate role array with full user info
-            user_obj = {
-                'userId': user_id,
-                'displayName': display_name,
-                'email': email
-            }
-            
-            if role == 'admin':
-                workspace.setdefault('admins', []).append(user_obj)
-            elif role == 'document_manager':
-                workspace.setdefault('documentManagers', []).append(user_obj)
-            
-            # Update modification timestamp
-            workspace['modifiedDate'] = datetime.utcnow().isoformat()
-            
+            # The member is added to the copy being written, so a membership change
+            # made meanwhile is kept, and "already a member" is decided on that copy.
+            def apply_member(fresh):
+                owner = fresh.get('owner', {})
+                owner_id = owner.get('userId') if isinstance(owner, dict) else owner
+                admins = fresh.get('admins', [])
+                doc_managers = fresh.get('documentManagers', [])
+
+                # Extract user IDs from arrays (handle both object and string formats)
+                admin_ids = [a.get('userId') if isinstance(a, dict) else a for a in admins]
+                doc_manager_ids = [dm.get('userId') if isinstance(dm, dict) else dm for dm in doc_managers]
+
+                if user_id == owner_id or user_id in admin_ids or user_id in doc_manager_ids:
+                    raise _PublicChangeAnswer(({
+                        'error': f'User {email} already exists in workspace'
+                    }, 400))
+
+                # Add to appropriate role array with full user info
+                user_obj = {
+                    'userId': user_id,
+                    'displayName': display_name,
+                    'email': email
+                }
+
+                if role == 'admin':
+                    fresh.setdefault('admins', []).append(user_obj)
+                elif role == 'document_manager':
+                    fresh.setdefault('documentManagers', []).append(user_obj)
+
+                # Update modification timestamp
+                fresh['modifiedDate'] = datetime.utcnow().isoformat()
+                return fresh
+
             # Save workspace
-            cosmos_public_workspaces_container.upsert_item(workspace)
-            bump_chat_bootstrap_global_cache_version(reason="public_workspace_member_added")
+            try:
+                workspace = update_public_workspace_document_with_etag_guard(
+                    workspace_id, apply_member, cache_reason="public_workspace_member_added",
+                )
+            except _PublicChangeAnswer as answer:
+                payload, status_code = answer.answer
+                return jsonify(payload), status_code
+            except PublicWorkspaceDocumentWriteConflict:
+                return jsonify({
+                    'error': PUBLIC_WORKSPACE_WRITE_CONFLICT_MESSAGE,
+                    'error_code': PUBLIC_WORKSPACE_WRITE_CONFLICT_CODE,
+                }), 409
+            if workspace is None:
+                return jsonify({'error': 'Public workspace not found'}), 404
             
             # Log to activity logs
             activity_record = {
@@ -7131,59 +7308,84 @@ def register_route_backend_control_center(bp):
         return result
 
     def _execute_take_ownership(approval, executor_id, executor_email, executor_name):
-        """Execute admin take ownership action."""
+        """Execute admin take ownership action.
+
+        The request is checked again on the group's current copy. When the requester
+        already owns the group, as after a second approval, it has already been applied:
+        nothing is written or logged, and it succeeds. When anyone other than the owner
+        the request recorded owns the group, it is refused and the approval fails.
+        """
         try:
             group_id = approval['group_id']
             requester_id = approval['requester_id']
             requester_email = approval['requester_email']
-            
-            # Get the group
-            group = cosmos_groups_container.read_item(item=group_id, partition_key=group_id)
-            
-            old_owner = group.get('owner', {})
-            old_owner_id = old_owner.get('id')
-            old_owner_email = old_owner.get('email', 'unknown')
-            
-            # Update owner to requester (the admin who requested)
-            group['owner'] = {
-                'id': requester_id,
-                'email': requester_email,
-                'displayName': approval['requester_name']
+            recorded_owner_id = (approval.get('metadata') or {}).get('old_owner_id')
+            success = {
+                'success': True,
+                'message': f'Ownership transferred to {requester_email}'
             }
-            
-            # Remove requester from special roles if present
-            if requester_id in group.get('admins', []):
-                group['admins'].remove(requester_id)
-            if requester_id in group.get('documentManagers', []):
-                group['documentManagers'].remove(requester_id)
-            
-            # Ensure requester is in users list
-            requester_in_users = any(m.get('userId') == requester_id for m in group.get('users', []))
-            if not requester_in_users:
-                group.setdefault('users', []).append({
-                    'userId': requester_id,
+            replaced = {}
+
+            def apply_take(group):
+                old_owner = group.get('owner', {})
+                old_owner_id = old_owner.get('id')
+                old_owner_email = old_owner.get('email', 'unknown')
+                if old_owner_id == requester_id:
+                    raise _GroupChangeAnswer(success)
+                if old_owner_id != recorded_owner_id:
+                    raise _GroupChangeAnswer({'success': False, 'message': GROUP_OWNERSHIP_CHANGED_MESSAGE})
+                
+                # Update owner to requester (the admin who requested)
+                group['owner'] = {
+                    'id': requester_id,
                     'email': requester_email,
                     'displayName': approval['requester_name']
-                })
-            
-            # Demote old owner to regular member
-            if old_owner_id:
-                old_owner_in_users = any(m.get('userId') == old_owner_id for m in group.get('users', []))
-                if not old_owner_in_users:
+                }
+                
+                # Remove requester from special roles if present
+                if requester_id in group.get('admins', []):
+                    group['admins'].remove(requester_id)
+                if requester_id in group.get('documentManagers', []):
+                    group['documentManagers'].remove(requester_id)
+                
+                # Ensure requester is in users list
+                requester_in_users = any(m.get('userId') == requester_id for m in group.get('users', []))
+                if not requester_in_users:
                     group.setdefault('users', []).append({
-                        'userId': old_owner_id,
-                        'email': old_owner_email,
-                        'displayName': old_owner.get('displayName', old_owner_email)
+                        'userId': requester_id,
+                        'email': requester_email,
+                        'displayName': approval['requester_name']
                     })
                 
-                if old_owner_id in group.get('admins', []):
-                    group['admins'].remove(old_owner_id)
-                if old_owner_id in group.get('documentManagers', []):
-                    group['documentManagers'].remove(old_owner_id)
-            
-            group['modifiedDate'] = datetime.utcnow().isoformat()
-            cosmos_groups_container.upsert_item(group)
-            bump_chat_bootstrap_global_cache_version(reason="group_ownership_transferred")
+                # Demote old owner to regular member
+                if old_owner_id:
+                    old_owner_in_users = any(m.get('userId') == old_owner_id for m in group.get('users', []))
+                    if not old_owner_in_users:
+                        group.setdefault('users', []).append({
+                            'userId': old_owner_id,
+                            'email': old_owner_email,
+                            'displayName': old_owner.get('displayName', old_owner_email)
+                        })
+                    
+                    if old_owner_id in group.get('admins', []):
+                        group['admins'].remove(old_owner_id)
+                    if old_owner_id in group.get('documentManagers', []):
+                        group['documentManagers'].remove(old_owner_id)
+                
+                group['modifiedDate'] = datetime.utcnow().isoformat()
+                replaced.update(old_owner_id=old_owner_id, old_owner_email=old_owner_email)
+                return group
+
+            try:
+                group = update_group_document_with_etag_guard(
+                    group_id, apply_take, cache_reason="group_ownership_transferred",
+                )
+            except _GroupChangeAnswer as answer:
+                return answer.answer
+            except GroupDocumentWriteConflict:
+                return {'success': False, 'message': GROUP_APPROVAL_CONFLICT_MESSAGE}
+            if group is None:
+                return {'success': False, 'message': GROUP_NO_LONGER_EXISTS_MESSAGE}
             
             # Log to activity logs
             activity_record = {
@@ -7197,8 +7399,8 @@ def register_route_backend_control_center(bp):
                 'approver_email': executor_email,
                 'group_id': group_id,
                 'group_name': group.get('name', 'Unknown'),
-                'old_owner_id': old_owner_id,
-                'old_owner_email': old_owner_email,
+                'old_owner_id': replaced['old_owner_id'],
+                'old_owner_email': replaced['old_owner_email'],
                 'new_owner_id': requester_id,
                 'new_owner_email': requester_email,
                 'approval_id': approval['id'],
@@ -7206,10 +7408,7 @@ def register_route_backend_control_center(bp):
             }
             cosmos_activity_logs_container.create_item(body=activity_record)
             
-            return {
-                'success': True,
-                'message': f'Ownership transferred to {requester_email}'
-            }
+            return success
             
         except Exception as e:
             return {'success': False, 'message': f'Failed to take ownership: {str(e)}'}
@@ -7224,104 +7423,135 @@ def register_route_backend_control_center(bp):
             
             # Get the workspace
             workspace = cosmos_public_workspaces_container.read_item(item=workspace_id, partition_key=workspace_id)
-            
-            # Get old owner info
-            old_owner = workspace.get('owner', {})
-            if isinstance(old_owner, dict):
-                old_owner_id = old_owner.get('userId')
-                old_owner_email = old_owner.get('email')
-                old_owner_name = old_owner.get('displayName')
-            else:
-                # Old format where owner is just a string
-                old_owner_id = old_owner
-                # Try to get user info
+
+            # The recorded owner the request was made against. The change is applied only
+            # when the workspace's current owner still matches it; a second approval, where
+            # the requester already owns it, is idempotent; any other owner is refused.
+            recorded_owner_id = (approval.get('metadata') or {}).get('old_owner_id')
+
+            # Resolve display info for any legacy string-format members up front, so the
+            # guarded write below performs no user-settings or Graph reads while it may
+            # retry. Reads use the copy just fetched; entries added meanwhile degrade to
+            # 'unknown' rather than blocking the write.
+            def _resolve_user(uid):
                 try:
-                    old_owner_user = cosmos_user_settings_container.read_item(
-                        item=old_owner_id,
-                        partition_key=old_owner_id
-                    )
-                    old_owner_email = old_owner_user.get('email', 'unknown')
-                    old_owner_name = old_owner_user.get('display_name', old_owner_email)
-                except Exception as ex:
-                    old_owner_email = 'unknown'
-                    old_owner_name = 'unknown'
-            
-            # Update owner to requester (the admin who requested) with full user object
-            workspace['owner'] = {
-                'userId': requester_id,
-                'email': requester_email,
-                'displayName': requester_name
+                    u = cosmos_user_settings_container.read_item(item=uid, partition_key=uid)
+                    return {
+                        'userId': uid,
+                        'email': u.get('email', 'unknown'),
+                        'displayName': u.get('display_name', 'unknown'),
+                    }
+                except Exception:
+                    return {'userId': uid, 'email': 'unknown', 'displayName': 'unknown'}
+
+            resolved_users = {}
+            pre_owner = workspace.get('owner', {})
+            if isinstance(pre_owner, dict):
+                pre_owner_id = pre_owner.get('userId')
+                pre_owner_email = pre_owner.get('email', 'unknown')
+                pre_owner_name = pre_owner.get('displayName', pre_owner_email)
+            else:
+                pre_owner_id = pre_owner
+                info = _resolve_user(pre_owner_id) if pre_owner_id else {'email': 'unknown', 'displayName': 'unknown'}
+                pre_owner_email = info['email']
+                pre_owner_name = info['displayName']
+                if pre_owner_id:
+                    resolved_users[pre_owner_id] = info
+            for entry in list(workspace.get('admins', [])) + list(workspace.get('documentManagers', [])):
+                if not isinstance(entry, dict) and entry and entry not in resolved_users:
+                    resolved_users[entry] = _resolve_user(entry)
+
+            success = {
+                'success': True,
+                'message': f"Ownership transferred to {requester_email}"
             }
-            
-            # Remove requester from admins/documentManagers if present
-            new_admins = []
-            for admin in workspace.get('admins', []):
-                admin_id = admin.get('userId') if isinstance(admin, dict) else admin
-                if admin_id != requester_id:
-                    # Ensure admin is full object
+            replaced = {}
+
+            def apply_take(fresh):
+                fresh_owner = fresh.get('owner', {})
+                if isinstance(fresh_owner, dict):
+                    fresh_owner_id = fresh_owner.get('userId')
+                    fresh_owner_email = fresh_owner.get('email', 'unknown')
+                    fresh_owner_name = fresh_owner.get('displayName', fresh_owner_email)
+                else:
+                    fresh_owner_id = fresh_owner
+                    info = resolved_users.get(fresh_owner_id, {'email': pre_owner_email, 'displayName': pre_owner_name})
+                    fresh_owner_email = info.get('email', 'unknown')
+                    fresh_owner_name = info.get('displayName', 'unknown')
+
+                if fresh_owner_id == requester_id:
+                    raise _PublicChangeAnswer(success)
+                if fresh_owner_id != recorded_owner_id:
+                    raise _PublicChangeAnswer({'success': False, 'message': PUBLIC_OWNERSHIP_CHANGED_MESSAGE})
+
+                # Update owner to requester (the admin who requested) with full user object
+                fresh['owner'] = {
+                    'userId': requester_id,
+                    'email': requester_email,
+                    'displayName': requester_name
+                }
+
+                # Remove requester from admins/documentManagers if present, keeping full objects
+                new_admins = []
+                for admin in fresh.get('admins', []):
+                    admin_id = admin.get('userId') if isinstance(admin, dict) else admin
+                    if admin_id == requester_id:
+                        continue
                     if isinstance(admin, dict):
                         new_admins.append(admin)
+                    elif admin_id in resolved_users:
+                        new_admins.append(resolved_users[admin_id])
                     else:
-                        # Convert string ID to object if needed
-                        try:
-                            admin_user = cosmos_user_settings_container.read_item(
-                                item=admin,
-                                partition_key=admin
-                            )
-                            new_admins.append({
-                                'userId': admin,
-                                'email': admin_user.get('email', 'unknown'),
-                                'displayName': admin_user.get('display_name', 'unknown')
-                            })
-                        except Exception as ex:
-                            pass
-            workspace['admins'] = new_admins
-            
-            new_dms = []
-            for dm in workspace.get('documentManagers', []):
-                dm_id = dm.get('userId') if isinstance(dm, dict) else dm
-                if dm_id != requester_id:
-                    # Ensure dm is full object
+                        new_admins.append({'userId': admin_id, 'email': 'unknown', 'displayName': 'unknown'})
+                fresh['admins'] = new_admins
+
+                new_dms = []
+                for dm in fresh.get('documentManagers', []):
+                    dm_id = dm.get('userId') if isinstance(dm, dict) else dm
+                    if dm_id == requester_id:
+                        continue
                     if isinstance(dm, dict):
                         new_dms.append(dm)
+                    elif dm_id in resolved_users:
+                        new_dms.append(resolved_users[dm_id])
                     else:
-                        # Convert string ID to object if needed
-                        try:
-                            dm_user = cosmos_user_settings_container.read_item(
-                                item=dm,
-                                partition_key=dm
-                            )
-                            new_dms.append({
-                                'userId': dm,
-                                'email': dm_user.get('email', 'unknown'),
-                                'displayName': dm_user.get('display_name', 'unknown')
-                            })
-                        except Exception as ex:
-                            pass
-            workspace['documentManagers'] = new_dms
-            
-            # Demote old owner to admin if not already there
-            if old_owner_id and old_owner_id != requester_id:
-                old_owner_in_admins = any(
-                    (a.get('userId') if isinstance(a, dict) else a) == old_owner_id 
-                    for a in workspace.get('admins', [])
+                        new_dms.append({'userId': dm_id, 'email': 'unknown', 'displayName': 'unknown'})
+                fresh['documentManagers'] = new_dms
+
+                # Demote old owner to admin if not already a member
+                if fresh_owner_id and fresh_owner_id != requester_id:
+                    old_owner_in_admins = any(
+                        (a.get('userId') if isinstance(a, dict) else a) == fresh_owner_id
+                        for a in fresh.get('admins', [])
+                    )
+                    old_owner_in_dms = any(
+                        (dm.get('userId') if isinstance(dm, dict) else dm) == fresh_owner_id
+                        for dm in fresh.get('documentManagers', [])
+                    )
+                    if not old_owner_in_admins and not old_owner_in_dms:
+                        fresh.setdefault('admins', []).append({
+                            'userId': fresh_owner_id,
+                            'email': fresh_owner_email,
+                            'displayName': fresh_owner_name
+                        })
+
+                fresh['modifiedDate'] = datetime.utcnow().isoformat()
+                replaced.update(old_owner_id=fresh_owner_id, old_owner_email=fresh_owner_email)
+                return fresh
+
+            try:
+                workspace = update_public_workspace_document_with_etag_guard(
+                    workspace_id, apply_take, cache_reason="public_workspace_ownership_transferred",
                 )
-                old_owner_in_dms = any(
-                    (dm.get('userId') if isinstance(dm, dict) else dm) == old_owner_id 
-                    for dm in workspace.get('documentManagers', [])
-                )
-                
-                if not old_owner_in_admins and not old_owner_in_dms:
-                    # Add old owner as admin
-                    workspace.setdefault('admins', []).append({
-                        'userId': old_owner_id,
-                        'email': old_owner_email,
-                        'displayName': old_owner_name
-                    })
-            
-            workspace['modifiedDate'] = datetime.utcnow().isoformat()
-            cosmos_public_workspaces_container.upsert_item(workspace)
-            bump_chat_bootstrap_global_cache_version(reason="public_workspace_ownership_transferred")
+            except _PublicChangeAnswer as answer:
+                return answer.answer
+            except PublicWorkspaceDocumentWriteConflict:
+                return {'success': False, 'message': PUBLIC_APPROVAL_CONFLICT_MESSAGE}
+            if workspace is None:
+                return {'success': False, 'message': PUBLIC_NO_LONGER_EXISTS_MESSAGE}
+
+            old_owner_id = replaced['old_owner_id']
+            old_owner_email = replaced['old_owner_email']
             
             # Log to activity logs
             activity_record = {
@@ -7353,7 +7583,14 @@ def register_route_backend_control_center(bp):
             return {'success': False, 'message': f'Failed to take workspace ownership: {str(e)}'}
 
     def _execute_transfer_ownership(approval, executor_id, executor_email, executor_name):
-        """Execute transfer ownership action."""
+        """Execute transfer ownership action.
+
+        The request is checked again on the group's current copy. When the new owner
+        already owns the group, as after a second approval, it has already been applied:
+        nothing is written or logged, and it succeeds. When anyone other than the owner
+        the request recorded owns the group, it is refused and the approval fails. The
+        new owner must still be a member.
+        """
         try:
             group_id = approval['group_id']
             new_owner_id = approval['metadata'].get('new_owner_id')
@@ -7361,53 +7598,74 @@ def register_route_backend_control_center(bp):
             if not new_owner_id:
                 return {'success': False, 'message': 'new_owner_id not found in approval metadata'}
             
-            # Get the group
-            group = cosmos_groups_container.read_item(item=group_id, partition_key=group_id)
-            
-            # Find new owner in members
-            new_owner_member = None
-            for member in group.get('users', []):
-                if member.get('userId') == new_owner_id:
-                    new_owner_member = member
-                    break
-            
-            if not new_owner_member:
-                return {'success': False, 'message': 'New owner not found in group members'}
-            
-            old_owner = group.get('owner', {})
-            old_owner_id = old_owner.get('id')
-            
-            # Update owner
-            group['owner'] = {
-                'id': new_owner_id,
-                'email': new_owner_member.get('email'),
-                'displayName': new_owner_member.get('displayName')
-            }
-            
-            # Remove new owner from special roles
-            if new_owner_id in group.get('admins', []):
-                group['admins'].remove(new_owner_id)
-            if new_owner_id in group.get('documentManagers', []):
-                group['documentManagers'].remove(new_owner_id)
-            
-            # Demote old owner to member
-            if old_owner_id:
-                old_owner_in_users = any(m.get('userId') == old_owner_id for m in group.get('users', []))
-                if not old_owner_in_users:
-                    group.setdefault('users', []).append({
-                        'userId': old_owner_id,
-                        'email': old_owner.get('email'),
-                        'displayName': old_owner.get('displayName')
+            recorded_owner_id = approval['metadata'].get('old_owner_id')
+            replaced = {}
+
+            def apply_transfer(group):
+                old_owner = group.get('owner', {})
+                old_owner_id = old_owner.get('id')
+                if old_owner_id == new_owner_id:
+                    raise _GroupChangeAnswer({
+                        'success': True,
+                        'message': f"Ownership transferred to {old_owner.get('email') or approval['metadata'].get('new_owner_email')}"
                     })
+                if old_owner_id != recorded_owner_id:
+                    raise _GroupChangeAnswer({'success': False, 'message': GROUP_OWNERSHIP_CHANGED_MESSAGE})
                 
-                if old_owner_id in group.get('admins', []):
-                    group['admins'].remove(old_owner_id)
-                if old_owner_id in group.get('documentManagers', []):
-                    group['documentManagers'].remove(old_owner_id)
-            
-            group['modifiedDate'] = datetime.utcnow().isoformat()
-            cosmos_groups_container.upsert_item(group)
-            bump_chat_bootstrap_global_cache_version(reason="group_ownership_transferred")
+                # Find new owner in members
+                new_owner_member = None
+                for member in group.get('users', []):
+                    if member.get('userId') == new_owner_id:
+                        new_owner_member = member
+                        break
+                
+                if not new_owner_member:
+                    raise _GroupChangeAnswer({'success': False, 'message': 'New owner not found in group members'})
+                
+                # Update owner
+                group['owner'] = {
+                    'id': new_owner_id,
+                    'email': new_owner_member.get('email'),
+                    'displayName': new_owner_member.get('displayName')
+                }
+                
+                # Remove new owner from special roles
+                if new_owner_id in group.get('admins', []):
+                    group['admins'].remove(new_owner_id)
+                if new_owner_id in group.get('documentManagers', []):
+                    group['documentManagers'].remove(new_owner_id)
+                
+                # Demote old owner to member
+                if old_owner_id:
+                    old_owner_in_users = any(m.get('userId') == old_owner_id for m in group.get('users', []))
+                    if not old_owner_in_users:
+                        group.setdefault('users', []).append({
+                            'userId': old_owner_id,
+                            'email': old_owner.get('email'),
+                            'displayName': old_owner.get('displayName')
+                        })
+                    
+                    if old_owner_id in group.get('admins', []):
+                        group['admins'].remove(old_owner_id)
+                    if old_owner_id in group.get('documentManagers', []):
+                        group['documentManagers'].remove(old_owner_id)
+                
+                group['modifiedDate'] = datetime.utcnow().isoformat()
+                replaced.update(old_owner=old_owner, new_owner_member=new_owner_member)
+                return group
+
+            try:
+                group = update_group_document_with_etag_guard(
+                    group_id, apply_transfer, cache_reason="group_ownership_transferred",
+                )
+            except _GroupChangeAnswer as answer:
+                return answer.answer
+            except GroupDocumentWriteConflict:
+                return {'success': False, 'message': GROUP_APPROVAL_CONFLICT_MESSAGE}
+            if group is None:
+                return {'success': False, 'message': GROUP_NO_LONGER_EXISTS_MESSAGE}
+            old_owner = replaced['old_owner']
+            new_owner_member = replaced['new_owner_member']
             
             # Log to activity logs
             activity_record = {
@@ -7421,7 +7679,7 @@ def register_route_backend_control_center(bp):
                 'approver_email': executor_email,
                 'group_id': group_id,
                 'group_name': group.get('name', 'Unknown'),
-                'old_owner_id': old_owner_id,
+                'old_owner_id': old_owner.get('id'),
                 'old_owner_email': old_owner.get('email'),
                 'new_owner_id': new_owner_id,
                 'new_owner_email': new_owner_member.get('email'),
@@ -7451,104 +7709,134 @@ def register_route_backend_control_center(bp):
             
             # Get the workspace
             workspace = cosmos_public_workspaces_container.read_item(item=workspace_id, partition_key=workspace_id)
-            
-            # Get old owner info
-            old_owner = workspace.get('owner', {})
-            if isinstance(old_owner, dict):
-                old_owner_id = old_owner.get('userId')
-                old_owner_email = old_owner.get('email')
-                old_owner_name = old_owner.get('displayName')
-            else:
-                # Handle case where owner is just a string (old format)
-                old_owner_id = old_owner
-                # Try to get full user info
+
+            # The recorded owner the request was made against. The change is applied only
+            # when the workspace's current owner still matches it; a second approval, where
+            # the new owner already owns it, is idempotent; any other owner is refused.
+            recorded_owner_id = approval['metadata'].get('old_owner_id')
+
+            # Resolve display info for any legacy string-format members up front, so the
+            # guarded write below performs no user-settings or Graph reads while it may
+            # retry. Reads use the copy just fetched; entries added meanwhile degrade to
+            # 'unknown' rather than blocking the write.
+            def _resolve_user(uid):
                 try:
-                    old_owner_user = cosmos_user_settings_container.read_item(
-                        item=old_owner_id,
-                        partition_key=old_owner_id
-                    )
-                    old_owner_email = old_owner_user.get('email', 'unknown')
-                    old_owner_name = old_owner_user.get('display_name', old_owner_email)
-                except Exception as ex:
-                    old_owner_email = 'unknown'
-                    old_owner_name = 'unknown'
-            
-            # Update owner with full user object
-            workspace['owner'] = {
-                'userId': new_owner_id,
-                'email': new_owner_email,
-                'displayName': new_owner_name
+                    u = cosmos_user_settings_container.read_item(item=uid, partition_key=uid)
+                    return {
+                        'userId': uid,
+                        'email': u.get('email', 'unknown'),
+                        'displayName': u.get('display_name', 'unknown'),
+                    }
+                except Exception:
+                    return {'userId': uid, 'email': 'unknown', 'displayName': 'unknown'}
+
+            resolved_users = {}
+            pre_owner = workspace.get('owner', {})
+            if isinstance(pre_owner, dict):
+                pre_owner_email = pre_owner.get('email', 'unknown')
+                pre_owner_name = pre_owner.get('displayName', pre_owner_email)
+            else:
+                pre_owner_id = pre_owner
+                info = _resolve_user(pre_owner_id) if pre_owner_id else {'email': 'unknown', 'displayName': 'unknown'}
+                pre_owner_email = info['email']
+                pre_owner_name = info['displayName']
+                if pre_owner_id:
+                    resolved_users[pre_owner_id] = info
+            for entry in list(workspace.get('admins', [])) + list(workspace.get('documentManagers', [])):
+                if not isinstance(entry, dict) and entry and entry not in resolved_users:
+                    resolved_users[entry] = _resolve_user(entry)
+
+            success = {
+                'success': True,
+                'message': f"Ownership transferred to {new_owner_email}"
             }
-            
-            # Remove new owner from admins/documentManagers if present
-            new_admins = []
-            for admin in workspace.get('admins', []):
-                admin_id = admin.get('userId') if isinstance(admin, dict) else admin
-                if admin_id != new_owner_id:
-                    # Ensure admin is full object
+            replaced = {}
+
+            def apply_transfer(fresh):
+                fresh_owner = fresh.get('owner', {})
+                if isinstance(fresh_owner, dict):
+                    fresh_owner_id = fresh_owner.get('userId')
+                    fresh_owner_email = fresh_owner.get('email', 'unknown')
+                    fresh_owner_name = fresh_owner.get('displayName', fresh_owner_email)
+                else:
+                    fresh_owner_id = fresh_owner
+                    info = resolved_users.get(fresh_owner_id, {'email': pre_owner_email, 'displayName': pre_owner_name})
+                    fresh_owner_email = info.get('email', 'unknown')
+                    fresh_owner_name = info.get('displayName', 'unknown')
+
+                if fresh_owner_id == new_owner_id:
+                    raise _PublicChangeAnswer(success)
+                if fresh_owner_id != recorded_owner_id:
+                    raise _PublicChangeAnswer({'success': False, 'message': PUBLIC_OWNERSHIP_CHANGED_MESSAGE})
+
+                # Update owner with full user object
+                fresh['owner'] = {
+                    'userId': new_owner_id,
+                    'email': new_owner_email,
+                    'displayName': new_owner_name
+                }
+
+                # Remove new owner from admins/documentManagers if present, keeping full objects
+                new_admins = []
+                for admin in fresh.get('admins', []):
+                    admin_id = admin.get('userId') if isinstance(admin, dict) else admin
+                    if admin_id == new_owner_id:
+                        continue
                     if isinstance(admin, dict):
                         new_admins.append(admin)
+                    elif admin_id in resolved_users:
+                        new_admins.append(resolved_users[admin_id])
                     else:
-                        # Convert string ID to object if needed
-                        try:
-                            admin_user = cosmos_user_settings_container.read_item(
-                                item=admin,
-                                partition_key=admin
-                            )
-                            new_admins.append({
-                                'userId': admin,
-                                'email': admin_user.get('email', 'unknown'),
-                                'displayName': admin_user.get('display_name', 'unknown')
-                            })
-                        except Exception as ex:
-                            pass
-            workspace['admins'] = new_admins
-            
-            new_dms = []
-            for dm in workspace.get('documentManagers', []):
-                dm_id = dm.get('userId') if isinstance(dm, dict) else dm
-                if dm_id != new_owner_id:
-                    # Ensure dm is full object
+                        new_admins.append({'userId': admin_id, 'email': 'unknown', 'displayName': 'unknown'})
+                fresh['admins'] = new_admins
+
+                new_dms = []
+                for dm in fresh.get('documentManagers', []):
+                    dm_id = dm.get('userId') if isinstance(dm, dict) else dm
+                    if dm_id == new_owner_id:
+                        continue
                     if isinstance(dm, dict):
                         new_dms.append(dm)
+                    elif dm_id in resolved_users:
+                        new_dms.append(resolved_users[dm_id])
                     else:
-                        # Convert string ID to object if needed
-                        try:
-                            dm_user = cosmos_user_settings_container.read_item(
-                                item=dm,
-                                partition_key=dm
-                            )
-                            new_dms.append({
-                                'userId': dm,
-                                'email': dm_user.get('email', 'unknown'),
-                                'displayName': dm_user.get('display_name', 'unknown')
-                            })
-                        except Exception as ex:
-                            pass
-            workspace['documentManagers'] = new_dms
-            
-            # Add old owner to admins if not already there
-            if old_owner_id and old_owner_id != new_owner_id:
-                old_owner_in_admins = any(
-                    (a.get('userId') if isinstance(a, dict) else a) == old_owner_id 
-                    for a in workspace.get('admins', [])
+                        new_dms.append({'userId': dm_id, 'email': 'unknown', 'displayName': 'unknown'})
+                fresh['documentManagers'] = new_dms
+
+                # Add old owner to admins if not already a member
+                if fresh_owner_id and fresh_owner_id != new_owner_id:
+                    old_owner_in_admins = any(
+                        (a.get('userId') if isinstance(a, dict) else a) == fresh_owner_id
+                        for a in fresh.get('admins', [])
+                    )
+                    old_owner_in_dms = any(
+                        (dm.get('userId') if isinstance(dm, dict) else dm) == fresh_owner_id
+                        for dm in fresh.get('documentManagers', [])
+                    )
+                    if not old_owner_in_admins and not old_owner_in_dms:
+                        fresh.setdefault('admins', []).append({
+                            'userId': fresh_owner_id,
+                            'email': fresh_owner_email,
+                            'displayName': fresh_owner_name
+                        })
+
+                fresh['modifiedDate'] = datetime.utcnow().isoformat()
+                replaced.update(old_owner_id=fresh_owner_id, old_owner_email=fresh_owner_email)
+                return fresh
+
+            try:
+                workspace = update_public_workspace_document_with_etag_guard(
+                    workspace_id, apply_transfer, cache_reason="public_workspace_ownership_transferred",
                 )
-                old_owner_in_dms = any(
-                    (dm.get('userId') if isinstance(dm, dict) else dm) == old_owner_id 
-                    for dm in workspace.get('documentManagers', [])
-                )
-                
-                if not old_owner_in_admins and not old_owner_in_dms:
-                    # Add old owner as admin
-                    workspace.setdefault('admins', []).append({
-                        'userId': old_owner_id,
-                        'email': old_owner_email,
-                        'displayName': old_owner_name
-                    })
-            
-            workspace['modifiedDate'] = datetime.utcnow().isoformat()
-            cosmos_public_workspaces_container.upsert_item(workspace)
-            bump_chat_bootstrap_global_cache_version(reason="public_workspace_ownership_transferred")
+            except _PublicChangeAnswer as answer:
+                return answer.answer
+            except PublicWorkspaceDocumentWriteConflict:
+                return {'success': False, 'message': PUBLIC_APPROVAL_CONFLICT_MESSAGE}
+            if workspace is None:
+                return {'success': False, 'message': PUBLIC_NO_LONGER_EXISTS_MESSAGE}
+
+            old_owner_id = replaced['old_owner_id']
+            old_owner_email = replaced['old_owner_email']
             
             # Log to activity logs
             activity_record = {

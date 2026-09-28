@@ -42,8 +42,14 @@ from functions_workflow_alerts import normalize_workflow_alert_settings
 from functions_workflow_alert_safety import sanitize_workflow_alert_record
 from functions_workflow_result_store import delete_workflow_run_results
 from functions_workflow_bindings import authorize_workflow_reference
-from functions_workflow_definition_store import save_workflow_definition_record, update_workflow_runtime_record
+from functions_workflow_definition_store import (
+    refuse_save_of_deleted_workflow,
+    save_workflow_definition_record,
+    update_workflow_runtime_record,
+)
 from functions_workflow_definitions import (
+    WorkflowPublicValidationError,
+    WorkflowSourceUnavailableError,
     normalize_publication_completion_policy, normalize_publication_source_kind,
     normalize_workflow_definition, workflow_definition_for_editor,
 )
@@ -144,16 +150,18 @@ def _normalize_schedule(schedule_payload):
     schedule_payload = schedule_payload if isinstance(schedule_payload, dict) else {}
     unit = str(schedule_payload.get('unit') or '').strip().lower()
     if unit not in WORKFLOW_SCHEDULE_UNITS:
-        raise ValueError('Schedule unit must be seconds, minutes, or hours.')
+        raise WorkflowPublicValidationError('Schedule unit must be seconds, minutes or hours.')
 
     try:
         value = int(schedule_payload.get('value'))
-    except (TypeError, ValueError):
-        raise ValueError('Schedule value must be an integer.')
+    except (TypeError, ValueError, OverflowError):
+        # OverflowError: the request JSON parser accepts Infinity, which int() cannot convert.
+        raise WorkflowPublicValidationError('Schedule value must be a whole number.')
 
     max_value = 59 if unit in ('seconds', 'minutes') else 24
     if value < 1 or value > max_value:
-        raise ValueError(f'Schedule value for {unit} must be between 1 and {max_value}.')
+        # The unit is one of WORKFLOW_SCHEDULE_UNITS and the limit is fixed, so no caller text is echoed.
+        raise WorkflowPublicValidationError(f'Schedule value for {unit} must be between 1 and {max_value}.')
 
     return {
         'unit': unit,
@@ -431,13 +439,15 @@ def _normalize_file_sync_config(user_id, workflow_data, existing_workflow=None):
     enabled = _normalize_bool(payload.get('enabled', existing_config.get('enabled', False)), default=False)
     wait_mode = _normalize_text(payload.get('wait_mode', existing_config.get('wait_mode', 'complete')), 'File Sync wait mode').lower() or 'complete'
     if wait_mode not in WORKFLOW_FILE_SYNC_WAIT_MODES:
-        raise ValueError('File Sync wait mode must be complete or queued.')
+        raise WorkflowPublicValidationError('File Sync wait mode must be complete or queued.')
 
     continue_mode = _normalize_text(payload.get('continue_mode', existing_config.get('continue_mode', 'always')), 'File Sync continue mode').lower() or 'always'
     if continue_mode not in WORKFLOW_FILE_SYNC_CONTINUE_MODES:
-        raise ValueError('File Sync continue mode must be always or changed.')
+        raise WorkflowPublicValidationError('File Sync continue mode must be always or changed.')
     if wait_mode == 'queued' and continue_mode == 'changed':
-        raise ValueError('File Sync must wait for completion before a workflow can continue only when changes are found.')
+        raise WorkflowPublicValidationError(
+            'To continue only when changes are found, File Sync must wait for the sync to complete.'
+        )
 
     use_changed_documents = _normalize_bool(
         payload.get('use_changed_documents', existing_config.get('use_changed_documents', True)),
@@ -463,7 +473,11 @@ def _normalize_file_sync_config(user_id, workflow_data, existing_workflow=None):
         if source_key in seen_source_keys:
             continue
 
-        source = get_authorized_sync_source(scope_type, source_id, user_id, scope_id=scope_id)
+        try:
+            source = get_authorized_sync_source(scope_type, source_id, user_id, scope_id=scope_id)
+        except LookupError as exc:
+            # A PermissionError still propagates as a 403; only a deleted source becomes this 400.
+            raise WorkflowSourceUnavailableError() from exc
         sanitized_source = sanitize_file_sync_source(source)
         normalized_sources.append({
             'scope_type': scope_type,
@@ -475,7 +489,7 @@ def _normalize_file_sync_config(user_id, workflow_data, existing_workflow=None):
         seen_source_keys.add(source_key)
 
     if enabled and not normalized_sources:
-        raise ValueError('Select at least one File Sync source for this workflow.')
+        raise WorkflowPublicValidationError('Select at least one File Sync source for this workflow.')
 
     return {
         'enabled': enabled,
@@ -820,6 +834,7 @@ def save_personal_workflow(user_id, workflow_data, actor_user_id=None):
 
     workflow_id = str(workflow_data.get('id') or '').strip()
     existing_workflow = get_personal_workflow(user_id, workflow_id) if workflow_id else None
+    refuse_save_of_deleted_workflow(cosmos_personal_workflows_container, user_id, workflow_data, existing_workflow)
 
     workflow_name = _normalize_text(workflow_data.get('name'), 'Workflow name', required=True)
     description = _normalize_text(workflow_data.get('description'), 'Description')
@@ -865,9 +880,11 @@ def save_personal_workflow(user_id, workflow_data, actor_user_id=None):
     if runner_type not in WORKFLOW_RUNNER_TYPES:
         raise ValueError('Runner type must be agent or model.')
 
-    trigger_type = _normalize_text(workflow_data.get('trigger_type'), 'Trigger type', required=True).lower()
+    trigger_type = _normalize_text(workflow_data.get('trigger_type'), 'Trigger type').lower()
+    if not trigger_type:
+        raise WorkflowPublicValidationError('Trigger type is required.')
     if trigger_type not in WORKFLOW_TRIGGER_TYPES:
-        raise ValueError('Trigger type must be manual, interval, or file_sync.')
+        raise WorkflowPublicValidationError('Trigger type must be manual, interval or file_sync.')
 
     is_enabled = bool(workflow_data.get('is_enabled', existing_workflow.get('is_enabled', True) if existing_workflow else True))
     url_access_enabled = _normalize_bool(
@@ -902,11 +919,13 @@ def save_personal_workflow(user_id, workflow_data, actor_user_id=None):
     )
     if trigger_type == 'file_sync':
         if not file_sync.get('enabled'):
-            raise ValueError('Monitor File Sync Changes workflows require File Sync before run.')
+            raise WorkflowPublicValidationError('Monitor File Sync Changes workflows require File Sync before run.')
         if file_sync.get('wait_mode') != 'complete':
-            raise ValueError('Monitor File Sync Changes workflows must wait for sync completion.')
+            raise WorkflowPublicValidationError('Monitor File Sync Changes workflows must wait for sync completion.')
         if file_sync.get('continue_mode') != 'changed':
-            raise ValueError('Monitor File Sync Changes workflows must continue only when changes are found.')
+            raise WorkflowPublicValidationError(
+                'Monitor File Sync Changes workflows must continue only when changes are found.'
+            )
     analyze = build_analyze_config(document_action)
     selected_agent = {}
     model_binding_summary = None

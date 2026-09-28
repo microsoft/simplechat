@@ -27,6 +27,7 @@ from config import (
     cosmos_user_documents_container_name,
 )
 from functions_appinsights import log_event
+from functions_group_document_projection_fence import hold_group_document_projection
 from functions_settings import get_settings
 
 
@@ -3503,6 +3504,17 @@ def sync_document_access_index_for_document(
             'deleted_count': 0,
         }
 
+    if _resolve_source_scope(document_item) == DOCUMENT_ACCESS_SCOPE_GROUP:
+        with hold_group_document_projection(
+            cosmos_group_documents_container, document_item.get("id") or document_item.get("document_id"),
+            document_item.get("group_id"), expected_version=document_item.get("version"), log=log_event,
+        ) as current:
+            return _sync_document_access_index_projection(current, operation, settings)
+    return _sync_document_access_index_projection(document_item, operation, settings)
+
+
+def _sync_document_access_index_projection(document_item, operation, settings):
+    """Publish only after group callers have bound a fresh source and writer claim."""
     rows = build_document_access_index_rows(document_item)
     document_id = str((document_item or {}).get('id') or (document_item or {}).get('document_id') or '').strip()
     if not document_id:
@@ -3612,8 +3624,10 @@ def delete_document_access_index_for_document(
     }
 
 
-def sync_document_access_index_for_document_fail_open(document_item, operation=DOCUMENT_ACCESS_OPERATION_UPSERT, settings=None):
-    """Synchronize projection rows without failing the source document mutation."""
+def sync_document_access_index_for_document_fail_open(
+    document_item, operation=DOCUMENT_ACCESS_OPERATION_UPSERT, settings=None, *, raise_on_error=False,
+):
+    """Record projection failures, optionally preserving the exception for a durable caller."""
     try:
         return sync_document_access_index_for_document(document_item, operation=operation, settings=settings)
     except Exception as exc:
@@ -3649,6 +3663,8 @@ def sync_document_access_index_for_document_fail_open(document_item, operation=D
                 level=logging.ERROR,
                 exceptionTraceback=True,
             )
+        if raise_on_error:
+            raise
         return {
             'success': False,
             'status': 'repair_required',

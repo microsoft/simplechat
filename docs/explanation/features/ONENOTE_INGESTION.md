@@ -7,6 +7,8 @@ This branch ports the native ingestion from [#1525](https://github.com/microsoft
 source commit `1db88bce120c0b59141e4aafd5e52116ef146c45` (original version
 0.261.045), without merging that pull request.
 
+Native OneNote ingestion shipped in the React V2 branch as 0.261.142. The V2 shared workspaces branch had already assigned 0.261.142 to its group file source APIs, so there it arrives with the React V2 base merge in version **0.261.189**.
+
 ## Overview
 
 Upload a OneNote section (`.one`) or exported notebook (`.onepkg`) directly to a

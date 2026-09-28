@@ -188,8 +188,9 @@ function McpImplementationConfiguration(props: ActionConnectorProps) {
 export function McpActionConfiguration(props: ActionConnectorProps) {
     const { draft, original, onChange, errors } = props;
     const readOnly = props.readOnly || Boolean(original?.read_only);
+    const groupScoped = Boolean(props.groupScope);
     const fields = draft.additionalFields;
-    const catalogue = useMcpCatalogues(props, true);
+    const catalogue = useMcpCatalogues(props, !groupScoped);
     const profile = connectorText(fields.server_profile) || 'generic';
     const preconfigurationId = connectorText(fields.preconfiguration_id);
     const transport = connectorText(fields.transport) || 'streamable_http';
@@ -218,7 +219,7 @@ export function McpActionConfiguration(props: ActionConnectorProps) {
         `${name} ${tool?.function_name || ''} ${tool?.description || ''}`.toLowerCase().includes(toolSearch.toLowerCase()));
     const blockedExecution = readOnly || Boolean(busy) || Object.keys(localErrors).length > 0;
     const doDiscovery = async () => {
-        const result = await run('Discovering MCP tools…', (signal) => discoverMcpAction(draft, original, signal),
+        const result = await run('Discovering MCP tools…', (signal) => discoverMcpAction(draft, original, signal, props.groupScope),
             (current, response) => updateConnectorFields(current, {
                 mcp_tools: mergeMcpTools(current.additionalFields.mcp_tools, response.tools, connectorStrings(current.additionalFields.allowed_tool_names)),
             }),
@@ -245,6 +246,11 @@ export function McpActionConfiguration(props: ActionConnectorProps) {
                     {catalogue.preconfigurationsError ? <p>{catalogue.preconfigurationsError} This is not an empty catalogue; your saved selection is retained.</p> : null}
                     <GlassButton type="button" size="sm" disabled={catalogue.loading} onClick={catalogue.retry}>Retry catalogues</GlassButton>
                 </div> : null}
+                {groupScoped ? (
+                    <p className="rounded-lg bg-panel-2 p-3 text-xs text-text-3">
+                        Saved MCP preconfigurations aren’t available for group actions yet. Choose a compatibility preset below or configure the server manually.
+                    </p>
+                ) : (<>
                 <ActionField id="mcp-preconfiguration" label="Preconfigured server">
                     <select id="mcp-preconfiguration" className={ACTION_INPUT_CLASS} value={preconfigurationChoice} disabled={readOnly || catalogue.loading}
                         onChange={(event) => setPreconfigurationChoice(event.target.value)}>
@@ -276,6 +282,7 @@ export function McpActionConfiguration(props: ActionConnectorProps) {
                     }}>
                     {preconfigurationChoice ? 'Apply server preconfiguration' : 'Use custom configuration'}
                 </GlassButton>
+                </>)}
                 <div className="space-y-3 border-t border-edge pt-4">
                     <ActionField id="mcp-preset" label="Compatibility preset">
                         <select id="mcp-preset" className={ACTION_INPUT_CLASS} value={presetChoice} disabled={readOnly || catalogue.loading}
@@ -448,9 +455,9 @@ export function McpActionConfiguration(props: ActionConnectorProps) {
                 <p className="text-xs text-text-3">The connection test initializes a server session and lists its tools. It does not invoke tools or save discovered metadata. Authentication is configured in the Authentication section.</p>
                 <div className="flex flex-wrap items-center gap-2">
                     <GlassButton type="button" variant="subtle" disabled={blockedExecution}
-                        onClick={() => void run('Validating MCP configuration…', (signal) => validateApiConnector(draft, original, 'mcp', signal))}>Validate MCP configuration</GlassButton>
+                        onClick={() => void run('Validating MCP configuration…', (signal) => validateApiConnector(draft, original, 'mcp', signal, props.groupScope))}>Validate MCP configuration</GlassButton>
                     <GlassButton type="button" variant="subtle" disabled={blockedExecution}
-                        onClick={() => void run('Testing MCP connection…', (signal) => testApiConnector(draft, original, 'mcp', signal))}>Test MCP connection</GlassButton>
+                        onClick={() => void run('Testing MCP connection…', (signal) => testApiConnector(draft, original, 'mcp', signal, props.groupScope))}>Test MCP connection</GlassButton>
                     {busy ? <p role="status" className="text-sm text-text-3">{busy}</p> : null}
                 </div>
                 {readOnly ? <p className="text-xs text-text-3">Provided actions are read-only. Discovery and connection testing are disabled.</p> : null}

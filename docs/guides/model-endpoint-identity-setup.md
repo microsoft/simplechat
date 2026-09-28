@@ -80,9 +80,9 @@ The multi-endpoint UI also includes a **Setup Guide** button beside endpoint act
 
 - Sign in to Simple Chat as an admin when creating global model endpoints.
 - Make sure you can assign Azure roles on the target Azure OpenAI resource, Foundry project, or backing Foundry resource.
-- Decide whether the endpoint is global, personal, or group scoped. The identity and RBAC requirements are the same, but the endpoint is saved in a different scope.
+- Decide whether the endpoint is global, personal, or group scoped. The RBAC requirements are the same, but personal and group endpoints that use the application's managed identity have extra rules. See [Personal and group endpoints](#personal-and-group-endpoints-that-use-the-application-identity).
 - If you use a service principal, create the Entra app registration first and keep the tenant ID, client ID, and client secret ready.
-- If you use a user-assigned managed identity, attach it to the App Service and copy the managed identity **Client ID** for the modal.
+- If you use a user-assigned managed identity on a global endpoint, attach it to the App Service and copy the managed identity **Client ID** for the modal. Personal and group endpoints always use the deployment's default identity.
 - Plan separate model endpoints when provider families need different project settings, authentication, or manual deployment rows. For Foundry project model inference, Simple Chat normalizes calls to `/openai/v1`, so keep **OpenAI API Version** at endpoint default `v1`.
 
 ## Choose The Provider
@@ -96,6 +96,33 @@ The modal provider decides which discovery API and token scope Simple Chat uses.
 | `New Foundry` | Application-based Foundry runtime, New Foundry agents, and OpenAI-compatible project model deployments | The same Foundry project endpoint shape used by the New Foundry project | The Foundry project when the portal exposes project-scoped access, otherwise the backing Foundry resource/account |
 
 For APIM, choose the provider that matches the backend service and select API key authentication when APIM expects a subscription key or other shared key. API key authentication can run inference, but it cannot use **Fetch Models** for Azure OpenAI ARM discovery or Foundry project discovery.
+
+## Personal And Group Endpoints That Use The Application Identity
+
+Personal and group endpoints are set up by people who aren't administrators. When
+one of them authenticates with **Managed Identity**, the token Simple Chat sends
+is the application's own. Simple Chat therefore decides where that token can go,
+what it is for, and which identity issues it. These rules were implemented in
+version **0.261.140**. They apply to Azure OpenAI, Foundry (classic), and New
+Foundry endpoints in personal and group workspaces.
+
+The rules don't apply to:
+
+- global endpoints configured in Admin Settings;
+- endpoints that use an API key or a service principal;
+- custom connections.
+
+| Rule | What it means |
+| --- | --- |
+| The endpoint must be an Azure AI service host in this deployment's cloud | Public cloud: `*.openai.azure.com`, `*.services.ai.azure.com`, `*.cognitiveservices.azure.com`, `*.api.cognitive.microsoft.com`. Azure Government: the same names ending in `.azure.us` or `.microsoft.us`. A custom cloud has no allowed hosts. APIM gateways (`*.azure-api.net`) and other proxies aren't allowed. |
+| The token audience and authority are the deployment's own | Leave **Foundry Scope**, **Custom Authority**, and a **Custom** management cloud unset. Simple Chat uses the deployment's own values. |
+| The deployment chooses the identity | A managed identity client ID can't be entered. The deployment's default identity is the one that needs the role assignments in [Assign Roles](#assign-roles). |
+
+Saving an endpoint that breaks a rule is refused with a message that names the
+rule. An endpoint saved before these rules stops working until it's changed:
+tests, **Fetch Models**, and chat show the same message instead of calling the
+endpoint. To reach a host outside the list, or to use a specific identity, use an
+API key or a service principal, or ask an administrator to add a global endpoint.
 
 ## Choose API Versions
 
@@ -267,7 +294,7 @@ If the target cloud still lists the earlier role names, replace `Foundry User` w
 3. Set **Provider** to **Azure OpenAI**.
 4. Enter an endpoint name and the Azure OpenAI resource endpoint, such as `https://<openai-resource>.openai.azure.com/`.
 5. Select the **OpenAI API Version** used by the deployment.
-6. For managed identity, set **Authentication Type** to **Managed Identity**. Choose **System Assigned** or **User Assigned**. For user-assigned identity, enter the identity client ID.
+6. For managed identity, set **Authentication Type** to **Managed Identity**. Choose **System Assigned** or **User Assigned**. For user-assigned identity on a global endpoint, enter the identity client ID. Personal and group endpoints use the deployment's default identity.
 7. For service principal, set **Authentication Type** to **Service Principal** and enter tenant ID, client ID, and client secret.
 8. Enter **Subscription ID** and **Resource Group** when using managed identity or service principal. These are required for **Fetch Models** because Azure OpenAI discovery uses ARM deployment listing.
 9. Select **Fetch Models**. Confirm the expected deployments appear, then use **Test Model** on at least one model row.
@@ -286,7 +313,7 @@ Use **Foundry (classic)** when the target is an existing classic Foundry project
 5. Keep **Project API Version** at `v1` unless your Foundry project specifically requires another supported value.
 6. Keep **OpenAI API Version** at **Endpoint default (v1)** for Foundry project model inference. Simple Chat normalizes these calls to `/openai/v1`, and that path rejects `api-version` query values.
 7. Select **Managed Identity** or **Service Principal** and fill the identity fields.
-8. For Azure Government, set **Management Cloud** to **Azure Government**. For a custom cloud, set **Management Cloud** to **Custom**, then enter the custom authority and Foundry scope.
+8. For Azure Government, set **Management Cloud** to **Azure Government**. For a custom cloud on a global endpoint, set **Management Cloud** to **Custom**, then enter the custom authority and Foundry scope. Personal and group endpoints that use managed identity can't set these.
 9. Select **Fetch Models** to verify project deployment discovery.
 10. When importing classic Foundry agents, use the saved endpoint from the agent modal and fetch the classic agents from that project.
 
@@ -301,7 +328,7 @@ Use **New Foundry** for the application-based Foundry runtime and New Foundry ag
 5. Keep **Project API Version** at `v1` unless your Foundry project requires a different supported value.
 6. Keep **OpenAI API Version** at **Endpoint default (v1)** for New Foundry project model inference. Simple Chat normalizes these calls to `/openai/v1`, and that path rejects `api-version` query values. Claude deployments are detected from the model name and use the Anthropic messages protocol.
 7. Select **Managed Identity** or **Service Principal** and fill the identity fields.
-8. Set **Management Cloud** for public, Azure Government, or custom cloud. Custom cloud requires both **Custom Authority** and **Foundry Scope**.
+8. Set **Management Cloud** for public, Azure Government, or custom cloud. Custom cloud requires both **Custom Authority** and **Foundry Scope**, and is available only for global endpoints or for personal and group endpoints that use a service principal.
 9. Select **Fetch Models** and test a deployment.
 10. When creating New Foundry agents, use the saved endpoint in the agent modal so application discovery and runtime calls use the same identity and project settings.
 
@@ -326,7 +353,10 @@ API keys are not a replacement for Foundry RBAC when users need New Foundry agen
 | DeepSeek, Grok, Llama, or another non-OpenAI family returns empty content or content-filter errors only from Simple Chat | The request may include model-family-specific parameters such as `reasoning_effort`. | Use the current Simple Chat version, which sends reasoning effort only to known OpenAI reasoning families, then test the model again. |
 | DeepSeek, Grok, Llama, or another non-OpenAI family works in direct probes but fails only in the app | App-added memory system messages may trigger provider-side content filters. | Use the current Simple Chat version, which folds saved memory values into the latest user message as plain background notes for non-OpenAI Foundry models. |
 | Service principal cannot authenticate | Tenant ID, client ID, or secret is incorrect, expired, or saved against the wrong endpoint. | Rotate the secret, update the endpoint, and confirm the enterprise application has the role assignment. |
-| User-assigned managed identity is ignored | The client ID is missing or the identity is not attached to the App Service. | Attach the identity to the App Service and enter the managed identity client ID, not the object ID. |
+| User-assigned managed identity is ignored | The client ID is missing or the identity is not attached to the App Service. Personal and group endpoints always use the deployment's default identity. | For a global endpoint, attach the identity to the App Service and enter the managed identity client ID, not the object ID. For a personal or group endpoint, grant the deployment's default identity access, or use a service principal. |
+| "The application identity can be used only with an Azure AI endpoint in this cloud." | A personal or group endpoint uses managed identity with a host outside the allowed list, such as an APIM gateway. | Use an API key or a service principal, or ask an admin for a global endpoint. See [Personal and group endpoints](#personal-and-group-endpoints-that-use-the-application-identity). |
+| "The application identity uses this deployment's own token audience and authority." | A personal or group endpoint that uses managed identity sets a Foundry scope, custom authority, or custom cloud. | Remove those settings, or use a service principal. |
+| "The application identity is selected by this deployment." | A personal or group endpoint that uses managed identity sets a managed identity client ID. | Remove the client ID, or use a service principal. |
 | API key endpoint cannot fetch models | API key mode is inference-only for discovery paths. | Add model rows manually, or switch to managed identity/service principal and assign RBAC. |
 
 ## Related Documentation

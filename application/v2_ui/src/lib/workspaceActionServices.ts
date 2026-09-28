@@ -11,7 +11,9 @@ import {
     actionAuthMethod, actionForSave, actionText, actionValueAt, validateActionDraft,
 } from './workspaceActionLogic';
 import { nativeActionDefinition, sqlConnectionMethod } from './workspaceActionRegistry';
-import type { ActionIdentity } from './workspaceActionTypes';
+import type { ActionIdentity, ActionTestGroupScope } from './workspaceActionTypes';
+
+export type { ActionTestGroupScope } from './workspaceActionTypes';
 
 export interface ActionEditorHints {
     canAuthor: boolean;
@@ -78,8 +80,10 @@ function translateActionSecrets(
 
 export function buildActionConnectionPayload(
     draft: ActionConfiguration, original: AuthoringResource<ActionConfiguration> | null,
+    groupScope?: ActionTestGroupScope,
 ): Record<string, unknown> {
-    if (draft.type === 'agent' || original?.read_only || draft.is_global || draft.is_group) {
+    // A group action is testable only from its own group workspace, carrying action_scope 'group'.
+    if (draft.type === 'agent' || original?.read_only || draft.is_global || (draft.is_group && !groupScope)) {
         throw new Error('This action cannot be connection-tested from My Workspace.');
     }
     if (original && !actionText(original.record.id).trim()) {
@@ -136,7 +140,9 @@ export function buildActionConnectionPayload(
     }
     manifest.auth = auth;
     manifest.additionalFields = fields;
-    const context = original ? { scope: 'personal', id: original.record.id, name: original.record.name } : undefined;
+    const context = original
+        ? { scope: groupScope ? 'group' : 'personal', id: original.record.id, name: original.record.name }
+        : undefined;
     const contextKey = ['sql_query', 'sql_schema', 'cosmos_query', 'yamcs', 'rocksdb'].includes(draft.type)
         ? 'existing_plugin' : 'plugin_context';
     const clearPaths = buildEditorWrite(draft, original).clear_secret_paths;
@@ -150,7 +156,8 @@ export function buildActionConnectionPayload(
         }
     }
     const common = {
-        action_scope: 'personal', identity_id: draft.identity_id ?? '', clear_secret_paths: clearPaths,
+        action_scope: groupScope ? 'group' : 'personal', identity_id: draft.identity_id ?? '', clear_secret_paths: clearPaths,
+        ...(groupScope ? { group_id: groupScope.id } : {}),
         ...(context ? { [contextKey]: context } : {}),
     };
     if (sql) return {
@@ -179,14 +186,14 @@ export function buildActionConnectionPayload(
 
 export function testWorkspaceAction(
     draft: ActionConfiguration, original: AuthoringResource<ActionConfiguration> | null,
-    definition: ActionTypeDefinition, signal?: AbortSignal,
+    definition: ActionTypeDefinition, signal?: AbortSignal, groupScope?: ActionTestGroupScope,
 ): Promise<unknown> {
     const path = nativeActionDefinition(draft.type).testPath;
     if (!path) return Promise.reject(new Error('This connector does not expose a connection-test command.'));
     const errors = validateActionDraft(actionForSave(draft), definition, original);
     for (const field of ['/name', '/displayName', '/type']) delete errors[field];
     if (Object.keys(errors).length) return Promise.reject(new Error(Object.values(errors).join(' ')));
-    return api.post(path, buildActionConnectionPayload(draft, original), signal);
+    return api.post(path, buildActionConnectionPayload(draft, original, groupScope), signal);
 }
 
 export function validateWorkspaceAction(

@@ -8,18 +8,13 @@
 // room to say why.
 
 import { useMemo } from 'react';
-import { NavLink, useParams } from 'react-router-dom';
-import { clsx } from 'clsx';
-import { LayoutGrid, Lock, PanelLeftClose, PanelLeftOpen } from 'lucide-react';
+import { useParams } from 'react-router-dom';
+import { LayoutGrid, Lock } from 'lucide-react';
 import { PageHeader } from '../../components/layout/PageHeader';
 import { EmptyState } from '../../components/ui/primitives';
 import { useBootstrapStore } from '../../stores/bootstrapStore';
-import { useUserSettingsStore } from '../../stores/userSettingsStore';
-import {
-    groupWorkspaceSections,
-    navigableSections,
-    resolveWorkspaceSections,
-} from '../../lib/workspaceSections';
+import { WorkspaceShell } from '../../components/workspace/WorkspaceShell';
+import { resolveWorkspaceSections } from '../../lib/workspaceSections';
 import { OverviewSection } from './OverviewSection';
 import { WORKSPACE_SECTIONS, WORKSPACE_SECTIONS_BY_ID } from './sections';
 import type { WorkspaceSectionContext } from './sections';
@@ -29,18 +24,10 @@ export function WorkspacePage() {
     const ownerId = useBootstrapStore((state) => state.data?.user?.id);
     const { section: requestedSection, resourceId } = useParams<{ section?: string; resourceId?: string }>();
 
-    const railCollapsed = useUserSettingsStore(
-        (state) => state.settings.v2WorkspaceRailCollapsed === true,
-    );
-    const updateUserSettings = useUserSettingsStore((state) => state.update);
-
     const resolved = useMemo(
         () => resolveWorkspaceSections(WORKSPACE_SECTIONS, workspace),
         [workspace],
     );
-
-    const available = useMemo(() => navigableSections(resolved), [resolved]);
-    const groups = useMemo(() => groupWorkspaceSections(available), [available]);
 
     const context: WorkspaceSectionContext = useMemo(
         () => ({
@@ -109,129 +96,14 @@ export function WorkspacePage() {
         return activeEntry.section.render(context);
     };
 
-    const linkClass = ({ isActive }: { isActive: boolean }) =>
-        clsx(
-            'flex items-center gap-2.5 rounded-lg text-left text-sm transition-colors',
-            railCollapsed ? 'justify-center px-2 py-2' : 'px-2.5 py-2',
-            isActive
-                ? 'bg-accent-soft font-medium text-accent'
-                : 'text-text-2 hover:bg-surface-2 hover:text-text-1',
-        );
-
     return (
-        <div className="flex h-full min-h-0 flex-col">
-            <PageHeader
+        <WorkspaceShell basePath="/workspace" sections={resolved} fullBleed={Boolean(fullBleed)}
+            header={<PageHeader
                 title="My workspace"
                 description="Documents, prompts and automation that belong to you alone"
-            />
-
-            <div className="flex min-h-0 flex-1 gap-4 overflow-hidden p-4">
-                <nav
-                    aria-label="Workspace sections"
-                    className={clsx(
-                        'flex shrink-0 flex-col gap-3 overflow-y-auto transition-[width]',
-                        railCollapsed ? 'w-12' : 'w-12 md:w-52',
-                    )}
-                >
-                    <button
-                        type="button"
-                        onClick={() =>
-                            updateUserSettings({ v2WorkspaceRailCollapsed: !railCollapsed })
-                        }
-                        aria-label={
-                            railCollapsed
-                                ? 'Expand workspace sections'
-                                : 'Collapse workspace sections'
-                        }
-                        aria-expanded={!railCollapsed}
-                        title={
-                            railCollapsed
-                                ? 'Expand workspace sections'
-                                : 'Collapse workspace sections'
-                        }
-                        className={clsx(
-                            'flex items-center gap-2 rounded-lg py-1.5 text-xs text-text-3 transition-colors hover:bg-surface-2 hover:text-text-1',
-                            railCollapsed ? 'justify-center px-2' : 'px-2.5',
-                        )}
-                    >
-                        {railCollapsed ? (
-                            <PanelLeftOpen size={15} />
-                        ) : (
-                            <>
-                                <PanelLeftClose size={15} />
-                                <span className="hidden md:inline">Collapse</span>
-                            </>
-                        )}
-                    </button>
-
-                    <NavLink
-                        to="/workspace"
-                        end
-                        className={linkClass}
-                        title={railCollapsed ? 'Overview' : undefined}
-                    >
-                        <LayoutGrid size={15} className="shrink-0" />
-                        {railCollapsed ? (
-                            <span className="sr-only">Overview</span>
-                        ) : (
-                            <span className="sr-only md:not-sr-only md:truncate">Overview</span>
-                        )}
-                    </NavLink>
-
-                    {groups.map(({ group, sections }) => (
-                        <div key={group.id} className="space-y-0.5">
-                            {railCollapsed ? (
-                                // A rule rather than a heading: the group label has nowhere to
-                                // go at this width, but the grouping itself still reads.
-                                <div
-                                    aria-hidden="true"
-                                    className="mx-2 my-1.5 border-t border-edge"
-                                />
-                            ) : (
-                                <p className="hidden px-2.5 text-[11px] font-semibold tracking-wide text-text-3 uppercase md:block">
-                                    {group.label}
-                                </p>
-                            )}
-                            {sections.map(({ section }) => {
-                                const Icon = section.icon;
-                                return (
-                                    <NavLink
-                                        key={section.id}
-                                        to={`/workspace/${section.id}`}
-                                        className={linkClass}
-                                        title={
-                                            railCollapsed
-                                                ? `${group.label}: ${section.label}`
-                                                : undefined
-                                        }
-                                    >
-                                        <Icon size={15} className="shrink-0" />
-                                        {railCollapsed ? (
-                                            <span className="sr-only">{section.label}</span>
-                                        ) : (
-                                            <span className="sr-only md:not-sr-only md:truncate">{section.label}</span>
-                                        )}
-                                    </NavLink>
-                                );
-                            })}
-                        </div>
-                    ))}
-                </nav>
-
-                <div
-                    className={clsx(
-                        'min-w-0 flex-1',
-                        fullBleed ? 'flex min-h-0 flex-col overflow-hidden' : 'overflow-y-auto',
-                    )}
-                >
-                    {fullBleed ? (
-                        renderBody()
-                    ) : (
-                        <div className="mx-auto max-w-4xl pb-8">{renderBody()}</div>
-                    )}
-                </div>
-            </div>
-        </div>
+            />}>
+            {renderBody()}
+        </WorkspaceShell>
     );
 }
 

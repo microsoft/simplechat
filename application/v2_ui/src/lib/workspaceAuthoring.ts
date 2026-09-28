@@ -198,17 +198,55 @@ export function buildEditorWrite<T extends Record<string, unknown>>(
     };
 }
 
-/** Only a known agent editor can receive a just-created action. */
-export function agentEditorReturnPath(value: string | null): string | null {
-    const match = value?.match(/^\/workspace\/agents\/([^/?#]+)$/);
-    if (!match) return null;
+/** A path segment that names a real, safe resource id, not a traversal or control sequence. */
+function validPathIdentifier(segment: string): boolean {
     let identifier: string;
     try {
-        identifier = decodeURIComponent(match[1]);
+        identifier = decodeURIComponent(segment);
     } catch (error) {
-        if (error instanceof URIError) return null;
+        if (error instanceof URIError) return false;
         throw error;
     }
-    return identifier.trim() && !['.', '..'].includes(identifier) &&
-        !/[/\\\u0000-\u001f\u007f]/.test(identifier) ? value : null;
+    return Boolean(identifier.trim()) && !['.', '..'].includes(identifier) &&
+        !/[/\\\u0000-\u001f\u007f]/.test(identifier);
+}
+
+/**
+ * Only a known agent editor can receive a just-created action.
+ *
+ * Personal scope, the default, matches `/workspace/agents/<id>` exactly as before, so personal
+ * callers and links are byte-identical. A group caller passes its group id, and only that group's
+ * `/groups/<id>/agents/<id>` path is accepted -- an action created for group A can never hand back
+ * into group B, and a personal path is refused in group scope and the reverse. The group id is
+ * matched by its encoded spelling, the same spelling `workspaceBasePath` writes into the URL.
+ */
+export function agentEditorReturnPath(value: string | null, groupId?: string): string | null {
+    if (!value) return null;
+    let identifierSegment: string | undefined;
+    if (typeof groupId === 'string') {
+        const prefix = `/groups/${encodeURIComponent(groupId)}/agents/`;
+        if (!value.startsWith(prefix)) return null;
+        const rest = value.slice(prefix.length);
+        identifierSegment = /^[^/?#]+$/.test(rest) ? rest : undefined;
+    } else {
+        identifierSegment = value.match(/^\/workspace\/agents\/([^/?#]+)$/)?.[1];
+    }
+    return identifierSegment && validPathIdentifier(identifierSegment) ? value : null;
+}
+
+/**
+ * Whether a path is any agent editor, personal or group. Used only by the editor frame's
+ * navigation blocker, which recognises the agent<->action handoff without knowing the group id --
+ * the returnTo linkage the blocker also checks ties the two halves together. Stricter callers pass
+ * an explicit group id to `agentEditorReturnPath` instead.
+ */
+export function isAgentEditorPath(value: string | null): boolean {
+    if (agentEditorReturnPath(value)) return true;
+    const identifierSegment = value?.match(/^\/groups\/[^/?#]+\/agents\/([^/?#]+)$/)?.[1];
+    return Boolean(identifierSegment && validPathIdentifier(identifierSegment));
+}
+
+/** Whether a path is a new-action editor, personal or group. Used by the editor frame blocker. */
+export function isActionEditorNewPath(value: string): boolean {
+    return value === '/workspace/actions/new' || /^\/groups\/[^/?#]+\/actions\/new$/.test(value);
 }

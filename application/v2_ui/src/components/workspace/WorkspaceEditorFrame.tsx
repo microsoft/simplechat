@@ -4,7 +4,7 @@ import { useEffect, useId, useRef, type ReactNode } from 'react';
 import { useBlocker, useNavigate } from 'react-router-dom';
 import { ArrowLeft, Loader2, Lock, Save } from 'lucide-react';
 import { GlassButton, GlassPanel } from '../ui/primitives';
-import { agentEditorReturnPath, isRecord } from '../../lib/workspaceAuthoring';
+import { isActionEditorNewPath, isAgentEditorPath, isRecord } from '../../lib/workspaceAuthoring';
 
 export interface WorkspaceEditorSection {
     id: string;
@@ -13,9 +13,9 @@ export interface WorkspaceEditorSection {
     content: ReactNode;
 }
 
-function LeavePrompt({
-    saving, onStay, onDiscard,
-}: { saving: boolean; onStay: () => void; onDiscard: () => void }) {
+export function WorkspaceLeavePrompt({
+    saving, onStay, onDiscard, switching = false,
+}: { saving: boolean; onStay: () => void; onDiscard: () => void; switching?: boolean }) {
     const dialog = useRef<HTMLDialogElement>(null);
     const titleId = useId();
     useEffect(() => {
@@ -30,10 +30,10 @@ function LeavePrompt({
             onCancel={(event) => { event.preventDefault(); onStay(); }}
             className="glass-modal m-auto w-[calc(100%_-_2rem)] max-w-md rounded-2xl border border-edge p-5 text-text-1 backdrop:bg-surface-sunken/75">
             <h2 id={titleId} className="text-lg font-semibold">
-                {saving ? 'Your changes are still being saved' : 'Discard unsaved changes?'}
+                {switching ? 'Workspace switch in progress' : saving ? 'Your changes are still being saved' : 'Discard unsaved changes?'}
             </h2>
             <p className="mt-2 text-sm text-text-2">
-                {saving ? 'Stay here until the save finishes.' : 'Your changes have not been saved. Stay to keep editing, or discard them before leaving.'}
+                {switching ? 'Stay here until the selected workspace is confirmed.' : saving ? 'Stay here until the save finishes.' : 'Your changes have not been saved. Stay to keep editing, or discard them before leaving.'}
             </p>
             <div className="mt-5 flex flex-wrap justify-end gap-2">
                 <GlassButton type="button" autoFocus onClick={onStay}>Keep editing</GlassButton>
@@ -70,13 +70,17 @@ export function WorkspaceEditorFrame({
         const state = isRecord(nextLocation.state) ? nextLocation.state : {};
         const currentEditorTransition = historyAction !== 'POP' &&
             state.workspaceEditorFrom === currentLocation.key;
-        if (currentEditorTransition && state.workspaceEditorSaved === true && /^\/workspace\/(?:agents|actions)(?:\/|$)/.test(nextLocation.pathname)) return false;
+        // A save navigates to backTo (the collection or the agent return path). Personal editors
+        // live under /workspace, but a group editor returns to /groups/<id>/actions, so the bypass
+        // matches the frame's own backTo as well as the personal family it always did.
+        if (currentEditorTransition && state.workspaceEditorSaved === true
+            && (nextLocation.pathname === backTo || /^\/workspace\/(?:agents|actions)(?:\/|$)/.test(nextLocation.pathname))) return false;
         if (currentEditorTransition && state.preserveWorkspaceDraft === true) {
-            const goingToAction = nextLocation.pathname === '/workspace/actions/new' &&
-                agentEditorReturnPath(currentLocation.pathname) &&
+            const goingToAction = isActionEditorNewPath(nextLocation.pathname) &&
+                isAgentEditorPath(currentLocation.pathname) &&
                 new URLSearchParams(nextLocation.search).get('returnTo') === currentLocation.pathname;
-            const returningToAgent = currentLocation.pathname === '/workspace/actions/new' &&
-                agentEditorReturnPath(nextLocation.pathname) &&
+            const returningToAgent = isActionEditorNewPath(currentLocation.pathname) &&
+                isAgentEditorPath(nextLocation.pathname) &&
                 new URLSearchParams(currentLocation.search).get('returnTo') === nextLocation.pathname;
             if (goingToAction || returningToAgent) return false;
         }
@@ -189,7 +193,7 @@ export function WorkspaceEditorFrame({
                 </div>
             </div>
             {blocker.state === 'blocked' ? (
-                <LeavePrompt saving={saving} onStay={() => blocker.reset()}
+                <WorkspaceLeavePrompt saving={saving} onStay={() => blocker.reset()}
                     onDiscard={() => { onDiscard(); blocker.proceed(); }} />
             ) : null}
         </form>

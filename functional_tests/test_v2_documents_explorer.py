@@ -1,9 +1,11 @@
+# test_v2_documents_explorer.py
 #!/usr/bin/env python3
 """
 Functional test for the V2 workspace documents explorer.
 
-Version: 0.261.048
+Version: 0.261.129
 Implemented in: 0.261.048
+Shared workspace shell integration: 0.261.127
 
 The behavioural half of the front end lives in ``test_v2_documents_explorer_logic.ts``, run
 from here. This file covers the parts that are only observable in the source, plus the new
@@ -57,6 +59,7 @@ DOCUMENTS_ROUTE = APP_DIR / "route_backend_documents.py"
 USERS_ROUTE = APP_DIR / "route_backend_users.py"
 SECTIONS_PY = APP_DIR / "functions_workspace_sections.py"
 DOCUMENTS_FUNCTIONS = APP_DIR / "functions_documents.py"
+DOCUMENT_QUERY_FUNCTIONS = APP_DIR / "functions_document_queries.py"
 
 ENDPOINTS_TS = V2_SRC / "lib" / "endpoints.ts"
 EXPLORER_TS = V2_SRC / "lib" / "documentExplorer.ts"
@@ -64,6 +67,7 @@ SAVED_VIEWS_TS = V2_SRC / "lib" / "documentSavedViews.ts"
 USER_SETTINGS_TS = V2_SRC / "lib" / "userSettings.ts"
 SECTIONS_TSX = V2_SRC / "pages" / "workspace" / "sections.tsx"
 WORKSPACE_PAGE_TSX = V2_SRC / "pages" / "workspace" / "WorkspacePage.tsx"
+WORKSPACE_SHELL_TSX = V2_SRC / "components" / "workspace" / "WorkspaceShell.tsx"
 DOCUMENTS_SECTION_TSX = V2_SRC / "pages" / "workspace" / "DocumentsSection.tsx"
 TAGS_SECTION_TSX = V2_SRC / "pages" / "workspace" / "TagsSection.tsx"
 EXPLORER_TSX = V2_SRC / "components" / "documents" / "DocumentExplorer.tsx"
@@ -287,16 +291,16 @@ def test_place_filters_and_facets_are_derived_correctly():
     print("Testing standing views and facet counts...")
 
     namespace = _load_module_functions(
-        DOCUMENTS_ROUTE,
+        DOCUMENT_QUERY_FUNCTIONS,
         [
             "filter_documents_by_place",
-            "build_personal_document_facets",
+            "build_document_facets",
             "_document_processing_state",
             "_parse_document_timestamp",
         ],
     )
     filter_by_place = namespace["filter_documents_by_place"]
-    build_facets = namespace["build_personal_document_facets"]
+    build_facets = namespace["build_document_facets"]
 
     now = datetime.now(timezone.utc)
     recent_ts = int((now - timedelta(days=2)).timestamp())
@@ -440,8 +444,10 @@ def test_the_explorer_is_wired_to_its_parts():
                    "describeActiveFilters", "clearAllFilters", "toggleSort"):
         assert helper in explorer, f"The explorer should use {helper} from documentExplorer"
 
-    assert "bulkDeletePersonalDocuments" in explorer
-    assert "bulkTagPersonalDocuments" in explorer
+    operations = _read(V2_SRC / "lib" / "documentOperations.ts")
+    assert "adapter.deleteDocuments(" in explorer and "bulkDeletePersonalDocuments" in operations
+    assert "adapter.tagDocuments(" in explorer and "bulkTagPersonalDocuments" in operations
+    assert "PERSONAL_DOCUMENT_OPERATIONS" in explorer, "Personal defaults must remain explicit"
     assert "onDropOnTag" in explorer, "Drag-to-tag should be wired to the rail"
     assert "application/x-simplechat-documents" in explorer, (
         "The drag payload needs an explicit type so unrelated drops are ignored"
@@ -507,7 +513,9 @@ def test_only_two_views_are_offered():
 
     page = _read(WORKSPACE_PAGE_TSX)
     assert "fullBleed" in page, "WorkspacePage should honour the full-bleed layout"
-    assert "max-w-4xl" in page, "Other sections should keep their reading measure"
+    assert "fullBleed={Boolean(fullBleed)}" in page, "The page must pass its layout choice to the shared shell"
+    shell = _read(WORKSPACE_SHELL_TSX)
+    assert "max-w-4xl" in shell, "Other sections should keep their reading measure"
 
     explorer = _read(EXPLORER_TSX)
     assert "'tiles'" in explorer and "DocumentTable" in explorer
@@ -666,13 +674,12 @@ def test_bulk_work_reports_determinate_progress():
     )
     assert "batched(" in explorer, "Batching should use the tested helper"
 
-    # The regression that made this necessary: a task left set forever. Every path that
-    # starts one must clear it in a finally.
-    starts = explorer.count("setTask({")
-    clears = explorer.count("setTask(null)")
-    assert clears >= 3, (
-        f"Every operation that sets a progress task must clear it; found {starts} starts "
-        f"and only {clears} clears"
+    # Shared lifecycle helpers keep group dirty/busy guards and progress in agreement.
+    finish = explorer.split("const finishMutation = useCallback(")[1].split("const readCurrentDocument")[0]
+    assert "setTask(null)" in finish and "onBusyChange?.(false)" in finish
+    assert "beginMutation(" in explorer and "processed += batch.length" in explorer
+    assert explorer.count("finally {\n                finishMutation();") >= 3, (
+        "Bulk, upload and metadata operations must release the common busy/progress guard."
     )
 
     print("  ok  bulk work is batched and reports determinate, always-cleared progress")
@@ -719,7 +726,9 @@ def test_reextract_states_the_current_mode():
 def test_the_workspace_rail_can_be_collapsed():
     print("Testing the collapsible workspace rail...")
 
-    page = _read(WORKSPACE_PAGE_TSX)
+    page = _read(WORKSPACE_SHELL_TSX)
+    personal = _read(WORKSPACE_PAGE_TSX)
+    assert "<WorkspaceShell" in personal, "The personal page must retain the shared rail"
 
     assert "v2WorkspaceRailCollapsed" in page, (
         "The workspace section rail should have its own collapse preference"
@@ -730,7 +739,7 @@ def test_the_workspace_rail_can_be_collapsed():
     )
     assert "PanelLeftClose" in page and "PanelLeftOpen" in page
     assert 'aria-expanded={!railCollapsed}' in page
-    assert 'className="sr-only"' in page, (
+    assert "railCollapsed ? 'sr-only'" in page, (
         "A collapsed entry still needs its label available to a screen reader"
     )
 

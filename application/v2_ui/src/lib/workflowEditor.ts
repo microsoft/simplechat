@@ -8,6 +8,13 @@ import {
 } from './documentExplorer';
 import type { DocumentListResponse, DocumentQuery, WorkspaceDocument } from './types';
 import { isRecord, sameEditorValue } from './workspaceAuthoring';
+import { WORKFLOW_ALERT_FIELDS, workflowAlertDraftErrors, workflowAlertsForSave } from './workflowAlerts';
+import {
+    WORKFLOW_FILE_SYNC_CONTINUE_MODES,
+    WORKFLOW_FILE_SYNC_MAX_SOURCES,
+    WORKFLOW_FILE_SYNC_WAIT_MODES,
+    workflowSettingsErrors,
+} from './workflowSettings';
 import {
     analyzeWorkflowFlow,
     DEFAULT_FLOW_LIMITS,
@@ -1093,6 +1100,8 @@ export function workflowForSave(
         ...(draft.definition_version === 3 ? { flow: structuredClone(draft.flow), limits: structuredClone(draft.limits) } : {}),
         ...(includeDurable ? { durable_execution: draft.durable_execution === true } : {}),
         ...(scope.type === 'group' ? { group_id: scope.groupId } : {}),
+        ...(scope.type === 'group' ? workflowFileSyncForSave(draft, original) : {}),
+        ...workflowAlertsForSave(draft, original),
     };
     if (!includeDurable) {
         delete next.durable_execution;
@@ -1121,7 +1130,10 @@ export function workflowForFlowPreview(definition: WorkflowDefinition): Workflow
     return preview;
 }
 
-export function preservedWorkflowFieldLabels(original: WorkflowDefinition | null): string[] {
+export function preservedWorkflowFieldLabels(
+    original: WorkflowDefinition | null,
+    scope: WorkflowScope = DEFAULT_WORKFLOW_SCOPE,
+): string[] {
     if (!original) {
         return [];
     }
@@ -1148,6 +1160,9 @@ export function preservedWorkflowFieldLabels(original: WorkflowDefinition | null
         'flow',
         'limits',
         'group_id',
+        // Alerts have their own section in both scopes; group editors also author File Sync.
+        ...WORKFLOW_ALERT_FIELDS,
+        ...(scope.type === 'group' ? ['file_sync'] : []),
     ]);
     const labels: Record<string, string> = {
         file_sync: 'file sync settings',
@@ -1163,6 +1178,225 @@ export function preservedWorkflowFieldLabels(original: WorkflowDefinition | null
         .map((key) => labels[key] ?? key.replace(/_/g, ' '))
         .sort((left, right) => left.localeCompare(right));
 }
+
+// ---------------------------------------------------------------------------------------------
+// File Sync triggers. Group workflows author them here. The File Sync, trigger and schedule rules
+// for both scopes live in workflowSettings.ts, which mirrors the save path and returns the
+// server's reviewed messages; the names below are re-exported so importers keep one entry point.
+// ---------------------------------------------------------------------------------------------
+
+export {
+    WORKFLOW_FILE_SYNC_CONTINUE_MODES,
+    WORKFLOW_FILE_SYNC_MAX_SOURCES,
+    WORKFLOW_FILE_SYNC_SOURCE_UNAVAILABLE_CODE,
+    WORKFLOW_FILE_SYNC_SOURCE_UNAVAILABLE_MESSAGE,
+    WORKFLOW_FILE_SYNC_WAIT_MODES,
+} from './workflowSettings';
+export type WorkflowFileSyncWaitMode = typeof WORKFLOW_FILE_SYNC_WAIT_MODES[number];
+export type WorkflowFileSyncContinueMode = typeof WORKFLOW_FILE_SYNC_CONTINUE_MODES[number];
+
+/** One File Sync source the server offers to this group's workflows. */
+export interface WorkflowFileSyncSource {
+    scope_type: 'group';
+    scope_id: string;
+    source_id: string;
+    name: string;
+    source_type: string;
+    enabled: boolean;
+    label: string;
+}
+
+/** A source selected by a workflow; saved records also carry the name and type the server stored. */
+export interface WorkflowFileSyncSourceRef {
+    scope_type: string;
+    scope_id: string;
+    source_id: string;
+    name?: string;
+    source_type?: string;
+}
+
+export interface WorkflowFileSyncConfig {
+    enabled: boolean;
+    wait_mode: WorkflowFileSyncWaitMode;
+    continue_mode: WorkflowFileSyncContinueMode;
+    use_changed_documents: boolean;
+    sources: WorkflowFileSyncSourceRef[];
+}
+
+export function workflowFileSyncSourceKey(source: Pick<WorkflowFileSyncSourceRef, 'scope_type' | 'scope_id' | 'source_id'>): string {
+    return [source.scope_type, source.scope_id, source.source_id].map((value) => text(value).trim()).join(':');
+}
+
+/** Read a stored or drafted `file_sync` value with the server's defaults. */
+export function workflowFileSyncConfig(value: unknown): WorkflowFileSyncConfig {
+    const record = isRecord(value) ? value : {};
+    const wait = text(record.wait_mode).trim().toLowerCase();
+    const proceed = text(record.continue_mode).trim().toLowerCase();
+    return {
+        enabled: record.enabled === true,
+        wait_mode: (WORKFLOW_FILE_SYNC_WAIT_MODES as readonly string[]).includes(wait) ? wait as WorkflowFileSyncWaitMode : 'complete',
+        continue_mode: (WORKFLOW_FILE_SYNC_CONTINUE_MODES as readonly string[]).includes(proceed)
+            ? proceed as WorkflowFileSyncContinueMode : 'always',
+        use_changed_documents: record.use_changed_documents !== false,
+        sources: (Array.isArray(record.sources) ? record.sources : [])
+            .filter(isRecord)
+            .map((source) => ({
+                scope_type: text(source.scope_type).trim() || 'group',
+                scope_id: text(source.scope_id).trim(),
+                source_id: text(source.source_id).trim() || text(source.id).trim(),
+                ...(text(source.name) ? { name: text(source.name) } : {}),
+                ...(text(source.source_type) ? { source_type: text(source.source_type) } : {}),
+            }))
+            .filter((source) => source.source_id),
+    };
+}
+
+/** The Monitor File Sync changes trigger always syncs first, waits, and continues only on changes. */
+export function workflowMonitorFileSyncConfig(value: unknown): WorkflowFileSyncConfig {
+    return { ...workflowFileSyncConfig(value), enabled: true, wait_mode: 'complete', continue_mode: 'changed' };
+}
+
+function workflowFileSyncActive(draft: WorkflowDefinition): boolean {
+    return draft.trigger_type === 'file_sync' || workflowFileSyncConfig(draft.file_sync).enabled;
+}
+
+/**
+ * The server lets Analyze run without selected documents when File Sync supplies the changed
+ * files: `allow_empty_file_sync_targets` in both `save_personal_workflow` and `save_group_workflow`
+ * is `file_sync.enabled and file_sync.use_changed_documents`. Personal drafts carry their loaded
+ * `file_sync` unchanged, since V2 authors File Sync for group workflows only.
+ */
+export function workflowFileSyncProvidesAnalyzeTargets(draft: WorkflowDefinition): boolean {
+    const config = workflowFileSyncConfig(draft.file_sync);
+    return config.enabled && config.use_changed_documents;
+}
+
+/** The `file_sync` a group save sends: the loaded value when untouched, else the edited configuration. */
+function workflowFileSyncForSave(
+    draft: WorkflowDefinition,
+    original: WorkflowDefinition | null,
+): { file_sync?: unknown } {
+    if (!Object.hasOwn(draft, 'file_sync') || original && sameEditorValue(draft.file_sync, original.file_sync)) {
+        return {};
+    }
+    const config = workflowFileSyncConfig(draft.file_sync);
+    return {
+        file_sync: {
+            enabled: config.enabled,
+            wait_mode: config.wait_mode,
+            continue_mode: config.continue_mode,
+            use_changed_documents: config.use_changed_documents,
+            // Classic sends no sources when File Sync is off; the server re-authorizes every one sent.
+            sources: config.enabled || draft.trigger_type === 'file_sync'
+                ? config.sources.map(({ scope_type, scope_id, source_id }) => ({ scope_type, scope_id, source_id }))
+                : [],
+        },
+    };
+}
+
+/** A group's File Sync source list, as the sources route returns it. */
+export interface WorkflowFileSyncSourceListing {
+    /** The File Sync gate a group workflow save applies for this caller. */
+    fileSyncEnabled: boolean;
+    sources: WorkflowFileSyncSource[];
+}
+
+/**
+ * The File Sync, trigger and schedule problems in the payload this draft would save, in the
+ * server's order and words, for either scope. `listing` is the group's loaded source list, or
+ * null when it is not loaded; with it the editor also applies the group File Sync gate and checks
+ * each sent source, as the save will.
+ */
+export function workflowSettingsDraftErrors(
+    draft: WorkflowDefinition,
+    options: WorkflowEditorOptions,
+    original: WorkflowDefinition | null,
+    listing: WorkflowFileSyncSourceListing | null,
+): string[] {
+    const group = options.scope.type === 'group';
+    const scope: WorkflowScope = group ? { type: 'group', groupId: options.scope.id ?? '' } : { type: 'personal' };
+    let payload: WorkflowDefinition;
+    try {
+        payload = workflowForSave(draft, original, scope);
+    } catch {
+        // A draft that cannot be serialized already reports why.
+        return [];
+    }
+    const errors = workflowSettingsErrors(payload, original, {
+        scope,
+        fileSyncEnabled: group && listing ? listing.fileSyncEnabled : null,
+        // A group whose File Sync is off lists no sources, which says nothing about the selected ones.
+        availableSourceKeys: group && listing?.fileSyncEnabled
+            ? new Set(listing.sources.map(workflowFileSyncSourceKey)) : null,
+    });
+    const sent = isRecord(payload.file_sync) && Array.isArray(payload.file_sync.sources) ? payload.file_sync.sources : [];
+    // The one deliberate difference: the server keeps the first 10 sources without saying so.
+    if (group && sent.length > WORKFLOW_FILE_SYNC_MAX_SOURCES) {
+        errors.push(`Choose at most ${WORKFLOW_FILE_SYNC_MAX_SOURCES} File Sync sources.`);
+    }
+    return errors;
+}
+
+/** Selected sources the current source list no longer offers; a save would fail on each one. */
+export function workflowUnavailableFileSyncSources(
+    draft: WorkflowDefinition,
+    available: WorkflowFileSyncSource[],
+): WorkflowFileSyncSourceRef[] {
+    if (!workflowFileSyncActive(draft)) {
+        return [];
+    }
+    const offered = new Set(available.map(workflowFileSyncSourceKey));
+    return workflowFileSyncConfig(draft.file_sync).sources
+        .filter((source) => !offered.has(workflowFileSyncSourceKey(source)));
+}
+
+export async function fetchWorkflowFileSyncSources(
+    scope: WorkflowScope,
+    signal?: AbortSignal,
+): Promise<WorkflowFileSyncSourceListing> {
+    if (scope.type !== 'group') {
+        throw new Error('File Sync sources are listed only for group workflows.');
+    }
+    const response = await api.get<unknown>(withScopeQuery('/api/group/workflows/file-sync-sources', scope), signal);
+    const invalid = 'The File Sync source list returned an invalid response.';
+    if (!isRecord(response) || !Array.isArray(response.sources) || typeof response.file_sync_enabled !== 'boolean') {
+        throw new Error(invalid);
+    }
+    const sources = new Map<string, WorkflowFileSyncSource>();
+    for (const entry of response.sources) {
+        if (!isRecord(entry) || entry.scope_type !== 'group' || entry.scope_id !== scope.groupId ||
+            typeof entry.source_id !== 'string' || !entry.source_id.trim() ||
+            typeof entry.name !== 'string' || typeof entry.label !== 'string' ||
+            typeof entry.source_type !== 'string' || typeof entry.enabled !== 'boolean') {
+            throw new Error(invalid);
+        }
+        sources.set(entry.source_id, {
+            scope_type: 'group',
+            scope_id: entry.scope_id,
+            source_id: entry.source_id,
+            name: entry.name,
+            source_type: entry.source_type,
+            enabled: entry.enabled,
+            label: entry.label || entry.name || entry.source_id,
+        });
+    }
+    return { fileSyncEnabled: response.file_sync_enabled, sources: [...sources.values()] };
+}
+
+// ---------------------------------------------------------------------------------------------
+// Stored alerts live in workflowAlerts.ts, which mirrors the server's alert normalizer. The
+// names below are re-exported so existing importers keep one entry point.
+// ---------------------------------------------------------------------------------------------
+
+export {
+    WORKFLOW_ALERT_FIELDS,
+    WORKFLOW_ALERT_MODES,
+    WORKFLOW_ALERT_PRIORITIES,
+    workflowAlertSummary,
+    type WorkflowAlertMode,
+    type WorkflowAlertPriority,
+    type WorkflowAlertSummary,
+} from './workflowAlerts';
 
 export function workflowTaskHasLocalRunner(
     workflow: WorkflowDefinition,
@@ -1213,6 +1447,10 @@ export function workflowInputProcessingErrors(
 export function workflowValidationErrors(
     draft: WorkflowDefinition,
     options: WorkflowEditorOptions,
+    /** The loaded record (null when creating). Alerts are validated only when it is supplied. */
+    original?: WorkflowDefinition | null,
+    /** The group's loaded File Sync source list, when the editor has one. */
+    fileSyncListing: WorkflowFileSyncSourceListing | null = null,
 ): string[] {
     const errors: string[] = [];
     if (!draft.name.trim()) {
@@ -1271,9 +1509,7 @@ export function workflowValidationErrors(
     }
     const unsupported = flowUnsupportedReason(draft, options);
     if (unsupported) errors.push(unsupported);
-    if (draft.trigger_type === 'interval' && draft.schedule.value < 1) {
-        errors.push('Interval workflows need a positive schedule value.');
-    }
+    errors.push(...workflowSettingsDraftErrors(draft, options, original ?? null, fileSyncListing));
     if (draft.runner_type === 'agent' && !draft.selected_agent) {
         errors.push('Choose an agent or switch the workflow runner to model.');
     }
@@ -1297,6 +1533,7 @@ export function workflowValidationErrors(
         errors.push('Enable durable execution before requiring task approval.');
     }
     const taskIds = new Map(draft.tasks.map((task, index) => [task.id, index]));
+    const changedFileTargets = workflowFileSyncProvidesAnalyzeTargets(draft);
     draft.tasks.forEach((task, index) => {
         errors.push(...workflowInputProcessingErrors(draft, task, options));
         if (!task.name.trim()) {
@@ -1327,7 +1564,8 @@ export function workflowValidationErrors(
         if (action && !['none', 'search', 'analyze', 'comparison'].includes(String(action.type))) {
             errors.push(`${task.name || `Task ${index + 1}`} has an unsupported document action type.`);
         }
-        if (action?.type === 'analyze' && action.target_mode !== 'current_item' && (!Array.isArray(action.document_ids) || action.document_ids.length === 0)) {
+        if (action?.type === 'analyze' && action.target_mode !== 'current_item' && !changedFileTargets &&
+            (!Array.isArray(action.document_ids) || action.document_ids.length === 0)) {
             errors.push(`${task.name || `Task ${index + 1}`} needs selected evidence for Analyze.`);
         }
         if (action?.target_mode === 'current_item' && draft.definition_version !== 3) {
@@ -1398,6 +1636,10 @@ export function workflowValidationErrors(
             errors.push(`Shared reference ${reference.document_id} has an alias that must start with a letter and use only letters, numbers, underscores, or dashes, up to 64 characters.`);
         }
     });
+    if (original !== undefined) {
+        // The editor passes the loaded record so alerts are checked exactly as the server will see them.
+        errors.push(...workflowAlertDraftErrors(draft, original));
+    }
     return [...new Set(errors)];
 }
 
@@ -1442,7 +1684,20 @@ export function sameWorkflowDefinition(
     return sameEditorValue(left, right);
 }
 
+export const WORKFLOW_DELETED_CODE = 'workflow_deleted';
+export const WORKFLOW_DELETED_MESSAGE = 'This workflow was deleted after it was opened, so your changes were not saved.';
+
+/** The machine-readable `code` a workflow route returned beside its error, or '' when there is none. */
+export function workflowErrorCode(cause: unknown): string {
+    return cause instanceof ApiError && isRecord(cause.payload) && typeof cause.payload.code === 'string'
+        ? cause.payload.code : '';
+}
+
 export function workflowErrorMessage(cause: unknown, fallback: string): string {
+    if (cause instanceof ApiError && cause.status === 409 && workflowErrorCode(cause) === WORKFLOW_DELETED_CODE) {
+        // Reloading cannot help: the workflow is gone, and the draft holds the only copy of these edits.
+        return `${cause.message || WORKFLOW_DELETED_MESSAGE} Your draft has been retained. Copy anything you need, then close this editor.`;
+    }
     if (cause instanceof ApiError && cause.status === 409) {
         return `${cause.message || 'This workflow could not be updated.'} Your draft has been retained; reload the saved workflow before retrying.`;
     }

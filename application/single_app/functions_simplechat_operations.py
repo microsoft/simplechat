@@ -89,6 +89,7 @@ from functions_generated_artifact_sources import (
     has_generated_artifact_source,
 )
 from functions_chat_bootstrap_cache import bump_chat_bootstrap_global_cache_version
+import functions_group
 from functions_group import (
     assert_group_role,
     check_group_status_allows_operation,
@@ -1901,6 +1902,14 @@ def create_group_for_current_user(name: str, description: str = "") -> Dict[str,
     return group_doc
 
 
+class _GroupAlreadyInactive(Exception):
+    """The group's current copy is already inactive; carries it, so nothing is written."""
+
+    def __init__(self, group_doc):
+        super().__init__("The group is already inactive.")
+        self.group_doc = group_doc
+
+
 def make_group_inactive_for_current_user(
     group_id: str = "",
     reason: str = "",
@@ -1913,20 +1922,6 @@ def make_group_inactive_for_current_user(
     if not resolved_group_id:
         resolved_group_id = require_active_group(current_user_info["userId"])
 
-    group_doc = find_group_by_id(resolved_group_id)
-    if not group_doc:
-        raise LookupError("Group not found")
-
-    old_status = str(group_doc.get("status") or "active").strip() or "active"
-    if old_status == "inactive":
-        return {
-            "group": group_doc,
-            "old_status": old_status,
-            "new_status": old_status,
-            "message": f"Group '{group_doc.get('name', 'Unknown')}' is already inactive.",
-        }
-
-    changed_at = datetime.utcnow().isoformat()
     changed_by_user_id = str(admin_session_user.get("oid") or current_user_info.get("userId") or "").strip() or "unknown"
     changed_by_email = str(
         admin_session_user.get("preferred_username")
@@ -1935,25 +1930,51 @@ def make_group_inactive_for_current_user(
         or ""
     ).strip() or "unknown"
     normalized_reason = str(reason or "").strip()
+    transition = {}
 
-    group_doc["status"] = "inactive"
-    group_doc["modifiedDate"] = changed_at
-    group_doc.setdefault("statusHistory", []).append(
-        {
-            "old_status": old_status,
+    def apply_inactive(fresh_group_doc):
+        # Decided on the copy being written: a status or membership change made
+        # meanwhile is kept, and the previous status logged is the one replaced.
+        old_status = str(fresh_group_doc.get("status") or "active").strip() or "active"
+        if old_status == "inactive":
+            raise _GroupAlreadyInactive(fresh_group_doc)
+        changed_at = datetime.utcnow().isoformat()
+        fresh_group_doc["status"] = "inactive"
+        fresh_group_doc["modifiedDate"] = changed_at
+        fresh_group_doc.setdefault("statusHistory", []).append(
+            {
+                "old_status": old_status,
+                "new_status": "inactive",
+                "changed_by_user_id": changed_by_user_id,
+                "changed_by_email": changed_by_email,
+                "changed_at": changed_at,
+                "reason": normalized_reason,
+            }
+        )
+        transition["old_status"] = old_status
+        return fresh_group_doc
+
+    # Reached through the module, as the direct add is, so callers that stub
+    # functions_group with only the names imported above can still import this module.
+    try:
+        updated_group_doc = functions_group.update_group_document_with_etag_guard(
+            resolved_group_id, apply_inactive, cache_reason="group_marked_inactive",
+        )
+    except _GroupAlreadyInactive as already:
+        group_doc = already.group_doc
+        return {
+            "group": group_doc,
+            "old_status": "inactive",
             "new_status": "inactive",
-            "changed_by_user_id": changed_by_user_id,
-            "changed_by_email": changed_by_email,
-            "changed_at": changed_at,
-            "reason": normalized_reason,
+            "message": f"Group '{group_doc.get('name', 'Unknown')}' is already inactive.",
         }
-    )
-    updated_group_doc = cosmos_groups_container.upsert_item(group_doc)
-    bump_chat_bootstrap_global_cache_version(reason="group_marked_inactive")
+    if updated_group_doc is None:
+        raise LookupError("Group not found")
+    old_status = transition["old_status"]
 
     log_group_status_change(
         group_id=resolved_group_id,
-        group_name=str(group_doc.get("name") or "Unknown").strip() or "Unknown",
+        group_name=str(updated_group_doc.get("name") or "Unknown").strip() or "Unknown",
         old_status=old_status,
         new_status="inactive",
         changed_by_user_id=changed_by_user_id,
@@ -1964,7 +1985,7 @@ def make_group_inactive_for_current_user(
         "[SIMPLE_CHAT] Group marked inactive",
         {
             "group_id": resolved_group_id,
-            "group_name": group_doc.get("name"),
+            "group_name": updated_group_doc.get("name"),
             "old_status": old_status,
             "new_status": "inactive",
             "changed_by_user_id": changed_by_user_id,
@@ -1977,7 +1998,7 @@ def make_group_inactive_for_current_user(
         "group": updated_group_doc,
         "old_status": old_status,
         "new_status": "inactive",
-        "message": f"Marked group '{group_doc.get('name', 'Unknown')}' as inactive.",
+        "message": f"Marked group '{updated_group_doc.get('name', 'Unknown')}' as inactive.",
     }
 
 
@@ -2160,28 +2181,53 @@ def add_group_member_for_current_user(
         "email": resolved_user.get("email", ""),
         "displayName": resolved_user.get("displayName") or resolved_user.get("email") or target_user_id,
     }
-    group_doc.setdefault("users", []).append(new_member_doc)
+    added = {}
 
-    if member_role == "admin":
-        if target_user_id not in group_doc.get("admins", []):
-            group_doc.setdefault("admins", []).append(target_user_id)
-    elif member_role == "document_manager":
-        if target_user_id not in group_doc.get("documentManagers", []):
-            group_doc.setdefault("documentManagers", []).append(target_user_id)
+    def apply(fresh_group_doc):
+        # Re-checked on every fresh copy: a concurrent change is kept, and a
+        # demotion or an approval that lands first refuses the add.
+        fresh_actor_role = get_user_role_in_group(fresh_group_doc, current_user["userId"])
+        if fresh_actor_role not in ["Owner", "Admin"]:
+            raise PermissionError("Only the owner or admin can add members")
+        if get_user_role_in_group(fresh_group_doc, target_user_id):
+            raise ValueError("User is already a member")
 
-    group_doc["modifiedDate"] = datetime.utcnow().isoformat()
-    updated_group_doc = cosmos_groups_container.upsert_item(group_doc)
-    bump_chat_bootstrap_global_cache_version(reason="group_member_added")
+        fresh_group_doc.setdefault("users", []).append(dict(new_member_doc))
+        if member_role == "admin":
+            if target_user_id not in fresh_group_doc.get("admins", []):
+                fresh_group_doc.setdefault("admins", []).append(target_user_id)
+        elif member_role == "document_manager":
+            if target_user_id not in fresh_group_doc.get("documentManagers", []):
+                fresh_group_doc.setdefault("documentManagers", []).append(target_user_id)
+        # A member added directly has no request left to decide.
+        pending_users = fresh_group_doc.get("pendingUsers")
+        if isinstance(pending_users, list):
+            fresh_group_doc["pendingUsers"] = [
+                entry for entry in pending_users
+                if not (isinstance(entry, dict) and entry.get("userId") == target_user_id)
+            ]
+
+        fresh_group_doc["modifiedDate"] = datetime.utcnow().isoformat()
+        added["actor_role"] = fresh_actor_role
+        return fresh_group_doc
+
+    # Reached through the module so callers that stub functions_group with only the
+    # names imported above can still import this module.
+    updated_group_doc = functions_group.update_group_document_with_etag_guard(
+        group_doc.get("id"), apply, cache_reason="group_member_added",
+    )
+    if updated_group_doc is None:
+        raise LookupError("Group not found")
 
     _log_group_member_addition(
         actor_user=current_user,
-        actor_role=actor_role,
-        group_doc=group_doc,
+        actor_role=added["actor_role"],
+        group_doc=updated_group_doc,
         member_doc=new_member_doc,
         member_role=member_role,
     )
     _notify_group_member_addition(
-        group_doc=group_doc,
+        group_doc=updated_group_doc,
         member_doc=new_member_doc,
         member_role=member_role,
         added_by_email=current_user.get("email", "unknown"),
@@ -2191,8 +2237,8 @@ def add_group_member_for_current_user(
     return {
         "success": True,
         "message": "Member added",
-        "group_id": group_doc.get("id"),
-        "group_name": group_doc.get("name", "Unknown"),
+        "group_id": updated_group_doc.get("id"),
+        "group_name": updated_group_doc.get("name", "Unknown"),
         "member": new_member_doc,
         "member_role": member_role,
         "group": updated_group_doc,
@@ -4054,7 +4100,7 @@ def _notify_group_member_addition(
                 f"You have been added to the group '{group_doc.get('name', 'Unknown')}' "
                 f"as {role_display} by {added_by_email}."
             ),
-            link_url=f"/manage_group/{group_doc.get('id', '')}",
+            link_url=_build_group_manage_url(group_doc.get("id")),
             link_context={
                 "workspace_type": "group",
                 "group_id": group_doc.get("id", ""),
@@ -4087,7 +4133,7 @@ def _notify_group_member_addition(
                 f"Added {member_doc.get('displayName', 'a new member')} to '{group_doc.get('name', 'Unknown')}' "
                 f"as {role_display}."
             ),
-            link_url=f"/manage_group/{group_doc.get('id', '')}",
+            link_url=_build_group_manage_url(group_doc.get("id")),
             link_context={
                 "workspace_type": "group",
                 "group_id": group_doc.get("id", ""),
@@ -4149,6 +4195,11 @@ def _build_group_link_context(group_doc: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
+def _build_group_manage_url(group_id: Any) -> str:
+    """Link to the group management page, served by ``route_frontend_groups.manage_group``."""
+    return f"/groups/{quote(str(group_id or '').strip(), safe='')}"
+
+
 def _build_conversation_link_context(conversation_doc: Dict[str, Any]) -> Dict[str, Any]:
     conversation_doc = conversation_doc if isinstance(conversation_doc, dict) else {}
     scope = conversation_doc.get("scope") if isinstance(conversation_doc.get("scope"), dict) else {}
@@ -4199,7 +4250,7 @@ def _notify_group_created(group_doc: Dict[str, Any], actor_user: Dict[str, str])
         notification_type="group_created",
         title=f"Group created: {group_name}",
         message=f"You created the group '{group_name}'.",
-        link_url=f"/manage_group/{group_id}",
+        link_url=_build_group_manage_url(group_id),
         link_context=_build_group_link_context(group_doc),
         metadata={
             "group_id": group_id,

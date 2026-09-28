@@ -21,6 +21,7 @@ import {
 } from 'lucide-react';
 import type { WorkspaceDocument } from '../../lib/types';
 import { documentStatus } from '../../lib/documentExplorer';
+import { relativeLuminance } from '../../lib/visualPalettes';
 import { ScreeningStatusBadge } from '../screening/ScreeningStatusBadge';
 
 /**
@@ -125,7 +126,9 @@ export function DocumentIcon({
  * Decide readable text for an arbitrary background colour.
  *
  * Tag colours are user-chosen and unconstrained, so a fixed foreground would be unreadable
- * against roughly half of them. The threshold is the usual relative-luminance one.
+ * against roughly half of them. Black or white, whichever has the higher WCAG contrast with the
+ * background, reaches at least about 4.58:1 on any colour; a softer dark would miss 4.5:1 on
+ * mid tones.
  */
 export function readableTextColor(background: string | undefined): string {
     const hex = String(background ?? '').trim().replace('#', '');
@@ -136,14 +139,11 @@ export function readableTextColor(background: string | undefined): string {
         hex.length === 3
             ? hex.split('').map((character) => character + character).join('')
             : hex;
-    const red = parseInt(expanded.slice(0, 2), 16);
-    const green = parseInt(expanded.slice(2, 4), 16);
-    const blue = parseInt(expanded.slice(4, 6), 16);
-    if ([red, green, blue].some((channel) => Number.isNaN(channel))) {
+    if (!/^[0-9a-f]{6}$/i.test(expanded)) {
         return 'inherit';
     }
-    const luminance = (0.299 * red + 0.587 * green + 0.114 * blue) / 255;
-    return luminance > 0.6 ? '#1f2933' : '#ffffff';
+    const luminance = relativeLuminance(`#${expanded}`);
+    return (luminance + 0.05) / 0.05 >= 1.05 / (luminance + 0.05) ? '#000000' : '#ffffff';
 }
 
 export function TagChip({

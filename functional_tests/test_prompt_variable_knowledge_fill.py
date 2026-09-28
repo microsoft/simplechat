@@ -1,7 +1,7 @@
 # test_prompt_variable_knowledge_fill.py
 """
 Functional tests for scoped, document-grounded prompt variable filling.
-Version: 0.261.105
+Version: 0.261.169
 Implemented in: 0.261.096
 
 Execute the service with mocked retrieval/model/storage boundaries and the real
@@ -1219,6 +1219,9 @@ class PromptKnowledgeRouteTests(unittest.TestCase):
             "login_required": login_required, "user_required": user_required,
             "swagger_route": lambda **_kwargs: lambda function: function,
             "get_auth_security": lambda: [],
+            # The registrar also builds the group and public context routes, which apply
+            # @enabled_required(...) when registered; this suite exercises only the fill route.
+            "enabled_required": lambda _setting: lambda function: function,
         }
         tree = ast.parse(ROUTE_PATH.read_text(encoding="utf-8"))
         registrar = next(node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == "register_route_backend_v2")

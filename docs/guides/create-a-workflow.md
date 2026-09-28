@@ -50,8 +50,80 @@ opened in V2. Advanced definitions cannot be saved through the classic editor
 because it cannot represent their data-flow fields. A stale edit retains its
 draft instead of overwriting another editor's changes.
 
+From version **0.261.149**, a refused save names the rule that failed, such as
+"Schedule value for minutes must be between 1 and 59.", and the editor checks
+the same rules before you save. If someone deletes the workflow while you have
+it open, saving is refused with "This workflow was deleted after it was opened,
+so your changes were not saved." The draft stays open so you can copy anything
+you need; saving in V2 never brings a deleted workflow back.
+
 See [Explicit workflow data flow](../explanation/features/WORKFLOW_EXPLICIT_DATA_FLOW.md)
 for binding semantics, shared references, and validation outcomes.
+
+## Run a group workflow when File Sync finds changes
+
+From version **0.261.141**, the V2 editor for group workflows can author File
+Sync. Owners, Admins, and other workflow managers see these choices when the
+group has File Sync sources:
+
+- **Monitor File Sync changes** is a trigger. On the interval you set, it syncs
+  the selected sources, waits for the sync to finish, and runs the workflow only
+  when files changed.
+- **Run File Sync before each run** syncs the selected sources first on a manual
+  or interval workflow. **Wait for File Sync** and **Continue the workflow**
+  decide whether the workflow waits, and whether it runs when nothing changed.
+- **Use changed files as Analyze targets** lets an Analyze task with no
+  selected documents work on the files each sync changed.
+
+Choose between 1 and 10 of the group's own sources. A source the group no
+longer offers is marked **No longer available**; remove it before saving. From
+version **0.261.149**, if a source is deleted while you're editing, saving is
+refused with "A selected File Sync source is no longer available. Remove it and
+save again." Your changes stay in the editor, and the source is marked so you
+can remove it. When File Sync is turned off for the group, the editor says so
+instead of showing an empty list.
+Personal workflows keep the File Sync settings they already have, but can't
+create new ones in V2 yet. From version **0.261.144**, a personal workflow
+whose Analyze task works on the files File Sync changed can be saved in V2.
+
+## Set up alerts
+
+From version **0.261.144**, personal and group workflows are given alerts in the
+V2 editor, under **Alerts** after the tasks. The alert settings are:
+
+- **When to alert:** **Never notify me**, **On every run** (choose a **Pop-up
+  alert priority**), or **Only when a condition is met**.
+- **Alert rules**, up to 20, used by **Only when a condition is met**. Each rule
+  has a condition:
+  - the run finished with a status;
+  - a task finished with a status;
+  - the output text contains, lacks or matches a pattern;
+  - a File Sync result;
+  - the run produced no output;
+  - a model judges a condition you describe;
+  - the agent raised an alert.
+
+  A rule that reads output (task status, output text, no output, or a model's
+  judgement) can look at the final output, any task's output, or one task. Run
+  status, File Sync results and agent alerts apply to the whole run. A rule's
+  **severity** decides where the alert lands: info and low go to the
+  notification bell, and medium and above open the pop-up alert, unless you
+  choose the delivery yourself. A new rule is named after its condition until you
+  give it a name.
+- **If a model evaluated condition cannot be judged** appears when a rule asks a
+  model to judge. It either skips the rule silently, or alerts anyway so a
+  failure isn't missed.
+
+When several rules match one run, the highest severity wins and every matched
+rule is listed. Rules you keep while alerts are off, or on every run, are still
+saved and still checked.
+
+If you delete a task that a rule watches, the rule is marked, and the editor
+won't save until you choose another task or remove the rule. A problem with the
+alert settings is shown with the rule's number.
+
+Members who can't manage the workflow see a read-only summary. A workflow saved
+in V2 can no longer be opened by the classic editor.
 
 ## Choose the Microsoft 365 Run as account
 
@@ -76,6 +148,9 @@ changing that account, subject to the usual workflow permissions and validation.
 In a structured workflow, Undo and Redo also restore unsaved Run as selections
 across List and Flow, including an explicitly cleared account (version
 **0.261.124**). This does not grant consent or restore an earlier approval.
+
+People who can't manage the workflow see only whether an account is selected
+(version **0.261.149**). Only workflow managers can see who it is or change it.
 
 ## Choose branches and optional work
 

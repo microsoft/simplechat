@@ -2,6 +2,10 @@
 
 Fixed/Implemented in version: **0.261.133**
 
+On the V2 shared workspaces branch, which had already assigned 0.261.133 to native
+public document management, this fix arrives with the React V2 base merge in
+version **0.261.158**.
+
 ## Issue
 
 V2 Admin Settings showed only loading placeholders until the application release

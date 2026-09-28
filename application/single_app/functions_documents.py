@@ -7,6 +7,8 @@ import time
 import traceback
 import zipfile
 import hashlib
+from functools import partial
+from contextlib import nullcontext
 from io import BytesIO
 from flask import make_response
 from azure.core import MatchConditions
@@ -63,6 +65,11 @@ from functions_data_management_search_write_fence import (
     DataManagementSearchWritesFrozenError,
     hold_data_management_search_write_slot,
 )
+from functions_group_document_projection_fence import (
+    GroupDocumentProjectionConflict,
+    assert_group_document_source_writable,
+    hold_group_document_projection,
+)
 from functions_visio import build_visio_page_markdown, parse_vsdx_pages
 from functions_onenote import ONENOTE_MAX_CHUNKS, OneNoteExtractionError, extract_onenote
 from functions_content import *
@@ -110,6 +117,22 @@ class DocumentSearchAclProjectionDeferredError(RuntimeError):
     """Raised when an authorization-reducing Search ACL update must be retried safely."""
 
 
+class DocumentMutationPropagationError(RuntimeError):
+    """The source changed, but a required downstream projection needs repair."""
+
+    def __init__(self, message, *, deleted_document_ids=()):
+        super().__init__(message)
+        self.deleted_document_ids = list(deleted_document_ids)
+
+
+class DocumentRevisionDeleteError(RuntimeError):
+    """A revision-family deletion stopped after removing some source records."""
+
+    def __init__(self, deleted_document_ids):
+        super().__init__("Some document revisions could not be deleted. Refresh before retrying.")
+        self.deleted_document_ids = list(deleted_document_ids)
+
+
 class XsdIngestionCapabilityError(RuntimeError):
     """Raised when an XSD cannot be accepted without exact-source storage."""
 
@@ -137,7 +160,9 @@ def _search_indexing_results_succeeded(results):
     )
 
 
-def _execute_document_search_write(search_client, operation_name, *args, **kwargs):
+def _execute_document_search_write(
+    search_client, operation_name, *args, group_id=None, document_id=None, document_version=None, **kwargs,
+):
     """Serialize bounded target Search writes with an active Data Management migration fence."""
     kwargs.update({
         "connection_timeout": 30,
@@ -157,10 +182,33 @@ def _execute_document_search_write(search_client, operation_name, *args, **kwarg
             (getattr(document.get("embedding"), "profile_id", None) for document in documents if document.get("embedding") is not None),
             None,
         )
+    if group_id is not None and not document_id:
+        raise GroupDocumentProjectionConflict("The group projection has no document identity.")
+    projection = (
+        hold_group_document_projection(
+            cosmos_group_documents_container, document_id, group_id,
+            expected_version=document_version, log=log_event,
+        ) if group_id is not None else nullcontext(None)
+    )
     with hold_data_management_search_write_slot(cosmos_data_management_jobs_container, **slot_options):
         if vector_write:
             prepare_embedding_search_documents(search_client, documents)
-        results = getattr(search_client, operation_name)(*args, **kwargs)
+        with projection as current:
+            if current is not None:
+                allowed = set(current.get("shared_group_ids") or [])
+                for payload in documents or []:
+                    if not isinstance(payload, dict):
+                        raise GroupDocumentProjectionConflict("The group projection payload is invalid.")
+                    if payload.get("document_id", document_id) != document_id:
+                        raise GroupDocumentProjectionConflict("The group projection targets another document.")
+                    if "shared_group_ids" in payload:
+                        payload["shared_group_ids"] = [
+                            entry for entry in payload["shared_group_ids"] or [] if entry in allowed
+                        ]
+                    if current.get("is_current_version") is False and "group_id" in payload:
+                        payload["group_id"] = _build_archived_scope_value(group_id)
+                        payload["shared_group_ids"] = []
+            results = getattr(search_client, operation_name)(*args, **kwargs)
     if not _search_indexing_results_succeeded(results):
         raise RuntimeError(
             f"Azure AI Search did not acknowledge every {operation_name} document mutation."
@@ -900,12 +948,15 @@ def _get_download_content_type(file_name):
     return mimetypes.guess_type(str(file_name or ''))[0] or 'application/octet-stream'
 
 
-def _get_document_download_entry(document_item, user_id=None, group_id=None, public_workspace_id=None):
+def _get_document_download_entry(
+    document_item, user_id=None, group_id=None, public_workspace_id=None, *, metadata_reader=None,
+):
     if not document_item:
         raise FileNotFoundError('Document not found.')
 
     document_item, file_bytes = read_available_document_bytes(
         document_item, user_id, group_id, public_workspace_id,
+        metadata_reader=metadata_reader,
     )
 
     file_name = _sanitize_download_file_name(
@@ -919,13 +970,16 @@ def _get_document_download_entry(document_item, user_id=None, group_id=None, pub
     }
 
 
-def build_document_download_response(document_item, user_id=None, group_id=None, public_workspace_id=None):
+def build_document_download_response(
+    document_item, user_id=None, group_id=None, public_workspace_id=None, *, metadata_reader=None,
+):
     """Build an attachment response for a single authorized document source file."""
     entry = _get_document_download_entry(
         document_item,
         user_id=user_id,
         group_id=group_id,
         public_workspace_id=public_workspace_id,
+        metadata_reader=metadata_reader,
     )
     response = make_response(entry['content'])
     response.headers['Content-Type'] = entry['content_type']
@@ -935,7 +989,9 @@ def build_document_download_response(document_item, user_id=None, group_id=None,
     return response
 
 
-def build_documents_zip_download_response(documents, archive_name, user_id=None, group_id=None, public_workspace_id=None):
+def build_documents_zip_download_response(
+    documents, archive_name, user_id=None, group_id=None, public_workspace_id=None, *, metadata_reader=None,
+):
     """Build a ZIP attachment for multiple authorized document source files."""
     buffer = BytesIO()
     used_names = set()
@@ -948,6 +1004,7 @@ def build_documents_zip_download_response(documents, archive_name, user_id=None,
                 user_id=user_id,
                 group_id=group_id,
                 public_workspace_id=public_workspace_id,
+                metadata_reader=metadata_reader,
             )
             base_name, extension = os.path.splitext(entry['file_name'])
             candidate_name = entry['file_name']
@@ -1656,32 +1713,40 @@ def _query_accessible_documents(user_id, group_id=None, public_workspace_id=None
     return documents
 
 
-def _upsert_document_and_sync_access_index(cosmos_container, document_item, operation):
+def _upsert_document_and_sync_access_index(cosmos_container, document_item, operation, *, strict=False):
     try:
         current_document = cosmos_container.read_item(
             item=document_item["id"], partition_key=document_item["id"],
         )
     except CosmosResourceNotFoundError:
         current_document = None
-    if current_document and SCREENING_FIELD in current_document:
+    coordinated_group = bool(document_item.get("group_id")) and not document_item.get("public_workspace_id")
+    if current_document and coordinated_group:
+        assert_group_document_source_writable(current_document)
+    if (strict or coordinated_group) and current_document is None and document_item.get("_etag"):
+        raise ScreeningConflictError()
+    if current_document and (strict or coordinated_group or SCREENING_FIELD in current_document):
         expected_etag = document_item.get("_etag")
-        if expected_etag != current_document.get("_etag"):
+        if ((strict or coordinated_group) and not expected_etag) or expected_etag != current_document.get("_etag"):
             raise ScreeningConflictError()
         if document_item.get("version") != current_document.get("version"):
             raise ScreeningConflictError()
-        document_item = {**document_item, SCREENING_FIELD: current_document[SCREENING_FIELD]}
+        if SCREENING_FIELD in current_document:
+            document_item = {**document_item, SCREENING_FIELD: current_document[SCREENING_FIELD]}
         persisted_document = cosmos_container.replace_item(
             item=document_item["id"], body=document_item,
             etag=expected_etag, match_condition=MatchConditions.IfNotModified,
         )
-    elif current_document is None and SCREENING_FIELD in document_item:
+    elif current_document is None and (strict or coordinated_group or SCREENING_FIELD in document_item):
         persisted_document = cosmos_container.create_item(document_item)
     else:
         persisted_document = cosmos_container.upsert_item(document_item)
-    sync_document_access_index_for_document_fail_open(
+    projection = sync_document_access_index_for_document_fail_open(
         persisted_document if isinstance(persisted_document, dict) else document_item,
         operation=operation,
     )
+    if strict and not projection.get("success"):
+        raise DocumentMutationPropagationError("Document saved, but its access projection could not be updated.")
     return persisted_document if isinstance(persisted_document, dict) else document_item
 
 
@@ -1729,6 +1794,9 @@ def set_document_chunk_visibility(document_item, active=True):
         search_client,
         "merge_documents",
         documents=documents_to_update,
+        group_id=group_id if is_group and not is_public_workspace else None,
+        document_id=document_id,
+        document_version=document_item.get("version"),
     )
     return len(documents_to_update)
 
@@ -2476,6 +2544,9 @@ def save_video_chunk(
                 client,
                 "upload_documents",
                 documents=[chunk],
+                group_id=group_id if is_group and not is_public_workspace else None,
+                document_id=document_id,
+                document_version=version,
             )
             debug_print(f"[VIDEO_CHUNK] Upload successful for chunk: {chunk_id}")
             print(f"[VIDEO_CHUNK] UPLOAD OK for {chunk_id}", flush=True)
@@ -3388,7 +3459,12 @@ def update_document(**kwargs):
     user_id = kwargs.get('user_id')
     group_id = kwargs.get('group_id')
     public_workspace_id = kwargs.get('public_workspace_id')
+    strict = kwargs.pop('strict', False)
+    expected_etag = kwargs.pop('expected_etag', None)
+    operation_guard = kwargs.pop('operation_guard', None)
     num_chunks_increment = kwargs.pop('num_chunks_increment', 0)
+    if operation_guard is not None:
+        operation_guard()
 
     if not document_id or not user_id:
         # Cannot proceed without these identifiers
@@ -3482,6 +3558,8 @@ def update_document(**kwargs):
 
 
         existing_document = existing_documents[0]
+        if strict and (not expected_etag or expected_etag != existing_document.get("_etag")):
+            raise ScreeningConflictError()
         capture = current_extraction(document_id)
         if capture is not None and getattr(capture, "heartbeat", None) is not None:
             capture.heartbeat()
@@ -3505,7 +3583,15 @@ def update_document(**kwargs):
                 if key not in {"document_id", "user_id", "group_id", "public_workspace_id"}
                 and value is not None
             }
+            if operation_guard is not None:
+                operation_guard()
             queue_metadata_rescan(existing_document, metadata_updates, user_id)
+            if strict:
+                saved_document = cosmos_container.read_item(item=document_id, partition_key=document_id)
+                projection = sync_document_access_index_for_document_fail_open(saved_document, operation="document_updated")
+                if not projection.get("success"):
+                    raise DocumentMutationPropagationError("Document saved, but its access projection could not be updated.")
+                return saved_document
             return
         original_percentage = existing_document.get('percentage_complete', 0) # Store for comparison
 
@@ -3524,6 +3610,8 @@ def update_document(**kwargs):
             )
 
         for key, value in kwargs.items():
+            if strict and key in {'document_id', 'user_id', 'group_id', 'public_workspace_id'}:
+                continue
             if value is not None and existing_document.get(key) != value:
                 # Avoid overwriting num_chunks if it was just incremented
                 if key == 'num_chunks' and num_chunks_increment > 0:
@@ -3566,11 +3654,24 @@ def update_document(**kwargs):
             else:
                  existing_document['percentage_complete'] = new_percentage
 
+        if strict:
+            if operation_guard is not None:
+                operation_guard()
+            saved_document = _upsert_document_and_sync_access_index(
+                cosmos_container, existing_document, operation='document_updated', strict=True,
+            )
+            # Retry the requested projections even when a previous attempt
+            # committed the source but failed downstream.
+            updated_fields_requiring_chunk_sync.update(
+                field for field in ("title", "authors", "file_name", "document_classification", "tags", "shared_group_ids")
+                if field in kwargs and kwargs[field] is not None
+            )
+
         # 4. Propagate relevant changes to search index chunks
         # This happens regardless of 'update_occurred' flag because the *intent* from kwargs might trigger it,
         # even if the main doc update didn't happen (e.g., only percentage changed).
         # However, it's better to only do this if the relevant fields *actually* changed.
-        if update_occurred and updated_fields_requiring_chunk_sync and marker is None:
+        if (update_occurred or strict) and updated_fields_requiring_chunk_sync and marker is None:
             try:
                 chunks_to_update = get_all_chunks(
                     document_id,
@@ -3579,6 +3680,12 @@ def update_document(**kwargs):
                     public_workspace_id=public_workspace_id
                 )
                 for chunk in chunks_to_update:
+                    if operation_guard is not None:
+                        operation_guard()
+                    if strict:
+                        current = cosmos_container.read_item(item=document_id, partition_key=document_id)
+                        if current.get("_etag") != saved_document.get("_etag"):
+                            raise DocumentMutationPropagationError("A newer document update must be projected before retrying.")
                     chunk_updates = {}
                     if 'title' in updated_fields_requiring_chunk_sync:
                         chunk_updates['title'] = existing_document.get('title')
@@ -3614,6 +3721,8 @@ def update_document(**kwargs):
                     content=f"Propagated updates for fields {updated_fields_requiring_chunk_sync} to search chunks."
                 )
             except Exception as chunk_sync_error:
+                if strict:
+                    raise DocumentMutationPropagationError("Document saved, but chunk metadata propagation failed.") from chunk_sync_error
                 # Log error but don't necessarily fail the whole document update
                 error_msg = f"Warning: Failed to sync metadata updates to search chunks for doc {document_id}: {chunk_sync_error}"
                 print(error_msg)
@@ -3625,12 +3734,24 @@ def update_document(**kwargs):
 
 
         # 5. Upsert the document if changes were made
-        if update_occurred:
+        if update_occurred and not strict:
+            if operation_guard is not None:
+                operation_guard()
             _upsert_document_and_sync_access_index(
-                cosmos_container,
-                existing_document,
-                operation='document_updated',
+                cosmos_container, existing_document, operation='document_updated',
             )
+        if strict:
+            if 'tags' in kwargs:
+                if operation_guard is not None:
+                    operation_guard()
+                current = cosmos_container.read_item(item=document_id, partition_key=document_id)
+                if current.get("_etag") != saved_document.get("_etag"):
+                    raise DocumentMutationPropagationError("A newer document update must be projected before retrying.")
+                propagate_tags_to_blob_metadata(
+                    document_id, kwargs['tags'], user_id, group_id, public_workspace_id,
+                    strict=True, expected_etag=saved_document.get("_etag"),
+                )
+            return saved_document
 
     except CosmosResourceNotFoundError as e:
         # Error already logged where it was first detected
@@ -3899,6 +4020,9 @@ def save_chunks(page_text_content, page_number, file_name, user_id, document_id,
             search_client,
             "upload_documents",
             documents=[chunk_document],
+            group_id=group_id if is_group and not is_public_workspace else None,
+            document_id=document_id,
+            document_version=version,
         )
 
     except Exception as e:
@@ -4096,6 +4220,9 @@ def save_chunks_batch(chunks_data, user_id, document_id, group_id=None, public_w
                 search_client,
                 "upload_documents",
                 documents=sub_batch,
+                group_id=group_id if is_group and not is_public_workspace else None,
+                document_id=document_id,
+                document_version=version,
             )
 
     except Exception as e:
@@ -4280,6 +4407,9 @@ def update_chunk_metadata(chunk_id, user_id, group_id=None, public_workspace_id=
             search_client,
             "merge_documents",
             documents=[metadata_update],
+            group_id=group_id if is_group and not is_public_workspace else None,
+            document_id=document_id,
+            document_version=chunk_item.get("version"),
         )
 
     except Exception as e:
@@ -4611,21 +4741,39 @@ def get_document_version(user_id, document_id, version, group_id=None, public_wo
     except Exception as e:
         return jsonify({'error': f'Error retrieving document version: {str(e)}'}), 500
 
-def delete_from_blob_storage(document_item, user_id=None, group_id=None, public_workspace_id=None):
+def delete_from_blob_storage(
+    document_item, user_id=None, group_id=None, public_workspace_id=None, *, strict=False, operation_guard=None,
+    persisted_sources_only=False,
+):
     """Delete a document from Azure Blob Storage."""
 
     try:
+        if persisted_sources_only and not (
+            document_item.get("blob_path") or document_item.get("archived_blob_path")
+        ):
+            return
         delete_targets = get_document_blob_delete_targets(
             document_item,
             user_id=user_id,
             group_id=group_id,
             public_workspace_id=public_workspace_id,
         )
+        if persisted_sources_only:
+            persisted_paths = {
+                path for path in (document_item.get("blob_path"), document_item.get("archived_blob_path"))
+                if isinstance(path, str) and path
+            }
+            delete_targets = [
+                (container_name, blob_path) for container_name, blob_path in delete_targets
+                if blob_path in persisted_paths
+            ]
         if not delete_targets:
             return
 
         blob_service_client = CLIENTS.get("storage_account_office_docs_client")
         if not blob_service_client:
+            if strict and (_has_persisted_blob_reference(document_item) or document_item.get("enhanced_citations")):
+                raise RuntimeError("Document source storage is unavailable.")
             if SCREENING_FIELD in document_item:
                 raise ScreeningError("The storage connection is required to finish deleting this document.")
             log_event(
@@ -4640,6 +4788,22 @@ def delete_from_blob_storage(document_item, user_id=None, group_id=None, public_
 
         for container_name, blob_path in delete_targets:
             blob_client = blob_service_client.get_blob_client(container=container_name, blob=blob_path)
+            if strict:
+                try:
+                    properties = blob_client.get_blob_properties()
+                except Exception as error:
+                    if getattr(error, "status_code", None) == 404:
+                        continue
+                    raise
+                if operation_guard is not None:
+                    operation_guard(document_id=document_item["id"])
+                current = _get_documents_container(group_id, public_workspace_id).read_item(
+                    item=document_item["id"], partition_key=document_item["id"],
+                )
+                if not document_item.get("_etag") or current.get("_etag") != document_item["_etag"]:
+                    raise ScreeningConflictError()
+                blob_client.delete_blob(etag=properties.etag, match_condition=MatchConditions.IfNotModified)
+                continue
             if blob_client.exists():
                 blob_client.delete_blob()
                 print(f"Successfully deleted blob at {container_name}/{blob_path}")
@@ -4647,6 +4811,13 @@ def delete_from_blob_storage(document_item, user_id=None, group_id=None, public_
                 print(f"No blob found at {container_name}/{blob_path} to delete")
 
     except Exception as e:
+        if strict:
+            log_event(
+                "[DOCUMENT_BLOB_DELETE] Scoped source deletion failed.",
+                extra={"document_id": document_item.get("id"), "exception_type": type(e).__name__},
+                level=logging.ERROR,
+            )
+            raise
         if SCREENING_FIELD in document_item:
             log_event(
                 "[CONTENT_SCREENING] Source deletion failed.",
@@ -4658,7 +4829,10 @@ def delete_from_blob_storage(document_item, user_id=None, group_id=None, public_
         # Don't raise the exception, as we want the Cosmos DB deletion to proceed
         # even if blob deletion fails
 
-def delete_document(user_id, document_id, group_id=None, public_workspace_id=None):
+def delete_document(
+    user_id, document_id, group_id=None, public_workspace_id=None, *,
+    strict=False, expected_etag=None, operation_guard=None, persisted_sources_only=False,
+):
     """Delete a document from the user's documents in Cosmos DB and blob storage if enhanced citations are enabled."""
     from functions_debug import debug_print
 
@@ -4675,6 +4849,8 @@ def delete_document(user_id, document_id, group_id=None, public_workspace_id=Non
         cosmos_container = cosmos_user_documents_container
 
     try:
+        if operation_guard is not None:
+            operation_guard(document_id=document_id)
         document_item = cosmos_container.read_item(
             item=document_id,
             partition_key=document_id
@@ -4686,8 +4862,11 @@ def delete_document(user_id, document_id, group_id=None, public_workspace_id=Non
         elif is_group:
             if document_item.get("group_id") != group_id:
                 raise PermissionError("Document access denied.")
+            assert_group_document_source_writable(document_item)
         elif document_item.get("user_id") != user_id:
             raise PermissionError("Document access denied.")
+        if strict and (not expected_etag or document_item.get("_etag") != expected_etag):
+            raise ScreeningConflictError()
         if SCREENING_FIELD in document_item:
             prepare_document_deletion(document_item, user_id)
             document_item = cosmos_container.read_item(item=document_id, partition_key=document_id)
@@ -4730,19 +4909,26 @@ def delete_document(user_id, document_id, group_id=None, public_workspace_id=Non
 
         # Delete from blob storage
         try:
-            delete_from_blob_storage(
-                document_item,
-                user_id=user_id,
-                group_id=group_id,
-                public_workspace_id=public_workspace_id,
-            )
+            if operation_guard is not None:
+                operation_guard(document_id=document_id)
+            if strict:
+                delete_from_blob_storage(
+                    document_item, user_id=user_id, group_id=group_id, public_workspace_id=public_workspace_id,
+                    strict=True, operation_guard=operation_guard, persisted_sources_only=persisted_sources_only,
+                )
+            else:
+                delete_from_blob_storage(
+                    document_item, user_id=user_id, group_id=group_id, public_workspace_id=public_workspace_id,
+                )
         except Exception as blob_error:
-            if SCREENING_FIELD in document_item:
+            if strict or SCREENING_FIELD in document_item:
                 raise
             # Log the error but continue with Cosmos DB deletion
             print(f"Error deleting from blob storage (continuing with document deletion): {str(blob_error)}")
 
         # Then delete from Cosmos DB
+        if operation_guard is not None:
+            operation_guard(document_id=document_id)
         if SCREENING_FIELD in document_item:
             current_document = cosmos_container.read_item(item=document_id, partition_key=document_id)
             if (
@@ -4754,15 +4940,26 @@ def delete_document(user_id, document_id, group_id=None, public_workspace_id=Non
                 item=document_id, partition_key=document_id,
                 etag=current_document["_etag"], match_condition=MatchConditions.IfNotModified,
             )
+        elif strict or is_group:
+            cosmos_container.delete_item(
+                item=document_id, partition_key=document_id,
+                etag=expected_etag if strict else document_item["_etag"],
+                match_condition=MatchConditions.IfNotModified,
+            )
         else:
             cosmos_container.delete_item(
                 item=document_id,
                 partition_key=document_id
             )
-        delete_document_access_index_for_document_fail_open(
+        projection = delete_document_access_index_for_document_fail_open(
             document_item,
             operation='document_deleted',
         )
+        if strict and not projection.get("success"):
+            raise DocumentMutationPropagationError(
+                "Document deleted, but its access projection could not be removed.",
+                deleted_document_ids=[document_id],
+            )
         if (
             document_item.get("source_kind") == "xml_schema"
             and document_item.get("is_current_version") is not False
@@ -4784,36 +4981,70 @@ def delete_document(user_id, document_id, group_id=None, public_workspace_id=Non
         raise
 
 
-def delete_document_revision(user_id, document_id, delete_mode="all_versions", group_id=None, public_workspace_id=None):
+def delete_document_revision(
+    user_id, document_id, delete_mode="all_versions", group_id=None, public_workspace_id=None, *,
+    family_documents=None, strict=False, operation_guard=None, persisted_sources_only=False,
+):
     if delete_mode not in {"all_versions", "current_only"}:
         raise ValueError("Unsupported delete mode")
 
     cosmos_container = _get_documents_container(group_id=group_id, public_workspace_id=public_workspace_id)
     target_document = cosmos_container.read_item(item=document_id, partition_key=document_id)
 
-    family_documents = _get_document_family_items_from_document(
-        target_document,
-        user_id=user_id,
-        group_id=group_id,
-        public_workspace_id=public_workspace_id,
-    )
+    if family_documents is None:
+        family_documents = _get_document_family_items_from_document(
+            target_document, user_id=user_id, group_id=group_id, public_workspace_id=public_workspace_id,
+        )
+    if strict:
+        scope_field = "public_workspace_id" if public_workspace_id is not None else "group_id" if group_id is not None else "user_id"
+        scope_id = public_workspace_id if public_workspace_id is not None else group_id if group_id is not None else user_id
+        if (
+            target_document.get(scope_field) != scope_id
+            or not any(member.get("id") == document_id for member in family_documents)
+            or any(
+                member.get(scope_field) != scope_id
+                or _get_document_family_key(member) != _get_document_family_key(target_document)
+                for member in family_documents
+            )
+        ):
+            raise PermissionError("Document access denied.")
+        selected_documents = family_documents if delete_mode == "all_versions" else [target_document]
+        for member in selected_documents:
+            if operation_guard is not None:
+                operation_guard(document_id=member["id"])
+            fresh = cosmos_container.read_item(item=member["id"], partition_key=member["id"])
+            if not member.get("_etag") or fresh.get("_etag") != member["_etag"]:
+                raise ScreeningConflictError()
     current_document = _choose_current_document(family_documents)
     target_is_current = current_document and current_document.get('id') == document_id
 
     if delete_mode == "all_versions":
         deleted_document_ids = []
         for family_document in family_documents:
-            delete_document(
-                user_id=user_id,
-                document_id=family_document['id'],
-                group_id=group_id,
-                public_workspace_id=public_workspace_id,
-            )
-            delete_document_chunks(
-                document_id=family_document['id'],
-                group_id=group_id,
-                public_workspace_id=public_workspace_id,
-            )
+            try:
+                if strict:
+                    if operation_guard is not None:
+                        operation_guard(document_id=family_document["id"])
+                    delete_document_chunks(family_document["id"], group_id=group_id, public_workspace_id=public_workspace_id)
+                    delete_document(
+                        user_id, family_document["id"], group_id=group_id, public_workspace_id=public_workspace_id,
+                        strict=True, expected_etag=family_document.get("_etag"), operation_guard=operation_guard,
+                        persisted_sources_only=persisted_sources_only,
+                    )
+                else:
+                    delete_document(
+                        user_id=user_id, document_id=family_document['id'],
+                        group_id=group_id, public_workspace_id=public_workspace_id,
+                    )
+                    delete_document_chunks(
+                        document_id=family_document['id'], group_id=group_id, public_workspace_id=public_workspace_id,
+                    )
+            except Exception as error:
+                if strict:
+                    raise DocumentRevisionDeleteError(
+                        [*deleted_document_ids, *getattr(error, "deleted_document_ids", [])],
+                    ) from error
+                raise
             deleted_document_ids.append(family_document['id'])
 
         return {
@@ -4822,40 +5053,56 @@ def delete_document_revision(user_id, document_id, delete_mode="all_versions", g
             'promoted_document_id': None,
         }
 
-    delete_document(
-        user_id=user_id,
-        document_id=document_id,
-        group_id=group_id,
-        public_workspace_id=public_workspace_id,
-    )
-    delete_document_chunks(
-        document_id=document_id,
-        group_id=group_id,
-        public_workspace_id=public_workspace_id,
-    )
+    if strict:
+        if operation_guard is not None:
+            operation_guard(document_id=document_id)
+        delete_document_chunks(document_id, group_id=group_id, public_workspace_id=public_workspace_id)
+        delete_document(
+            user_id, document_id, group_id=group_id, public_workspace_id=public_workspace_id,
+            strict=True, expected_etag=target_document.get("_etag"), operation_guard=operation_guard,
+            persisted_sources_only=persisted_sources_only,
+        )
+    else:
+        delete_document(
+            user_id=user_id, document_id=document_id, group_id=group_id, public_workspace_id=public_workspace_id,
+        )
+        delete_document_chunks(document_id=document_id, group_id=group_id, public_workspace_id=public_workspace_id)
 
     promoted_document_id = None
     if target_is_current:
         remaining_documents = [doc for doc in family_documents if doc.get('id') != document_id]
         if remaining_documents:
+            if operation_guard is not None:
+                operation_guard()
             promoted_document = _choose_current_document(remaining_documents)
             promoted_document['revision_family_id'] = target_document.get('revision_family_id') or promoted_document.get('revision_family_id') or promoted_document.get('id')
             promoted_document['is_current_version'] = True
             promoted_document['search_visibility_state'] = 'active'
-            _promote_document_blob_to_current_alias(
-                promoted_document,
-                user_id=user_id,
-                group_id=group_id,
-                public_workspace_id=public_workspace_id,
-            )
-            set_document_chunk_visibility(promoted_document, active=True)
-            _upsert_document_and_sync_access_index(
-                cosmos_container,
-                promoted_document,
-                operation='document_revision_promoted',
-            )
+            screened_promotion = strict and SCREENING_FIELD in promoted_document
+            promotion_available = not screened_promotion or public_document_payload(promoted_document)[SCREENING_FIELD]["available"]
+            if strict:
+                try:
+                    if not screened_promotion and promoted_document.get("archived_blob_path"):
+                        promoted_document["blob_path"] = promoted_document["archived_blob_path"]
+                        promoted_document["blob_path_mode"] = ARCHIVED_REVISION_BLOB_PATH_MODE
+                    promoted_document = _upsert_document_and_sync_access_index(
+                        cosmos_container, promoted_document, operation='document_revision_promoted', strict=True,
+                    )
+                    if operation_guard is not None:
+                        operation_guard()
+                    set_document_chunk_visibility(promoted_document, active=promotion_available)
+                except Exception as error:
+                    raise DocumentRevisionDeleteError([document_id]) from error
+            else:
+                _promote_document_blob_to_current_alias(
+                    promoted_document, user_id=user_id, group_id=group_id, public_workspace_id=public_workspace_id,
+                )
+                set_document_chunk_visibility(promoted_document, active=True)
+                _upsert_document_and_sync_access_index(
+                    cosmos_container, promoted_document, operation='document_revision_promoted',
+                )
             promoted_document_id = promoted_document.get('id')
-            if promoted_document.get("source_kind") == "xml_schema":
+            if promoted_document.get("source_kind") == "xml_schema" and promotion_available:
                 try:
                     _refresh_xsd_document_schema_state(
                         promoted_document,
@@ -5382,13 +5629,30 @@ def detect_doc_type(document_id, user_id=None):
 
     return None
 
-def process_metadata_extraction_background(document_id, user_id, group_id=None, public_workspace_id=None):
+def _update_document_for_job(*, operation_guard=None, safe_errors=False, **arguments):
+    status = arguments.get("status")
+    if safe_errors and isinstance(status, str) and any(word in status.lower() for word in ("error", "failed")):
+        arguments["status"] = "Document processing failed. Contact an administrator if the problem persists."
+    if operation_guard is None:
+        return update_document(**arguments)
+    document = operation_guard()
+    return update_document(
+        **arguments, strict=True, expected_etag=document.get("_etag"), operation_guard=operation_guard,
+    )
+
+
+def process_metadata_extraction_background(
+    document_id, user_id, group_id=None, public_workspace_id=None, *, operation_guard=None, safe_errors=False,
+):
     """
     Background function that calls extract_document_metadata(...)
     and updates Cosmos DB accordingly.
     """
     is_group = group_id is not None
     is_public_workspace = public_workspace_id is not None
+    update_doc = update_document if operation_guard is None and not safe_errors else partial(
+        _update_document_for_job, operation_guard=operation_guard, safe_errors=safe_errors,
+    )
 
     try:
         # Log status: starting
@@ -5404,7 +5668,7 @@ def process_metadata_extraction_background(document_id, user_id, group_id=None, 
         elif is_group:
             args["group_id"] = group_id
 
-        update_document(**args)
+        update_doc(**args)
 
         # Call your existing extraction function
         args = {
@@ -5417,7 +5681,10 @@ def process_metadata_extraction_background(document_id, user_id, group_id=None, 
         elif is_group:
             args["group_id"] = group_id
 
-        metadata = extract_document_metadata(**args)
+        if operation_guard is not None or safe_errors:
+            metadata = extract_document_metadata(**args, operation_guard=operation_guard, safe_errors=safe_errors)
+        else:
+            metadata = extract_document_metadata(**args)
 
 
         if not metadata:
@@ -5433,7 +5700,7 @@ def process_metadata_extraction_background(document_id, user_id, group_id=None, 
             elif is_group:
                 args["group_id"] = group_id
 
-            update_document(**args)
+            update_doc(**args)
 
             return
 
@@ -5454,7 +5721,9 @@ def process_metadata_extraction_background(document_id, user_id, group_id=None, 
         elif is_group:
             args_metadata["group_id"] = group_id
 
-        update_document(**args_metadata)
+        saved = update_doc(**args_metadata)
+        if safe_errors and isinstance(saved, dict) and SCREENING_FIELD in saved and not document_is_available(saved):
+            return
 
         args_status = {
             "document_id": document_id,
@@ -5468,7 +5737,7 @@ def process_metadata_extraction_background(document_id, user_id, group_id=None, 
         elif is_group:
             args_status["group_id"] = group_id
 
-        update_document(**args_status)
+        update_doc(**args_status)
 
     except Exception as e:
         # Log any exceptions
@@ -5483,9 +5752,13 @@ def process_metadata_extraction_background(document_id, user_id, group_id=None, 
         elif is_group:
             args["group_id"] = group_id
 
-        update_document(**args)
+        update_doc(**args)
+        if safe_errors:
+            raise
 
-def extract_document_metadata(document_id, user_id, group_id=None, public_workspace_id=None):
+def extract_document_metadata(
+    document_id, user_id, group_id=None, public_workspace_id=None, *, operation_guard=None, safe_errors=False,
+):
     """
     Extract metadata from a document stored in Cosmos DB.
     This function is called in the background after the document is uploaded.
@@ -5493,6 +5766,11 @@ def extract_document_metadata(document_id, user_id, group_id=None, public_worksp
     content safety checks.
     """
 
+    if operation_guard is not None:
+        operation_guard()
+    update_doc = update_document if operation_guard is None and not safe_errors else partial(
+        _update_document_for_job, operation_guard=operation_guard, safe_errors=safe_errors,
+    )
     screening_document = get_document_metadata(document_id, user_id, group_id, public_workspace_id)
     if screening_document and SCREENING_FIELD in screening_document:
         require_document_available(screening_document)
@@ -5597,7 +5875,7 @@ def extract_document_metadata(document_id, user_id, group_id=None, public_worksp
         elif is_group:
             args["group_id"] = group_id
 
-        update_document(**args)
+        update_doc(**args)
 
 
         add_file_task_to_file_processing_log(
@@ -5606,6 +5884,8 @@ def extract_document_metadata(document_id, user_id, group_id=None, public_worksp
             content=f"Retrieved {len(document_items)} metadata record(s) for document {document_id}"
         )
     except Exception as e:
+        if operation_guard is not None:
+            raise
         add_file_task_to_file_processing_log(
             document_id=document_id,
             user_id=group_id if is_group else user_id,
@@ -5650,7 +5930,7 @@ def extract_document_metadata(document_id, user_id, group_id=None, public_worksp
     elif is_group:
         args["group_id"] = group_id
 
-    update_document(**args)
+    update_doc(**args)
 
 
     # --- Step 3: Content Safety Check (if enabled) ---
@@ -5726,13 +6006,15 @@ def extract_document_metadata(document_id, user_id, group_id=None, public_worksp
             elif is_group:
                 args["group_id"] = group_id
 
-            update_document(**args)
+            update_doc(**args)
 
 
-            document_scope, scope_id = detect_doc_type(
-                document_id,
-                user_id
-            )
+            if group_id is not None:
+                document_scope, scope_id = "group", group_id
+            elif public_workspace_id is not None:
+                document_scope, scope_id = "public", public_workspace_id
+            else:
+                document_scope, scope_id = detect_doc_type(document_id, user_id)
 
             if document_scope == "personal":
                 search_results = hybrid_search(
@@ -5778,6 +6060,8 @@ def extract_document_metadata(document_id, user_id, group_id=None, public_worksp
         else:
             search_results = "No Hybrid results"
     except Exception as e:
+        if operation_guard is not None:
+            raise
         add_file_task_to_file_processing_log(
             document_id=document_id,
             user_id=group_id if is_group else user_id,
@@ -5787,12 +6071,16 @@ def extract_document_metadata(document_id, user_id, group_id=None, public_worksp
         search_results = "No Hybrid results"
 
     # --- Step 5: Prepare GPT Client ---
+    if operation_guard is not None:
+        operation_guard()
     try:
         gpt_client, gpt_model = _resolve_metadata_extraction_client(
             settings,
             identity_context={'user_id': user_id},
         )
     except Exception as e:
+        if operation_guard is not None:
+            raise
         add_file_task_to_file_processing_log(
             document_id=document_id,
             user_id=group_id if is_group else user_id,
@@ -5834,6 +6122,8 @@ def extract_document_metadata(document_id, user_id, group_id=None, public_worksp
         )
 
     except Exception as e:
+        if operation_guard is not None:
+            raise
         if screening_document and SCREENING_FIELD in screening_document:
             log_event(
                 "[CONTENT_SCREENING] Approved-source metadata generation failed.",
@@ -5853,6 +6143,8 @@ def extract_document_metadata(document_id, user_id, group_id=None, public_worksp
         require_document_available(get_document_metadata(document_id, user_id, group_id, public_workspace_id))
 
     if not response:
+        if operation_guard is not None:
+            raise RuntimeError("Metadata generation returned no response.")
         return meta_data  # or None, depending on your logic
 
     response_content = response.choices[0].message.content
@@ -5891,6 +6183,8 @@ def extract_document_metadata(document_id, user_id, group_id=None, public_worksp
         gpt_output["keywords"] = ensure_list(gpt_output.get("keywords", []))
 
     except (json.JSONDecodeError, TypeError) as e:
+        if operation_guard is not None:
+            raise
         add_file_task_to_file_processing_log(
             document_id=document_id,
             user_id=group_id if is_group else user_id,
@@ -5948,7 +6242,7 @@ def extract_document_metadata(document_id, user_id, group_id=None, public_worksp
     elif is_group:
         args["group_id"] = group_id
 
-    update_document(**args)
+    update_doc(**args)
 
 
     return meta_data
@@ -9858,8 +10152,13 @@ def _download_document_source_to_temp_file(document_item, user_id=None, group_id
         raise
 
 
-def process_document_reprocess_extraction_background(document_id, user_id, target_extraction_mode, group_id=None, public_workspace_id=None):
+def process_document_reprocess_extraction_background(
+    document_id, user_id, target_extraction_mode, group_id=None, public_workspace_id=None, *,
+    operation_guard=None, safe_errors=False,
+):
     """Extract a stored PDF or image again with an explicit Standard/Enhanced mode."""
+    if operation_guard is not None:
+        operation_guard()
     document = get_document_metadata(document_id, user_id, group_id, public_workspace_id)
     if document_requires_screening(document, get_settings()):
         return reprocess_document(
@@ -9869,10 +10168,14 @@ def process_document_reprocess_extraction_background(document_id, user_id, targe
     return _process_document_reprocess_extraction_background_impl(
         document_id, user_id, target_extraction_mode,
         group_id=group_id, public_workspace_id=public_workspace_id,
+        operation_guard=operation_guard, safe_errors=safe_errors,
     )
 
 
-def _process_document_reprocess_extraction_background_impl(document_id, user_id, target_extraction_mode, group_id=None, public_workspace_id=None):
+def _process_document_reprocess_extraction_background_impl(
+    document_id, user_id, target_extraction_mode, group_id=None, public_workspace_id=None, *,
+    operation_guard=None, safe_errors=False,
+):
     is_group = group_id is not None
     is_public_workspace = public_workspace_id is not None
     target_mode = normalize_document_intelligence_manual_extraction_mode(target_extraction_mode)
@@ -9889,7 +10192,10 @@ def _process_document_reprocess_extraction_background_impl(document_id, user_id,
             args["public_workspace_id"] = public_workspace_id
         elif is_group:
             args["group_id"] = group_id
-        update_document(**args)
+        if operation_guard is not None or safe_errors:
+            _update_document_for_job(**args, operation_guard=operation_guard, safe_errors=safe_errors)
+        else:
+            update_document(**args)
 
     try:
         document_item = get_document_metadata(
@@ -9982,6 +10288,8 @@ def _process_document_reprocess_extraction_background_impl(document_id, user_id,
             )
         except Exception as update_error:
             print(f"Failed to update extraction change error status for {document_id}: {update_error}")
+        if safe_errors:
+            raise
     finally:
         if temp_file_path and os.path.exists(temp_file_path):
             try:
@@ -11100,9 +11408,17 @@ def _process_markdown_with_ordered_dict_retry(processor_args, update_callback):
     raise RuntimeError("Markdown processing retry loop exited unexpectedly.")
 
 
-def process_document_upload_background(document_id, user_id, temp_file_path, original_filename, group_id=None, public_workspace_id=None, extraction_mode_override=None):
+def process_document_upload_background(
+    document_id, user_id, temp_file_path, original_filename, group_id=None, public_workspace_id=None,
+    extraction_mode_override=None, *, operation_guard=None, safe_errors=False,
+):
     """Keep screened intake private until its complete, revision-bound decision."""
+    if operation_guard is not None:
+        operation_guard()
     document = get_document_metadata(document_id, user_id, group_id, public_workspace_id)
+    processor = _process_document_upload_background_impl
+    if operation_guard is not None or safe_errors:
+        processor = partial(processor, operation_guard=operation_guard, safe_errors=safe_errors)
     if document and document.get(PUBLICATION_BINDING):
         try:
             should_process = begin_publication_processing(document, temp_file_path)
@@ -11121,7 +11437,13 @@ def process_document_upload_background(document_id, user_id, temp_file_path, ori
     if document_requires_screening(document, get_settings()):
         return process_screened_upload(
             document_id, user_id, temp_file_path, original_filename,
-            _process_document_upload_background_impl,
+            processor,
+            group_id=group_id, public_workspace_id=public_workspace_id,
+            extraction_mode_override=extraction_mode_override,
+        )
+    if operation_guard is not None or safe_errors:
+        return processor(
+            document_id, user_id, temp_file_path, original_filename,
             group_id=group_id, public_workspace_id=public_workspace_id,
             extraction_mode_override=extraction_mode_override,
         )
@@ -11150,7 +11472,10 @@ def _get_screening_existing_chunks(document):
     return existing_chunks(document)
 
 
-def _process_document_upload_background_impl(document_id, user_id, temp_file_path, original_filename, group_id=None, public_workspace_id=None, extraction_mode_override=None):
+def _process_document_upload_background_impl(
+    document_id, user_id, temp_file_path, original_filename, group_id=None, public_workspace_id=None,
+    extraction_mode_override=None, *, operation_guard=None, safe_errors=False,
+):
     """
     Main background task dispatcher for document processing.
     Handles various file types with specific chunking and processing logic.
@@ -11187,7 +11512,10 @@ def _process_document_upload_background_impl(document_id, user_id, temp_file_pat
         elif is_group:
             args["group_id"] = group_id
 
-        update_document(**args)
+        if operation_guard is not None or safe_errors:
+            _update_document_for_job(**args, operation_guard=operation_guard, safe_errors=safe_errors)
+        else:
+            update_document(**args)
 
 
     total_chunks_saved = 0
@@ -11626,6 +11954,8 @@ def _process_document_upload_background_impl(document_id, user_id, temp_file_pat
             sync_chat_upload_workspace_attachment_status(failed_document_metadata)
         except Exception as update_e:
             print(f"Critical Error: Failed to update document status to error for {document_id}: {update_e}")
+        if safe_errors:
+            raise
 
     finally:
         # --- 3. Cleanup ---
@@ -12479,6 +12809,22 @@ def get_default_tag_color(tag_name):
     return color_palette[color_index]
 
 
+class _GroupTagDefinitionPresent(Exception):
+    """The group's current copy already has the definition; carries it, so nothing is written."""
+
+    def __init__(self, definition):
+        super().__init__("The group already has this tag definition.")
+        self.definition = definition
+
+
+class _PublicTagDefinitionPresent(Exception):
+    """The public workspace's current copy already has the definition; carries it, so nothing is written."""
+
+    def __init__(self, definition):
+        super().__init__("The public workspace already has this tag definition.")
+        self.definition = definition
+
+
 def get_or_create_tag_definition(user_id, tag_name, workspace_type='personal', color=None, group_id=None, public_workspace_id=None):
     """
     Get or create a tag definition.
@@ -12502,34 +12848,94 @@ def get_or_create_tag_definition(user_id, tag_name, workspace_type='personal', c
     safe_color = get_safe_tag_color(color, tag_name)
 
     if workspace_type == 'group' and group_id:
-        from functions_group import find_group_by_id
+        from functions_group import (
+            GroupDocumentWriteConflict,
+            find_group_by_id,
+            update_group_document_with_etag_guard,
+        )
         group_doc = find_group_by_id(group_id)
         if not group_doc:
             return {'color': safe_color}
         tag_defs = group_doc.get('tag_definitions', {})
         if tag_name not in tag_defs:
-            tag_defs[tag_name] = {
-                'color': safe_color,
-                'created_at': datetime.now(timezone.utc).isoformat()
-            }
-            group_doc['tag_definitions'] = tag_defs
-            cosmos_groups_container.upsert_item(group_doc)
+            # Added to the group's current copy, and only while that copy still lacks it:
+            # a definition added meanwhile is kept, not replaced, nothing else on the
+            # group is restored from the copy read above, and a group deleted meanwhile
+            # is not recreated. A group that keeps changing is left without it; the
+            # colour answered is the same either way.
+            created_at = datetime.now(timezone.utc).isoformat()
+
+            def add_definition(fresh):
+                fresh_defs = fresh.get('tag_definitions') or {}
+                if tag_name in fresh_defs:
+                    raise _GroupTagDefinitionPresent(fresh_defs[tag_name])
+                fresh_defs[tag_name] = {
+                    'color': safe_color,
+                    'created_at': created_at
+                }
+                fresh['tag_definitions'] = fresh_defs
+                return fresh
+
+            try:
+                group_doc = update_group_document_with_etag_guard(group_id, add_definition, cache_reason=None)
+            except _GroupTagDefinitionPresent as present:
+                group_doc = {'tag_definitions': {tag_name: present.definition}}
+            except GroupDocumentWriteConflict:
+                log_event(
+                    "[CREATE_TAG] A group tag definition was not saved because the group kept changing.",
+                    level=logging.WARNING,
+                )
+                return {'color': safe_color}
+            if not group_doc:
+                return {'color': safe_color}
+            tag_defs = group_doc.get('tag_definitions') or {}
         stored_tag_def = dict(tag_defs[tag_name])
         stored_tag_def['color'] = get_safe_tag_color(stored_tag_def.get('color'), tag_name)
         return stored_tag_def
     elif workspace_type == 'public' and public_workspace_id:
-        from functions_public_workspaces import find_public_workspace_by_id
+        from functions_public_workspaces import (
+            PublicWorkspaceDocumentWriteConflict,
+            find_public_workspace_by_id,
+            update_public_workspace_document_with_etag_guard,
+        )
         ws_doc = find_public_workspace_by_id(public_workspace_id)
         if not ws_doc:
             return {'color': safe_color}
         tag_defs = ws_doc.get('tag_definitions', {})
         if tag_name not in tag_defs:
-            tag_defs[tag_name] = {
-                'color': safe_color,
-                'created_at': datetime.now(timezone.utc).isoformat()
-            }
-            ws_doc['tag_definitions'] = tag_defs
-            cosmos_public_workspaces_container.upsert_item(ws_doc)
+            # Added to the workspace's current copy, and only while that copy still lacks
+            # it: a definition added meanwhile is kept, not replaced, nothing else on the
+            # workspace is restored from the copy read above, and a workspace deleted
+            # meanwhile is not recreated. A workspace that keeps changing is left without
+            # it; the colour answered is the same either way.
+            created_at = datetime.now(timezone.utc).isoformat()
+
+            def add_definition(fresh):
+                fresh_defs = fresh.get('tag_definitions') or {}
+                if tag_name in fresh_defs:
+                    raise _PublicTagDefinitionPresent(fresh_defs[tag_name])
+                fresh_defs[tag_name] = {
+                    'color': safe_color,
+                    'created_at': created_at
+                }
+                fresh['tag_definitions'] = fresh_defs
+                return fresh
+
+            try:
+                ws_doc = update_public_workspace_document_with_etag_guard(
+                    public_workspace_id, add_definition, cache_reason=None
+                )
+            except _PublicTagDefinitionPresent as present:
+                ws_doc = {'tag_definitions': {tag_name: present.definition}}
+            except PublicWorkspaceDocumentWriteConflict:
+                log_event(
+                    "[PUBLIC_DOCUMENTS] A public workspace tag definition was not saved because the workspace kept changing.",
+                    level=logging.WARNING,
+                )
+                return {'color': safe_color}
+            if not ws_doc:
+                return {'color': safe_color}
+            tag_defs = ws_doc.get('tag_definitions') or {}
         stored_tag_def = dict(tag_defs[tag_name])
         stored_tag_def['color'] = get_safe_tag_color(stored_tag_def.get('color'), tag_name)
         return stored_tag_def
@@ -12558,7 +12964,9 @@ def get_or_create_tag_definition(user_id, tag_name, workspace_type='personal', c
         return stored_tag_def
 
 
-def propagate_tags_to_blob_metadata(document_id, tags, user_id, group_id=None, public_workspace_id=None):
+def propagate_tags_to_blob_metadata(
+    document_id, tags, user_id, group_id=None, public_workspace_id=None, *, strict=False, expected_etag=None,
+):
     """
     Update blob metadata with document tags when enhanced citations is enabled.
     Tags are stored as a comma-separated string in blob metadata.
@@ -12587,6 +12995,14 @@ def propagate_tags_to_blob_metadata(document_id, tags, user_id, group_id=None, p
             cosmos_container = cosmos_user_documents_container
 
         doc_item = cosmos_container.read_item(document_id, partition_key=document_id)
+        if strict and (
+            not expected_etag or doc_item.get("_etag") != expected_etag
+            or (group_id is not None and doc_item.get("group_id") != group_id)
+            or (public_workspace_id is not None and doc_item.get("public_workspace_id") != public_workspace_id)
+        ):
+            raise ScreeningConflictError()
+        if strict and not _has_persisted_blob_reference(doc_item) and not doc_item.get("enhanced_citations"):
+            return
         storage_account_container_name, blob_path = get_document_blob_storage_info(
             doc_item,
             user_id=user_id,
@@ -12594,11 +13010,15 @@ def propagate_tags_to_blob_metadata(document_id, tags, user_id, group_id=None, p
             public_workspace_id=public_workspace_id,
         )
         if not blob_path:
+            if strict:
+                raise FileNotFoundError("The document source is unavailable.")
             print(f"Warning: No blob path found for document {document_id}, skipping blob metadata update")
             return
 
         blob_service_client = CLIENTS.get("storage_account_office_docs_client")
         if not blob_service_client:
+            if strict:
+                raise RuntimeError("Document source storage is unavailable.")
             print(f"Warning: Blob service client not available, skipping blob metadata update")
             return
 
@@ -12608,6 +13028,8 @@ def propagate_tags_to_blob_metadata(document_id, tags, user_id, group_id=None, p
         )
 
         if not blob_client.exists():
+            if strict:
+                raise FileNotFoundError("The document source is unavailable.")
             print(f"Warning: Blob not found at {blob_path}, skipping metadata update")
             return
 
@@ -12615,11 +13037,23 @@ def propagate_tags_to_blob_metadata(document_id, tags, user_id, group_id=None, p
         properties = blob_client.get_blob_properties()
         existing_metadata = dict(properties.metadata) if properties.metadata else {}
         existing_metadata['document_tags'] = ','.join(tags) if tags else ''
-        blob_client.set_blob_metadata(metadata=existing_metadata)
+        if strict:
+            blob_client.set_blob_metadata(
+                metadata=existing_metadata, etag=properties.etag, match_condition=MatchConditions.IfNotModified,
+            )
+        else:
+            blob_client.set_blob_metadata(metadata=existing_metadata)
 
         print(f"Successfully updated blob metadata tags for document {document_id} at {blob_path}")
 
     except Exception as e:
+        if strict:
+            log_event(
+                "[DOCUMENTS] Document tags were saved but blob metadata propagation failed.",
+                extra={"document_id": document_id, "exception_type": type(e).__name__},
+                level=logging.ERROR,
+            )
+            raise DocumentMutationPropagationError("Document tags were saved, but source metadata could not be updated.") from e
         print(f"Warning: Failed to update blob metadata tags for document {document_id}: {e}")
         # Non-fatal — tag propagation to chunks is the primary operation
 

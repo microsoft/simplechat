@@ -84,6 +84,15 @@ from route_backend_feedback import *
 from route_backend_settings import *
 from route_backend_prompts import *
 from route_backend_group_prompts import *
+from route_backend_group_prompts_scoped import *
+from route_backend_group_actions_scoped import *
+from route_backend_group_agents_scoped import *
+from route_backend_group_identities_scoped import *
+from route_backend_group_endpoints_scoped import *
+from route_backend_group_file_sources_scoped import *
+from route_backend_group_directory import register_route_backend_group_directory
+from route_backend_group_membership import register_route_backend_group_membership
+from route_backend_group_settings import register_route_backend_group_settings
 from route_backend_control_center import *
 from route_backend_notifications import *
 from route_backend_retention_policy import *
@@ -92,8 +101,17 @@ from route_backend_plugins import bpap as admin_plugins_bp, bpdp as dynamic_plug
 from route_backend_agents import bpa as admin_agents_bp
 from route_backend_agent_templates import bp_agent_templates
 from route_backend_public_workspaces import *
+from route_backend_public_directory import register_route_backend_public_directory
+from route_backend_public_settings import register_route_backend_public_settings
 from route_backend_public_documents import *
+from route_backend_public_document_reads import register_route_backend_public_document_reads
+from route_backend_public_document_management import register_route_backend_public_document_management
+from route_backend_public_document_collaboration import register_route_backend_public_document_collaboration
+from route_backend_public_membership import register_route_backend_public_membership
 from route_backend_public_prompts import *
+from route_backend_public_prompts_scoped import register_route_backend_public_prompts_scoped
+from route_backend_public_identities_scoped import register_route_backend_public_identities_scoped
+from route_backend_public_file_sources_scoped import register_route_backend_public_file_sources_scoped
 from route_backend_file_sync import register_route_backend_file_sync
 from route_backend_workspace_identities import register_route_backend_workspace_identities
 from route_backend_user_agreement import register_route_backend_user_agreement
@@ -1473,6 +1491,31 @@ register_route_blueprint('backend_prompts', register_route_backend_prompts, user
 
 # ------------------- API Group Prompts Routes ----------
 register_route_blueprint('backend_group_prompts', register_route_backend_group_prompts, user_required_blueprint)
+register_route_blueprint('backend_group_prompts_scoped', register_route_backend_group_prompts_scoped, user_required_blueprint)
+
+# ------------------- API Group Actions Routes ----------
+register_route_blueprint('backend_group_actions_scoped', register_route_backend_group_actions_scoped, user_required_blueprint)
+
+# ------------------- API Group Agents Routes -----------
+register_route_blueprint('backend_group_agents_scoped', register_route_backend_group_agents_scoped, user_required_blueprint)
+
+# ------------------- API Group Identities Routes -------
+register_route_blueprint('backend_group_identities_scoped', register_route_backend_group_identities_scoped, user_required_blueprint)
+
+# ------------------- API Group Model Endpoints Routes --
+register_route_blueprint('backend_group_endpoints_scoped', register_route_backend_group_endpoints_scoped, user_required_blueprint)
+
+# ------------------- API Group File Sources Routes -----
+register_route_blueprint('backend_group_file_sources_scoped', register_route_backend_group_file_sources_scoped, user_required_blueprint)
+
+# ------------------- API Group Directory Routes --------
+register_route_blueprint('backend_group_directory', register_route_backend_group_directory, user_required_blueprint)
+
+# ------------------- API Group Membership Routes -------
+register_route_blueprint('backend_group_membership', register_route_backend_group_membership, user_required_blueprint)
+
+# ------------------- API Group Settings Routes ---------
+register_route_blueprint('backend_group_settings', register_route_backend_group_settings, user_required_blueprint)
 
 # ------------------- API Control Center Routes ---------
 register_route_blueprint('backend_control_center', register_route_backend_control_center, login_required_blueprint)
@@ -1489,14 +1532,41 @@ register_route_blueprint('backend_governance', register_route_backend_governance
 # ------------------- API Public Workspaces Routes -------
 register_route_blueprint('backend_public_workspaces', register_route_backend_public_workspaces, user_required_blueprint)
 
+# ------------------- API Public Directory Routes -------
+register_route_blueprint('backend_public_directory', register_route_backend_public_directory, user_required_blueprint)
+
+# ------------------- API Public Settings Routes --------
+register_route_blueprint('backend_public_settings', register_route_backend_public_settings, user_required_blueprint)
+
 # ------------------- API Conversation Export Routes -----
 register_route_blueprint('backend_conversation_export', register_route_backend_conversation_export, user_required_blueprint)
 
 # ------------------- API Public Documents Routes --------
 register_route_blueprint('backend_public_documents', register_route_backend_public_documents, user_required_blueprint)
 
+# ------------------- API Public Document Reads (immutable-target) ---
+register_route_blueprint('backend_public_document_reads', register_route_backend_public_document_reads, user_required_blueprint)
+
+# ------------------- API Public Document Management (immutable-target) ---
+register_route_blueprint('backend_public_document_management', register_route_backend_public_document_management, user_required_blueprint)
+
+# ------------------- API Public Document Collaboration (immutable-target) ---
+register_route_blueprint('backend_public_document_collaboration', register_route_backend_public_document_collaboration, user_required_blueprint)
+
+# ------------------- API Public Membership Routes (immutable-target) ---
+register_route_blueprint('backend_public_membership', register_route_backend_public_membership, user_required_blueprint)
+
 # ------------------- API Public Prompts Routes ----------
 register_route_blueprint('backend_public_prompts', register_route_backend_public_prompts, user_required_blueprint)
+
+# ------------------- API Public Prompts Routes (immutable-target) ---
+register_route_blueprint('backend_public_prompts_scoped', register_route_backend_public_prompts_scoped, user_required_blueprint)
+
+# ------------------- API Public Identities Routes (immutable-target) ---
+register_route_blueprint('backend_public_identities_scoped', register_route_backend_public_identities_scoped, user_required_blueprint)
+
+# ------------------- API Public File Sources Routes (immutable-target) ---
+register_route_blueprint('backend_public_file_sources_scoped', register_route_backend_public_file_sources_scoped, user_required_blueprint)
 
 # ------------------- API File Sync Routes ---------------
 register_route_blueprint('backend_file_sync', register_route_backend_file_sync, login_required_blueprint)

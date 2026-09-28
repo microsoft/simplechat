@@ -6,6 +6,7 @@ from flask import current_app
 from functions_authentication import *
 from functions_settings import *
 from functions_public_workspaces import *
+from functions_public_prompt_policy import public_prompt_management_operations
 from functions_prompts import *
 from swagger_wrapper import swagger_route, get_auth_security
 
@@ -25,6 +26,26 @@ def _get_active_public_workspace_or_error(
         return None, (jsonify({'error': 'Workspace not found'}), 404)
     except PermissionError:
         return None, (jsonify({'error': 'Access denied'}), 403)
+
+
+def _ensure_active_status_for_write(workspace_doc, role, operation):
+    """Refuse a legacy public prompt write when the workspace status forbids it.
+
+    M9C behaviour change (contract decision 19 default): the active-scoped
+    ``/api/public_prompts`` writes previously ran without any workspace-status
+    check, so a ``locked``, ``upload_disabled``, ``inactive`` or unrecognized
+    workspace could still be written through the active route. They now require
+    an ``active`` workspace, reusing the same explicit status allowlist as the
+    new scoped routes rather than the fail-open shared status helper. Reads are
+    unchanged, and the manager-role gate still comes from
+    ``_get_active_public_workspace_or_error``'s ``allowed_roles``.
+    """
+    settings = get_settings()
+    if operation not in public_prompt_management_operations(workspace_doc, role, settings):
+        return jsonify({
+            'error': 'This public workspace is not accepting prompt changes right now.',
+        }), 403
+    return None
 
 def register_route_backend_public_prompts(bp):
     """
@@ -73,7 +94,11 @@ def register_route_backend_public_prompts(bp):
         )
         if error_response:
             return error_response
-        active_ws, _, _ = active_workspace_context
+        active_ws, active_ws_doc, active_role = active_workspace_context
+
+        status_error = _ensure_active_status_for_write(active_ws_doc, active_role, "create")
+        if status_error:
+            return status_error
 
         data = request.get_json() or {}
         name = data.get('name','').strip()
@@ -138,7 +163,11 @@ def register_route_backend_public_prompts(bp):
         )
         if error_response:
             return error_response
-        active_ws, _, _ = active_workspace_context
+        active_ws, active_ws_doc, active_role = active_workspace_context
+
+        status_error = _ensure_active_status_for_write(active_ws_doc, active_role, "edit")
+        if status_error:
+            return status_error
 
         data = request.get_json() or {}
         updates, error = build_prompt_updates(data)
@@ -173,7 +202,11 @@ def register_route_backend_public_prompts(bp):
         )
         if error_response:
             return error_response
-        active_ws, _, _ = active_workspace_context
+        active_ws, active_ws_doc, active_role = active_workspace_context
+
+        status_error = _ensure_active_status_for_write(active_ws_doc, active_role, "delete")
+        if status_error:
+            return status_error
 
         try:
             success = delete_prompt_doc(

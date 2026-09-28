@@ -1,7 +1,7 @@
 # test_v2_workflow_loops.py
 """
 Closed browser regressions for serial For each, exact Collect and explicit saved-record reporting.
-Version: 0.261.122
+Version: 0.261.127
 Implemented in: 0.261.117
 
 Loads the real built local SPA and validates authoring payloads with production
@@ -64,7 +64,7 @@ def expand_history(ui, *, group=False):
     page = ui.page
     ui.open("/groups" if group else "/workspace/workflows")
     if group:
-        page.get_by_label("Group workspace", exact=True).select_option(GROUP_ID)
+        ui.select_group(GROUP_ID)
     row = page.get_by_role("listitem").filter(has_text="Group source loop" if group else "Source loop review").first
     row.get_by_role("button", name="Show run history", exact=True).click()
     row.get_by_role("button", name="Show run task results", exact=True).click()
@@ -230,7 +230,7 @@ def test_http_422_preview_preserves_count_precision_and_clears_previous_items(wo
     ui, page = workflow_loops_ui, workflow_loops_ui.page
     if group:
         ui.open("/groups")
-        page.get_by_label("Group workspace", exact=True).select_option(GROUP_ID)
+        ui.select_group(GROUP_ID)
         page.get_by_role("button", name="Edit Group source loop", exact=True).click()
         loop = page.get_by_role("region", name="For each block", exact=True)
     else:
@@ -280,7 +280,7 @@ def test_hybrid_preview_discloses_candidate_reranking_and_backfill_limits(workfl
     ui, page = workflow_loops_ui, workflow_loops_ui.page
     if group:
         ui.open("/groups")
-        page.get_by_label("Group workspace", exact=True).select_option(GROUP_ID)
+        ui.select_group(GROUP_ID)
         page.get_by_role("button", name="Edit Group source loop", exact=True).click()
         loop = page.get_by_role("region", name="For each block", exact=True)
     else:
@@ -772,7 +772,7 @@ def test_saved_record_report_is_read_only_when_server_capability_is_missing(work
 def test_group_query_preview_and_save_keep_explicit_group_scope(workflow_loops_ui):
     ui, page = workflow_loops_ui, workflow_loops_ui.page
     ui.open("/groups")
-    page.get_by_label("Group workspace", exact=True).select_option(GROUP_ID)
+    ui.select_group(GROUP_ID)
     page.get_by_role("button", name="Edit Group source loop", exact=True).click()
     loop = page.get_by_role("region", name="For each block", exact=True)
     loop.get_by_label("For each source", exact=True).select_option("workspace_query")
@@ -801,7 +801,7 @@ def test_selected_shared_group_document_keeps_recipient_scope(workflow_loops_ui,
     })
     if group_workflow:
         ui.open("/groups")
-        page.get_by_label("Group workspace", exact=True).select_option(GROUP_ID)
+        ui.select_group(GROUP_ID)
         page.get_by_role("button", name="Edit Group source loop", exact=True).click()
         loop = page.get_by_role("region", name="For each block", exact=True)
     else:

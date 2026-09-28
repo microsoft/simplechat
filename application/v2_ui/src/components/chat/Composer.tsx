@@ -97,8 +97,9 @@ import {
 } from '../../lib/reasoning';
 import { Dropdown, type DropdownOption } from '../ui/Dropdown';
 import { suggestPromptName } from '../../lib/promptSlash';
-import { readPromptParam } from '../../lib/conversationUrl';
+import { readPromptParam, readPromptScope } from '../../lib/conversationUrl';
 import { createPrompt } from '../../lib/workspaceApi';
+import { resolvePublicPromptForChat } from '../../lib/promptWorkbench';
 import { messageToPlainText } from '../../lib/messageText';
 import { ANALYSIS_CONTEXT_NOTICE } from '../../lib/savedAnalysis';
 import type { Json, PromptOption, WorkspaceRef } from '../../lib/types';
@@ -568,6 +569,9 @@ export function Composer({ initialAgentSelection }: { initialAgentSelection?: st
     const [searchParams, setSearchParams] = useSearchParams();
     const location = useLocation();
     const [linkedPromptId] = useState(() => readPromptParam(searchParams));
+    // A group prompt link carries its scope so it resolves by id *and* scope. A legacy
+    // `?prompt=<id>` link carries none and keeps resolving by id alone, exactly as before.
+    const [linkedPromptScope] = useState(() => readPromptScope(searchParams));
     const promptLinkConsumed = useRef(false);
     useEffect(() => {
         if (promptLinkConsumed.current || !linkedPromptId || !bootstrap) {
@@ -575,14 +579,59 @@ export function Composer({ initialAgentSelection }: { initialAgentSelection?: st
         }
         promptLinkConsumed.current = true;
 
-        const prompt = promptCatalog.find((item) => item.id === linkedPromptId);
+        const prompt = linkedPromptScope
+            ? promptCatalog.find(
+                  (item) =>
+                      item.id === linkedPromptId
+                      && String(item.scope_type ?? 'personal') === linkedPromptScope.kind
+                      && String(item.scope_id ?? '') === linkedPromptScope.id,
+              )
+            : promptCatalog.find((item) => item.id === linkedPromptId);
         if (!prompt) {
-            toast.error('That prompt is no longer available.');
+            // R4a: a public "Use in chat" link names its workspace and prompt explicitly, so a
+            // workspace hidden from the chat catalog still resolves. This fires only on a catalog
+            // miss for an explicit public link; it fetches the one prompt (reauthorized server-side
+            // by role and status, never through the visibility map), attaches its content on success,
+            // and on any failure falls back to the same "no longer available" toast, attaching
+            // nothing. It writes no catalog or visibility state, and the link is already marked
+            // consumed above, so it never replays. The group and personal paths are unchanged.
+            if (linkedPromptScope && linkedPromptScope.kind === 'public') {
+                const workspaceId = linkedPromptScope.id;
+                void resolvePublicPromptForChat(workspaceId, linkedPromptId)
+                    .then((fetched) => {
+                        attachPrompt({
+                            id: fetched.id,
+                            name: fetched.name,
+                            content: fetched.content,
+                            description: fetched.description,
+                            scope_type: 'public',
+                            scope_id: workspaceId,
+                        });
+                    })
+                    .catch(() => {
+                        toast.error('That prompt is no longer available.');
+                    });
+                return;
+            }
+            // A scoped link names its workspace so the reason is legible: a member who lost
+            // access, or a deleted prompt, should not read as "some prompt, somewhere, is gone".
+            const groupName = linkedPromptScope
+                ? promptCatalog.find(
+                      (item) =>
+                          String(item.scope_id ?? '') === linkedPromptScope.id
+                          && typeof item.scope_name === 'string' && item.scope_name,
+                  )?.scope_name
+                : undefined;
+            toast.error(
+                linkedPromptScope && linkedPromptScope.kind === 'group'
+                    ? `That prompt is no longer available in ${groupName || 'that group'}.`
+                    : 'That prompt is no longer available.',
+            );
             return;
         }
         attachPrompt(prompt);
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [bootstrap, promptCatalog, linkedPromptId]);
+    }, [bootstrap, promptCatalog, linkedPromptId, linkedPromptScope]);
 
     // A model is identified by endpoint + id + provider + deployment together, so the
     // option is keyed on `selection_key` (unique per endpoint) rather than the deployment
@@ -1039,6 +1088,7 @@ export function Composer({ initialAgentSelection }: { initialAgentSelection?: st
             groups: (bootstrap?.scope?.groups ?? []) as WorkspaceRef[],
             publicWorkspaces: (bootstrap?.scope?.public_workspaces ?? []) as WorkspaceRef[],
             state: linkedHandoffState,
+            viewerId: bootstrap?.user.id,
             signal: controller.signal,
         })
             .then((items) => {
@@ -1075,7 +1125,7 @@ export function Composer({ initialAgentSelection }: { initialAgentSelection?: st
             });
 
         return () => controller.abort();
-    }, [canPost, linkedHandoff, linkedHandoffState, setSearchParams, bootstrap?.scope]);
+    }, [canPost, linkedHandoff, linkedHandoffState, setSearchParams, bootstrap?.scope, bootstrap?.user.id]);
 
     const applySuggestion = (suggestion: MentionSuggestion) => {
         // An "Add to this conversation" row is an action, not just a completion. Inserting

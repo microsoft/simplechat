@@ -28,6 +28,7 @@ export function promptDate(prompt: WorkspacePrompt): Date | null {
  * writer of its query string. Re-exported here so the prompt surfaces have one import.
  */
 export { PROMPT_PARAM, chatHrefForPrompt, readPromptParam } from './conversationUrl';
+export type { PromptLinkScope } from './conversationUrl';
 
 export function promptUpdatedLabel(prompt: WorkspacePrompt, now: Date = new Date()): string {
     return formatRelativeDate(promptDate(prompt), now);
@@ -70,16 +71,22 @@ export type PromptSort = 'recent' | 'name';
  * sort key would need a composite index, and prompts written before `is_favorite` existed have
  * no such property for the index to cover. Sorting a few hundred rows in the client costs
  * nothing and works on every existing document.
+ *
+ * `favorites` is false in group scope, where a per-user star is not offered: a shared prompt has
+ * no reader-specific favourite to float, so ordering there is purely by recency or name.
  */
 export function sortPrompts(
     prompts: WorkspacePrompt[],
     sort: PromptSort = 'recent',
+    favorites = true,
 ): WorkspacePrompt[] {
     return prompts.slice().sort((left, right) => {
-        const leftFavourite = isFavoritePrompt(left);
-        const rightFavourite = isFavoritePrompt(right);
-        if (leftFavourite !== rightFavourite) {
-            return leftFavourite ? -1 : 1;
+        if (favorites) {
+            const leftFavourite = isFavoritePrompt(left);
+            const rightFavourite = isFavoritePrompt(right);
+            if (leftFavourite !== rightFavourite) {
+                return leftFavourite ? -1 : 1;
+            }
         }
 
         if (sort === 'name') {
@@ -101,10 +108,12 @@ export function visiblePrompts(
     prompts: WorkspacePrompt[],
     query: string,
     sort: PromptSort = 'recent',
+    favorites = true,
 ): WorkspacePrompt[] {
     return sortPrompts(
         prompts.filter((prompt) => promptMatchesQuery(prompt, query)),
         sort,
+        favorites,
     );
 }
 

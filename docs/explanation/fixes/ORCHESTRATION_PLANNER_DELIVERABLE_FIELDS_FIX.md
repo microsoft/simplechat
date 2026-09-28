@@ -3,6 +3,8 @@
 Fixed/Implemented in version: **0.261.140**, recorded in
 `application/single_app/config.py`.
 
+The deliverable fields fix is the React V2 branch's 0.261.140. On the V2 shared workspaces branch, where 0.261.140 was already its group model endpoint APIs, the fix is part of the React V2 base merge in version **0.261.181**.
+
 ## Issue
 
 Ordinary writing requests and comparisons of selected documents could end with

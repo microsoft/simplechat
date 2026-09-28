@@ -2,7 +2,7 @@
 #!/usr/bin/env python3
 """
 Functional test for Cosmos Wave 4B document access shadow validation.
-Version: 0.250.047
+Version: 0.261.163
 Implemented in: 0.250.012
 Metrics added in: 0.250.013
 Candidate read metrics added in: 0.250.014
@@ -354,6 +354,9 @@ def test_shadow_validation_preserves_missing_group_classification_for_none_filte
     )
 
     with _load_document_access_index_module() as (indexing, index_container, _settings_container):
+        # A group document's sync reads its stored source through the projection fence,
+        # so the document must exist in the group documents container.
+        indexing.cosmos_group_documents_container.upsert_item(legacy_group_document)
         indexing.sync_document_access_index_for_document(legacy_group_document, force=True)
         projection_rows = list(index_container.items.values())
         assert projection_rows[0].get("document_classification") is None

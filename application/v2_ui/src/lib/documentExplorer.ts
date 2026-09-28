@@ -345,6 +345,17 @@ export interface DocumentStatus {
     label: string;
 }
 
+export function generatedArtifactRestriction(document: WorkspaceDocument): string | null {
+    const promotion = document.generated_artifact_promotion_status;
+    if (promotion === 'approval_failed') {
+        return 'Publication approval was recorded, but its processing handoff needs reconciliation in classic before this artifact can be used.';
+    }
+    return promotion === 'pending_approval'
+        || (!promotion && String(document.status ?? '').trim().toLowerCase() === 'pending approval')
+        ? 'This generated artifact needs publication approval before it can be selected for chat or ordinary use.'
+        : null;
+}
+
 /**
  * Work out what to show for a document's processing state.
  *
@@ -355,8 +366,16 @@ export interface DocumentStatus {
 export function documentStatus(document: WorkspaceDocument): DocumentStatus {
     const statusText = String(document.status ?? '').toLowerCase();
 
+    if (document.generated_artifact_promotion_status === 'approval_failed') {
+        return { state: 'error', percent: 0, label: 'Publication handoff failed' };
+    }
+
     if (statusText.includes('error') || statusText.includes('failed')) {
         return { state: 'error', percent: 0, label: 'Error' };
+    }
+
+    if (generatedArtifactRestriction(document)) {
+        return { state: 'pending_approval', percent: 100, label: 'Pending approval' };
     }
 
     if (document.shared_approval_status === 'not_approved') {

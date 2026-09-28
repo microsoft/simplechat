@@ -23,6 +23,7 @@ import { Modal } from '../ui/Modal';
 import { GlassButton } from '../ui/primitives';
 import { PlainMarkdown } from '../ui/PlainMarkdown';
 import { parsePromptVariables } from '../../lib/promptVariables';
+import type { RebaseField } from '../../lib/rebaseDraft';
 import { VariableChip } from './promptPresentation';
 import { PromptVariablePicker, usePromptVariableInsertion } from './PromptVariablePicker';
 
@@ -39,6 +40,13 @@ export const EMPTY_PROMPT_DRAFT: PromptDraft = {
     description: '',
     content: '',
 };
+
+/** The editable fields the conflict rebase considers, over a {@link PromptDraft}. */
+export const PROMPT_REBASE_FIELDS: RebaseField[] = [
+    { path: 'name', label: 'Name' },
+    { path: 'description', label: 'Description' },
+    { path: 'content', label: 'Content' },
+];
 
 type EditorTab = 'write' | 'preview';
 
@@ -100,6 +108,7 @@ export function PromptEditorDialog({
     onChange,
     onSave,
     onCancel,
+    onRefresh,
 }: {
     draft: PromptDraft;
     saving: boolean;
@@ -107,6 +116,11 @@ export function PromptEditorDialog({
     onChange: (next: PromptDraft) => void;
     onSave: () => void;
     onCancel: () => void;
+    /**
+     * Present only after a conditional-write conflict on a shared group prompt. Reloads the list
+     * so the editor's next save carries the latest etag, without discarding the open draft.
+     */
+    onRefresh?: () => void;
 }) {
     const [tab, setTab] = useState<EditorTab>('write');
     const [confirmingDiscard, setConfirmingDiscard] = useState(false);
@@ -245,6 +259,11 @@ export function PromptEditorDialog({
                         <GlassButton size="sm" onClick={requestClose} disabled={saving}>
                             Cancel
                         </GlassButton>
+                        {onRefresh ? (
+                            <GlassButton size="sm" onClick={onRefresh} disabled={saving}>
+                                Refresh
+                            </GlassButton>
+                        ) : null}
                         <GlassButton
                             variant="primary"
                             size="sm"

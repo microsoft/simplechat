@@ -1,7 +1,7 @@
 # test_v2_workflow_publication_completion.py
 """
 UI coverage for publication completion authoring and exact run inspection.
-Version: 0.261.118
+Version: 0.261.127
 Implemented in: 0.261.118
 
 The production SPA uses a closed API fixture with serialized public publication
@@ -48,7 +48,7 @@ def open_editor(ui, scope="user", **viewport):
     ui.workflow_runs[record["id"]] = []
     if scope == "group":
         ui.open("/groups", **viewport)
-        ui.page.get_by_label("Group workspace", exact=True).select_option(GROUP_ID)
+        ui.select_group(GROUP_ID)
         ui.page.get_by_role("button", name=f"Edit {record['name']}", exact=True).click()
     else:
         ui.open(f"/workspace/workflows?workflow_id={record['id']}", **viewport)
@@ -76,7 +76,7 @@ def open_run(ui, scope="user", **viewport):
     record = saved_workflow(ui, scope)
     if scope == "group":
         ui.open("/groups", **viewport)
-        ui.page.get_by_label("Group workspace", exact=True).select_option(GROUP_ID)
+        ui.select_group(GROUP_ID)
     else:
         ui.open("/workspace/workflows", **viewport)
     row = ui.page.get_by_role("listitem").filter(has_text=record["name"]).first

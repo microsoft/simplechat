@@ -1,8 +1,10 @@
 # workspace_authoring.py
 """
 Closed API fixtures for the production V2 My Workspace authoring SPA.
-Version: 0.261.096
+Version: 0.261.165
 Implemented in: 0.261.096
+Action type auth lists as the real editor type builder answers them: 0.261.161
+Binary-safe request recorder so logo image uploads never crash the base route: 0.261.163
 
 The browser loads the real built application and CSS. Only HTTP responses and
 synthetic resource persistence are replaced; no components, stores, navigation,
@@ -140,6 +142,21 @@ def _schema(path):
     }
 
 
+def action_editor_auth_types(action_type):
+    """The auth types `build_action_editor_types` lists for a type, sorted: the type's definition's
+    `allowedAuthTypes` when it lists any, otherwise the shared `AuthType` enum of plugin.schema.json
+    (`get_allowed_auth_types_for_plugin_type`). The personal and group type routes share the builder."""
+    compact = re.sub(r"[^a-z0-9]", "", str(action_type or "").lower())
+    if compact in {"msgraph", "microsoftgraph", "msgraphplugin", "microsoftgraphplugin"}:
+        name = "msgraph"
+    else:
+        name = re.sub(r"[^a-zA-Z0-9_]", "_", str(action_type or "")).lower()
+    allowed = _schema(SCHEMA_ROOT / f"{name}.definition.json").get("allowedAuthTypes")
+    if not (isinstance(allowed, list) and allowed):
+        allowed = _schema(SCHEMA_ROOT / "plugin.schema.json").get("definitions", {}).get("AuthType", {}).get("enum", [])
+    return sorted({str(item) for item in allowed})
+
+
 def action_types():
     """Offer shipped modules using their checked-in definitions and schemas."""
     types = []
@@ -147,7 +164,6 @@ def action_types():
         action_type = module_path.stem.removesuffix("_plugin")
         if action_type == "base":
             continue
-        definition = _schema(SCHEMA_ROOT / f"{action_type}.definition.json")
         types.append({
             "type": action_type,
             "display": {
@@ -158,7 +174,7 @@ def action_types():
                 "simplechat": "SimpleChat",
             }.get(action_type, action_type.replace("_", " ").title()),
             "description": f"Configure the {action_type.replace('_', ' ')} connector.",
-            "allowed_auth_types": definition.get("allowedAuthTypes", ["NoAuth"]),
+            "allowed_auth_types": action_editor_auth_types(action_type),
             "additional_fields_schema": _schema(
                 SCHEMA_ROOT / f"{action_type}_plugin.additional_settings.schema.json"
             ),
@@ -168,7 +184,8 @@ def action_types():
         "type": "fixture_custom",
         "display": "Custom governed connector",
         "description": "A server-discovered action that is not hardcoded in the browser.",
-        "allowed_auth_types": ["NoAuth"],
+        # A type with no definition file gets the shared enum, as the real builder answers.
+        "allowed_auth_types": action_editor_auth_types("fixture_custom"),
         "additional_fields_schema": {
             "type": "object",
             "properties": {
@@ -337,6 +354,39 @@ class ApiRequest:
     body: object
 
 
+def personal_scope_leak(path, query):
+    """Classify a request from a shared-workspace (group or public) page as a personal-scope leak.
+
+    A group or public workspace page must resolve every side resource through a scoped route. Any
+    read of a personal resource that reaches a shared-workspace fixture is a leak by definition, so
+    the fixture records it and refuses to answer rather than silently serving personal data -- the
+    base fixture answers these routes for personal pages, which is exactly why two personal reads
+    once passed every group suite. `/api/user/settings` is the shared theme and preference store,
+    not personal workspace data, so it is the sole `/api/user` exemption. The classification is a
+    short human-readable reason, or None when the request is not a personal-scope read.
+    """
+    if path.startswith("/api/user/") and path != "/api/user/settings":
+        return "personal user resource"
+    if path.startswith("/api/file-sync/personal/"):
+        return "personal file-sync source"
+    if path.startswith("/api/workspace-identities/personal/"):
+        return "personal identity list"
+    if path == "/api/plugins/mcp/preconfigurations":
+        return "personal MCP preconfigurations"
+    # Personal prompts and personal documents are the caller's own workspace resources; a shared
+    # page reaches them only through a scoped route (`/api/groups/<g>/...`, `/api/group_documents`,
+    # `/api/public-workspaces/<id>/documents`), never these personal prefixes.
+    if path == "/api/prompts" or path.startswith("/api/prompts/"):
+        return "personal prompts"
+    if path == "/api/documents" or path.startswith("/api/documents/"):
+        return "personal documents"
+    if query.get("agent_scope") == ["personal"]:
+        return "personal agent scope"
+    if query.get("scope") == ["personal"]:
+        return "personal scope"
+    return None
+
+
 class WorkspaceAuthoringFixture:
     """A closed synthetic server, not a replacement implementation of the UI."""
 
@@ -414,6 +464,11 @@ class WorkspaceAuthoringFixture:
         self.deferred_paths = set()
         self.pending_responses = []
         self.created_counts = {"agents": 0, "plugins": 0}
+        # Group chat catalogue entries and the groups the bootstrap lists. Kept apart from
+        # `self.agents` so a group agent never appears in the personal collection. Both default to
+        # empty, so existing tests see the bootstrap they always did.
+        self.group_catalogue_agents = []
+        self.groups = []
         self.loaded_assets = set()
         self.knowledge_catalog = {
             "sources": [
@@ -623,9 +678,9 @@ class WorkspaceAuthoringFixture:
                         "scope_label": "Provided" if record.get("is_global") else "Personal",
                     }
                     for record in self.agents.values()
-                ],
+                ] + copy.deepcopy(self.group_catalogue_agents),
             },
-            "scope": {"groups": [], "public_workspaces": []},
+            "scope": {"groups": copy.deepcopy(self.groups), "public_workspaces": []},
             "navigation": {
                 "custom_pages": {"enabled": False, "items": []},
                 "external_links": {"enabled": False, "items": []},
@@ -671,11 +726,19 @@ class WorkspaceAuthoringFixture:
             route.fulfill(status=404, body="Fixture asset not found.")
             return
         body = None
-        if request.post_data:
-            if "application/json" in request.headers.get("content-type", ""):
+        content_type = request.headers.get("content-type", "")
+        if "application/json" in content_type:
+            if request.post_data:
                 body = request.post_data_json
-            else:
+        elif request.post_data_buffer:
+            # A text body (including a document upload's multipart form) is recorded as a string so the
+            # handlers can inspect it. A binary body (a logo upload's PNG or JPEG) is not UTF-8, so
+            # request.post_data would raise decoding it; the handler reads those bytes from
+            # request.post_data_buffer instead, and here the undecodable body is simply left as None.
+            try:
                 body = request.post_data
+            except UnicodeDecodeError:
+                body = None
         entry = ApiRequest(request.method, path, parse_qs(parsed.query), copy.deepcopy(body))
         self.requests.append(entry)
         if request.method != "GET":
@@ -763,6 +826,17 @@ class WorkspaceAuthoringFixture:
             identifier = path.rsplit("/", 1)[-1]
             assert identifier in self.messages, entry
             self._json(route, {"active": False, "pending": False, "reattachable": False})
+        elif path == "/api/v2/orchestration/runs" and method == "GET":
+            # Mirrors route_backend_orchestration.py: a conversation id is required (400), an
+            # unknown conversation is 404, and a known one answers {"runs": [...]}. The chat page
+            # hydrates run history this way since base-branch commit 0f52e9bf.
+            identifier = (entry.query.get("conversation_id") or [""])[0].strip()
+            if not identifier:
+                self._json(route, {"error": "A conversation id is required."}, 400)
+            elif identifier not in self.messages:
+                self._json(route, {"error": "Conversation not found."}, 404)
+            else:
+                self._json(route, {"runs": []})
         elif path == "/api/create_conversation" and method == "POST":
             assert set(entry.body) == {"initial_message"}
             identifier = f"created-workspace-chat-{len(self.conversations)}"

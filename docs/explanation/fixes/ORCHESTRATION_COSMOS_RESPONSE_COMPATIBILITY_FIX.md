@@ -3,6 +3,8 @@
 Fixed/Implemented in version: **0.261.140**, recorded in
 `application/single_app/config.py`.
 
+The Cosmos response fix shipped in the React V2 branch as 0.261.140. On the V2 shared workspaces branch, which had already assigned 0.261.140 to its group model endpoint APIs, it arrives with the React V2 base merge in version **0.261.181**.
+
 ## Issue
 
 A CSV request could produce a plan but never execute a step. Execution admission

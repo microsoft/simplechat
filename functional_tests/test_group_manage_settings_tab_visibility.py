@@ -1,14 +1,18 @@
 # test_group_manage_settings_tab_visibility.py
 """
 Functional test for group manage settings tab visibility.
-Version: 0.242.072
+Version: 0.261.189
 Implemented in: 0.241.204
 
 This test ensures the group manage Settings pane is unhidden for group owners
 and admins, and that group/public download settings PATCH responses match the
 frontend success contract. Updated in 0.242.057 to ensure local file download
 disable settings are hidden unless administrators enable downloads for the
-specific group or public workspace.
+specific group or public workspace. Updated in 0.261.143 for the group details
+projection, which builds `file_downloads_admin_enabled` in a dictionary rather
+than assigning it onto the stored document. Updated in 0.261.189 for the public
+download settings PATCH, which writes through the etag guard and answers the
+committed copy's value.
 """
 
 import re
@@ -107,7 +111,7 @@ def test_download_settings_patch_responses_match_frontend_contract() -> None:
             '@bp.route("/api/public_workspaces/<ws_id>/download-settings", methods=["PATCH"])',
             'if not is_public_workspace_file_download_admin_enabled(get_settings(), ws):',
             '"success": True,',
-            '"disable_file_downloads": ws["disable_file_downloads"],',
+            '"disable_file_downloads": committed["disable_file_downloads"],',
         ],
         "application/single_app/route_backend_public_workspaces.py",
     )
@@ -133,7 +137,7 @@ def test_download_settings_visibility_is_admin_gated() -> None:
 
     require_token(
         group_routes,
-        'response_doc["file_downloads_admin_enabled"] = is_group_workspace_file_download_admin_enabled(',
+        '"file_downloads_admin_enabled": is_group_workspace_file_download_admin_enabled(',
         "application/single_app/route_backend_groups.py",
     )
     require_token(

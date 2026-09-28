@@ -1,7 +1,7 @@
 # test_v2_workflow_control_runtime.py
 """
 UI tests for V2 workflow control-runtime run inspection.
-Version: 0.261.116
+Version: 0.261.127
 Implemented in: 0.261.116
 
 These tests use the real V2 SPA bundle with a closed API fixture. They cover
@@ -98,7 +98,7 @@ def test_v3_group_runtime_decisions_keep_scope_and_replace_pages(workflow_contro
     review_id = execution_id(GROUP_V3_WORKFLOW_ID, GROUP_V3_RUN_ID, "review")
     producer_id = execution_id(GROUP_V3_WORKFLOW_ID, GROUP_V3_RUN_ID, "evaluate")
     ui.open("/groups")
-    page.get_by_label("Group workspace", exact=True).select_option(GROUP_ID)
+    ui.select_group(GROUP_ID)
     expect(page.get_by_role("heading", name="Workflows", exact=True)).to_be_visible()
     expand_run_history(page, "Group structured branch workflow")
 
@@ -203,7 +203,7 @@ def test_recovery_confirmation_does_not_transfer_to_a_new_attempt(workflow_contr
     attempts = ui.attempt_pages[(*key, eid)][""]["items"]
     attempts[0]["state"] = "failed"
     ui.open("/groups")
-    page.get_by_label("Group workspace", exact=True).select_option(GROUP_ID)
+    ui.select_group(GROUP_ID)
     expand_run_history(page, "Group structured branch workflow")
     page.get_by_role("button", name="Retry task", exact=True).click()
     confirmation = page.get_by_role("dialog", name="Retry task?", exact=True)

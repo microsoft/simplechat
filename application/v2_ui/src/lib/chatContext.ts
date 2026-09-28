@@ -23,6 +23,7 @@ import {
     sanitizeContextLabel,
     uniqueContextLabel,
 } from './chatContextTokens';
+import { getPublicWorkspaceLabels } from './publicWorkspaceLabels';
 import type { WorkspaceDocument, WorkspaceRef } from './types';
 import { isScreeningAvailable } from './contentScreening';
 
@@ -87,7 +88,7 @@ export function publicScope(ref: WorkspaceRef): ContextScopeRef {
     return {
         kind: 'public',
         id: String(ref.id ?? ''),
-        name: String(ref.name ?? 'Public workspace'),
+        name: String(ref.name ?? getPublicWorkspaceLabels().singular),
     };
 }
 

@@ -1,8 +1,9 @@
 # test_v2_workflow_flow_inspection.py
 """
 Offline browser regressions for approved M5A read-only workflow Flow inspection.
-Version: 0.261.122
+Version: 0.261.178
 Implemented in: 0.261.121
+Group saved Flow opens through the group route only: 0.261.178
 
 Uses the real local SPA, compiler-derived projections and closed fictional APIs.
 Run with PLAYWRIGHT_SERVICE_URL='' in this same pytest process. No live app,
@@ -68,7 +69,7 @@ def select_node(view, node_id):
 def open_saved(ui, name=FLOW_NAME, *, group_id=None, **options):
     ui.open("/groups" if group_id else "/workspace/workflows", **options)
     if group_id:
-        ui.page.get_by_label("Group workspace", exact=True).select_option(group_id)
+        ui.select_group(group_id)
     ui.page.get_by_role("button", name=f"View Flow for {name}", exact=True).click()
     expect(ui.page.get_by_role("dialog", name="Workflow Flow", exact=True)).to_be_visible()
     view = flow_region(ui.page)
@@ -109,7 +110,7 @@ def select_authoring_node(view, node_id):
 def open_run_flow(ui, *, workflow_name=FLOW_NAME, workflow_id=FLOW_WORKFLOW_ID, run_id=FLOW_RUN_ID, group=False):
     ui.open("/groups" if group else "/workspace/workflows")
     if group:
-        ui.page.get_by_label("Group workspace", exact=True).select_option(GROUP_ID)
+        ui.select_group(GROUP_ID)
     row = ui.page.get_by_role("listitem").filter(has=ui.page.get_by_role(
         "button", name=f"View Flow for {workflow_name}", exact=True,
     )).first
@@ -241,6 +242,25 @@ def test_v1_v2_have_no_implicit_flow_conversion_or_preview_request(workflow_flow
     expect(page.get_by_role("dialog")).to_have_count(0)
     assert not ui.topology_requests and not ui.preview_requests
     assert {key: ui.personal_workflows[key] for key in original} == original
+
+
+def test_group_saved_flow_uses_group_route_and_read_only_dialog(workflow_flow_ui):
+    ui = workflow_flow_ui
+    view = open_saved(ui, name="Alpha read-only Flow", group_id=GROUP_ID)
+    expect(view.get_by_text("Saved definition", exact=True)).to_be_visible()
+    expect(view.get_by_role("button", name="Add block in Flow", exact=True)).to_have_count(0)
+    expect(view.get_by_role("button", name="Save workflow", exact=True)).to_have_count(0)
+    group_flow_reads = [
+        entry for entry in ui.requests
+        if entry.method == "GET" and entry.path == f"/api/group/workflows/{FLOW_WORKFLOW_ID}/flow"
+    ]
+    assert len(group_flow_reads) == 1
+    assert group_flow_reads[0].query == {"group_id": [GROUP_ID]}
+    assert not [
+        entry for entry in ui.requests
+        if entry.path.startswith("/api/user/workflows")
+    ], "A group Flow view must not read personal workflow routes."
+    ui.assert_read_only()
 
 
 def test_saved_flow_is_available_while_editing_is_disabled_by_an_active_run(workflow_flow_ui):
@@ -866,11 +886,11 @@ def test_read_only_group_source_switch_rejects_delayed_previous_group_projection
     next(task for task in beta["tasks"] if task["id"] == "evaluate")["name"] = "Beta-only evaluation"
     ui.hold_next_flow(source_kind="saved", group_id=GROUP_ID)
     ui.open("/groups")
-    page.get_by_label("Group workspace", exact=True).select_option(GROUP_ID)
+    ui.select_group(GROUP_ID)
     page.get_by_role("button", name="View Flow for Alpha read-only Flow", exact=True).click()
     expect(flow_region(page).get_by_text("Loading authorized Flow definition...", exact=True)).to_be_visible()
     close_saved(page)
-    page.get_by_label("Group workspace", exact=True).select_option(SECOND_GROUP_ID)
+    ui.select_group(SECOND_GROUP_ID)
     page.get_by_role("button", name="View Flow for Beta read-only Flow", exact=True).click()
     view = flow_region(page)
     expect(node_button(view, "evaluate")).to_have_accessible_name("Select Beta-only evaluation (Task)")

@@ -4,6 +4,8 @@
 
 **Fixed in version: 0.261.137**
 
+The model picker fix shipped in the React V2 branch as 0.261.137. The V2 shared workspaces branch had already assigned 0.261.137 to its native group actions, so there it arrives with the React V2 base merge in version **0.261.181**.
+
 ## Issue
 
 In the V2 composer, switching on **Orchestrate** made the model picker jump out of the

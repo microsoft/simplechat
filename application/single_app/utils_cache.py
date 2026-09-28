@@ -642,7 +642,7 @@ def invalidate_personal_search_cache(user_id: str) -> int:
         return 0
 
 
-def invalidate_group_search_cache(group_id: str) -> int:
+def invalidate_group_search_cache(group_id: str, *, document_id=None, strict=False) -> int:
     """
     Invalidate all cached searches for a specific group's documents in Cosmos DB.
     
@@ -671,6 +671,14 @@ def invalidate_group_search_cache(group_id: str) -> int:
         # Looking for doc_scope containing group references
         query = "SELECT c.id, c.user_id FROM c WHERE CONTAINS(c.doc_scope, @group_id)"
         parameters = [{"name": "@group_id", "value": group_id}]
+        if document_id is not None:
+            query = (
+                "SELECT c.id, c.user_id FROM c WHERE CONTAINS(c.doc_scope, @group_id) "
+                "OR CONTAINS(c.user_id, @group_id) "
+                "OR EXISTS(SELECT VALUE r FROM r IN c.results WHERE r.document_id = @document_id "
+                "OR r.source_document_id = @document_id OR r.screening_provenance.document_id = @document_id)"
+            )
+            parameters.append({"name": "@document_id", "value": document_id})
         
         items = list(cosmos_search_cache_container.query_items(
             query=query,
@@ -688,6 +696,10 @@ def invalidate_group_search_cache(group_id: str) -> int:
                     partition_key=item['user_id']
                 )
             except Exception as e:
+                if strict:
+                    if getattr(e, "status_code", None) == 404:
+                        continue
+                    raise
                 logger.warning(f"Failed to delete cache item {item['id']}: {e}")
         
         if count > 0:
@@ -701,6 +713,8 @@ def invalidate_group_search_cache(group_id: str) -> int:
         return count
         
     except Exception as e:
+        if strict:
+            raise
         logger.error(f"Error invalidating group search cache: {e}")
         _debug_print(f"Invalidation ERROR: {e}", "INVALIDATION", group_id=group_id[:8])
         return 0

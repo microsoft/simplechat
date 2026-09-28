@@ -2,7 +2,7 @@
 #!/usr/bin/env python3
 """
 Functional test for Cosmos Wave 5A/5B document access index read path.
-Version: 0.261.023
+Version: 0.261.183
 Implemented in: 0.250.022
 Public workspace UI coverage updated in: 0.250.023
 Tag listing coverage updated in: 0.250.024
@@ -11,6 +11,7 @@ Default read enablement updated in: 0.250.027
 Redis DAI cache updated in: 0.250.029
 Legacy tag family projection updated in: 0.250.030
 XSD schema metadata projection updated in: 0.261.023
+Public chat tags counted over the DAI-first chat document list: 0.261.183
 
 This test ensures the default DAI read path only serves document list reads
 when backfill is complete and repair backlog is clear. It also verifies
@@ -24,6 +25,9 @@ import os
 import sys
 import types
 from contextlib import contextmanager
+
+from azure.core import MatchConditions
+from azure.cosmos.exceptions import CosmosHttpResponseError
 from test_support.versioning import assert_app_version_at_least
 from test_support.templates import read_admin_settings_template
 
@@ -59,6 +63,17 @@ class FakeCosmosContainer:
         if key not in self.items:
             raise FakeCosmosError(404, f"Missing item {item}")
         return copy.deepcopy(self.items[key])
+
+    def replace_item(self, *, item, body, etag, match_condition):
+        key = (body.get("id"), item)
+        current = self.items.get(key)
+        if current is None:
+            raise CosmosHttpResponseError(status_code=404, message="Missing fixture source")
+        if match_condition != MatchConditions.IfNotModified or current.get("_etag") != etag:
+            raise CosmosHttpResponseError(status_code=412, message="Fixture source changed")
+        saved = {**copy.deepcopy(body), "_etag": f"{etag}-next"}
+        self.items[key] = saved
+        return copy.deepcopy(saved)
 
     def query_items(self, query, parameters=None, partition_key=None, **kwargs):
         if self.fail_query:
@@ -689,16 +704,12 @@ def test_tag_count_read_switch_uses_owner_projection_rows_by_scope():
             ),
             force=True,
         )
-        indexing.sync_document_access_index_for_document(
-            _document(
-                "group-owned",
-                "owner-1",
-                group_id="group-a",
-                tags=["group-alpha"],
-                shared_group_ids=["group-b,approved"],
-            ),
-            force=True,
+        group_document = _document(
+            "group-owned", "owner-1", group_id="group-a", tags=["group-alpha"],
+            shared_group_ids=["group-b,approved"], _etag="group-source",
         )
+        indexing.cosmos_group_documents_container.upsert_item(group_document)
+        indexing.sync_document_access_index_for_document(group_document, force=True)
         indexing.sync_document_access_index_for_document(
             _document(
                 "public-owned",
@@ -770,20 +781,17 @@ def test_legacy_count_read_switch_uses_unfiltered_owner_projection_rows():
             ),
             force=True,
         )
-        indexing.sync_document_access_index_for_document(
-            _document("group-owner-legacy", "owner-1", group_id="group-a", percentage_complete=None),
-            force=True,
+        group_owner = _document(
+            "group-owner-legacy", "owner-1", group_id="group-a", percentage_complete=None, _etag="owner-source",
         )
-        indexing.sync_document_access_index_for_document(
-            _document(
-                "group-shared-legacy",
-                "owner-1",
-                group_id="group-b",
-                percentage_complete=None,
-                shared_group_ids=["group-a,approved"],
-            ),
-            force=True,
+        group_shared = _document(
+            "group-shared-legacy", "owner-1", group_id="group-b", percentage_complete=None,
+            shared_group_ids=["group-a,approved"], _etag="shared-source",
         )
+        indexing.cosmos_group_documents_container.upsert_item(group_owner)
+        indexing.cosmos_group_documents_container.upsert_item(group_shared)
+        indexing.sync_document_access_index_for_document(group_owner, force=True)
+        indexing.sync_document_access_index_for_document(group_shared, force=True)
         indexing.sync_document_access_index_for_document(
             _document("public-owner-legacy", "owner-public", public_workspace_id="public-a", percentage_complete=None),
             force=True,
@@ -880,7 +888,9 @@ def test_wave5b_route_and_admin_contract_are_wired():
     assert "query_document_access_index_documents(" in backend_public_route
     assert "query_document_access_index_tag_counts(" in personal_route
     assert "query_document_access_index_tag_counts(" in group_route
-    assert "query_document_access_index_tag_counts(" in backend_public_route
+    # The public chat tags are counted over the chat document list itself (DAI first, source
+    # fallback), so a document that list leaves out, a pending generated artifact, is never counted.
+    assert "_query_public_chat_documents(" in backend_public_route
     assert "query_document_access_index_legacy_count(" in personal_route
     assert "query_document_access_index_legacy_count(" in group_route
     assert "query_document_access_index_legacy_count(" in public_route

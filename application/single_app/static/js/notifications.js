@@ -752,6 +752,8 @@
         isPollingDisabled: () => notificationPollingDisabled,
         refreshCount: fetchNotificationCount,
         refreshCompletionEvents: loadChatCompletionEvents,
+        resolveNavigationTarget: resolveNotificationNavigationTarget,
+        openNotification: handleNotificationClick,
     };
     
     /**
@@ -1021,18 +1023,80 @@
     function getNotificationById(id) {
         return cachedNotifications.find(n => n.id === id);
     }
+
+    function resolveNotificationNavigationTarget(notification) {
+        if (!notification?.link_url) {
+            return null;
+        }
+        if (typeof notification.link_url !== 'string' || !notification.link_url.trim()) {
+            throw new Error('This notification has an invalid link. Open the destination directly.');
+        }
+        const url = new URL(notification.link_url, window.location.origin);
+        if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password) {
+            throw new Error('This notification has an unsupported link. Open the destination directly.');
+        }
+        const match = url.pathname.match(/^\/v2\/groups\/([^/]+)\/documents\/?$/);
+        const intentPath = url.pathname.replace(/\/+/g, '/');
+        const nativeGroupIntent = /^\/v2\/groups(?:\/|$)/i.test(intentPath);
+        const workflowLink = /^\/v2\/groups\/[^/]+\/workflows(?:\/[^/]+)?\/?$/.test(url.pathname);
+        const looksLikeNativeDocument = nativeGroupIntent && (
+            /(?:^|\/)documents(?:\/|$)/i.test(intentPath)
+            || (url.searchParams.has('document_id') && !workflowLink)
+        );
+        if (!looksLikeNativeDocument) {
+            return {
+                href: url.origin === window.location.origin ? `${url.pathname}${url.search}${url.hash}` : url.href,
+                nativeGroupDocument: false,
+            };
+        }
+        const context = notification.link_context;
+        const ids = url.searchParams.getAll('document_id');
+        const groupId = match ? decodeURIComponent(match[1]) : '';
+        const documentId = ids.length === 1 ? ids[0] : '';
+        const validId = (value) => typeof value === 'string' && value
+            && value === value.trim() && value !== '.' && value !== '..'
+            && !/[/\\?#\u0000-\u001f\u007f]/.test(value);
+        if (!match || url.origin !== window.location.origin || !validId(groupId) || !validId(documentId)
+            || !context || context.workspace_type !== 'group' || context.group_id !== groupId
+            || context.document_id !== documentId || url.searchParams.has('group_id') || url.searchParams.has('group_ids')) {
+            throw new Error('This notification does not match its group and document. Refresh notifications or open the workspace directly.');
+        }
+        return {
+            href: `/v2/groups/${encodeURIComponent(groupId)}/documents?${new URLSearchParams({ document_id: documentId })}`,
+            nativeGroupDocument: true,
+        };
+    }
+
+    function showNotificationNavigationError(error, container) {
+        let alert = document.getElementById('notification-navigation-error');
+        if (!alert) {
+            alert = document.createElement('div');
+            alert.id = 'notification-navigation-error';
+            alert.className = 'alert alert-danger';
+            alert.setAttribute('role', 'alert');
+            (container || document.getElementById('notifications-container') || document.body).prepend(alert);
+        }
+        alert.textContent = error instanceof Error ? error.message : 'The notification link could not be verified.';
+    }
     
     /**
      * Handle notification click
      */
     async function handleNotificationClick(notification) {
+        let navigation;
+        try {
+            navigation = resolveNotificationNavigationTarget(notification);
+        } catch (error) {
+            showNotificationNavigationError(error);
+            return;
+        }
         // Mark as read
         if (!notification.is_read) {
-            await markNotificationRead(notification.id);
+            await markNotificationRead(notification.id, !navigation);
         }
 
         const groupId = notification.link_context?.group_id || notification.metadata?.group_id;
-        if (groupId) {
+        if (groupId && !navigation?.nativeGroupDocument) {
             try {
                 const response = await fetch('/api/groups/setActive', {
                     method: 'PATCH',
@@ -1051,15 +1115,15 @@
         }
         
         // Navigate if link exists
-        if (notification.link_url) {
-            window.location.href = notification.link_url;
+        if (navigation) {
+            window.location.href = navigation.href;
         }
     }
     
     /**
      * Mark notification as read
      */
-    function markNotificationRead(notificationId) {
+    function markNotificationRead(notificationId, refreshCurrentPage = true) {
         return fetch(`/api/notifications/${notificationId}/read`, {
             method: 'POST',
             headers: {
@@ -1069,7 +1133,9 @@
         .then(response => response.json())
         .then(data => {
             if (data.success) {
-                refreshNotificationsUi();
+                if (refreshCurrentPage) {
+                    refreshNotificationsUi();
+                }
                 return true;
             }
             return false;
@@ -1117,6 +1183,16 @@
             if (!target?.link_url) {
                 return;
             }
+            let navigation;
+            try {
+                navigation = resolveNotificationNavigationTarget(target);
+            } catch (error) {
+                showNotificationNavigationError(error, workflowAlertModalContent);
+                return;
+            }
+            if (!navigation) {
+                return;
+            }
 
             const targetWindow = window.open('about:blank', '_blank');
             if (targetWindow) {
@@ -1126,7 +1202,7 @@
             await markNotificationRead(activeWorkflowAlert.id);
 
             const groupId = target.link_context?.group_id || '';
-            if (groupId) {
+            if (groupId && !navigation.nativeGroupDocument) {
                 try {
                     await fetch('/api/groups/setActive', {
                         method: 'PATCH',
@@ -1141,9 +1217,9 @@
             }
 
             if (targetWindow) {
-                targetWindow.location.href = target.link_url;
+                targetWindow.location.href = navigation.href;
             } else {
-                window.open(target.link_url, '_blank', 'noopener');
+                window.open(navigation.href, '_blank', 'noopener');
             }
         });
 
