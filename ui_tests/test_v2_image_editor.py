@@ -1,8 +1,8 @@
 # test_v2_image_editor.py
 """
 UI coverage for v2 image editor derive mode.
-Version: 0.261.144
-Implemented in: 0.261.144
+Version: 0.261.192
+Implemented in: 0.261.192
 
 This test ensures derive mode creates a new image from an uploaded/reference image while the
 existing revise-mode controls remain available for generated images.

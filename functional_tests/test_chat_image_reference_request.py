@@ -2,8 +2,8 @@
 # test_chat_image_reference_request.py
 """
 Functional test for chat Image-mode reference request helpers.
-Version: 0.261.144
-Implemented in: 0.261.144
+Version: 0.261.192
+Implemented in: 0.261.192
 
 This test ensures direct Image-mode reference request parsing, validation, mask handling,
 prompt composition, and compatibility thoughts work without Azure services.
@@ -114,7 +114,7 @@ class ChatImageReferenceRequestTests(unittest.TestCase):
         return raised.exception
 
     def test_version_header_is_current(self):
-        assert_app_version_at_least("0.261.144")
+        assert_app_version_at_least("0.261.192")
 
     def test_parse_errors_are_exposed(self):
         self.assert_reference_error(

@@ -4,7 +4,7 @@ title: "Review and edit orchestration plans"
 description: "Refine proposed work with the planner before running it."
 section: "Guides"
 audience: user
-version: "0.261.144"
+version: "0.261.192"
 ---
 
 ## Decide what should run
@@ -152,7 +152,7 @@ AI-generated image when the plan runs and shows it in the answer. When a report 
 binds an image, its input is optional: if the image cannot be generated, the content is
 still written and the delivery notes say what is missing.
 
-Since **0.261.144**, a **Generate image** step can also use your own pictures as reference
+Since **0.261.192**, a **Generate image** step can also use your own pictures as reference
 images, such as "a cartoon of my house" with a photo of the house attached. Turn on **Image**,
 then attach the pictures, select workspace images, or choose **Use as reference** on an image
 in the conversation. The step shows each reference as a chip with a thumbnail and its name.

@@ -1,6 +1,6 @@
 # Chat Orchestration
 
-**Version: 0.261.144** (tracked in `application/single_app/config.py`)
+**Version: 0.261.192** (tracked in `application/single_app/config.py`)
 
 **Implemented in version: 0.261.086**
 **Knowledge phase added in version: 0.261.089**
@@ -23,7 +23,7 @@
 **Orchestrate model picker placement and remembered choice fixed in version: 0.261.137**
 **Deliverables contract and generated images in files implemented in version: 0.261.138**
 **Gather / Reason / Render made the only orchestration contract in version: 0.261.139**
-**Photorealistic planned images and reference images implemented in version: 0.261.144**
+**Photorealistic planned images and reference images implemented in version: 0.261.192**
 
 ## Overview
 
@@ -1068,7 +1068,7 @@ before its steps, and the server checks that list. See
   with an `[[image:<step_id>]]` token, the chat shows it inline, and DOCX, PDF, and PPTX
   files embed it. Images follow the requested visual style, including photorealistic, and
   are captioned as AI-generated images.
-- **Reference images.** Since **0.261.144**, a `generate_image` step can bind the user's own
+- **Reference images.** Since **0.261.192**, a `generate_image` step can bind the user's own
   pictures with `reference_document_ids` and `reference_message_ids`, for example to make
   a cartoon of an attached photo of a house. Only images the user attached, selected, or
   referenced with **Image** on are offered, as server-computed seed candidates constrained

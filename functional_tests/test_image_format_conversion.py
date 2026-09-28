@@ -2,8 +2,8 @@
 # test_image_format_conversion.py
 """
 Functional tests for uploaded-image format detection and conversion.
-Version: 0.261.144
-Implemented in: 0.261.144
+Version: 0.261.192
+Implemented in: 0.261.192
 
 This test ensures that functions_image_formats detects formats from bytes rather than file
 names, converts TIFF for browsers, bounds thumbnails, prepares EXIF-free model inputs within a
@@ -54,7 +54,7 @@ def png_header_only(width, height):
 
 class ImageFormatDetectionTests(unittest.TestCase):
     def test_version_header_is_current(self):
-        assert_app_version_at_least('0.261.144')
+        assert_app_version_at_least('0.261.192')
 
     def test_detects_formats_from_bytes(self):
         rgb = Image.new('RGB', (8, 6), (10, 120, 200))

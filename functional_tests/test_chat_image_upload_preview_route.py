@@ -2,8 +2,8 @@
 # test_chat_image_upload_preview_route.py
 """
 Functional test for chat image upload preview routes.
-Version: 0.261.144
-Implemented in: 0.261.144
+Version: 0.261.192
+Implemented in: 0.261.192
 
 This test ensures chat image preview variants and workspace image preview routing
 serve browser-safe image bytes without leaking unauthorized workspace documents.
@@ -96,7 +96,7 @@ class ChatImagePreviewRouteTests(unittest.TestCase):
     """Preview route regressions for chat-owned and workspace-backed images."""
 
     def setUp(self):
-        assert_app_version_at_least("0.261.144")
+        assert_app_version_at_least("0.261.192")
         self._socket = socket.socket
         socket.socket = self._blocked_socket
 

@@ -1,7 +1,7 @@
 # test_image_provider_capabilities.py
 """
 Functional tests for provider-qualified image generation and editing.
-Version: 0.261.144
+Version: 0.261.192
 Implemented in: 0.261.107
 
 Exercise the real JSON catalog and pure resolver without credentials, application
@@ -26,7 +26,7 @@ from functions_model_capabilities import get_image_operation_profile  # noqa: E4
 from test_support.versioning import assert_app_version_at_least  # noqa: E402
 
 
-assert_app_version_at_least("0.261.144")
+assert_app_version_at_least("0.261.192")
 
 
 def endpoint(provider="custom", url="https://api.openai.com/v1", api_type="openai", **connection):

@@ -33,7 +33,7 @@ asking for one are the same call.
 shift. The interface says so rather than implying a precision the API does not offer.
 
 **Only generated images are edited in place.** A user's own uploaded image is never rewritten.
-Since version **0.261.144**, **Edit** on an upload opens the editor in "Create image from
+Since version **0.261.192**, **Edit** on an upload opens the editor in "Create image from
 reference" mode instead: the upload is sent as a reference image, optionally with a selected
 region, and the result is a new image message. See
 [Chat Image Uploads and Reference Images](CHAT_IMAGE_UPLOADS_AND_REFERENCE_IMAGES.md).

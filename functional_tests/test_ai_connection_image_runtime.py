@@ -1,7 +1,7 @@
 # test_ai_connection_image_runtime.py
 """
 Functional tests for shared image bindings, persistence, proposals, editing, and admin tests.
-Version: 0.261.144
+Version: 0.261.192
 Implemented in: 0.261.105
 
 Application storage, secret retrieval, and credentials are isolated before runtime imports.
@@ -53,7 +53,7 @@ with stubbed_config(cognitive_services_scope="https://cognitiveservices.azure.co
 
 
 generation = import_app_module("functions_image_generation")
-assert_app_version_at_least("0.261.144")
+assert_app_version_at_least("0.261.192")
 IMAGE_BASE64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP4z8DwHwAFAAH/iZk9HQAAAABJRU5ErkJggg=="
 IMAGE_BYTES = base64.b64decode(IMAGE_BASE64)
 IMAGE_SOURCE = f"data:image/png;base64,{IMAGE_BASE64}"

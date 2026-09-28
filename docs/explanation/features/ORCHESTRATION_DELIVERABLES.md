@@ -1,9 +1,9 @@
 # Orchestration deliverables
 
-**Version: 0.261.144** (tracked in `application/single_app/config.py`)
+**Version: 0.261.192** (tracked in `application/single_app/config.py`)
 
 **Implemented in version: 0.261.138**
-**Requested visual styles and reference images for planned images added in version: 0.261.144**
+**Requested visual styles and reference images for planned images added in version: 0.261.192**
 
 Deliverables shipped in the React V2 branch as 0.261.138. The V2 shared workspaces branch had already assigned 0.261.138 to its native group agents, so there deliverables arrive with the React V2 base merge in version **0.261.181**.
 

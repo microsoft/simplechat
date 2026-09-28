@@ -25,7 +25,7 @@ This feature makes uploaded images visible and usable:
 - **Current-turn vision.** Images attached to a message are shown to a vision-capable chat model
   as pixels, not only as their extracted text.
 
-**Implemented in version: 0.261.144**
+**Implemented in version: 0.261.192**
 
 ### What this deliberately does not do
 

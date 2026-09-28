@@ -2,8 +2,8 @@
 # test_chat_vision_current_turn.py
 """
 Functional tests for current-turn chat vision.
-Version: 0.261.144
-Implemented in: 0.261.144
+Version: 0.261.192
+Implemented in: 0.261.192
 
 This test ensures current-turn chat images are collected, resolved, and attached only
 for verified direct vision model paths without persisting or mutating chat history.
@@ -56,7 +56,7 @@ def image_message(message_id, filename, *, upload=True, active=True):
 
 class ChatVisionCurrentTurnTests(unittest.TestCase):
     def test_version_header_matches_feature_version(self):
-        assert_app_version_at_least("0.261.144")
+        assert_app_version_at_least("0.261.192")
 
     def test_current_turn_window_retry_and_inactive_threads(self):
         messages = [

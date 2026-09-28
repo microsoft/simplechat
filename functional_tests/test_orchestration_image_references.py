@@ -2,8 +2,8 @@
 #!/usr/bin/env python3
 """
 Functional test for orchestration image references.
-Version: 0.261.144
-Implemented in: 0.261.144
+Version: 0.261.192
+Implemented in: 0.261.192
 
 This test ensures orchestration plans can seed, validate, bind, and execute image
 references without trusting planner or browser-supplied labels.
@@ -17,7 +17,7 @@ import pytest
 from test_support.versioning import assert_app_version_at_least
 
 
-assert_app_version_at_least("0.261.144")
+assert_app_version_at_least("0.261.192")
 
 
 def test_seed_normalization_and_invalid_input():

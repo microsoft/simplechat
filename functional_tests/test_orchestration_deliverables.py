@@ -1,7 +1,7 @@
 # test_orchestration_deliverables.py
 """The deliverables contract and planned image generation in Gather / Reason / Render plans.
 
-Version: 0.261.144
+Version: 0.261.192
 Implemented in: 0.261.138
 Single orchestration contract updated in: 0.261.139
 Planner kind-specific fields and absent answer bindings updated in: 0.261.140
@@ -57,7 +57,7 @@ REPORT_TEXT = (
 
 
 def test_version_includes_the_deliverables_contract():
-    assert_app_version_at_least("0.261.144")
+    assert_app_version_at_least("0.261.192")
 
 
 # ------------------------------------------------------------------------------------------

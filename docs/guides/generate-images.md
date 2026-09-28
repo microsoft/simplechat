@@ -4,14 +4,14 @@ title: "Generate images"
 description: "Use the chat Image control to request AI-generated images."
 section: "Guides"
 audience: user
-version: "0.261.144"
+version: "0.261.192"
 ---
 
 ## What this does
 
 **Image** switches the chat composer into image-generation mode for the current prompt. While it
 is active, web search, URL review, and Deep Research are turned off so the request stays focused
-on image generation. From version **0.261.144**, file upload and **Documents** stay available in
+on image generation. From version **0.261.192**, file upload and **Documents** stay available in
 Image mode when the image model can use reference images: the pictures you attach are sent to the
 image model as visual input, not only described in text.
 
@@ -62,7 +62,7 @@ Use image generation for visual concepts, drafts, illustrations, and creative ex
 
 ## Create an image from your own pictures (V2)
 
-From version **0.261.144**, the V2 interface can send your images to the image model as
+From version **0.261.192**, the V2 interface can send your images to the image model as
 references. The model sees the picture itself, so it can keep a face, follow the layout of a
 house, or trace the shapes on a map.
 

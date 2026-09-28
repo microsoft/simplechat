@@ -1,7 +1,7 @@
 # test_image_chat_route_integration.py
 """
 Functional test for the actual /api/chat Image-mode request path.
-Version: 0.261.144
+Version: 0.261.192
 Implemented in: 0.261.105
 
 Registers the complete production chat handler with its original Flask route decorator.
@@ -56,7 +56,7 @@ from functions_prompt_metadata import build_prompt_selection_metadata  # noqa: E
 from test_support.versioning import assert_app_version_at_least  # noqa: E402
 
 
-assert_app_version_at_least("0.261.144")
+assert_app_version_at_least("0.261.192")
 
 
 class MemoryContainer:

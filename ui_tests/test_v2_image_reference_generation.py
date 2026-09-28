@@ -1,8 +1,8 @@
 # test_v2_image_reference_generation.py
 """
 UI coverage for v2 direct Image mode reference-image generation.
-Version: 0.261.144
-Implemented in: 0.261.144
+Version: 0.261.192
+Implemented in: 0.261.192
 
 This test ensures reference uploads, "Use as reference", sent thumbnails, and capability
 gating are wired through the real v2 composer and message list.
@@ -133,7 +133,7 @@ def mount_prompt_experience(page, capability=None, messages=None):
             const H = window.OrchHarness;
             H.reset();
             H.stores.bootstrap.useBootstrapStore.setState({ data: {
-                version: '0.261.144',
+                version: '0.261.192',
                 settings: { max_file_size_mb: 25 },
                 branding: { app_title: 'SimpleChat' },
                 features: {

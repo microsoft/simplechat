@@ -71,7 +71,7 @@ The response can reference the uploaded file when relevant. If enabled, **Open u
 
 ## Uploaded images (V2)
 
-From version **0.261.144**, an uploaded PNG, JPG, BMP, or TIFF image appears in the V2
+From version **0.261.192**, an uploaded PNG, JPG, BMP, or TIFF image appears in the V2
 conversation as the picture itself rather than as a file name, so you and anyone reading the
 thread later can see what was asked about. Select the image to open it full size.
 

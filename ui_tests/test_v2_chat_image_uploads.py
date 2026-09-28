@@ -1,8 +1,8 @@
 # test_v2_chat_image_uploads.py
 """
 UI coverage for v2 inline chat upload image previews.
-Version: 0.261.144
-Implemented in: 0.261.144
+Version: 0.261.192
+Implemented in: 0.261.192
 
 This test ensures workspace-backed uploaded image messages render as inline image cards,
 fall back safely when previews are unavailable, and keep non-image uploads as file chips.
@@ -153,7 +153,7 @@ def mount_messages(page, api, messages):
             const H = window.OrchHarness;
             H.reset();
             H.stores.bootstrap.useBootstrapStore.setState({ data: {
-                version: '0.261.144',
+                version: '0.261.192',
                 settings: {},
                 branding: { app_title: 'SimpleChat' },
                 features: { enable_user_workspace: true, enable_image_generation: true },
@@ -191,7 +191,7 @@ def mount_composer(page, api):
             const H = window.OrchHarness;
             H.reset();
             H.stores.bootstrap.useBootstrapStore.setState({ data: {
-                version: '0.261.144',
+                version: '0.261.192',
                 settings: { max_file_size_mb: 25 },
                 branding: { app_title: 'SimpleChat' },
                 features: { enable_user_workspace: true, enable_chat_file_uploads: true },

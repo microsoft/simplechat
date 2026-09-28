@@ -1,5 +1,5 @@
 // test_v2_image_capability_logic.mjs
-// Version: 0.261.144
+// Version: 0.261.192
 // Implemented in: 0.261.107
 // Execute server-profile normalization, image operation validation and both revision transports.
 // React/store imports are blocked only for the pure helper tests; the browser suite exercises

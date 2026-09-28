@@ -1,6 +1,6 @@
 // test_v2_chat_image_preview_logic.mjs
-// Version: 0.261.144
-// Implemented in: 0.261.144
+// Version: 0.261.192
+// Implemented in: 0.261.192
 // Pure helper coverage for v2 chat upload image preview decisions and local preview storage.
 
 import assert from 'node:assert/strict';

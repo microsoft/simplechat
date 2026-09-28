@@ -2,8 +2,8 @@
 # test_image_reference_resolver.py
 """
 Functional tests for image reference resolver.
-Version: 0.261.144
-Implemented in: 0.261.144
+Version: 0.261.192
+Implemented in: 0.261.192
 
 This test ensures chat image references are parsed, authorized, screened, normalized, and
 converted into provenance without importing application configuration or using Azure services.
@@ -87,7 +87,7 @@ class FakeReaders:
 
 class ImageReferenceParsingTests(unittest.TestCase):
     def test_version_header_is_current(self):
-        assert_app_version_at_least("0.261.144")
+        assert_app_version_at_least("0.261.192")
 
     def test_parse_valid_mixed_list_dedupes_and_normalizes(self):
         parsed = refs.parse_image_references([

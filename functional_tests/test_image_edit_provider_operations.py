@@ -1,7 +1,7 @@
 # test_image_edit_provider_operations.py
 """
 Functional tests for selected-provider image editing and explicit regeneration.
-Version: 0.261.144
+Version: 0.261.192
 Implemented in: 0.261.107
 
 Run the real binding, capability, generation and edit helpers with isolated
@@ -37,7 +37,7 @@ from test_support.versioning import assert_app_version_at_least  # noqa: E402
 import functions_image_adapters as image_adapters  # noqa: E402
 
 
-assert_app_version_at_least("0.261.144")
+assert_app_version_at_least("0.261.192")
 
 
 def settings_for(name, provider="new_foundry"):
