@@ -1,8 +1,9 @@
 # image_editor.py
 """
 Source-backed, isolated image editor browser fixture.
-Version: 0.261.107
+Version: 0.261.194
 Implemented in: 0.261.107
+Held responses and stored assist turns added in: 0.261.194
 
 Compile the production component, hooks, store and theme in memory with the installed
 V2 toolchain. Never read or replace checked-in static bundles. All browser requests are
@@ -18,7 +19,7 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 import pytest
-from playwright.sync_api import Page, Route, expect
+from playwright.sync_api import Error as PlaywrightError, Page, Route, expect
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -224,6 +225,10 @@ class ImageEditorFixture:
         self.unexpected_requests = []
         self.expected_http_errors = set()
         self.next_error = None
+        # With `hold` set, revision requests wait in `held` until `release()` answers them, so a
+        # test can look at the editor while a request is in flight.
+        self.hold = False
+        self.held = []
         self.entry = {
             "current": 1,
             "revisions": [
@@ -332,25 +337,10 @@ class ImageEditorFixture:
         elif request.method == "POST" and path == self.revision_endpoint:
             body = copy.deepcopy(request.post_data_json)
             self.requests.append({"path": path, "body": body})
-            if self.next_error:
-                status, message = self.next_error
-                self.expected_http_errors.add(status)
-                self.next_error = None
-                route.fulfill(status=status, json={"error": message})
+            if self.hold:
+                self.held.append((route, body))
                 return
-            revision = {
-                "id": f"revision-{len(self.entry['revisions'])}",
-                "origin": body["origin"],
-                "method": body["operation"],
-                "prompt": body.get("prompt") or self.entry["revisions"][self.entry["current"]]["prompt"],
-                "instruction": body.get("instruction", ""),
-                "has_mask": bool(body.get("mask")),
-                "timestamp": "2026-09-16T12:02:00Z",
-                **{key: body[key] for key in ("size", "quality", "background") if key in body},
-            }
-            self.entry["revisions"].append(revision)
-            self.entry["current"] = len(self.entry["revisions"]) - 1
-            self._revision_response(route)
+            self._answer_revision(route, body)
         elif request.method == "POST" and path == f"{self.revision_endpoint}/current":
             body = copy.deepcopy(request.post_data_json)
             self.restores.append({"path": path, "body": body})
@@ -362,6 +352,79 @@ class ImageEditorFixture:
         else:
             self.unexpected_requests.append(f"{request.method} {path}")
             route.abort()
+
+    def _answer_revision(self, route, body):
+        if self.next_error:
+            status, message = self.next_error
+            self.expected_http_errors.add(status)
+            self.next_error = None
+            route.fulfill(status=status, json={"error": message})
+            return
+        # Like the server, an id it already stored is answered from what was stored rather than
+        # run again, and a change made against an out-of-date version is refused with the stored
+        # state, so the page can tell whether the change that got in first was its own.
+        submission = body.get("submission_id")
+        if submission and any(
+            turn.get("role") == "user" and turn.get("submission_id") == submission
+            for turn in self.entry["chat"]
+        ):
+            self._revision_response(route)
+            return
+        expected = body.get("expected_revision_count")
+        if expected is not None and expected != len(self.entry["revisions"]):
+            self.expected_http_errors.add(409)
+            route.fulfill(status=409, json={
+                "error": "This image was revised elsewhere.",
+                "image_revisions": copy.deepcopy(self.entry),
+            })
+            return
+        revision = {
+            "id": f"revision-{len(self.entry['revisions'])}",
+            "origin": body["origin"],
+            "method": body["operation"],
+            "prompt": body.get("prompt") or self.entry["revisions"][self.entry["current"]]["prompt"],
+            "instruction": body.get("instruction", ""),
+            "has_mask": bool(body.get("mask")),
+            "timestamp": "2026-09-16T12:02:00Z",
+            **{key: body[key] for key in ("size", "quality", "background") if key in body},
+        }
+        self.entry["revisions"].append(revision)
+        self.entry["current"] = len(self.entry["revisions"]) - 1
+        # Like the server, an instruction is kept in the image's own chat under the client's id.
+        if revision["instruction"]:
+            stamp = {"submission_id": body["submission_id"]} if body.get("submission_id") else {}
+            self.entry["chat"].extend([
+                {"role": "user", "content": revision["instruction"], "timestamp": revision["timestamp"], **stamp},
+                {"role": "assistant", "content": revision["prompt"], "timestamp": revision["timestamp"], **stamp},
+            ])
+        self._revision_response(route)
+
+    def release(self):
+        """Answer every held revision request, as the server would once each one finished."""
+        held, self.held = self.held, []
+        for route, body in held:
+            try:
+                self._answer_revision(route, body)
+            except PlaywrightError:
+                # The page already stopped waiting for this one, which is what Cancel does.
+                pass
+
+    def drop(self):
+        """Fail every held revision request without applying it, as if it never reached the server."""
+        held, self.held = self.held, []
+        for route, _body in held:
+            try:
+                route.abort()
+            except PlaywrightError:
+                pass
+
+    def wait_for_requests(self, count):
+        """Let the page's requests reach the route handler, which runs while Playwright waits."""
+        for _ in range(100):
+            if len(self.requests) >= count:
+                return
+            self.page.wait_for_timeout(50)
+        raise AssertionError(f"Expected {count} revision requests, saw {len(self.requests)}")
 
     def _revision_response(self, route):
         revision = self.entry["revisions"][self.entry["current"]]

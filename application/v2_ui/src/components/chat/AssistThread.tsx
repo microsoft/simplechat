@@ -262,7 +262,9 @@ export function AssistThread({
                     </div>
                     {thread.overLimit ? (
                         <p id={limitId} className="mt-1.5 text-xs text-danger">
-                            {`This is ${thread.length - thread.maxLength} characters over the limit. Shorten it to send.`}
+                            {`This is ${thread.length - thread.maxLength} character${
+                                thread.length - thread.maxLength === 1 ? '' : 's'
+                            } over the limit. Shorten it to send.`}
                         </p>
                     ) : null}
                     {composerNote}
