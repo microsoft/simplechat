@@ -2,6 +2,18 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.191)**
+
+#### Bug Fixes
+
+*   **Comparisons Of Table-Heavy Documents No Longer Stop On Quote Formatting**
+    *   A V2 chat comparison of a document with many tables, such as a narrative PDF compared with a CSV, could end **Partially completed**, with the comparison step failing with "The operation did not produce the complete named results declared by the plan." That step writes the comparison as text and never creates a file. It stopped because Analyze had returned only a partial result for the PDF.
+    *   Analyze rejected correctly quoted evidence whenever the quote's formatting differed from the stored text. Document Intelligence stores tables as HTML and keeps line breaks, while models quote tables as readable text. A quote now also matches when it differs only in line breaks or repeated spaces, table or inline markup, entities, emphasis marks, invisible characters, typographic quotes and dashes, Unicode forms, or letter case. It must still be in the chunk it cites, and start and end on whole words and numbers. Paraphrases, partial words and numbers, and changed numbers or symbols are still rejected, and saved evidence is always the exact source text.
+    *   Analyze now records qualifications, such as a unit the text doesn't state, as caveats on the finding, and observations about a slice as notes. Neither makes the result partial, and both appear in the report, as **Caveat:** lines and under **Analysis notes**. In a comparison, each file's preparation step is now asked only for what its own file contributes, and the comparison step does the comparing.
+    *   When a step can't run because an earlier step returned only a partial result, it now reports `input_partial_not_accepted` instead of `result_invalid`, with a message that says so, and its log names the earlier step's capability. A new `Final findings validated` event gives the counts behind a partial Analyze result, and the window page-range debug log no longer prints `None:None`.
+    *   A run that already failed still fails on retry, because the retry reuses the saved partial result. Ask the question again.
+    *   (Ref: #1540, `functions_document_analysis_results.py`, `functions_document_analysis.py`, `functions_orchestration_planner.py`, `functions_orchestration_result_runtime.py`, `functions_orchestration_executor.py`, `docs/reference/logging-tags.md`, [V2 Comparison Analyze Evidence Matching Fix](fixes/V2_COMPARISON_ANALYZE_EVIDENCE_MATCHING_FIX.md))
+
 ### **(v0.261.190)**
 
 #### New Features
