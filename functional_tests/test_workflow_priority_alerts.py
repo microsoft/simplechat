@@ -46,7 +46,7 @@ def test_workflow_priority_alert_contracts():
     assert 'window.dispatchEvent(new CustomEvent("workflow-alert-refresh-requested"));' in workflow_js_content
     assert "WORKFLOW_ALERT_NOTIFICATION_TYPE = 'workflow_priority_alert'" in notifications_content
     assert 'def create_workflow_priority_notification(' in notifications_content
-    assert 'def get_unread_workflow_priority_notifications(user_id, limit=5):' in notifications_content
+    assert 'def get_unread_workflow_priority_notifications(user_id, limit=5, since_hours=None):' in notifications_content
     assert '/api/notifications/workflow-alerts' in notifications_route_content
     assert 'create_workflow_priority_notification' in workflow_runner_content
     assert "default_label='Open workflow'" in workflow_runner_content

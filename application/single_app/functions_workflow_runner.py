@@ -5768,6 +5768,9 @@ def _create_workflow_priority_alert(workflow, run_record, conversation, executio
         metadata = {
             'workflow_id': workflow_id,
             'workflow_name': workflow_name,
+            # Where the workflow lives, so an alert can link back to the right workflows list.
+            'workflow_scope': _get_workflow_scope(workflow),
+            'group_id': _get_workflow_group_id(workflow),
             'priority': priority,
             'category': decision.get('category') or 'alert',
             'delivery': decision.get('delivery') or 'popup',
