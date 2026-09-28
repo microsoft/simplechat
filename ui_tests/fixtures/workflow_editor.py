@@ -1,7 +1,7 @@
 # workflow_editor.py
 """
 Closed API fixtures for the native V2 workflow editor.
-Version: 0.261.191
+Version: 0.261.192
 Implemented in: 0.261.108
 Group File Sync, alert handoff and personal-scope trap modelling added in: 0.261.141
 Real alert normalizer on both save routes added in: 0.261.144
@@ -10,7 +10,8 @@ Group workflow list/save/run/cancel/delete responses held to the real route shap
 The public document picker is served the public chat list as its route answers it (chat_list), with
 no generated artifact awaiting publication: 0.261.183
 Calendar schedules, the server's schedule editor options and the administrator's minimum interval
-(`min_schedule_interval_seconds`, applied only to a new or changed interval) added in: 0.261.191
+(`min_schedule_interval_seconds`, applied only to a new or changed interval) added in: 0.261.192.
+`unlisted_schedule_timezones` leaves zones out of the options' list, as an older server tzdata would.
 
 Group File Sync requests are answered by the real server functions, compiled from source:
 `_serialize_workflow_file_sync_source` builds the source list, and `_normalize_file_sync_config`,
@@ -473,6 +474,9 @@ class WorkflowEditorFixture(WorkspaceAuthoringFixture):
         self.settings_refusals = []
         # The administrator's Workflow Minimum Schedule Interval; one second is the setting's default.
         self.min_schedule_interval_seconds = 1
+        # Zones left out of the editor options' list, as when the browser reports a zone newer than
+        # the server's tzdata release.
+        self.unlisted_schedule_timezones = set()
         self.file_sync_rules, self.personal_file_sync_rules = self._bind_file_sync_rules()
 
     def _group_role(self):
@@ -776,10 +780,13 @@ class WorkflowEditorFixture(WorkspaceAuthoringFixture):
                 options = editor_options("group", GROUP_ID, min_schedule_interval_seconds=minimum)
                 # The real options grant management from the viewer's group role.
                 options["can_manage"] = getattr(self, "group_can_manage", True)
-                self._json(route, options)
             else:
                 assert not entry.query, entry
-                self._json(route, editor_options(min_schedule_interval_seconds=minimum))
+                options = editor_options(min_schedule_interval_seconds=minimum)
+            options["schedule"]["timezones"] = [
+                zone for zone in options["schedule"]["timezones"] if zone not in self.unlisted_schedule_timezones
+            ]
+            self._json(route, options)
         elif path == FILE_SYNC_SOURCES_PATH and method == "GET":
             self._group_file_sync_sources(route, entry)
         elif path == "/api/workflows/m365-run-as-users" and method == "GET":

@@ -1515,6 +1515,39 @@ function getWorkflowRunnerLabel(workflow) {
     return normalizeText(modelBindingSummary.label) || "Default app model";
 }
 
+function isWorkflowCalendarSchedule(schedule) {
+    return Boolean(schedule && typeof schedule === "object" && normalizeText(schedule.kind).toLowerCase() === "calendar");
+}
+
+function getWorkflowCalendarScheduleLabel(schedule) {
+    const at = `${normalizeText(schedule.time_of_day)} ${normalizeText(schedule.timezone)}`.trim();
+    const frequency = normalizeText(schedule.frequency).toLowerCase();
+    if (frequency === "weekdays") {
+        return `Weekdays ${at}`;
+    }
+    if (frequency === "weekly") {
+        const dayOrder = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"];
+        const selectedDays = Array.isArray(schedule.days_of_week)
+            ? schedule.days_of_week.map((day) => normalizeText(day).toLowerCase())
+            : [];
+        const dayLabels = dayOrder
+            .filter((day) => selectedDays.includes(day))
+            .map((day) => `${day.charAt(0).toUpperCase()}${day.slice(1)}s`);
+        if (!dayLabels.length) {
+            return `Weekly ${at}`;
+        }
+        const joinedDays = dayLabels.length === 1
+            ? dayLabels[0]
+            : `${dayLabels.slice(0, -1).join(", ")} and ${dayLabels[dayLabels.length - 1]}`;
+        return `${joinedDays} ${at}`;
+    }
+    if (frequency === "monthly") {
+        const dayOfMonth = Number(schedule.day_of_month) || 1;
+        return `Monthly on day ${dayOfMonth}${dayOfMonth > 28 ? " (or last day)" : ""}, ${at}`;
+    }
+    return `Daily ${at}`;
+}
+
 function getWorkflowTriggerLabel(workflow) {
     if (!workflow || typeof workflow !== "object") {
         return "Manual";
@@ -1522,6 +1555,9 @@ function getWorkflowTriggerLabel(workflow) {
 
     if (workflow.trigger_type === "file_sync") {
         const schedule = workflow.schedule && typeof workflow.schedule === "object" ? workflow.schedule : {};
+        if (isWorkflowCalendarSchedule(schedule)) {
+            return `Monitor File Sync: ${getWorkflowCalendarScheduleLabel(schedule)}`;
+        }
         const value = Number(schedule.value || 0);
         const unit = normalizeText(schedule.unit) || "minutes";
         return `Monitor File Sync every ${value} ${unit}`;
@@ -1532,6 +1568,9 @@ function getWorkflowTriggerLabel(workflow) {
     }
 
     const schedule = workflow.schedule && typeof workflow.schedule === "object" ? workflow.schedule : {};
+    if (isWorkflowCalendarSchedule(schedule)) {
+        return getWorkflowCalendarScheduleLabel(schedule);
+    }
     const value = Number(schedule.value || 0);
     const unit = normalizeText(schedule.unit) || "minutes";
     return `Every ${value} ${unit}`;
@@ -4044,11 +4083,23 @@ function resetWorkflowForm() {
     showWorkflowStep(0);
 }
 
+// Calendar schedules come first: the classic form edits only fixed intervals, and saving one here
+// would replace the calendar schedule.
+function workflowNativeEditorReason(workflow) {
+    if (!workflow || typeof workflow !== "object") {
+        return "";
+    }
+    if (isWorkflowCalendarSchedule(workflow.schedule)) {
+        return "a calendar schedule";
+    }
+    if ((workflow.definition_version !== undefined && workflow.definition_version !== 1) || workflow.flow !== undefined) {
+        return "advanced data flow";
+    }
+    return "";
+}
+
 function workflowNeedsNativeEditor(workflow) {
-    return Boolean(workflow && (
-        (workflow.definition_version !== undefined && workflow.definition_version !== 1)
-        || workflow.flow !== undefined
-    ));
+    return Boolean(workflowNativeEditorReason(workflow));
 }
 
 async function openWorkflowModal(workflow = null) {
@@ -4056,7 +4107,7 @@ async function openWorkflowModal(workflow = null) {
         return;
     }
     if (workflowNeedsNativeEditor(workflow)) {
-        showToast("This workflow uses advanced data flow. Open V2 to edit it without losing its configuration. Run and Cancel remain available here.", "warning");
+        showToast(`This workflow uses ${workflowNativeEditorReason(workflow)}. Open V2 to edit it without losing its configuration. Run and Cancel remain available here.`, "warning");
         return;
     }
     if (workflowWorkspaceConfig.scope === "group" && !getWorkflowActiveGroupId()) {

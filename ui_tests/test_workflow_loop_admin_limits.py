@@ -1,12 +1,13 @@
 # test_workflow_loop_admin_limits.py
 """
 Source-backed browser tests for Classic/V2 For-each and Repeat policy limits.
-Version: 0.261.120
+Version: 0.261.192
 Implemented in: 0.261.117
 
 The actual Classic pane, V2 SPA, field registry and admin patch normalizer run
 against intercepted APIs. No live settings, Azure resource, or model is used.
 Repeat-until coverage was added in 0.261.120.
+Workflow Minimum Schedule Interval coverage was added in 0.261.192.
 """
 
 import sys
@@ -145,3 +146,52 @@ def test_v2_unrelated_patch_preserves_an_absent_workflow_limit(loop_admin_ui, wo
     expect(page.get_by_role("button", name="Save changes", exact=True)).to_have_count(0)
     assert ui.patches == [{"workflow_max_tasks": 51}]
     assert policy.key not in ui.settings
+
+
+SCHEDULE_MINIMUM_KEY = "workflow_min_schedule_interval_seconds"
+SCHEDULE_MINIMUM_LABEL = "Workflow Minimum Schedule Interval (seconds)"
+
+
+def test_classic_schedule_minimum_defaults_to_one_second_within_its_bounds(loop_admin_ui):
+    ui, page = loop_admin_ui, loop_admin_ui.page
+    ui.settings.pop(SCHEDULE_MINIMUM_KEY, None)
+    ui.open_workflow(classic=True, width=390)
+    field = page.get_by_label(SCHEDULE_MINIMUM_LABEL, exact=True)
+    expect(field).to_have_value("1")
+    for attribute, value in (
+        ("type", "number"), ("name", SCHEDULE_MINIMUM_KEY), ("min", "1"), ("max", "86400"), ("step", "1"),
+        ("required", ""), ("aria-describedby", "workflow-min-schedule-interval-help"),
+    ):
+        expect(field).to_have_attribute(attribute, value)
+    for text in ("created or changed", "keep their schedule", "Calendar schedules are not affected"):
+        expect(page.locator("#workflow-min-schedule-interval-help")).to_contain_text(text)
+    for invalid in ("0", "86401", "1.5", ""):
+        field.fill(invalid)
+        assert not field.evaluate("element => element.checkValidity()")
+    field.fill("3600")
+    assert field.evaluate("element => element.checkValidity()")
+    assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
+    assert ui.patches == []
+
+
+def test_v2_schedule_minimum_refuses_an_out_of_range_value_and_saves_a_narrow_patch(loop_admin_ui):
+    ui, page = loop_admin_ui, loop_admin_ui.page
+    ui.open_workflow()
+    field = page.get_by_label(SCHEDULE_MINIMUM_LABEL, exact=True)
+    expect(field).to_have_value("1")
+    expect(field).to_have_attribute("min", "1")
+    expect(field).to_have_attribute("max", "86400")
+    expect(field).to_have_attribute("step", "1")
+    field.fill("86401")
+    page.get_by_role("button", name="Save changes", exact=True).click()
+    expect(page.get_by_role("alert").filter(has_text="86,400")).to_be_visible()
+    expect(field).to_have_value("86401")
+    assert ui.settings[SCHEDULE_MINIMUM_KEY] == 1
+
+    field.fill("3600")
+    page.get_by_role("button", name="Save changes", exact=True).click()
+    expect(page.get_by_role("button", name="Save changes", exact=True)).to_have_count(0)
+    assert ui.patches[-1] == {SCHEDULE_MINIMUM_KEY: 3600}
+    assert ui.settings[SCHEDULE_MINIMUM_KEY] == 3600
+    page.reload(wait_until="networkidle")
+    expect(field).to_have_value("3600")

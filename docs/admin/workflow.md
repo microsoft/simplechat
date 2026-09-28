@@ -52,7 +52,7 @@ visible to its members. Turning one on does not turn on the other.
 
 | Setting | What it does | Default | Notes |
 | --- | --- | --- | --- |
-| Enable Personal Workflows | Lets users build workflows in their personal workspace and run them manually or on an interval schedule. | Off | `allow_user_workflows` |
+| Enable Personal Workflows | Lets users build workflows in their personal workspace and run them manually or on a schedule, either at a fixed interval or at a local time on a calendar schedule. | Off | `allow_user_workflows` |
 | Require WorkflowUser App Role | Restricts personal workflows to holders of the `WorkflowUser` Enterprise App role. Covers opening, creating, editing, running and inspecting them, so assign the role before turning this on or every user loses access at once. | Off | `require_member_of_workflow_user` |
 | Enable Group Workflows | Lets permitted members create, manage and run workflows from group workspaces. Owners and Admins may author them unless Workspaces restricts group agent, action and workflow management to Owners. | Off | `allow_group_workflows` |
 | Require Group Assignment to Use Workflow | Narrows group workflows to an explicit allow list instead of every group. Groups outside the list lose the capability. | Off | `require_group_assignment_for_group_workflows` |
@@ -61,9 +61,34 @@ visible to its members. Turning one on does not turn on the other.
 | Workflow Task Limit | Caps the ordered instruction tasks a single workflow may contain. Supported range is 1–100. | 50 | `workflow_max_tasks` |
 | Workflow Loop Item Limit | Bounds the actual per-item body visits in a For each block, not the number of documents that may be searched. A collection above the effective limit must be narrowed before its body can run; it is never silently trimmed. | 500 | `workflow_max_loop_items`; supported range 1-5,000; applies to new runs |
 | Workflow Repeat Iteration Limit | Bounds one automatic Repeat until batch, including its first round. Authors must choose an explicit per-block maximum; a new run above this ceiling is rejected rather than shortened. | 25 | `workflow_max_repeat_iterations`; supported range 1-1,000; new runs only; active runs and manual continuation retain the admitted policy |
+| Workflow Minimum Schedule Interval (seconds) | Sets the shortest fixed interval a personal or group workflow may be saved with, so no one can schedule a workflow to run every few seconds. It's checked only when an interval schedule is created or changed; workflows already saved on a shorter interval keep running. Calendar schedules run at most once a day and are never checked. The default, 1 second, allows every interval, as before. | 1 | `workflow_min_schedule_interval_seconds`; supported range 1-86,400; new or changed interval schedules only |
 
 The action and task limits apply to personal and group runs alike, so they stay
 in effect whichever capability is enabled.
+
+### Workflow schedules {#workflow-schedules}
+
+Version **0.261.192** adds calendar schedules. Besides repeating at a fixed
+interval, a personal or group workflow can run daily, on weekdays, on chosen
+days of the week, or on a day of the month, at a local time in an IANA time
+zone such as `America/New_York`. Runs keep their local time through daylight
+saving changes. Authors set calendar schedules in the V2 workflow editor; the
+classic editor sends those workflows to V2. There's nothing to turn on, and
+existing interval workflows, with their Microsoft 365 Run as approvals, don't
+change.
+
+**Workflow Minimum Schedule Interval (seconds)** limits how often an interval
+schedule may run. Raising it doesn't stop or change any saved workflow. It
+refuses a save that creates an interval workflow below the minimum, or changes a
+workflow to such an interval, with a message that names the minimum, for
+example "This schedule runs more often than the administrator allows. Choose an
+interval of at least 5 minutes." A workflow already saved on a shorter interval
+can still be saved with it, including when it's turned off and on, until someone
+changes its schedule. The scheduler doesn't read the minimum.
+
+The time zones offered come from the server's time zone database. See
+[Workflow calendar schedules](../explanation/features/WORKFLOW_CALENDAR_SCHEDULES.md)
+for the daylight saving rules and the stored format.
 
 ## Durable runs
 
@@ -177,6 +202,12 @@ See [Workflow publication completion](../explanation/features/WORKFLOW_PUBLICATI
    run reaches the end of its task list instead of halting mid-way, and Cosmos RU
    and Azure OpenAI throttling stay within headroom.
 
+3. **Stop workflows that run every few seconds.** Set Workflow Minimum Schedule
+   Interval (seconds) to 300. Outcome to verify: saving a new workflow that
+   repeats every 30 seconds is refused with "Choose an interval of at least 5
+   minutes.", while workflows already saved on shorter intervals keep running
+   until their authors change them.
+
 ## Troubleshooting
 
 | Symptom | Likely cause | Fix |
@@ -187,6 +218,8 @@ See [Workflow publication completion](../explanation/features/WORKFLOW_PUBLICATI
 | A workflow rejects a new task | The workflow already holds the maximum number of tasks. | Raise Workflow Task Limit, or split the work across two workflows. |
 | A saved Repeat workflow cannot start a new run | Its explicit block maximum exceeds the current Repeat ceiling. | Deliberately reduce the authored maximum or adjust Workflow Repeat Iteration Limit; the app does not silently clamp it. |
 | Repeat pauses with its condition unmet | The automatic batch ended, or a separate global budget blocked progress. | Inspect the gate and remaining budgets. Only a Repeat-limit gate can receive an explicit same-sized manual continuation; global budget exhaustion cannot be reset. |
+| Authors can't save a workflow that repeats every few seconds or minutes | The new or changed interval is shorter than Workflow Minimum Schedule Interval (seconds). | Expected when the minimum is raised. Lower the minimum, or have the author choose a longer interval or a calendar schedule. |
+| A calendar-scheduled workflow stopped running | Its saved time zone is no longer in the server's time zone database, so it has no next run. The server logs `[Workflows] Calendar schedule could not compute a next run.` with the workflow ID. | Have the author open it in the V2 editor, choose a listed time zone, and save. |
 
 ## Related
 
