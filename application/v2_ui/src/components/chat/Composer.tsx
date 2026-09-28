@@ -113,6 +113,7 @@ import {
     type PromptDraft,
 } from '../prompts/PromptEditorDialog';
 import { AiNotice } from './AiNotice';
+import { requestDesktopNotificationPermission } from '../../lib/desktopNotifications';
 import { VoiceInput } from './VoiceInput';
 import { WebSearchNotice } from './WebSearchNotice';
 import { ImageReferenceThumbnail } from './ImageReferenceThumbnail';
@@ -1008,6 +1009,9 @@ export function Composer({ initialAgentSelection }: { initialAgentSelection?: st
         // running a chat stream, so the large-run confirmation — a manual-flow concern about a
         // tabular export the planner has not chosen — does not apply.
         if (orchestrating) {
+            // Asked inside the click or key press that sent the message, because that is the
+            // only moment a browser shows its prompt. Does nothing once it has been answered.
+            void requestDesktopNotificationPermission();
             dispatchOrchestration(outgoing.message, outgoing.promptInfo);
             return;
         }
@@ -1054,6 +1058,9 @@ export function Composer({ initialAgentSelection }: { initialAgentSelection?: st
                 activeConversationKind: 'personal',
             });
         }
+        // Asked here rather than in `submit`, so the browser's prompt cannot land on top of
+        // the large-run confirmation; continuing from that dialog is a click too.
+        void requestDesktopNotificationPermission();
         // `options` is read before the clear below replaces it, so the request carries the
         // references this message was written with.
         void sendMessage(outgoing.message, {

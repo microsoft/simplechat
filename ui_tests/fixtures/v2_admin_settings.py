@@ -1,9 +1,10 @@
 # v2_admin_settings.py
 """
 Schema-backed browser fixtures for V2 Admin Settings.
-Version: 0.261.133
+Version: 0.261.194
 Implemented in: 0.261.093
 Separate release check boundary: 0.261.133
+The rail's notification count is answered: 0.261.194
 
 Serve the real built SPA through Playwright request interception, using the real
 Agents field schema and synthetic settings. No application server, signed-in
@@ -26,6 +27,7 @@ import pytest
 from playwright.sync_api import Page, Route, expect
 
 from playwright_connection import connect_options  # noqa: F401
+from v2_notification_stubs import is_notification_count, notification_count_payload
 
 # Reuse the existing isolated application imports rather than initializing Azure clients.
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -162,6 +164,9 @@ class AdminSettingsFixture:
         elif path == "/api/user/settings" and request.method == "POST":
             self.preferences.update(request.post_data_json["settings"])
             route.fulfill(json={"message": "Saved fixture preferences."})
+        elif is_notification_count(request.method, path):
+            # The rail's notification bell reads the count on every page.
+            route.fulfill(json=notification_count_payload())
         elif path == "/api/v2/admin/settings" and request.method == "GET":
             route.fulfill(json=self.payload)
         elif path == "/api/v2/admin/update-status" and request.method == "GET":

@@ -11,6 +11,7 @@ import { useBootstrapStore } from './stores/bootstrapStore';
 import { useUserSettingsStore } from './stores/userSettingsStore';
 import { initializeTheme, hydrateUiPreferences } from './stores/uiStore';
 import { startImageApprovalTracking } from './lib/imageProposalResume';
+import { useNotificationRuntime } from './lib/useNotificationRuntime';
 import { restorePersistedRuns } from './stores/orchestrationStore';
 import { ChatPage } from './pages/ChatPage';
 import { HomePage } from './pages/HomePage';
@@ -166,6 +167,10 @@ export function App() {
     useEffect(() => {
         document.documentElement.dataset.fontSize = fontSize;
     }, [fontSize]);
+
+    // The bell's unread count and desktop notifications for finished replies. Started only
+    // once a session has loaded, and kept running across every page.
+    useNotificationRuntime(Boolean(data) && !error);
 
     if (loading) {
         return <BootScreen />;

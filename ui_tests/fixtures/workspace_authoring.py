@@ -1,10 +1,11 @@
 # workspace_authoring.py
 """
 Closed API fixtures for the production V2 My Workspace authoring SPA.
-Version: 0.261.165
+Version: 0.261.194
 Implemented in: 0.261.096
 Action type auth lists as the real editor type builder answers them: 0.261.161
 Binary-safe request recorder so logo image uploads never crash the base route: 0.261.163
+The rail's notification count and watched-reply read receipts are answered: 0.261.194
 
 The browser loads the real built application and CSS. Only HTTP responses and
 synthetic resource persistence are replaced; no components, stores, navigation,
@@ -33,6 +34,10 @@ import pytest
 from playwright.sync_api import Page, Route, expect
 
 from ui_tests.fixtures.v2_admin_settings import connect_options  # noqa: F401
+from ui_tests.fixtures.v2_notification_stubs import (
+    conversation_mark_read_payload, is_notification_count, mark_read_conversation,
+    notification_count_payload,
+)
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -764,6 +769,12 @@ class WorkspaceAuthoringFixture:
             assert set(entry.body) == {"settings"}
             self.preferences.update(copy.deepcopy(entry.body["settings"]))
             self._json(route, {"message": "Saved fixture preferences."})
+        elif is_notification_count(method, path):
+            # The rail's notification bell reads the count on every page.
+            self._json(route, notification_count_payload())
+        elif mark_read_conversation(method, path):
+            # A personal reply the reader watched finish is marked read.
+            self._json(route, conversation_mark_read_payload(mark_read_conversation(method, path)))
         elif path == "/api/user/agent/settings" and method == "GET":
             assert entry.query == {"view": ["editor"]}
             self._json(route, self.options)
