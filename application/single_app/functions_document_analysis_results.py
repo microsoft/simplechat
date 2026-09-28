@@ -5,6 +5,7 @@ import hashlib
 import html
 import json
 import re
+import unicodedata
 from copy import deepcopy
 
 from functions_analysis_access import AnalysisResultUnavailable, analysis_source_snapshot
@@ -14,6 +15,37 @@ from functions_tabular_transformations import normalize_tabular_transformation_s
 
 ANALYSIS_RESULT_VERSION = 'analyze-final-v1'
 ANALYSIS_OPTIONS_VERSION = 'analysis-options-v1'
+EVIDENCE_MATCHER_VERSION = 'evidence-matcher-v2'
+EVIDENCE_MATCH_TIERS = ('exact', 'normalized', 'normalized_casefold')
+EVIDENCE_MISS_REASONS = ('missing_quote', 'missing_location', 'ambiguous', 'not_in_cited_location', 'not_in_window')
+_EVIDENCE_SELECTORS = ('chunk_sequence', 'page_number', 'chunk_id')
+_EVIDENCE_MARKUP = re.compile(r'<!--.*?-->|</?([A-Za-z][A-Za-z0-9:-]*)(?:[\s/][^<>]*)?>', re.DOTALL)
+_EVIDENCE_LINE = re.compile(r'[^\n]+')
+# Inline formatting renders no gap. Every other tag, comment or table rule separates words.
+_EVIDENCE_INLINE_TAGS = frozenset((
+    'a', 'abbr', 'b', 'bdi', 'bdo', 'big', 'cite', 'code', 'data', 'del', 'dfn', 'em', 'font', 'i', 'ins',
+    'kbd', 'mark', 'q', 's', 'samp', 'small', 'span', 'strike', 'strong', 'time', 'tt', 'u', 'var', 'wbr',
+))
+_EVIDENCE_ENTITY = re.compile(r'&(?:#\d+|#[xX][0-9a-fA-F]+|[A-Za-z][A-Za-z0-9]*);')
+# The window prompt labels each chunk this way; a quote may repeat the label.
+_EVIDENCE_PROMPT_LABEL = re.compile(
+    r'\s*\[(?:Page [^\[\],]{1,64}(?:, Chunk [^\[\]]{1,64})?|Chunk [^\[\]]{1,64})\]\s*'
+)
+_EVIDENCE_INVISIBLE = frozenset(
+    '\u00ad\u061c\u200b\u200c\u200d\u200e\u200f\u202a\u202b\u202c\u202d\u202e\u2060\u2066\u2067\u2068\u2069\ufeff'
+)
+_EVIDENCE_EMPHASIS = frozenset('*_`')
+# Digits joined by one of these, or by a single no-break or thin space, are one number, for example
+# 1,200,000, 4.5, 1'200 or 1 200 000.
+_EVIDENCE_NUMBER_JOINERS = frozenset(",.'\u066b\u066c")
+_EVIDENCE_GROUPING_SPACES = frozenset('\u00a0\u2007\u2009\u202f')
+# Plain equivalents of these compatibility forms would change a value, for example 10⁶ to 106.
+_EVIDENCE_KEPT_FORMS = ('<super>', '<sub>', '<fraction>', '<circle>', '<square>')
+_EVIDENCE_FOLDS = str.maketrans({
+    **dict.fromkeys('\u00b4\u2018\u2019\u201a\u201b\u2032', "'"),
+    **dict.fromkeys('\u201c\u201d\u201e\u201f\u2033', '"'),
+    **dict.fromkeys('\u2010\u2011\u2012\u2013\u2014\u2015\u2212\ufe58\ufe63\uff0d', '-'),
+})
 
 
 def normalize_analysis_options(analysis_options=None, transformation_spec=None):
@@ -260,6 +292,244 @@ def _public_issue(issue):
     return public
 
 
+def _evidence_word_character(character):
+    """Letters, digits, combining marks such as vowel signs, and connectors such as _ continue a word."""
+    category = unicodedata.category(character)
+    return character.isalnum() or category[0] == 'M' or category == 'Pc'
+
+
+def _evidence_markup(text):
+    """Presentation markup as (start, end, separates): tags, comments and table rule lines."""
+    spans = [
+        (match.start(), match.end(), (match.group(1) or '').lower() not in _EVIDENCE_INLINE_TAGS)
+        for match in _EVIDENCE_MARKUP.finditer(text)
+    ]
+    for line in _EVIDENCE_LINE.finditer(text):
+        content = line.group(0).strip()
+        if (
+            content and '-' in content and not content.strip('|:- \t')
+            and ('|' in content or content.count('-') >= 3)
+        ):
+            spans.append((line.start(), line.end(), True))
+    merged = []
+    for start, end, separates in sorted(spans):
+        if merged and start < merged[-1][1]:
+            merged[-1][1] = max(merged[-1][1], end)
+            merged[-1][2] = merged[-1][2] or separates
+        else:
+            merged.append([start, end, separates])
+    return merged
+
+
+def _evidence_form(text):
+    """Return comparable characters, each mapped to the original span it came from.
+
+    Words and numbers keep their boundaries: whitespace, table pipes, rule lines, comments and
+    structural tags become one space. Only marks that render as nothing are dropped, and nothing
+    written in the text, such as a sign, bullet or comparison symbol, is removed.
+    """
+    units = []
+
+    def add(character, start, end):
+        character = character.translate(_EVIDENCE_FOLDS)
+        if character in _EVIDENCE_INVISIBLE:
+            return
+        # Marks, including vowel signs with no combining class, stay with their base character.
+        if units and units[-1][0] == 'text' and unicodedata.category(character)[0] == 'M':
+            units[-1][1] += character
+            units[-1][3] = end
+        else:
+            units.append(['text', character, start, end])
+
+    position = 0
+    for start, end, separates in [*_evidence_markup(text), (len(text), len(text), False)]:
+        if start > position:
+            index = position
+            # Entities are decoded only after markup removal, so escaped text never becomes markup.
+            for entity in _EVIDENCE_ENTITY.finditer(text, position, start):
+                for offset in range(index, entity.start()):
+                    add(text[offset], offset, offset + 1)
+                value = html.unescape(entity.group(0))
+                if value == entity.group(0):
+                    for offset in range(entity.start(), entity.end()):
+                        add(text[offset], offset, offset + 1)
+                else:
+                    for character in value:
+                        add(character, entity.start(), entity.end())
+                index = entity.end()
+            for offset in range(index, start):
+                add(text[offset], offset, offset + 1)
+        if separates:
+            units.append(['gap', ' ', start, end])
+        position = max(position, end)
+
+    items = []
+    for kind, characters, start, end in units:
+        if kind == 'text' and not characters.isascii():
+            kept = any(
+                unicodedata.decomposition(character).startswith(_EVIDENCE_KEPT_FORMS)
+                for character in characters
+            )
+            characters = unicodedata.normalize('NFC' if kept else 'NFKC', characters).translate(_EVIDENCE_FOLDS)
+        for character in characters:
+            if kind == 'gap' or character.isspace() or character == '|':
+                items.append(('gap', ' ', start, end))
+            elif character in _EVIDENCE_EMPHASIS:
+                items.append(('mark', character, start, end))
+            elif character not in _EVIDENCE_INVISIBLE:
+                items.append(('char', character, start, end))
+
+    characters = []
+    spans = []
+    gap = None
+
+    def emit(character, start, end):
+        if gap is not None and characters:
+            characters.append(' ')
+            spans.append(gap)
+        characters.append(character)
+        spans.append((start, end))
+
+    index = 0
+    while index < len(items):
+        kind, character, start, end = items[index]
+        if kind == 'gap':
+            gap = (start, end) if gap is None else (gap[0], end)
+            index += 1
+            continue
+        if kind == 'char':
+            emit(character, start, end)
+            gap = None
+            index += 1
+            continue
+        run_end = index
+        while run_end < len(items) and items[run_end][0] == 'mark':
+            run_end += 1
+        before = items[index - 1] if index else None
+        after = items[run_end] if run_end < len(items) else None
+        # Emphasis and code marks at a word edge render as nothing. Marks standing alone or
+        # between two letters or digits are written text, for example 2 * 3, 2*3 or snake_case.
+        standalone = (before is None or before[0] == 'gap') and (after is None or after[0] == 'gap')
+        joined = (
+            before is not None and after is not None and before[0] == 'char' and after[0] == 'char'
+            and _evidence_word_character(before[1]) and _evidence_word_character(after[1])
+        )
+        if standalone or joined:
+            for _, mark, mark_start, mark_end in items[index:run_end]:
+                emit(mark, mark_start, mark_end)
+                gap = None
+        index = run_end
+    return ''.join(characters), spans
+
+
+def _evidence_forms(text):
+    normalized, spans = _evidence_form(text)
+    folded = normalized.casefold()
+    if len(folded) != len(normalized):
+        folded_spans = [span for character, span in zip(normalized, spans) for _ in character.casefold()]
+    else:
+        folded_spans = spans
+    return {'normalized': (normalized, spans), 'normalized_casefold': (folded, folded_spans)}
+
+
+def _evidence_joined(form, text, position):
+    """What comparable position joins into one token with its neighbours: 'number', 'word' or None."""
+    comparable, spans = form
+    if position <= 0 or position + 1 >= len(comparable):
+        return None
+    before, character, after = comparable[position - 1:position + 2]
+    if before.isdecimal() and after.isdecimal():
+        start, end = spans[position]
+        if character in _EVIDENCE_NUMBER_JOINERS or (
+            character == ' ' and html.unescape(text[start:end]) in _EVIDENCE_GROUPING_SPACES
+        ):
+            return 'number'
+    if character == "'" and _evidence_word_character(before) and _evidence_word_character(after):
+        return 'word'
+    return None
+
+
+def _evidence_edge_allowed(form, text, index, closing):
+    """Whether a match may start, or when closing end, between comparable positions index - 1 and index."""
+    comparable, spans = form
+    if index <= 0 or index >= len(comparable):
+        return True
+    if spans[index - 1] == spans[index]:
+        return False
+    if _evidence_word_character(comparable[index - 1]) and _evidence_word_character(comparable[index]):
+        return False
+    # Numbers are never split. A match may leave out an elided prefix such as the l' of
+    # l'augmentation, but it never ends before a suffix such as the 't of can't.
+    blocked = ('number', 'word') if closing else ('number',)
+    return not any(_evidence_joined(form, text, position) in blocked for position in (index - 1, index))
+
+
+def _evidence_occurrence(form, needle, text):
+    """First occurrence covering whole original characters, never starting or ending inside a word or number."""
+    comparable, spans = form
+    position = comparable.find(needle)
+    while position >= 0:
+        end = position + len(needle)
+        if (
+            _evidence_edge_allowed(form, text, position, closing=False)
+            and _evidence_edge_allowed(form, text, end, closing=True)
+        ):
+            return spans[position][0], spans[end - 1][1]
+        position = comparable.find(needle, position + 1)
+    return None
+
+
+def _locate_analysis_evidence(passage, contents, forms):
+    """Locate a cited passage in exactly one cited chunk, or return why it was not accepted."""
+    quote = passage.get('quote')
+    if not isinstance(quote, str) or not quote.strip():
+        return None, 'missing_quote'
+    label = _EVIDENCE_PROMPT_LABEL.match(quote)
+    needles = {
+        tier: form[0]
+        for tier, form in _evidence_forms(quote[label.end():] if label else quote).items()
+    }
+    if not needles['normalized']:
+        return None, 'missing_quote'
+    if not any(passage.get(key) is not None for key in _EVIDENCE_SELECTORS):
+        return None, 'missing_location'
+
+    def occurrence(index, tier):
+        text = contents[index]['text']
+        if tier == 'exact':
+            offset = text.find(quote)
+            return (offset, offset + len(quote)) if offset >= 0 else None
+        if index not in forms:
+            forms[index] = _evidence_forms(text)
+        return _evidence_occurrence(forms[index][tier], needles[tier], text)
+
+    selected = {
+        index for index, content in enumerate(contents)
+        if all(
+            passage.get(key) is None or str(passage[key]) == str(content.get(key))
+            for key in _EVIDENCE_SELECTORS
+        )
+    }
+    for tier in EVIDENCE_MATCH_TIERS:
+        hits = [
+            (index, span) for index in sorted(selected)
+            for span in [occurrence(index, tier)] if span is not None
+        ]
+        if len(hits) > 1:
+            return None, 'ambiguous'
+        if hits:
+            index, (start, end) = hits[0]
+            return (contents[index], start, end, tier), None
+    # Diagnostics only: a quote found under another chunk still fails its citation.
+    if any(
+        occurrence(index, tier) is not None
+        for index in range(len(contents)) if index not in selected
+        for tier in EVIDENCE_MATCH_TIERS
+    ):
+        return None, 'not_in_cited_location'
+    return None, 'not_in_window'
+
+
 def collect_analysis_window_candidates(analysis_text, source, work_unit, window_payload):
     """Check an extraction response against its assigned original source window."""
     cleaned = str(analysis_text or '').strip()
@@ -274,7 +544,14 @@ def collect_analysis_window_candidates(analysis_text, source, work_unit, window_
     window_issues = payload.get('issues', [])
     if not isinstance(window_issues, list) or any(not isinstance(item, str) for item in window_issues):
         raise ValueError('Analysis issues must be a list of text descriptions.')
+    window_notes = payload.get('notes')
+    window_notes = [] if window_notes is None else window_notes
+    if not isinstance(window_notes, list) or any(not isinstance(item, str) for item in window_notes):
+        raise ValueError('Analysis notes must be a list of text descriptions.')
 
+    contents = [_chunk_content(chunk) for chunk in window_payload.get('chunks', [])]
+    comparison_forms = {}
+    matching = dict.fromkeys((*EVIDENCE_MATCH_TIERS, *EVIDENCE_MISS_REASONS), 0)
     candidates = []
     evidence = {}
     for index, finding in enumerate(payload['findings']):
@@ -295,6 +572,12 @@ def collect_analysis_window_candidates(analysis_text, source, work_unit, window_
             issues.append(_issue('invalid_issues', 'A finding supplied an invalid uncertainty description.'))
         else:
             issues.extend(_issue('unresolved_finding', item) for item in finding_issues if item.strip())
+        caveats = finding.get('caveats')
+        caveats = [] if caveats is None else caveats
+        if not isinstance(caveats, list) or any(not isinstance(item, str) for item in caveats):
+            issues.append(_issue('invalid_caveats', 'A finding supplied an invalid caveat description.'))
+            caveats = []
+        caveats = sorted({item.strip() for item in caveats if item.strip()})
 
         evidence_refs = []
         passages = finding.get('evidence')
@@ -302,45 +585,37 @@ def collect_analysis_window_candidates(analysis_text, source, work_unit, window_
             issues.append(_issue('missing_evidence', 'A finding has no supporting source passage.'))
             passages = []
         for passage in passages:
-            passage = passage if isinstance(passage, dict) else {}
-            quote = passage.get('quote')
-            matches = []
-            if isinstance(quote, str) and quote.strip():
-                for chunk in window_payload.get('chunks', []):
-                    content = _chunk_content(chunk)
-                    selectors = ('chunk_sequence', 'page_number', 'chunk_id')
-                    if not any(passage.get(key) is not None for key in selectors):
-                        continue
-                    if any(
-                        passage.get(key) is not None and str(passage[key]) != str(content.get(key))
-                        for key in selectors
-                    ):
-                        continue
-                    offset = content['text'].find(quote)
-                    if offset >= 0:
-                        matches.append((content, offset))
-            if len(matches) != 1:
+            located, reason = _locate_analysis_evidence(
+                passage if isinstance(passage, dict) else {}, contents, comparison_forms,
+            )
+            if located is None:
+                matching[reason] += 1
                 issues.append(_issue(
                     'unmatched_evidence',
                     'A supporting passage could not be located uniquely in the assigned source window.',
+                    reason=reason,
                 ))
                 continue
-            content, offset = matches[0]
+            content, start, end, tier = located
+            matching[tier] += 1
             location = {
                 'chunk_id': content['chunk_id'],
                 'chunk_sequence': content['chunk_sequence'],
                 'page_number': content['page_number'],
-                'start_char': offset,
-                'end_char': offset + len(quote),
+                'start_char': start,
+                'end_char': end,
+                'match': tier,
             }
-            evidence_id = _identity('evidence', [source, location, quote])
+            # Keep the verbatim source span, never the model's wording of it.
+            text = content['text'][start:end]
+            evidence_id = _identity('evidence', [source, location, text])
             evidence[evidence_id] = {
                 'evidence_id': evidence_id,
                 'document_id': source['document_id'],
                 'source': deepcopy(source),
                 'work_unit_ids': [work_unit['work_unit_id']],
                 'location': location,
-                'text': quote,
+                'text': text,
             }
             evidence_refs.append(evidence_id)
 
@@ -355,6 +630,8 @@ def collect_analysis_window_candidates(analysis_text, source, work_unit, window_
             'status': 'candidate' if not issues else 'unresolved',
             'issues': issues,
         }
+        if caveats:
+            candidate['caveats'] = caveats
         candidate['candidate_id'] = _identity('candidate', candidate)
         candidates.append(candidate)
 
@@ -366,6 +643,9 @@ def collect_analysis_window_candidates(analysis_text, source, work_unit, window_
                    document_id=source['document_id'])
             for text in window_issues if text.strip()
         ],
+        'notes': list(dict.fromkeys(text.strip() for text in window_notes if text.strip())),
+        'evidence_matcher_version': EVIDENCE_MATCHER_VERSION,
+        'evidence_matching': matching,
     }
 
 
@@ -452,13 +732,17 @@ def finalize_document_analysis_result(sources, work_units, candidates, evidence)
                 for issue in candidate['issues'] + candidate['resolution_issues']
             )
         if not unresolved:
-            records.append({
+            record = {
                 'record_id': record_id,
                 'document_id': group[0]['document_id'],
                 'source': deepcopy(group[0]['source']),
                 'values': values,
                 'evidence_refs': sorted({ref for candidate in group for ref in candidate['evidence_refs']}),
-            })
+            }
+            caveats = sorted({caveat for candidate in group for caveat in candidate.get('caveats', [])})
+            if caveats:
+                record['caveats'] = caveats
+            records.append(record)
 
     source_order = {source['document_id']: index for index, source in enumerate(sources)}
     records.sort(key=lambda item: (source_order[item['document_id']], item['record_id']))
@@ -502,11 +786,16 @@ def finalize_document_analysis_result(sources, work_units, candidates, evidence)
         'pending_work_units': pending_units,
         'status': 'complete' if coverage_complete else 'incomplete',
         'sources': source_coverage,
+        # Model-authored notes stay in diagnostics; validation carries only application messages.
         'work_units': [
-            {**deepcopy(unit), 'issues': [_public_issue(issue) for issue in unit.get('issues', [])]}
+            {
+                **{key: deepcopy(value) for key, value in unit.items() if key != 'notes'},
+                'issues': [_public_issue(issue) for issue in unit.get('issues', [])],
+            }
             for unit in units.values()
         ],
     }
+    noted_units = [unit for unit in units.values() if unit['status'] == 'completed' and unit.get('notes')]
     return {
         'analysis_result_version': ANALYSIS_RESULT_VERSION,
         'analysis_sources': deepcopy(sources),
@@ -543,6 +832,7 @@ def finalize_document_analysis_result(sources, work_units, candidates, evidence)
             'coverage': coverage,
             'finalized_record_count': len(records),
             'unresolved_candidate_count': unresolved_count,
+            'evidence_matcher_version': EVIDENCE_MATCHER_VERSION,
         },
         'analysis_diagnostics': {
             'candidates': list(unique_candidates.values()),
@@ -552,6 +842,15 @@ def finalize_document_analysis_result(sources, work_units, candidates, evidence)
                     for unit in units.values() if unit.get('issues')
                 ],
             } if any(unit.get('issues') for unit in units.values()) else {}),
+            **({
+                'work_unit_notes': [
+                    {
+                        'work_unit_id': unit['work_unit_id'], 'document_id': unit['document_id'],
+                        'window_range': deepcopy(unit.get('window_range') or {}), 'notes': list(unit['notes']),
+                    }
+                    for unit in noted_units
+                ],
+            } if noted_units else {}),
         },
     }
 
@@ -647,6 +946,12 @@ def build_document_analysis_report(result):
                 locations.append(label)
         if locations:
             lines.append(f'  Supporting locations: {"; ".join(locations)}.')
+        caveats = record.get('caveats')
+        if isinstance(caveats, list):
+            lines.extend(
+                f'  Caveat: {_markdown_text(caveat)}' for caveat in caveats
+                if isinstance(caveat, str) and caveat.strip()
+            )
         lines.append('')
     lines.extend([
         '', '## Coverage', '',
@@ -660,10 +965,32 @@ def build_document_analysis_report(result):
             f'- {_markdown_text(source_coverage["source"]["file_name"])}: '
             f'{source_coverage["completed_work_units"]}/{source_coverage["assigned_work_units"]} windows processed.'
         )
+    names = {
+        item['document_id']: item['source']['file_name'] for item in coverage.get('sources', [])
+    }
+    note_lines = []
+    for item in (result.get('analysis_diagnostics') or {}).get('work_unit_notes') or []:
+        if not isinstance(item, dict) or not isinstance(item.get('notes'), list):
+            continue
+        prefix = _markdown_text(names.get(item.get('document_id')) or item.get('document_id') or 'Source')
+        window_range = item.get('window_range') if isinstance(item.get('window_range'), dict) else {}
+        for first, last, label in (
+            ('start_page', 'end_page', 'page'), ('start_chunk_sequence', 'end_chunk_sequence', 'chunk'),
+        ):
+            if window_range.get(first) is not None and window_range.get(last) is not None:
+                span = (
+                    f'{label} {window_range[first]}' if window_range[first] == window_range[last]
+                    else f'{label}s {window_range[first]} to {window_range[last]}'
+                )
+                prefix = f'{prefix}, {_markdown_text(span)}'
+                break
+        note_lines.extend(
+            f'- {prefix}: {_markdown_text(note)}' for note in item['notes']
+            if isinstance(note, str) and note.strip()
+        )
+    if note_lines:
+        lines.extend(['', '## Analysis notes', '', *note_lines])
     if validation.get('issues'):
-        names = {
-            item['document_id']: item['source']['file_name'] for item in coverage.get('sources', [])
-        }
         lines.extend(['', '## Validation notes' if validation.get('status') == 'valid' else '## Unresolved work', ''])
         for issue in validation['issues']:
             name = names.get(issue.get('document_id'))

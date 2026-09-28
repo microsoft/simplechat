@@ -293,7 +293,10 @@ invent one. If the user already selected documents, plan around those documents.
 Use each candidate's server-resolved source_kind, not its display label, to choose compatible
 work. Never send tabular source IDs to document_analyze or document_compare: those steps
 do not admit native tabular inputs. For mixed narrative/tabular comparisons, prepare each
-source with compatible offered capabilities and compose their named results. A document
+source with compatible offered capabilities and compose their named results. Ask each
+preparation step only for its own sources' contribution, such as values, periods, units and
+identifiers. A preparation step sees only its own sources, so never ask it to compare them
+with, or look for, another source; compose performs the comparison. A document
 search can support an overview, but not substitute for exact native tabular work. Search
 results are bounded excerpts, not full-source coverage. Searching documents is much cheaper
 than analysing them: analyse only when the question needs whole-document coverage. Selected

@@ -433,3 +433,103 @@ events with request outcomes instead of interpreting HTTP 200 as a valid plan or
 HTTP 503 as proof that no execution claim exists. Historical events before this
 version may contain only string-length metadata and cannot be used to reconstruct
 the exact rejected proposal.
+
+### Analyze validation and partial-input events
+
+Since **0.261.144**, these events explain why an Analyze result was partial and
+which later step refused it. They record codes and counts only: no quotes,
+findings, caveats, notes, prompts, file names, or model responses.
+
+| Event message | Severity | Properties |
+| --- | --- | --- |
+| `[DOCUMENT_ANALYSIS] Final findings validated` | Information when the result is `valid`; otherwise Warning | `sc_validation_code`, the record, window and evidence counts described below, and one `sc_issue_<code>_count` per validation issue code. |
+| `[ORCHESTRATION_EXECUTOR] A dependency-bound step could not complete.` | Warning | `sc_failure_code`, `sc_execution_code`, `sc_error_type`, and, when the step refused a partial input, the `sc_producer_*` fields described below. |
+
+Analyze writes its event each time it validates newly assembled final findings. A
+step that resumes from an already saved final result does not write it again. The
+event carries `sc_conversation_id_hash` when the analysis runs for a conversation,
+but no run or step hash, so match it by time to the step events that follow it.
+The executor event carries the run, conversation and step hashes and
+`sc_capability_id`, like the other executor events.
+
+The Analyze event reports:
+
+- `sc_validation_code`: the result's validation status, `valid`, `partial`,
+  `pending`, or `invalid`.
+- `sc_finalized_record_count` and `sc_unresolved_candidate_count`: the candidate
+  findings that became final records and those that did not. `sc_candidate_count`
+  counts all candidates.
+- `sc_window_count`: the assigned source windows, split into
+  `sc_completed_window_count`, `sc_failed_window_count`, and
+  `sc_pending_window_count`. `sc_reused_window_count` counts windows restored from
+  a checkpoint instead of being analyzed again.
+- `sc_caveat_count` and `sc_note_count`: finding caveats and slice notes. Neither
+  makes a result partial.
+- `sc_evidence_<outcome>_count`: cited passages by outcome. A located passage is
+  counted under the first tier that finds it in the chunk it cites:
+  - `exact`: the quote appears verbatim.
+  - `normalized`: the quote matches once presentation is set aside. Markup, table
+    rules and runs of whitespace separate words without merging them. Entities,
+    typographic quotes and dashes, compatibility forms, invisible characters, and
+    emphasis marks at a word edge are ignored. Written signs, symbols and list
+    markers still have to match, and the match must start and end on whole words
+    and numbers.
+  - `normalized_casefold`: the quote matches as `normalized`, also ignoring case.
+
+  A rejected passage is counted under its reason:
+  - `missing_quote`: the quote is empty, or has no text once presentation is set
+    aside.
+  - `missing_location`: the passage names no chunk sequence, chunk ID, or page.
+  - `ambiguous`: the citation selects more than one chunk, and the quote is found
+    in more than one of them.
+  - `not_in_cited_location`: the quote is in a different chunk of the same window.
+    This is a mis-citation, and the passage is still rejected.
+  - `not_in_window`: the quote is nowhere in the window, typically because it is a
+    paraphrase, a summary, or text joined from different chunks.
+- `sc_issue_<code>_count`: how often each validation issue code occurred, such as
+  `sc_issue_unmatched_evidence_count` or `sc_issue_unresolved_finding_count`. Only
+  codes present in the result appear.
+
+A step whose inputs must be complete does not run when an earlier step returned a
+partial result. Its executor event reports `input_partial_not_accepted` as both
+`sc_failure_code` and `sc_execution_code`, with `sc_error_type`
+`PartialInputNotAcceptedError`, and identifies the producer:
+
+- `sc_producer_capability_id`, such as `document_analyze`, and
+  `sc_producer_step_id_hash`, which matches the producing step's
+  `sc_step_id_hash`.
+- `sc_producer_actual_count` and `sc_producer_expected_count`: the records the
+  producer returned and the total it expected.
+- `sc_producer_coverage_completed` and `sc_producer_coverage_expected`: the
+  producer's completed and assigned coverage units, such as sources or work units.
+- `sc_producer_limitation_count`: the limitations the producer recorded to qualify
+  its partial result.
+
+The expected count and expected coverage are absent when the producer declared no
+total.
+
+To see why a conversation's analysis or comparison was partial:
+
+```kusto
+let conversationHash = hash_sha256("<conversation-id>");
+AppTraces
+| where TimeGenerated > ago(2h)
+| where tostring(Properties.sc_conversation_id_hash) == conversationHash
+| where tostring(Properties.sc_message) contains "Final findings validated"
+    or tostring(Properties.sc_failure_code) == "input_partial_not_accepted"
+| project TimeGenerated,
+    message = tostring(Properties.sc_message),
+    validationCode = tostring(Properties.sc_validation_code),
+    finalized = toint(Properties.sc_finalized_record_count),
+    unresolved = toint(Properties.sc_unresolved_candidate_count),
+    failedWindows = toint(Properties.sc_failed_window_count),
+    normalized = toint(Properties.sc_evidence_normalized_count),
+    miscited = toint(Properties.sc_evidence_not_in_cited_location_count),
+    notInWindow = toint(Properties.sc_evidence_not_in_window_count),
+    producer = tostring(Properties.sc_producer_capability_id),
+    producerLimitations = toint(Properties.sc_producer_limitation_count)
+| order by TimeGenerated asc
+```
+
+See [the evidence matching fix](../explanation/fixes/V2_COMPARISON_ANALYZE_EVIDENCE_MATCHING_FIX.md)
+for how the tiers are applied.

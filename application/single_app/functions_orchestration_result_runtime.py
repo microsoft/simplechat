@@ -17,7 +17,8 @@ from functions_orchestration_registry import (
 )
 from functions_orchestration_result_contracts import (
     IMAGE_ASSET_KIND, MAX_DESCRIPTOR_BYTES, MAX_EXTERNAL_SOURCES, Completeness, Coverage, ExternalSourceRef,
-    InputBinding, ResultContractError, ResultRef, TaskResult, canonical_bytes, canonical_digest, output_name,
+    InputBinding, PartialInputNotAcceptedError, ResultContractError, ResultNotReadyError, ResultRef, TaskResult,
+    canonical_bytes, canonical_digest, output_name,
 )
 from functions_orchestration_results import MAX_LINEAGE_RESULTS, MAX_VALUE_BYTES, NamedOutput, OrchestrationResults
 from functions_orchestration_schema import step_input_specs
@@ -44,6 +45,21 @@ def reuse_alias(reference):
     return f'reused_{canonical_digest(reference.to_dict())[:48]}'
 
 
+def _bound_reference(spec, context):
+    """The already-admitted reference a binding names, for diagnostics only."""
+    binding = spec.binding
+    if binding.existing_result is not None:
+        reference = (getattr(context, 'result_aliases', None) or {}).get(binding.existing_result)
+        return reference if type(reference) is ResultRef else None
+    task = context.task_results.get(binding.step_id)
+    if type(task) is not TaskResult:
+        return None
+    try:
+        return task.output(binding.output_name)
+    except ResultContractError:
+        return None
+
+
 def resolve_step_inputs(step, context):
     """Only declared, authorized inputs; a recovered old attempt needs an admitted alias."""
     service = require_result_service(context)
@@ -54,6 +70,7 @@ def resolve_step_inputs(step, context):
             # The optional producer did not complete. Its consumer runs without a reader and
             # discloses the gap; a failed or partial result is never made readable.
             continue
+        producer_step_id = spec.binding.step_id
         if spec.binding.step_id is not None:
             task = context.task_results.get(spec.binding.step_id)
             if isinstance(task, TaskResult) and (
@@ -64,13 +81,21 @@ def resolve_step_inputs(step, context):
                 if context.result_aliases.get(alias) != reference:
                     raise ResultContractError('result_attempt_mismatch')
                 spec = replace(spec, binding=InputBinding(existing_result=alias))
-        reader = service.resolve_input(
-            spec, consumer=consumer, task_results=context.task_results,
-            existing_results=context.result_aliases,
-        )
-        reader = service.open_result(
-            reader.reference, allow_partial=spec.allow_partial, require_current_sources=True,
-        )
+        try:
+            reader = service.resolve_input(
+                spec, consumer=consumer, task_results=context.task_results,
+                existing_results=context.result_aliases,
+            )
+            reader = service.open_result(
+                reader.reference, allow_partial=spec.allow_partial, require_current_sources=True,
+            )
+        except ResultNotReadyError as exc:
+            # A complete-only input is never opened on a partial result; say which producer.
+            if exc.status == 'partial' and not exc.preview and not spec.allow_partial:
+                raise PartialInputNotAcceptedError(
+                    _bound_reference(spec, context), producer_step_id=producer_step_id,
+                ) from exc
+            raise
         reader.recheck()
         readers[spec.name] = reader
     return readers

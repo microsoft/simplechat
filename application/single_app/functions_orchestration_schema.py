@@ -1172,6 +1172,9 @@ FAILURE_MESSAGES = {
     'result_not_ready': 'Required computation is still pending. Its result is not ready to consume.',
     'result_commit_unconfirmed': 'The producer stopped before its retained completion checkpoint was confirmed. Its work will not be repeated automatically.',
     'result_partial': 'Required work produced only an explicitly limited partial result.',
+    'input_partial_not_accepted': (
+        'An earlier step returned only a partial result, and this step requires complete results, so it did not run.'
+    ),
     'dependency_unavailable': 'A required dependency did not complete. This operation was not executed.',
     'file_publication_not_allowed': 'Gathering and reasoning cannot create downloadable files.',
     'checkpoint_unavailable': 'Progress could not be saved or verified. This attempt cannot safely resume.',

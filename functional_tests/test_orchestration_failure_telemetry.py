@@ -1,9 +1,10 @@
 # test_orchestration_failure_telemetry.py
 """Specific orchestration failure rules reach telemetry without private plan text.
 
-Version: 0.261.141
+Version: 0.261.144
 Implemented in: 0.261.140
 Step, capability, format, and authority-reason codes covered in: 0.261.141
+Partial-input producer capability and step hash fields covered in: 0.261.144
 
 Uses real planner/validation/logging modules with offline provider replies.
 The synthetic invalid proposals test diagnostics, not the unknown historical
@@ -134,6 +135,8 @@ def test_workflow_hash_and_code_fields_do_not_preserve_arbitrary_text(harness):
         "output_code": "output_record_invalid", "durable_status": "failed",
         "failure_code": "source_authority_unverified", "authority_reason": "manifest_revision_invalid",
         "capability_id": "render_file", "output_format": "docx",
+        "producer_capability_id": "document_analyze",
+        "producer_step_id_hash": hashlib.sha256(b"PRIVATE_PRODUCER_STEP").hexdigest(),
         "response_type": "CosmosDict", "api_key": "PRIVATE_KEY",
         "prompt": "PRIVATE_PROMPT", "run_id": "PRIVATE_RUN",
     })
@@ -148,8 +151,13 @@ def test_workflow_hash_and_code_fields_do_not_preserve_arbitrary_text(harness):
     assert properties["sc_authority_reason"] == "manifest_revision_invalid"
     assert properties["sc_capability_id"] == "render_file"
     assert properties["sc_output_format"] == "docx"
+    assert properties["sc_producer_capability_id"] == "document_analyze"
+    assert properties["sc_producer_step_id_hash"] == hashlib.sha256(b"PRIVATE_PRODUCER_STEP").hexdigest()
     assert "PRIVATE_" not in json.dumps(properties)
-    assert {"stepidhash", "failurecode", "authorityreason", "capabilityid", "outputformat"} <= (
+    assert {
+        "stepidhash", "failurecode", "authorityreason", "capabilityid", "outputformat",
+        "producerstepidhash", "producercapabilityid",
+    } <= (
         telemetry.LOGGER_WORKFLOW_HASH_KEYS | telemetry.LOGGER_WORKFLOW_CODE_KEYS
     )
     for key in (*telemetry.LOGGER_WORKFLOW_HASH_KEYS, *telemetry.LOGGER_WORKFLOW_CODE_KEYS):

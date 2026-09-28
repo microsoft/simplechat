@@ -67,7 +67,7 @@ from functions_orchestration_registry import (
     resolve_available_capability_ids,
 )
 from functions_orchestration_result_contracts import (
-    InputBinding, ProducerIdentity, ResultContractError, ResultRef, TaskResult, digest,
+    InputBinding, PartialInputNotAcceptedError, ProducerIdentity, ResultContractError, ResultRef, TaskResult, digest,
 )
 from functions_orchestration_result_runtime import (
     decode_step_result, raise_source_service_failure, read_complete_input, read_result_document_citations,
@@ -152,6 +152,21 @@ def _step_log_context(context, step):
 def _error_code(error):
     code = getattr(error, 'code', None)
     return code if isinstance(code, str) else None
+
+
+def _partial_input_log_fields(error):
+    """Which producer returned the partial result a complete-only input refused, as codes and counts."""
+    if not isinstance(error, PartialInputNotAcceptedError):
+        return {}
+    fields = {
+        'producer_capability_id': error.producer_capability_id,
+        'producer_step_id_hash': workflow_log_context(step_id=error.producer_step_id).get('step_id_hash'),
+    }
+    for name in ('expected_count', 'actual_count', 'coverage_expected', 'coverage_completed', 'limitation_count'):
+        value = getattr(error, name, None)
+        if isinstance(value, int) and not isinstance(value, bool):
+            fields[f'producer_{name}'] = value
+    return fields
 
 
 def _log_transient_retry(context, step, result):
@@ -834,6 +849,8 @@ def _run_dependency_step(
             failure = build_failure('file_publication_not_allowed')
         elif isinstance(exc, (ResultUnavailableError, ElicitationContextError, PermissionError, ScreeningError)):
             failure = build_failure('result_unavailable')
+        elif isinstance(exc, PartialInputNotAcceptedError):
+            failure = build_failure('input_partial_not_accepted')
         elif isinstance(exc, ResultContractError):
             failure = build_failure('result_invalid')
         else:
@@ -844,6 +861,7 @@ def _run_dependency_step(
             extra={
                 **_step_log_context(context, step), 'error_type': type(exc).__name__,
                 'failure_code': failure['code'], 'execution_code': _error_code(exc),
+                **_partial_input_log_fields(exc),
             },
         )
         return build_step_result(
