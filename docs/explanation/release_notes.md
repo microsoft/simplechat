@@ -4,7 +4,14 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
 
 ### **(v0.261.190)**
 
-Merged from the React V2 branch at `01c728bf`. This change shipped there as 0.261.143. This branch had already used that number for its own change, so here it carries the merge's version. The version numbers inside its own documentation and tests are the React V2 branch's.
+#### New Features
+
+*   **Group And Public Workspaces Are Native In V2**
+    *   Group and public workspaces now work in the React V2 interface, on the design of My Workspace. Choosing a workspace on its V2 page selects it, as the classic interface does, and loads its details, your role and the sections you can use without leaving V2.
+    *   Group workspaces cover documents, prompts, actions, agents, connections (identities, file sources and endpoints), workflows, and management: the directory, members, settings, activity and statistics.
+    *   Public workspaces cover the directory, where you choose which workspaces chat uses and save visibility lists, and documents, prompts and management: members, identities and file sources, settings, activity and statistics. Every reader can browse a public workspace's documents, and download them when downloads are enabled; the Owner, Admins and DocumentManagers manage them and approve generated artifacts.
+    *   The workspaces were built in stages from 0.261.127, and each version's entries describe what it added. Deleting a group or public workspace, the legacy document upgrade, managing an inactive group, and chatting with every visible public workspace at once stay in the classic interface.
+    *   (Ref: #1542, #1541, [Use group workspaces in V2](../guides/manage-group-workspaces.md), [Use public workspaces](../guides/use-public-workspaces.md), [V2 Shared Workspace Context and Group Shell](features/V2_SHARED_WORKSPACE_CONTEXT.md))
 
 #### Bug Fixes
 
@@ -12,7 +19,7 @@ Merged from the React V2 branch at `01c728bf`. This change shipped there as 0.26
     *   Fixed orchestration runs, such as a PDF-and-CSV comparison, stalling on the tabular step when the CSV or workbook had been re-uploaded under the same name. The step stopped before reading any rows, the run later reported that the step's saved result could not be confirmed (`result_commit_unconfirmed`), and the step kept showing **Reasoning**.
     *   The tabular step's replay descriptor carries its own schema version, which was compared with the file's revision even after the source's screening provenance had matched. A matching provenance is now authoritative. Sources without provenance keep their existing checks, and a source that really changed still conflicts.
     *   Revision conflicts now log `sc_authority_reason`, naming the check that failed, without logging document values.
-    *   Shipped in the React V2 branch as 0.261.143.
+    *   Merged from the React V2 branch at `01c728bf`, where it shipped as 0.261.143. This branch had already used 0.261.143 for its group details fix, so here the fix carries the merge's version. Its own documentation and tests keep the React V2 branch's number.
     *   (Ref: `content_screening/access.py`, `docs/reference/logging-tags.md`, [Re-uploaded Tabular Source Revision Conflict Fix](fixes/REUPLOADED_TABULAR_SOURCE_REVISION_CONFLICT_FIX.md))
 
 ### **(v0.261.189)**
@@ -1029,7 +1036,8 @@ Merged from the React V2 branch at `d243b0ca`. These changes shipped there as 0.
     *   Decisions are bound to the document revision the reviewer actually saw. A conflicting change keeps the entered target and asks for an explicit refresh instead of resolving itself, and a partial outcome is repaired rather than replayed as a new decision.
     *   Sharing calls name the group in the URL rather than relying on the account's current selection, so changing groups mid-decision cannot redirect one, and an older server rejects the call instead of acting in the wrong group.
     *   Approving a generated artifact can start screening on a brand-new destination without that approval being blocked by the destination's own not-yet-started screening reservation. Admission requires recorded proof rather than the absence of evidence, so a scan that ran and was later removed cannot restore eligibility, and the screening hold itself is never released early.
-    *   (Ref: `functions_group_document_collaboration.py`, `functions_group_document_publication.py`, `functions_artifact_publication.py`, `route_backend_group_documents.py`, `documentCollaboration.ts`, `DocumentCollaborationDialog.tsx`, [V2 Group Document Collaboration](features/V2_GROUP_DOCUMENT_COLLABORATION.md), [Collaboration APIs](features/GROUP_DOCUMENT_COLLABORATION_APIS.md))
+    *   Removing a share can't be undone by a document update that was already writing the document's search entries. Sharing changes and those updates coordinate on the document itself, and an update carrying an older share list is limited to the document's current shares (0.261.130).
+    *   (Ref: `functions_group_document_collaboration.py`, `functions_group_document_publication.py`, `functions_artifact_publication.py`, `functions_group_document_projection_fence.py`, `route_backend_group_documents.py`, `documentCollaboration.ts`, `DocumentCollaborationDialog.tsx`, [V2 Group Document Collaboration](features/V2_GROUP_DOCUMENT_COLLABORATION.md), [Collaboration APIs](features/GROUP_DOCUMENT_COLLABORATION_APIS.md), [Projection Coordination](features/GROUP_DOCUMENT_PROJECTION_COORDINATION.md), #1542)
 
 #### Bug Fixes
 
@@ -1052,6 +1060,13 @@ Merged from the React V2 branch at `d243b0ca`. These changes shipped there as 0.
     *   No new Microsoft Graph permission is required. Reads stay limited to the primary mailbox and default calendar, and items removed by retention can't be returned.
     *   (Ref: `msgraph_plugin.py`, `functions_msgraph_operations.py`, [Microsoft 365 Email](../reference/actions/m365-email.md), [Microsoft 365 Calendar](../reference/actions/m365-calendar.md), #1523)
 
+*   **Manage Group Documents In V2**
+    *   Group Owners, Admins and DocumentManagers can upload documents and follow their progress, edit metadata and tags, manage the group's tag vocabulary, download when downloads are enabled, extract metadata, reprocess, and delete revisions, in the same explorer. Ordinary members keep read access, without these operations or downloads.
+    *   The server checks each operation against your current role, the group's status, the document's revision and its content screening state. Locked groups are read-only, with downloads controlled separately. Upload-disabled groups allow deletion and reprocessing, but not uploads, edits or metadata extraction. Inactive groups allow none.
+    *   Edits, extraction and reprocessing apply only to a document's current revision, and an edit made against an older copy is refused rather than applied to a newer one. Earlier revisions can only be downloaded or deleted.
+    *   Operations use `/api/groups/<group_id>/documents/...` rather than the account's active group, and queued processing keeps the group it started in. The classic group document routes are unchanged.
+    *   (Ref: `route_backend_group_documents.py`, `functions_group_document_management.py`, `DocumentExplorer.tsx`, [V2 Group Document Management](features/V2_GROUP_DOCUMENT_MANAGEMENT.md), [Group Document Management APIs](features/GROUP_DOCUMENT_MANAGEMENT_APIS.md), #1542)
+
 #### Bug Fixes
 
 *   **Microsoft 365 Agent Replies Survive Stream Failures**
@@ -1059,6 +1074,29 @@ Merged from the React V2 branch at `d243b0ca`. These changes shipped there as 0.
     *   A reply that fails after streaming text is now saved as an incomplete message and appears when the conversation is reopened. Approval and sign-in waits still resume as before.
     *   The error banner says the partial content was saved only when the server saved it.
     *   (Ref: `agent_delegation_runtime.py`, `route_backend_chats.py`, `chat-streaming.js`, [Stream Context And Persistence Fix](fixes/M365_AGENT_STREAM_CONTEXT_PERSISTENCE_FIX.md), #1523)
+
+### **(v0.261.128)**
+
+#### New Features
+
+*   **Browse Group Documents In V2**
+    *   Group Documents uses the same explorer as My Workspace. Search, sort, filter by tag, classification and place, see whole-workspace counts, open a document's details and the revisions you can access, and pass eligible documents to chat, without leaving V2.
+    *   Every read names the group, so the page never shows the documents of a group selected in another tab. Switching groups resets the search and selection, and a slower earlier response can't replace newer details.
+    *   The explorer offers only the sorts, filters and views the server says the group supports. Your display preferences are shared with My Workspace; personal saved views aren't shown as group views.
+    *   The group document list, facets, tags, details and revisions accept one explicit `group_id`. A malformed or repeated one is refused rather than replaced by your active group, a missing group returns 404, and a group you can't view returns 403. Requests without `group_id` behave as before.
+    *   (Ref: `route_backend_group_documents.py`, `functions_group_document_reads.py`, `documentReadAdapter.ts`, `DocumentExplorer.tsx`, [V2 Group Document Browsing](features/V2_GROUP_DOCUMENT_BROWSING.md), [Group Document Read APIs](features/GROUP_DOCUMENT_READ_APIS.md), #1542)
+
+### **(v0.261.127)**
+
+#### New Features
+
+*   **Group Workspaces In V2**
+    *   Open your group workspaces in V2 at `/v2/groups`, with the rail and layout of My Workspace. Choosing a group from the picker makes it your active group, as the classic interface does, and loads its details, your role, its status and the sections your role can use. The page opens your active group if you can still view it, and otherwise asks you to choose one.
+    *   Links to a group, or to one of its sections such as `/v2/groups/<group_id>/workflows`, are checked before the page shows that group. The picker keeps your choice while you search or page through your groups.
+    *   Switching groups asks before discarding unsaved edits. A switch you cancel sends nothing, a refused switch keeps the group you had, and an interrupted switch is checked with the server instead of being assumed to have failed. A conversation you already have open keeps its workspace.
+    *   Group workflows and Call agent tools open inside the group page. Sections that weren't native yet linked to their classic pages; every section is native from 0.261.153.
+    *   The page reads its group from `GET /api/v2/workspaces/group/<group_id>` (0.261.126). It requires current membership in that group (being an application admin isn't enough) and never reads or changes your active group. It returns an allow-listed summary of the group, your role and status, and the sections and operations your role allows, with no settings, membership lists, pending requests, endpoint configurations or credentials. A failure is reported as an error, never as an empty workspace.
+    *   (Ref: `route_backend_v2.py`, `functions_workspace_context.py`, `workspaceContext.ts`, `groupWorkspaceStore.ts`, `GroupWorkspacePage.tsx`, `WorkspaceShell.tsx`, [V2 Shared Workspace Context and Group Shell](features/V2_SHARED_WORKSPACE_CONTEXT.md), #1542)
 
 ### **(v0.261.123)**
 
