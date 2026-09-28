@@ -18,6 +18,8 @@
 import { useCallback, useMemo, useState } from 'react';
 import { useChatStore } from '../stores/chatStore';
 import type { ConversationKind } from '../stores/chatStore';
+import { ASSIST_INSTRUCTION_LIMITS } from './assistLimits';
+import { blockThreadKey, type AssistSendRequest, type AssistSendResult } from './assistThread';
 import { describeChartProblem } from './chartEdits';
 import { fingerprintSource } from './visualPalettes';
 import type {
@@ -35,8 +37,13 @@ export type EditableBlockKind = (typeof EDITABLE_BLOCK_KINDS)[number];
 /** Longest source the server will store. Matches MAX_SOURCE_LENGTH. */
 export const MAX_BLOCK_SOURCE_LENGTH = 20000;
 
-/** Longest instruction the assist endpoint accepts. Matches MAX_INSTRUCTION_LENGTH. */
-export const MAX_INSTRUCTION_LENGTH = 2000;
+/**
+ * Longest instruction the assist endpoint accepts. Matches MAX_INSTRUCTION_LENGTH.
+ *
+ * Longer text is refused in the editor with a counter, never cut short, because a silently
+ * truncated instruction asks the model for something the reader did not write.
+ */
+export const MAX_INSTRUCTION_LENGTH = ASSIST_INSTRUCTION_LIMITS.block;
 
 /**
  * A line that would close the fence the diagram lives in.
@@ -169,8 +176,17 @@ export interface BlockRevisionState {
     save: (source: string, origin?: 'manual' | 'control', note?: string) => Promise<boolean>;
     /** Show one of the stored revisions. Nothing is discarded. */
     restore: (revisionId: string) => Promise<boolean>;
-    /** Ask the model to change the diagram, scoped to this block. */
-    ask: (instruction: string) => Promise<boolean>;
+    /**
+     * Ask the model to change the diagram, scoped to this block.
+     *
+     * Sent from the Ask tab's thread, which shows the outcome itself, so a failure is returned
+     * rather than set as `error`.
+     */
+    ask: (request: AssistSendRequest) => Promise<AssistSendResult>;
+    /** The Ask tab's thread, or null while nothing can be kept. */
+    threadKey: string | null;
+    /** The conversation an edit would be written to. */
+    conversationId: string | null;
 }
 
 /**
@@ -310,28 +326,59 @@ export function useBlockRevisions(
     );
 
     const ask = useCallback(
-        (instruction: string) => {
-            const trimmed = instruction.trim();
-            if (!trimmed) {
-                setError('Describe the change you want.');
-                return Promise.resolve(false);
+        async (request: AssistSendRequest): Promise<AssistSendResult> => {
+            const noun = kind === 'simplechart' ? 'chart' : 'diagram';
+            const instruction = request.text.trim();
+            if (!instruction) {
+                return { ok: false, error: 'Describe the change you want.' };
             }
-            return run((conversationId, conversationKind) =>
-                askBlockRevision({
+            if (instruction.length > MAX_INSTRUCTION_LENGTH) {
+                return {
+                    ok: false,
+                    error: `Shorten the request to ${MAX_INSTRUCTION_LENGTH} characters or fewer.`,
+                };
+            }
+            const { activeConversationId, activeConversationKind } = useChatStore.getState();
+            if (!canPersist || !activeConversationId) {
+                return { ok: false, error: `This ${noun} cannot be edited until the reply has finished.` };
+            }
+
+            setBusy(true);
+            setError(null);
+            try {
+                const outcome = await askBlockRevision({
                     messageId: messageId as string,
-                    conversationId,
-                    conversationKind,
+                    conversationId: activeConversationId,
+                    conversationKind: activeConversationKind,
                     blockKind: kind,
                     blockIndex: blockIndex as number,
                     sourceHash,
-                    instruction: trimmed.slice(0, MAX_INSTRUCTION_LENGTH),
+                    instruction,
                     originalSource: source,
                     expectedRevisionCount: revisions.length || undefined,
-                }),
-            );
+                    submissionId: request.submissionId,
+                    signal: request.signal,
+                    earlierSubmissionIds: request.earlierSubmissionIds,
+                });
+                if (outcome.aborted) {
+                    return { ok: false, error: '', aborted: true };
+                }
+                if (outcome.earlierApplied) {
+                    return { ok: false, error: '', earlierApplied: true };
+                }
+                return outcome.error ? { ok: false, error: outcome.error } : { ok: true };
+            } finally {
+                setBusy(false);
+            }
         },
-        [askBlockRevision, blockIndex, kind, messageId, revisions.length, run, source, sourceHash],
+        [askBlockRevision, blockIndex, canPersist, kind, messageId, revisions.length, source, sourceHash],
     );
+
+    const activeConversationId = useChatStore((state) => state.activeConversationId);
+    const conversationId = canPersist ? activeConversationId : null;
+    const threadKey = conversationId
+        ? blockThreadKey(conversationId, kind, messageId as string, blockIndex as number)
+        : null;
 
     return {
         source: effectiveSource,
@@ -347,5 +394,7 @@ export function useBlockRevisions(
         save,
         restore,
         ask,
+        threadKey,
+        conversationId,
     };
 }

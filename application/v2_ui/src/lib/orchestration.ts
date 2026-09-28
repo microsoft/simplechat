@@ -29,6 +29,7 @@ import { normalizeReasoningAdjustments, type ReasoningResolution } from './reaso
 import { readGeneratedArtifacts, type GeneratedArtifact } from './generatedArtifacts';
 import type { ImageReferenceRequest, ImageReferenceScope } from './imageReferences';
 import type { OrchestrationExportFormat } from './orchestrationExports';
+import { ASSIST_INSTRUCTION_LIMITS } from './assistLimits';
 import {
     hasPendingOrchestrationOutputs, normalizeOrchestrationOutputs, type OrchestrationOutput,
 } from './orchestrationOutputs';
@@ -568,7 +569,13 @@ export interface PlanEditorState {
     plan: OrchestrationPlan;
     version: string;
     edits: PlanEdits;
-    chat: Array<{ role: 'user' | 'assistant'; content: string; timestamp: string }>;
+    chat: Array<{
+        role: 'user' | 'assistant';
+        content: string;
+        timestamp: string;
+        /** The client's id for the exchange this turn belongs to, when the browser sent one. */
+        submission_id?: string;
+    }>;
     history: PlanEditorHistoryEntry[];
     next_before_revision: number | null;
     pending: Elicitation | null;
@@ -602,7 +609,11 @@ export interface OrchestrationRequestError {
     current_run_id?: string;
 }
 
-export const MAX_PLAN_INSTRUCTION_LENGTH = 2000;
+/**
+ * Longest planner instruction the editor sends. Matches EDIT_INSTRUCTION_LIMIT on the server.
+ * Longer text is refused with a counter rather than cut short.
+ */
+export const MAX_PLAN_INSTRUCTION_LENGTH = ASSIST_INSTRUCTION_LIMITS.plan;
 
 /* -------------------------------------------------------------------------- */
 /* Request bodies                                                              */

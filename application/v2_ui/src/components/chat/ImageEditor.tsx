@@ -15,8 +15,10 @@ import {
     X,
 } from 'lucide-react';
 import { GlassPanel } from '../ui/primitives';
+import { AssistThread } from './AssistThread';
 import { ImageMaskCanvas, type MaskSelection } from './ImageMaskCanvas';
 import { useChatStore } from '../../stores/chatStore';
+import { useAssistThread, type AssistSend } from '../../lib/assistThread';
 import type { ImageReferenceRequest } from '../../lib/imageReferences';
 import {
     describePromptProblem,
@@ -41,6 +43,9 @@ const TABS: { id: EditorTab; label: string; icon: typeof Sparkles }[] = [
 ];
 
 const EMPTY_SELECTION: MaskSelection = { dataUrl: null, regions: 0, coverage: 0 };
+
+// A new image made from a reference is created in the conversation, not in this editor.
+const DERIVE_SENT_REPLY = 'Sent. The new image is being created in the conversation.';
 
 function formatTimestamp(value: string | undefined): string {
     if (!value) {
@@ -97,20 +102,14 @@ export function ImageEditor({
     onClose: () => void;
 }) {
     const [tab, setTab] = useState<EditorTab>('ask');
-    const [instruction, setInstruction] = useState('');
     const [promptDraft, setPromptDraft] = useState(revisions.prompt);
     const [comparing, setComparing] = useState(false);
-    const [deriveBusy, setDeriveBusy] = useState(false);
-    const [deriveError, setDeriveError] = useState<string | null>(null);
     const closeRef = useRef<HTMLButtonElement>(null);
     const generateImageFromReference = useChatStore((state) => state.generateImageFromReference);
     const deriveMode = mode === 'derive';
 
     const inferenceEnabled = capability.enabled && capability.mode !== 'unavailable'
         && capability.availability !== 'unavailable';
-    const inferenceDisabled = deriveMode
-        ? deriveBusy || !inferenceEnabled || !capability.editing || !reference
-        : revisions.busy || !revisions.canPersist || !inferenceEnabled;
     const masked = inferenceEnabled && capability.mode === 'masked' && capability.masking;
     const editing = inferenceEnabled && capability.editing
         && (capability.mode === 'masked' || capability.mode === 'edit');
@@ -129,6 +128,68 @@ export function ImageEditor({
     const onSelectionChange = useCallback((value: MaskSelection) => {
         setSelectionState({ key: contextKey, value });
     }, [contextKey]);
+
+    // Read when a message is sent, so it carries the region selected at that moment. A finished
+    // edit clears the region, because it described the image that has just been replaced.
+    const sendRevision: AssistSend = async (request) => {
+        const result = await revisions.ask(request, {
+            operation: editing ? 'edit' : 'regenerate',
+            ...(masked && selection.dataUrl ? {
+                mask: selection.dataUrl,
+                maskRegions: selection.regions,
+            } : {}),
+        });
+        if (result.ok) {
+            onSelectionChange(EMPTY_SELECTION);
+            setMaskReset((value) => value + 1);
+        }
+        return result;
+    };
+    // The new image arrives in the conversation, so once the request is on its way the editor
+    // closes and the reader watches it there. A cancelled request that was sent anyway stays
+    // open, with the thread saying where it went.
+    const sendDerived: AssistSend = async ({ text, signal }) => {
+        if (!reference) {
+            return { ok: false, error: 'Choose a reference image before creating a new image.' };
+        }
+        const error = await generateImageFromReference({
+            prompt: text,
+            references: [reference],
+            ...(masked && selection.dataUrl ? {
+                mask: selection.dataUrl,
+                maskRegions: selection.regions,
+            } : {}),
+        });
+        if (error) {
+            return { ok: false, error };
+        }
+        if (!signal.aborted) {
+            onClose();
+        }
+        return { ok: true, reply: DERIVE_SENT_REPLY };
+    };
+    // The image's stored chat is kept for the model, not shown turn by turn, so this thread is
+    // the page's own transcript and keeps finished exchanges until the page is gone. A new image
+    // from a reference is not a change to the reference, so it keeps a thread of its own.
+    const thread = useAssistThread({
+        key: deriveMode
+            ? revisions.threadKey ? `${revisions.threadKey}:derive` : null
+            : revisions.threadKey,
+        conversationId: revisions.conversationId,
+        mode: 'local',
+        maxLength: MAX_IMAGE_INSTRUCTION_LENGTH,
+        storedTurns: deriveMode ? null : revisions.chat,
+        send: deriveMode ? sendDerived : sendRevision,
+    });
+    const working = (!deriveMode && revisions.busy) || Boolean(thread.pending);
+    const unavailable = deriveMode
+        ? !inferenceEnabled || !capability.editing || !reference
+        : !revisions.canPersist || !inferenceEnabled;
+    const inferenceDisabled = working || unavailable;
+    const earlierChanges = deriveMode ? [] : revisions.chat
+        .filter((turn) => turn.role === 'user'
+            && !(turn.submission_id && thread.ownSubmissionIds.has(turn.submission_id)))
+        .slice(-6);
 
     // Key the canvas as well as the payload: clearing the parent alone leaves drawn regions behind.
     // The keyed reads also prevent an event before this effect from submitting an old selection.
@@ -171,52 +232,6 @@ export function ImageEditor({
             ? revisions.revisionUrl(revisions.previous.id)
             : imageSrc;
 
-    const submitInstruction = async () => {
-        if (inferenceDisabled || !instruction.trim()) {
-            return;
-        }
-        if (deriveMode) {
-            if (!reference) {
-                setDeriveError('Choose a reference image before creating a new image.');
-                return;
-            }
-            setDeriveBusy(true);
-            setDeriveError(null);
-            try {
-                const error = await generateImageFromReference({
-                    prompt: instruction,
-                    references: [reference],
-                    ...(masked && selection.dataUrl ? {
-                        mask: selection.dataUrl,
-                        maskRegions: selection.regions,
-                    } : {}),
-                });
-                if (error) {
-                    setDeriveError(error);
-                } else {
-                    onClose();
-                }
-            } finally {
-                setDeriveBusy(false);
-            }
-            return;
-        }
-        const ok = await revisions.revise({
-            origin: 'ai',
-            operation: editing ? 'edit' : 'regenerate',
-            instruction,
-            ...(masked && selection.dataUrl ? {
-                mask: selection.dataUrl,
-                maskRegions: selection.regions,
-            } : {}),
-        });
-        if (ok) {
-            setInstruction('');
-            onSelectionChange(EMPTY_SELECTION);
-            setMaskReset((value) => value + 1);
-        }
-    };
-
     const regenerate = (origin: 'prompt' | 'control') => {
         if (inferenceDisabled || (origin === 'prompt' && promptProblem)) {
             return;
@@ -256,7 +271,7 @@ export function ImageEditor({
                     <h2 className="min-w-0 flex-1 truncate text-sm font-semibold text-text-1">
                         {title}
                     </h2>
-                    {(deriveBusy || revisions.busy) && (
+                    {working && (
                         <span className="shrink-0 text-xs text-text-3">Generating…</span>
                     )}
                     <button
@@ -358,13 +373,13 @@ export function ImageEditor({
                                     Generation and editing are unavailable. You can still restore saved versions in History.
                                 </p>
                             )}
-                            {(deriveError || revisions.error) && (
+                            {revisions.error && (
                                 <div role="alert" className="mb-3 flex items-start gap-2 rounded-lg border border-danger/40 bg-danger/10 px-3 py-2 text-xs text-text-1">
                                     <AlertTriangle size={14} className="mt-0.5 shrink-0" />
-                                    <span className="flex-1">{deriveError || revisions.error}</span>
+                                    <span className="flex-1">{revisions.error}</span>
                                     <button
                                         type="button"
-                                        onClick={() => deriveError ? setDeriveError(null) : revisions.clearError()}
+                                        onClick={revisions.clearError}
                                         aria-label="Dismiss the error"
                                         className="shrink-0 text-text-3 hover:text-text-1"
                                     >
@@ -374,85 +389,61 @@ export function ImageEditor({
                             )}
 
                             {tab === 'ask' && (
-                                <div className="flex flex-col gap-3">
-                                    <label
-                                        htmlFor="image-edit-instruction"
-                                        className="text-xs font-medium text-text-2"
-                                    >
-                                        Describe the change
-                                    </label>
-                                    <textarea
-                                        id="image-edit-instruction"
-                                        aria-describedby="image-edit-guidance"
-                                        value={instruction}
-                                        onChange={(event) => setInstruction(event.target.value)}
-                                        onKeyDown={(event) => {
-                                            if (event.key === 'Enter' && !event.shiftKey) {
-                                                event.preventDefault();
-                                                void submitInstruction();
-                                            }
-                                        }}
-                                        maxLength={MAX_IMAGE_INSTRUCTION_LENGTH}
-                                        rows={4}
-                                        disabled={inferenceDisabled}
-                                        placeholder={
-                                            masked
-                                                ? 'Make the sky orange'
-                                                : 'Make the sky orange and add a path in the foreground'
-                                        }
-                                        className="w-full rounded-lg border border-edge-strong bg-surface-1 px-3 py-2 text-sm text-text-1 outline-none focus:border-accent disabled:opacity-50"
-                                    />
-
-                                    <p id="image-edit-guidance" className="text-[11px] leading-relaxed text-text-3">
-                                        {masked
-                                            ? `${selection.dataUrl
-                                                ? `About ${Math.round(selection.coverage * 100)}% of the image is selected.`
-                                                : 'The current image guides the edit. Optionally select a region to guide where it changes.'} The model is not strictly bound by a mask; areas outside it can still shift. Pixel-exact preservation is not guaranteed.`
-                                            : editing
-                                              ? 'The current image is used as a reference for this edit. Region selection is not supported; changes may affect the whole image.'
-                                              : inferenceEnabled
-                                                ? 'This model only supports whole-image regeneration. Ask AI creates a replacement from the prompt and your instruction, without using the current image as a reference.'
-                                                : 'Ask an administrator to configure an available image model before requesting a new version.'}
-                                    </p>
-
-                                    <button
-                                        type="button"
-                                        onClick={() => void submitInstruction()}
-                                        disabled={
-                                            inferenceDisabled ||
-                                            !instruction.trim()
-                                        }
-                                        className="inline-flex items-center justify-center gap-1.5 rounded-lg bg-accent px-3 py-2 text-xs font-semibold text-white transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
-                                    >
-                                        <Send size={13} />
-                                        {deriveBusy || revisions.busy
-                                            ? 'Generating…'
-                                            : deriveMode
-                                              ? 'Create new image'
-                                            : masked
-                                              ? selection.dataUrl ? 'Edit selected region' : 'Edit image'
-                                              : editing ? 'Edit using source image' : 'Regenerate whole image'}
-                                    </button>
-
-                                    {!deriveMode && revisions.chat.length > 0 && (
-                                        <div className="mt-2 flex flex-col gap-2 border-t border-edge pt-3">
+                                <AssistThread
+                                    thread={thread}
+                                    conversationId={revisions.conversationId}
+                                    inputId="image-edit-instruction"
+                                    label="Describe the change"
+                                    labelClassName="block px-3 pt-2 text-xs font-medium text-text-2"
+                                    logLabel="Changes to this image"
+                                    assistantName="AI"
+                                    logHeader={earlierChanges.length > 0 ? (
+                                        <div className="mb-3 flex flex-col gap-2 border-b border-edge pb-3">
                                             <p className="text-[11px] font-medium text-text-3">
                                                 Earlier changes to this image
                                             </p>
-                                            {revisions.chat
-                                                .filter((turn) => turn.role === 'user')
-                                                .slice(-6)
-                                                .map((turn, index) => (
-                                                    <p
-                                                        key={`${turn.timestamp}-${index}`}
-                                                        className="rounded-lg bg-surface-2 px-2.5 py-1.5 text-[11px] text-text-2"
-                                                    >
-                                                        {turn.content}
-                                                    </p>
-                                                ))}
+                                            {earlierChanges.map((turn, index) => (
+                                                <p
+                                                    key={`${turn.submission_id ?? turn.timestamp ?? ''}-${index}`}
+                                                    className="rounded-lg bg-surface-2 px-2.5 py-1.5 text-[11px] text-text-2"
+                                                >
+                                                    {turn.content}
+                                                </p>
+                                            ))}
                                         </div>
+                                    ) : null}
+                                    sendLabel={deriveMode
+                                        ? 'Create new image'
+                                        : masked
+                                          ? selection.dataUrl ? 'Edit selected region' : 'Edit image'
+                                          : editing ? 'Edit using source image' : 'Regenerate whole image'}
+                                    busyLabel="Generating…"
+                                    busy={!deriveMode && revisions.busy}
+                                    disabled={unavailable}
+                                    placeholder={
+                                        masked
+                                            ? 'Make the sky orange'
+                                            : 'Make the sky orange and add a path in the foreground'
+                                    }
+                                    describedBy="image-edit-guidance"
+                                    composerNote={(
+                                        <p id="image-edit-guidance" className="mt-2 text-[11px] leading-relaxed text-text-3">
+                                            {masked
+                                                ? `${selection.dataUrl
+                                                    ? `About ${Math.round(selection.coverage * 100)}% of the image is selected.`
+                                                    : 'The current image guides the edit. Optionally select a region to guide where it changes.'} The model is not strictly bound by a mask; areas outside it can still shift. Pixel-exact preservation is not guaranteed.`
+                                                : editing
+                                                  ? 'The current image is used as a reference for this edit. Region selection is not supported; changes may affect the whole image.'
+                                                  : inferenceEnabled
+                                                    ? 'This model only supports whole-image regeneration. Ask AI creates a replacement from the prompt and your instruction, without using the current image as a reference.'
+                                                    : 'Ask an administrator to configure an available image model before requesting a new version.'}
+                                        </p>
                                     )}
-                                </div>
+                                    counterHint="Enter to send · Shift+Enter for a new line"
+                                    density="comfortable"
+                                    className="gap-3"
+                                    logClassName="max-h-72"
+                                />
                             )}
 
                             {!deriveMode && tab === 'prompt' && (
@@ -638,7 +629,7 @@ export function ImageEditor({
                                                             onClick={() =>
                                                                 void revisions.restore(revision.id)
                                                             }
-                                                            disabled={revisions.busy || !revisions.canPersist}
+                                                            disabled={working || !revisions.canPersist}
                                                             className="inline-flex h-fit shrink-0 items-center gap-1 self-center rounded-lg border border-edge-strong px-2 py-1 text-[11px] font-medium text-text-2 transition-colors hover:bg-surface-2 hover:text-text-1 disabled:cursor-not-allowed disabled:opacity-50"
                                                         >
                                                             <RotateCcw size={12} />

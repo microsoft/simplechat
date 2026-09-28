@@ -3,8 +3,9 @@
 import { useEffect, useId, useMemo, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { clsx } from 'clsx';
-import { Check, History, Loader2, RotateCcw, Send, Sparkles, X } from 'lucide-react';
+import { Check, History, Loader2, RotateCcw, Sparkles, X } from 'lucide-react';
 import { GlassButton, GlassPanel } from '../ui/primitives';
+import { AssistThread, type AssistThreadTurn } from './AssistThread';
 import { ElicitationForm } from './ElicitationCard';
 import { OrchestrationRunView } from './OrchestrationRunView';
 import { useChatStore } from '../../stores/chatStore';
@@ -19,6 +20,7 @@ import {
 } from '../../stores/orchestrationStore';
 import { applyPlanEdits, isPlanRunnable } from '../../lib/orchestrationPlan';
 import { MAX_PLAN_INSTRUCTION_LENGTH } from '../../lib/orchestration';
+import { planThreadKey, useAssistThread, type AssistSend } from '../../lib/assistThread';
 import {
     approveAndRunPlan,
     loadPlanEditorHistory,
@@ -26,6 +28,7 @@ import {
     previewPlanEditorRevision,
     refreshOrchestrationPlanEditor,
     submitPlanRevision,
+    whenPlanEditorSettles,
 } from '../../lib/orchestrationController';
 
 const originLabels = { original: 'Original plan', ai: 'Planner revision', restore: 'Restored plan' };
@@ -59,6 +62,52 @@ function OrchestrationPlanEditor({ conversationId, turnId }: PlanEditorTarget) {
     const target = useMemo(() => ({ conversationId, turnId }), [conversationId, turnId]);
     const currentPreview = useMemo(() => plan ? applyPlanEdits(plan, edits) : null, [plan, edits]);
     const close = () => useOrchestrationStore.getState().setEditorTarget(null);
+    const pendingQuestion = session?.state?.pending ?? null;
+    const storedChat = session?.state?.chat;
+    const cancelChange = () => submitPlanRevision(target, {
+        action: 'discard',
+        ...(pendingQuestion ? {
+            elicitation_id: pendingQuestion.elicitation_id,
+            elicitation_revision: pendingQuestion.revision ?? 0,
+        } : {}),
+    });
+    const sendInstruction: AssistSend = async ({ text, submissionId }) => {
+        const result = await submitPlanRevision(
+            target, { action: 'ask', instruction: text }, { submissionId, inlineError: true },
+        );
+        if (result.ok) {
+            return { ok: true, submissionId: result.submissionId };
+        }
+        if (!result.stale) {
+            return { ok: false, error: result.error, submissionId: result.submissionId };
+        }
+        // Cancelled. Wait for the cancel to be answered: the stored chat then shows whether
+        // the change had finished first.
+        await whenPlanEditorSettles(target);
+        const sentId = result.submissionId ?? submissionId;
+        const chat = selectPlanEditor(useOrchestrationStore.getState(), conversationId, turnId)?.state?.chat ?? [];
+        return {
+            ok: false,
+            error: result.error,
+            stale: true,
+            recorded: chat.some((turn) => turn.submission_id === sentId),
+            submissionId: result.submissionId,
+        };
+    };
+    const thread = useAssistThread({
+        key: planThreadKey(conversationId, turnId),
+        conversationId,
+        mode: 'stored',
+        maxLength: MAX_PLAN_INSTRUCTION_LENGTH,
+        storedTurns: storedChat,
+        send: sendInstruction,
+        cancel: () => cancelChange(),
+    });
+    const chatTurns = useMemo<AssistThreadTurn[]>(() => (storedChat ?? []).map((entry, index) => ({
+        key: `${entry.timestamp}:${index}`,
+        role: entry.role,
+        content: entry.content,
+    })), [storedChat]);
 
     useEffect(() => {
         const previous = document.activeElement instanceof HTMLElement ? document.activeElement : null;
@@ -113,18 +162,19 @@ function OrchestrationPlanEditor({ conversationId, turnId }: PlanEditorTarget) {
                 ...current, tab,
                 ...(tab === 'ask' ? { previewRunId: null, previewPlan: null, previewLoading: false } : {}),
             }));
-    const ask = () => {
-        if (canRequest && !pending && session.instruction.trim()) {
-            void submitPlanRevision(target, { action: 'ask', instruction: session.instruction });
+    // With a request of this page in flight, cancelling goes through the thread so its turn
+    // shows the cancel; otherwise it discards whatever change the server holds.
+    const cancelFromEditor = () => {
+        if (thread.pending) {
+            thread.cancel(thread.pending.id);
+        } else {
+            void cancelChange();
         }
     };
-    const cancelChange = () => void submitPlanRevision(target, {
-        action: 'discard',
-        ...(pending ? {
-            elicitation_id: pending.elicitation_id,
-            elicitation_revision: pending.revision ?? 0,
-        } : {}),
-    });
+    const workingText = session.cancellationStatus === 'cancelling' ? 'Cancelling the pending change…'
+        : session.submitting ? (thread.pending ? null : 'Planner is working…')
+        : editor?.busy ? 'An edit is in progress. Refresh for its result or cancel the change to keep the saved plan.'
+        : null;
     const retryLoad = () => {
         if (editor) {
             void refreshOrchestrationPlanEditor(target);
@@ -184,7 +234,7 @@ function OrchestrationPlanEditor({ conversationId, turnId }: PlanEditorTarget) {
                         || session.cancellationStatus !== 'idle') ? (
                         <GlassButton size="sm" variant="ghost"
                             disabled={!canEdit || session.loading || session.cancellationStatus === 'cancelling'}
-                            onClick={cancelChange}
+                            onClick={cancelFromEditor}
                             aria-label="Cancel change">
                             <X size={13} aria-hidden="true" />
                             {session.cancellationStatus === 'cancelling' ? 'Cancelling…'
@@ -278,95 +328,67 @@ function OrchestrationPlanEditor({ conversationId, turnId }: PlanEditorTarget) {
                             aria-labelledby={`${id}-${session.tab}-tab`}
                             className="flex min-h-0 flex-1 flex-col">
                             {session.tab === 'ask' ? (
-                                <>
-                                    <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-3" role="log" aria-label="Planner conversation">
-                                        {!editor?.chat.length ? (
-                                            <p className="text-sm text-text-3">
-                                                Ask to add, remove, or rework steps. The planner checks available capabilities before saving a revision.
-                                                This conversation stays in the editor.
-                                            </p>
-                                        ) : (
-                                            <ol className="space-y-3">
-                                                {editor.chat.map((entry, index) => (
-                                                    <li key={`${entry.timestamp}:${index}`} className={clsx(
-                                                        'rounded-xl p-3 text-sm',
-                                                        entry.role === 'user' ? 'bg-accent-soft text-text-1' : 'bg-surface-2 text-text-2',
-                                                    )}>
-                                                        <p className="mb-1 text-xs font-medium text-text-3">{entry.role === 'user' ? 'You' : 'Planner'}</p>
-                                                        <p className="whitespace-pre-wrap break-words">{entry.content}</p>
-                                                    </li>
-                                                ))}
-                                            </ol>
-                                        )}
-                                        {session.submitting || editor?.busy ? (
-                                            <p role="status" className="mt-3 flex items-center gap-2 text-sm text-text-3">
-                                                <Loader2 size={14} className="animate-spin" aria-hidden="true" />
-                                                {session.cancellationStatus === 'cancelling' ? 'Cancelling the pending change…'
-                                                    : session.submitting ? 'Planner is working…'
-                                                    : 'An edit is in progress. Refresh for its result or cancel the change to keep the saved plan.'}
-                                            </p>
-                                        ) : null}
-                                        {pending && session.pendingDraft ? (
-                                            <ElicitationForm
-                                                conversationId={conversationId}
-                                                elicitation={pending}
-                                                draft={{
-                                                    ...session.pendingDraft,
-                                                    submitting: busy || !canEdit || session.blocked,
-                                                }}
-                                                ariaLabel="Planner edit questions"
-                                                cancelLabel="Cancel edit request and keep current plan"
-                                                onDraftChange={(update) => useOrchestrationStore.getState().updatePlanEditor(
-                                                    conversationId, turnId, (current) =>
-                                                        current.pendingDraft?.elicitationId === pending.elicitation_id
-                                                        && current.pendingDraft.revision === (pending.revision ?? 0)
-                                                            ? { ...current, pendingDraft: update(current.pendingDraft) } : current,
-                                                )}
-                                                onAnswer={(response, context) => void submitPlanRevision(target, {
-                                                    action: 'answer',
-                                                    elicitation_id: pending.elicitation_id,
-                                                    elicitation_revision: pending.revision ?? 0,
-                                                    elicitation_response: response,
-                                                    ...(context ? { elicitation_context: context } : {}),
-                                                })}
-                                                onCancel={cancelChange}
-                                            />
-                                        ) : null}
-                                    </div>
-                                    {!pending ? (
-                                        <form className="shrink-0 border-t border-edge p-3" onSubmit={(event) => { event.preventDefault(); ask(); }}>
-                                            <label htmlFor={`${id}-instruction`} className="mb-1 block text-xs font-medium text-text-2">Ask planner</label>
-                                            <textarea
-                                                id={`${id}-instruction`}
-                                                value={session.instruction}
-                                                rows={3}
-                                                maxLength={MAX_PLAN_INSTRUCTION_LENGTH}
-                                                placeholder="For example: add a web search, then focus the comparison on pricing."
-                                                className="w-full resize-none rounded-xl border border-edge bg-surface-2 px-3 py-2 text-sm text-text-1 focus:outline-none focus:ring-2 focus:ring-accent-ring"
-                                                onChange={(event) => {
-                                                    const instruction = event.target.value;
-                                                    useOrchestrationStore.getState().updatePlanEditor(conversationId, turnId,
-                                                        (current) => ({ ...current, instruction }));
-                                                }}
-                                                onKeyDown={(event) => {
-                                                    if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) {
-                                                        event.preventDefault();
-                                                        ask();
-                                                    }
-                                                }}
-                                            />
-                                            <div className="mt-2 flex items-center justify-between gap-2">
-                                                <span className="text-xs text-text-3">{session.instruction.length}/{MAX_PLAN_INSTRUCTION_LENGTH} · Ctrl/⌘ + Enter</span>
-                                                <GlassButton type="submit" size="sm" variant="primary"
-                                                    disabled={!canRequest || !session.instruction.trim()}
-                                                    aria-label="Send planner request">
-                                                    <Send size={14} aria-hidden="true" />
-                                                    Send
-                                                </GlassButton>
-                                            </div>
-                                        </form>
-                                    ) : null}
-                                </>
+                                <AssistThread
+                                    thread={thread}
+                                    conversationId={conversationId}
+                                    inputId={`${id}-instruction`}
+                                    label="Ask planner"
+                                    labelClassName="block px-3 pt-2 text-xs font-medium text-text-2"
+                                    logLabel="Planner conversation"
+                                    assistantName="Planner"
+                                    turns={chatTurns}
+                                    emptyState={(
+                                        <p>
+                                            Ask to add, remove, or rework steps. The planner checks available capabilities before saving a revision.
+                                            This conversation stays in the editor.
+                                        </p>
+                                    )}
+                                    logFooter={(
+                                        <>
+                                            {workingText ? (
+                                                <p role="status" className="mt-3 flex items-center gap-2 text-sm text-text-3">
+                                                    <Loader2 size={14} className="animate-spin" aria-hidden="true" />
+                                                    {workingText}
+                                                </p>
+                                            ) : null}
+                                            {pending && session.pendingDraft ? (
+                                                <ElicitationForm
+                                                    conversationId={conversationId}
+                                                    elicitation={pending}
+                                                    draft={{
+                                                        ...session.pendingDraft,
+                                                        submitting: busy || !canEdit || session.blocked,
+                                                    }}
+                                                    ariaLabel="Planner edit questions"
+                                                    cancelLabel="Cancel edit request and keep current plan"
+                                                    onDraftChange={(update) => useOrchestrationStore.getState().updatePlanEditor(
+                                                        conversationId, turnId, (current) =>
+                                                            current.pendingDraft?.elicitationId === pending.elicitation_id
+                                                            && current.pendingDraft.revision === (pending.revision ?? 0)
+                                                                ? { ...current, pendingDraft: update(current.pendingDraft) } : current,
+                                                    )}
+                                                    onAnswer={(response, context) => void submitPlanRevision(target, {
+                                                        action: 'answer',
+                                                        elicitation_id: pending.elicitation_id,
+                                                        elicitation_revision: pending.revision ?? 0,
+                                                        elicitation_response: response,
+                                                        ...(context ? { elicitation_context: context } : {}),
+                                                    })}
+                                                    onCancel={() => void cancelChange()}
+                                                />
+                                            ) : null}
+                                        </>
+                                    )}
+                                    sendLabel="Send"
+                                    sendAriaLabel="Send planner request"
+                                    busy={!canRequest}
+                                    hideComposer={Boolean(pending)}
+                                    placeholder="For example: add a web search, then focus the comparison on pricing."
+                                    counterHint="Enter to send · Shift+Enter for a new line"
+                                    density="comfortable"
+                                    logClassName="p-3"
+                                    composerClassName="border-t border-edge p-3"
+                                />
                             ) : (
                                 <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-3">
                                     <p className="mb-3 text-xs text-text-3">Previewing history never changes the active plan. Restore saves a newly validated revision.</p>

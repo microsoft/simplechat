@@ -17,6 +17,8 @@ import { useCallback, useMemo, useState } from 'react';
 import { useChatStore } from '../stores/chatStore';
 import type { ConversationKind } from '../stores/chatStore';
 import { useBootstrapStore } from '../stores/bootstrapStore';
+import { ASSIST_INSTRUCTION_LIMITS } from './assistLimits';
+import { imageThreadKey, type AssistSendRequest, type AssistSendResult } from './assistThread';
 import type {
     ImageRevision,
     ImageRevisionChatTurn,
@@ -29,8 +31,16 @@ import type { ImageEditCapability } from './types';
 export type { ImageRevision, ImageRevisionChatTurn, ImageRevisionOrigin, ImageRevisionOperation } from './endpoints';
 export type { ImageEditCapability } from './types';
 
-/** Longest instruction the server accepts. Matches MAX_INSTRUCTION_LENGTH. */
-export const MAX_IMAGE_INSTRUCTION_LENGTH = 2000;
+/**
+ * Longest instruction the server accepts. Matches MAX_INSTRUCTION_LENGTH.
+ *
+ * Longer text is refused with a counter, never cut short: a truncated instruction asks the model
+ * for something the reader did not write, and an image edit costs a wait to find that out.
+ */
+export const MAX_IMAGE_INSTRUCTION_LENGTH = ASSIST_INSTRUCTION_LIMITS.image;
+
+/** What the Ask tab's thread shows after an image edit worked. */
+export const IMAGE_ASSIST_REPLY = 'Created a new version.';
 
 /** Longest prompt the server stores. Matches MAX_PROMPT_LENGTH. */
 export const MAX_IMAGE_PROMPT_LENGTH = 4000;
@@ -248,8 +258,17 @@ export interface ImageRevisionState {
     clearError: () => void;
     /** The prompt describing the version showing, which the Prompt tab edits. */
     prompt: string;
-    /** Ask the model to change the image. */
+    /** Change the image from the Prompt or Controls tab. A failure is set as `error`. */
     revise: (request: ImageRevisionChange) => Promise<boolean>;
+    /**
+     * Ask the model to change the image from the Ask tab's thread, which shows the outcome
+     * itself, so a failure is returned rather than set as `error`.
+     */
+    ask: (request: AssistSendRequest, change: ImageRevisionChange) => Promise<AssistSendResult>;
+    /** The Ask tab's thread, or null while nothing can be kept. */
+    threadKey: string | null;
+    /** The conversation an edit would be written to. */
+    conversationId: string | null;
     /** Show one of the stored versions. Nothing is discarded. */
     restore: (revisionId: string) => Promise<boolean>;
     /** The URL of one stored version, for the history thumbnails. */
@@ -356,16 +375,14 @@ export function useImageRevisions(
                 return Promise.resolve(false);
             }
 
-            return run((conversationId, conversationKind) =>
-                reviseImage({
+            return run(async (conversationId, conversationKind) => {
+                const outcome = await reviseImage({
                     messageId: messageId as string,
                     conversationId,
                     conversationKind,
                     origin,
                     operation: imageRevisionOperation(capability, request),
-                    instruction: (request.instruction ?? '')
-                        .trim()
-                        .slice(0, MAX_IMAGE_INSTRUCTION_LENGTH),
+                    instruction: (request.instruction ?? '').trim(),
                     prompt: (request.prompt ?? '').trim().slice(0, MAX_IMAGE_PROMPT_LENGTH),
                     mask: request.mask,
                     maskRegions: request.maskRegions,
@@ -374,8 +391,9 @@ export function useImageRevisions(
                     background: request.background,
                     expectedRevisionCount: revisions.length || undefined,
                     expectedCurrentRevisionId: current?.id,
-                }),
-            );
+                });
+                return outcome.error;
+            });
         },
         [current?.id, messageId, revisions.length, reviseImage, run],
     );
@@ -407,6 +425,61 @@ export function useImageRevisions(
         [imageEndpoint],
     );
 
+    const ask = useCallback(
+        async (request: AssistSendRequest, change: ImageRevisionChange): Promise<AssistSendResult> => {
+            const capability = toImageEditCapability(useBootstrapStore.getState().data?.capabilities?.image_edit);
+            const asked: ImageRevisionChange = { ...change, origin: 'ai', instruction: request.text };
+            const problem = describeImageRevisionProblem(capability, asked)
+                || describeInstructionProblem(request.text);
+            if (problem) {
+                return { ok: false, error: problem };
+            }
+            const { activeConversationId, activeConversationKind } = useChatStore.getState();
+            if (!canPersist || !activeConversationId) {
+                return { ok: false, error: 'This image cannot be changed until the reply has finished.' };
+            }
+
+            setBusy(true);
+            setError(null);
+            try {
+                const outcome = await reviseImage({
+                    messageId: messageId as string,
+                    conversationId: activeConversationId,
+                    conversationKind: activeConversationKind,
+                    origin: 'ai',
+                    operation: imageRevisionOperation(capability, asked),
+                    instruction: request.text.trim(),
+                    mask: change.mask,
+                    maskRegions: change.maskRegions,
+                    size: change.size,
+                    quality: change.quality,
+                    background: change.background,
+                    expectedRevisionCount: revisions.length || undefined,
+                    expectedCurrentRevisionId: current?.id,
+                    submissionId: request.submissionId,
+                    signal: request.signal,
+                    earlierSubmissionIds: request.earlierSubmissionIds,
+                    revisionUrl,
+                });
+                if (outcome.aborted) {
+                    return { ok: false, error: '', aborted: true };
+                }
+                if (outcome.earlierApplied) {
+                    return { ok: false, error: '', earlierApplied: true };
+                }
+                return outcome.error
+                    ? { ok: false, error: outcome.error }
+                    : { ok: true, reply: IMAGE_ASSIST_REPLY };
+            } finally {
+                setBusy(false);
+            }
+        },
+        [canPersist, current?.id, messageId, revisionUrl, revisions.length, reviseImage],
+    );
+
+    const activeConversationId = useChatStore((state) => state.activeConversationId);
+    const conversationId = canPersist ? activeConversationId : null;
+
     return {
         revisions,
         currentIndex,
@@ -421,6 +494,9 @@ export function useImageRevisions(
         clearError: useCallback(() => setError(null), []),
         prompt: current?.prompt || fallbackPrompt,
         revise,
+        ask,
+        threadKey: conversationId ? imageThreadKey(conversationId, messageId as string) : null,
+        conversationId,
         restore,
         revisionUrl,
     };

@@ -677,6 +677,8 @@ export function MermaidDiagram({
                     onSave={revisions.save}
                     onRestore={revisions.restore}
                     onAsk={revisions.ask}
+                    threadKey={revisions.threadKey}
+                    conversationId={revisions.conversationId}
                     // Passed as a render prop so the editor never writes diagram markup itself:
                     // every such sink stays in this file, which is what the boundary check in
                     // test_v2_rich_rendering.py protects.

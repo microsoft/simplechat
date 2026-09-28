@@ -29,6 +29,7 @@ import {
     toggleConversationHidden,
     toggleConversationPinned,
     type BulkConversationResult,
+    type BlockRevisionEntry,
     type ImageRevisionEntry,
     type ImageRevisionOrigin,
     type ImageRevisionOperation,
@@ -504,9 +505,9 @@ interface ChatState {
         revisionId: string;
     }) => Promise<string | null>;
     /** Ask the model to change one diagram, scoped to that diagram alone. */
-    askBlockRevision: (request: BlockRevisionRequest & {
+    askBlockRevision: (request: BlockRevisionRequest & AssistRequestOptions & {
         instruction: string;
-    }) => Promise<string | null>;
+    }) => Promise<AssistRequestOutcome>;
     /** Fold a message's updated revision map into the thread after a successful write. */
     mergeBlockRevisions: (
         messageId: string,
@@ -519,9 +520,10 @@ interface ChatState {
      * cannot author an image. Every version comes from the model, so asking for one and
      * creating one are the same call.
      *
-     * Resolves to null on success, or to a message worth showing beside the image.
+     * Resolves to an outcome whose `error` is null on success, or a message worth showing
+     * beside the image.
      */
-    reviseImage: (request: ImageRevisionActionRequest) => Promise<string | null>;
+    reviseImage: (request: ImageRevisionActionRequest) => Promise<AssistRequestOutcome>;
     /** Show one of an image's stored versions. Nothing is discarded; the pointer moves. */
     restoreImageRevision: (request: {
         messageId: string;
@@ -606,6 +608,77 @@ function isSharedBlockRevision(
         : conversationKind === 'collaborative';
 }
 
+/** What the AI-assist thread adds to a model edit request. */
+export interface AssistRequestOptions {
+    /** The thread's id for this exchange, which the server stores on both of its chat turns. */
+    submissionId?: string;
+    /** Stops the browser waiting when the reader cancels. */
+    signal?: AbortSignal;
+    /**
+     * Ids of this thread's exchanges the reader cancelled.
+     *
+     * Cancelling only stops the browser waiting: the server may still finish the change. When it
+     * did, the next request is refused as a conflict, and these ids are how that refusal is
+     * recognised as the reader's own earlier change rather than somebody else's.
+     */
+    earlierSubmissionIds?: readonly string[];
+}
+
+/** How a model edit request ended. `error` is null on success. */
+export interface AssistRequestOutcome {
+    error: string | null;
+    /** The reader cancelled the request, so there is nothing to report. */
+    aborted?: boolean;
+    /** Refused because a cancelled earlier request finished first. Its result is now showing. */
+    earlierApplied?: boolean;
+}
+
+function isAbortError(error: unknown): boolean {
+    return Boolean(error) && typeof error === 'object' && (error as { name?: unknown }).name === 'AbortError';
+}
+
+/** The body of a revision conflict, which carries what the server has stored. */
+function revisionConflictPayload(error: unknown): Record<string, unknown> | null {
+    if (!(error instanceof ApiError) || error.status !== 409) {
+        return null;
+    }
+    const payload = error.payload;
+    if (!payload || typeof payload !== 'object'
+        || (payload as { code?: unknown }).code === 'submission_conflict') {
+        return null;
+    }
+    return payload as Record<string, unknown>;
+}
+
+/** Whether a stored sub-conversation holds one of the given submissions. */
+function chatHoldsSubmission(chat: unknown, submissionIds: readonly string[] | undefined): boolean {
+    if (!submissionIds?.length || !Array.isArray(chat)) {
+        return false;
+    }
+    return chat.some((turn) => {
+        const id = turn && typeof turn === 'object' ? (turn as { submission_id?: unknown }).submission_id : null;
+        return typeof id === 'string' && submissionIds.includes(id);
+    });
+}
+
+/** One block's stored sub-conversation inside a message's revision map. */
+function storedBlockChat(blockRevisions: unknown, blockKind: string, blockIndex: number): unknown {
+    const forKind = blockRevisions && typeof blockRevisions === 'object'
+        ? (blockRevisions as Record<string, unknown>)[blockKind]
+        : null;
+    const entry = forKind && typeof forKind === 'object'
+        ? (forKind as Record<string, unknown>)[String(blockIndex)]
+        : null;
+    return entry && typeof entry === 'object' ? (entry as BlockRevisionEntry).chat : null;
+}
+
+/** Whether a failure is the server refusing an id it already stored for a different message. */
+function isSubmissionConflict(error: unknown): boolean {
+    return error instanceof ApiError && error.status === 409
+        && Boolean(error.payload) && typeof error.payload === 'object'
+        && (error.payload as { code?: unknown }).code === 'submission_conflict';
+}
+
 /**
  * Turn a failed diagram edit into something worth showing beside the diagram.
  *
@@ -617,6 +690,9 @@ function describeBlockRevisionError(error: unknown, fallback: string): string {
         if (error.status === 403) {
             return 'You can only edit diagrams in conversations you take part in.';
         }
+        if (isSubmissionConflict(error)) {
+            return error.message;
+        }
         if (error.status === 409) {
             return 'Someone else changed this diagram. Close and reopen it to see their version.';
         }
@@ -625,7 +701,7 @@ function describeBlockRevisionError(error: unknown, fallback: string): string {
 }
 
 /** What a caller asks for when producing a new version of an image. */
-export interface ImageRevisionActionRequest {
+export interface ImageRevisionActionRequest extends AssistRequestOptions {
     messageId: string;
     conversationId: string;
     conversationKind: ConversationKind | null;
@@ -641,6 +717,8 @@ export interface ImageRevisionActionRequest {
     background?: string;
     expectedRevisionCount?: number;
     expectedCurrentRevisionId?: string;
+    /** The URL of one stored version, for showing a result recovered from a conflict. */
+    revisionUrl?: (revisionId: string) => string;
 }
 
 /**
@@ -655,6 +733,9 @@ function describeImageRevisionError(error: unknown, fallback: string): string {
     if (error instanceof ApiError) {
         if (error.status === 403) {
             return 'You can only change images in conversations you take part in.';
+        }
+        if (isSubmissionConflict(error)) {
+            return error.message;
         }
         if (error.status === 409) {
             return 'Someone else changed this image. Close and reopen it to see their version.';
@@ -3519,6 +3600,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
         instruction,
         originalSource,
         expectedRevisionCount,
+        submissionId,
+        signal,
+        earlierSubmissionIds,
     }) => {
         const shared = isSharedBlockRevision(get(), conversationId, conversationKind);
         const body = {
@@ -3530,19 +3614,37 @@ export const useChatStore = create<ChatState>((set, get) => ({
             ...(expectedRevisionCount === undefined
                 ? {}
                 : { expected_revision_count: expectedRevisionCount }),
+            ...(submissionId ? { submission_id: submissionId } : {}),
         };
 
         try {
             const result = shared
-                ? await assistCollaborationBlockRevision(conversationId, messageId, body)
+                ? await assistCollaborationBlockRevision(conversationId, messageId, body, signal)
                 : await assistMessageBlockRevisionApi(messageId, {
                       conversation_id: conversationId,
                       ...body,
-                  });
+                  }, signal);
             get().mergeBlockRevisions(messageId, result.block_revisions);
-            return null;
+            return { error: null };
         } catch (error) {
-            return describeBlockRevisionError(error, 'The diagram could not be updated.');
+            if (signal?.aborted || isAbortError(error)) {
+                return { error: null, aborted: true };
+            }
+            // A request the reader cancelled can still finish on the server, which moves the
+            // revision count this one was sent against. The conflict carries what is stored, and
+            // when that includes the cancelled request it is the reader's own change showing.
+            // The same goes for a retry that raced the request it repeats: that one already won.
+            const stored = revisionConflictPayload(error)?.block_revisions;
+            const storedChat = stored ? storedBlockChat(stored, blockKind, blockIndex) : null;
+            if (stored && submissionId && chatHoldsSubmission(storedChat, [submissionId])) {
+                get().mergeBlockRevisions(messageId, stored as MessageBlockRevisions);
+                return { error: null };
+            }
+            if (stored && chatHoldsSubmission(storedChat, earlierSubmissionIds)) {
+                get().mergeBlockRevisions(messageId, stored as MessageBlockRevisions);
+                return { error: null, earlierApplied: true };
+            }
+            return { error: describeBlockRevisionError(error, 'The diagram could not be updated.') };
         }
     },
 
@@ -3597,6 +3699,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
         background,
         expectedRevisionCount,
         expectedCurrentRevisionId,
+        submissionId,
+        signal,
+        earlierSubmissionIds,
+        revisionUrl,
     }) => {
         // A shared conversation's messages live in different Cosmos containers behind
         // `/api/collaboration/*`, so the endpoint is chosen from the conversation's kind rather
@@ -3619,16 +3725,29 @@ export const useChatStore = create<ChatState>((set, get) => ({
             ...(expectedCurrentRevisionId
                 ? { expected_current_revision_id: expectedCurrentRevisionId }
                 : {}),
+            ...(submissionId ? { submission_id: submissionId } : {}),
         };
 
         try {
             const result = shared
-                ? await addCollaborationImageRevision(conversationId, messageId, body)
-                : await addMessageImageRevisionApi(messageId, body);
+                ? await addCollaborationImageRevision(conversationId, messageId, body, signal)
+                : await addMessageImageRevisionApi(messageId, body, signal);
             get().mergeImageRevisions(messageId, result.image_revisions, result.image_url);
-            return null;
+            return { error: null };
         } catch (error) {
-            return describeImageRevisionError(error, 'That image could not be changed.');
+            if (signal?.aborted || isAbortError(error)) {
+                return { error: null, aborted: true };
+            }
+            const stored = revisionConflictPayload(error)?.image_revisions as ImageRevisionEntry | undefined;
+            const ownChange = Boolean(stored && submissionId && chatHoldsSubmission(stored.chat, [submissionId]));
+            if (stored && (ownChange || chatHoldsSubmission(stored.chat, earlierSubmissionIds))) {
+                // See askBlockRevision: the conflict is the reader's own earlier or repeated request.
+                const revisions = Array.isArray(stored.revisions) ? stored.revisions : [];
+                const current = revisions[typeof stored.current === 'number' ? stored.current : 0];
+                get().mergeImageRevisions(messageId, stored, current?.id ? revisionUrl?.(current.id) : undefined);
+                return ownChange ? { error: null } : { error: null, earlierApplied: true };
+            }
+            return { error: describeImageRevisionError(error, 'That image could not be changed.') };
         }
     },
 

@@ -18,7 +18,6 @@ import {
     History,
     PenLine,
     RotateCcw,
-    Send,
     Settings2,
     Sparkles,
     Table2,
@@ -26,6 +25,8 @@ import {
     X,
 } from 'lucide-react';
 import { GlassPanel } from '../ui/primitives';
+import { AssistThread, type AssistThreadTurn } from './AssistThread';
+import { useAssistThread, type AssistSend } from '../../lib/assistThread';
 import { describeSourceProblem, MAX_INSTRUCTION_LENGTH } from '../../lib/blockRevisions';
 import type { BlockRevision, BlockRevisionChatTurn } from '../../lib/blockRevisions';
 import {
@@ -109,7 +110,11 @@ export interface ChartEditorProps {
     onClearError: () => void;
     onSave: (source: string, origin?: 'manual' | 'control', note?: string) => Promise<boolean>;
     onRestore: (revisionId: string) => Promise<boolean>;
-    onAsk: (instruction: string) => Promise<boolean>;
+    /** Sends one message from the Ask tab. The thread shows how it went. */
+    onAsk: AssistSend;
+    /** The Ask tab's thread, or null while the chart cannot be edited. */
+    threadKey: string | null;
+    conversationId: string | null;
     onClose: () => void;
 }
 
@@ -127,15 +132,35 @@ export function ChartEditor({
     onSave,
     onRestore,
     onAsk,
+    threadKey,
+    conversationId,
     onClose,
 }: ChartEditorProps) {
     const [tab, setTab] = useState<EditorTab>('data');
     const [draft, setDraft] = useState(currentSource);
-    const [instruction, setInstruction] = useState('');
     // Which kind of edit produced the pending change, which is only used to label it in the
     // history. Typing in the source box is an edit; moving a slider is a change.
     const [typedInSource, setTypedInSource] = useState(false);
     const closeRef = useRef<HTMLButtonElement>(null);
+    const thread = useAssistThread({
+        key: threadKey,
+        conversationId,
+        mode: 'stored',
+        maxLength: MAX_INSTRUCTION_LENGTH,
+        storedTurns: chat,
+        send: onAsk,
+    });
+    // A change the model is still making would land on top of anything saved meanwhile.
+    const working = busy || Boolean(thread.pending);
+    const chatTurns = useMemo<AssistThreadTurn[]>(
+        () => chat.map((turn, index) => ({
+            key: `${turn.submission_id ?? turn.timestamp ?? ''}-${turn.role}-${index}`,
+            role: turn.role === 'assistant' ? 'assistant' : 'user',
+            content: turn.role === 'assistant' ? 'Updated the chart.' : turn.content,
+            mono: turn.role === 'assistant',
+        })),
+        [chat],
+    );
 
     // The stored source is the source of truth. When it changes underneath — an AI edit landed,
     // a revision was restored — the draft follows it, because the reader is now looking at
@@ -183,7 +208,7 @@ export function ChartEditor({
     // nothing coherent for a slider to be set to, and moving one would overwrite whatever the
     // reader is halfway through typing in the source box.
     const spec = draftSpec;
-    const locked = busy || !canPersist || !spec;
+    const locked = working || !canPersist || !spec;
 
     const baseType = spec ? getBaseChartType(spec.kind) : '';
     const cartesian = ['bar', 'line', 'scatter', 'bubble'].includes(baseType);
@@ -206,17 +231,6 @@ export function ChartEditor({
     const discard = () => {
         setDraft(currentSource);
         setTypedInSource(false);
-    };
-
-    const submitInstruction = async () => {
-        const asked = instruction.trim();
-        if (!asked) {
-            return;
-        }
-        const ok = await onAsk(asked);
-        if (ok) {
-            setInstruction('');
-        }
     };
 
     return (
@@ -726,66 +740,30 @@ export function ChartEditor({
 
                             {tab === 'ask' && (
                                 <div className="flex h-full flex-col gap-2">
-                                    {chat.length === 0 ? (
-                                        <p className="text-xs leading-relaxed text-text-3">
-                                            Describe a change and it is applied to this chart alone.
-                                            Nothing here is added to the conversation, and only the
-                                            version you keep is used as context later.
+                                    <AssistThread
+                                        thread={thread}
+                                        conversationId={conversationId}
+                                        inputId="chart-instruction"
+                                        label="Describe the change you want"
+                                        logLabel="Changes to this chart"
+                                        assistantName="AI"
+                                        turns={chatTurns}
+                                        emptyState="Describe a change and it is applied to this chart alone. Nothing here is added to the conversation, and only the version you keep is used as context later."
+                                        sendLabel="Update chart"
+                                        busyLabel="Updating…"
+                                        busy={busy}
+                                        disabled={!canPersist}
+                                        placeholder="Drop the 2019 column and show the rest as a stacked bar"
+                                        describedBy={dirty ? 'chart-unsaved-note' : undefined}
+                                        counterHint="Enter to send · Shift+Enter for a new line"
+                                        className="gap-2"
+                                    />
+                                    {dirty && (
+                                        <p id="chart-unsaved-note" className="shrink-0 text-[11px] text-text-3">
+                                            Unsaved changes are not sent. Save them first if the
+                                            model should build on them.
                                         </p>
-                                    ) : (
-                                        <ul className="flex min-h-0 flex-1 list-none flex-col gap-2 overflow-auto">
-                                            {chat.map((turn, index) => (
-                                                <li
-                                                    key={`${turn.timestamp ?? ''}-${index}`}
-                                                    className={
-                                                        turn.role === 'user'
-                                                            ? 'self-end rounded-lg bg-accent/10 px-2.5 py-1.5 text-xs text-text-1'
-                                                            : 'self-start rounded-lg bg-surface-sunken px-2.5 py-1.5 font-mono text-[11px] text-text-2'
-                                                    }
-                                                >
-                                                    {turn.role === 'assistant'
-                                                        ? 'Updated the chart.'
-                                                        : turn.content}
-                                                </li>
-                                            ))}
-                                        </ul>
                                     )}
-
-                                    <div className="mt-auto flex flex-col gap-2">
-                                        <label htmlFor="chart-instruction" className="sr-only">
-                                            Describe the change you want
-                                        </label>
-                                        <textarea
-                                            id="chart-instruction"
-                                            value={instruction}
-                                            rows={3}
-                                            maxLength={MAX_INSTRUCTION_LENGTH}
-                                            placeholder="Drop the 2019 column and show the rest as a stacked bar"
-                                            onChange={(event) => setInstruction(event.target.value)}
-                                            onKeyDown={(event) => {
-                                                if (event.key === 'Enter' && !event.shiftKey) {
-                                                    event.preventDefault();
-                                                    void submitInstruction();
-                                                }
-                                            }}
-                                            className="resize-none rounded-lg border border-edge-strong bg-surface-sunken p-2 text-xs text-text-1 outline-none focus:border-accent"
-                                        />
-                                        <button
-                                            type="button"
-                                            disabled={!instruction.trim() || busy || !canPersist}
-                                            onClick={() => void submitInstruction()}
-                                            className="inline-flex items-center justify-center gap-1.5 rounded-lg bg-accent px-3 py-1.5 text-xs font-medium text-white transition-opacity disabled:cursor-not-allowed disabled:opacity-50"
-                                        >
-                                            <Send size={13} />
-                                            {busy ? 'Updating…' : 'Update chart'}
-                                        </button>
-                                        {dirty && (
-                                            <p className="text-[11px] text-text-3">
-                                                Unsaved changes are not sent. Save them first if the
-                                                model should build on them.
-                                            </p>
-                                        )}
-                                    </div>
                                 </div>
                             )}
 
@@ -820,7 +798,7 @@ export function ChartEditor({
                                                     {index !== currentIndex && (
                                                         <button
                                                             type="button"
-                                                            disabled={busy || !canPersist}
+                                                            disabled={working || !canPersist}
                                                             onClick={() => void onRestore(revision.id)}
                                                             className="ml-auto inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[11px] text-text-3 transition-colors hover:bg-surface-2 hover:text-text-1 disabled:cursor-not-allowed disabled:opacity-50"
                                                         >
@@ -861,7 +839,7 @@ export function ChartEditor({
                                 <div className="flex items-center gap-2">
                                     <button
                                         type="button"
-                                        disabled={!dirty || Boolean(problem) || busy || !canPersist}
+                                        disabled={!dirty || Boolean(problem) || working || !canPersist}
                                         onClick={() => void save()}
                                         className="rounded-lg bg-accent px-3 py-1.5 text-xs font-medium text-white transition-opacity disabled:cursor-not-allowed disabled:opacity-50"
                                     >
@@ -869,7 +847,7 @@ export function ChartEditor({
                                     </button>
                                     <button
                                         type="button"
-                                        disabled={!dirty || busy}
+                                        disabled={!dirty || working}
                                         onClick={discard}
                                         className="rounded-lg px-3 py-1.5 text-xs font-medium text-text-3 transition-colors hover:bg-surface-2 hover:text-text-1 disabled:cursor-not-allowed disabled:opacity-50"
                                     >

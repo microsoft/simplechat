@@ -111,6 +111,13 @@ export interface ComposerEditorProps {
     onBlur?: () => void;
     onEscape?: () => boolean;
     onUploadComplete?: (response: ChatUploadResponse, ownerConversationId: string | null) => void;
+    /** Assist inputs: no `/` prompts, `@` mentions, uploads or conversation files. */
+    restricted?: boolean;
+    /** Restricted mode only: also offer `#` documents and tags and the Add context control. */
+    allowContext?: boolean;
+    describedBy?: string;
+    invalid?: boolean;
+    labelClassName?: string;
 }
 
 export interface ComposerEditorActions {
@@ -177,6 +184,11 @@ export function ComposerEditor({
     onBlur,
     onEscape,
     onUploadComplete,
+    restricted = false,
+    allowContext = false,
+    describedBy,
+    invalid = false,
+    labelClassName = 'sr-only',
 }: ComposerEditorProps) {
     const localTextareaRef = useRef<HTMLTextAreaElement>(null);
     const localFileInputRef = useRef<HTMLInputElement>(null);
@@ -191,7 +203,10 @@ export function ComposerEditor({
     );
     const shared = sharedOverride ?? sharedConversation;
     const features = bootstrap?.features ?? {};
-    const uploadsEnabled = features.enable_chat_file_uploads === true && !uploadsDisabled;
+    const contextEnabled = !restricted || allowContext;
+    const slashEnabled = !restricted;
+    const mentionsActive = mentionsEnabled && !restricted;
+    const uploadsEnabled = features.enable_chat_file_uploads === true && !uploadsDisabled && !restricted;
     const uploadAccept = referenceUploadsOnly ? '.png,.jpg,.jpeg,.bmp,.tif,.tiff' : CHAT_UPLOAD_ACCEPT;
     const promptCatalog = (bootstrap?.catalogs?.prompts ?? []) as PromptOption[];
     const [contextQuery, setContextQuery] = useState<ContextQuery | null>(null);
@@ -209,11 +224,13 @@ export function ComposerEditor({
         groupsEnabled: Boolean(features.enable_group_workspaces),
         publicEnabled: Boolean(features.enable_public_workspaces),
     }), [bootstrap?.scope, features.enable_group_workspaces, features.enable_public_workspaces]);
-    const { candidates, loading } = useContextSuggestions(disabled ? null : contextQuery?.query ?? null, scope);
-    const mentionSuggestions = useMentionSuggestions(
-        mentionsEnabled && !disabled ? mention?.query ?? null : null,
+    const { candidates, loading } = useContextSuggestions(
+        disabled || !contextEnabled ? null : contextQuery?.query ?? null, scope,
     );
-    const slashResults = slash && !disabled ? filterPromptsForSlash(promptCatalog, slash.query) : [];
+    const mentionSuggestions = useMentionSuggestions(
+        mentionsActive && !disabled ? mention?.query ?? null : null,
+    );
+    const slashResults = slash && slashEnabled && !disabled ? filterPromptsForSlash(promptCatalog, slash.query) : [];
     const [menuPlacement, setMenuPlacement] = useState<'up' | 'down'>('up');
     const menuOpen = Boolean(pickerOpen || contextQuery || slashResults.length || mentionSuggestions.length);
     useLayoutEffect(() => {
@@ -248,8 +265,8 @@ export function ComposerEditor({
         [draft.contextItems],
     );
     const availableAttachments = useMemo(
-        () => conversationAttachmentReferences(messages, conversationId),
-        [messages, conversationId],
+        () => restricted ? [] : conversationAttachmentReferences(messages, conversationId),
+        [messages, conversationId, restricted],
     );
 
     const attached = draft.attachedPrompt;
@@ -376,11 +393,11 @@ export function ComposerEditor({
             return;
         }
         const caret = element.selectionStart ?? 0;
-        setContextQuery(readContextQuery(element.value, caret));
+        setContextQuery(contextEnabled ? readContextQuery(element.value, caret) : null);
         setContextIndex(0);
-        setSlash(readSlashQuery(element.value, caret));
+        setSlash(slashEnabled ? readSlashQuery(element.value, caret) : null);
         setSlashIndex(0);
-        setMention(mentionsEnabled ? findMentionAtCaret(element.value, caret) : null);
+        setMention(mentionsActive ? findMentionAtCaret(element.value, caret) : null);
         setMentionIndex(0);
     };
     const applyText = (text: string) => onChange((current) => ({
@@ -914,11 +931,11 @@ export function ComposerEditor({
                     </div>
                 </div>
             )}
-            <label htmlFor={id} className="sr-only">{label}</label>
+            <label htmlFor={id} className={labelClassName}>{label}</label>
             <div className="relative">
                 <ComposerHighlight text={draft.text} tokens={contextTokens} backdropRef={backdropRef} />
                 <textarea id={id} ref={textareaRef} rows={rows} value={draft.text} disabled={disabled}
-                    placeholder={placeholder}
+                    placeholder={placeholder} aria-describedby={describedBy} aria-invalid={invalid || undefined}
                     onChange={(event) => {
                         applyText(event.target.value);
                         syncQueries(event.target);
@@ -951,20 +968,24 @@ export function ComposerEditor({
                         'placeholder:text-text-3 focus:outline-none selection:bg-accent-soft disabled:cursor-not-allowed')}
                     style={COMPOSER_TRANSPARENT_TEXT_STYLE} />
             </div>
-            <input ref={fileInputRef} type="file" accept={uploadAccept} multiple={multipleFiles}
-                disabled={disabled || !uploadsEnabled} className="hidden" onChange={(event) => void onSelectFiles(event)} />
-            {showTools && (
+            {!restricted && (
+                <input ref={fileInputRef} type="file" accept={uploadAccept} multiple={multipleFiles}
+                    disabled={disabled || !uploadsEnabled} className="hidden" onChange={(event) => void onSelectFiles(event)} />
+            )}
+            {showTools && contextEnabled && (
                 <div className="flex flex-wrap items-center gap-2 px-1 pb-1">
                     <button type="button" disabled={disabled} onClick={() => setPickerOpen(!pickerOpen)}
                         aria-expanded={pickerOpen} className="inline-flex items-center gap-1 rounded-lg px-2 py-1 text-xs text-text-2 hover:bg-surface-2 disabled:opacity-40">
                         <Search size={13} /> Add context
                     </button>
-                    <button type="button" disabled={disabled || !uploadsEnabled}
-                        onClick={() => fileInputRef.current?.click()} aria-label="Attach a file"
-                        className="inline-flex items-center gap-1 rounded-lg px-2 py-1 text-xs text-text-2 hover:bg-surface-2 disabled:opacity-40">
-                        <Paperclip size={13} /> Attach file
-                    </button>
-                    <span className="text-[11px] text-text-3"># context · / prompt</span>
+                    {!restricted && (
+                        <button type="button" disabled={disabled || !uploadsEnabled}
+                            onClick={() => fileInputRef.current?.click()} aria-label="Attach a file"
+                            className="inline-flex items-center gap-1 rounded-lg px-2 py-1 text-xs text-text-2 hover:bg-surface-2 disabled:opacity-40">
+                            <Paperclip size={13} /> Attach file
+                        </button>
+                    )}
+                    <span className="text-[11px] text-text-3">{restricted ? '# context' : '# context · / prompt'}</span>
                 </div>
             )}
             {availableAttachments.length > 0 && (

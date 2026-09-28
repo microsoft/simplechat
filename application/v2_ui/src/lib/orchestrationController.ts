@@ -1361,10 +1361,35 @@ export async function refreshOrchestrationPlanEditor(
     return loadPlanEditorState(target, false, runId, preservedError);
 }
 
+/** How the plan editor's assist thread sends a planner request. */
+export interface PlanRevisionOptions {
+    /**
+     * The id for a new request. A retry of the request the editor already holds keeps that
+     * request's id instead, so the server replays it rather than running it twice.
+     */
+    submissionId?: string;
+    /** The caller shows a failure in its own turn, so the editor's banner stays clear. */
+    inlineError?: boolean;
+}
+
+export type PlanRevisionResult =
+    | { ok: true; submissionId?: string }
+    | {
+        ok: false;
+        error: string;
+        /** The id this request was sent under, once it had one. */
+        submissionId?: string;
+        /** The editor dropped this request, because it was cancelled or the editor moved on. */
+        stale?: boolean;
+    };
+
+const STALE_EDITOR_REQUEST = 'This editor request is no longer active.';
+
 export async function submitPlanRevision(
     target: PlanEditorTarget,
     action: PlanRevisionAction,
-): Promise<ElicitationSubmitResult> {
+    options: PlanRevisionOptions = {},
+): Promise<PlanRevisionResult> {
     const { conversationId, turnId } = target;
     const key = scopeKey(conversationId, turnId);
     const store = useOrchestrationStore.getState();
@@ -1397,7 +1422,9 @@ export async function submitPlanRevision(
         action = { ...action, instruction: action.instruction.trim() };
         if (!action.instruction || action.instruction.length > MAX_PLAN_INSTRUCTION_LENGTH) {
             const error = `Enter an instruction of 1–${MAX_PLAN_INSTRUCTION_LENGTH} characters.`;
-            store.updatePlanEditor(conversationId, turnId, (editor) => ({ ...editor, error }));
+            if (!options.inlineError) {
+                store.updatePlanEditor(conversationId, turnId, (editor) => ({ ...editor, error }));
+            }
             return { ok: false, error };
         }
     }
@@ -1419,13 +1446,15 @@ export async function submitPlanRevision(
     let failure = 'The planner did not return a saved revision. Your current plan has been kept.';
     let info: OrchestrationRequestError | undefined;
     let accepted = false;
+    let submissionId: string | undefined;
+    const stale = (): PlanRevisionResult => ({ ok: false, error: STALE_EDITOR_REQUEST, stale: true, submissionId });
     try {
         let requestPlan = plan;
         let version = session.state.version;
         if (discarding) {
             const latest = await fetchPlanEditor(plan.run_id, conversationId, { signal: controller.signal });
             if (!isEditorRequestCurrent(target, controller)) {
-                return { ok: false, error: 'This editor request is no longer active.' };
+                return stale();
             }
             if (!useOrchestrationStore.getState().adoptPlanEditor(conversationId, turnId, latest)) {
                 throw new Error('Invalid or stale editor identity');
@@ -1464,17 +1493,18 @@ export async function submitPlanRevision(
         }
         const edits = discarding ? undefined : selectEdits(store, conversationId, turnId);
         const fingerprint = JSON.stringify({ runId: requestPlan.run_id, version, edits, action });
-        const submissionId = session.submission?.fingerprint === fingerprint
-            ? session.submission.id : makeTurnId();
+        const sentId = session.submission?.fingerprint === fingerprint
+            ? session.submission.id : options.submissionId ?? makeTurnId();
+        submissionId = sentId;
         const body: PlanRevisionRequest = {
             ...action,
             conversation_id: conversationId,
             expected_version: version,
             ...(edits ? { edits } : {}),
-            submission_id: submissionId,
+            submission_id: sentId,
         };
         useOrchestrationStore.getState().updatePlanEditor(conversationId, turnId, (editor) => ({
-            ...editor, submission: { id: submissionId, fingerprint },
+            ...editor, submission: { id: sentId, fingerprint },
         }));
         const result = await reviseOrchestrationPlan(requestPlan.run_id, body, {
             onThought: (event) => {
@@ -1487,7 +1517,7 @@ export async function submitPlanRevision(
             onError: (message, error) => { failure = message; info = error; },
         }, controller.signal);
         if (!isEditorRequestCurrent(target, controller)) {
-            return { ok: false, error: 'This editor request is no longer active.' };
+            return stale();
         }
         accepted = !result.errored && !result.cancelled && Boolean(result.editor)
             && useOrchestrationStore.getState().adoptPlanEditor(conversationId, turnId, result.editor!);
@@ -1498,23 +1528,26 @@ export async function submitPlanRevision(
             }
             useOrchestrationStore.getState().updatePlanEditor(conversationId, turnId, (editor) => ({
                 ...editor,
-                instruction: action.action === 'ask' && !result.editor?.pending
-                    && editor.instruction.trim() === action.instruction ? '' : editor.instruction,
                 submission: null,
             }));
         } else {
             useOrchestrationStore.getState().updatePlanEditor(conversationId, turnId, (editor) => ({
-                ...editor, error: failure,
+                ...editor,
+                ...(options.inlineError ? {} : { error: failure }),
                 blocked: discarding || info?.code === 'plan_changed' || info?.code === 'edit_in_progress'
                     || info?.code === 'already_run' || info?.status === 403 || info?.status === 404,
             }));
         }
     } catch (error) {
         failure = editorRequestFailure(error).message;
-        if (isEditorRequestCurrent(target, controller)) {
-            useOrchestrationStore.getState().updatePlanEditor(conversationId, turnId,
-                (editor) => ({ ...editor, error: failure, blocked: discarding || editor.blocked }));
+        if (!isEditorRequestCurrent(target, controller)) {
+            return stale();
         }
+        useOrchestrationStore.getState().updatePlanEditor(conversationId, turnId, (editor) => ({
+            ...editor,
+            ...(options.inlineError ? {} : { error: failure }),
+            blocked: discarding || editor.blocked,
+        }));
     } finally {
         if (isEditorRequestCurrent(target, controller)) {
             editorControllers.delete(key);
@@ -1527,9 +1560,41 @@ export async function submitPlanRevision(
         }
     }
     if (info?.code === 'plan_changed' || info?.code === 'edit_in_progress') {
-        await refreshOrchestrationPlanEditor(target, info.current_run_id ?? plan.run_id, failure);
+        await refreshOrchestrationPlanEditor(
+            target, info.current_run_id ?? plan.run_id, options.inlineError ? undefined : failure,
+        );
     }
-    return accepted ? { ok: true } : { ok: false, error: failure };
+    return accepted ? { ok: true, submissionId } : { ok: false, error: failure, submissionId };
+}
+
+/**
+ * Resolves once the plan editor has no request in flight, or after `timeoutMs`.
+ *
+ * A cancelled planner request returns before the cancel itself is answered. The assist thread
+ * waits for that answer, so the stored chat can show whether the request finished after all.
+ */
+export function whenPlanEditorSettles(target: PlanEditorTarget, timeoutMs = 60_000): Promise<void> {
+    const settled = (state: ReturnType<typeof useOrchestrationStore.getState>) => {
+        const session = selectPlanEditor(state, target.conversationId, target.turnId);
+        return !session || (!session.submitting && !session.loading);
+    };
+    if (settled(useOrchestrationStore.getState())) {
+        return Promise.resolve();
+    }
+    return new Promise((resolve) => {
+        let unsubscribe = () => {};
+        const timer = setTimeout(() => {
+            unsubscribe();
+            resolve();
+        }, timeoutMs);
+        unsubscribe = useOrchestrationStore.subscribe((state) => {
+            if (settled(state)) {
+                clearTimeout(timer);
+                unsubscribe();
+                resolve();
+            }
+        });
+    });
 }
 
 export async function loadPlanEditorHistory(target: PlanEditorTarget): Promise<void> {
