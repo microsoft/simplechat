@@ -2,6 +2,23 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.194)**
+
+#### New Features
+
+*   **V2 Notification Bell And Panel**
+    *   The V2 navigation rail has a notification bell beside the application's name. It shows the unread count, up to **9+**, or a dot when the rail is collapsed, and opens a panel of your notifications, newest first: workflow alerts, Microsoft 365 approval requests, "AI responded" notices, document processing results, share requests and the rest. Until now V2 users could only see these on the classic Notifications page.
+    *   Each notification can be opened, marked read or dismissed, and **Mark all read** clears the lot. Chat links open the conversation in V2, workspace and profile links open their V2 pages, and approvals, pending Microsoft 365 actions and workflow activity open in classic until V2 has those pages.
+    *   Links are followed only when they stay on this site, and notification text is shown as plain text, because it can quote email or web content.
+    *   The count refreshes when you return to the tab and every 30 seconds while it is visible, backing off to five minutes while nothing changes. It doesn't poll in a hidden tab, and stops once the session has signed out.
+    *   A reply you watch finish is marked read at once, so it doesn't add to the bell. A reply that finishes while you are in another tab or on another V2 page stays unread, with its "AI responded" notice, until you come back to it.
+    *   (Ref: #1554, #1543, `NotificationBell.tsx`, `NotificationPanel.tsx`, `notificationStore.ts`, `notificationLinks.ts`, `chatStore.ts`, [V2 Notification Bell and Desktop Notifications](features/V2_NOTIFICATIONS_BELL.md), [Manage notifications](../guides/manage-notifications.md))
+
+*   **V2 Desktop Notifications**
+    *   **User Settings > Preferences > Desktop notifications** now works. When an administrator has enabled desktop notifications and the preference is on, V2 raises one operating system notification per reply that finishes while the tab is hidden or unfocused. It names the conversation, never the reply, and clicking it opens the conversation.
+    *   The rules and the preference are shared with classic. Completed orchestrated answers notify too. V2 asks for browser permission when you send, when you turn the preference on, or from **Allow notifications**, and treats the preference as off until it has loaded.
+    *   (Ref: `desktopNotifications.ts`, `PreferencesTab.tsx`, `Composer.tsx`, `orchestrationController.ts`, [Desktop Conversation Notifications](features/DESKTOP_CONVERSATION_NOTIFICATIONS.md))
+
 ### **(v0.261.193)**
 
 #### New Features

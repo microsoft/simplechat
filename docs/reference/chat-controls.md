@@ -4,7 +4,7 @@ title: "Chat interface controls"
 description: "Reference for every documented control in the SimpleChat chat interface."
 section: "Reference"
 audience: user
-version: "0.261.192"
+version: "0.261.194"
 ---
 
 ## How to use this reference
@@ -41,6 +41,15 @@ desktop navigation preference.
 Conversation drawers overlay the chat below the wide-desktop breakpoint rather
 than leaving the message pane too narrow to read. **Close panel** returns to the
 chat; wide result tables keep their scrolling inside the table.
+
+### React V2 notification bell
+
+Since **0.261.194**, the V2 navigation rail has a notification bell beside the
+application's name. It shows the unread count, or a dot when the rail is collapsed,
+and opens a panel where you can follow, mark read, or dismiss notifications without
+leaving the chat. On narrow screens the bell is on the collapsed strip and in the
+open navigation, and Escape closes the panel before the navigation. See
+[Manage notifications]({{ '/guides/manage-notifications/' | relative_url }}).
 
 ### Foundry sign-in requests
 

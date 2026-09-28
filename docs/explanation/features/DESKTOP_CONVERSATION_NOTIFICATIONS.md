@@ -59,6 +59,25 @@ When permission is still undecided and the preference remains enabled, SimpleCha
 
 Clicking a desktop notification focuses the existing SimpleChat tab.
 
+## V2 Interface
+
+From version **0.261.194**, the V2 interface honors the same administrator setting
+and the same `desktopNotificationsEnabled` preference, so a choice made in either
+interface applies to both. See [V2 Notification Bell and Desktop Notifications](V2_NOTIFICATIONS_BELL.md).
+
+- The preference is under **User Settings > Preferences > Desktop notifications**
+  and appears only when the administrator setting is on. Turning it on asks the
+  browser for permission in the same click, and **Allow notifications** asks while
+  the browser is undecided.
+- As in classic, V2 also asks on the next chat send, once per page, while
+  permission is undecided and the preference is on.
+- The conditions above apply unchanged, with one addition: V2 loads the preference
+  after the page, so it treats the preference as off until it has loaded.
+- Completed orchestrated answers notify as well. A plan waiting for approval and a
+  failed or stopped run don't.
+- Clicking the notification opens its conversation in V2 before focusing the
+  window, because the reader may have moved to another page or conversation since.
+
 ## Testing and Validation
 
 Coverage includes:
@@ -80,6 +99,8 @@ Related tests:
 - `functional_tests/test_user_settings_allowlist_keys.py`
 - `functional_tests/test_chats_user_settings_hardening_fix.py`
 - `ui_tests/test_chat_desktop_conversation_notifications.py`
+- `functional_tests/test_v2_notifications_bell.py` (V2)
+- `ui_tests/test_v2_notifications_bell.py` (V2)
 
 ## Known Limitations
 
