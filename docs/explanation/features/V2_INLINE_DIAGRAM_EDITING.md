@@ -222,7 +222,9 @@ The editor opens with a live preview on one side and four tabs on the other:
   version stores it; Discard changes returns to what is stored.
 - **Layout** — flow direction and spacing. Each writes a revision, so a layout change can be
   undone like any other edit.
-- **Ask AI** — describe a change in words. Enter submits; Shift+Enter adds a line.
+- **Ask AI** — describe a change in words. Enter submits; Shift+Enter adds a line. From
+  0.261.195 the message joins the thread as soon as it is sent, with Cancel, Retry and a character
+  counter; see [V2 Shared Assist Thread](V2_SHARED_ASSIST_THREAD.md).
 - **History** — every version, newest first, with who made it and why. Restore moves the
   pointer; nothing is deleted, so restoring an old version and then editing appends rather than
   truncating.

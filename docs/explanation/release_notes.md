@@ -2,6 +2,39 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.195)**
+
+#### New Features
+
+*   **Shared AI Assist Thread In The V2 Editors**
+    *   The **Ask AI** tab of the diagram, chart and image editors and the **Ask planner** tab of the plan editor now share one conversation thread. Your message joins it the moment you send it and the input clears, instead of both waiting for the server's answer.
+    *   While a request runs, its reply shows **Working…** with the seconds elapsed and a **Cancel** button. A failed or cancelled request stays in the thread with its error, **Retry** and **Edit and resend**, which puts your text back in the input.
+    *   Cancel in the plan editor discards the pending change on the server. In the other editors it stops waiting; if the server finishes the change anyway, the editor recognises it as yours and shows the latest version rather than reporting a conflict.
+    *   The image editor keeps a transcript of this visit's changes, held on the page only and never saved. **Create image from reference** keeps a separate one.
+    *   A thread lives outside its editor, so closing and reopening the editor keeps a running request and any unsent text.
+    *   (Ref: #1552, #1543, `AssistThread.tsx`, `assistThread.ts`, `assistThreadStore.ts`, `assistLimits.ts`, `DiagramEditor.tsx`, `ChartEditor.tsx`, `ImageEditor.tsx`, `OrchestrationPlanEditor.tsx`, [V2 Shared Assist Thread](features/V2_SHARED_ASSIST_THREAD.md))
+
+*   **Client Submission Ids For Assist Requests**
+    *   The diagram, chart and image assist routes, personal and shared, accept an optional `submission_id` and store it on both turns of the exchange. A request without one behaves exactly as before.
+    *   A retry whose id is already stored is answered from what was stored, with `"replayed": true`, without calling the model, writing a second revision or notifying a shared conversation twice. The same id sent with a different instruction is refused with 409 `submission_conflict`, and a malformed id with 400.
+    *   Stored ids let the editor match the message it showed early to the stored turn, so a shared conversation's live update arriving before your reply doesn't show the message twice. Ids are never shown to the model.
+    *   The plan edit route holds its existing `submission_id` to the same format and stores it on the plan's edit chat turns.
+    *   (Ref: `functions_assist_submissions.py`, `functions_message_block_revisions.py`, `functions_message_image_revisions.py`, `functions_orchestration_plan_editing.py`, `functions_orchestration_plan_revisions.py`, `route_backend_chats.py`, `route_backend_collaboration.py`, `route_backend_orchestration.py`)
+
+#### Bug Fixes
+
+*   **Diagram And Chart Editors Closing On Their Own**
+    *   An open diagram or chart editor closed whenever its message changed, for example when a revision was saved. The message's masks were re-parsed on every change, which remounted each diagram and chart, and a diagram returned a different element tree while it re-rendered. Both now keep the editor mounted, so it stays open until you close it.
+    *   (Ref: `AssistantMarkdown.tsx`, `MermaidDiagram.tsx`)
+
+#### User Interface Enhancements
+
+*   **Keyboard, Limits And Announcements In Assist Inputs**
+    *   Enter sends and Shift+Enter adds a line in all four editors, with Ctrl+Enter and ⌘+Enter kept as aliases. The plan editor previously sent only with Ctrl+Enter or ⌘+Enter.
+    *   A counter shows the length against the 2,000-character limit and says how much to remove past it. Over-limit text is refused rather than silently cut off, as the old inputs' `maxLength` did.
+    *   The thread is announced politely to screen readers as a log. The assist inputs reuse the main composer's editor in a restricted mode without uploads, `/` saved prompts or `@` mentions.
+    *   (Ref: `ComposerEditor.tsx` `restricted`, `AssistThread.tsx`, [Chat interface controls](../reference/chat-controls.md))
+
 ### **(v0.261.193)**
 
 #### New Features

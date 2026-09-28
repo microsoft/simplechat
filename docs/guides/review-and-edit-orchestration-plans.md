@@ -4,7 +4,7 @@ title: "Review and edit orchestration plans"
 description: "Refine proposed work with the planner before running it."
 section: "Guides"
 audience: user
-version: "0.261.192"
+version: "0.261.195"
 ---
 
 ## Decide what should run
@@ -178,10 +178,17 @@ does not substitute guessed formats or change the plan.
 3. In **Ask planner**, describe what should change. For example: "Add a second
    document search focused on pricing" or "Remove the extra research and compare
    only the selected contracts."
-4. Read the updated preview. Check the steps, source selections, assumptions,
+4. Press Enter to send, or Shift+Enter for a new line. Your request moves into the
+   conversation straight away while the planner works. Select **Cancel** there to
+   discard it and keep the current plan.
+5. Read the updated preview. Check the steps, source selections, assumptions,
    and any adjustments reported by the planner.
-5. Continue refining the same plan, or select **Run** when the current version
+6. Continue refining the same plan, or select **Run** when the current version
    describes the work you want.
+
+If a request fails, select **Retry** to send it again or **Edit and resend** to
+reword it first. Requests are limited to 2,000 characters; the counter under the
+box shows how many you've used.
 
 The planner may ask a clarifying question or explain why a requested capability
 is unavailable. Answer within the editor to continue the change. A request to add

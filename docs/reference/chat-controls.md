@@ -4,7 +4,7 @@ title: "Chat interface controls"
 description: "Reference for every documented control in the SimpleChat chat interface."
 section: "Reference"
 audience: user
-version: "0.261.192"
+version: "0.261.195"
 ---
 
 ## How to use this reference
@@ -153,6 +153,27 @@ not part of the generated inventory above. See
 
 Shared conversations don't offer reference images. In Orchestrate, attached and referenced images
 are offered to planned image steps instead of being sent directly.
+
+## Ask AI in editors (V2 interface)
+
+From version **0.261.195**, the **Ask AI** tab of the diagram, chart and image editors and the
+**Ask planner** tab of the plan editor share one conversation thread. Your message joins it the
+moment you send it, so you can see the request running instead of waiting on a full input box.
+These controls exist only in the V2 interface, so they are not part of the generated inventory
+above. See [Generate images]({{ '/guides/generate-images/' | relative_url }}) and
+[Review and edit orchestration plans]({{ '/guides/review-and-edit-orchestration-plans/' | relative_url }}).
+
+| Control | What it does | Why you would use it | Enabled by |
+| --- | --- | --- | --- |
+| Send (Enter) | Moves your message into the thread and clears the input at once, then asks for the change. Ctrl+Enter and ⌘+Enter also send, and Shift+Enter adds a line. Only one request runs at a time. | Describe a change to the item in front of you without adding messages to the main conversation. | The editor itself: any diagram or chart, [`enable_image_generation`]({{ '/admin/ai-models/' | relative_url }}) for images, and [`enable_chat_orchestration`]({{ '/admin/orchestration/' | relative_url }}) for plans |
+| Working… | Stands in for the reply while the request runs, with the seconds elapsed. | Tell a slow request from a stuck one. | Same as Send |
+| Cancel | Stops waiting for the reply. In the plan editor it also discards the pending change on the server. In the other editors a change the server had already started may still be applied; if it is, the editor recognises it as yours and shows the latest version. | Drop a request you no longer want, or one taking too long. | Same as Send |
+| Retry | Sends a failed or cancelled message again. A change that had already gone through isn't made twice. | Recover from a dropped connection or a temporary error without retyping. | Same as Send |
+| Edit and resend | Takes a failed or cancelled message out of the thread and puts its text back in the input. | Reword a request before trying again. | Same as Send |
+| Character counter | Shows the message's length against the 2,000-character limit. Past the limit it turns red, says how much to remove, and sending is blocked. | Shorten a long request yourself, instead of losing its end to a silent cut. | Same as Send |
+| Earlier changes to this image | Lists the recent instructions stored for the image, above the thread. The thread itself keeps only this visit's exchanges and isn't saved. | Recall what was already asked of the image. | [`enable_image_generation`]({{ '/admin/ai-models/' | relative_url }}) |
+
+These inputs don't offer uploads, `/` saved prompts or `@` mentions; the main composer still does.
 
 ## Prompt, model, agent, and reasoning selectors
 
