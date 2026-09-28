@@ -1,10 +1,11 @@
 # test_group_document_management.py
 """
 Functional tests for immutable-target group document management.
-Version: 0.261.168
+Version: 0.261.196
 Implemented in: 0.261.129
 A tag vocabulary conflict answers one coded sentence, from the pre-check or a lost patch: 0.261.167
 New tags are defined before any document carries them, so a conflict writes no document: 0.261.168
+The real document definitions receive the server-only document provenance helpers they import: 0.261.196
 
 Real Flask routes, management/access/policy modules, conditional document writes,
 revision deletion and canonical downloads run against isolated storage, queues,
@@ -307,6 +308,12 @@ def management(environment):
             "functions_group_document_projection_fence"
         ).assert_group_document_source_writable,
     })
+    # The real definitions strip carried-forward origins and refuse client-supplied ones.
+    provenance = importlib.import_module("functions_document_provenance")
+    namespace.update({name: getattr(provenance, name) for name in (
+        "ORIGIN_FIELD_NAMES", "ORIGIN_KIND_FIELD", "DocumentOriginError",
+        "apply_document_provenance", "remember_document_origin_summary", "validate_origin",
+    )})
     execute_functions("functions_documents.py", {
         "_get_blob_service_client", "_blob_exists", "_get_documents_container",
         "_upsert_document_and_sync_access_index", "update_document", "propagate_tags_to_blob_metadata",

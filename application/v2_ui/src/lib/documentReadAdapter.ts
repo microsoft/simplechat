@@ -6,6 +6,7 @@ import {
     buildDocumentListParams, DEFAULT_DOCUMENT_QUERY, DOCUMENT_SORT_FIELDS, documentId,
     generatedArtifactRestriction,
 } from './documentExplorer';
+import { readDocumentOriginSummary } from './documentProvenance';
 import {
     fetchPersonalDocument, fetchPersonalDocumentFacets, fetchPersonalDocuments,
     fetchPersonalDocumentTags, fetchPersonalDocumentVersions,
@@ -13,7 +14,7 @@ import {
 import { requireWorkspaceId, workspaceScopeKey, type GroupWorkspaceContext, type PublicWorkspaceContext } from './workspaceContext';
 import { isRecord } from './workspaceAuthoring';
 import type {
-    DocumentFacets, DocumentListResponse, DocumentQuery, DocumentSortField,
+    DocumentFacets, DocumentListResponse, DocumentOriginSummary, DocumentQuery, DocumentSortField,
     DocumentVersionsResponse, WorkspaceDocument, WorkspaceTag,
 } from './types';
 
@@ -34,6 +35,25 @@ export interface DocumentReadAdapter {
     facets: (signal?: AbortSignal) => Promise<DocumentFacets>;
     detail: (id: string, signal?: AbortSignal) => Promise<WorkspaceDocument>;
     versions: (id: string, signal?: AbortSignal) => Promise<DocumentVersionsResponse>;
+    /** Where one document came from, resolved by the server for this reader; null when unreadable. */
+    originSummary: (id: string, signal?: AbortSignal) => Promise<DocumentOriginSummary | null>;
+}
+
+/** Asks a single-document read to resolve the document's origin for this reader. */
+const ORIGIN_SUMMARY_PARAM = 'origin_summary';
+
+function originSummaryParams(): URLSearchParams {
+    return new URLSearchParams({ [ORIGIN_SUMMARY_PARAM]: '1' });
+}
+
+async function fetchPersonalDocumentOriginSummary(id: string, signal?: AbortSignal) {
+    const response = await api.get<WorkspaceDocument>(
+        `/api/documents/${encodeURIComponent(requireWorkspaceId(id))}?${originSummaryParams()}`, signal,
+    );
+    if (!response || documentId(response) !== id) {
+        throw new Error('The document response does not match this document. Refresh and try again.');
+    }
+    return readDocumentOriginSummary(response.origin_summary);
 }
 
 export const PERSONAL_DOCUMENT_READER: DocumentReadAdapter = {
@@ -44,6 +64,7 @@ export const PERSONAL_DOCUMENT_READER: DocumentReadAdapter = {
     facets: fetchPersonalDocumentFacets,
     detail: fetchPersonalDocument,
     versions: fetchPersonalDocumentVersions,
+    originSummary: fetchPersonalDocumentOriginSummary,
 };
 
 export function documentExplorerScopeKey(viewerId: string, scope: DocumentReadScope): string {
@@ -135,6 +156,13 @@ export function createGroupDocumentReader(
             return response;
         },
         detail: (id, signal) => fetchScopedGroupDocument(groupId, id, signal),
+        originSummary: async (id, signal) => {
+            const response = await api.get<WorkspaceDocument>(
+                groupReadUrl(groupId, `/${encodeURIComponent(requireWorkspaceId(id))}`, originSummaryParams()), signal,
+            );
+            assertGroupDocumentScope(response, groupId, id);
+            return readDocumentOriginSummary(response.origin_summary);
+        },
         versions: async (id, signal) => {
             const response = await api.get<DocumentVersionsResponse>(
                 groupReadUrl(groupId, `/${encodeURIComponent(requireWorkspaceId(id))}/versions`), signal,
@@ -234,6 +262,14 @@ export function createPublicDocumentReader(
             return response;
         },
         detail: (id, signal) => fetchScopedPublicDocument(workspaceId, id, signal),
+        originSummary: async (id, signal) => {
+            const response = await api.get<WorkspaceDocument>(
+                publicReadUrl(workspaceId, `/${encodeURIComponent(requireWorkspaceId(id))}`, originSummaryParams()),
+                signal,
+            );
+            assertPublicDocumentScope(response, workspaceId, id);
+            return readDocumentOriginSummary(response.origin_summary);
+        },
         versions: async (id, signal) => {
             const response = await api.get<DocumentVersionsResponse>(
                 publicReadUrl(workspaceId, `/${encodeURIComponent(requireWorkspaceId(id))}/versions`), signal,

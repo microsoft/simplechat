@@ -185,6 +185,22 @@ export interface PromptOption {
     [key: string]: unknown;
 }
 
+export type DocumentOriginKind = 'workflow' | 'chat';
+
+/**
+ * Where a document version came from, as the server resolved it for this reader.
+ *
+ * Sent only on a single-document read that asks for it. `href` is present only when the
+ * reader may open the workflow or chat; otherwise `label` is plain text that names nothing.
+ */
+export interface DocumentOriginSummary {
+    kind: DocumentOriginKind;
+    label: string;
+    href?: string;
+    /** When the originating workflow run started, for a workflow the reader may open. */
+    run_started_at?: string;
+}
+
 export interface WorkspaceDocument {
     /** Fresh operation policy, never inferred from personal ownership or chat eligibility. */
     document_actions?: string[];
@@ -229,6 +245,10 @@ export interface WorkspaceDocument {
     conversation_id?: string;
     conversation_title_at_upload?: string;
     conversation_url?: string;
+    /** Server-owned: whether a workflow or a chat created this version. Never client-set. */
+    origin_kind?: DocumentOriginKind;
+    /** Server-resolved for this reader; only on a single-document read that asks for it. */
+    origin_summary?: DocumentOriginSummary;
     /** `read` is the standard extraction, `layout` the enhanced one. */
     document_intelligence_extraction_mode?: string;
     enhanced_citations?: boolean;
