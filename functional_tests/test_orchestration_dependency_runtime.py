@@ -1,11 +1,11 @@
 # test_orchestration_dependency_runtime.py
 """Real Gather / Reason / Render compiler, executor, composition, retained readers and checkpoints.
 
-Version: 0.261.144
+Version: 0.261.191
 Implemented in: 0.261.127
 Pending-Gather regression implemented in: 0.261.129
 Single orchestration contract updated in: 0.261.139
-Partial-input refusal diagnostics implemented in: 0.261.144
+Partial-input refusal diagnostics implemented in: 0.261.191
 External model/search/storage I/O is isolated; no paid or provider calls.
 """
 

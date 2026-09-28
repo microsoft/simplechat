@@ -1,9 +1,9 @@
 # test_orchestration_single_contract.py
 """
 Functional tests for Gather / Reason / Render as the only chat orchestration contract.
-Version: 0.261.144
+Version: 0.261.191
 Implemented in: 0.261.139
-Per-source preparation guidance for mixed comparisons covered in: 0.261.144
+Per-source preparation guidance for mixed comparisons covered in: 0.261.191
 
 This test ensures that new plans always use the single contract with no admin toggle, that
 the toggle is gone from settings, admin fields and the admin template, that the legacy

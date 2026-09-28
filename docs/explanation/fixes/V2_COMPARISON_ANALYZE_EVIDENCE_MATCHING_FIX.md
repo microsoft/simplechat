@@ -1,6 +1,6 @@
-# V2 Comparison Analyze Evidence Matching Fix (v0.261.144)
+# V2 Comparison Analyze Evidence Matching Fix (v0.261.191)
 
-**Fixed in version: 0.261.144**
+**Fixed in version: 0.261.191**
 
 The application version is tracked in `application/single_app/config.py`.
 
@@ -272,7 +272,7 @@ The property names and a query are in the
 | `application/single_app/functions_orchestration_executor.py` | Reports `input_partial_not_accepted` and logs the producer fields. |
 | `application/single_app/functions_orchestration_schema.py` | The `input_partial_not_accepted` message. |
 | `application/single_app/functions_appinsights.py` | Allowlists the producer fields. |
-| `application/single_app/config.py` | Version 0.261.144. |
+| `application/single_app/config.py` | Version 0.261.191. |
 
 ## Testing
 
@@ -317,11 +317,13 @@ The property names and a query are in the
   per-source guidance.
 
 The new file also passes under `python -O`. The directly affected Analyze and
-orchestration suites pass when run individually. In a wider run, 60 tests in 13
-Analyze, document-analysis, saved-analysis, workflow and mixed-source files failed,
-and the same 60 tests fail on the base commit. `test_orchestration_failure_telemetry.py` also fails
-when it runs in the same process after `test_analyze_backend_saved_integration.py`
-and `test_analyze_live_write_fences.py`; that also happens on the base commit.
+orchestration suites pass when run individually, both before and after merging the
+0.261.190 base branch. In a wider run before that merge, 60 tests in 13 Analyze,
+document-analysis, saved-analysis, workflow and mixed-source files failed, and the
+same 60 tests fail on the base commit, `01c728bf`.
+`test_orchestration_failure_telemetry.py` also fails when it runs in the same process
+after `test_analyze_backend_saved_integration.py` and
+`test_analyze_live_write_fences.py`; that also happens on `01c728bf`.
 
 ## Validation
 

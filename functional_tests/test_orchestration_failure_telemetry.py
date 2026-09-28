@@ -1,10 +1,10 @@
 # test_orchestration_failure_telemetry.py
 """Specific orchestration failure rules reach telemetry without private plan text.
 
-Version: 0.261.144
+Version: 0.261.191
 Implemented in: 0.261.140
 Step, capability, format, and authority-reason codes covered in: 0.261.141
-Partial-input producer capability and step hash fields covered in: 0.261.144
+Partial-input producer capability and step hash fields covered in: 0.261.191
 
 Uses real planner/validation/logging modules with offline provider replies.
 The synthetic invalid proposals test diagnostics, not the unknown historical

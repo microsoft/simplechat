@@ -438,7 +438,7 @@ the exact rejected proposal.
 
 ### Analyze validation and partial-input events
 
-Since **0.261.144**, these events explain why an Analyze result was partial and
+Since **0.261.191**, these events explain why an Analyze result was partial and
 which later step refused it. They record codes and counts only: no quotes,
 findings, caveats, notes, prompts, file names, or model responses.
 
