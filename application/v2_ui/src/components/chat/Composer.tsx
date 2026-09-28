@@ -48,13 +48,16 @@ import {
 } from '../../lib/chatContextTokens';
 import {
     attachPromptToDraft,
+    addComposerDraftImageReference,
     buildComposerDraftSubmission,
     composerDraftContextItems,
     composerDraftHasPendingUploads,
+    composerDraftImageReferences,
     composerDraftUnfilledVariables,
     composerDraftUserPromptValues,
     createComposerDraft,
 } from '../../lib/composerDraft';
+import { clearChatUploadLocalPreviews } from '../../lib/chatUploads';
 import { ComposerEditor, type ComposerEditorActions } from './ComposerEditor';
 import {
     CONTEXT_HANDOFF_PARAMS,
@@ -112,6 +115,13 @@ import {
 import { AiNotice } from './AiNotice';
 import { VoiceInput } from './VoiceInput';
 import { WebSearchNotice } from './WebSearchNotice';
+import { ImageReferenceThumbnail } from './ImageReferenceThumbnail';
+import { useImageEditCapability } from '../../lib/imageRevisions';
+import {
+    effectiveReferenceImageLimit,
+    imageReferenceKey,
+    type ImageReferenceRequest,
+} from '../../lib/imageReferences';
 
 /** A capability toggle in the composer toolbar. */
 function ToolToggle({
@@ -152,6 +162,7 @@ export function Composer({ initialAgentSelection }: { initialAgentSelection?: st
     const {
         streaming, sendMessage, stopStreaming, activeConversationId,
         analysisResultContext, clearAnalysisResultContext,
+        composerImageReferences, consumeComposerImageReferences,
     } = useChatStore();
     const savedAnalysis = analysisResultContext?.conversation_id === activeConversationId
         ? analysisResultContext : null;
@@ -223,9 +234,21 @@ export function Composer({ initialAgentSelection }: { initialAgentSelection?: st
     const { text, attachedPrompt } = draft;
     const promptInstance = draft.promptInstance ?? 0;
     const contextItems = composerDraftContextItems(draft);
+    const imageCapability = useImageEditCapability();
+    const referenceLimit = effectiveReferenceImageLimit(imageCapability);
+    const referenceImagesAvailable = referenceLimit > 0 && !shared;
+    const draftImageReferences = composerDraftImageReferences(draft, referenceLimit);
+    // References added with "Use as reference": the only ones with no chip of their own.
+    const explicitImageReferences = (draft.imageReferences ?? []).filter((reference) =>
+        draftImageReferences.some((item) => imageReferenceKey(item) === imageReferenceKey(reference)));
     const uploading = composerDraftHasPendingUploads(draft);
     const uploadsBlocked = uploading || draft.uploads.some((upload) => upload.state === 'failed');
     const uploadConversationRef = useRef<string | null>(null);
+    // The conversation a first upload created, adopted as active when its message is sent. Its
+    // local previews are kept so the sent image shows before the server preview loads.
+    const adoptedUploadConversationRef = useRef<string | null>(null);
+    // The conversation explicit image references in the draft belong to.
+    const imageReferenceConversationRef = useRef<string | null>(activeConversationId);
     const setText: React.Dispatch<React.SetStateAction<string>> = (update) => setDraft((current) => {
         const value = typeof update === 'function' ? update(current.text) : update;
         return { ...current, text: value, contextItems: reconcileContextItems(value, current.contextItems) };
@@ -424,6 +447,7 @@ export function Composer({ initialAgentSelection }: { initialAgentSelection?: st
                 webSearchActive: options.webSearch,
                 urlAccessActive: options.urlAccess,
                 imageGenerationActive: options.imageGeneration,
+                imageReferencesAvailable: referenceImagesAvailable,
                 agentActive,
                 orchestrating,
             }),
@@ -433,6 +457,7 @@ export function Composer({ initialAgentSelection }: { initialAgentSelection?: st
             options.webSearch,
             options.urlAccess,
             options.imageGeneration,
+            referenceImagesAvailable,
             agentActive,
             orchestrating,
         ],
@@ -440,6 +465,26 @@ export function Composer({ initialAgentSelection }: { initialAgentSelection?: st
     // In Orchestrate, Image asks the answer to include image proposals for approval rather
     // than sending the prompt to the image endpoint, so it combines with every other control.
     const imageProposalsRequested = orchestrating && options.imageGeneration && gating.showImage;
+
+    // "Use as reference" hands references over through the store, so the effect has to
+    // re-run whenever that queue fills, not only when the composer mounts.
+    useEffect(() => {
+        if (composerImageReferences.length === 0) {
+            return;
+        }
+        const references = consumeComposerImageReferences();
+        if (references.length === 0 || shared || referenceLimit <= 0) {
+            return;
+        }
+        setDraft((current) =>
+            references.reduce(
+                (next, reference) => addComposerDraftImageReference(next, reference, referenceLimit),
+                current,
+            ),
+        );
+        setOptions((current) => current.imageGeneration ? current : { ...current, imageGeneration: true });
+        textareaRef.current?.focus();
+    }, [composerImageReferences, consumeComposerImageReferences, shared, referenceLimit]);
 
     // No URLs means the draft no longer has a Read URLs selection. A capability losing
     // authorization is different: keep that requirement visible for server validation.
@@ -549,7 +594,24 @@ export function Composer({ initialAgentSelection }: { initialAgentSelection?: st
         // claim made in the conversation being left.
         typingRef.current = false;
         uploadConversationRef.current = null;
-        setDraft((current) => current.uploads.length ? { ...current, uploads: [] } : current);
+        const adoptedUploadConversation = Boolean(activeConversationId)
+            && adoptedUploadConversationRef.current === activeConversationId;
+        adoptedUploadConversationRef.current = null;
+        if (!adoptedUploadConversation) {
+            clearChatUploadLocalPreviews();
+        }
+        // Explicit image references point at messages in the conversation being left, which
+        // the server would refuse in any other one. Compared with the previous id so the
+        // first run, on mount, cannot discard a reference handed over as the composer opened.
+        const conversationChanged = imageReferenceConversationRef.current !== activeConversationId;
+        imageReferenceConversationRef.current = activeConversationId;
+        setDraft((current) => {
+            const clearReferences = conversationChanged && Boolean(current.imageReferences?.length);
+            if (!current.uploads.length && !clearReferences) {
+                return current;
+            }
+            return { ...current, uploads: [], ...(clearReferences ? { imageReferences: [] } : {}) };
+        });
     }, [activeConversationId]);
 
     /**
@@ -848,6 +910,53 @@ export function Composer({ initialAgentSelection }: { initialAgentSelection?: st
      * typing changes what is actually sent instead of only what the preview shows.
      */
     const buildOutgoing = () => buildComposerDraftSubmission(draft, promptContext());
+    const directReferenceMode = options.imageGeneration && !orchestrating && referenceImagesAvailable;
+    const imageReferenceLimitHint = options.imageGeneration && !orchestrating && !referenceImagesAvailable
+        ? imageCapability.reason || 'The selected image model can’t use reference images.'
+        : '';
+
+    const referenceLabel = (reference: ImageReferenceRequest): string => {
+        if (reference.type === 'message') {
+            const upload = draft.uploads.find((item) =>
+                item.fileMessageId === reference.message_id
+                || item.reference?.id === reference.message_id);
+            const message = messages.find((item) => item.id === reference.message_id);
+            if (upload?.fileName || message?.filename) {
+                return String(upload?.fileName || message?.filename);
+            }
+            const metadata = (message?.metadata ?? {}) as Record<string, unknown>;
+            return message?.role === 'image' && !metadata.is_user_upload ? 'Generated image' : 'Conversation image';
+        }
+        const upload = draft.uploads.find((item) =>
+            item.reference?.kind === 'document' && item.reference.id === reference.document_id);
+        const item = draft.contextItems.find((entry) =>
+            entry.kind === 'document' && entry.id === reference.document_id);
+        return upload?.fileName || item?.meta?.fileName || item?.label || 'Workspace image';
+    };
+
+    const removeImageReference = (reference: ImageReferenceRequest) => {
+        const key = imageReferenceKey(reference);
+        setDraft((current) => ({
+            ...current,
+            uploads: current.uploads.filter((upload) => {
+                const uploadReference = composerDraftImageReferences({
+                    ...current,
+                    uploads: [upload],
+                    contextItems: [],
+                    imageReferences: [],
+                }, 1)[0];
+                return !uploadReference || imageReferenceKey(uploadReference) !== key;
+            }),
+            contextItems: current.contextItems.filter((item) => {
+                if (reference.type !== 'document' || item.kind !== 'document') {
+                    return true;
+                }
+                return item.id !== reference.document_id;
+            }),
+            imageReferences: (current.imageReferences ?? []).filter((item) =>
+                imageReferenceKey(item) !== key),
+        }));
+    };
 
     /**
      * Send, unless the prompt is about to start a long row-level export.
@@ -939,6 +1048,7 @@ export function Composer({ initialAgentSelection }: { initialAgentSelection?: st
             rememberPromptValues(attachedPrompt.id, composerDraftUserPromptValues(draft));
         }
         if (!activeConversationId && uploadConversationRef.current) {
+            adoptedUploadConversationRef.current = uploadConversationRef.current;
             useChatStore.setState({
                 activeConversationId: uploadConversationRef.current,
                 activeConversationKind: 'personal',
@@ -949,6 +1059,7 @@ export function Composer({ initialAgentSelection }: { initialAgentSelection?: st
         void sendMessage(outgoing.message, {
             ...options,
             contextItems,
+            imageReferences: options.imageGeneration && !orchestrating ? draftImageReferences : [],
             promptInfo: outgoing.promptInfo,
         });
         clearDraft();
@@ -1004,6 +1115,9 @@ export function Composer({ initialAgentSelection }: { initialAgentSelection?: st
         if (filterMode) {
             seeds.document_filter_mode = filterMode;
         }
+        if (options.imageGeneration && draftImageReferences.length > 0) {
+            seeds.image_references = draftImageReferences;
+        }
         Object.assign(
             seeds,
             buildSelectionFields({
@@ -1035,6 +1149,7 @@ export function Composer({ initialAgentSelection }: { initialAgentSelection?: st
         }
         const conversationId = activeConversationId ?? uploadConversationRef.current;
         if (!activeConversationId && conversationId) {
+            adoptedUploadConversationRef.current = conversationId;
             useChatStore.setState({ activeConversationId: conversationId, activeConversationKind: 'personal' });
         }
         void startOrchestrationPlan({
@@ -1408,7 +1523,8 @@ export function Composer({ initialAgentSelection }: { initialAgentSelection?: st
                         textareaRef={textareaRef}
                         fileInputRef={fileInputRef}
                         showTools={false}
-                        uploadsDisabled={gating.disabledByImageGeneration}
+                        uploadsDisabled={gating.uploadsDisabledByImageGeneration}
+                        referenceUploadsOnly={directReferenceMode}
                         pickerOpen={pickerOpen}
                         onPickerOpenChange={(open) => {
                             if (open) {
@@ -1457,6 +1573,42 @@ export function Composer({ initialAgentSelection }: { initialAgentSelection?: st
                                       : 'Send a message, or type # to add a document…'
                         }
                     />
+
+                    {options.imageGeneration && !shared && (!orchestrating || explicitImageReferences.length > 0) && (
+                        <div className="flex flex-wrap items-center gap-1.5 px-1 pb-1 pt-1">
+                            {/* Uploads and picked documents already have chips of their own;
+                                only references with no other chip are drawn here, while the
+                                count covers every image that will be sent. */}
+                            {explicitImageReferences.map((reference) => (
+                                <span
+                                    key={imageReferenceKey(reference)}
+                                    className="inline-flex max-w-full items-center gap-1.5 rounded-xl border border-edge bg-surface-1 px-2 py-1 text-xs text-text-2"
+                                >
+                                    <ImageReferenceThumbnail
+                                        reference={reference}
+                                        label={referenceLabel(reference)}
+                                        className="h-7 w-7"
+                                    />
+                                    <span className="max-w-40 truncate">{referenceLabel(reference)}</span>
+                                    <button
+                                        type="button"
+                                        onClick={() => removeImageReference(reference)}
+                                        aria-label={`Remove reference ${referenceLabel(reference)}`}
+                                        className="rounded p-0.5 text-text-3 hover:bg-surface-2 hover:text-text-1"
+                                    >
+                                        <X size={12} />
+                                    </button>
+                                </span>
+                            ))}
+                            <span className="text-[11px] text-text-3">
+                                {orchestrating
+                                    ? 'Planned image steps can use these references'
+                                    : referenceImagesAvailable
+                                      ? `${draftImageReferences.length} / ${referenceLimit} reference images`
+                                      : imageReferenceLimitHint}
+                            </span>
+                        </div>
+                    )}
 
                     <div className="flex flex-wrap items-center gap-1.5 px-1 pt-1">
                         {orchestrationAvailable && (
@@ -1607,7 +1759,7 @@ export function Composer({ initialAgentSelection }: { initialAgentSelection?: st
 
                                 <ToolToggle
                                     active={options.documentSearch || contextItems.length > 0}
-                                    disabled={gating.disabledByImageGeneration}
+                                    disabled={gating.documentsDisabledByImageGeneration}
                                     onClick={() => {
                                         clearAnalysisResultContext();
                                         setPickerOpen((open) => !open);
@@ -1723,10 +1875,10 @@ export function Composer({ initialAgentSelection }: { initialAgentSelection?: st
                                 disabled={
                                     !canPost ||
                                     !gating.showFileUpload ||
-                                    gating.disabledByImageGeneration
+                                    gating.uploadsDisabledByImageGeneration
                                 }
-                                title="Attach a file"
-                                aria-label="Attach a file"
+                                title={directReferenceMode ? 'Attach a reference image' : imageReferenceLimitHint || 'Attach a file'}
+                                aria-label={directReferenceMode ? 'Attach a reference image' : 'Attach a file'}
                                 className={clsx(
                                     'inline-flex h-9 w-9 items-center justify-center rounded-xl border border-edge',
                                     'bg-surface-1 text-text-2 transition-colors hover:bg-surface-2 hover:text-text-1',

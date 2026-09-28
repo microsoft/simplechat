@@ -135,6 +135,8 @@ def _description(model, context, *, supported=False, source="unknown", reason=""
         "output_formats": [],
         "model_path": "",
         "transport": "native",
+        "max_reference_images": 0,
+        "input_fidelity": False,
         "max_mask_bytes": 4 * 1024 * 1024,
         "min_dimension": 0,
         "max_pixels": 0,
@@ -257,7 +259,7 @@ def resolve_image_model_capability(model, endpoint=None, provider="aoai"):
         if not isinstance(value, list) or any(not isinstance(item, str) for item in value):
             result.update(source="catalog", reason="The image operation options are invalid.")
             return result
-    for name in ("maxMaskBytes", "minDimension", "maxPixels"):
+    for name in ("maxMaskBytes", "maxReferenceImages", "minDimension", "maxPixels"):
         if name in profile and (type(profile[name]) is not int or profile[name] <= 0):
             result.update(source="catalog", reason="The image operation limits are invalid.")
             return result
@@ -284,6 +286,7 @@ def resolve_image_model_capability(model, endpoint=None, provider="aoai"):
         return result
     editing = profile["editing"] and _flag(model, "supportsImageEditing", "supports_image_editing") is not False
     masking = profile["masking"] and editing and _flag(model, "supportsImageMasking", "supports_image_masking") is not False
+    max_reference_images = profile.get("maxReferenceImages") if type(profile.get("maxReferenceImages")) is int else 1
     result.update(
         supported=True, api=api, editing=editing, masking=masking,
         mode="masked" if masking else "edit" if editing else "regenerate",
@@ -299,6 +302,8 @@ def resolve_image_model_capability(model, endpoint=None, provider="aoai"):
         output_formats=list(profile.get("outputFormats", [])),
         model_path=model_path,
         transport=transport,
+        max_reference_images=max_reference_images if editing else 0,
+        input_fidelity=catalog.get("inputFidelity") is True,
         max_mask_bytes=profile.get("maxMaskBytes", result["max_mask_bytes"]),
         min_dimension=profile.get("minDimension", 0),
         max_pixels=profile.get("maxPixels", 0),

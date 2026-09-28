@@ -6,6 +6,7 @@ import { OrchestrationExportCatalog } from './OrchestrationExportCatalog';
 import { OrchestrationPlannedFile } from './OrchestrationPlannedFile';
 import { OrchestrationOutputs } from './OrchestrationOutputs';
 import { OrchestrationDeliverables } from './OrchestrationDeliverables';
+import { ImageReferenceThumbnail } from './ImageReferenceThumbnail';
 // The full step list for one run or one pending plan, with the narrowing edits and live status.
 //
 // This is the detail the inline card deliberately omits. It reads the RAW plan, not the edited
@@ -45,6 +46,7 @@ import {
     planRequiresApproval,
     stepDisableExplanation,
     stepDocumentIds,
+    stepReferenceIds,
     stepRoleLabel,
     stepRemovableDocumentIds,
 } from '../../lib/orchestrationPlan';
@@ -57,6 +59,7 @@ import type {
     OrchestrationStep,
     StepStatus,
 } from '../../lib/orchestration';
+import type { ImageReferenceRequest } from '../../lib/imageReferences';
 import { useDocumentTitles } from '../../lib/documentTitles';
 import { plannedFileSpecification, type OrchestrationExportFormat } from '../../lib/orchestrationExports';
 
@@ -97,6 +100,8 @@ function readableArguments(step: OrchestrationStep): Array<[string, string]> {
         'document_ids',
         'right_document_ids',
         'left_document_id',
+        'reference_document_ids',
+        'reference_message_ids',
     ]);
     const entries: Array<[string, string]> = [];
     const args = step.arguments as Json;
@@ -206,6 +211,28 @@ export function OrchestrationRunView({
         [plan],
     );
 
+    const planImageReferences = useMemo(() => {
+        const byId = new Map<string, { name: string; reference: ImageReferenceRequest }>();
+        for (const entry of plan?.inputs?.image_reference_documents ?? []) {
+            byId.set(entry.document_id, {
+                name: entry.file_name || entry.document_id,
+                reference: {
+                    type: 'document',
+                    document_id: entry.document_id,
+                    scope: entry.scope,
+                    scope_id: entry.scope_id ?? null,
+                },
+            });
+        }
+        for (const entry of plan?.inputs?.image_reference_messages ?? []) {
+            byId.set(entry.message_id, {
+                name: entry.file_name || entry.label || entry.message_id,
+                reference: { type: 'message', message_id: entry.message_id },
+            });
+        }
+        return byId;
+    }, [plan]);
+
     /**
      * Names for anything the plan did not describe.
      *
@@ -215,9 +242,12 @@ export function OrchestrationRunView({
      */
     const planDocumentIds = useMemo(
         () =>
-            [...new Set(orderedSteps.flatMap((step) => stepDocumentIds(step)))].filter(
-                (id) => !(planInputDocuments.get(id)?.name),
-            ),
+            [
+                ...new Set(orderedSteps.flatMap((step) => {
+                    const references = new Set(stepReferenceIds(step));
+                    return stepDocumentIds(step).filter((documentId) => !references.has(documentId));
+                })),
+            ].filter((id) => !(planInputDocuments.get(id)?.name)),
         [orderedSteps, planInputDocuments],
     );
     const documentTitles = useDocumentTitles(planDocumentIds);
@@ -255,7 +285,9 @@ export function OrchestrationRunView({
         const summary = stepRuntime[step.step_id]?.summary ?? '';
         const removed = new Set(edits.removed_document_ids[step.step_id] ?? []);
         const removable = new Set(stepRemovableDocumentIds(step));
-        const explicitDocuments = stepDocumentIds(step);
+        const references = stepReferenceIds(step);
+        const referenceSet = new Set(references);
+        const explicitDocuments = stepDocumentIds(step).filter((documentId) => !referenceSet.has(documentId));
         const documents = step.capability_id === 'document_search' && explicitDocuments.length === 0
             ? [...planInputDocuments].filter(([, document]) => document.selectedByUser).map(([id]) => id)
             : explicitDocuments;
@@ -405,6 +437,7 @@ export function OrchestrationRunView({
                                                     yours
                                                 </span>
                                             ) : null}
+
                                             {isRemoved && editable ? (
                                                 <button
                                                     type="button"
@@ -433,6 +466,72 @@ export function OrchestrationRunView({
                                                         )
                                                     }
                                                     aria-label={`Remove document ${documentId} from this step`}
+                                                    className="text-text-3 hover:text-danger"
+                                                >
+                                                    <X size={11} />
+                                                </button>
+                                            ) : null}
+                                        </li>
+                                    );
+                                })}
+                            </ul>
+                        ) : null}
+
+                        {references.length > 0 ? (
+                            <ul className="mt-2 flex flex-wrap gap-1.5" aria-label="Reference images">
+                                {references.map((referenceId) => {
+                                    const isRemoved = removed.has(referenceId);
+                                    const canRemove = editable && removable.has(referenceId);
+                                    const item = planImageReferences.get(referenceId);
+                                    const title = item?.name ?? referenceId;
+                                    return (
+                                        <li
+                                            key={referenceId}
+                                            className={clsx(
+                                                'inline-flex items-center gap-1 rounded-full border px-1.5 py-0.5 text-[11px]',
+                                                isRemoved
+                                                    ? 'border-edge text-text-3 line-through'
+                                                    : 'border-edge-strong text-text-2',
+                                            )}
+                                        >
+                                            {item ? (
+                                                <ImageReferenceThumbnail
+                                                    reference={item.reference}
+                                                    label={title}
+                                                    className="h-5 w-5"
+                                                />
+                                            ) : null}
+                                            <span className="max-w-[12rem] truncate" title={title}>
+                                                {title}
+                                            </span>
+                                            {isRemoved && editable ? (
+                                                <button
+                                                    type="button"
+                                                    onClick={() =>
+                                                        restoreDocument(
+                                                            conversationId,
+                                                            turnId,
+                                                            step.step_id,
+                                                            referenceId,
+                                                        )
+                                                    }
+                                                    aria-label={`Restore reference image ${title}`}
+                                                    className="text-accent hover:text-accent-hover"
+                                                >
+                                                    <RotateCcw size={11} />
+                                                </button>
+                                            ) : canRemove ? (
+                                                <button
+                                                    type="button"
+                                                    onClick={() =>
+                                                        removeDocument(
+                                                            conversationId,
+                                                            turnId,
+                                                            step,
+                                                            referenceId,
+                                                        )
+                                                    }
+                                                    aria-label={`Remove reference image ${title} from this step`}
                                                     className="text-text-3 hover:text-danger"
                                                 >
                                                     <X size={11} />

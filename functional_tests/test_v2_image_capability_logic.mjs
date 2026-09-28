@@ -1,5 +1,5 @@
 // test_v2_image_capability_logic.mjs
-// Version: 0.261.107
+// Version: 0.261.144
 // Implemented in: 0.261.107
 // Execute server-profile normalization, image operation validation and both revision transports.
 // React/store imports are blocked only for the pure helper tests; the browser suite exercises
@@ -61,6 +61,8 @@ function profile(overrides = {}) {
         reason: '',
         editing: true,
         masking: true,
+        max_reference_images: 16,
+        input_fidelity: true,
         sizes: ['1024x1024', '1536x1024', '1024x1536'],
         qualities: ['low', 'medium', 'high'],
         backgrounds: ['opaque', 'transparent'],
@@ -97,6 +99,7 @@ const check = (name, run) => checks.push([name, run]);
 const masked = toImageEditCapability(profile());
 const reference = toImageEditCapability(profile({
     mode: 'edit', masking: false, model_name: 'MAI-Image-2.6',
+    max_reference_images: 1, input_fidelity: false,
     sizes: ['1024x1024', '1024x768', '768x1024'], qualities: [], backgrounds: [],
 }));
 const regenerate = toImageEditCapability(profile({
@@ -125,6 +128,24 @@ check('explicit readiness and consistent operation flags are required', () => {
     }
     assert.equal(reference.enabled, true);
     assert.equal(regenerate.enabled, true);
+});
+
+check('reference image limits and input fidelity are clamped to safe edit metadata', () => {
+    assert.equal(masked.max_reference_images, 16);
+    assert.equal(masked.input_fidelity, true);
+    assert.equal(reference.max_reference_images, 1);
+    assert.equal(reference.input_fidelity, false);
+    assert.equal(regenerate.max_reference_images, 0);
+    assert.equal(regenerate.input_fidelity, false);
+
+    for (const max_reference_images of [undefined, null, 0, -1, Number.NaN, Number.POSITIVE_INFINITY, '16']) {
+        const capability = toImageEditCapability(profile({ max_reference_images }));
+        assert.equal(capability.max_reference_images, 1, String(max_reference_images));
+    }
+    assert.equal(toImageEditCapability(profile({ max_reference_images: 1.9 })).max_reference_images, 1);
+    assert.equal(toImageEditCapability(profile({ max_reference_images: 2.1 })).max_reference_images, 2);
+    assert.equal(toImageEditCapability(profile({ editing: false, mode: 'regenerate' })).max_reference_images, 0);
+    assert.equal(toImageEditCapability(profile({ input_fidelity: 'true' })).input_fidelity, false);
 });
 
 check('unknown availability warns but does not invent a cloud ban or support', () => {

@@ -4,7 +4,7 @@ title: "Review and edit orchestration plans"
 description: "Refine proposed work with the planner before running it."
 section: "Guides"
 audience: user
-version: "0.261.139"
+version: "0.261.144"
 ---
 
 ## Decide what should run
@@ -146,10 +146,21 @@ The plan panel also names the step that produces each item. **Also included** li
 the planner added without being asked, such as a suggested chart. Ask the planner for a
 revision if something you need is missing from the list.
 
-A **Generate image** step shows the image prompt and caption it will use. Each image is
-an AI-generated illustration, created when the plan runs and shown in the answer. When a
-report or deck binds an image, its input is optional: if the image cannot be generated,
-the content is still written and the delivery notes say what is missing.
+A **Generate image** step shows the image prompt and caption it will use. Each image
+follows the requested visual style, including photorealistic, and is captioned as an
+AI-generated image when the plan runs and shows it in the answer. When a report or deck
+binds an image, its input is optional: if the image cannot be generated, the content is
+still written and the delivery notes say what is missing.
+
+Since **0.261.144**, a **Generate image** step can also use your own pictures as reference
+images, such as "a cartoon of my house" with a photo of the house attached. Turn on **Image**,
+then attach the pictures, select workspace images, or choose **Use as reference** on an image
+in the conversation. The step shows each reference as a chip with a thumbnail and its name.
+In **Review**, remove a reference to leave it out of the step, and restore it if you change
+your mind. With every reference removed, the image is generated from its prompt alone. When
+the configured image model can't use reference images, attached pictures are still read as
+documents, and planned images are generated from their prompts. See
+[Generate images]({{ '/guides/generate-images/' | relative_url }}).
 
 File-format reference information is optional and uses only the shared catalog
 supplied by the server. It is not a separate browser format list or permission

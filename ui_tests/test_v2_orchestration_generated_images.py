@@ -1,7 +1,7 @@
 # test_v2_orchestration_generated_images.py
 """
 Real-component browser coverage for images an orchestrated answer generated as planned steps.
-Version: 0.261.138
+Version: 0.261.144
 Implemented in: 0.261.138
 
 The production controller, SSE reader, stores, message list and image cards execute in the
@@ -55,8 +55,8 @@ def image_block(visual_id, title):
     """The block the server projects for a generated image."""
     payload = {
         "version": 1, "visualId": visual_id, "title": title,
-        "description": "AI-generated illustration", "prompt": f"An illustrated portrait of {title}.",
-        "visualType": "illustration", "context": "AI-generated illustration",
+        "description": "AI-generated image", "prompt": f"A photorealistic studio portrait of {title}.",
+        "visualType": "illustration", "context": "AI-generated image",
     }
     return "```simpleimage\n" + json.dumps(payload) + "\n```"
 
@@ -64,9 +64,11 @@ def image_block(visual_id, title):
 def image_message(visual_id, title, source_answer_id):
     return {
         "id": f"image-{visual_id}", "conversation_id": recovery_tests.CONVERSATION, "role": "image",
-        "content": PIXEL, "prompt": f"An illustrated portrait of {title}.", "model_deployment_name": "gpt-image-1",
+        "content": PIXEL, "prompt": f"A photorealistic studio portrait of {title}.",
+        "model_deployment_name": "gpt-image-1",
         "metadata": {"image_proposal": {
-            "version": 1, "visualId": visual_id, "title": title, "prompt": f"An illustrated portrait of {title}.",
+            "version": 1, "visualId": visual_id, "title": title,
+            "prompt": f"A photorealistic studio portrait of {title}.",
             "source_assistant_message_id": source_answer_id,
         }},
     }
@@ -74,7 +76,7 @@ def image_message(visual_id, title, source_answer_id):
 
 def answer_content():
     sections = [
-        f"## {title}\n\n{image_block(visual_id, title)}\n\n*AI-generated illustration: {title}*"
+        f"## {title}\n\n{image_block(visual_id, title)}\n\n*AI-generated image: {title}*"
         for visual_id, title in PRESIDENTS
     ]
     return "# The first three presidents\n\n" + "\n\n".join(sections)

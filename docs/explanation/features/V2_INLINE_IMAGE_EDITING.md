@@ -32,9 +32,11 @@ asking for one are the same call.
 **A mask guides the model; it does not clamp pixels.** Areas outside the selection can still
 shift. The interface says so rather than implying a precision the API does not offer.
 
-**Only generated images are editable.** A user's own uploaded image is not something the image
-deployment can be asked to rework, and editing one is a separate decision. The Edit control is
-not offered for an upload.
+**Only generated images are edited in place.** A user's own uploaded image is never rewritten.
+Since version **0.261.144**, **Edit** on an upload opens the editor in "Create image from
+reference" mode instead: the upload is sent as a reference image, optionally with a selected
+region, and the result is a new image message. See
+[Chat Image Uploads and Reference Images](CHAT_IMAGE_UPLOADS_AND_REFERENCE_IMAGES.md).
 
 Editing is available in the V2 interface only. The classic interface shows whatever version is
 current — because both interfaces load images through the same serve routes — but the editor is

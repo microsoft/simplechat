@@ -1,6 +1,6 @@
 # Chat Orchestration
 
-**Version: 0.261.139** (tracked in `application/single_app/config.py`)
+**Version: 0.261.144** (tracked in `application/single_app/config.py`)
 
 **Implemented in version: 0.261.086**
 **Knowledge phase added in version: 0.261.089**
@@ -23,6 +23,7 @@
 **Orchestrate model picker placement and remembered choice fixed in version: 0.261.137**
 **Deliverables contract and generated images in files implemented in version: 0.261.138**
 **Gather / Reason / Render made the only orchestration contract in version: 0.261.139**
+**Photorealistic planned images and reference images implemented in version: 0.261.144**
 
 ## Overview
 
@@ -1065,7 +1066,17 @@ before its steps, and the server checks that list. See
   step when the plan runs. It is saved as a conversation image message tied to the
   orchestrated answer and retained as an `image-asset-v1` result. The answer places it
   with an `[[image:<step_id>]]` token, the chat shows it inline, and DOCX, PDF, and PPTX
-  files embed it. Images are captioned as AI-generated illustrations.
+  files embed it. Images follow the requested visual style, including photorealistic, and
+  are captioned as AI-generated images.
+- **Reference images.** Since **0.261.144**, a `generate_image` step can bind the user's own
+  pictures with `reference_document_ids` and `reference_message_ids`, for example to make
+  a cartoon of an attached photo of a house. Only images the user attached, selected, or
+  referenced with **Image** on are offered, as server-computed seed candidates constrained
+  to the image model's reference limit. The executor re-validates them against the run's
+  seeds, reads them through the same authorization and screening boundary as direct Image
+  mode, and records referenced documents as the step's result sources. The plan card shows
+  them as removable chips. See
+  [Chat image uploads and reference images](CHAT_IMAGE_UPLOADS_AND_REFERENCE_IMAGES.md#orchestrate).
 - **Images in files.** A file embeds a rendition of each image that the Office renderers
   accept: an image over 4 MB or in WEBP is re-encoded and, only if needed, scaled down.
   The chat keeps the image exactly as generated, so an image never fails its file for its
@@ -1384,14 +1395,15 @@ research-selection rate is not itself a quality improvement.
   agent creates with its chart tool travels in those citations and is placed in the answer,
   and images are offered as proposal cards by the answer step. Agent steps do not receive
   saved memories.
-- **Generated images are AI illustrations, and proposal images stay out of files.** Since
+- **Generated images are AI-generated, and proposal images stay out of files.** Since
   **0.261.138**, a Gather / Reason / Render plan generates each image the user asks for
   and embeds it in DOCX, PDF, and PPTX files. Web search cannot retrieve existing pictures,
-  so a report links authentic sources and uses captioned AI illustrations. A plan generates
-  at most four images, one after another. Proposal images the planner only suggests are
-  generated after the user approves each card, so a file rendered during the run cannot
-  contain them. A chart renders at most 200 points per series; longer series are reduced
-  to each segment's highest and lowest values.
+  so a report links authentic sources and uses captioned AI-generated images instead of
+  presenting them as real photographs or web-sourced pictures. A plan generates at most
+  four images, one after another. Proposal images the planner only suggests are generated
+  after the user approves each card, so a file rendered during the run cannot contain them.
+  A chart renders at most 200 points per series; longer series are reduced to each segment's
+  highest and lowest values.
 - **One agent per plan.** Loading an agent resolves Key Vault secrets, hydrates every plugin
   it declares, and introspects SQL and Cosmos schemas. There is no working kernel cache, so
   each agent step pays that cost in full.

@@ -9,6 +9,7 @@
 
 import type { ReasoningResolution } from './reasoning';
 import type { ContentScreeningSummary } from './contentScreening';
+import type { ImageReferenceRequest } from './imageReferences';
 
 export type Json = Record<string, unknown>;
 
@@ -78,6 +79,8 @@ export interface ImageEditCapability {
     sizes: string[];
     qualities: string[];
     backgrounds: string[];
+    max_reference_images: number;
+    input_fidelity: boolean;
 }
 
 export interface Conversation {
@@ -1203,6 +1206,9 @@ export interface ChatStreamRequest {
     hybrid_search?: boolean;
     web_search_enabled?: boolean;
     image_generation?: boolean;
+    image_references?: ImageReferenceRequest[];
+    image_mask?: string;
+    image_mask_regions?: number;
     /** Deep research. Both fields are sent together, matching the existing client. */
     source_review_enabled?: boolean;
     deep_research_enabled?: boolean;

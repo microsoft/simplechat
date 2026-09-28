@@ -415,15 +415,30 @@ def request_generated_image_source(settings, prompt, size='', quality='', backgr
     return _request_image_source(settings, prompt, size=size, quality=quality, background=background)
 
 
-def request_edited_image_source(settings, prompt, source_image, mask=None, size='', quality='', background=''):
+def request_edited_image_source(settings, prompt, source_image, mask=None, size='', quality='', background='', input_fidelity=''):
     """Use the same binding, errors and output validation for a real source-image edit."""
     return _request_image_source(
         settings, prompt, source_image=source_image, mask=mask,
         size=size, quality=quality, background=background, operation='edit',
+        input_fidelity=input_fidelity,
     )
 
 
-def _request_image_source(settings, prompt, *, source_image=None, mask=None, size='', quality='', background='', operation='generate'):
+def _reference_source_count(source_image):
+    return len(source_image) if isinstance(source_image, list) else 1 if source_image is not None else 0
+
+
+def _reference_source_limit(capability):
+    value = capability.get('max_reference_images')
+    if type(value) is not int or value <= 0:
+        value = 1
+    return min(value, 10)
+
+
+def _request_image_source(
+    settings, prompt, *, source_image=None, mask=None, size='', quality='', background='',
+    operation='generate', input_fidelity='',
+):
     client = None
     response = None
     route = ''
@@ -445,6 +460,20 @@ def _request_image_source(settings, prompt, *, source_image=None, mask=None, siz
                     capability.get('reason') or 'The selected model cannot edit a source image.',
                     'unsupported_image_operation',
                 )
+            source_count = _reference_source_count(source_image)
+            reference_limit = _reference_source_limit(capability)
+            if source_count > reference_limit:
+                raise ImageGenerationError(
+                    f'The selected image model supports at most {reference_limit} reference image(s).',
+                    'too_many_reference_images',
+                    400,
+                )
+            if mask and source_count > 1:
+                raise ImageGenerationError(
+                    'A selected region can only be applied to a single reference image.',
+                    'unsupported_image_operation',
+                    400,
+                )
         route = capability['api']
         validate_image_options(capability, size, quality, background)
         if mask and not capability.get('masking'):
@@ -454,6 +483,7 @@ def _request_image_source(settings, prompt, *, source_image=None, mask=None, siz
             response = edit_image(
                 client, deployment, capability, prompt, source_image, mask,
                 size=size, quality=quality, background=background,
+                input_fidelity=input_fidelity if capability.get('input_fidelity') else '',
             )
         else:
             response = generate_image(
@@ -642,6 +672,26 @@ def _build_image_proposal_metadata(proposal, source_assistant_message_id=None):
     return metadata
 
 
+def _metadata_value_contains_binary(value):
+    if isinstance(value, (bytes, bytearray, memoryview)):
+        return True
+    if isinstance(value, dict):
+        return any(_metadata_value_contains_binary(item) for item in value.values())
+    if isinstance(value, (list, tuple)):
+        return any(_metadata_value_contains_binary(item) for item in value)
+    return False
+
+
+def _safe_image_message_extra_metadata(extra_metadata):
+    if not isinstance(extra_metadata, dict):
+        return {}
+    return {
+        key: value
+        for key, value in extra_metadata.items()
+        if isinstance(key, str) and not _metadata_value_contains_binary(value)
+    }
+
+
 def find_planned_proposal_image(source_message, proposal, read_image_message):
     """The image an orchestrated answer already generated for this proposal, or None.
 
@@ -690,6 +740,9 @@ def generate_chat_image_message(
     size='',
     quality='',
     background='',
+    reference_sources=None,
+    extra_metadata=None,
+    input_fidelity='',
 ):
     """Generate an image, persist it as a chat image message, and return response data.
 
@@ -702,9 +755,15 @@ def generate_chat_image_message(
         raise ValueError('Image generation prompt is required')
 
     image_gen_model = resolve_selected_image_deployment_name(settings)
-    generated_image_url = request_generated_image_source(
-        settings, normalized_prompt, size=size, quality=quality, background=background,
-    )
+    if reference_sources:
+        generated_image_url = request_edited_image_source(
+            settings, normalized_prompt, reference_sources,
+            size=size, quality=quality, background=background, input_fidelity=input_fidelity,
+        )
+    else:
+        generated_image_url = request_generated_image_source(
+            settings, normalized_prompt, size=size, quality=quality, background=background,
+        )
     if not generated_image_url or generated_image_url == 'null':
         raise ImageGenerationError('The image service returned no usable image.', 'image_output_missing')
 
@@ -713,7 +772,8 @@ def generate_chat_image_message(
 
     image_message_id = f"{conversation_id}_image_{int(time.time())}_{random.randint(1000, 9999)}"
     image_timestamp = datetime.utcnow().isoformat()
-    image_metadata = {
+    image_metadata = _safe_image_message_extra_metadata(extra_metadata)
+    image_metadata.update({
         'user_info': user_info,
         'thread_info': {
             'thread_id': thread_id,
@@ -721,7 +781,7 @@ def generate_chat_image_message(
             'active_thread': True,
             'thread_attempt': 1,
         },
-    }
+    })
 
     image_proposal_metadata = _build_image_proposal_metadata(
         proposal,

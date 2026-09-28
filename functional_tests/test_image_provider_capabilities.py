@@ -1,7 +1,7 @@
 # test_image_provider_capabilities.py
 """
 Functional tests for provider-qualified image generation and editing.
-Version: 0.261.107
+Version: 0.261.144
 Implemented in: 0.261.107
 
 Exercise the real JSON catalog and pure resolver without credentials, application
@@ -23,6 +23,10 @@ sys.path.insert(0, str(APP_ROOT))
 # Pure leaf modules are loaded after installing this standalone test's application path.
 import functions_image_capabilities as images  # noqa: E402
 from functions_model_capabilities import get_image_operation_profile  # noqa: E402
+from test_support.versioning import assert_app_version_at_least  # noqa: E402
+
+
+assert_app_version_at_least("0.261.144")
 
 
 def endpoint(provider="custom", url="https://api.openai.com/v1", api_type="openai", **connection):
@@ -141,7 +145,10 @@ class ImageProviderCapabilityTests(unittest.TestCase):
                         self.assertIn("known incompatibility", support["reason"])
 
     def test_image_profiles_are_version_and_provider_specific(self):
-        for name in ("gpt-image-1", "gpt-image-1.5", "gpt-image-2", "gpt-image-2.5-flare", "gpt-image-2.5-sunburst"):
+        for name in (
+            "gpt-image-1", "gpt-image-1.5", "gpt-image-1-mini", "gpt-image-2",
+            "gpt-image-2.5-flare", "gpt-image-2.5-sunburst",
+        ):
             for provider, url in (
                 ("custom", "https://api.openai.com/v1"),
                 ("aoai", "https://image.openai.azure.com"),
@@ -152,6 +159,8 @@ class ImageProviderCapabilityTests(unittest.TestCase):
                     self.assertTrue(support["supported"])
                     self.assertEqual(support["api"], "images")
                     self.assertTrue(support["masking"])
+                    self.assertEqual(support["max_reference_images"], 16)
+                    self.assertEqual(support["input_fidelity"], name in ("gpt-image-1", "gpt-image-1.5"))
         self.assertFalse(images.resolve_image_model_capability(model("gpt-image-99"), endpoint())["supported"])
 
     def test_known_dedicated_image_profile_overrides_a_stale_route(self):
@@ -178,6 +187,17 @@ class ImageProviderCapabilityTests(unittest.TestCase):
                 self.assertEqual(support["api"], api)
                 self.assertEqual(support["mode"], "edit")
                 self.assertFalse(support["masking"])
+                self.assertEqual(support["max_reference_images"], {
+                    "MAI-Image-2.5": 1,
+                    "MAI-Image-2.5-Flash": 1,
+                    "MAI-Image-2.5-Pro": 1,
+                    "MAI-Image-2.6": 1,
+                    "MAI-Image-2.6-Flash": 1,
+                    "FLUX.2-pro": 8,
+                    "FLUX.2-flex": 10,
+                    "FLUX.1-Kontext-pro": 1,
+                }[name])
+                self.assertFalse(support["input_fidelity"])
                 self.assertFalse(images.resolve_image_model_capability(model(name), endpoint())["supported"])
 
     def test_generation_only_flux_is_regeneration_not_a_reference_edit(self):
@@ -187,6 +207,8 @@ class ImageProviderCapabilityTests(unittest.TestCase):
         self.assertTrue(support["supported"])
         self.assertEqual(support["mode"], "regenerate")
         self.assertFalse(support["editing"])
+        self.assertEqual(support["max_reference_images"], 0)
+        self.assertFalse(support["input_fidelity"])
 
     def test_mai_limits_reject_gpt_presets_and_unsupported_rendering_options(self):
         support = images.resolve_image_model_capability(
@@ -210,9 +232,13 @@ class ImageProviderCapabilityTests(unittest.TestCase):
         )
         self.assertFalse(retired["supported"])
         self.assertEqual(retired["availability"], "unavailable")
+        self.assertEqual(retired["max_reference_images"], 0)
+        self.assertFalse(retired["input_fidelity"])
         disabled = images.resolve_image_model_capability(model(supportsImageGeneration=False), endpoint())
         self.assertFalse(disabled["supported"])
         self.assertEqual(disabled["source"], "declared")
+        self.assertEqual(disabled["max_reference_images"], 0)
+        self.assertFalse(disabled["input_fidelity"])
 
     def test_catalog_profile_results_are_isolated(self):
         first = get_image_operation_profile("mai-images")

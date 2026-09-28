@@ -9,6 +9,7 @@ import {
     ChevronDown,
     EyeOff,
     FileText,
+    Image as ImageIcon,
     ImageOff,
     PenLine,
     RefreshCw,
@@ -51,6 +52,7 @@ import {
 } from '../../lib/masking';
 import { ImageLightbox } from './ImageLightbox';
 import { ImageEditor } from './ImageEditor';
+import { ImageReferenceThumbnail } from './ImageReferenceThumbnail';
 import { ImageProposalScope } from './ImageProposalContext';
 import {
     answerGeneratedImages,
@@ -70,7 +72,25 @@ import { isOrchestrationOutputArtifact } from '../../lib/orchestrationOutputs';
 import { analysisUnavailableMessage, readSavedAnalysis, sameAnalysis } from '../../lib/savedAnalysis';
 import { readMessagePrompt } from '../../lib/messagePrompt';
 import { PromptCard } from './PromptCard';
+import {
+    buildChatImagePreviewUrl,
+    imagePreviewHintForFileName,
+    useChatImagePreview,
+    workspaceAttachmentDocumentId,
+    type WorkspaceAttachmentPreviewRef,
+} from '../../lib/chatImagePreview';
+import { isImageFileName } from '../../lib/chatUploads';
+import {
+    effectiveReferenceImageLimit,
+    imageReferencePreviewUrl,
+    isHeifFileName,
+    isReferenceImageFileName,
+    readImageReferenceProvenance,
+    type ImageReferenceRequest,
+} from '../../lib/imageReferences';
 import type { ChatMessage, CollaborationMessage, ThoughtEntry } from '../../lib/types';
+import type { ReactNode } from 'react';
+import type { ChatWidth } from '../../stores/uiStore';
 
 function ThoughtsPanel({ thoughts, live = false }: { thoughts: ThoughtEntry[]; live?: boolean }) {
     const [open, setOpen] = useState(false);
@@ -115,10 +135,18 @@ function ImageMessage({ message }: { message: ChatMessage }) {
     const [lightboxOpen, setLightboxOpen] = useState(false);
     const [editorOpen, setEditorOpen] = useState(false);
     const chatWidth = useUiStore((state) => state.chatWidth);
+    const currentUserId = useBootstrapStore((state) => state.data?.user?.id);
     const source = resolveImageSource(message.content);
+    const userUpload = Boolean((message.metadata as Record<string, unknown> | undefined)?.is_user_upload);
+    const own = isOwnMessage(message, currentUserId);
+    const fileName = String(message.filename || message.prompt || 'Uploaded image');
 
     const imageGenerationEnabled = useFeature('enable_image_generation');
     const capability = useImageEditCapability();
+    const referenceLimit = effectiveReferenceImageLimit(capability);
+    const referencesAvailable = imageGenerationEnabled && referenceLimit > 0;
+    const collaborative = useChatStore((state) => state.activeConversationKind === 'collaborative');
+    const addComposerImageReference = useChatStore((state) => state.addComposerImageReference);
     const revisions = useImageRevisions(
         message.id,
         String(message.prompt ?? ''),
@@ -133,6 +161,18 @@ function ImageMessage({ message }: { message: ChatMessage }) {
 
     // An unrecognised content shape, or an image that will not load, falls back to the
     // prompt text. A broken image element tells the user nothing.
+    if ((!source || failed) && userUpload) {
+        return (
+            <div id={`message-${message.id}`} className={clsx('flex flex-col', own && 'items-end')}>
+                <FileAttachmentChip
+                    fileName={fileName}
+                    chatWidth={chatWidth}
+                    hint={imagePreviewHintForFileName(fileName) ?? 'Preview is unavailable.'}
+                />
+            </div>
+        );
+    }
+
     if (!source || failed) {
         return (
             <div id={`message-${message.id}`} className="flex justify-start">
@@ -151,16 +191,24 @@ function ImageMessage({ message }: { message: ChatMessage }) {
 
     const alt = String(message.prompt || message.filename || 'Generated image');
 
-    // Offered only for an image the app generated. A user's own upload is not something the
-    // image deployment can be asked to rework, and editing one is a separate decision.
+    // In-place revision is offered only for an image the app generated. A user's own upload is
+    // never rewritten; its Edit creates a new image with the upload as the reference instead.
+    const heif = isHeifFileName(fileName);
     const editable =
         imageGenerationEnabled &&
         revisions.canPersist &&
         !Boolean((message.metadata as Record<string, unknown> | undefined)?.is_user_upload);
+    const deriveEditable = userUpload && referencesAvailable && capability.editing && !heif && !collaborative;
+    const canUseAsReference = referencesAvailable && !collaborative
+        && !heif && (!userUpload || isReferenceImageFileName(fileName));
+    const reference: ImageReferenceRequest = { type: 'message', message_id: message.id };
+    const useAsReference = () => {
+        addComposerImageReference(reference);
+    };
 
     return (
-        <div id={`message-${message.id}`} className="group/message flex flex-col">
-            <div className="flex justify-start">
+        <div id={`message-${message.id}`} className={clsx('group/message flex flex-col', userUpload && own && 'items-end')}>
+            <div className={clsx('flex', userUpload && own ? 'justify-end' : 'justify-start')}>
                 {/*
                   A button rather than a link: the image opens in a dialog, not a new
                   document. It also keeps the thumbnail keyboard operable, which a plain
@@ -203,6 +251,29 @@ function ImageMessage({ message }: { message: ChatMessage }) {
                         )}
                     </button>
                 )}
+                {canUseAsReference && (
+                    <button
+                        type="button"
+                        onClick={useAsReference}
+                        title="Use this image as a reference"
+                        className="inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-xs font-medium text-text-3 transition-colors hover:bg-surface-2 hover:text-text-1"
+                    >
+                        <ImageIcon size={13} />
+                        Use as reference
+                    </button>
+                )}
+                {deriveEditable && (
+                    <button
+                        type="button"
+                        onClick={() => setEditorOpen(true)}
+                        title="Edit this upload into a new image"
+                        aria-haspopup="dialog"
+                        className="inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-xs font-medium text-text-3 transition-colors hover:bg-surface-2 hover:text-text-1"
+                    >
+                        <PenLine size={13} />
+                        Edit
+                    </button>
+                )}
             </div>
 
             {lightboxOpen && (
@@ -212,18 +283,188 @@ function ImageMessage({ message }: { message: ChatMessage }) {
                     naming={naming}
                     onClose={() => setLightboxOpen(false)}
                     onEdit={editable ? () => setEditorOpen(true) : undefined}
+                    onUseAsReference={canUseAsReference ? useAsReference : undefined}
                 />
             )}
 
             {editorOpen && (
                 <ImageEditor
+                    mode={deriveEditable && !editable ? 'derive' : 'revise'}
                     title={alt}
                     imageSrc={source.src}
                     revisions={revisions}
                     capability={capability}
+                    reference={reference}
                     onClose={() => setEditorOpen(false)}
                 />
             )}
+        </div>
+    );
+}
+
+function FileAttachmentChip({
+    fileName,
+    chatWidth,
+    hint,
+    onOpen,
+}: {
+    fileName: string;
+    chatWidth: ChatWidth;
+    hint?: string | null;
+    onOpen?: () => void;
+}) {
+    const body = (
+        <>
+            <FileText size={16} className="shrink-0 text-text-3" />
+            <span className="truncate">{fileName}</span>
+        </>
+    );
+
+    return (
+        <>
+            {onOpen ? (
+                <button
+                    type="button"
+                    onClick={onOpen}
+                    title={`Open ${fileName}`}
+                    className={clsx(
+                        bubbleWidthClass(chatWidth),
+                        'glass-flat flex items-center gap-2 rounded-2xl px-4 py-3 text-left text-[14px] text-text-1',
+                        'transition-colors hover:bg-surface-2',
+                    )}
+                >
+                    {body}
+                </button>
+            ) : (
+                <div
+                    className={clsx(
+                        bubbleWidthClass(chatWidth),
+                        'glass-flat flex items-center gap-2 rounded-2xl px-4 py-3 text-[14px] text-text-1',
+                    )}
+                >
+                    {body}
+                </div>
+            )}
+            {hint ? (
+                <p className={clsx(bubbleWidthClass(chatWidth), 'mt-1 px-1 text-xs text-text-3')}>
+                    {hint}
+                </p>
+            ) : null}
+        </>
+    );
+}
+
+export interface UploadedImageFileCardProps {
+    messageId: string;
+    fileName: string;
+    own?: boolean;
+    chatWidth: ChatWidth;
+    workspaceAttachment?: WorkspaceAttachmentPreviewRef | null;
+    localPreviewKeys?: readonly unknown[];
+    onOpenFile?: () => void;
+    onUseAsReference?: () => void;
+    actions?: ReactNode;
+}
+
+export function UploadedImageFileCard({
+    messageId,
+    fileName,
+    own = false,
+    chatWidth,
+    workspaceAttachment = null,
+    localPreviewKeys = [],
+    onOpenFile,
+    onUseAsReference,
+    actions,
+}: UploadedImageFileCardProps) {
+    const [lightboxOpen, setLightboxOpen] = useState(false);
+    const [decodeFailed, setDecodeFailed] = useState(false);
+    const preview = useChatImagePreview(messageId, {
+        enabled: !decodeFailed,
+        variant: 'thumbnail',
+        fileName,
+        localPreviewKeys,
+        workspaceAttachment,
+    });
+    const displaySource = useMemo(
+        () => ({ kind: 'endpoint' as const, src: buildChatImagePreviewUrl(messageId, 'display') }),
+        [messageId],
+    );
+    const visibleUrl = !decodeFailed ? preview.url ?? preview.localUrl : null;
+    const fallbackHint = decodeFailed
+        ? imagePreviewHintForFileName(fileName) ?? 'Preview is unavailable.'
+        : preview.status === 'held'
+            ? 'Unavailable pending review.'
+            : preview.status === 'unavailable' ? preview.reason : null;
+
+    if (!visibleUrl && (preview.status === 'unavailable' || preview.status === 'held' || decodeFailed)) {
+        return (
+            <FileAttachmentChip
+                fileName={fileName}
+                chatWidth={chatWidth}
+                onOpen={onOpenFile}
+                hint={fallbackHint}
+            />
+        );
+    }
+
+    return (
+        <div className={clsx('w-full', bubbleWidthClass(chatWidth), own && 'ml-auto')}>
+            <div className="glass-flat overflow-hidden rounded-2xl p-2">
+                <button
+                    type="button"
+                    onClick={() => visibleUrl && setLightboxOpen(true)}
+                    disabled={!visibleUrl}
+                    aria-label={`View the full-size image: ${fileName}`}
+                    aria-haspopup="dialog"
+                    className={clsx(
+                        'flex w-full items-center justify-center overflow-hidden rounded-xl bg-surface-sunken',
+                        visibleUrl ? 'cursor-zoom-in' : 'cursor-default',
+                    )}
+                >
+                    {visibleUrl ? (
+                        <img
+                            src={visibleUrl}
+                            alt={fileName}
+                            onError={() => setDecodeFailed(true)}
+                            className="max-h-80 max-w-full rounded-xl object-contain"
+                        />
+                    ) : (
+                        <div className="flex h-40 w-full max-w-md flex-col items-center justify-center gap-2 px-6 text-center">
+                            <Skeleton className="h-24 w-full max-w-sm motion-reduce:animate-none" />
+                            <p className="text-xs text-text-3">
+                                {preview.status === 'processing' ? 'Processing image…' : 'Loading image…'}
+                            </p>
+                        </div>
+                    )}
+                </button>
+                <div className="mt-2 flex items-center gap-2 px-1">
+                    <p className="min-w-0 flex-1 truncate text-xs text-text-2">{fileName}</p>
+                    {onOpenFile ? (
+                        <button
+                            type="button"
+                            onClick={onOpenFile}
+                            aria-label={`Open file preview for ${fileName}`}
+                            className="shrink-0 rounded-md p-1 text-text-3 transition-colors hover:bg-surface-2 hover:text-text-1"
+                        >
+                            <FileText size={13} />
+                        </button>
+                    ) : null}
+                </div>
+                {actions ? <div className="mt-2 flex flex-wrap items-center gap-1 px-1">{actions}</div> : null}
+            </div>
+            {preview.status === 'processing' && !visibleUrl ? (
+                <p role="status" className="mt-1 px-1 text-xs text-text-3">Processing image…</p>
+            ) : null}
+            {lightboxOpen && visibleUrl ? (
+                <ImageLightbox
+                    source={displaySource}
+                    title={fileName}
+                    naming={{ filename: fileName, id: messageId }}
+                    onClose={() => setLightboxOpen(false)}
+                    onUseAsReference={onUseAsReference}
+                />
+            ) : null}
         </div>
     );
 }
@@ -287,23 +528,61 @@ function FileMessage({ message }: { message: ChatMessage }) {
     const author = messageAuthorName(message, currentUserId);
     const own = isOwnMessage(message, currentUserId);
     const [previewOpen, setPreviewOpen] = useState(false);
+    const [deriveEditorOpen, setDeriveEditorOpen] = useState(false);
+    const imageGenerationEnabled = useFeature('enable_image_generation');
+    const capability = useImageEditCapability();
+    const referenceLimit = effectiveReferenceImageLimit(capability);
+    const referencesAvailable = imageGenerationEnabled && referenceLimit > 0 && !collaborative;
+    const addComposerImageReference = useChatStore((state) => state.addComposerImageReference);
 
     const orchestrationFile = message.metadata?.generated_artifact_origin === 'orchestration_retained_output';
     const unavailable = orchestrationFile && message.content_unavailable === true;
     const fileName = unavailable ? 'Generated file unavailable'
         : shared.filename || (orchestrationFile ? 'Generated file' : 'Attached file');
+    const metadata = message.metadata as Record<string, unknown> | undefined;
+    const workspaceAttachment = (
+        metadata?.workspace_attachment && typeof metadata.workspace_attachment === 'object'
+            ? metadata.workspace_attachment as WorkspaceAttachmentPreviewRef
+            : null
+    );
+    const workspaceDocumentId = String(
+        message.workspace_document_id ?? workspaceAttachmentDocumentId(workspaceAttachment),
+    ).trim();
     // The upload's own id, which is the message id for a file message. Both it and the
     // conversation are needed to fetch the content.
     const fileId = String(message.id ?? '').trim();
     const conversationId = String(message.conversation_id ?? '').trim();
     const openable = Boolean(fileId && conversationId && workspaceEnabled && !collaborative && !orchestrationFile);
-
-    const body = (
-        <>
-            <FileText size={16} className="shrink-0 text-text-3" />
-            <span className="truncate">{fileName}</span>
-        </>
+    const imagePreviewable = Boolean(
+        workspaceEnabled && !collaborative && !orchestrationFile
+        && workspaceDocumentId && fileId && isImageFileName(fileName),
     );
+    const referenceCapable = imagePreviewable && referencesAvailable
+        && isReferenceImageFileName(fileName) && !isHeifFileName(fileName);
+    const imageReference: ImageReferenceRequest = { type: 'message', message_id: fileId };
+    const uploadRevisions = useImageRevisions(fileId, '', buildChatImagePreviewUrl(fileId, 'display'));
+    const uploadActions = referenceCapable ? (
+        <>
+            <button
+                type="button"
+                onClick={() => addComposerImageReference(imageReference)}
+                className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-[11px] font-medium text-text-3 hover:bg-surface-2 hover:text-text-1"
+            >
+                <ImageIcon size={12} />
+                Use as reference
+            </button>
+            {capability.editing && (
+                <button
+                    type="button"
+                    onClick={() => setDeriveEditorOpen(true)}
+                    className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-[11px] font-medium text-text-3 hover:bg-surface-2 hover:text-text-1"
+                >
+                    <PenLine size={12} />
+                    Edit
+                </button>
+            )}
+        </>
+    ) : null;
 
     return (
         <div
@@ -311,28 +590,24 @@ function FileMessage({ message }: { message: ChatMessage }) {
             className={clsx('flex flex-col', own && 'items-end')}
         >
             {author && <p className="mb-1 px-1 text-[11px] text-text-3">{author}</p>}
-            {openable ? (
-                <button
-                    type="button"
-                    onClick={() => setPreviewOpen(true)}
-                    title={`Open ${fileName}`}
-                    className={clsx(
-                        bubbleWidthClass(chatWidth),
-                        'glass-flat flex items-center gap-2 rounded-2xl px-4 py-3 text-left text-[14px] text-text-1',
-                        'transition-colors hover:bg-surface-2',
-                    )}
-                >
-                    {body}
-                </button>
+            {imagePreviewable ? (
+                <UploadedImageFileCard
+                    messageId={fileId}
+                    fileName={fileName}
+                    own={own}
+                    chatWidth={chatWidth}
+                    workspaceAttachment={workspaceAttachment}
+                    localPreviewKeys={[fileId, workspaceDocumentId]}
+                    onOpenFile={openable ? () => setPreviewOpen(true) : undefined}
+                    onUseAsReference={referenceCapable ? () => addComposerImageReference(imageReference) : undefined}
+                    actions={uploadActions}
+                />
             ) : (
-                <div
-                    className={clsx(
-                        bubbleWidthClass(chatWidth),
-                        'glass-flat flex items-center gap-2 rounded-2xl px-4 py-3 text-[14px] text-text-1',
-                    )}
-                >
-                    {body}
-                </div>
+                <FileAttachmentChip
+                    fileName={fileName}
+                    chatWidth={chatWidth}
+                    onOpen={openable ? () => setPreviewOpen(true) : undefined}
+                />
             )}
 
             {orchestrationFile && (
@@ -349,6 +624,17 @@ function FileMessage({ message }: { message: ChatMessage }) {
                     fileId={fileId}
                     fileName={fileName}
                     onClose={() => setPreviewOpen(false)}
+                />
+            )}
+            {deriveEditorOpen && (
+                <ImageEditor
+                    mode="derive"
+                    title={fileName}
+                    imageSrc={buildChatImagePreviewUrl(fileId, 'display')}
+                    revisions={uploadRevisions}
+                    capability={capability}
+                    reference={imageReference}
+                    onClose={() => setDeriveEditorOpen(false)}
                 />
             )}
         </div>
@@ -391,6 +677,32 @@ function PromptUsedBlock({
             onToggle={() => setOpen((isOpen) => !isOpen)}
             onAccent={onAccent}
         />
+    );
+}
+
+function ReferenceImagesRow({
+    references,
+    onAccent,
+}: {
+    references: ReturnType<typeof readImageReferenceProvenance>;
+    onAccent: boolean;
+}) {
+    return (
+        <div className="mt-2">
+            <p className={clsx('mb-1 text-[11px] font-medium', onAccent ? 'text-on-accent/75' : 'text-text-3')}>
+                Reference images
+            </p>
+            <div className="flex flex-wrap gap-1.5">
+                {references.map((reference, index) => (
+                    <ImageReferenceThumbnail
+                        key={`${imageReferencePreviewUrl(reference)}:${index}`}
+                        reference={reference}
+                        label={reference.file_name || `Reference image ${index + 1}`}
+                        className="h-9 w-9"
+                    />
+                ))}
+            </div>
+        </div>
     );
 }
 
@@ -518,6 +830,10 @@ function MessageBubbleInner({
         () => (isUser && masks.ranges.length === 0 ? readMessagePrompt(message) : null),
         [isUser, message, masks.ranges.length],
     );
+    const referenceProvenance = useMemo(
+        () => (isUser ? readImageReferenceProvenance(message.metadata) : []),
+        [isUser, message.metadata],
+    );
 
     if (message.role === 'image') {
         return <ImageMessage message={message} />;
@@ -643,11 +959,19 @@ function MessageBubbleInner({
                                     {promptUsed.userText}
                                 </p>
                             )}
+                            {referenceProvenance.length > 0 && (
+                                <ReferenceImagesRow references={referenceProvenance} onAccent={alignRight} />
+                            )}
                         </>
                     ) : (
-                        <p className="text-[15px] leading-relaxed whitespace-pre-wrap">
-                            {maskedUserContent}
-                        </p>
+                        <>
+                            <p className="text-[15px] leading-relaxed whitespace-pre-wrap">
+                                {maskedUserContent}
+                            </p>
+                            {referenceProvenance.length > 0 && (
+                                <ReferenceImagesRow references={referenceProvenance} onAccent={alignRight} />
+                            )}
+                        </>
                     )
                 ) : (
                     <>

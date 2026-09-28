@@ -457,7 +457,7 @@ def _build_capabilities(settings):
             for key in (
                 "enabled", "mode", "model_name", "reason", "provider_label", "cloud_label",
                 "availability", "availability_reason", "editing", "masking",
-                "sizes", "qualities", "backgrounds",
+                "sizes", "qualities", "backgrounds", "max_reference_images", "input_fidelity",
             )
         },
     }

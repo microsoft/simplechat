@@ -2,6 +2,38 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.192)**
+
+#### New Features
+
+*   **Uploaded Images Display Inline In React V2 Chat**
+    *   A PNG, JPG, BMP, or TIFF image uploaded in chat now appears in the thread as a picture with a full-size viewer, instead of a file-name chip. TIFF images are converted to PNG for display; the original upload is unchanged.
+    *   While a workspace upload is still processing, the card shows **Processing image…** and a local preview when the browser can draw one. An image held for review shows **Unavailable pending review**.
+    *   HEIC and HEIF photos are not converted, so they render only in Safari. Other browsers show the file card with a hint to convert the photo to JPG or PNG.
+    *   Shared (collaborative) conversations keep the file chip.
+    *   (Ref: `functions_image_formats.py`, `route_backend_conversations.py`, `route_enhanced_citations.py`, `route_frontend_chats.py`, `MessageList.tsx`, `chatImagePreview.ts`, [Chat Image Uploads and Reference Images](features/CHAT_IMAGE_UPLOADS_AND_REFERENCE_IMAGES.md))
+
+*   **Reference Images For Image Generation**
+    *   With **Image** on, pictures you attach, paste, drop, or pick from a workspace are sent to the image model as visual input, not only as their extracted text. Requests such as "make a cartoon of my house" or "turn this map into an architectural diagram" can now use the picture itself.
+    *   **Use as reference** adds any uploaded or generated image in the conversation to the next image request.
+    *   The number of references follows the selected image model: up to 10 for GPT Image models (the SimpleChat limit), 10 for FLUX.2 flex, 8 for FLUX.2 pro, and 1 for MAI Image and FLUX Kontext. Generation-only models keep attachments disabled in Image mode. GPT Image 1 and 1.5 are also asked to preserve reference details closely.
+    *   Every reference is authorized and screened before it is sent. Metadata is stripped and the image is resized for the model. HEIC and HEIF are refused with a clear message, and references are never silently dropped.
+    *   (Ref: `functions_image_references.py`, `functions_chat_image_references.py`, `functions_image_adapters.py`, `functions_image_capabilities.py`, `route_backend_chats.py`, `model_capabilities.json`, `Composer.tsx`, `imageReferences.ts`, [Generate images](../guides/generate-images.md))
+
+*   **Edit An Uploaded Image Into A New Image**
+    *   **Edit** on an uploaded image opens the editor as **Create image from reference**. Describe the change and, when the model supports masking, select a region. **Create new image** adds a new AI image to the conversation and leaves the upload unchanged.
+    *   (Ref: `ImageEditor.tsx`, `chatStore.ts`, `route_backend_chats.py`, [V2 Inline Image Editing](features/V2_INLINE_IMAGE_EDITING.md))
+
+*   **Reference Images And Requested Styles In Orchestrated Image Tasks**
+    *   With **Orchestrate** and **Image** on, planned **Generate image** tasks can use attached and conversation images as references. Review shows each reference on the task, and you can remove it before approving. References are checked again when the task runs, and the images used are recorded as the task's sources.
+    *   Planned images now follow the style you ask for, including photorealistic images, instead of always being illustrations. Every generated image is still captioned **AI-generated image** and is never presented as a real photograph or as found on the web.
+    *   (Ref: `functions_orchestration_context.py`, `functions_orchestration_images.py`, `functions_orchestration_schema.py`, `functions_orchestration_registry.py`, `functions_orchestration_deliverables.py`, `OrchestrationRunView.tsx`, [Review and edit orchestration plans](../guides/review-and-edit-orchestration-plans.md))
+
+*   **Vision Chat Models See Images From The Current Message**
+    *   When a vision-capable chat model answers directly, up to four images attached to the current message, or selected as image documents, are sent as pixels alongside their extracted text. Older images stay in the history as text only.
+    *   Agents and models without vision keep the existing text-only behavior. An image that can't be loaded, including HEIC, is skipped without failing the turn.
+    *   (Ref: `functions_chat_vision.py`, `route_backend_chats.py`, [Upload documents in chat](../guides/upload-documents-in-chat.md))
+
 ### **(v0.261.191)**
 
 #### Bug Fixes

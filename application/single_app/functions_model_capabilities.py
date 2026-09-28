@@ -127,9 +127,11 @@ def load_model_capability_catalog(force_refresh=False, *, strict_identity=False)
             capabilities["reasoningPolicy"] = copy.deepcopy(record["reasoningPolicy"])
         if "embeddingPolicy" in record:
             capabilities["embeddingPolicy"] = copy.deepcopy(record["embeddingPolicy"])
-        for field_name in ("imageProfiles", "imageLifecycle"):
+        for field_name in ("imageProfiles", "imageLifecycle", "inputFidelity"):
             if isinstance(record.get(field_name), Mapping):
                 capabilities[field_name] = copy.deepcopy(record[field_name])
+            elif field_name == "inputFidelity" and isinstance(record.get(field_name), bool):
+                capabilities[field_name] = record[field_name]
         if record.get("provider"):
             capabilities["publisher"] = record["provider"]
         identifiers = _iter_catalog_record_identifiers(record)

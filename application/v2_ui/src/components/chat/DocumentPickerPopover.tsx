@@ -23,8 +23,14 @@ import {
     type ContextCandidate,
 } from '../../lib/contextMentions';
 import type { ContextSearchScope } from './ContextMenu';
+import { isReferenceImageFileName } from '../../lib/imageReferences';
+import type { WorkspaceDocument } from '../../lib/types';
 
 const SEARCH_DEBOUNCE_MS = 250;
+
+function isReferenceImageDocument(document: WorkspaceDocument): boolean {
+    return isReferenceImageFileName(String(document.file_name ?? ''));
+}
 
 export function DocumentPickerPopover({
     scope,
@@ -35,6 +41,7 @@ export function DocumentPickerPopover({
     onClear,
     onClose,
     placement = 'up',
+    imagesOnly = false,
 }: {
     scope: ContextSearchScope;
     /** The original Documents boolean: search everything by relevance. */
@@ -45,6 +52,7 @@ export function DocumentPickerPopover({
     onClear: () => void;
     onClose: () => void;
     placement?: 'up' | 'down';
+    imagesOnly?: boolean;
 }) {
     const [query, setQuery] = useState('');
     const [candidates, setCandidates] = useState<ContextCandidate[]>([]);
@@ -89,6 +97,8 @@ export function DocumentPickerPopover({
                 publicEnabled: scope.publicEnabled,
                 signal: controller.signal,
                 includeUnavailable: true,
+                documentFilter: imagesOnly ? isReferenceImageDocument : undefined,
+                documentsOnly: imagesOnly,
             })
                 .then((found) => {
                     if (!controller.signal.aborted) {
@@ -110,7 +120,7 @@ export function DocumentPickerPopover({
         };
         // The scope arrays are rebuilt on every bootstrap read, so this keys on the flags and
         // the query rather than on array identity.
-    }, [query, scope.groupsEnabled, scope.publicEnabled]);
+    }, [query, scope.groupsEnabled, scope.publicEnabled, imagesOnly]);
 
     // Grouped by workspace, which is how the chip row groups them too: a reader scanning for
     // "the contract in Marketing" is looking for the workspace first.
@@ -150,8 +160,8 @@ export function DocumentPickerPopover({
                             event.stopPropagation();
                         }
                     }}
-                    placeholder="Search documents, tags and workspaces…"
-                    aria-label="Search documents"
+                    placeholder={imagesOnly ? 'Search images…' : 'Search documents, tags and workspaces…'}
+                    aria-label={imagesOnly ? 'Search images' : 'Search documents'}
                     className={clsx(
                         'w-full rounded-lg border border-edge bg-surface-1 py-1.5 pl-7 pr-2',
                         'text-sm text-text-1 placeholder:text-text-3',
@@ -160,7 +170,7 @@ export function DocumentPickerPopover({
                 />
             </div>
 
-            {onToggleSearchAll && <button
+            {!imagesOnly && onToggleSearchAll && <button
                 type="button"
                 onClick={onToggleSearchAll}
                 className={clsx(
@@ -198,7 +208,9 @@ export function DocumentPickerPopover({
                     <p className="px-2 py-3 text-xs text-text-3">
                         {query.trim()
                             ? 'Nothing matches that.'
-                            : 'No documents in your workspaces yet.'}
+                            : imagesOnly
+                              ? 'No reference-capable images among your recent documents. Search by name to find an older one.'
+                              : 'No documents in your workspaces yet.'}
                     </p>
                 )}
 

@@ -52,6 +52,8 @@ from functions_orchestration_registry import (
 from functions_orchestration_schema import validate_elicitation_response
 from functions_prompt_metadata import build_prompt_selection_metadata
 from functions_model_catalog import ModelCatalogError
+from functions_image_formats import is_reference_image_file_name
+from functions_image_references import parse_image_references
 
 # Relevance probe bounds. Deliberately small: this runs before planning on every
 # non-trivial message, so it is on the latency path of the whole feature.
@@ -156,6 +158,8 @@ def resolve_seeds(request_data):
         raise ModelCatalogError("Choose Auto or a specific model.", "model_routing")
     if routing == 'auto' and model:
         raise ModelCatalogError("Auto cannot be combined with a pinned model.", "model_routing")
+    raw_image_references = request_data.get('image_references')
+    image_references = [] if raw_image_references is None else parse_image_references(raw_image_references)
 
     prompt = request_data.get('prompt_info')
     prompt = prompt if isinstance(prompt, dict) else None
@@ -195,6 +199,9 @@ def resolve_seeds(request_data):
         # The composer's Image control. In orchestration it asks the answer to propose
         # images for approval; the answer step honors it only when image generation is on.
         'image_generation': request_data.get('image_generation_enabled') is True,
+        'image_references': image_references,
+        'image_reference_documents': [],
+        'image_reference_messages': [],
         'required_capabilities': _string_list(request_data.get('required_capabilities')),
         'active_group_ids': _string_list(
             request_data.get('active_group_ids') or request_data.get('active_group_id')
@@ -204,6 +211,265 @@ def resolve_seeds(request_data):
             or request_data.get('active_public_workspace_id')
         ),
     }
+
+
+def _message_file_name(message):
+    metadata = message.get('metadata') if isinstance(message.get('metadata'), dict) else {}
+    for key in ('file_name', 'filename', 'name'):
+        if message.get(key):
+            return _text(message.get(key), 500)
+    for key in ('file_name', 'filename', 'original_file_name', 'upload_file_name'):
+        if metadata.get(key):
+            return _text(metadata.get(key), 500)
+    return ''
+
+
+def _workspace_document_id(message):
+    metadata = message.get('metadata') if isinstance(message.get('metadata'), dict) else {}
+    return _text(message.get('workspace_document_id') or metadata.get('workspace_document_id'))
+
+
+def _image_reference_message_candidates(seeds, conversation_id):
+    refs = [item for item in seeds.get('image_references') or [] if item.get('type') == 'message']
+    if not refs:
+        return []
+    from azure.cosmos.exceptions import CosmosResourceNotFoundError
+    from config import cosmos_messages_container
+
+    candidates = []
+    for reference in refs:
+        message_id = reference['message_id']
+        if not message_id.startswith(f'{conversation_id}_'):
+            raise CatalogResolutionError(
+                'A reference image is not part of this conversation.',
+                code='image_reference_unavailable',
+            )
+        try:
+            message = cosmos_messages_container.read_item(item=message_id, partition_key=conversation_id)
+        except CosmosResourceNotFoundError as exc:
+            raise CatalogResolutionError(
+                'A reference image could not be opened. Review your image selection.',
+                code='image_reference_unavailable',
+            ) from exc
+        if message.get('conversation_id') != conversation_id:
+            raise CatalogResolutionError(
+                'A reference image is not part of this conversation.',
+                code='image_reference_unavailable',
+            )
+        role = _text(message.get('role')).lower()
+        file_name = _message_file_name(message) or 'image.png'
+        if role == 'image':
+            if not is_reference_image_file_name(file_name):
+                raise CatalogResolutionError(
+                    'A reference image format is not supported. Convert it to JPG or PNG and retry.',
+                    code='image_reference_unavailable',
+                )
+        elif role == 'file':
+            if not _workspace_document_id(message) or not is_reference_image_file_name(file_name):
+                raise CatalogResolutionError(
+                    'A reference image could not be opened. Review your image selection.',
+                    code='image_reference_unavailable',
+                )
+        else:
+            raise CatalogResolutionError(
+                'A reference image could not be opened. Review your image selection.',
+                code='image_reference_unavailable',
+            )
+        candidates.append({
+            'message_id': message_id,
+            'file_name': file_name,
+            'label': file_name,
+            # Only used to fold an upload into its selected workspace document; never kept.
+            'workspace_document_id': _workspace_document_id(message) if role == 'file' else '',
+        })
+    return candidates
+
+
+_REFERENCE_DOCUMENT_SCOPES = frozenset({'personal', 'group', 'public'})
+
+
+def _image_reference_document_candidates(seeds, user_id, conversation_id, candidates=None):
+    """Authorized, reference-capable image documents among the user's own selections.
+
+    ``candidates`` are the enriched planner candidates. Their file names come from the
+    authorized source manifest, so only the selected images need a second manifest read,
+    however many other documents were selected.
+    """
+    selected = _string_list(seeds.get('document_ids'))
+    if candidates is not None:
+        file_names = {
+            candidate.get('document_id'): _text(candidate.get('file_name'), 500)
+            for candidate in candidates if isinstance(candidate, dict)
+        }
+        selected = [
+            document_id for document_id in selected
+            if is_reference_image_file_name(file_names.get(document_id) or '')
+        ]
+    selected_ids = set(selected)
+    reference_documents = [
+        reference for reference in seeds.get('image_references') or []
+        if reference.get('type') == 'document' and reference.get('document_id') not in selected_ids
+    ]
+    if not selected and not reference_documents:
+        return []
+
+    from functions_mixed_source_orchestration import SOURCE_MANIFEST_MAX_SOURCES
+    from functions_orchestration_source_access import resolve_orchestration_source_manifest
+
+    def manifest_for(ids, *, doc_scope='all', active_group_ids=None, active_public_workspace_ids=None):
+        manifest = []
+        for start in range(0, len(ids), SOURCE_MANIFEST_MAX_SOURCES):
+            manifest.extend(resolve_orchestration_source_manifest(
+                ids[start:start + SOURCE_MANIFEST_MAX_SOURCES], user_id, conversation_id=conversation_id,
+                doc_scope=doc_scope,
+                active_group_ids=active_group_ids,
+                active_public_workspace_ids=active_public_workspace_ids,
+            ))
+        return manifest
+
+    manifests = []
+    try:
+        manifests.extend(manifest_for(
+            selected,
+            doc_scope=seeds.get('doc_scope') or 'all',
+            active_group_ids=seeds.get('active_group_ids') or None,
+            active_public_workspace_ids=seeds.get('active_public_workspace_ids') or None,
+        ))
+        scoped = {}
+        for reference in reference_documents:
+            scoped.setdefault((reference['scope'], reference.get('scope_id')), []).append(reference['document_id'])
+        for (scope, scope_id), ids in scoped.items():
+            manifests.extend(manifest_for(
+                ids,
+                doc_scope=scope,
+                active_group_ids=[scope_id] if scope == 'group' else None,
+                active_public_workspace_ids=[scope_id] if scope == 'public' else None,
+            ))
+    except Exception as exc:
+        log_event(
+            '[ORCHESTRATION_CONTEXT] Reference image metadata could not be loaded.',
+            level=logging.WARNING, extra={
+                **workflow_log_context(conversation_id=conversation_id),
+                'stage': 'image_reference_metadata', 'error_type': type(exc).__name__,
+            },
+        )
+        raise CatalogResolutionError(
+            'Reference images could not be checked. Review your image selection.',
+            code='image_reference_unavailable',
+        ) from exc
+
+    reference_candidates = []
+    seen = set()
+    for source in manifests:
+        if not isinstance(source, dict):
+            continue
+        document_id = _text(source.get('document_id'))
+        file_name = _text(source.get('file_name') or source.get('display_name'), 500)
+        scope = _text(source.get('scope'))
+        # The resolver reads workspace documents only; a chat-scoped source is not one.
+        scope_id = None if scope == 'personal' else _text(source.get('scope_id')) or None
+        if (
+            not document_id or document_id in seen
+            or source.get('authorization_status') != 'authorized'
+            or scope not in _REFERENCE_DOCUMENT_SCOPES
+            or (scope != 'personal' and not scope_id)
+            or not is_reference_image_file_name(file_name)
+        ):
+            continue
+        seen.add(document_id)
+        reference_candidates.append({
+            'document_id': document_id,
+            'scope': scope,
+            'scope_id': scope_id,
+            'file_name': file_name,
+        })
+    return reference_candidates
+
+
+def resolve_image_reference_candidates(seeds, user_id, conversation_id, candidates=None, *, settings=None):
+    """Attach server-validated image reference candidates to orchestration seeds.
+
+    A ready workspace upload arrives twice, as a selected document and as its upload
+    message. It is offered once, as the document, so a plan that binds it also uses the
+    selected document, and the user's reference is rewritten to that document to match.
+
+    With ``settings``, nothing is offered unless planned images can use references, so the
+    planner is never shown candidates its image step cannot accept.
+    """
+    seeds = deepcopy(seeds or {})
+    if settings is not None:
+        from functions_orchestration_images import image_generation_readiness
+
+        readiness = image_generation_readiness(settings)
+        if readiness.get('status') != 'available' or not readiness.get('max_reference_images'):
+            if readiness.get('status') == 'available' and seeds.get('image_references'):
+                raise CatalogResolutionError(
+                    'The configured image model cannot use reference images. Remove them and retry.',
+                    code='image_reference_unavailable',
+                )
+            seeds['image_reference_documents'] = []
+            seeds['image_reference_messages'] = []
+            return seeds
+    documents = _image_reference_document_candidates(seeds, user_id, conversation_id, candidates)
+    documents_by_id = {item['document_id']: item for item in documents}
+    # An image the user chose as a reference is never dropped silently from the plan.
+    if any(
+        reference.get('type') == 'document' and reference.get('document_id') not in documents_by_id
+        for reference in seeds.get('image_references') or []
+    ):
+        raise CatalogResolutionError(
+            'A reference image could not be opened. Review your image selection.',
+            code='image_reference_unavailable',
+        )
+    messages = []
+    folded = {}
+    for item in _image_reference_message_candidates(seeds, conversation_id):
+        workspace_document_id = item.pop('workspace_document_id', '')
+        if workspace_document_id and workspace_document_id in documents_by_id:
+            folded[item['message_id']] = documents_by_id[workspace_document_id]
+        else:
+            messages.append(item)
+    references = []
+    seen = set()
+    for reference in seeds.get('image_references') or []:
+        document = folded.get(reference.get('message_id')) if reference.get('type') == 'message' else None
+        if document is not None:
+            reference = {
+                'type': 'document', 'document_id': document['document_id'],
+                'scope': document['scope'], 'scope_id': document['scope_id'],
+            }
+        key = (reference.get('type'), reference.get('message_id') or reference.get('document_id'))
+        if key not in seen:
+            seen.add(key)
+            references.append(reference)
+    seeds['image_references'] = references
+    seeds['image_reference_documents'] = documents
+    seeds['image_reference_messages'] = messages
+    return seeds
+
+
+def image_reference_provenance_from_seeds(seeds):
+    """Sanitized provenance for the user's orchestrate bubble, in reference order."""
+    seeds = seeds or {}
+    documents = {item['document_id']: item for item in seeds.get('image_reference_documents') or []}
+    messages = {item['message_id']: item for item in seeds.get('image_reference_messages') or []}
+    provenance = []
+    for reference in seeds.get('image_references') or []:
+        if reference.get('type') == 'message':
+            item = messages.get(reference.get('message_id'))
+            if item:
+                provenance.append({
+                    'type': 'message', 'message_id': item['message_id'], 'file_name': item.get('file_name') or item.get('label') or '',
+                })
+        elif reference.get('type') == 'document':
+            item = documents.get(reference.get('document_id'))
+            if item:
+                provenance.append({
+                    'type': 'document', 'document_id': item['document_id'],
+                    'scope': item.get('scope') or 'personal', 'scope_id': item.get('scope_id'),
+                    'file_name': item.get('file_name') or '',
+                })
+    return provenance
 
 
 def seeds_are_explicit(seeds):
@@ -1597,6 +1863,8 @@ def build_planner_context(
             {key: value for key, value in candidate.items() if key != 'score'}
             for candidate in (candidates or ())
         ],
+        'image_reference_documents': deepcopy(seeds.get('image_reference_documents') or []),
+        'image_reference_messages': deepcopy(seeds.get('image_reference_messages') or []),
         'user_selected': {
             'documents': seeds.get('document_ids') or [],
             'context_references': deepcopy(seeds.get('elicitation_references') or []),

@@ -7,7 +7,7 @@ from functools import partial
 
 from azure.core.exceptions import AzureError
 
-from content_screening.access import build_available_document_response, public_history_messages
+from content_screening.access import build_available_document_response, public_history_messages, read_available_document_bytes
 from content_screening.contracts import ScreeningError
 from collaboration_models import GROUP_MULTI_USER_CHAT_TYPE, PERSONAL_MULTI_USER_CHAT_TYPE
 from config import *
@@ -50,8 +50,12 @@ from functions_conversation_cache import (
 )
 from functions_image_messages import decode_image_content, get_complete_image_content, hydrate_image_messages, is_blob_backed_image_message, is_external_image_url
 from functions_message_image_revisions import resolve_served_revision
+from functions_image_edit import load_image_bytes_from_blob
+from functions_image_formats import ImageFormatError, PREVIEW_VARIANTS, is_image_file_name, to_browser_image
+from functions_image_references import references_from_metadata
 from functions_notifications import mark_chat_response_notifications_read_for_conversation
 from flask import Response, current_app, request, stream_with_context
+from werkzeug.utils import secure_filename
 from functions_debug import debug_print
 from functions_documents import (
     delete_chat_upload_workspace_documents_for_conversation,
@@ -1184,21 +1188,70 @@ def register_route_backend_conversations(bp):
     @user_required
     def api_get_image(image_id):
         """Serve chat images from blob storage or legacy chunked message content."""
-        
+
+        def preview_file_extension(mime_type):
+            return {
+                'image/png': 'png',
+                'image/jpeg': 'jpg',
+                'image/gif': 'gif',
+                'image/webp': 'webp',
+                'image/bmp': 'bmp',
+                'image/heic': 'heic',
+                'image/heif': 'heif',
+            }.get(str(mime_type or '').split(';', 1)[0].strip().lower(), 'png')
+
+        def inline_image_preview_response(image_bytes, preview_variant, *, file_name='image', cache_control='no-store, private'):
+            converted = to_browser_image(image_bytes, preview_variant)
+            safe_name = secure_filename(str(file_name or 'image').replace('\\', '/').rsplit('/', 1)[-1]) or 'image'
+            stem = safe_name.rsplit('.', 1)[0] if '.' in safe_name else safe_name
+            stem = secure_filename(stem) or 'image'
+            extension = preview_file_extension(converted['mime_type'])
+            content = converted['bytes']
+            return Response(
+                content,
+                mimetype=converted['mime_type'],
+                headers={
+                    'Content-Length': str(len(content)),
+                    'Cache-Control': cache_control,
+                    'X-Content-Type-Options': 'nosniff',
+                    'Content-Disposition': f'inline; filename="{stem}.{extension}"',
+                },
+            )
+
+        def load_blob_backed_image_bytes(message_doc):
+            blob_container = str(message_doc.get('blob_container') or '').strip()
+            blob_path = str(message_doc.get('blob_path') or '').strip()
+            if not blob_container or not blob_path:
+                raise LookupError('Image not found')
+            return load_image_bytes_from_blob(blob_container, blob_path)
+
         user_id = get_current_user_id()
         if not user_id:
-            print(f"🔥 Authentication failed for image request")
+            log_event(
+                "[CHAT_IMAGE] Authenticated image request had no user id.",
+                extra={"image_id": image_id},
+                level=logging.WARNING,
+            )
             return jsonify({'error': 'User not authenticated'}), 401
-            
+
         try:
+            variant = request.args.get('variant')
+            if variant is not None:
+                variant = str(variant or '').strip().lower()
+                if variant not in PREVIEW_VARIANTS:
+                    return jsonify({
+                        'error': 'The preview variant is not supported.',
+                        'error_code': 'invalid_preview_variant',
+                    }), 400
+
             # Extract conversation_id from image_id (format: conversation_id_image_timestamp_random)
             parts = image_id.split('_')
             if len(parts) < 4:
                 return jsonify({'error': 'Invalid image ID format'}), 400
-            
+
             # Reconstruct conversation_id (everything except the last 3 parts)
             conversation_id = '_'.join(parts[:-3])
-            
+
             debug_print(f"Serving image {image_id} from conversation {conversation_id}")
 
             _authorize_image_conversation_read(user_id, conversation_id)
@@ -1208,8 +1261,23 @@ def register_route_backend_conversations(bp):
                 image_id,
             )
             if image_message.get("workspace_document_id"):
-                return build_available_document_response(
+                if not variant:
+                    return build_available_document_response(
+                        image_message["workspace_document_id"], user_id=user_id, purpose="image_preview",
+                    )
+                active_document, content = read_available_document_bytes(
                     image_message["workspace_document_id"], user_id=user_id, purpose="image_preview",
+                )
+                if not is_image_file_name(active_document.get('file_name')):
+                    return jsonify({
+                        'error': 'This file is not an image.',
+                        'error_code': 'not_an_image',
+                    }), 415
+                return inline_image_preview_response(
+                    content,
+                    variant,
+                    file_name=active_document.get('file_name') or image_message.get('filename') or image_id,
+                    cache_control='no-store, private',
                 )
 
             # An edited image is served from the revision's own blob. `rev` names which version
@@ -1220,20 +1288,44 @@ def register_route_backend_conversations(bp):
             requested_revision = str(request.args.get('rev') or '').strip()
             served_revision = resolve_served_revision(image_message, requested_revision)
             if served_revision:
+                cache_control = (
+                    'private, max-age=31536000, immutable'
+                    if requested_revision
+                    else 'private, max-age=60'
+                )
+                if variant:
+                    return inline_image_preview_response(
+                        load_blob_backed_image_bytes(served_revision),
+                        variant,
+                        file_name=served_revision.get('file_name') or image_message.get('filename') or image_id,
+                        cache_control=cache_control,
+                    )
                 return _stream_blob_backed_image_message(
                     served_revision,
-                    cache_control='private, max-age=31536000, immutable'
-                    if requested_revision
-                    else 'private, max-age=60',
+                    cache_control=cache_control,
                 )
 
             if is_blob_backed_image_message(image_message):
+                if variant:
+                    return inline_image_preview_response(
+                        load_blob_backed_image_bytes(image_message),
+                        variant,
+                        file_name=image_message.get('filename') or image_id,
+                        cache_control='private, max-age=300',
+                    )
                 return _stream_blob_backed_image_message(image_message)
 
             if is_external_image_url(complete_content):
                 return redirect(complete_content)
 
             mime_type, image_data = decode_image_content(complete_content)
+            if variant:
+                return inline_image_preview_response(
+                    image_data,
+                    variant,
+                    file_name=image_message.get('filename') or image_id,
+                    cache_control='private, max-age=3600',
+                )
             return Response(
                 image_data,
                 mimetype=mime_type,
@@ -1243,6 +1335,8 @@ def register_route_backend_conversations(bp):
                 }
             )
 
+        except ImageFormatError as error:
+            return jsonify({"error": error.public_message, "error_code": error.code}), error.status_code
         except ScreeningError as error:
             return jsonify({"error": error.public_message, "error_code": error.code}), error.status_code
         except PermissionError:
@@ -1252,9 +1346,11 @@ def register_route_backend_conversations(bp):
         except LookupError:
             return jsonify({'error': 'Image not found'}), 404
         except Exception as e:
-            print(f"ERROR: Failed to serve image {image_id}: {str(e)}")
-            import traceback
-            traceback.print_exc()
+            log_event(
+                "[CHAT_IMAGE] Failed to serve image.",
+                extra={"image_id": image_id, "exception_type": type(e).__name__},
+                level=logging.ERROR,
+            )
             return jsonify({'error': 'Failed to retrieve image'}), 500
         
     @bp.route('/api/get_conversations', methods=['GET'])
@@ -3181,6 +3277,11 @@ def register_route_backend_conversations(bp):
                 'retry_thread_id': thread_id,  # Pass thread_id to maintain same thread
                 'retry_thread_attempt': new_attempt  # Pass attempt number
             }
+            image_references = references_from_metadata(original_metadata)
+            if image_references:
+                chat_request['image_references'] = image_references
+            if original_metadata.get('image_reference_mask'):
+                chat_request['image_mask_dropped'] = True
             
             # Add agent_info to chat request if provided (for agent-based retry)
             if agent_info:
@@ -3411,6 +3512,11 @@ def register_route_backend_conversations(bp):
                 'retry_thread_id': thread_id,  # Pass thread_id to maintain same thread
                 'retry_thread_attempt': new_attempt  # Pass attempt number
             }
+            image_references = references_from_metadata(original_metadata)
+            if image_references:
+                chat_request['image_references'] = image_references
+            if original_metadata.get('image_reference_mask'):
+                chat_request['image_mask_dropped'] = True
             
             # Include agent_info from original metadata if present (for agent-based edits)
             if original_metadata.get('agent_selection'):

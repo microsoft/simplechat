@@ -88,10 +88,13 @@ from functions_orchestration_context import (
     resolve_agent_catalog,
     resolve_candidate_documents,
     resolve_elicitation_references,
+    resolve_image_reference_candidates,
+    image_reference_provenance_from_seeds,
     resolve_seeds,
     validate_clarification_answers,
     validate_conversation_snapshot,
 )
+from functions_image_references import ImageReferenceError
 from functions_orchestration_events import (
     build_cancelled_event,
     build_conversation_metadata_event,
@@ -462,6 +465,10 @@ def _authorized_document_ids(candidates, seeds):
         if _text(candidate.get('document_id'))
     }
     allowed.update(_text(value) for value in (seeds or {}).get('document_ids') or () if _text(value))
+    allowed.update(
+        _text(item.get('document_id')) for item in (seeds or {}).get('image_reference_documents') or ()
+        if isinstance(item, dict) and _text(item.get('document_id'))
+    )
     return allowed
 
 
@@ -915,6 +922,7 @@ def _persist_planned_turn(
         content_check={
             **turn_context[CHECK_METADATA], "source": {"kind": "orchestration_turn", "run_id": plan["run_id"]},
         } if turn_context.get(CHECK_METADATA) else None,
+        image_references=image_reference_provenance_from_seeds(turn_context.get('seeds')),
     )
     turn_context['user_message_id'] = message_id
     turn_context['user_message_fingerprint'] = fingerprint
@@ -926,7 +934,10 @@ def _persist_planned_turn(
         prepare_elicitation_outcome(submission, 'plan', plan, turn_context)
 
 
-def _save_turn_message(conversation_id, user_id, turn_id, message, previous=None, prompt_selection=None, content_check=None):
+def _save_turn_message(
+    conversation_id, user_id, turn_id, message, previous=None, prompt_selection=None,
+    content_check=None, image_references=None,
+):
     """A stable ID makes retries and revised plans reuse their original user message."""
     _authorize_context_conversation(conversation_id, user_id)
     message_id = (previous or {}).get('user_message_id') or (
@@ -950,8 +961,12 @@ def _save_turn_message(conversation_id, user_id, turn_id, message, previous=None
             )
         ):
             raise ConversationContextError('This turn changed. Submit a new request.')
-        if content_check:
-            stored.setdefault("metadata", {})[CHECK_METADATA] = deepcopy(content_check)
+        if content_check or image_references:
+            metadata = stored.setdefault("metadata", {})
+            if content_check:
+                metadata[CHECK_METADATA] = deepcopy(content_check)
+            if image_references:
+                metadata['image_references'] = deepcopy(image_references)
             cosmos_messages_container.upsert_item(stored)
         return message_id, normalized['fingerprint']
     # The flat turn id is what ties a reloaded thread back to its run: the live card stamps
@@ -966,6 +981,8 @@ def _save_turn_message(conversation_id, user_id, turn_id, message, previous=None
         metadata['prompt_selection'] = prompt_selection
     if content_check:
         metadata[CHECK_METADATA] = deepcopy(content_check)
+    if image_references:
+        metadata['image_references'] = deepcopy(image_references)
     saved = _save_message(
         conversation_id, 'user', message,
         metadata=metadata,
@@ -1246,6 +1263,7 @@ def _validate_retry_context(record, user_id, settings, *, preparing=False):
             answered_questions=record.get('answered_questions') or [],
             elicitation_references=seeds.get('elicitation_references') or [],
             selected_document_ids=seeds.get('document_ids') or [],
+            seeds=seeds,
             original_seeds=record.get('original_seeds') or {},
             resolved_message=record.get('resolved_message') or record.get('user_message'),
             conversation_context=snapshot, context_message_ids=(record.get('request_resolution') or {}).get('message_ids'),
@@ -1537,6 +1555,8 @@ def register_route_backend_orchestration(bp):
             seeds = resolve_seeds(data)
         except ModelCatalogError as exc:
             return jsonify({'error': exc.public_message, 'field': exc.field}), 400
+        except ImageReferenceError as exc:
+            return jsonify({'error': exc.public_message, 'error_code': exc.code}), exc.status_code
         replan_hint = _text(data.get('replan_hint'), 600)
         answered_record = []
         submission = None
@@ -1918,6 +1938,17 @@ def register_route_backend_orchestration(bp):
                 candidates = enrich_planner_candidates(
                     candidates, user_id, conversation_id=resolved_conversation_id, seeds=seeds,
                 )
+                if seeds.get('image_generation') or seeds.get('image_references'):
+                    seeds = resolve_image_reference_candidates(
+                        seeds, user_id, resolved_conversation_id, candidates=candidates, settings=settings,
+                    )
+                else:
+                    seeds = {
+                        **seeds,
+                        'image_reference_documents': [],
+                        'image_reference_messages': [],
+                    }
+                turn_context['seeds'] = seeds
                 ledger = _load_ledger(resolved_conversation_id, user_id, settings)
                 signals = build_conversation_signals(
                     snapshot['messages'], message, truncated=snapshot['truncated'],
@@ -1968,6 +1999,18 @@ def register_route_backend_orchestration(bp):
                     user_id, resolved_conversation_id, settings=settings, services=services,
                 )
                 turn_context['planner_contract_version'] = contract_version
+                capability_request_context = _capability_request_context(
+                    user_id, planning_identity, message, agent_catalog,
+                    action_catalog,
+                    allowed_user_urls=allowed_user_urls,
+                    **services.capability_request_bindings(),
+                )
+                capability_request_context['image_reference_documents'] = (
+                    seeds.get('image_reference_documents') or []
+                )
+                capability_request_context['image_reference_messages'] = (
+                    seeds.get('image_reference_messages') or []
+                )
                 kind, plan = plan_request(
                     effective_message, context, resolved_conversation_id, user_id,
                     settings=settings,
@@ -1977,12 +2020,7 @@ def register_route_backend_orchestration(bp):
                     revision=current_revision,
                     allow_elicitation=allow_elicitation,
                     turn_id=turn_id, seeds=seeds, document_labels=labels,
-                    request_context=_capability_request_context(
-                        user_id, planning_identity, message, agent_catalog,
-                        action_catalog,
-                        allowed_user_urls=allowed_user_urls,
-                        **services.capability_request_bindings(),
-                    ),
+                    request_context=capability_request_context,
                     planner_model=planner_model,
                     contract_version=contract_version, existing_results=existing_results,
                     export_catalog=context['export_catalog'], composition_profiles=composition_profiles(),

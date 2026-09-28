@@ -1,6 +1,6 @@
 // ComposerEditor.tsx
 
-import { useCallback, useEffect, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { clsx } from 'clsx';
 import { Check, FileText, Loader2, Paperclip, RotateCcw, Search, X } from 'lucide-react';
 import { useBootstrapStore } from '../../stores/bootstrapStore';
@@ -35,15 +35,25 @@ import {
 } from '../../lib/composerDraft';
 import {
     CHAT_UPLOAD_ACCEPT,
+    addChatUploadLocalPreview,
     cancelRetainedComposerUpload,
     chatUploadTargets,
     chatUploadValidationError,
     conversationAttachmentReferences,
+    getChatUploadLocalPreview,
     hasRetainedComposerUpload,
+    linkChatUploadLocalPreview,
+    removeChatUploadLocalPreview,
     normalizeChatUpload,
     pollChatUpload,
     retainComposerUploadProcessing,
+    subscribeChatUploadLocalPreviews,
 } from '../../lib/chatUploads';
+import {
+    HEIF_REFERENCE_HINT,
+    isHeifFileName,
+    isReferenceImageFileName,
+} from '../../lib/imageReferences';
 import { uploadDocument, type ChatUploadResponse } from '../../lib/endpoints';
 import { findMentionAtCaret, replaceMention, type MentionMatch, type MentionSuggestion } from '../../lib/mentions';
 import { attachedPromptContent, attachedPromptIsEdited } from '../../lib/promptRequest';
@@ -90,6 +100,7 @@ export interface ComposerEditorProps {
     fileInputRef?: React.RefObject<HTMLInputElement>;
     showTools?: boolean;
     uploadsDisabled?: boolean;
+    referenceUploadsOnly?: boolean;
     pickerOpen?: boolean;
     onPickerOpenChange?: (open: boolean) => void;
     searchAll?: boolean;
@@ -107,6 +118,29 @@ export interface ComposerEditorActions {
 }
 
 let uploadSequence = 0;
+
+function ComposerUploadThumbnail({ upload }: { upload: ComposerUpload }) {
+    const keys = useMemo(
+        () => [upload.id, upload.reference?.id].filter(Boolean),
+        [upload.id, upload.reference?.id],
+    );
+    const url = useSyncExternalStore(
+        subscribeChatUploadLocalPreviews,
+        () => getChatUploadLocalPreview(...keys),
+        () => getChatUploadLocalPreview(...keys),
+    );
+    if (!url) {
+        return null;
+    }
+    return (
+        <img
+            src={url}
+            alt=""
+            aria-hidden="true"
+            className="h-9 w-9 shrink-0 rounded-md border border-edge object-cover"
+        />
+    );
+}
 
 export function ComposerEditor({
     id,
@@ -132,6 +166,7 @@ export function ComposerEditor({
     fileInputRef: externalFileInputRef,
     showTools = true,
     uploadsDisabled = false,
+    referenceUploadsOnly = false,
     pickerOpen: controlledPickerOpen,
     onPickerOpenChange,
     searchAll = false,
@@ -157,6 +192,7 @@ export function ComposerEditor({
     const shared = sharedOverride ?? sharedConversation;
     const features = bootstrap?.features ?? {};
     const uploadsEnabled = features.enable_chat_file_uploads === true && !uploadsDisabled;
+    const uploadAccept = referenceUploadsOnly ? '.png,.jpg,.jpeg,.bmp,.tif,.tiff' : CHAT_UPLOAD_ACCEPT;
     const promptCatalog = (bootstrap?.catalogs?.prompts ?? []) as PromptOption[];
     const [contextQuery, setContextQuery] = useState<ContextQuery | null>(null);
     const [contextIndex, setContextIndex] = useState(0);
@@ -617,6 +653,11 @@ export function ComposerEditor({
                 return;
             }
             const normalized = normalizeChatUpload(result, file.name);
+            linkChatUploadLocalPreview(upload.id, [
+                result.file_message_id,
+                result.workspace_document_id,
+                normalized.reference?.id,
+            ]);
             if (owningConversationId && normalized.conversationId
                 && normalized.conversationId !== owningConversationId) {
                 throw new Error('The upload returned a different conversation. Remove it and try again.');
@@ -652,9 +693,19 @@ export function ComposerEditor({
         uploadQueue.current = pending;
         return pending;
     };
-    const onSelectFiles = async (event: React.ChangeEvent<HTMLInputElement>) => {
-        const chosen = Array.from(event.target.files ?? []);
-        event.target.value = '';
+    const referenceUploadValidationError = (file: File): string | null => {
+        if (!referenceUploadsOnly) {
+            return null;
+        }
+        if (isHeifFileName(file.name)) {
+            return HEIF_REFERENCE_HINT;
+        }
+        if (!isReferenceImageFileName(file.name)) {
+            return 'Image mode can only use PNG, JPG, BMP or TIFF files as references.';
+        }
+        return null;
+    };
+    const enqueueSelectedFiles = async (chosen: File[]) => {
         if (disabled || !uploadsEnabled) {
             return;
         }
@@ -668,7 +719,8 @@ export function ComposerEditor({
             ...groupIds,
         ])];
         const queued = selectedFiles.map((file, index) => {
-            const error = chatUploadValidationError(file, uploadsEnabled, bootstrap?.settings?.max_file_size_mb);
+            const error = referenceUploadValidationError(file)
+                ?? chatUploadValidationError(file, uploadsEnabled, bootstrap?.settings?.max_file_size_mb);
             const upload: ComposerUpload = {
                 id: replacedUpload && index === 0
                     ? replacedUpload.id
@@ -681,6 +733,11 @@ export function ComposerEditor({
                 groupUploadTargetId: replacedUpload?.groupUploadTargetId,
             };
             files.current.set(upload.id, file);
+            if (error) {
+                removeChatUploadLocalPreview(upload.id);
+            } else {
+                addChatUploadLocalPreview(file, [upload.id]);
+            }
             const controller = new AbortController();
             if (!error) {
                 owner.uploadIds.add(upload.id);
@@ -700,6 +757,11 @@ export function ComposerEditor({
         await Promise.all(queued.filter((item) => !item.upload.error)
             .map((item) => queueUpload(item.upload, item.file, item.controller)));
     };
+    const onSelectFiles = async (event: React.ChangeEvent<HTMLInputElement>) => {
+        const chosen = Array.from(event.target.files ?? []);
+        event.target.value = '';
+        await enqueueSelectedFiles(chosen);
+    };
     const retryUpload = (upload: ComposerUpload) => {
         if (upload.reference) {
             updateUpload(upload.id, { state: 'processing', interrupted: undefined, error: undefined });
@@ -711,7 +773,8 @@ export function ComposerEditor({
             fileInputRef.current?.click();
             return;
         }
-        const error = chatUploadValidationError(file, uploadsEnabled, bootstrap?.settings?.max_file_size_mb);
+        const error = referenceUploadValidationError(file)
+            ?? chatUploadValidationError(file, uploadsEnabled, bootstrap?.settings?.max_file_size_mb);
         if (error) {
             updateUpload(upload.id, { state: 'failed', error });
             return;
@@ -726,6 +789,7 @@ export function ComposerEditor({
         requests.current.get(localId)?.abort();
         requests.current.delete(localId);
         files.current.delete(localId);
+        removeChatUploadLocalPreview(localId);
         onChange((current) => ({ ...current, uploads: current.uploads.filter((upload) => upload.id !== localId) }));
     };
     const selectAttachment = (reference: ComposerReference) => onChange((current) => {
@@ -762,7 +826,8 @@ export function ComposerEditor({
                 <DocumentPickerPopover scope={scope} searchAll={searchAll} selectedKeys={contextKeys}
                     onToggleSearchAll={onToggleSearchAll} onToggle={toggleContextCandidate}
                     onClear={() => removeContextChips(draft.contextItems)}
-                    onClose={() => setPickerOpen(false)} placement={menuPlacement} />
+                    onClose={() => setPickerOpen(false)} placement={menuPlacement}
+                    imagesOnly={referenceUploadsOnly} />
             )}
             <ContextChips items={draft.contextItems}
                 onRemove={(item) => !disabled && removeContextChip(item)}
@@ -860,12 +925,33 @@ export function ComposerEditor({
                         onTyping?.(event.target.value);
                     }}
                     onSelect={(event) => syncQueries(event.currentTarget)}
+                    onPaste={(event) => {
+                        const pasted = Array.from(event.clipboardData.files ?? []);
+                        if (pasted.length === 0 || !referenceUploadsOnly) {
+                            return;
+                        }
+                        event.preventDefault();
+                        void enqueueSelectedFiles(pasted);
+                    }}
+                    onDrop={(event) => {
+                        const dropped = Array.from(event.dataTransfer.files ?? []);
+                        if (dropped.length === 0 || !referenceUploadsOnly) {
+                            return;
+                        }
+                        event.preventDefault();
+                        void enqueueSelectedFiles(dropped);
+                    }}
+                    onDragOver={(event) => {
+                        if (referenceUploadsOnly && event.dataTransfer.types.includes('Files')) {
+                            event.preventDefault();
+                        }
+                    }}
                     onBlur={onBlur} onKeyDown={onKeyDown}
                     className={clsx(COMPOSER_TEXT_CLASS, 'relative resize-none bg-transparent',
                         'placeholder:text-text-3 focus:outline-none selection:bg-accent-soft disabled:cursor-not-allowed')}
                     style={COMPOSER_TRANSPARENT_TEXT_STYLE} />
             </div>
-            <input ref={fileInputRef} type="file" accept={CHAT_UPLOAD_ACCEPT} multiple={multipleFiles}
+            <input ref={fileInputRef} type="file" accept={uploadAccept} multiple={multipleFiles}
                 disabled={disabled || !uploadsEnabled} className="hidden" onChange={(event) => void onSelectFiles(event)} />
             {showTools && (
                 <div className="flex flex-wrap items-center gap-2 px-1 pb-1">
@@ -900,6 +986,7 @@ export function ComposerEditor({
                     {draft.uploads.map((upload) => (
                         <li key={upload.id} className="rounded-lg border border-edge bg-surface-1 px-2 py-1.5 text-xs">
                             <div className="flex items-center gap-1.5">
+                                <ComposerUploadThumbnail upload={upload} />
                                 {upload.state === 'uploading' || upload.state === 'processing'
                                     ? <Loader2 size={12} className="shrink-0 animate-spin" />
                                     : upload.state === 'ready' ? <Check size={12} className="shrink-0 text-accent" /> : <FileText size={12} />}

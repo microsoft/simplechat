@@ -78,6 +78,10 @@ export function toImageEditCapability(value: unknown): ImageEditCapability {
         ? source.availability
         : 'unknown';
     const enabled = source.enabled === true && mode !== 'unavailable' && availability !== 'unavailable';
+    const maxReferenceImages = typeof source.max_reference_images === 'number'
+        && Number.isFinite(source.max_reference_images) && source.max_reference_images > 0
+        ? Math.max(1, Math.floor(source.max_reference_images))
+        : 1;
     return {
         enabled,
         mode: enabled ? mode : 'unavailable',
@@ -94,6 +98,8 @@ export function toImageEditCapability(value: unknown): ImageEditCapability {
         sizes: options(source.sizes),
         qualities: options(source.qualities),
         backgrounds: options(source.backgrounds),
+        max_reference_images: enabled && editing ? maxReferenceImages : 0,
+        input_fidelity: enabled && editing && source.input_fidelity === true,
     };
 }
 

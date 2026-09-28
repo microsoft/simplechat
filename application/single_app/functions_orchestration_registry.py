@@ -348,19 +348,43 @@ def render_file_arguments_schema(catalog):
     }
 
 
+GENERATE_IMAGE_MAX_REFERENCE_IMAGES = 10  # Matches functions_image_references.MAX_APP_REFERENCE_IMAGES.
+
+
 def generate_image_arguments_schema(options=None):
-    """Image step arguments; options, when known, are the configured model's exact values."""
+    """Image step arguments; options, when known, are the configured model's exact values.
+
+    The static contract (``options`` None) accepts reference image ids of any value. Plan
+    validation checks them against the run's server-computed candidates and the image
+    model's limit; the planner is only ever offered the candidates for its own request.
+    """
+    reference_limit = 0
+    if isinstance(options, dict):
+        try:
+            reference_limit = max(0, min(
+                GENERATE_IMAGE_MAX_REFERENCE_IMAGES, int(options.get('max_reference_images') or 0),
+            ))
+        except (TypeError, ValueError):
+            reference_limit = 0
+    reference_documents = [
+        item for item in (options or {}).get('image_reference_documents') or []
+        if isinstance(item, dict) and item.get('document_id')
+    ]
+    reference_messages = [
+        item for item in (options or {}).get('image_reference_messages') or []
+        if isinstance(item, dict) and item.get('message_id')
+    ]
     properties = {
         'prompt': {
             'type': 'string', 'minLength': 1, 'maxLength': GENERATE_IMAGE_PROMPT_MAX_LENGTH,
             'description': (
                 'A self-contained image prompt: subject, setting, composition, style, and any text '
-                'the image shows. Ask for an illustration, not a photograph.'
+                'the image shows. Follow the visual style the user asked for, including photorealistic.'
             ),
         },
         'title': {
             'type': 'string', 'minLength': 1, 'maxLength': 120,
-            'description': 'A short caption naming what the illustration shows.',
+            'description': 'A short caption naming what the AI-generated image shows.',
         },
     }
     for name, plural in (('size', 'sizes'), ('quality', 'qualities'), ('background', 'backgrounds')):
@@ -368,6 +392,36 @@ def generate_image_arguments_schema(options=None):
             properties[name] = {'type': 'string', 'minLength': 1}
         elif options.get(plural):
             properties[name] = {'type': 'string', 'enum': list(options[plural])}
+    if options is None:
+        for name in ('reference_document_ids', 'reference_message_ids'):
+            properties[name] = {
+                'type': 'array', 'items': {'type': 'string', 'minLength': 1},
+                'minItems': 1, 'uniqueItems': True, 'maxItems': GENERATE_IMAGE_MAX_REFERENCE_IMAGES,
+            }
+    elif reference_limit and (reference_documents or reference_messages):
+        description = (
+            'Bind user-supplied images here when the user asks to transform, restyle, or use '
+            'the images as the base subject (such as a face, house, or map). Describe the '
+            'desired output in prompt; do not restate image IDs in the prompt.'
+        )
+        if reference_documents:
+            properties['reference_document_ids'] = {
+                'type': 'array',
+                'items': {'type': 'string', 'enum': [item['document_id'] for item in reference_documents]},
+                'minItems': 1,
+                'uniqueItems': True,
+                'maxItems': reference_limit,
+                'description': description,
+            }
+        if reference_messages:
+            properties['reference_message_ids'] = {
+                'type': 'array',
+                'items': {'type': 'string', 'enum': [item['message_id'] for item in reference_messages]},
+                'minItems': 1,
+                'uniqueItems': True,
+                'maxItems': reference_limit,
+                'description': description,
+            }
     return {
         'type': 'object', 'properties': properties,
         'required': ['prompt', 'title'], 'additionalProperties': False,
@@ -879,15 +933,15 @@ CAPABILITY_REGISTRY = (
         'label': 'Generate image',
         'role': ROLE_REASON,
         'result_contract_version': 'generate-image-v1',
-        'summary': 'Generate one new AI illustration and keep it for the answer and for DOCX, PDF, or PPTX files.',
+        'summary': 'Generate one new AI-generated image and keep it for the answer and for DOCX, PDF, or PPTX files.',
         'when_to_use': (
             'Use one step for each image the user explicitly asked for, including through the Image '
-            'control. The result is a new AI-generated illustration, never a photograph or a picture '
-            'found on the web: for a real person or historical figure, ask for an illustrated portrait '
-            'and caption it as an AI illustration. Bind the "image" output to the compose step that '
-            'writes the answer or file content, as an optional named input, so the answer and any '
-            'DOCX, PDF, or PPTX file include it. Named text inputs may add visual details to the '
-            'prompt. Images the user did not ask for stay image proposal cards on compose.'
+            'control. Follow the visual style the user asked for, including photorealistic images. '
+            'The result is a new AI-generated image, not a real photograph, depiction of a real event, '
+            'or picture found on the web; caption it as AI-generated. Bind the "image" output to the '
+            'compose step that writes the answer or file content, as an optional named input, so the '
+            'answer and any DOCX, PDF, or PPTX file include it. Named text inputs may add visual '
+            'details to the prompt. Images the user did not ask for stay image proposal cards on compose.'
         ),
         'settings_gates': ('enable_image_generation',),
         'settings_gates_any': (),
@@ -1203,6 +1257,11 @@ def resolve_available_capabilities(
                 if unavailable is not None:
                     unavailable[capability['id']] = readiness['reason']
                 continue
+            readiness = {
+                **readiness,
+                'image_reference_documents': list((request_context or {}).get('image_reference_documents') or []),
+                'image_reference_messages': list((request_context or {}).get('image_reference_messages') or []),
+            }
             capability = deepcopy(capability)
             capability['inputs'] = generate_image_arguments_schema(readiness)
         if not _request_gate_passes(capability, settings, request_context):

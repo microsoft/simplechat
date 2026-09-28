@@ -376,7 +376,7 @@ def _normalize_edits(plan, edits):
             raise _invalid('Choose documents from the current plan.')
         arguments = steps[step_id].get('arguments') or {}
         available = {
-            document_id for field in ('document_ids', 'right_document_ids')
+            document_id for field in ('document_ids', 'right_document_ids', 'reference_document_ids', 'reference_message_ids')
             for document_id in arguments.get(field) or []
         }
         if any(not _valid_id(document_id) or document_id not in available for document_id in document_ids):

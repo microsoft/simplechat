@@ -432,6 +432,9 @@
         "imageLifecycle": {
           "$ref": "#/$defs/imageLifecycle"
         },
+        "inputFidelity": {
+          "type": "boolean"
+        },
         "notes": {
           "$ref": "#/$defs/stringList"
         },
@@ -516,7 +519,8 @@
         "notes": {"$ref": "#/$defs/stringList"},
         "reasoningPolicy": {"$ref": "#/$defs/reasoningPolicy"},
         "imageProfiles": {"$ref": "#/$defs/imageProfiles"},
-        "imageLifecycle": {"$ref": "#/$defs/imageLifecycle"}
+        "imageLifecycle": {"$ref": "#/$defs/imageLifecycle"},
+        "inputFidelity": {"type": "boolean"}
       },
       "additionalProperties": false
     },

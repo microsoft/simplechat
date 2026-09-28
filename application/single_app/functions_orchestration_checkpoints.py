@@ -200,7 +200,11 @@ def step_input_fingerprint(step, context, binding, *, settings=None):
     except (KeyError, ResultContractError) as exc:
         raise CheckpointError('result_unavailable') from exc
     arguments = step.get('arguments') or {}
-    document_ids = set(arguments.get('document_ids') or []) | set(arguments.get('right_document_ids') or [])
+    document_ids = (
+        set(arguments.get('document_ids') or [])
+        | set(arguments.get('right_document_ids') or [])
+        | set(arguments.get('reference_document_ids') or [])
+    )
     if arguments.get('left_document_id'):
         document_ids.add(arguments['left_document_id'])
     if step['capability_id'] == 'document_search' and not document_ids:

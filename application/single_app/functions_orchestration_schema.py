@@ -52,6 +52,7 @@ from functions_model_catalog import ModelCatalogError
 from functions_orchestration_registry import (
     CAPABILITY_ACTION_INVOKE,
     CAPABILITY_COMPOSE,
+    CAPABILITY_GENERATE_IMAGE,
     CAPABILITY_TABULAR_ANALYZE,
     DEPENDENCY_PLAN_CONTRACT_VERSION,
     GENERAL_KNOWLEDGE_BASES,
@@ -550,10 +551,55 @@ def _apply_image_input_policy(steps, existing_results):
             )
 
 
+_REFERENCE_IMAGE_FIELDS = ('reference_document_ids', 'reference_message_ids')
+
+
+def _validate_reference_id_list(values, label):
+    if not isinstance(values, list) or not values:
+        raise PlanValidationError(f'{label} must be a nonempty list.')
+    if any(not isinstance(value, str) or not value or value != value.strip() for value in values):
+        raise PlanValidationError('Reference image IDs must be exact, nonempty identifiers.')
+    if len(set(values)) != len(values):
+        raise PlanValidationError('Reference image selections must not contain duplicates.')
+
+
+def _validate_generate_image_references(arguments, seeds, settings):
+    document_ids = arguments.get('reference_document_ids') or []
+    message_ids = arguments.get('reference_message_ids') or []
+    if not document_ids and not message_ids:
+        return
+    _validate_reference_id_list(document_ids, 'Reference document IDs') if document_ids else None
+    _validate_reference_id_list(message_ids, 'Reference message IDs') if message_ids else None
+    seed_data = seeds if isinstance(seeds, dict) else {}
+    offered_documents = {
+        item.get('document_id') for item in seed_data.get('image_reference_documents') or []
+        if isinstance(item, dict)
+    }
+    offered_messages = {
+        item.get('message_id') for item in seed_data.get('image_reference_messages') or []
+        if isinstance(item, dict)
+    }
+    if set(document_ids) - offered_documents or set(message_ids) - offered_messages:
+        raise PlanValidationError('A required reference image is unavailable.')
+    if set(document_ids) & set(message_ids):
+        raise PlanValidationError('Reference image selections must not contain duplicates.')
+    try:
+        from functions_image_edit import resolve_image_edit_capability
+        from functions_image_references import effective_max_reference_images
+
+        limit = effective_max_reference_images(resolve_image_edit_capability(settings or {}))
+    except Exception as exc:
+        raise PlanValidationError('Reference images are unavailable for this image model.') from exc
+    if limit <= 0:
+        raise PlanValidationError('Reference images are unavailable for this image model.')
+    if len(document_ids) + len(message_ids) > limit:
+        raise PlanValidationError('The complete reference image selection exceeds the image model limit.')
+
+
 def validate_dependency_plan(
     plan, *, settings=None, authorized_document_ids=None, available_capability_ids=None,
     agent_names=None, action_refs=None, existing_results=None, composition_profiles=None,
-    export_catalog=None, deliverable_availability=None, image_selected=False,
+    export_catalog=None, deliverable_availability=None, image_selected=False, seeds=None,
 ):
     """Compile a plan without dropping required work, arguments, outputs, or dependencies.
 
@@ -643,6 +689,14 @@ def validate_dependency_plan(
                         raise PlanValidationError('The complete source selection exceeds the document limit.')
                     if authorized_document_ids is not None and set(arguments[name]) - set(authorized_document_ids):
                         raise PlanValidationError('A required source is unavailable.')
+            if 'reference_document_ids' in arguments:
+                _validate_reference_id_list(arguments['reference_document_ids'], 'Reference document IDs')
+                if authorized_document_ids is not None and set(arguments['reference_document_ids']) - set(authorized_document_ids):
+                    raise PlanValidationError('A required reference image is unavailable.')
+            if 'reference_message_ids' in arguments:
+                _validate_reference_id_list(arguments['reference_message_ids'], 'Reference message IDs')
+            if capability_id == CAPABILITY_GENERATE_IMAGE:
+                _validate_generate_image_references(arguments, seeds, settings)
             if (
                 'left_document_id' in arguments
                 and arguments['left_document_id'] != arguments['left_document_id'].strip()
@@ -745,6 +799,7 @@ def validate_plan(
     contract_version=None,
     deliverable_availability=None,
     image_selected=False,
+    seeds=None,
 ):
     """Make a planner-authored plan safe to run, or refuse it.
 
@@ -772,6 +827,7 @@ def validate_plan(
         composition_profiles=composition_profiles,
         export_catalog=export_catalog,
         deliverable_availability=deliverable_availability, image_selected=image_selected,
+        seeds=seeds,
     )
 
 
@@ -786,7 +842,7 @@ def plan_document_ids(plan, *, include_disabled=False):
         arguments = step.get('arguments')
         if not isinstance(arguments, dict):
             continue
-        for field in ('document_ids', 'right_document_ids', 'left_document_id'):
+        for field in ('document_ids', 'right_document_ids', 'left_document_id', 'reference_document_ids'):
             document_ids.extend(_string_list(arguments.get(field)))
     return list(dict.fromkeys(document_ids))
 
@@ -900,6 +956,8 @@ def build_plan_inputs(plan, seeds=None, document_labels=None, actions=None):
             }
             for document_id in document_ids
         ],
+        'image_reference_documents': deepcopy(seeds.get('image_reference_documents') or []),
+        'image_reference_messages': deepcopy(seeds.get('image_reference_messages') or []),
         'web': uses_web,
         'required_capabilities': required_capability_ids(seeds),
         'actions': [
@@ -1022,6 +1080,7 @@ def normalize_plan(
         contract_version=contract_version,
         deliverable_availability=deliverable_availability,
         image_selected=image_selected,
+        seeds=seeds,
     )
 
     plan['inputs'] = build_plan_inputs(
@@ -1075,12 +1134,16 @@ def apply_plan_edits(
         drop = set(_string_list(removed_documents.get(step['step_id'])))
         if not drop:
             continue
-        for field in ('document_ids', 'right_document_ids'):
+        for field in ('document_ids', 'right_document_ids', *_REFERENCE_IMAGE_FIELDS):
             if field not in step.get('arguments', {}):
                 continue
             kept = [value for value in step['arguments'][field] if value not in drop]
             if len(kept) != len(step['arguments'][field]):
-                step['arguments'][field] = kept
+                if not kept and field in _REFERENCE_IMAGE_FIELDS:
+                    # With every reference removed, the image is generated from its prompt alone.
+                    del step['arguments'][field]
+                else:
+                    step['arguments'][field] = kept
                 edited = True
 
     if edited:

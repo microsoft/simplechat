@@ -115,6 +115,7 @@ def _available_sources(context, plan, user_id, settings, candidates=()):
     ids = list(dict.fromkeys([
         *(seeds.get('document_ids') or []),
         *plan_document_ids(plan, include_disabled=True),
+        *(item.get('document_id') for item in seeds.get('image_reference_documents') or [] if isinstance(item, dict)),
         *offered,
     ]))
     if not ids:
@@ -190,6 +191,8 @@ def _revision_catalogs(
         agents, actions, allowed_user_urls=revision_allowed_urls(context),
         **runtime_options,
     )
+    caller['image_reference_documents'] = list(seeds.get('image_reference_documents') or [])
+    caller['image_reference_messages'] = list(seeds.get('image_reference_messages') or [])
     return agents, actions, caller
 
 

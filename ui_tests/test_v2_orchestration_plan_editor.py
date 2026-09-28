@@ -18,6 +18,7 @@ npm --prefix .\\application\\v2_ui run build -- --outDir ..\\..\\ui_tests\\artif
 Run: python -m pytest .\\ui_tests\\test_v2_orchestration_plan_editor.py -q
 """
 
+import base64
 import copy
 import json
 import re
@@ -370,6 +371,19 @@ class EditorApi:
         if path == "/favicon.ico":
             route.fulfill(status=204)
             return
+        if request.method == "GET" and (
+            path == "/api/workspace_documents/image_preview"
+            or path.startswith("/api/image/")
+        ):
+            route.fulfill(
+                status=200,
+                content_type="image/png",
+                body=base64.b64decode(
+                    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJ"
+                    "AAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
+                ),
+            )
+            return
         self.unexpected.append(f"{request.method} {path}")
         route.fulfill(status=404, json={"error": "Unmocked request"})
 
@@ -548,6 +562,44 @@ def test_review_entry_preserves_narrowing_and_stable_modal(editor_ui):
     assert effective["edits"] == empty_edits()
     assert "research" not in [step["step_id"] for step in effective["plan"]["steps"]]
     assert effective["plan"]["steps"][0]["arguments"]["document_ids"] == ["doc-b"]
+
+
+def test_review_entry_shows_and_removes_image_reference_chips(editor_ui):
+    page, api = editor_ui
+    plan = api.add()
+    plan["inputs"]["image_reference_documents"] = [
+        {"document_id": "img-doc", "scope": "personal", "scope_id": "", "file_name": "house.png"},
+    ]
+    plan["inputs"]["image_reference_messages"] = [
+        {"message_id": "img-message", "file_name": "sketch.jpg", "label": "Uploaded sketch"},
+    ]
+    plan["steps"].insert(2, {
+        "step_id": "image", "capability_id": "generate_image", "title": "Restyle the house",
+        "arguments": {
+            "prompt": "Make a cartoon of the house.",
+            "reference_document_ids": ["img-doc"],
+            "reference_message_ids": ["img-message"],
+        },
+        "role": "compose", "outputs": [{"name": "image", "kind": "image-v1"}],
+        "estimated_cost": "medium", "enabled": True, "status": "pending",
+    })
+    api.records[plan["run_id"]] = copy.deepcopy(plan)
+    mount(page, api)
+    snapshot = state(page)
+    assert snapshot["plan"]["inputs"]["image_reference_documents"][0]["file_name"] == "house.png"
+    assert snapshot["plan"]["steps"][2]["arguments"]["reference_document_ids"] == ["img-doc"]
+    page.get_by_role("button", name="Review the plan in the drawer").click()
+    review = page.get_by_role("complementary", name="Review drawer")
+    references = review.get_by_role("list", name="Reference images")
+    expect(references.get_by_text("house.png", exact=True)).to_be_visible()
+    expect(references.get_by_text("sketch.jpg", exact=True)).to_be_visible()
+    expect(review.get_by_role("img", name="Reference image: house.png")).to_be_visible()
+    expect(review.get_by_role("button", name="Remove reference image house.png from this step")).to_be_visible()
+    expect(review.get_by_role("button", name="Remove reference image sketch.jpg from this step")).to_be_visible()
+    review.get_by_role("button", name="Remove reference image house.png from this step").click()
+    assert state(page)["edits"]["removed_document_ids"] == {"image": ["img-doc"]}
+    expect(review.get_by_role("button", name="Restore reference image house.png")).to_be_visible()
+    expect(review.get_by_role("button", name=re.compile("Add reference image"))).to_have_count(0)
 
 
 def test_add_remove_restore_refine_and_run_only_latest_saved_version(editor_ui):

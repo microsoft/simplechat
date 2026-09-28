@@ -33,6 +33,8 @@ from functions_appinsights import log_event
 from functions_artifact_publication import publish_generated_chat_artifact_for_user
 from functions_settings import get_settings, enabled_required
 from functions_documents import get_document_blob_storage_info, get_document_record
+from functions_image_formats import ImageFormatError, PREVIEW_VARIANTS, is_image_file_name, to_browser_image
+from functions_image_references import personal_document_metadata_reader
 from functions_conversation_memory import is_conversation_memory_blob_path
 from functions_visio import render_vsdx_page_preview
 from functions_group import get_user_groups
@@ -693,6 +695,110 @@ def register_enhanced_citations_routes(bp):
         except Exception as e:
             debug_print(f"Error serving workspace document download: {e}")
             return jsonify({"error": str(e)}), 500
+
+    @bp.route("/api/workspace_documents/image_preview", methods=["GET"])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    def preview_workspace_document_image():
+        """Serve an authorized workspace image as a browser-safe preview."""
+
+        def preview_file_extension(mime_type):
+            return {
+                'image/png': 'png',
+                'image/jpeg': 'jpg',
+                'image/gif': 'gif',
+                'image/webp': 'webp',
+                'image/bmp': 'bmp',
+                'image/heic': 'heic',
+                'image/heif': 'heif',
+            }.get(str(mime_type or '').split(';', 1)[0].strip().lower(), 'png')
+
+        def build_workspace_image_preview_response(content, preview_variant, file_name):
+            converted = to_browser_image(content, preview_variant)
+            safe_name = secure_filename(str(file_name or 'image').replace('\\', '/').rsplit('/', 1)[-1]) or 'image'
+            stem = secure_filename(safe_name.rsplit('.', 1)[0] if '.' in safe_name else safe_name) or 'image'
+            output_name = f"{stem}.{preview_file_extension(converted['mime_type'])}"
+            return Response(
+                converted['bytes'],
+                mimetype=converted['mime_type'],
+                headers={
+                    'Content-Length': str(len(converted['bytes'])),
+                    'Content-Disposition': f'inline; filename="{output_name}"',
+                    'Cache-Control': 'no-store, private',
+                    'X-Content-Type-Options': 'nosniff',
+                },
+            )
+
+        doc_id = str(request.args.get("doc_id") or "").strip()
+        if not doc_id:
+            return jsonify({"error": "doc_id is required"}), 400
+
+        scope = str(request.args.get("scope") or "personal").strip().lower()
+        if scope not in {"personal", "group", "public"}:
+            return jsonify({"error": "scope must be personal, group, or public"}), 400
+
+        variant = str(request.args.get("variant") or "thumbnail").strip().lower()
+        if variant not in PREVIEW_VARIANTS:
+            return jsonify({
+                "error": "The preview variant is not supported.",
+                "error_code": "invalid_preview_variant",
+            }), 400
+
+        scope_id = str(request.args.get("scope_id") or "").strip()
+        if scope in {"group", "public"} and not scope_id:
+            return jsonify({"error": "scope_id is required for this scope"}), 400
+
+        user_id = get_current_user_id()
+        if not user_id:
+            return jsonify({"error": "User not authenticated"}), 401
+
+        settings = get_settings()
+        if scope == "personal" and not settings.get("enable_user_workspace", False):
+            return jsonify({"error": "User workspaces are not enabled"}), 403
+        if scope == "group" and not settings.get("enable_group_workspaces", False):
+            return jsonify({"error": "Group workspaces are not enabled"}), 403
+        if scope == "public" and not settings.get("enable_public_workspaces", False):
+            return jsonify({"error": "Public workspaces are not enabled"}), 403
+
+        try:
+            read_kwargs = {"user_id": user_id, "purpose": "image_preview"}
+            if scope == "group":
+                read_kwargs["group_id"] = scope_id
+            elif scope == "public":
+                read_kwargs["public_workspace_id"] = scope_id
+            else:
+                # An unscoped read also searches group and public containers, bypassing their flags.
+                read_kwargs["metadata_reader"] = personal_document_metadata_reader
+
+            active_document, content = read_available_document_bytes(doc_id, **read_kwargs)
+            if scope == "personal" and (
+                active_document.get("group_id") or active_document.get("public_workspace_id")
+            ):
+                return jsonify({"error": "Document not found or access denied"}), 404
+            if not is_image_file_name(active_document.get("file_name")):
+                return jsonify({
+                    "error": "This file is not an image.",
+                    "error_code": "not_an_image",
+                }), 415
+            return build_workspace_image_preview_response(
+                content,
+                variant,
+                active_document.get("file_name") or doc_id,
+            )
+        except ScreeningError as exc:
+            return jsonify({"error": exc.public_message, "error_code": exc.code}), exc.status_code
+        except ImageFormatError as exc:
+            return jsonify({"error": exc.public_message, "error_code": exc.code}), exc.status_code
+        except (PermissionError, LookupError, CosmosResourceNotFoundError):
+            return jsonify({"error": "Document not found or access denied"}), 404
+        except Exception as exc:
+            log_event(
+                "[CITATIONS] Failed to serve workspace image preview.",
+                extra={"doc_id": doc_id, "scope": scope, "exception_type": type(exc).__name__},
+                level=logging.ERROR,
+            )
+            return jsonify({"error": "Failed to retrieve image preview"}), 500
 
     @bp.route("/api/chat_artifacts/download", methods=["GET"])
     @swagger_route(security=get_auth_security())

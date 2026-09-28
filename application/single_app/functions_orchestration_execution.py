@@ -757,6 +757,7 @@ class HarnessExecution:
             user_message_id=self.record["user_message_id"], answered_questions=answers,
             elicitation_references=seeds.get("elicitation_references") or [],
             selected_document_ids=seeds.get("document_ids") or [],
+            seeds=seeds,
             original_seeds=self.record.get("original_seeds") or {},
             resolved_message=self.record.get("resolved_message") or user_message,
             conversation_context=snapshot, analysis_result_contexts=self.record.get("analysis_result_contexts"),

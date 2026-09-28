@@ -32,6 +32,7 @@ export interface GatingInput {
     webSearchActive: boolean;
     urlAccessActive: boolean;
     imageGenerationActive: boolean;
+    imageReferencesAvailable?: boolean;
     /** True while an agent is selected in the composer. */
     agentActive: boolean;
     orchestrating?: boolean;
@@ -50,6 +51,8 @@ export interface ControlGating {
      * an image endpoint that ignores them.
      */
     disabledByImageGeneration: boolean;
+    documentsDisabledByImageGeneration: boolean;
+    uploadsDisabledByImageGeneration: boolean;
     showModelPicker: boolean;
     /**
      * The model picker is retained but overridden: an agent is selected, so it supplies the
@@ -77,6 +80,7 @@ export function resolveGating(input: GatingInput): ControlGating {
         webSearchActive,
         urlAccessActive,
         imageGenerationActive,
+        imageReferencesAvailable = false,
         agentActive,
     } = input;
     const urls = promptUrls(prompt);
@@ -90,6 +94,9 @@ export function resolveGating(input: GatingInput): ControlGating {
         enabled(features, 'enable_source_review') &&
         (input.orchestrating || webSearchActive || (urlAccessActive && hasUrls) || hasUrls);
 
+    const imageGenerationBlocksSources = imageGenerationActive && !input.orchestrating && !imageReferencesAvailable;
+    const imageGenerationBlocksRetrieval = imageGenerationActive && !input.orchestrating;
+
     return {
         showDocuments: true,
         showWeb: enabled(features, 'enable_web_search'),
@@ -97,7 +104,9 @@ export function resolveGating(input: GatingInput): ControlGating {
         showUrlAccess,
         showDeepResearch,
         showFileUpload: enabled(features, 'enable_chat_file_uploads'),
-        disabledByImageGeneration: imageGenerationActive && !input.orchestrating,
+        disabledByImageGeneration: imageGenerationBlocksRetrieval,
+        documentsDisabledByImageGeneration: imageGenerationBlocksSources,
+        uploadsDisabledByImageGeneration: imageGenerationBlocksSources,
         showModelPicker: !imageGenerationActive || Boolean(input.orchestrating),
         modelPickerInactive: agentActive,
         showReasoning: !agentActive && (!imageGenerationActive || Boolean(input.orchestrating)),

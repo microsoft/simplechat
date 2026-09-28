@@ -4,7 +4,7 @@ title: "Chat interface controls"
 description: "Reference for every documented control in the SimpleChat chat interface."
 section: "Reference"
 audience: user
-version: "0.261.139"
+version: "0.261.144"
 ---
 
 ## How to use this reference
@@ -132,6 +132,27 @@ provider-qualified capabilities, not the text-chat model or the application's cl
 
 Unsupported or stale masks/options are rejected rather than silently changed into a
 different operation. See [Generate images]({{ '/guides/generate-images/' | relative_url }}).
+
+## Uploaded and reference images (V2 interface)
+
+From version **0.261.144**, images you upload are shown in the conversation and can be sent to
+the image model as visual references. These controls exist only in the V2 interface, so they are
+not part of the generated inventory above. See
+[Generate images]({{ '/guides/generate-images/' | relative_url }}) and
+[Upload documents in chat]({{ '/guides/upload-documents-in-chat/' | relative_url }}).
+
+| Control | What it does | Why you would use it | Enabled by |
+| --- | --- | --- | --- |
+| Uploaded image card | Draws an uploaded PNG, JPG, BMP, or TIFF image in the thread, shows **Processing image…** until the workspace is ready, and opens the full-size viewer when selected. HEIC is drawn only in Safari. | See what was asked about instead of a file name, and check that the right picture was attached. | [`enable_chat_file_uploads`]({{ '/admin/workspaces/' | relative_url }})<br>[`enable_user_workspace`]({{ '/admin/workspaces/' | relative_url }}) |
+| Attach a reference image | With **Image** on, uploads, pastes, or drops a PNG, JPG, BMP, or TIFF picture that is sent to the image model with your prompt. HEIC is refused with a conversion hint. | Base a new image on a real picture: your house, your face, or a map. | [`enable_image_generation`]({{ '/admin/ai-models/' | relative_url }}) and an image model that can use references |
+| Documents (in Image mode) | Lists only workspace images, most recent first, and adds the ones you pick as references. Search by name to reach an older image. | Reuse a picture already stored in a workspace without uploading it again. | Same as Attach a reference image, plus a workspace |
+| Reference count | Shows how many references are attached and how many the image model accepts, for example **2 / 10 reference images**, or explains why references are unavailable. | Stay within the model's limit before sending. | Same as Attach a reference image |
+| Use as reference | Adds an uploaded or generated image from the conversation to the next image request and turns **Image** on. Also offered in the full-size viewer. The reference is dropped if you open another conversation. | Iterate on an earlier result or reuse an upload without attaching it again. | Same as Attach a reference image |
+| Edit on an uploaded image | Opens the image editor as **Create image from reference**. You describe a change, optionally select a region on masking-capable models, and select **Create new image**. The upload itself is never changed. | Make a new version of your own picture, such as a watercolor of a photo. | Same as Attach a reference image |
+| Reference images on a sent message | Shows thumbnails of the references a message used, under **Reference images**. | Confirm which pictures shaped a generated image when you revisit the conversation. | Same as Attach a reference image |
+
+Shared conversations don't offer reference images. In Orchestrate, attached and referenced images
+are offered to planned image steps instead of being sent directly.
 
 ## Prompt, model, agent, and reasoning selectors
 
@@ -348,7 +369,7 @@ the request.
 
 | Control or output | What it does | Why you would use it | Enabled by |
 | --- | --- | --- | --- |
-| Image (in Orchestrate) | Asks the plan for images and shows "Orchestrate will plan the images you ask for and generate them when the plan runs." while it is on. Each requested image is generated as a planned task, shown in the answer, and embedded in DOCX, PDF, or PPTX files when the file source uses it. Suggested images remain approval cards generated only when you approve them. | Make sure a request that would benefit from pictures gets them, even when the wording does not say "image". | `enable_image_generation` and `enable_chat_orchestration` |
+| Image (in Orchestrate) | Asks the plan for images and shows "Orchestrate will plan the images you ask for and generate them when the plan runs." while it is on. Each requested image is generated as a planned task, shown in the answer, and embedded in DOCX, PDF, or PPTX files when the file source uses it. Since **0.261.144**, pictures you attach, select, or add with **Use as reference** can be used as reference images for those tasks when the image model supports references. Suggested images remain approval cards generated only when you approve them. | Make sure a request that would benefit from pictures gets them, even when the wording does not say "image". | `enable_image_generation` and `enable_chat_orchestration` |
 | Inline charts | Charts numeric results. When data comes from an action, the chart is drawn from the exact retrieved rows; long series show up to 200 points and keep each segment's highest and lowest value. | Plot telemetry, metrics, or other series without copying values into a prompt. | `enable_chat_orchestration` |
 | Mermaid diagrams | Draws flows, architectures, sequences, and relationships the gathered information describes. | Get an editable, accessible diagram instead of a picture of one. | `enable_chat_orchestration` |
 
@@ -395,6 +416,7 @@ plan rather than editing the main chat message. See
 | Prepared output schema | Expands the server-declared schema for a named structured result. | Check the intended shape before approving composition; this is a retained result, not a download. | A Gather / Reason / Render task with an output schema |
 | Server file format reference | Shows only a supplied shared export catalog, including source kinds and profiles. Its option-rule and default-limit disclosures are read-only. | Check the server's format descriptions before requesting a validated planner revision. | A Gather / Reason / Render view with a server-provided catalog; absent otherwise |
 | Load server file format reference | Retrieves the shared catalog using the selected plan's authorized run context. A failed read leaves formats unadvertised. | Inspect available format descriptions when they were not included with the current view. | A Gather / Reason / Render plan view without a loaded catalog |
+| Reference image chips (Generate image tasks) | Since **0.261.144**, lists the pictures a planned image will be based on, each with a thumbnail and name. In Review, removes a reference from the task or restores it; with every reference removed, the image is generated from its prompt alone. | Check that the plan uses the right pictures, such as the photo of your house, before it runs. | `enable_chat_orchestration` and `enable_image_generation`, with an image model that can use references and **Image** on when you attached the pictures |
 
 Version-aware inspection was implemented in **0.261.127** (Refs:
 microsoft/simplechat#1509; `application/single_app/config.py`). Gather / Reason /

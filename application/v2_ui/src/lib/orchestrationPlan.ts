@@ -21,6 +21,8 @@ import type {
     OrchestrationApproval,
     OrchestrationDeliverable,
     OrchestrationDeliverableKind,
+    OrchestrationImageReferenceDocument,
+    OrchestrationImageReferenceMessage,
     OrchestrationIntent,
     OrchestrationInputBinding,
     OrchestrationNamedInput,
@@ -46,7 +48,8 @@ import { normalizeReasoningAdjustments } from './reasoning';
  * `left_document_id` is deliberately absent: it is a single document, not a list, and removing
  * it would empty the step rather than narrow it -- which is re-planning, not editing.
  */
-export const DOCUMENT_ARRAY_FIELDS = ['document_ids', 'right_document_ids'] as const;
+export const DOCUMENT_ARRAY_FIELDS = ['document_ids', 'right_document_ids', 'reference_document_ids', 'reference_message_ids'] as const;
+export const REFERENCE_ARRAY_FIELDS = ['reference_document_ids', 'reference_message_ids'] as const;
 
 const STEP_STATUSES: readonly StepStatus[] = [
     'pending',
@@ -540,10 +543,48 @@ function normalizeInputs(raw: unknown): OrchestrationPlanInputs {
         });
     }
 
+    const rawReferenceDocuments: unknown[] = Array.isArray(source.image_reference_documents)
+        ? source.image_reference_documents
+        : [];
+    const imageReferenceDocuments: OrchestrationImageReferenceDocument[] = rawReferenceDocuments.flatMap((entry) => {
+        const record = asRecord(entry);
+        const documentId = asString(record.document_id).trim();
+        const fileName = asString(record.file_name).trim();
+        const scope = asString(record.scope).trim();
+        if (!documentId || !fileName || !scope) {
+            return [];
+        }
+        return [{
+            document_id: documentId,
+            scope: scope as OrchestrationImageReferenceDocument['scope'],
+            scope_id: record.scope_id === null ? null : asString(record.scope_id).trim() || null,
+            file_name: fileName,
+        }];
+    });
+
+    const rawReferenceMessages: unknown[] = Array.isArray(source.image_reference_messages)
+        ? source.image_reference_messages
+        : [];
+    const imageReferenceMessages: OrchestrationImageReferenceMessage[] = rawReferenceMessages.flatMap((entry) => {
+        const record = asRecord(entry);
+        const messageId = asString(record.message_id).trim();
+        const fileName = asString(record.file_name).trim();
+        if (!messageId || !fileName) {
+            return [];
+        }
+        return [{
+            message_id: messageId,
+            file_name: fileName,
+            label: asString(record.label).trim() || fileName,
+        }];
+    });
+
     return {
         required_capabilities: asStringList(source.required_capabilities),
         documents,
         actions: source.actions !== undefined ? actions : undefined,
+        image_reference_documents: imageReferenceDocuments,
+        image_reference_messages: imageReferenceMessages,
         web: asBoolean(source.web, false),
         agent: source.agent !== undefined ? asRecord(source.agent) : undefined,
         model: source.model !== undefined ? asRecord(source.model) : undefined,
@@ -569,6 +610,20 @@ export function stepRemovableDocumentIds(step: OrchestrationStep): string[] {
     const seen = new Set<string>();
     const out: string[] = [];
     for (const field of DOCUMENT_ARRAY_FIELDS) {
+        for (const id of argumentDocumentIds(step, field)) {
+            if (!seen.has(id)) {
+                seen.add(id);
+                out.push(id);
+            }
+        }
+    }
+    return out;
+}
+
+export function stepReferenceIds(step: OrchestrationStep): string[] {
+    const seen = new Set<string>();
+    const out: string[] = [];
+    for (const field of REFERENCE_ARRAY_FIELDS) {
         for (const id of argumentDocumentIds(step, field)) {
             if (!seen.has(id)) {
                 seen.add(id);
@@ -744,7 +799,12 @@ export function applyPlanEdits(plan: OrchestrationPlan, edits: PlanEdits): Orche
                 }
                 const kept = value.filter((id) => !(typeof id === 'string' && drop.has(id)));
                 if (kept.length !== value.length) {
-                    nextArguments[field] = kept;
+                    if (kept.length === 0 && (REFERENCE_ARRAY_FIELDS as readonly string[]).includes(field)) {
+                        // With every reference removed, the image is generated from its prompt alone.
+                        delete nextArguments[field];
+                    } else {
+                        nextArguments[field] = kept;
+                    }
                     argumentsChanged = true;
                 }
             }

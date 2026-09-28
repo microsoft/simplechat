@@ -25,6 +25,13 @@ import {
     type PromptVariable,
 } from './promptVariables';
 import type { ChatUploadTarget } from './endpoints';
+import {
+    imageReferenceKey,
+    isHeifFileName,
+    isReferenceImageFileName,
+    normalizeImageReferences,
+    type ImageReferenceRequest,
+} from './imageReferences';
 import type { Json, PromptOption } from './types';
 import type { PromptAiValue } from './usePromptVariableValues';
 
@@ -44,6 +51,7 @@ export interface ComposerUpload {
     fileName: string;
     state: 'uploading' | 'processing' | 'ready' | 'failed';
     reference?: ComposerReference;
+    fileMessageId?: string;
     error?: string;
     progress?: number;
     conversationId?: string;
@@ -61,10 +69,11 @@ export interface ComposerDraft {
     promptAiValues?: Record<string, PromptAiValue>;
     promptInstance?: number;
     uploads: ComposerUpload[];
+    imageReferences?: ImageReferenceRequest[];
 }
 
 export function createComposerDraft(): ComposerDraft {
-    return { text: '', contextItems: [], attachedPrompt: null, promptValues: {}, uploads: [] };
+    return { text: '', contextItems: [], attachedPrompt: null, promptValues: {}, uploads: [], imageReferences: [] };
 }
 
 export function attachPromptToDraft(
@@ -197,6 +206,72 @@ export function composerDraftReferences(draft: ComposerDraft): ComposerReference
         seen.add(key);
         return true;
     }).map((reference) => ({ ...reference, scope: { ...reference.scope } }));
+}
+
+function documentReferenceFromScope(
+    documentId: string,
+    scope: ComposerReference['scope'],
+): ImageReferenceRequest | null {
+    if (scope.kind === 'personal') {
+        return { type: 'document', document_id: documentId, scope: 'personal', scope_id: null };
+    }
+    if ((scope.kind === 'group' || scope.kind === 'public') && scope.id) {
+        return { type: 'document', document_id: documentId, scope: scope.kind, scope_id: scope.id };
+    }
+    return null;
+}
+
+function uploadImageReference(upload: ComposerUpload): ImageReferenceRequest | null {
+    if (upload.state !== 'ready' || !isReferenceImageFileName(upload.fileName) || isHeifFileName(upload.fileName)) {
+        return null;
+    }
+    if (upload.fileMessageId) {
+        return { type: 'message', message_id: upload.fileMessageId };
+    }
+    if (upload.reference?.kind === 'chat_attachment') {
+        return { type: 'message', message_id: upload.reference.id };
+    }
+    if (upload.reference?.kind === 'document') {
+        return documentReferenceFromScope(upload.reference.id, upload.reference.scope);
+    }
+    return null;
+}
+
+function contextImageReference(item: ContextItem): ImageReferenceRequest | null {
+    if (item.kind !== 'document') {
+        return null;
+    }
+    const fileName = item.meta?.fileName || item.label;
+    if (!isReferenceImageFileName(fileName) || isHeifFileName(fileName)) {
+        return null;
+    }
+    return documentReferenceFromScope(item.id, item.scope);
+}
+
+export function composerDraftImageReferences(
+    draft: ComposerDraft,
+    limit: number,
+): ImageReferenceRequest[] {
+    const candidates = [
+        ...draft.uploads.map(uploadImageReference),
+        ...draft.contextItems.map(contextImageReference),
+        ...(draft.imageReferences ?? []),
+    ].filter((reference): reference is ImageReferenceRequest => reference !== null);
+    return normalizeImageReferences(candidates, limit);
+}
+
+export function addComposerDraftImageReference(
+    draft: ComposerDraft,
+    reference: ImageReferenceRequest,
+    limit: number,
+): ComposerDraft {
+    const current = normalizeImageReferences(draft.imageReferences ?? [], limit);
+    const next = normalizeImageReferences([...current, reference], limit);
+    if (next.length === current.length
+        && next.every((item, index) => imageReferenceKey(item) === imageReferenceKey(current[index]))) {
+        return draft;
+    }
+    return { ...draft, imageReferences: next };
 }
 
 export function composerDraftHasContent(draft: ComposerDraft): boolean {

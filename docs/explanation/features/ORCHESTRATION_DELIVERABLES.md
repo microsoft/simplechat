@@ -1,8 +1,9 @@
 # Orchestration deliverables
 
-**Version: 0.261.139** (tracked in `application/single_app/config.py`)
+**Version: 0.261.144** (tracked in `application/single_app/config.py`)
 
 **Implemented in version: 0.261.138**
+**Requested visual styles and reference images for planned images added in version: 0.261.144**
 
 Deliverables shipped in the React V2 branch as 0.261.138. The V2 shared workspaces branch had already assigned 0.261.138 to its native group agents, so there deliverables arrive with the React V2 base merge in version **0.261.181**.
 
@@ -79,9 +80,10 @@ is shown, so the two cannot disagree:
 - `image.suggested`: whether proposal cards are available.
 - `unavailable_reasons`: the closed reason codes and their messages.
 - `facts`: that only `render_file` creates a file, that web search, URL reading, and deep
-  research return text and links only and cannot retrieve images, that generated images are
-  AI illustrations to be labelled as such (especially for real people and historical
-  figures), and that proposal cards need the user's approval and so never appear in a file.
+  research return text and links only and cannot retrieve images, that generated images
+  follow the requested visual style (including photorealistic) while being labelled as
+  AI-generated and never presented as real photographs, real events, or web-sourced
+  pictures, and that proposal cards need the user's approval and so never appear in a file.
 - `recipes`: records-v1 with explicit columns into CSV or XLSX; a markdown-v1 document into
   DOCX or PDF; the prepared slide deck into PPTX; one `generate_image` step per requested
   image, bound to the step that places it; and a chart of the rows an action retrieves.
@@ -156,8 +158,8 @@ everything you asked to receive."
   forces proposal cards in these plans; it makes the user's images explicit deliverables.
 - **Images in content.** A compose step bound to generated images receives each one as
   `[[image:<step_id>]]` with its title. Prepared Markdown then carries
-  `![AI-generated illustration: ...](asset:<step_id>)` followed by an italic
-  "AI-generated illustration" caption; images the content did not place are added after
+  `![AI-generated image: ...](asset:<step_id>)` followed by an italic
+  "AI-generated image" caption; images the content did not place are added after
   it. A prepared slide deck uses image shapes with `source: "asset:<step_id>"`, and an image
   the deck did not place gets a slide of its own. Content that received images can
   reference no other image. Image inputs to compose are always optional, so one failed
@@ -207,6 +209,12 @@ everything you asked to receive."
 - Arguments: a self-contained `prompt` (up to 3,000 characters) and a short `title`.
   Named text or Markdown inputs add "Visual details" to the prompt, within the image
   service's 4,000-character limit and never truncated.
+- Optional reference images: `reference_document_ids` and `reference_message_ids` bind
+  pictures the user attached, selected, or referenced with **Image** on. The schema offers
+  them only as the run's server-computed candidates, within the image model's reference
+  limit. With references, the step edits them into a new image through the direct Image
+  mode resolver, and the referenced documents become the step's result sources. See
+  [Chat image uploads and reference images](CHAT_IMAGE_UPLOADS_AND_REFERENCE_IMAGES.md#orchestrate).
 - The prompt passes the chat output checks configured for answers before any image is
   generated.
 - The adapter reuses `generate_chat_image_message`. The image is saved as a blob-backed
@@ -231,7 +239,8 @@ everything you asked to receive."
   with its state (planned, in progress, delivered, not delivered, turned off, or not
   available with its reason) and, in the plan panel, the step that produces it.
   Suggested deliverables appear under **Also included**.
-- A `generate_image` step card shows its image prompt and caption.
+- A `generate_image` step card shows its image prompt and caption, and each reference image
+  as a chip with a thumbnail that can be removed before approval.
 - All plan values are rendered as React text.
 
 ### Files
@@ -318,8 +327,9 @@ limits. Running image steps in parallel is a possible follow-up.
 
 ### Known limitations
 
-- Generated images are AI illustrations. Retrieving authentic images, such as
-  public-domain museum portraits, is not supported; reports link those sources instead.
+- Generated images follow the requested visual style, including photorealistic images, and
+  are captioned as AI-generated. Retrieving authentic images, such as public-domain museum
+  portraits, is not supported; reports link those sources instead.
 - Markdown and plain-text files do not contain images.
 - A plan generates at most four images.
 - React V2 offers **Retry from failed step** only for an attempt without files, because
