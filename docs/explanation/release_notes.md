@@ -21,6 +21,11 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
     *   Added the shared workspace selector row class to the public selector row and extended the existing group dropdown dark-theme rules to the public dropdown.
     *   (Ref: public workspace selector, dark theme dropdown styling, `public_workspaces.html`, `styles.css`)
 
+*   **Revert Premature OneNote Rollout From Development**
+    *   Removed native `.one` and `.onepkg` workspace uploads from Development pending Reactv2 testing, correcting the accidental merge of PR #1525.
+    *   Restored the previous upload formats and container packaging. Existing document formats and the separately adapted Reactv2 OneNote implementation remain unchanged.
+    *   (Ref: `config.py`, `functions_documents.py`, `Dockerfile`, [OneNote Development Rollout Revert](fixes/ONENOTE_DEVELOPMENT_ROLLOUT_REVERT_FIX.md))
+
 ### **(v0.261.044)**
 
 #### New Features
