@@ -1,6 +1,6 @@
 # Workflow calendar schedules
 
-Implemented in version: **0.261.192**.
+Implemented in version: **0.261.193**.
 
 Application version tracking: `application\single_app\config.py`.
 
@@ -110,8 +110,8 @@ group saves both call `_normalize_schedule` in `functions_personal_workflows.py`
 after `from_time`, as UTC ISO text. It follows RFC 5545:
 
 - a local time that doesn't exist, because the clocks went forward past it, runs
-  at the instant the offset before the change names, which is the same clock
-  time plus the size of the gap;
+  at the instant the UTC offset from before the change gives it. On the new
+  clock that's later by the size of the gap, so 02:30 in New York runs at 03:30;
 - a local time that happens twice, because the clocks went back, runs once, at
   its first occurrence;
 - a monthly day that a month doesn't have runs on that month's last day.
@@ -134,20 +134,20 @@ workflows use the same function. A save recomputes `next_run_at` when the
 workflow is new, is re-enabled, or changes its trigger or schedule, or when
 `next_run_at` is missing. A disabled or manual workflow has no next run.
 
-If a stored calendar schedule no longer validates, for example because a future
-`tzdata` release drops its zone, the workflow has no next run and the server
-logs `[Workflows] Calendar schedule could not compute a next run.` with the
-workflow ID. It isn't run at a guessed time. Saving the workflow again names the
-problem.
+If a stored calendar schedule no longer validates, for example because a later
+time zone database release drops its zone, the workflow has no next run and the
+server logs `[Workflows] Calendar schedule could not compute a next run.` with
+the workflow ID. It isn't run at a guessed time. Saving the workflow again names
+the problem.
 
 ### Scheduler and catch-up
 
 The scheduler in `background_tasks.py` isn't changed. It checks for due
-workflows every 5 seconds and, after each run, sets the next run from the
-current time. So a workflow whose run was missed while the scheduler was
-stopped runs once when it catches up, then waits for the first scheduled time
-after that, exactly as an interval workflow does. It doesn't replay each missed
-occurrence.
+workflows every 5 seconds. When it queues a durable run, or when a synchronous
+run finishes, it sets the next run from the current time. So a workflow whose
+run was missed while the scheduler was stopped runs once when it catches up,
+then waits for the first scheduled time after that, exactly as an interval
+workflow does. It doesn't replay each missed occurrence.
 
 The scheduler never reads the minimum interval setting.
 
@@ -293,7 +293,7 @@ shows calendar labels.
 | `application/single_app/static/js/workspace/workspace_workflows.js` | Classic labels and routing to V2 |
 | `application/v2_ui/src/components/workflows/WorkflowScheduleFields.tsx` | New: V2 schedule fields |
 | `application/v2_ui/src/components/workflows/WorkflowEditorDialog.tsx` | Uses the schedule fields |
-| `application/v2_ui/src/components/workflows/WorkflowFileSyncFields.tsx` | Monitor labels |
+| `application/v2_ui/src/components/workflows/WorkflowFileSyncFields.tsx` | Monitor help text refers to the schedule, not only an interval |
 | `application/v2_ui/src/lib/workflowSettings.ts` | Client schedule rules and labels |
 | `application/v2_ui/src/lib/workflowEditor.ts` | Schedule types, options and round-tripping |
 | `application/v2_ui/src/pages/workspace/WorkflowsSection.tsx` | Schedule labels in the list |
@@ -328,7 +328,7 @@ The author guide is [Create a workflow](../../guides/create-a-workflow.md).
 
 | Test | Covers |
 | --- | --- |
-| `functional_tests/test_workflow_calendar_schedules.py` | Normalization; next runs across spring-forward and fall-back nights, weekly on several days, weekdays, monthly day 31 in short months and February in leap and other years, and a full year; catch-up; refused time zones, times, days and kinds; labels; personal and group saves through the real save routes, with the same results in both scopes; the minimum applying only to new or changed interval schedules; unchanged legacy interval shapes and Microsoft 365 Run as fingerprints, against values captured before this change; the editor options; the MCP summary |
+| `functional_tests/test_workflow_calendar_schedules.py` | Normalization; next runs across spring-forward and fall-back nights, weekly on several days, weekdays, monthly day 31 in short months and February in leap and other years, and a year of runs checked day by day; catch-up; refused time zones, times, days and kinds; labels; personal and group saves through the real save route bodies over doubled storage, with the same results in both scopes; the minimum applying only to new or changed interval schedules; unchanged legacy interval shapes and Microsoft 365 Run as fingerprints, against values captured before this change; the editor options; the MCP summary |
 | `functional_tests/test_workflow_calendar_schedule_client_parity.py` | The V2 editor's schedule rules, run in Node, against the server's for the same raw schedules and drafts, including the minimum and the labels |
 | `ui_tests/test_v2_workflow_calendar_schedules.py` | The V2 editor: "Mondays 08:00 America/New_York" saved, listed and reopened in both scopes; stored calendar schedules re-saved unchanged; the UTC fallback; problems named before saving; the minimum |
 | `ui_tests/test_workflow_loop_admin_limits.py` | The minimum interval field in the classic and V2 admin pages |

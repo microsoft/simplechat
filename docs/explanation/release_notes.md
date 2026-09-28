@@ -2,6 +2,35 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.193)**
+
+#### New Features
+
+*   **Calendar Schedules For Workflows**
+    *   A scheduled personal or group workflow can now run at a local time instead of at a fixed interval: daily, on weekdays, on chosen days of the week, or on a day of the month, in an IANA time zone. For example, "Mondays 08:00 America/New_York" runs at 12:00 UTC in summer and 13:00 UTC in winter.
+    *   Runs keep their local time through daylight saving changes. A time the clocks skip runs later by the amount skipped (02:30 becomes 03:30 in New York), and a time that happens twice runs once, the first time. A monthly day that a month doesn't have, such as the 31st, runs on that month's last day, including 28 or 29 February.
+    *   Group workflows that monitor File Sync can use calendar schedules too. A missed run still runs once when the scheduler catches up, then waits for the next scheduled time.
+    *   Existing interval workflows keep their stored schedules byte for byte, so their Microsoft 365 Run as approvals stay valid.
+    *   The inbound MCP workflow summary includes each workflow's schedule and a readable label.
+    *   (Ref: #1544, #1543, `functions_workflow_schedules.py`, `functions_personal_workflows.py`, `functions_group_workflows.py`, `functions_workflow_editor.py`, `functions_mcp_server_tools.py`, [Workflow calendar schedules](features/WORKFLOW_CALENDAR_SCHEDULES.md), [Create a workflow](../guides/create-a-workflow.md))
+
+*   **Workflow Minimum Schedule Interval**
+    *   **Admin Settings > Workflow** adds **Workflow Minimum Schedule Interval (seconds)**, from 1 to 86,400, in the classic and V2 admin pages. Its default, 1, allows every interval, as before.
+    *   It's checked only when an interval schedule is created or changed. Workflows already saved on a shorter interval keep running and can be re-saved unchanged. Calendar schedules are never checked.
+    *   A refused save names the minimum, for example "This schedule runs more often than the administrator allows. Choose an interval of at least 5 minutes."
+    *   (Ref: `functions_workflow_limits.py`, `functions_settings.py`, `admin_settings_fields.py`, `route_frontend_admin_settings.py`, `templates/admin/_panes/workflow.html`, [Workflow settings](../admin/workflow.md))
+
+#### User Interface Enhancements
+
+*   **Calendar Schedule Fields In The V2 Workflow Editor**
+    *   A new **Repeats** field chooses a fixed interval, daily, weekdays, weekly on chosen days, or monthly on a day of the month, with **Time** and **Time zone** fields. New schedules start in the browser's time zone when the server offers it, otherwise in UTC with a note saying so.
+    *   The editor reads the schedule back, such as "Schedule: Mondays 08:00 America/New_York", and the workflow list shows the same label. The editor checks the server's schedule rules and the administrator's minimum before saving.
+    *   (Ref: `WorkflowScheduleFields.tsx`, `WorkflowEditorDialog.tsx`, `WorkflowsSection.tsx`, `workflowSettings.ts`, `workflowEditor.ts`)
+
+*   **The Classic Editor Sends Calendar Workflows To V2**
+    *   The classic workspace editor edits only fixed intervals, so opening a calendar-scheduled workflow there says "This workflow uses a calendar schedule. Open V2 to edit it without losing its configuration. Run and Cancel remain available here." instead of replacing its schedule. The classic list shows calendar schedules' labels.
+    *   (Ref: `workflowNeedsNativeEditor`, `static/js/workspace/workspace_workflows.js`)
+
 ### **(v0.261.192)**
 
 #### New Features

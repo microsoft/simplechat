@@ -1,8 +1,8 @@
 # test_v2_workflow_calendar_schedules.py
 """
 UI tests for calendar schedules in the native V2 workflow editor, in both workflow scopes.
-Version: 0.261.192
-Implemented in: 0.261.192
+Version: 0.261.193
+Implemented in: 0.261.193
 
 These tests use the real V2 SPA bundle with the closed workflow fixture, whose save routes validate
 each schedule with the server's `_normalize_schedule` and the administrator's minimum interval,

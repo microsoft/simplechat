@@ -2,8 +2,8 @@
 #!/usr/bin/env python3
 """
 Functional test for calendar workflow schedules and the administrator's minimum schedule interval.
-Version: 0.261.192
-Implemented in: 0.261.192
+Version: 0.261.193
+Implemented in: 0.261.193
 
 This test ensures that:
 
@@ -169,7 +169,7 @@ def _next(schedules, schedule, from_time):
 
 
 def test_the_application_version_includes_calendar_schedules():
-    assert_app_version_at_least("0.261.192")
+    assert_app_version_at_least("0.261.193")
 
 
 # ---------------------------------------------------------------------------------------------

@@ -2,8 +2,8 @@
 #!/usr/bin/env python3
 """
 Functional test for V2 workflow editor parity with the server's calendar schedule rules.
-Version: 0.261.192
-Implemented in: 0.261.192
+Version: 0.261.193
+Implemented in: 0.261.193
 
 This test ensures that the V2 editor's schedule rules, which name a schedule problem before the
 save, agree with the server's:
@@ -269,7 +269,7 @@ def outcome():
 
 
 def test_the_application_version_includes_calendar_schedule_parity():
-    assert_app_version_at_least("0.261.192")
+    assert_app_version_at_least("0.261.193")
 
 
 @pytest.mark.parametrize("name", sorted(RAW_CASES))

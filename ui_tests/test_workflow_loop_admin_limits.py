@@ -1,13 +1,13 @@
 # test_workflow_loop_admin_limits.py
 """
 Source-backed browser tests for Classic/V2 For-each and Repeat policy limits.
-Version: 0.261.192
+Version: 0.261.193
 Implemented in: 0.261.117
 
 The actual Classic pane, V2 SPA, field registry and admin patch normalizer run
 against intercepted APIs. No live settings, Azure resource, or model is used.
 Repeat-until coverage was added in 0.261.120.
-Workflow Minimum Schedule Interval coverage was added in 0.261.192.
+Workflow Minimum Schedule Interval coverage was added in 0.261.193.
 """
 
 import sys

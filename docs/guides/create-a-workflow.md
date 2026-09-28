@@ -62,7 +62,7 @@ for binding semantics, shared references, and validation outcomes.
 
 ## Run on a calendar schedule
 
-From version **0.261.192**, a scheduled workflow can run at a local time rather
+From version **0.261.193**, a scheduled workflow can run at a local time rather
 than at a fixed interval, for example every Monday at 08:00 in New York. This
 works in personal and group workflows, and you set it in the V2 editor:
 

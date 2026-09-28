@@ -68,7 +68,7 @@ in effect whichever capability is enabled.
 
 ### Workflow schedules {#workflow-schedules}
 
-Version **0.261.192** adds calendar schedules. Besides repeating at a fixed
+Version **0.261.193** adds calendar schedules. Besides repeating at a fixed
 interval, a personal or group workflow can run daily, on weekdays, on chosen
 days of the week, or on a day of the month, at a local time in an IANA time
 zone such as `America/New_York`. Runs keep their local time through daylight

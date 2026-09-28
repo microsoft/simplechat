@@ -1,7 +1,7 @@
 # workflow_editor.py
 """
 Closed API fixtures for the native V2 workflow editor.
-Version: 0.261.192
+Version: 0.261.193
 Implemented in: 0.261.108
 Group File Sync, alert handoff and personal-scope trap modelling added in: 0.261.141
 Real alert normalizer on both save routes added in: 0.261.144
@@ -10,7 +10,7 @@ Group workflow list/save/run/cancel/delete responses held to the real route shap
 The public document picker is served the public chat list as its route answers it (chat_list), with
 no generated artifact awaiting publication: 0.261.183
 Calendar schedules, the server's schedule editor options and the administrator's minimum interval
-(`min_schedule_interval_seconds`, applied only to a new or changed interval) added in: 0.261.192.
+(`min_schedule_interval_seconds`, applied only to a new or changed interval) added in: 0.261.193.
 `unlisted_schedule_timezones` leaves zones out of the options' list, as an older server tzdata would.
 
 Group File Sync requests are answered by the real server functions, compiled from source:
