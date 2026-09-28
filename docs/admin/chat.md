@@ -193,7 +193,7 @@ enabling either offers the capability rather than imposing it.
 A desktop notification requires browser permission, only fires when the
 SimpleChat tab is hidden or unfocused, and stops entirely once the tab is closed.
 Users can turn it off in their profile, or under **Preferences** in the V2
-interface's **User Settings**; both save the same preference. Since **0.261.194**
+interface's **User Settings**; both save the same preference. Since **0.261.195**
 the V2 interface honors this setting as well.
 
 The completion sound is a short bundled audio cue the browser plays locally. No

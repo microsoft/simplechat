@@ -2,8 +2,8 @@
 # test_v2_notifications_bell.py
 """
 Functional test for the V2 notification bell, its panel and desktop notifications.
-Version: 0.261.194
-Implemented in: 0.261.194
+Version: 0.261.195
+Implemented in: 0.261.195
 
 The browser suite (ui_tests/test_v2_notifications_bell.py) drives the bell, the panel and the
 desktop notifier against stubbed HTTP answers. On its own it cannot notice those stubs drifting
@@ -43,7 +43,7 @@ sys.path.insert(0, str(REPO_ROOT / "functional_tests"))
 from test_support.versioning import assert_app_version_at_least  # noqa: E402
 
 
-IMPLEMENTED_IN = "0.261.194"
+IMPLEMENTED_IN = "0.261.195"
 
 # The files this feature added. Notification text passes through all of them on its way to
 # the screen, and none of them has any reason to load or link anything off-site.

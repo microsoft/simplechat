@@ -61,7 +61,7 @@ Clicking a desktop notification focuses the existing SimpleChat tab.
 
 ## V2 Interface
 
-From version **0.261.194**, the V2 interface honors the same administrator setting
+From version **0.261.195**, the V2 interface honors the same administrator setting
 and the same `desktopNotificationsEnabled` preference, so a choice made in either
 interface applies to both. See [V2 Notification Bell and Desktop Notifications](V2_NOTIFICATIONS_BELL.md).
 

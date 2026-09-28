@@ -1,4 +1,4 @@
-# V2 Notification Bell and Desktop Notifications (v0.261.194)
+# V2 Notification Bell and Desktop Notifications (v0.261.195)
 
 ## Overview
 
@@ -11,7 +11,7 @@ results and share requests were invisible unless a V2 user went to the classic
 page. The **Desktop notifications** toggle in V2 Preferences saved the preference
 the two interfaces share, but nothing in V2 acted on it.
 
-Implemented in version: **0.261.194**, tracked in
+Implemented in version: **0.261.195**, tracked in
 `application/single_app/config.py`. Track N1 of the
 [chat orchestration workflows roadmap](CHAT_ORCHESTRATION_WORKFLOWS_ROADMAP.md)
 (#1554, part of #1543).

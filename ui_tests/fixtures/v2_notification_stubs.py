@@ -1,8 +1,8 @@
 # v2_notification_stubs.py
 """
 The notification requests every real V2 page makes, answered the way the real routes answer.
-Version: 0.261.194
-Implemented in: 0.261.194
+Version: 0.261.195
+Implemented in: 0.261.195
 
 The V2 rail's bell reads the unread count as soon as the signed-in session loads, and again
 whenever the tab comes back into view. A chat reply the reader watched finish is marked read,

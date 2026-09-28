@@ -1,9 +1,9 @@
 # group_documents.py
 """
 Closed M2A group document HTTP fixtures for the real production V2 SPA.
-Version: 0.261.194
+Version: 0.261.195
 Implemented in: 0.261.128
-Watched-reply read receipt permitted in: 0.261.194
+Watched-reply read receipt permitted in: 0.261.195
 The served rows, read texts and restricted projections are the real read routes', held to them by
 functional_tests/test_group_document_fixture_parity.py.
 

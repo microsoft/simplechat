@@ -1,8 +1,8 @@
 # test_v2_notifications_bell.py
 """
 Browser regressions for the V2 notification bell, its panel and desktop notifications.
-Version: 0.261.194
-Implemented in: 0.261.194
+Version: 0.261.195
+Implemented in: 0.261.195
 
 Exercises the real rail, bell, panel, chat page, preferences tab, stores and notification
 runtime, bundled by fixtures/notification_bell. Only HTTP answers and the browser APIs a
@@ -611,7 +611,7 @@ SEED = r"""
     const H = window.NotificationHarness;
     H.stores.bootstrap.useBootstrapStore.setState({
         data: {
-            version: '0.261.194',
+            version: '0.261.195',
             user: {id: 'user-1', display_name: 'Riley Chen', roles: []},
             features: seed.features,
             branding: seed.branding,

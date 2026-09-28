@@ -4,7 +4,7 @@ title: "Chat interface controls"
 description: "Reference for every documented control in the SimpleChat chat interface."
 section: "Reference"
 audience: user
-version: "0.261.194"
+version: "0.261.195"
 ---
 
 ## How to use this reference
@@ -44,7 +44,7 @@ chat; wide result tables keep their scrolling inside the table.
 
 ### React V2 notification bell
 
-Since **0.261.194**, the V2 navigation rail has a notification bell beside the
+Since **0.261.195**, the V2 navigation rail has a notification bell beside the
 application's name. It shows the unread count, or a dot when the rail is collapsed,
 and opens a panel where you can follow, mark read, or dismiss notifications without
 leaving the chat. On narrow screens the bell is on the collapsed strip and in the
