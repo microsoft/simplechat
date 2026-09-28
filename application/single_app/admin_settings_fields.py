@@ -137,12 +137,16 @@ from functions_workflow_limits import (
     WORKFLOW_LOOP_ITEMS_DEFAULT,
     WORKFLOW_LOOP_ITEMS_MAX,
     WORKFLOW_LOOP_ITEMS_MIN,
+    WORKFLOW_MIN_SCHEDULE_INTERVAL_DEFAULT,
+    WORKFLOW_MIN_SCHEDULE_INTERVAL_MAX,
+    WORKFLOW_MIN_SCHEDULE_INTERVAL_MIN,
     WORKFLOW_REPEAT_ITERATIONS_DEFAULT,
     WORKFLOW_REPEAT_ITERATIONS_MAX,
     WORKFLOW_REPEAT_ITERATIONS_MIN,
     WorkflowLoopLimitError,
     validate_workflow_max_loop_items,
     validate_workflow_max_repeat_iterations,
+    validate_workflow_min_schedule_interval_seconds,
 )
 
 HEX_COLOR_PATTERN = re.compile(r"^#[0-9a-fA-F]{6}$")
@@ -4064,6 +4068,21 @@ ADMIN_SETTINGS_FIELDS = {
             "max": WORKFLOW_REPEAT_ITERATIONS_MAX,
             "step": 1,
         },
+        {
+            "key": "workflow_min_schedule_interval_seconds",
+            "type": "number",
+            "label": "Workflow Minimum Schedule Interval (seconds)",
+            "help": (
+                "Shortest repeat interval, in seconds, allowed when a personal or group "
+                "workflow interval schedule is created or changed. Workflows already saved "
+                "keep their schedule and keep running when this is raised. Calendar "
+                "schedules are not affected. Default is 1; supported range is 1-86,400."
+            ),
+            "default": WORKFLOW_MIN_SCHEDULE_INTERVAL_DEFAULT,
+            "min": WORKFLOW_MIN_SCHEDULE_INTERVAL_MIN,
+            "max": WORKFLOW_MIN_SCHEDULE_INTERVAL_MAX,
+            "step": 1,
+        },
     ],
     # --- Agents & Actions -------------------------------------------------
     #
@@ -6743,6 +6762,12 @@ def _normalize_field_value(key, value, field):
     if key == "workflow_max_repeat_iterations":
         try:
             return validate_workflow_max_repeat_iterations(value), None, None
+        except WorkflowLoopLimitError as error:
+            return None, error.public_message, None
+
+    if key == "workflow_min_schedule_interval_seconds":
+        try:
+            return validate_workflow_min_schedule_interval_seconds(value), None, None
         except WorkflowLoopLimitError as error:
             return None, error.public_message, None
 

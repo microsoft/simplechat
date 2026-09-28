@@ -303,6 +303,7 @@ class GroupWorkflowStore:
         real = (
             "functions_workflow_alert_safety", "functions_workflow_definitions", "functions_workflow_alerts",
             "functions_m365_workflow_binding", "functions_workflow_definition_store", "functions_document_actions",
+            "functions_workflow_limits", "functions_workflow_schedules",
             "functions_personal_workflows", "functions_group_workflow_policy", "functions_group_workflows",
         )
         with _installed((*stubs, *real)):
