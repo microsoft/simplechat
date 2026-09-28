@@ -174,7 +174,7 @@ export interface UserSettings {
      *
      * Read-only here, like `activeGroupOid`: the route pops it and routes it to
      * `update_active_public_workspace_for_user()` rather than storing it as a setting, so it
-     * is deliberately absent from `WRITABLE_USER_SETTING_KEYS`. Setting the active workspace
+     * is deliberately absent from the writable key list below. Setting the active workspace
      * gets its own call.
      */
     activePublicWorkspaceOid?: string;
