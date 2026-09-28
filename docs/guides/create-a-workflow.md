@@ -60,13 +60,67 @@ you need; saving in V2 never brings a deleted workflow back.
 See [Explicit workflow data flow](../explanation/features/WORKFLOW_EXPLICIT_DATA_FLOW.md)
 for binding semantics, shared references, and validation outcomes.
 
+## Run on a calendar schedule
+
+From version **0.261.193**, a scheduled workflow can run at a local time rather
+than at a fixed interval, for example every Monday at 08:00 in New York. This
+works in personal and group workflows, and you set it in the V2 editor:
+
+1. Set **Trigger** to **Interval**. A group workflow that watches File Sync can
+   use **Monitor File Sync changes** instead.
+2. In **Repeats**, choose how often it runs:
+   - **At an interval** keeps a fixed interval, set with **Interval value** and
+     **Interval unit**.
+   - **Daily** runs every day.
+   - **Weekdays (Monday to Friday)** skips weekends.
+   - **Weekly on chosen days** runs on the days you select under **Days of the
+     week**.
+   - **Monthly on a day of the month** runs on the **Day of the month** you
+     enter, from 1 to 31. A month without that day runs on its last day, so day
+     31 runs on 30 April, and on 28 February or, in a leap year, 29 February.
+3. Set **Time** and **Time zone**. The time zone is an IANA name, such as
+   `America/New_York` or `Europe/London`; start typing to choose one from the
+   list. A new calendar schedule starts at 09:00 in your browser's time zone.
+   If the server doesn't offer your browser's zone, the schedule starts in UTC
+   and the editor says so; choose the zone the schedule should follow.
+4. Check the summary under the fields, such as "Schedule: Mondays 08:00
+   America/New_York", then save. The workflow list shows the same summary.
+
+Runs follow the local time in the zone you chose, through daylight saving
+changes. "Mondays 08:00 America/New_York" runs at 12:00 UTC in summer and 13:00
+UTC in winter. On the night the clocks go forward, a time they skip runs later
+by the amount skipped, so 02:30 in New York runs at 03:30. On the night the
+clocks go back, a time that happens twice runs once, the first time it happens.
+
+If a run was missed, for example while the app was stopped, the workflow runs
+once when the scheduler catches up, then waits for its next scheduled time. It
+doesn't make up each missed run.
+
+Existing interval workflows keep their schedules, and their Microsoft 365 Run
+as approvals stay valid. The schedule is part of that approval, so changing it,
+including to a calendar schedule, is a material change that needs renewed
+approval.
+
+The classic editor can't edit calendar schedules. Opening one there shows
+"This workflow uses a calendar schedule. Open V2 to edit it without losing its
+configuration. Run and Cancel remain available here."
+
+Your administrator can set a minimum interval. A new or changed interval that
+runs more often is refused with a message that names the minimum, such as
+"This schedule runs more often than the administrator allows. Choose an
+interval of at least 5 minutes." Workflows already saved on a shorter interval
+keep running, and calendar schedules aren't affected.
+
+See [Workflow calendar schedules](../explanation/features/WORKFLOW_CALENDAR_SCHEDULES.md)
+for the stored format and the full rules.
+
 ## Run a group workflow when File Sync finds changes
 
 From version **0.261.141**, the V2 editor for group workflows can author File
 Sync. Owners, Admins, and other workflow managers see these choices when the
 group has File Sync sources:
 
-- **Monitor File Sync changes** is a trigger. On the interval you set, it syncs
+- **Monitor File Sync changes** is a trigger. On the schedule you set, it syncs
   the selected sources, waits for the sync to finish, and runs the workflow only
   when files changed.
 - **Run File Sync before each run** syncs the selected sources first on a manual
@@ -392,7 +446,8 @@ for readiness, recovery, and cancellation limits.
                       capture="Capture the create a workflow task at this step in SimpleChat with realistic sample data and redact secrets." %}
 
 4. In **General**, enter a name, description, and default runner.
-5. In **Trigger**, choose manual execution or a scheduled interval.
+5. In **Trigger**, choose manual execution or a scheduled interval. Calendar
+   schedules, such as weekdays at 08:00, are set in the V2 editor.
 6. In **Tasks**, write the first task instructions and add more tasks with **Add Task**.
 7. For each task, decide whether it inherits the runner or uses a specific **Direct Model** or **Agent**.
 8. Optionally set a document action such as **Search**, **Analyze**, or **Compare**.
@@ -532,6 +587,9 @@ for readiness proof, screening and recovery limitations.
 | No agents are available as runners | No authorized agents exist for this workspace | Create an agent first or use a direct model runner. |
 | Flow shows Unvalidated draft without execution arrows | The current draft has not passed its compiler preview | Keep editing the visible blocks and repair the reported fields or selectors; do not interpret old topology as the current draft. |
 | Save is blocked after moving or removing a block | A retained reference is now missing or out of scope | Use the affected-selector diagnostics to repair each consumer explicitly. |
+| Save is refused with "This schedule runs more often than the administrator allows." | The new or changed interval is shorter than the administrator's minimum | Choose the interval the message names or longer, or use a calendar schedule. |
+| A calendar schedule's time zone isn't accepted | The name isn't an exact IANA time zone that the server offers; names are case-sensitive | Choose a zone from the **Time zone** list, such as `America/New_York`. |
+| The classic editor won't open a workflow | It uses a calendar schedule or advanced data flow, which the classic editor can't represent | Edit it in V2. Run and Cancel still work in the classic workspace. |
 
 ## Related
 

@@ -607,7 +607,11 @@ def save_group_workflow(group_id, workflow_data, actor_user_id, user_info=None):
 
     schedule = {}
     if trigger_type in {'interval', 'file_sync'}:
-        schedule = _normalize_schedule(workflow_data.get('schedule'))
+        schedule = _normalize_schedule(
+            workflow_data.get('schedule'),
+            existing_workflow=existing_workflow,
+            settings=settings,
+        )
 
     owner_user_id = (existing_workflow or {}).get('user_id') or (existing_workflow or {}).get('created_by') or actor_user_id
     workflow = {

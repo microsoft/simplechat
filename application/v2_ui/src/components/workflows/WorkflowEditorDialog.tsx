@@ -16,6 +16,7 @@ import { WorkflowMicrosoft365RunAs } from './WorkflowMicrosoft365RunAs';
 import { WorkflowFlowAuthoring } from './WorkflowFlowAuthoring';
 import { WorkflowFlowLimitFields } from './WorkflowStructuredFields';
 import { WorkflowFileSyncFields, useWorkflowFileSyncSources } from './WorkflowFileSyncFields';
+import { WorkflowScheduleFields } from './WorkflowScheduleFields';
 import { WorkflowAlertEditor } from './WorkflowAlertEditor';
 import { WorkflowAlertSummary } from './WorkflowAlertSummary';
 import { useWorkflowAuthoring } from './useWorkflowAuthoring';
@@ -496,62 +497,36 @@ export function WorkflowEditorDialog({
                                 canListAccounts={options.can_manage}
                                 onChange={(userId) => setWorkflow((current) => ({ ...current, m365_run_as_user_id: userId }))}
                             />
-                            <div className="grid gap-3 md:grid-cols-3">
-                                <label className="text-sm text-text-2">
-                                    Trigger
-                                    <select
-                                        className={`${inputClass} mt-1`}
-                                        aria-label="Trigger"
-                                        value={draft.trigger_type}
-                                        onChange={(event) => {
-                                            const trigger = event.target.value as WorkflowDefinition['trigger_type'];
-                                            setWorkflow((current) => groupScope && trigger === 'file_sync' ? {
-                                                ...current,
-                                                trigger_type: trigger,
-                                                file_sync: workflowMonitorFileSyncConfig(current.file_sync),
-                                            } : { ...current, trigger_type: trigger });
-                                        }}
-                                    >
-                                        <option value="manual">Manual</option>
-                                        <option value="interval">Interval</option>
-                                        {groupScope
-                                            ? fileSyncTriggerOffered ? <option value="file_sync">Monitor File Sync changes</option> : null
-                                            : draft.trigger_type === 'file_sync' ? <option value="file_sync">Existing file sync</option> : null}
-                                    </select>
-                                </label>
-                                <label className="text-sm text-text-2">
-                                    Interval value
-                                    <input
-                                        className={`${inputClass} mt-1`}
-                                        type="number"
-                                        min={1}
-                                        aria-label="Interval value"
-                                        value={draft.schedule.value}
-                                        disabled={!scheduled}
-                                        onChange={(event) => setWorkflow((current) => ({
-                                            ...current,
-                                            schedule: { ...current.schedule, value: Math.max(1, Math.trunc(Number(event.target.value) || 1)) },
-                                        }))}
-                                    />
-                                </label>
-                                <label className="text-sm text-text-2">
-                                    Interval unit
-                                    <select
-                                        className={`${inputClass} mt-1`}
-                                        aria-label="Interval unit"
-                                        value={draft.schedule.unit}
-                                        disabled={!scheduled}
-                                        onChange={(event) => setWorkflow((current) => ({
-                                            ...current,
-                                            schedule: { ...current.schedule, unit: event.target.value as WorkflowDefinition['schedule']['unit'] },
-                                        }))}
-                                    >
-                                        <option value="seconds">Seconds</option>
-                                        <option value="minutes">Minutes</option>
-                                        <option value="hours">Hours</option>
-                                    </select>
-                                </label>
-                            </div>
+                            <WorkflowScheduleFields
+                                triggerField={(
+                                    <label className="text-sm text-text-2">
+                                        Trigger
+                                        <select
+                                            className={`${inputClass} mt-1`}
+                                            aria-label="Trigger"
+                                            value={draft.trigger_type}
+                                            onChange={(event) => {
+                                                const trigger = event.target.value as WorkflowDefinition['trigger_type'];
+                                                setWorkflow((current) => groupScope && trigger === 'file_sync' ? {
+                                                    ...current,
+                                                    trigger_type: trigger,
+                                                    file_sync: workflowMonitorFileSyncConfig(current.file_sync),
+                                                } : { ...current, trigger_type: trigger });
+                                            }}
+                                        >
+                                            <option value="manual">Manual</option>
+                                            <option value="interval">Interval</option>
+                                            {groupScope
+                                                ? fileSyncTriggerOffered ? <option value="file_sync">Monitor File Sync changes</option> : null
+                                                : draft.trigger_type === 'file_sync' ? <option value="file_sync">Existing file sync</option> : null}
+                                        </select>
+                                    </label>
+                                )}
+                                schedule={draft.schedule}
+                                options={options}
+                                scheduled={scheduled}
+                                onChange={(update) => setWorkflow((current) => ({ ...current, schedule: update(current.schedule) }))}
+                            />
                             <div className="grid gap-3 md:grid-cols-2">
                                 <label className="text-sm text-text-2">
                                     Error handling

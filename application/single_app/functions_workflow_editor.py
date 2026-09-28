@@ -9,19 +9,24 @@ from functions_workflow_definitions import (
 from functions_workflow_flow import FLOW_LIMITS
 from functions_workflow_limits import (
     WORKFLOW_LOOP_ITEMS_DEFAULT,
+    WORKFLOW_MIN_SCHEDULE_INTERVAL_DEFAULT,
     WORKFLOW_REPEAT_ITERATIONS_DEFAULT,
     WORKFLOW_REPEAT_ITERATIONS_MAX,
     get_workflow_max_loop_items,
     get_workflow_max_repeat_iterations,
+    get_workflow_min_schedule_interval_seconds,
     validate_workflow_max_loop_items,
     validate_workflow_max_repeat_iterations,
+    validate_workflow_min_schedule_interval_seconds,
 )
+from functions_workflow_schedules import build_workflow_schedule_editor_options
 
 
 def build_workflow_editor_options(*, scope_type, scope_id, can_manage, max_tasks,
                                   agents, endpoints, default_model=None,
                                   max_loop_items=WORKFLOW_LOOP_ITEMS_DEFAULT,
-                                  max_repeat_iterations=WORKFLOW_REPEAT_ITERATIONS_DEFAULT):
+                                  max_repeat_iterations=WORKFLOW_REPEAT_ITERATIONS_DEFAULT,
+                                  min_schedule_interval_seconds=WORKFLOW_MIN_SCHEDULE_INTERVAL_DEFAULT):
     if scope_type not in {"personal", "group"}:
         raise ValueError("Unsupported workflow editor scope.")
     agent_options = [
@@ -81,6 +86,9 @@ def build_workflow_editor_options(*, scope_type, scope_id, can_manage, max_tasks
             "max_repeat_iterations": validate_workflow_max_repeat_iterations(max_repeat_iterations),
             "hard_repeat_iterations": WORKFLOW_REPEAT_ITERATIONS_MAX,
         },
+        "schedule": build_workflow_schedule_editor_options(
+            min_interval_seconds=validate_workflow_min_schedule_interval_seconds(min_schedule_interval_seconds),
+        ),
         "scope": {"type": scope_type, "id": str(scope_id)},
         "can_manage": bool(can_manage),
         "max_tasks": max_tasks,
@@ -132,4 +140,5 @@ def get_workflow_editor_options(user_id, settings, *, group_id=""):
         agents=agents, endpoints=endpoints, default_model=_build_default_model_summary(settings),
         max_loop_items=get_workflow_max_loop_items(settings),
         max_repeat_iterations=get_workflow_max_repeat_iterations(settings),
+        min_schedule_interval_seconds=get_workflow_min_schedule_interval_seconds(settings),
     )

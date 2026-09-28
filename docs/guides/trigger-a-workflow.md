@@ -38,7 +38,7 @@ A workflow only helps when it runs at the right moment and leaves evidence you c
                       capture="Capture the trigger a workflow task at this step in SimpleChat with realistic sample data and redact secrets." %}
 
 4. Use the workflow row **Actions** to start a manual run, or edit the workflow to adjust **Trigger**.
-5. For scheduled operation, choose an interval trigger and leave the workflow enabled.
+5. For scheduled operation, choose the **Interval** trigger and leave the workflow enabled. It can repeat at a fixed interval or, in the V2 editor, at a local time on a calendar schedule; see [Run on a calendar schedule]({{ '/guides/create-a-workflow/' | relative_url }}#run-on-a-calendar-schedule).
 6. After a run starts, open **Open workflow activity view** from the chat header when available.
 
 {% include media.html src="guides/trigger-a-workflow-step-6.png"
@@ -249,6 +249,7 @@ See [Workflow publication completion](../explanation/features/WORKFLOW_PUBLICATI
 | Symptom | Likely cause | Fix |
 | --- | --- | --- |
 | A scheduled workflow does not run | It is disabled or still configured for manual trigger | Edit the trigger and confirm the workflow is enabled. |
+| A calendar-scheduled workflow stopped running | Its saved time zone is no longer in the server's time zone database, so no next run can be worked out | Open it in the V2 editor, choose a time zone from the list, and save. |
 | A run fails immediately | A runner, action, document, or File Sync source is unavailable | Open run details, fix the dependency, and run again. |
 
 ## Related

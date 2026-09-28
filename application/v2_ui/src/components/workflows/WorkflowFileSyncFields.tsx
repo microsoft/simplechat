@@ -129,7 +129,7 @@ export function WorkflowFileSyncFields({
                 <h3 id={`${baseId}-title`} className="text-base font-semibold text-text-1">File Sync</h3>
                 <p className="mt-0.5 text-xs text-text-3">
                     {monitored
-                        ? 'Monitor workflows check the selected sources on the interval above and run only when files changed.'
+                        ? 'Monitor workflows check the selected sources on the schedule above and run only when files changed.'
                         : 'Optionally sync the selected group sources before each run.'}
                 </p>
             </div>

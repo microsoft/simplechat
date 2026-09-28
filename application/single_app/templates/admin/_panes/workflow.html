@@ -115,6 +115,28 @@
                         </div>
                     </div>
 
+                    <div class="form-group mb-3">
+                        <label for="workflow_min_schedule_interval_seconds" class="form-label">
+                            Workflow Minimum Schedule Interval (seconds)
+                        </label>
+                        <input type="number"
+                            class="form-control"
+                            id="workflow_min_schedule_interval_seconds"
+                            name="workflow_min_schedule_interval_seconds"
+                            min="1"
+                            max="86400"
+                            step="1"
+                            required
+                            aria-describedby="workflow-min-schedule-interval-help"
+                            value="{{ settings.workflow_min_schedule_interval_seconds|default(1) }}" />
+                        <div class="form-text" id="workflow-min-schedule-interval-help">
+                            Shortest repeat interval, in seconds, allowed when a personal or group workflow
+                            interval schedule is created or changed. Default is 1; supported range is 1-86,400.
+                            Workflows already saved keep their schedule and keep running when this is raised.
+                            Calendar schedules are not affected.
+                        </div>
+                    </div>
+
                     <div class="form-group form-check form-switch mb-3">
                         <input type="checkbox"
                             class="form-check-input"

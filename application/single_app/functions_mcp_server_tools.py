@@ -41,6 +41,7 @@ from functions_personal_workflows import (
 from functions_search_service import search_documents as run_document_search
 from functions_settings import get_settings, is_user_workflows_enabled_for_user
 from functions_workflow_runner import run_personal_workflow
+from functions_workflow_schedules import workflow_schedule_label, workflow_schedule_summary
 
 
 INBOUND_MCP_TOOL_RESULT_LIMIT_DEFAULT = 100
@@ -648,6 +649,8 @@ def _serialize_personal_workflow_summary(workflow):
         "description_truncated": description_truncated,
         "runner_type": str(workflow.get("runner_type") or "").strip(),
         "trigger_type": str(workflow.get("trigger_type") or "").strip(),
+        "schedule": workflow_schedule_summary(workflow.get("trigger_type"), workflow.get("schedule")),
+        "schedule_label": workflow_schedule_label(workflow.get("trigger_type"), workflow.get("schedule")),
         "is_enabled": bool(workflow.get("is_enabled", False)),
         "status": str(workflow.get("status") or "").strip(),
         "created_at": str(workflow.get("created_at") or "").strip(),

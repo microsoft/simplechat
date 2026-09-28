@@ -105,8 +105,10 @@ from functions_workflow_limits import (
     WorkflowLoopLimitError,
     get_workflow_max_loop_items,
     get_workflow_max_repeat_iterations,
+    get_workflow_min_schedule_interval_seconds,
     validate_workflow_max_loop_items,
     validate_workflow_max_repeat_iterations,
+    validate_workflow_min_schedule_interval_seconds,
 )
 from support_menu_config import (
     get_admin_latest_feature_release_groups_for_settings,
@@ -1131,6 +1133,18 @@ def register_route_frontend_admin_settings(bp):
                     validate_workflow_max_repeat_iterations(form_data['workflow_max_repeat_iterations'])
                     if 'workflow_max_repeat_iterations' in form_data
                     else get_workflow_max_repeat_iterations(settings)
+                )
+            except WorkflowLoopLimitError as error:
+                flash(error.public_message, 'danger')
+                return redirect(url_for('frontend_admin_settings.admin_settings'))
+
+            try:
+                workflow_min_schedule_interval_seconds = (
+                    validate_workflow_min_schedule_interval_seconds(
+                        form_data['workflow_min_schedule_interval_seconds']
+                    )
+                    if 'workflow_min_schedule_interval_seconds' in form_data
+                    else get_workflow_min_schedule_interval_seconds(settings)
                 )
             except WorkflowLoopLimitError as error:
                 flash(error.public_message, 'danger')
@@ -2584,6 +2598,7 @@ def register_route_frontend_admin_settings(bp):
                 'workflow_max_tasks': workflow_max_tasks,
                 'workflow_max_loop_items': workflow_max_loop_items,
                 'workflow_max_repeat_iterations': workflow_max_repeat_iterations,
+                'workflow_min_schedule_interval_seconds': workflow_min_schedule_interval_seconds,
                 **chat_orchestration_settings,
                 'allow_personal_workspace_file_downloads': form_data.get('allow_personal_workspace_file_downloads') == 'on',
                 'allow_group_workspace_file_downloads': form_data.get('allow_group_workspace_file_downloads') == 'on',

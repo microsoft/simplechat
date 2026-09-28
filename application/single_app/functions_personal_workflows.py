@@ -53,12 +53,19 @@ from functions_workflow_definitions import (
     normalize_publication_completion_policy, normalize_publication_source_kind,
     normalize_workflow_definition, workflow_definition_for_editor,
 )
+from functions_workflow_limits import get_workflow_min_schedule_interval_seconds
 from functions_workflow_runtime_store import workflow_runtime_store
+from functions_workflow_schedules import (
+    enforce_workflow_schedule_minimum,
+    is_calendar_workflow_schedule,
+    next_workflow_schedule_run,
+    normalize_workflow_schedule,
+    workflow_schedule_minimum_applies,
+)
 
 
 WORKFLOW_TRIGGER_TYPES = {'manual', 'interval', 'file_sync'}
 WORKFLOW_RUNNER_TYPES = {'agent', 'model'}
-WORKFLOW_SCHEDULE_UNITS = {'seconds', 'minutes', 'hours'}
 WORKFLOW_ALERT_PRIORITIES = {'none', 'low', 'medium', 'high'}
 WORKFLOW_FILE_SYNC_WAIT_MODES = {'complete', 'queued'}
 WORKFLOW_FILE_SYNC_CONTINUE_MODES = {'always', 'changed'}
@@ -146,27 +153,16 @@ def _normalize_personal_workflow_conversation_id(user_id, workflow_data, existin
     return conversation_id
 
 
-def _normalize_schedule(schedule_payload):
-    schedule_payload = schedule_payload if isinstance(schedule_payload, dict) else {}
-    unit = str(schedule_payload.get('unit') or '').strip().lower()
-    if unit not in WORKFLOW_SCHEDULE_UNITS:
-        raise WorkflowPublicValidationError('Schedule unit must be seconds, minutes or hours.')
+def _normalize_schedule(schedule_payload, existing_workflow=None, settings=None):
+    """Normalize an interval or calendar schedule for saving.
 
-    try:
-        value = int(schedule_payload.get('value'))
-    except (TypeError, ValueError, OverflowError):
-        # OverflowError: the request JSON parser accepts Infinity, which int() cannot convert.
-        raise WorkflowPublicValidationError('Schedule value must be a whole number.')
-
-    max_value = 59 if unit in ('seconds', 'minutes') else 24
-    if value < 1 or value > max_value:
-        # The unit is one of WORKFLOW_SCHEDULE_UNITS and the limit is fixed, so no caller text is echoed.
-        raise WorkflowPublicValidationError(f'Schedule value for {unit} must be between 1 and {max_value}.')
-
-    return {
-        'unit': unit,
-        'value': value,
-    }
+    The administrator's minimum interval governs only a new or changed interval schedule, so a
+    raised minimum never blocks re-saving a workflow on the interval it already runs on.
+    """
+    schedule = normalize_workflow_schedule(schedule_payload)
+    if workflow_schedule_minimum_applies(schedule, existing_workflow):
+        enforce_workflow_schedule_minimum(schedule, get_workflow_min_schedule_interval_seconds(settings))
+    return schedule
 
 
 def _normalize_alert_priority(value):
@@ -751,6 +747,22 @@ def compute_next_run_at(workflow, from_time=None):
     if reference_time.tzinfo is None:
         reference_time = reference_time.replace(tzinfo=timezone.utc)
 
+    if is_calendar_workflow_schedule(schedule):
+        try:
+            return next_workflow_schedule_run(schedule, reference_time)
+        except (ValueError, OverflowError, LookupError) as exc:
+            # A stored calendar schedule that no longer validates stays unscheduled rather than
+            # running at a guessed time; saving the workflow again reports what to fix.
+            log_event(
+                '[Workflows] Calendar schedule could not compute a next run.',
+                extra={
+                    'workflow_id': str(workflow.get('id') or ''),
+                    'error_type': type(exc).__name__,
+                },
+                level=logging.WARNING,
+            )
+            return None
+
     return (reference_time + _build_schedule_delta(schedule)).isoformat()
 
 
@@ -952,7 +964,11 @@ def save_personal_workflow(user_id, workflow_data, actor_user_id=None):
 
     schedule = {}
     if trigger_type in {'interval', 'file_sync'}:
-        schedule = _normalize_schedule(workflow_data.get('schedule'))
+        schedule = _normalize_schedule(
+            workflow_data.get('schedule'),
+            existing_workflow=existing_workflow,
+            settings=settings,
+        )
 
     workflow = {
         'id': workflow_id or str(uuid.uuid4()),

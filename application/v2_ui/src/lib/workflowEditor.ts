@@ -13,7 +13,13 @@ import {
     WORKFLOW_FILE_SYNC_CONTINUE_MODES,
     WORKFLOW_FILE_SYNC_MAX_SOURCES,
     WORKFLOW_FILE_SYNC_WAIT_MODES,
+    WORKFLOW_SCHEDULE_DAYS,
+    WORKFLOW_SCHEDULE_FREQUENCIES,
+    WORKFLOW_SCHEDULE_UNITS,
     workflowSettingsErrors,
+    type WorkflowSchedule,
+    type WorkflowScheduleFrequency,
+    type WorkflowScheduleUnit,
 } from './workflowSettings';
 import {
     analyzeWorkflowFlow,
@@ -108,11 +114,54 @@ export interface WorkflowEditorOptions {
         loop_eligible?: boolean;
     };
     scope: { type: 'personal' | 'group'; id?: string };
+    /** Schedule choices, the time zone list and the administrator's minimum interval; absent from older servers. */
+    schedule?: WorkflowScheduleOptions;
 }
 
-export interface WorkflowSchedule {
-    unit: 'seconds' | 'minutes' | 'hours';
-    value: number;
+export interface WorkflowScheduleOptions {
+    kinds: string[];
+    units: string[];
+    frequencies: string[];
+    days_of_week: string[];
+    /** IANA names a calendar schedule may use, sorted. */
+    timezones: string[];
+    /** The shortest new or changed interval, in seconds. */
+    min_interval_seconds: number;
+}
+
+export {
+    formatWorkflowScheduleDuration,
+    isWorkflowCalendarSchedule,
+    workflowScheduleLabel,
+    WORKFLOW_SCHEDULE_DAYS,
+    WORKFLOW_SCHEDULE_FREQUENCIES,
+} from './workflowSettings';
+export type {
+    WorkflowCalendarSchedule,
+    WorkflowIntervalSchedule,
+    WorkflowSchedule,
+    WorkflowScheduleDay,
+    WorkflowScheduleFrequency,
+    WorkflowScheduleUnit,
+} from './workflowSettings';
+
+const scheduleTimezoneSets = new WeakMap<readonly string[], ReadonlySet<string>>();
+
+/** The options' time zone names as a set, built once per options response; null when not offered. */
+export function workflowScheduleTimezones(options: Pick<WorkflowEditorOptions, 'schedule'>): ReadonlySet<string> | null {
+    const zones = options.schedule?.timezones;
+    if (!zones) return null;
+    let set = scheduleTimezoneSets.get(zones);
+    if (!set) {
+        set = new Set(zones);
+        scheduleTimezoneSets.set(zones, set);
+    }
+    return set;
+}
+
+/** Whether the server offers calendar schedules to this editor. */
+export function workflowCalendarSchedulesOffered(options: Pick<WorkflowEditorOptions, 'schedule'>): boolean {
+    return Boolean(options.schedule?.kinds.includes('calendar'));
 }
 
 export interface WorkflowInputBinding {
@@ -813,6 +862,39 @@ export function newWorkflowDefinition(scope: WorkflowScope): WorkflowDefinition 
     };
 }
 
+/**
+ * A stored or drafted schedule in the editor's shape. An interval schedule stays `{unit, value}`.
+ * A calendar schedule keeps its time and time zone text as stored, so validation can name a bad
+ * value instead of replacing it, and carries days only when weekly and a day of the month only
+ * when monthly, which is the shape the server stores.
+ */
+export function normalizeWorkflowSchedule(value: unknown): WorkflowSchedule {
+    const schedule = isRecord(value) ? value : {};
+    if (text(schedule.kind).trim().toLowerCase() === 'calendar') {
+        const stored = text(schedule.frequency).trim().toLowerCase();
+        const frequency = (WORKFLOW_SCHEDULE_FREQUENCIES as readonly string[]).includes(stored)
+            ? stored as WorkflowScheduleFrequency : 'daily';
+        const days = new Set((Array.isArray(schedule.days_of_week) ? schedule.days_of_week : [])
+            .map((day) => text(day).trim().toLowerCase()));
+        const dayOfMonth = schedule.day_of_month;
+        return {
+            kind: 'calendar',
+            frequency,
+            days_of_week: frequency === 'weekly' ? WORKFLOW_SCHEDULE_DAYS.filter((day) => days.has(day)) : [],
+            day_of_month: frequency === 'monthly' && typeof dayOfMonth === 'number' && Number.isInteger(dayOfMonth)
+                ? dayOfMonth : null,
+            time_of_day: text(schedule.time_of_day).trim(),
+            timezone: text(schedule.timezone).trim(),
+        };
+    }
+    return {
+        unit: (WORKFLOW_SCHEDULE_UNITS as readonly string[]).includes(String(schedule.unit))
+            ? schedule.unit as WorkflowScheduleUnit
+            : 'minutes',
+        value: numberInRange(schedule.value, 15, 1, 999999),
+    };
+}
+
 function normalizeRunner(value: unknown, structured = false): WorkflowTaskRunner {
     if (!isRecord(value)) {
         return { type: 'inherit' };
@@ -1005,7 +1087,6 @@ export function normalizeWorkflowDefinition(
 ): WorkflowDefinition {
     const record = isRecord(value) ? value : {};
     const revision = text(record.definition_revision);
-    const schedule = isRecord(record.schedule) ? record.schedule : {};
     const errorHandling = isRecord(record.error_handling) ? record.error_handling : {};
     const trigger = ['manual', 'interval', 'file_sync'].includes(String(record.trigger_type))
         ? record.trigger_type as WorkflowTriggerType
@@ -1041,12 +1122,7 @@ export function normalizeWorkflowDefinition(
         m365_run_as_user_id: text(record.m365_run_as_user_id),
         chat_capabilities_enabled: record.chat_capabilities_enabled === true,
         trigger_type: trigger,
-        schedule: {
-            unit: ['seconds', 'minutes', 'hours'].includes(String(schedule.unit))
-                ? schedule.unit as WorkflowSchedule['unit']
-                : 'minutes',
-            value: numberInRange(schedule.value, 15, 1, 999999),
-        },
+        schedule: normalizeWorkflowSchedule(record.schedule),
         is_enabled: record.is_enabled !== false,
         error_handling: {
             strategy: errorHandling.strategy === 'continue' ? 'continue' : 'halt',
@@ -1328,6 +1404,8 @@ export function workflowSettingsDraftErrors(
         // A group whose File Sync is off lists no sources, which says nothing about the selected ones.
         availableSourceKeys: group && listing?.fileSyncEnabled
             ? new Set(listing.sources.map(workflowFileSyncSourceKey)) : null,
+        scheduleTimezones: workflowScheduleTimezones(options),
+        minScheduleIntervalSeconds: options.schedule?.min_interval_seconds ?? null,
     });
     const sent = isRecord(payload.file_sync) && Array.isArray(payload.file_sync.sources) ? payload.file_sync.sources : [];
     // The one deliberate difference: the server keeps the first 10 sources without saying so.
@@ -1773,6 +1851,16 @@ export async function fetchWorkflowEditorOptions(
         new Set(publicationSources.map((capability) => capability.source_kind)).size !== publicationSources.length
     )) {
         throw new Error('The workflow editor returned invalid publication source capabilities.');
+    }
+    const schedule = response.schedule;
+    const textList = (values: unknown) => Array.isArray(values) && values.every((value) => typeof value === 'string');
+    if (schedule !== undefined && (
+        !isRecord(schedule) || !textList(schedule.kinds) || !textList(schedule.units) ||
+        !textList(schedule.frequencies) || !textList(schedule.days_of_week) || !textList(schedule.timezones) ||
+        !Number.isInteger(schedule.min_interval_seconds) || schedule.min_interval_seconds < 1 ||
+        schedule.min_interval_seconds > 86400
+    )) {
+        throw new Error('The workflow editor returned invalid schedule options.');
     }
     return response;
 }

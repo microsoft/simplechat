@@ -1,5 +1,5 @@
 # functions_workflow_limits.py
-"""Validated item ceilings shared by workflow administration and loop admission."""
+"""Validated ceilings and floors shared by workflow administration, saving and loop admission."""
 
 from collections.abc import Mapping
 
@@ -13,6 +13,11 @@ WORKFLOW_REPEAT_ITERATIONS_DEFAULT = 25
 WORKFLOW_REPEAT_ITERATIONS_MIN = 1
 WORKFLOW_REPEAT_ITERATIONS_MAX = 1000
 WORKFLOW_REPEAT_LIMIT_SETTING = "workflow_max_repeat_iterations"
+# One second is the shortest interval a schedule could already use, so the default changes nothing.
+WORKFLOW_MIN_SCHEDULE_INTERVAL_DEFAULT = 1
+WORKFLOW_MIN_SCHEDULE_INTERVAL_MIN = 1
+WORKFLOW_MIN_SCHEDULE_INTERVAL_MAX = 86400
+WORKFLOW_MIN_SCHEDULE_INTERVAL_SETTING = "workflow_min_schedule_interval_seconds"
 
 
 class WorkflowLoopInputError(ValueError):
@@ -112,6 +117,44 @@ def get_workflow_max_repeat_iterations(settings=None):
         )
     return validate_workflow_max_repeat_iterations(
         settings.get(WORKFLOW_REPEAT_LIMIT_SETTING, WORKFLOW_REPEAT_ITERATIONS_DEFAULT)
+    )
+
+
+def validate_workflow_min_schedule_interval_seconds(value):
+    """Validate the shortest interval a new or changed interval schedule may use."""
+    candidate = value
+    if isinstance(value, str):
+        text = value.strip()
+        candidate = (
+            int(text)
+            if text.isascii() and text.isdecimal() and len(text) <= 10
+            else None
+        )
+    if (
+        type(candidate) is not int
+        or not WORKFLOW_MIN_SCHEDULE_INTERVAL_MIN <= candidate <= WORKFLOW_MIN_SCHEDULE_INTERVAL_MAX
+    ):
+        raise WorkflowLoopLimitError(
+            "Workflow Minimum Schedule Interval must be a whole number of seconds from 1 to 86,400.",
+            code="workflow_schedule_interval_limit_invalid",
+        )
+    return candidate
+
+
+def get_workflow_min_schedule_interval_seconds(settings=None):
+    """Read the schedule floor for a save; saved schedules are never re-checked against it."""
+    if settings is None:
+        # Settings initialize application clients; load them only at a request boundary.
+        from functions_settings import get_settings
+
+        settings = get_settings()
+    if not isinstance(settings, Mapping):
+        raise WorkflowLoopLimitError(
+            "The workflow schedule minimum is temporarily unavailable.",
+            code="workflow_schedule_interval_limit_unavailable",
+        )
+    return validate_workflow_min_schedule_interval_seconds(
+        settings.get(WORKFLOW_MIN_SCHEDULE_INTERVAL_SETTING, WORKFLOW_MIN_SCHEDULE_INTERVAL_DEFAULT)
     )
 
 

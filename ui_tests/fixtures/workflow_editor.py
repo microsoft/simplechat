@@ -1,7 +1,7 @@
 # workflow_editor.py
 """
 Closed API fixtures for the native V2 workflow editor.
-Version: 0.261.183
+Version: 0.261.193
 Implemented in: 0.261.108
 Group File Sync, alert handoff and personal-scope trap modelling added in: 0.261.141
 Real alert normalizer on both save routes added in: 0.261.144
@@ -9,6 +9,9 @@ Reviewed settings errors, personal File Sync rules, deleted workflows and the ru
 Group workflow list/save/run/cancel/delete responses held to the real route shapes in: 0.261.178
 The public document picker is served the public chat list as its route answers it (chat_list), with
 no generated artifact awaiting publication: 0.261.183
+Calendar schedules, the server's schedule editor options and the administrator's minimum interval
+(`min_schedule_interval_seconds`, applied only to a new or changed interval) added in: 0.261.193.
+`unlisted_schedule_timezones` leaves zones out of the options' list, as an older server tzdata would.
 
 Group File Sync requests are answered by the real server functions, compiled from source:
 `_serialize_workflow_file_sync_source` builds the source list, and `_normalize_file_sync_config`,
@@ -68,6 +71,7 @@ sys.path.insert(0, str(APP_ROOT))
 
 # Validate the browser's actual data-flow payload with production helpers.
 import functions_workflow_alert_safety  # noqa: E402  (pure module, no application imports)
+import functions_workflow_schedules  # noqa: E402  (pure module: the standard library and the reviewed error)
 from functions_workflow_definitions import (  # noqa: E402
     WORKFLOW_DELETED_MESSAGE,
     WorkflowAlertValidationError,
@@ -131,7 +135,7 @@ FILE_SYNC_CODE = (
         "FILE_SYNC_SCOPE_PERSONAL", "FILE_SYNC_SCOPE_GROUP", "FILE_SYNC_SCOPE_PUBLIC", "FILE_SYNC_MANAGER_ROLES",
     )),
     _production_code("functions_personal_workflows.py", (
-        "WORKFLOW_SCHEDULE_UNITS", "WORKFLOW_FILE_SYNC_WAIT_MODES", "WORKFLOW_FILE_SYNC_CONTINUE_MODES",
+        "WORKFLOW_FILE_SYNC_WAIT_MODES", "WORKFLOW_FILE_SYNC_CONTINUE_MODES",
         "WORKFLOW_FILE_SYNC_MAX_SOURCES", "_normalize_text", "_normalize_bool", "_normalize_schedule",
     )),
     _production_code("functions_group_workflows.py", ("_normalize_file_sync_config",)),
@@ -237,7 +241,7 @@ def workflow_record(identifier=WORKFLOW_ID, **overrides):
     return record
 
 
-def editor_options(scope_type="personal", scope_id=None):
+def editor_options(scope_type="personal", scope_id=None, *, min_schedule_interval_seconds=1):
     return {
         "definition_version": 2,
         "supported_definition_versions": [1, 2, 3],
@@ -247,6 +251,10 @@ def editor_options(scope_type="personal", scope_id=None):
             "max_predicate_nodes": 100, "max_predicate_depth": 8,
             "max_executions": 5000, "deadline_seconds": 86400,
         },
+        # The server's own schedule choices, including its IANA time zone list.
+        "schedule": functions_workflow_schedules.build_workflow_schedule_editor_options(
+            min_interval_seconds=min_schedule_interval_seconds,
+        ),
         "can_manage": True,
         "max_tasks": 6,
         "agents": [
@@ -464,6 +472,11 @@ class WorkflowEditorFixture(WorkspaceAuthoringFixture):
         self.classic_visits = []
         self.alert_refusals = []
         self.settings_refusals = []
+        # The administrator's Workflow Minimum Schedule Interval; one second is the setting's default.
+        self.min_schedule_interval_seconds = 1
+        # Zones left out of the editor options' list, as when the browser reports a zone newer than
+        # the server's tzdata release.
+        self.unlisted_schedule_timezones = set()
         self.file_sync_rules, self.personal_file_sync_rules = self._bind_file_sync_rules()
 
     def _group_role(self):
@@ -516,6 +529,15 @@ class WorkflowEditorFixture(WorkspaceAuthoringFixture):
             ),
             "WorkflowPublicValidationError": WorkflowPublicValidationError,
             "WorkflowSourceUnavailableError": WorkflowSourceUnavailableError,
+            # `_normalize_schedule` applies the real schedule rules and the administrator's minimum,
+            # which is fixture state here instead of a settings read.
+            **{
+                name: getattr(functions_workflow_schedules, name) for name in (
+                    "normalize_workflow_schedule", "workflow_schedule_minimum_applies",
+                    "enforce_workflow_schedule_minimum",
+                )
+            },
+            "get_workflow_min_schedule_interval_seconds": lambda settings=None: self.min_schedule_interval_seconds,
         }
         for code in FILE_SYNC_CODE:
             exec(code, rules)
@@ -581,7 +603,7 @@ class WorkflowEditorFixture(WorkspaceAuthoringFixture):
             raise WorkflowPublicValidationError(TRIGGER_UNKNOWN)
         return trigger_type
 
-    def _trigger_refusal(self, trigger_type, body, file_sync):
+    def _trigger_refusal(self, trigger_type, body, file_sync, existing=None):
         """The Monitor File Sync trigger and schedule rules, which both saves apply after alerts."""
         if trigger_type == "file_sync":
             if not file_sync.get("enabled"):
@@ -591,7 +613,7 @@ class WorkflowEditorFixture(WorkspaceAuthoringFixture):
             if file_sync.get("continue_mode") != "changed":
                 raise WorkflowPublicValidationError(MONITOR_ON_CHANGES)
         if trigger_type in {"interval", "file_sync"}:
-            self.file_sync_rules["_normalize_schedule"](body.get("schedule"))
+            self.file_sync_rules["_normalize_schedule"](body.get("schedule"), existing_workflow=existing)
 
     def runtime_projection(self, state="running", version=1, gate=None, can_resume=False):
         runtime = {
@@ -752,15 +774,19 @@ class WorkflowEditorFixture(WorkspaceAuthoringFixture):
             assert entry.query.get("group_id") == [GROUP_ID], entry
             self._json(route, {"actions": [], "agents": []} if path.endswith("/plugins") else {"agents": []})
         elif path in ("/api/user/workflows/editor-options", "/api/group/workflows/editor-options") and method == "GET":
+            minimum = self.min_schedule_interval_seconds
             if path.startswith("/api/group/"):
                 assert entry.query.get("group_id") == [GROUP_ID], entry
-                options = editor_options("group", GROUP_ID)
+                options = editor_options("group", GROUP_ID, min_schedule_interval_seconds=minimum)
                 # The real options grant management from the viewer's group role.
                 options["can_manage"] = getattr(self, "group_can_manage", True)
-                self._json(route, options)
             else:
                 assert not entry.query, entry
-                self._json(route, editor_options())
+                options = editor_options(min_schedule_interval_seconds=minimum)
+            options["schedule"]["timezones"] = [
+                zone for zone in options["schedule"]["timezones"] if zone not in self.unlisted_schedule_timezones
+            ]
+            self._json(route, options)
         elif path == FILE_SYNC_SOURCES_PATH and method == "GET":
             self._group_file_sync_sources(route, entry)
         elif path == "/api/workflows/m365-run-as-users" and method == "GET":
@@ -867,7 +893,7 @@ class WorkflowEditorFixture(WorkspaceAuthoringFixture):
             self._json(route, {"error": exc.public_message, "code": exc.code}, 400)
             return
         try:
-            self._trigger_refusal(trigger_type, entry.body, file_sync)
+            self._trigger_refusal(trigger_type, entry.body, file_sync, existing)
         except WorkflowPublicValidationError as exc:
             self._save_error(route, exc, scope_type)
             return

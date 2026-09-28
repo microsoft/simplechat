@@ -29,6 +29,7 @@ import {
     fetchWorkflowEditorOptions,
     startScopedWorkflowRun,
     workflowErrorMessage,
+    workflowScheduleLabel,
     workflowScopeKey,
     type WorkflowDefinition,
     type WorkflowEditorOptions,
@@ -277,12 +278,19 @@ export function WorkflowsSection({
                     const running = Boolean(workflow.active_run_id);
                     const workflowId = workflow.id ?? '';
                     const expanded = expandedId === workflowId;
+                    const description = String(workflow.description ?? '');
+                    const scheduleLabel = workflowScheduleLabel(workflow.trigger_type, workflow.schedule);
                     return (
                         <div>
                             <ResourceRow
                                 icon={<Workflow size={17} />}
                                 title={String(workflow.name ?? 'Untitled workflow')}
-                                subtitle={String(workflow.description ?? '')}
+                                subtitle={scheduleLabel ? (
+                                    <>
+                                        {description ? <span className="block truncate">{description}</span> : null}
+                                        <span className="block truncate">Schedule: {scheduleLabel}</span>
+                                    </>
+                                ) : description}
                                 meta={
                                     workflow.status ? (
                                         <Pill tone={statusTone(workflow.status)}>
