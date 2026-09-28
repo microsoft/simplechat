@@ -1,9 +1,10 @@
 # test_v2_orchestration_plan_editor_backend.py
 """
 Browser-to-Flask regression for editing and running an orchestration plan.
-Version: 0.261.115
+Version: 0.261.196
 Implemented in: 0.261.102
 Selected model continuity through editing and execution: 0.261.103
+Retrying a failed ask resends the same request under its submission id: 0.261.196
 
 The browser's real HTTP requests are forwarded to the actual Flask route test client.
 Unlike the frontend-only suite, no orchestration response is fabricated by the browser
@@ -259,6 +260,39 @@ def test_stale_cancel_does_not_discard_another_tabs_new_question(integrated_edit
     assert discard['elicitation_id'] == newest['pending']['elicitation_id']
     assert discard['elicitation_id'] != old_question['elicitation_id']
     assert backend.editor(newest['plan']['run_id'])['pending'] is None
+
+
+def test_retrying_a_failed_ask_resends_the_same_request_under_its_id(integrated_editor):
+    """The server records a submission id before the planner answers. Retrying the same request,
+    even after closing and reopening the editor, must reuse that id so the server can tell a retry
+    from a new request, and the stored chat must then hold the exchange once."""
+    page, backend, requests, _original = integrated_editor
+    dialog = editor_tests.open_editor(page)
+    # An unusable reply fails the ask after the server has recorded its submission id.
+    backend.edit_responses.append({'kind': 'plan', 'steps': []})
+    instruction = 'Add another document search focused on winery prices.'
+    editor_tests.ask(page, instruction)
+    expect(editor_tests.thread_exchanges(dialog)).to_have_attribute('data-status', 'failed')
+
+    dialog.get_by_role('button', name='Close the plan editor').click()
+    dialog = editor_tests.open_editor(page)
+    failed = editor_tests.thread_exchanges(dialog)
+    expect(failed).to_have_attribute('data-status', 'failed')
+
+    backend.edit_responses.append(backend_tests.revised_plan(searches=2))
+    failed.get_by_role('button', name='Retry', exact=True).click()
+    editor_tests.wait_revision(page, 1, 'conv1', 'turn1')
+
+    asks = [entry for entry in requests if entry['path'].endswith('/revisions')]
+    assert [entry['status'] for entry in asks] == [200, 200], asks
+    first, retry = (entry['body'] for entry in asks)
+    assert first == retry
+    assert first['instruction'] == instruction
+    expect(editor_tests.thread_exchanges(dialog)).to_have_count(0)
+    expect(editor_tests.planner_log(dialog).locator('li')).to_have_count(2)
+    chat = editor_tests.state(page, 'conv1', 'turn1')['editor']['state']['chat']
+    assert [turn.get('submission_id') for turn in chat] == [first['submission_id']] * 2, chat
+    expect(dialog.get_by_role('alert')).to_have_count(0)
 
 
 @pytest.mark.parametrize('integrated_editor', ['luna-stale'], indirect=True)

@@ -35,16 +35,27 @@ import {
 } from '../application/v2_ui/src/lib/assistThread';
 import { ASSIST_INSTRUCTION_LIMITS } from '../application/v2_ui/src/lib/assistLimits';
 import {
+    MAX_SENT_PLAN_SUBMISSIONS,
+    choosePlanSubmissionId,
+    rememberPlanSubmission,
+    resetPlanSubmissions,
+    sentPlanSubmission,
+} from '../application/v2_ui/src/lib/planSubmissionIds';
+import {
     MAX_ABANDONED_IDS,
     MAX_DONE_EXCHANGES,
+    MAX_SENT_IDS,
     MAX_THREADS,
     blankDraft,
     capAbandonedIds,
     capDoneExchanges,
+    exchangeRetryId,
+    exchangeSubmissionIds,
     isThreadIdle,
     newThread,
     pruneThreads,
     useAssistThreadStore,
+    withSentId,
     type AssistExchange,
     type AssistThreadRecord,
 } from '../application/v2_ui/src/stores/assistThreadStore';
@@ -189,8 +200,13 @@ async function main() {
         );
         check(
             'the request carries no transcript, so the model only sees what the server stored',
-            Object.keys(calls[0]?.request ?? {}).sort().join() === 'draft,earlierSubmissionIds,signal,submissionId,text',
+            Object.keys(calls[0]?.request ?? {}).sort().join()
+                === 'draft,earlierSubmissionIds,ownSubmissionIds,signal,submissionId,text',
             Object.keys(calls[0]?.request ?? {}),
+        );
+        check(
+            'a first request names only its own id as its own',
+            calls[0]?.request.ownSubmissionIds.join() === id,
         );
         check('the request is in flight', hasActiveAssistRequest(id ?? ''));
         check('a pending exchange records when it started', (exchange?.startedAt ?? 0) > 0);
@@ -315,14 +331,134 @@ async function main() {
         const id = submit(planKey, send) ?? '';
         calls[0].answer({ ok: false, error: 'Try again.', submissionId: 'server-held-id' });
         await settle();
-        check('an id the editor sent instead is remembered', thread(planKey).exchanges[0]?.serverId === 'server-held-id');
+        check(
+            'an id the editor sent instead is remembered',
+            thread(planKey).exchanges[0]?.sentIds?.join() === [id, 'server-held-id'].join(),
+            thread(planKey).exchanges[0]?.sentIds,
+        );
 
         retryAssistExchange(planKey, id, 'stored', send);
         check('retry resends the id the server knows', calls[1]?.request.submissionId === 'server-held-id');
-        calls[1].answer({ ok: false, error: 'Still busy.' });
+        check(
+            'retry names every id the server may know the exchange by',
+            calls[1]?.request.ownSubmissionIds.join() === [id, 'server-held-id'].join(),
+        );
+        check(
+            'an id of the exchange itself is never named as an earlier one',
+            !calls[1]?.request.earlierSubmissionIds.some((value) => value === id || value === 'server-held-id'),
+        );
+
+        // The plan changed under the failed request, so the editor had to send the retry fresh.
+        calls[1].answer({ ok: false, error: 'Still busy.', submissionId: 'fresh-id' });
         await settle();
-        const reconciled = reconcileStoredExchanges(thread(planKey), new Set(['server-held-id']), 'stored');
-        check('the stored chat recognises an exchange by either id', reconciled.exchanges.length === 0);
+        check(
+            'every id an exchange went out under is remembered, oldest first',
+            thread(planKey).exchanges[0]?.sentIds?.join() === [id, 'server-held-id', 'fresh-id'].join(),
+            thread(planKey).exchanges[0]?.sentIds,
+        );
+        retryAssistExchange(planKey, id, 'stored', send);
+        check('a later retry sends the id it last went out under', calls[2]?.request.submissionId === 'fresh-id');
+        calls[2].answer({ ok: false, error: 'Still busy.', submissionId: 'fresh-id' });
+        await settle();
+        check(
+            'resending under the same id does not repeat it',
+            thread(planKey).exchanges[0]?.sentIds?.join() === [id, 'server-held-id', 'fresh-id'].join(),
+        );
+
+        for (const earlier of ['server-held-id', id]) {
+            const reconciled = reconcileStoredExchanges(thread(planKey), new Set([earlier]), 'stored');
+            check(`the stored chat recognises an exchange by an earlier id (${earlier === id ? 'its own' : 'one it replaced'})`,
+                reconciled.exchanges.length === 0);
+        }
+
+        retryAssistExchange(planKey, id, 'stored', send);
+        cancelAssistExchange(planKey, id);
+        await settle();
+        typeInto(planKey, 'Something else');
+        submit(planKey, send);
+        check(
+            'moving on remembers every id of the exchange left behind',
+            [id, 'server-held-id', 'fresh-id'].every((value) => thread(planKey).abandonedIds.includes(value)),
+            thread(planKey).abandonedIds,
+        );
+    }
+
+    /* ---- how many ids an exchange remembers ---- */
+
+    {
+        let exchange = exchangeOf('first-id');
+        for (let index = 0; index < MAX_SENT_IDS + 5; index += 1) {
+            exchange = { ...exchange, sentIds: withSentId(exchange, `id-${index}`) };
+        }
+        check(
+            'an exchange remembers a bounded number of ids',
+            exchange.sentIds?.length === MAX_SENT_IDS
+                && exchange.sentIds[MAX_SENT_IDS - 1] === `id-${MAX_SENT_IDS + 4}`,
+            exchange.sentIds,
+        );
+        check('a retry sends the newest of them', exchangeRetryId(exchange) === `id-${MAX_SENT_IDS + 4}`);
+        check(
+            'the exchange is always known by its own id',
+            exchangeSubmissionIds(exchange)[0] === 'first-id'
+                && new Set(exchangeSubmissionIds(exchange)).size === exchangeSubmissionIds(exchange).length,
+        );
+        const plain = exchangeOf('plain-id');
+        check('an exchange sent under its own id records nothing extra', withSentId(plain, 'plain-id') === undefined);
+        check('an exchange without a reported id records nothing extra', withSentId(plain, undefined) === undefined);
+        check('an exchange sent under its own id retries under it', exchangeRetryId(plain) === 'plain-id');
+    }
+
+    /* ---- the id a plan request is sent under ---- */
+
+    resetPlanSubmissions();
+    {
+        let minted = 0;
+        const mint = () => `minted-${++minted}`;
+        const first = JSON.stringify({ runId: 'run-1', version: 1, action: { action: 'ask', instruction: 'A' } });
+        const moved = JSON.stringify({ runId: 'run-1', version: 2, action: { action: 'ask', instruction: 'A' } });
+
+        check(
+            'a thread id this page never sent is used as it is',
+            choosePlanSubmissionId(first, null, 'thread-id', mint) === 'thread-id' && minted === 0,
+        );
+        rememberPlanSubmission('thread-id', first);
+        check('the request an id went out with is remembered', sentPlanSubmission('thread-id') === first);
+        check(
+            'the same request again keeps its id, so the server replays it',
+            choosePlanSubmissionId(first, null, 'thread-id', mint) === 'thread-id' && minted === 0,
+        );
+        check(
+            'a different request never reuses an id the server holds to another, which it would refuse for good',
+            choosePlanSubmissionId(moved, null, 'thread-id', mint) === 'minted-1',
+        );
+        check(
+            'the request the editor holds keeps its own id',
+            choosePlanSubmissionId(first, { id: 'held-id', fingerprint: first }, 'thread-id', mint) === 'held-id',
+        );
+        check(
+            'a held id for a different request is not reused',
+            choosePlanSubmissionId(moved, { id: 'held-id', fingerprint: first }, undefined, mint) === 'minted-2',
+        );
+        check(
+            'a held id for a different request gives way to the thread id',
+            choosePlanSubmissionId(moved, { id: 'held-id', fingerprint: first }, 'new-thread-id', mint) === 'new-thread-id',
+        );
+        check('with no id to use, a fresh one is minted', choosePlanSubmissionId(first, null, undefined, mint) === 'minted-3');
+
+        rememberPlanSubmission('thread-id', moved);
+        check('an id sent again is remembered with its latest request', sentPlanSubmission('thread-id') === moved);
+
+        resetPlanSubmissions();
+        for (let index = 0; index <= MAX_SENT_PLAN_SUBMISSIONS; index += 1) {
+            rememberPlanSubmission(`sent-${index}`, first);
+        }
+        check(
+            'the page remembers a bounded number of sent ids, forgetting the oldest',
+            sentPlanSubmission('sent-0') === undefined
+                && sentPlanSubmission(`sent-${MAX_SENT_PLAN_SUBMISSIONS}`) === first
+                && sentPlanSubmission('sent-1') === first,
+        );
+        resetPlanSubmissions();
     }
 
     /* ---- cancel ---- */
@@ -571,7 +707,7 @@ async function main() {
             'a local success records the reply and the id the editor sent',
             localDone.exchanges[0]?.status === 'done'
                 && localDone.exchanges[0].reply === 'Done.'
-                && localDone.exchanges[0].serverId === 'other-id',
+                && localDone.exchanges[0].sentIds?.join() === 'a,other-id',
         );
     }
 

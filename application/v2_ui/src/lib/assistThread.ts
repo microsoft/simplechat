@@ -27,9 +27,11 @@ import {
     capAbandonedIds,
     capDoneExchanges,
     draftHasContent,
+    exchangeRetryId,
     exchangeSubmissionIds,
     selectAssistThread,
     useAssistThreadStore,
+    withSentId,
     type AssistExchange,
     type AssistThreadRecord,
 } from '../stores/assistThreadStore';
@@ -51,6 +53,8 @@ export interface AssistSendRequest {
     text: string;
     draft: ComposerDraft;
     submissionId: string;
+    /** Every id the server may know this exchange by, `submissionId` among them. */
+    ownSubmissionIds: readonly string[];
     signal: AbortSignal;
     /** Ids of this thread's exchanges the reader cancelled or moved on from. */
     earlierSubmissionIds: readonly string[];
@@ -201,8 +205,7 @@ export function settleExchange(
         exchanges: record.exchanges.filter((item) => item.id !== id),
         abandonedIds: withoutIds(record.abandonedIds, ids),
     });
-    const serverId = result.submissionId && result.submissionId !== exchange.id
-        ? result.submissionId : exchange.serverId;
+    const sentIds = withSentId(exchange, result.submissionId);
 
     if (result.ok) {
         // A success also settles an exchange the reader cancelled: the change happened.
@@ -214,7 +217,7 @@ export function settleExchange(
             abandonedIds: withoutIds(record.abandonedIds, ids),
             exchanges: capDoneExchanges(record.exchanges.map((item) => item.id === id ? {
                 ...item,
-                serverId,
+                sentIds,
                 status: 'done',
                 reply: result.reply ?? '',
                 error: undefined,
@@ -224,7 +227,7 @@ export function settleExchange(
     }
     if (result.aborted) {
         return exchange.status === 'cancelled' ? record : replaceExchange(record, id, (item) => ({
-            ...item, serverId, status: 'cancelled', error: CANCELLED_MESSAGE, cancelling: false,
+            ...item, sentIds, status: 'cancelled', error: CANCELLED_MESSAGE, cancelling: false,
         }));
     }
     if (result.stale) {
@@ -237,7 +240,7 @@ export function settleExchange(
         // The reader asked for this, so it reads as cancelled rather than as a failure.
         return replaceExchange(record, id, (item) => ({
             ...item,
-            serverId,
+            sentIds,
             status: item.cancelling ? 'cancelled' : 'failed',
             error: item.cancelling ? CANCELLED_MESSAGE : STALE_MESSAGE,
             cancelling: false,
@@ -248,12 +251,12 @@ export function settleExchange(
             return { ...remove(), draft: exchange.draft, notice: EARLIER_APPLIED_MESSAGE };
         }
         return replaceExchange(record, id, (item) => ({
-            ...item, serverId, status: 'failed', error: EARLIER_APPLIED_MESSAGE, cancelling: false,
+            ...item, sentIds, status: 'failed', error: EARLIER_APPLIED_MESSAGE, cancelling: false,
         }));
     }
     return replaceExchange(record, id, (item) => ({
         ...item,
-        serverId,
+        sentIds,
         status: 'failed',
         error: result.error || 'The request failed. Try again.',
         cancelling: false,
@@ -293,7 +296,7 @@ async function runExchange(
     }
     const controller = new AbortController();
     controllers.set(id, controller);
-    const submissionId = exchange.serverId ?? exchange.id;
+    const submissionId = exchangeRetryId(exchange);
     const own = exchangeSubmissionIds(exchange);
     let result: AssistSendResult;
     try {
@@ -301,6 +304,7 @@ async function runExchange(
             text: exchange.text,
             draft: exchange.draft,
             submissionId,
+            ownSubmissionIds: own,
             signal: controller.signal,
             earlierSubmissionIds: record.abandonedIds.filter((value) => !own.includes(value)),
         });
@@ -357,7 +361,7 @@ export function submitAssistDraft(options: AssistSubmitOptions): string | null {
             ],
             abandonedIds: capAbandonedIds([
                 ...current.abandonedIds,
-                ...moving.map((item) => item.serverId ?? item.id),
+                ...moving.flatMap((item) => exchangeSubmissionIds(item)),
             ]),
             draft: blankDraft(),
             notice: null,
@@ -423,7 +427,7 @@ export function cancelAssistExchange(
         ...replaceExchange(current, id, (item) => ({
             ...item, status: 'cancelled', error: CANCELLED_MESSAGE, cancelling: false,
         })),
-        abandonedIds: capAbandonedIds([...current.abandonedIds, exchange.serverId ?? exchange.id]),
+        abandonedIds: capAbandonedIds([...current.abandonedIds, ...exchangeSubmissionIds(exchange)]),
     }));
     controllers.get(id)?.abort();
 }
@@ -439,7 +443,7 @@ export function editAssistExchange(key: string, id: string): boolean {
         ...current,
         exchanges: current.exchanges.filter((item) => item.id !== id),
         abandonedIds: exchange.status === 'done' ? current.abandonedIds
-            : capAbandonedIds([...current.abandonedIds, exchange.serverId ?? exchange.id]),
+            : capAbandonedIds([...current.abandonedIds, ...exchangeSubmissionIds(exchange)]),
         draft: restoreDraft(current.draft, exchange),
     }));
     return true;

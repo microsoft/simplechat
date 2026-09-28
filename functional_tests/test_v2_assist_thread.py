@@ -48,6 +48,7 @@ ENDPOINTS_TS = V2_SRC / "lib" / "endpoints.ts"
 COLLABORATION_TS = V2_SRC / "lib" / "collaboration.ts"
 ORCHESTRATION_TS = V2_SRC / "lib" / "orchestration.ts"
 CONTROLLER_TS = V2_SRC / "lib" / "orchestrationController.ts"
+PLAN_IDS_TS = V2_SRC / "lib" / "planSubmissionIds.ts"
 
 EDITORS = {
     "diagram": CHAT_COMPONENTS / "DiagramEditor.tsx",
@@ -239,7 +240,18 @@ def test_every_request_carries_a_submission_id():
         "a shared chat's assist request must accept a submission id"
     )
 
-    assert "submission_id: sentId" in _read(CONTROLLER_TS)
+    controller = _read(CONTROLLER_TS)
+    assert "submission_id: sentId" in controller
+    # The server holds an id to the request it first came with and refuses it with any other, so
+    # a retry that is no longer the same request must go out under a fresh id.
+    assert (
+        "choosePlanSubmissionId(fingerprint, session.submission, options.submissionId, makeTurnId)"
+        in controller
+    )
+    assert "rememberPlanSubmission(sentId, fingerprint);" in controller
+    plan_ids = _read(PLAN_IDS_TS)
+    assert "previous === undefined || previous === fingerprint" in plan_ids
+    assert "MAX_SENT_PLAN_SUBMISSIONS" in plan_ids
 
     # Each editor hands the thread's whole request to the hook that sends it, so the id, the
     # abort signal and the cancelled ids all travel together.
@@ -323,7 +335,7 @@ def test_the_thread_renders_text_only():
 
 def test_the_new_files_load_nothing_remote():
     """Browser code stays local: no remote URL and no dynamic import."""
-    for path in (THREAD_TSX, THREAD_TS, STORE_TS, LIMITS_TS):
+    for path in (THREAD_TSX, THREAD_TS, STORE_TS, LIMITS_TS, PLAN_IDS_TS):
         source = _read(path)
         assert not re.search(r"https?://", source), f"{path.name} references a remote URL"
         assert not re.search(r"\bimport\(", source), f"{path.name} uses a dynamic import"

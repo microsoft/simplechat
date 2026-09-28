@@ -56,6 +56,7 @@ import {
 import type { Json } from './types';
 import { normalizeReasoningAdjustments, type ReasoningResolution } from './reasoning';
 import { applyOrchestrationOutputEvent } from './orchestrationOutputController';
+import { choosePlanSubmissionId, rememberPlanSubmission } from './planSubmissionIds';
 import { useChatStore } from '../stores/chatStore';
 import {
     selectEdits,
@@ -1364,8 +1365,10 @@ export async function refreshOrchestrationPlanEditor(
 /** How the plan editor's assist thread sends a planner request. */
 export interface PlanRevisionOptions {
     /**
-     * The id for a new request. A retry of the request the editor already holds keeps that
-     * request's id instead, so the server replays it rather than running it twice.
+     * The id for this request. A retry of the request the editor already holds keeps that
+     * request's id instead, so the server replays it rather than running it twice. An id this page
+     * already sent with a different request is replaced by a fresh one, because the server would
+     * refuse it; the result says which id was used.
      */
     submissionId?: string;
     /** The caller shows a failure in its own turn, so the editor's banner stays clear. */
@@ -1493,8 +1496,8 @@ export async function submitPlanRevision(
         }
         const edits = discarding ? undefined : selectEdits(store, conversationId, turnId);
         const fingerprint = JSON.stringify({ runId: requestPlan.run_id, version, edits, action });
-        const sentId = session.submission?.fingerprint === fingerprint
-            ? session.submission.id : options.submissionId ?? makeTurnId();
+        const sentId = choosePlanSubmissionId(fingerprint, session.submission, options.submissionId, makeTurnId);
+        rememberPlanSubmission(sentId, fingerprint);
         submissionId = sentId;
         const body: PlanRevisionRequest = {
             ...action,

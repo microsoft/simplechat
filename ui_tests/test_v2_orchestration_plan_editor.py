@@ -106,6 +106,8 @@ class EditorApi:
         self.unexpected = []
         self.expected_errors = set()
         self.submissions = {}
+        # Like the server, an id is held to the request it first came with, even if that failed.
+        self.attempts = {}
         self.waiting = []
         self.next_revision = "success"
         self.hold_response = "success"
@@ -211,10 +213,16 @@ class EditorApi:
             assert saved_body == body, "An idempotency token must not identify changed input."
             self.stream(route, event)
             return
+        attempted = self.attempts.get(submission)
+        if attempted is not None and attempted != body:
+            self.error(route, 409, "That submission ID was already used for a different edit.",
+                       "submission_conflict")
+            return
         if body["expected_version"] != editor["version"]:
             self.error(route, 409, "The plan changed. Review its current saved revision.",
                        "plan_changed", editor["plan"]["run_id"])
             return
+        self.attempts[submission] = copy.deepcopy(body)
         assert "plan" not in body and "elicitation" not in body, "Only server-owned identities may be submitted."
         if behavior == "error":
             self.error(route, 503, "Planner unavailable. Your last saved plan is unchanged.", "unavailable")
@@ -709,6 +717,52 @@ def test_failed_or_lost_response_keeps_instruction_and_idempotent_retry(editor_u
     expect(planner_log(dialog).locator("li")).to_have_count(2)
     expect(dialog.get_by_role("alert")).to_have_count(0)
     assert len(state(page)["messages"]) == 1
+
+
+def test_retry_after_the_plan_changed_is_sent_as_a_new_request(editor_ui):
+    """The server holds a submission id to the request it first came with, even one that failed,
+    and refuses it with any other. A reader who changes the plan before pressing Retry must not
+    be refused for good, so the retry goes out as a new request."""
+    page, api = editor_ui
+    mount(page, api)
+    dialog = open_editor(page)
+    api.next_revision = "error"
+    ask(page, "Add web search before the comparison")
+    expect(thread_exchanges(dialog)).to_have_attribute("data-status", "failed")
+
+    dialog.get_by_role("button", name="Close the plan editor").click()
+    page.get_by_role("button", name="Review the plan in the drawer").click()
+    review = page.get_by_role("complementary", name="Review drawer")
+    review.locator("ol > li").filter(has_text="Investigate context").locator("label").click()
+    assert state(page)["edits"]["disabled_step_ids"] == ["research"]
+    review.get_by_role("button", name="Edit the plan").click()
+    dialog = page.get_by_role("dialog", name="Edit orchestration plan")
+    failed = thread_exchanges(dialog)
+    expect(failed).to_have_attribute("data-status", "failed")
+    failed.get_by_role("button", name="Retry", exact=True).click()
+    wait_revision(page, 1)
+
+    first, retry = (call["body"] for call in api.calls("/revisions"))
+    assert first["instruction"] == retry["instruction"] == "Add web search before the comparison"
+    assert first["edits"] != retry["edits"]
+    assert first["submission_id"] != retry["submission_id"]
+    expect(thread_exchanges(dialog)).to_have_count(0)
+    turns = planner_log(dialog).locator("li")
+    expect(turns).to_have_count(2)
+    expect(turns.first).to_contain_text("Add web search before the comparison")
+    expect(dialog.get_by_role("alert")).to_have_count(0)
+    chat = api.editors["editor-chat"]["chat"]
+    assert [turn["submission_id"] for turn in chat] == [retry["submission_id"]] * 2
+
+    # Retrying the very same request keeps its id, so the server can replay it.
+    api.next_revision = "error"
+    ask(page, "Add a pricing search")
+    failed = thread_exchanges(dialog)
+    expect(failed).to_have_attribute("data-status", "failed")
+    failed.get_by_role("button", name="Retry", exact=True).click()
+    wait_revision(page, 2)
+    last_failed, last_retry = (call["body"] for call in api.calls("/revisions")[-2:])
+    assert last_failed == last_retry
 
 
 def test_editor_question_answer_retry_close_and_discard_keep_live_plan(editor_ui):

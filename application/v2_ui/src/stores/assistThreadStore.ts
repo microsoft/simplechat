@@ -22,8 +22,13 @@ export type AssistExchangeStatus = 'pending' | 'failed' | 'cancelled' | 'done';
 export interface AssistExchange {
     /** The client submission id, which the server stores on both turns of the exchange. */
     id: string;
-    /** The id the server was actually sent, when the editor chose a different one. */
-    serverId?: string;
+    /**
+     * Every id the exchange was sent under, oldest first, once the editor chose one other than
+     * `id`. The plan editor does when a retry is no longer the same request, because the server
+     * holds an id to the request it first arrived with. A retry sends the last of them, and any of
+     * them may be the one the server stored.
+     */
+    sentIds?: string[];
     text: string;
     /** What the input held when it was sent, so Edit and resend can put it back. */
     draft: ComposerDraft;
@@ -59,6 +64,8 @@ export const MAX_DONE_EXCHANGES = 20;
 export const MAX_THREADS = 50;
 /** Abandoned submission ids remembered per thread. */
 export const MAX_ABANDONED_IDS = 10;
+/** Ids remembered per exchange that was sent under more than one. */
+export const MAX_SENT_IDS = 10;
 
 /** An empty input. Built here so the store does not load the composer's dependencies. */
 export function blankDraft(): ComposerDraft {
@@ -83,9 +90,23 @@ export function draftHasContent(draft: ComposerDraft): boolean {
 
 /** The ids the server may know an exchange by. */
 export function exchangeSubmissionIds(exchange: AssistExchange): string[] {
-    return exchange.serverId && exchange.serverId !== exchange.id
-        ? [exchange.id, exchange.serverId]
+    return exchange.sentIds?.length
+        ? Array.from(new Set([exchange.id, ...exchange.sentIds]))
         : [exchange.id];
+}
+
+/** The id a retry of an exchange is sent under: the one it was last sent under. */
+export function exchangeRetryId(exchange: AssistExchange): string {
+    return exchange.sentIds?.[exchange.sentIds.length - 1] ?? exchange.id;
+}
+
+/** An exchange's sent ids once it has also been sent under `submissionId`. */
+export function withSentId(exchange: AssistExchange, submissionId: string | undefined): string[] | undefined {
+    if (!submissionId || submissionId === exchangeRetryId(exchange)) {
+        return exchange.sentIds;
+    }
+    const sent = exchange.sentIds ?? [exchange.id];
+    return [...sent.filter((value) => value !== submissionId), submissionId].slice(-MAX_SENT_IDS);
 }
 
 /** A thread with nothing in flight, nothing to act on and no unsent text. */

@@ -71,7 +71,7 @@ function OrchestrationPlanEditor({ conversationId, turnId }: PlanEditorTarget) {
             elicitation_revision: pendingQuestion.revision ?? 0,
         } : {}),
     });
-    const sendInstruction: AssistSend = async ({ text, submissionId }) => {
+    const sendInstruction: AssistSend = async ({ text, submissionId, ownSubmissionIds }) => {
         const result = await submitPlanRevision(
             target, { action: 'ask', instruction: text }, { submissionId, inlineError: true },
         );
@@ -82,15 +82,15 @@ function OrchestrationPlanEditor({ conversationId, turnId }: PlanEditorTarget) {
             return { ok: false, error: result.error, submissionId: result.submissionId };
         }
         // Cancelled. Wait for the cancel to be answered: the stored chat then shows whether
-        // the change had finished first.
+        // the change had finished first, under this or any earlier id of the exchange.
         await whenPlanEditorSettles(target);
-        const sentId = result.submissionId ?? submissionId;
+        const own = new Set([...ownSubmissionIds, result.submissionId ?? submissionId]);
         const chat = selectPlanEditor(useOrchestrationStore.getState(), conversationId, turnId)?.state?.chat ?? [];
         return {
             ok: false,
             error: result.error,
             stale: true,
-            recorded: chat.some((turn) => turn.submission_id === sentId),
+            recorded: chat.some((turn) => Boolean(turn.submission_id && own.has(turn.submission_id))),
             submissionId: result.submissionId,
         };
     };
