@@ -238,7 +238,8 @@ def test_workflow_origin_links_to_its_run_in_the_workflow_history(provenance_ui)
     expect(link).to_have_text(normalized(f"Created by Quarterly review workflow \u00b7 run {run_time}"))
     expect(link).to_have_attribute("href", f"/v2{WORKFLOW_HREF}")
     expect(origin.get_by_role("status")).to_have_count(0)
-    assert [(entry.path, entry.query) for entry in ui.summary_reads()] == [
+    reads = ui.summary_reads()
+    assert [(entry.path, entry.query) for entry in reads] == [
         ("/api/documents/workflow-report", {"origin_summary": ["1"]}),
     ]
 
@@ -336,7 +337,8 @@ def test_an_origin_the_reader_cannot_open_is_plain_text(provenance_ui):
     show_details(ui, "Legacy notes")
     expect(details_pane(ui).get_by_text('Uploaded through chat in "Existing conversation".')).to_be_visible()
     expect(ui.page.get_by_role("heading", name="Origin", exact=True)).to_have_count(0)
-    assert [entry.path.rsplit("/", 1)[-1] for entry in ui.summary_reads()] == [
+    read_documents = [entry.path.rsplit("/", 1)[-1] for entry in ui.summary_reads()]
+    assert read_documents == [
         "workflow-report", "chat-notes", "deleted-origin", "mismatched-origin",
     ]
 
@@ -357,8 +359,10 @@ def test_unsafe_origin_links_and_markup_render_as_text(provenance_ui):
         expect(origin.locator("p"), f"The {href!r} summary must be text.").to_have_text(f"{MARKUP_LABEL} {index}")
         expect(origin.get_by_role("link"), f"The {href!r} summary must not become a link.").to_have_count(0)
         expect(origin.locator("img")).to_have_count(0)
-    assert ui.page.evaluate("() => window.__originInjected === undefined")
-    assert len(ui.summary_reads()) == len(UNSAFE_HREFS)
+    not_injected = ui.page.evaluate("() => window.__originInjected === undefined")
+    reads = ui.summary_reads()
+    assert not_injected
+    assert len(reads) == len(UNSAFE_HREFS)
 
 
 def test_a_failed_origin_read_can_be_retried(provenance_ui):
@@ -375,7 +379,8 @@ def test_a_failed_origin_read_can_be_retried(provenance_ui):
     alert.get_by_role("button", name="Retry origin", exact=True).click()
     expect(origin.get_by_role("link")).to_have_attribute("href", f"/v2{WORKFLOW_HREF}")
     expect(origin.get_by_role("alert")).to_have_count(0)
-    assert len(ui.summary_reads()) == 2
+    reads = ui.summary_reads()
+    assert len(reads) == 2
 
 
 def test_group_member_sees_what_the_server_resolved_for_them(group_provenance_ui):
@@ -408,6 +413,7 @@ def test_group_member_sees_what_the_server_resolved_for_them(group_provenance_ui
 
     show_details(ui, "Published report")
     expect(ui.page.get_by_role("heading", name="Origin", exact=True)).to_have_count(0)
-    assert [entry.path for entry in ui.summary_reads()] == [
+    read_paths = [entry.path for entry in ui.summary_reads()]
+    assert read_paths == [
         "/api/group_documents/same-document", "/api/group_documents/team-01", "/api/group_documents/team-02",
     ]

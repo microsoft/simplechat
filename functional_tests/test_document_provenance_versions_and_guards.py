@@ -11,33 +11,44 @@ update path can write an origin; that every mutating route on the guarded docume
 blueprints (personal, group, public, search, and the bearer-token external API)
 rejects client origin fields in JSON and form bodies; that responses expose at most
 ``origin_kind`` plus an access-checked ``origin_summary`` on single-document reads,
-never on lists or the external API; that held documents expose neither; and that
-origin list filters only narrow each list's existing parameterized, scoped query.
+never on lists or the external API; that held documents expose neither; that
+origin list filters only narrow each list's existing parameterized, scoped query;
+and that a chat upload into a conversation the user cannot access is refused
+before the file is saved, an origin is built, or a document is created.
 
-Runs the real create_document, update_document, document route guards, and scoped
-list queries with in-memory containers. No Azure resources or application startup
-are used.
+Runs the real create_document, update_document, document route guards, scoped list
+queries, and chat upload route with in-memory containers. No Azure resources or
+application startup are used.
 """
 
 import ast
 from copy import deepcopy
 from datetime import datetime, timezone
+from functools import partial
+import io
 import logging
+import os
 from pathlib import Path
+import random
 import re
 import sys
+import tempfile
+import time
 from types import SimpleNamespace
+import uuid
 
 from flask import Blueprint, Flask, Response, jsonify, request
 import pytest
 from werkzeug.datastructures import MultiDict
 from werkzeug.test import Client
+from werkzeug.utils import secure_filename
 
 APP_ROOT = Path(__file__).resolve().parents[1] / "application" / "single_app"
 if str(APP_ROOT) not in sys.path:
     sys.path.insert(0, str(APP_ROOT))
 
 # Resolve application modules only after configuring the standalone path.
+from collaboration_models import GROUP_MULTI_USER_CHAT_TYPE, PERSONAL_MULTI_USER_CHAT_TYPE
 from content_screening import access
 from content_screening.contracts import SCREENING_FIELD, ScreeningValidationError
 import functions_document_provenance as provenance
@@ -411,8 +422,9 @@ def test_every_guarded_mutation_route_rejects_client_origin_fields(mutation_clie
     mutation_client.reached.clear()
     for body in CLIENT_ORIGIN_BODIES:
         response = mutation_client.client.open(path, method=method, json=body)
+        payload = response.get_json()
         assert response.status_code == 400, (route, body)
-        assert response.get_json()["error_code"] == provenance.DocumentOriginError.code
+        assert payload["error_code"] == provenance.DocumentOriginError.code
     for field in ("origin", "origin_kind", "originSummary"):
         response = mutation_client.client.open(path, method=method, data={field: "workflow", "title": "Quarterly"})
         assert response.status_code == 400, (route, field)
@@ -590,15 +602,22 @@ def test_detail_routes_resolve_summaries_only_when_asked_and_never_in_lists():
         detail_calls = calls_named(function_node(tree, detail), "summary_requested")
         assert len(detail_calls) == 1
         for list_route in lists:
-            assert calls_named(function_node(tree, list_route), "summary_requested") == []
-    assert calls_named(app_tree(EXTERNAL_ROUTE_FILE), "summary_requested") == []
-    assert calls_named(app_tree(EXTERNAL_ROUTE_FILE), "remember_document_origin_summary") == []
+            list_calls = calls_named(function_node(tree, list_route), "summary_requested")
+            assert list_calls == []
+    external = app_tree(EXTERNAL_ROUTE_FILE)
+    external_calls = [
+        call for name in ("summary_requested", "remember_document_origin_summary")
+        for call in calls_named(external, name)
+    ]
+    assert external_calls == []
 
 
 def test_list_routes_apply_origin_filters_inside_their_own_scope():
     personal = function_node(app_tree("route_backend_documents.py"), "api_get_user_documents")
     filters = calls_named(personal, "origin_list_filter")
-    assert len(filters) == 1 and keyword_value(filters[0], "group_id") is None
+    assert len(filters) == 1
+    personal_group_id = keyword_value(filters[0], "group_id")
+    assert personal_group_id is None
     extended = {
         (call.func.value.id, ast.unparse(call.args[0]))
         for call in calls_named(personal, "extend") if isinstance(call.func.value, ast.Name)
@@ -610,11 +629,14 @@ def test_list_routes_apply_origin_filters_inside_their_own_scope():
     group = function_node(app_tree("route_backend_group_documents.py"), "api_get_group_documents")
     filters = calls_named(group, "origin_list_filter")
     assert len(filters) == 1
-    assert ast.unparse(keyword_value(filters[0], "group_id")) == "requested_group_id"
+    group_id_argument = ast.unparse(keyword_value(filters[0], "group_id"))
+    assert group_id_argument == "requested_group_id"
 
     public = function_node(app_tree("route_backend_public_document_reads.py"), "api_get_public_workspace_documents")
     filters = calls_named(public, "origin_list_filter")
-    assert len(filters) == 1 and keyword_value(filters[0], "group_id") is None
+    assert len(filters) == 1
+    public_group_id = keyword_value(filters[0], "group_id")
+    assert public_group_id is None
 
 
 class QueryRecorder:
@@ -715,8 +737,8 @@ def test_chat_uploads_stamp_the_origin_only_from_server_held_values():
         call for name in ("queue_personal_workspace_upload_from_temp_file", "queue_group_workspace_upload_from_temp_file")
         for call in calls_named(upload, name)
     ]
-    assert len(queued) == 2
-    assert all(ast.unparse(keyword_value(call, "origin")) == "chat_document_origin" for call in queued)
+    queued_origins = [ast.unparse(keyword_value(call, "origin")) for call in queued]
+    assert queued_origins == ["chat_document_origin", "chat_document_origin"]
 
 
 def test_workspace_upload_helpers_pass_the_origin_to_document_creation():
@@ -725,7 +747,9 @@ def test_workspace_upload_helpers_pass_the_origin_to_document_creation():
         node = function_node(tree, helper)
         assert "origin" in [argument.arg for argument in node.args.args + node.args.kwonlyargs]
         creates = calls_named(node, "create_document")
-        assert len(creates) == 1 and ast.unparse(keyword_value(creates[0], "origin")) == "origin"
+        assert len(creates) == 1
+        create_origin = ast.unparse(keyword_value(creates[0], "origin"))
+        assert create_origin == "origin"
 
 
 def test_publication_passes_only_server_derived_origin_fields():
@@ -741,3 +765,231 @@ def test_publication_passes_only_server_derived_origin_fields():
         if any(keyword.arg is None and ast.unparse(keyword.value) == "origin_fields" for keyword in call.keywords)
     ]
     assert len(creates) == 1
+
+
+# --- Chat upload route ----------------------------------------------------------------
+
+
+class ReachedDocumentCreation(BaseException):
+    """Stops a permitted upload at create_document.
+
+    A BaseException, so the route's and the queue helper's ``except Exception`` handlers let it through.
+    """
+
+
+class ConversationNotFound(Exception):
+    """Stands in for CosmosResourceNotFoundError."""
+
+
+class ConversationReads:
+    def __init__(self):
+        self.items = {}
+        self.reads = []
+
+    def read_item(self, item, partition_key):
+        self.reads.append((item, partition_key))
+        if item not in self.items:
+            raise ConversationNotFound(item)
+        return deepcopy(self.items[item])
+
+
+NOT_A_PARTICIPANT = "You are not a participant in this collaborative conversation"
+SHARED_CONVERSATION = {"id": "shared-1", "chat_type": PERSONAL_MULTI_USER_CHAT_TYPE, "title": "Shared planning"}
+FORGED_UPLOAD_FIELDS = {
+    "origin": "workflow", "origin_kind": "workflow", "message_id": "forged-message",
+    "collaboration_conversation_id": "forged-shared",
+}
+CHAT_UPLOAD_HELPERS = {
+    "_is_setting_enabled", "_append_unique", "_normalize_upload_group_ids", "_extract_group_context_ids_from_doc",
+    "_get_trusted_group_upload_scope_ids", "_is_group_chat_upload_context", "_resolve_chat_upload_context",
+    "_resolve_collaboration_upload_context",
+}
+RECORDED_UPLOAD_DEPENDENCIES = (
+    "_build_new_chat_conversation", "ensure_collaboration_source_conversation", "has_chat_file_upload_app_role",
+    "_resolve_group_workspace_upload_target", "_resolve_group_upload_targets",
+    "_apply_group_context_to_new_upload_conversation", "queue_group_workspace_upload_from_temp_file",
+    "invalidate_personal_search_cache", "invalidate_group_search_cache",
+    "sync_chat_upload_workspace_document_sharing_for_collaboration", "log_event", "debug_print",
+)
+
+
+def load_route_handler(file_name, name, namespace):
+    """Compile a route handler nested in a register function, without its decorators."""
+    handler = function_node(app_tree(file_name), name)
+    handler.decorator_list = []
+    exec(compile(ast.Module(body=[handler], type_ignores=[]), file_name, "exec"), namespace)
+    return namespace[name]
+
+
+@pytest.fixture
+def chat_upload(tmp_path):
+    """The real upload route and conversation access checks over in-memory conversations.
+
+    Everything that could stamp, save, queue, or share a document is recorded, and the real
+    personal queue helper runs up to create_document. Temporary files land in ``tmp_path``.
+    """
+    calls = []
+    conversations = ConversationReads()
+    collaborations = {}
+    participants = set()
+
+    def recorder(name, wraps=None):
+        def record(*args, **kwargs):
+            calls.append((name, args, kwargs))
+            return wraps(*args, **kwargs) if wraps else None
+        return record
+
+    def create_document(*args, **kwargs):
+        calls.append(("create_document", args, kwargs))
+        raise ReachedDocumentCreation()
+
+    def get_collaboration_conversation(conversation_id):
+        if conversation_id not in collaborations:
+            raise ConversationNotFound(conversation_id)
+        return deepcopy(collaborations[conversation_id])
+
+    def assert_user_can_participate_in_collaboration_conversation(user_id, collaboration):
+        if (user_id, collaboration.get("id")) not in participants:
+            raise PermissionError(NOT_A_PARTICIPANT)
+
+    def allowed_file(file_name):
+        return str(file_name).lower().endswith(".txt")
+
+    queue_personal = load_functions("functions_documents.py", {"queue_personal_workspace_upload_from_temp_file"}, {
+        "os": os, "uuid": uuid, "allowed_file": allowed_file, "create_document": create_document,
+        "resolve_unique_personal_workspace_file_name": lambda user_id, file_name, identity_suffix: file_name,
+        "_copy_workspace_upload_source": lambda temp_file_path, file_name: temp_file_path,
+    })["queue_personal_workspace_upload_from_temp_file"]
+    namespace = load_functions(
+        "functions_collaboration.py",
+        {"is_personal_collaboration_conversation", "is_group_collaboration_conversation"},
+        {
+            "PERSONAL_MULTI_USER_CHAT_TYPE": PERSONAL_MULTI_USER_CHAT_TYPE,
+            "GROUP_MULTI_USER_CHAT_TYPE": GROUP_MULTI_USER_CHAT_TYPE,
+        },
+    )
+    namespace.update({name: recorder(name) for name in RECORDED_UPLOAD_DEPENDENCIES})
+    namespace.update({
+        "get_settings": lambda: {
+            "enable_chat_file_uploads": True, "require_member_of_chat_file_upload_user": False, "max_file_size_mb": 10,
+            "enable_user_workspace": True, "enable_group_workspaces": True, "enable_enhanced_citations": False,
+        },
+        "session": {"user": {"roles": []}},
+        "jsonify": jsonify,
+        "request": request,
+        "get_current_user_id": lambda: "actor",
+        "get_current_user_info": lambda: {"userId": "actor"},
+        "cosmos_conversations_container": conversations,
+        "CosmosResourceNotFoundError": ConversationNotFound,
+        "get_collaboration_conversation": get_collaboration_conversation,
+        "assert_user_can_participate_in_collaboration_conversation": (
+            assert_user_can_participate_in_collaboration_conversation
+        ),
+        "os": os, "time": time, "random": random, "datetime": datetime, "logging": logging,
+        "secure_filename": secure_filename,
+        "tempfile": SimpleNamespace(NamedTemporaryFile=partial(tempfile.NamedTemporaryFile, dir=tmp_path)),
+        "allowed_file": allowed_file,
+        "CHAT_WORKSPACE_UPLOAD_EXTENSIONS": {"txt"},
+        "SCHEMA_EXTENSIONS": {"xsd"},
+        "XsdIngestionCapabilityError": type("XsdIngestionCapabilityError", (Exception,), {}),
+        "build_chat_upload_workspace_tags": lambda conversation_id: [],
+        "chat_upload_origin": recorder("chat_upload_origin", provenance.chat_upload_origin),
+        "queue_personal_workspace_upload_from_temp_file": recorder(
+            "queue_personal_workspace_upload_from_temp_file", queue_personal,
+        ),
+    })
+    load_functions("route_frontend_chats.py", CHAT_UPLOAD_HELPERS, namespace)
+    app = Flask(__name__)
+    app.testing = True
+    upload_file = load_route_handler("route_frontend_chats.py", "upload_file", namespace)
+    app.add_url_rule("/upload", view_func=upload_file, methods=["POST"])
+    client = app.test_client()
+
+    def post(conversation_id, **fields):
+        return client.post("/upload", data={
+            **fields, "conversation_id": conversation_id, "file": (io.BytesIO(b"Quarterly notes"), "notes.txt"),
+        })
+
+    return SimpleNamespace(
+        post=post, calls=calls, conversations=conversations, collaborations=collaborations,
+        participants=participants, saved_files=lambda: sorted(tmp_path.iterdir()),
+    )
+
+
+@pytest.mark.parametrize("requested_id,conversation,collaboration,participant,message", [
+    pytest.param(
+        "conversation-1", {"id": "conversation-1", "user_id": "someone-else", "title": "Payroll"}, None, False,
+        "You do not have access to this conversation", id="another-users-conversation",
+    ),
+    pytest.param(
+        "conversation-1",
+        {"id": "conversation-1", "user_id": "someone-else", "collaboration_conversation_id": "shared-1"},
+        SHARED_CONVERSATION, False, NOT_A_PARTICIPANT, id="shared-copy-without-membership",
+    ),
+    pytest.param(
+        "shared-1", None, SHARED_CONVERSATION, False, NOT_A_PARTICIPANT, id="shared-id-without-membership",
+    ),
+    pytest.param(
+        "conversation-1",
+        {"id": "conversation-1", "user_id": "actor", "collaboration_conversation_id": "shared-1"},
+        {"id": "shared-1", "chat_type": "unsupported_multi_user"}, True,
+        "Chat file uploads are not supported for this collaborative conversation",
+        id="unsupported-shared-conversation",
+    ),
+])
+def test_a_chat_upload_into_an_inaccessible_conversation_is_refused_before_any_origin(
+    chat_upload, requested_id, conversation, collaboration, participant, message,
+):
+    """A 403 before the file is saved, an origin is built, or anything is queued or created."""
+    if conversation:
+        chat_upload.conversations.items[conversation["id"]] = conversation
+    if collaboration:
+        chat_upload.collaborations[collaboration["id"]] = collaboration
+    if participant:
+        chat_upload.participants.add(("actor", collaboration["id"]))
+
+    response = chat_upload.post(
+        requested_id, upload_scope_group_ids="group-1", group_upload_target_id="group-1", **FORGED_UPLOAD_FIELDS,
+    )
+    payload = response.get_json()
+    saved_files = chat_upload.saved_files()
+
+    assert response.status_code == 403
+    assert payload == {"error": message}
+    assert chat_upload.calls == []
+    assert chat_upload.conversations.reads == [(requested_id, requested_id)]
+    assert saved_files == []
+
+
+@pytest.mark.parametrize("conversation,collaboration_id", [
+    pytest.param({"id": "conversation-1", "user_id": "actor", "title": "Budget"}, None, id="own-conversation"),
+    pytest.param(
+        {"id": "conversation-1", "user_id": "actor", "collaboration_conversation_id": "shared-1"}, "shared-1",
+        id="shared-conversation-member",
+    ),
+])
+def test_a_permitted_chat_upload_stamps_only_the_server_origin(chat_upload, conversation, collaboration_id):
+    """The refusal test's control: the same request, once allowed, reaches create_document."""
+    chat_upload.conversations.items["conversation-1"] = conversation
+    chat_upload.collaborations["shared-1"] = deepcopy(SHARED_CONVERSATION)
+    chat_upload.participants.add(("actor", "shared-1"))
+
+    with pytest.raises(ReachedDocumentCreation):
+        chat_upload.post("conversation-1", **FORGED_UPLOAD_FIELDS)
+    saved_files = chat_upload.saved_files()
+
+    names = [name for name, _args, _kwargs in chat_upload.calls]
+    assert names == ["chat_upload_origin", "queue_personal_workspace_upload_from_temp_file", "create_document"]
+    origin_arguments = chat_upload.calls[0][2]
+    message_id = origin_arguments["message_id"]
+    create_args, create_kwargs = chat_upload.calls[2][1:]
+    expected_origin = provenance.build_chat_origin(
+        conversation_id="conversation-1", message_id=message_id, collaboration_conversation_id=collaboration_id,
+    )
+    assert origin_arguments == {
+        "conversation_id": "conversation-1", "message_id": message_id, "collaboration_conversation_id": collaboration_id,
+    }
+    assert re.fullmatch(r"conversation-1_file_\d+_\d{4}", message_id)
+    assert create_args[:2] == ("notes.txt", "actor")
+    assert create_kwargs["origin"] == expected_origin
+    assert len(saved_files) == 1

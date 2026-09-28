@@ -227,7 +227,8 @@ def test_a_personal_chat_publication_is_stamped_chat_without_a_tag(publication, 
     }
     assert "server_tags" not in create
     assert provenance.tags == []
-    assert stored(publication, "personal", result)["origin"] == create["origin"]
+    saved = stored(publication, "personal", result)
+    assert saved["origin"] == create["origin"]
     assert_no_update_names_an_origin(publication)
 
 
@@ -298,7 +299,8 @@ def test_a_workflow_run_publishing_through_the_chat_pipeline_is_stamped_workflow
     }
     assert create["origin"]["kind"] != "chat"
     assert create["server_tags"] == ["workflow"]
-    assert stored(publication, "personal", result)["origin"]["kind"] == "workflow"
+    saved = stored(publication, "personal", result)
+    assert saved["origin"]["kind"] == "workflow"
 
 
 def test_a_workflow_producer_outside_a_workflow_conversation_gets_no_origin(publication, provenance, monkeypatch):

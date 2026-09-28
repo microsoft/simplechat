@@ -370,10 +370,15 @@ def test_validation_rejects_missing_required_fields_and_non_objects():
 
 
 def test_stored_origins_are_revalidated_before_use():
-    assert provenance.document_origin_kind({"origin": deepcopy(VALID_WORKFLOW_ORIGIN)}) == "workflow"
-    assert provenance.document_origin_kind({"origin": {**VALID_WORKFLOW_ORIGIN, "kind": "upload"}}) is None
-    assert provenance.document_origin_kind({"origin_kind": "workflow"}) is None
-    assert provenance.document_origin_kind({}) is None
+    kinds = [
+        provenance.document_origin_kind(document) for document in (
+            {"origin": deepcopy(VALID_WORKFLOW_ORIGIN)},
+            {"origin": {**VALID_WORKFLOW_ORIGIN, "kind": "upload"}},
+            {"origin_kind": "workflow"},
+            {},
+        )
+    ]
+    assert kinds == ["workflow", None, None, None]
 
 
 def test_chat_upload_origin_uses_only_the_authorized_conversation_and_server_message_id(world):
@@ -383,7 +388,8 @@ def test_chat_upload_origin_uses_only_the_authorized_conversation_and_server_mes
     assert origin == {
         "version": 1, "kind": "chat", "conversation_id": "conversation-1", "message_id": "conversation-1_file_abc",
     }
-    assert provenance.chat_upload_origin(conversation_id="bad\nid", message_id="m") is None
+    rejected = provenance.chat_upload_origin(conversation_id="bad\nid", message_id="m")
+    assert rejected is None
     assert world.logs and world.logs[-1]["level"] == logging.WARNING
     dropped = provenance.chat_upload_origin(conversation_id="conversation-1", message_id="bad\x00id")
     assert dropped == {"version": 1, "kind": "chat", "conversation_id": "conversation-1"}
@@ -489,7 +495,8 @@ def test_unproven_revisions_and_mismatched_receipts_are_omitted(world):
     assert "definition_revision" not in origin and "output_key" not in origin
     workflow["definition_version"] = 3
     world.runtime_controls[RUN_ID] = {"definition_revision": "not-a-digest"}
-    assert "definition_revision" not in provenance.derive_publication_origin(saved_output_artifact())
+    unproven = provenance.derive_publication_origin(saved_output_artifact())
+    assert "definition_revision" not in unproven
 
 
 def test_a_workflow_producer_in_its_workflow_conversation_is_stamped_workflow(world):
@@ -511,7 +518,8 @@ def test_a_workflow_producer_in_its_workflow_conversation_is_stamped_workflow(wo
 def test_a_workflow_producer_outside_a_workflow_conversation_gets_no_origin(world):
     world.conversations.records["conversation-1"] = {"id": "conversation-1", "user_id": "actor"}
     producer = {"kind": "workflow", "workflow_id": WORKFLOW_ID, "run_id": RUN_ID}
-    assert provenance.derive_publication_origin(chat_artifact(analysis_producer=producer)) is None
+    origin = provenance.derive_publication_origin(chat_artifact(analysis_producer=producer))
+    assert origin is None
     assert world.logs[-1]["level"] == logging.WARNING
 
 
@@ -547,7 +555,8 @@ def test_orchestration_outputs_are_chat_origins_with_their_run_and_step(world):
         "kind": "orchestration_retained_output",
         "producer": {"user_id": "actor", "conversation_id": "conversation-1", "run_id": "orch-1", "step_id": "step-2"},
     })
-    assert provenance.derive_publication_origin(bound) == {
+    bound_origin = provenance.derive_publication_origin(bound)
+    assert bound_origin == {
         "version": 1, "kind": "chat", "conversation_id": "conversation-1", "message_id": "artifact-1",
         "orchestration_run_id": "orch-1", "orchestration_step_id": "step-2",
     }
@@ -568,16 +577,19 @@ def test_an_ordinary_chat_artifact_is_stamped_chat_with_its_message(world):
 
 
 def test_an_unreadable_conversation_yields_no_origin(world):
-    assert provenance.derive_publication_origin(chat_artifact("missing")) is None
+    missing = provenance.derive_publication_origin(chat_artifact("missing"))
+    assert missing is None
     world.conversations.failure = RuntimeError("Cosmos unavailable")
-    assert provenance.publication_origin_fields("actor", chat_artifact()) == {}
+    fields = provenance.publication_origin_fields("actor", chat_artifact())
+    assert fields == {}
     assert any(entry["level"] == logging.WARNING for entry in world.logs)
 
 
 def test_publication_origin_fields_never_block_publication(world):
     artifact = saved_output_artifact()
     artifact["metadata"]["generated_artifact_source"]["producer"]["workflow_id"] = "bad\nid"
-    assert provenance.publication_origin_fields("actor", artifact, destination={"workspace_scope": "personal"}) == {}
+    fields = provenance.publication_origin_fields("actor", artifact, destination={"workspace_scope": "personal"})
+    assert fields == {}
     assert world.logs[-1]["level"] == logging.WARNING
 
 
@@ -641,7 +653,8 @@ def test_the_workflow_owner_sees_the_workflow_and_run(world):
     personal_workflow(world, name="Quarterly <summary>")
     world.personal_runs[("actor", RUN_ID)] = {"id": RUN_ID, "workflow_id": WORKFLOW_ID, "started_at": "2026-01-02T03:04:05Z"}
     world.run_readers.add(("actor", RUN_ID))
-    assert summary_for("actor", workflow_document(), world) == {
+    summary = summary_for("actor", workflow_document(), world)
+    assert summary == {
         "kind": "workflow", "label": "Created by Quarterly <summary>",
         "href": f"/workspace/workflows?workflow_id={WORKFLOW_ID}&run_id={RUN_ID}",
         "run_started_at": "2026-01-02T03:04:05Z",
@@ -656,7 +669,8 @@ def test_an_unreadable_or_foreign_run_links_only_the_workflow(world):
     assert "run_started_at" not in unreadable
     world.run_readers.add(("actor", RUN_ID))
     world.personal_runs[("actor", RUN_ID)]["workflow_id"] = "another-workflow"
-    assert "run_id" not in summary_for("actor", workflow_document(), world)["href"]
+    foreign = summary_for("actor", workflow_document(), world)
+    assert "run_id" not in foreign["href"]
 
 
 def test_a_reader_without_access_gets_plain_text_with_no_names_or_ids(world):
@@ -673,35 +687,43 @@ def test_a_reader_without_access_gets_plain_text_with_no_names_or_ids(world):
 def test_a_group_member_sees_a_group_workflow_and_others_do_not(world):
     group_workflow(world)
     document = workflow_document("group", "group-1")
-    assert summary_for("member", document, world)["label"] == "Created by a workflow"
+    outsider = summary_for("member", document, world)
+    assert outsider["label"] == "Created by a workflow"
     world.group_roles[("member", "group-1")] = "User"
     member = summary_for("member", document, world)
     assert member["label"] == "Created by Team digest"
     assert member["href"] == f"/groups/group-1/workflows?workflow_id={WORKFLOW_ID}"
     world.disabled_group_workflows.add("group-1")
-    assert "href" not in summary_for("member", document, world)
+    workflows_disabled = summary_for("member", document, world)
+    assert "href" not in workflows_disabled
     world.disabled_group_workflows.clear()
     world.settings["enable_group_workspaces"] = False
-    assert "href" not in summary_for("member", document, world)
+    groups_disabled = summary_for("member", document, world)
+    assert "href" not in groups_disabled
 
 
 def test_disabled_user_workflows_and_deleted_workflows_fall_back(world):
     personal_workflow(world)
     world.user_workflows_enabled = False
-    assert summary_for("actor", workflow_document(), world) == {"kind": "workflow", "label": "Created by a workflow"}
+    disabled = summary_for("actor", workflow_document(), world)
+    assert disabled == {"kind": "workflow", "label": "Created by a workflow"}
     world.user_workflows_enabled = True
     world.personal_workflows.clear()
-    assert summary_for("actor", workflow_document(), world) == {"kind": "workflow", "label": "Created by a workflow"}
+    deleted = summary_for("actor", workflow_document(), world)
+    assert deleted == {"kind": "workflow", "label": "Created by a workflow"}
 
 
 def test_the_chat_owner_sees_the_conversation_and_others_do_not(world):
     world.conversations.records["conversation-1"] = {"id": "conversation-1", "user_id": "actor", "title": "Budget review"}
-    assert summary_for("actor", chat_document(message_id="m-1"), world) == {
+    owner = summary_for("actor", chat_document(message_id="m-1"), world)
+    assert owner == {
         "kind": "chat", "label": "Created in chat \u00b7 Budget review", "href": "/chat?conversationId=conversation-1",
     }
-    assert summary_for("member", chat_document(), world) == {"kind": "chat", "label": "Created in a chat"}
+    other = summary_for("member", chat_document(), world)
+    assert other == {"kind": "chat", "label": "Created in a chat"}
     world.conversations.records.clear()
-    assert summary_for("actor", chat_document(), world) == {"kind": "chat", "label": "Created in a chat"}
+    deleted = summary_for("actor", chat_document(), world)
+    assert deleted == {"kind": "chat", "label": "Created in a chat"}
 
 
 def test_shared_conversations_link_only_when_collaboration_is_enabled(world):
@@ -711,9 +733,11 @@ def test_shared_conversations_link_only_when_collaboration_is_enabled(world):
     world.collaborations["shared-1"] = {"id": "shared-1", "title": "Shared planning"}
     world.collaboration_members.add(("member", "shared-1"))
     document = chat_document(collaboration_conversation_id="shared-1")
-    assert summary_for("member", document, world) == {"kind": "chat", "label": "Created in a chat"}
+    collaboration_disabled = summary_for("member", document, world)
+    assert collaboration_disabled == {"kind": "chat", "label": "Created in a chat"}
     world.settings["enable_collaborative_conversations"] = True
-    assert summary_for("member", document, world) == {
+    collaboration_enabled = summary_for("member", document, world)
+    assert collaboration_enabled == {
         "kind": "chat", "label": "Created in chat \u00b7 Shared planning", "href": "/chat?conversationId=shared-1",
     }
 
@@ -730,26 +754,33 @@ def test_labels_are_bounded_single_line_text(world):
 def test_store_failures_resolve_to_plain_text(world):
     personal_workflow(world)
     world.store_failure = RuntimeError("Cosmos unavailable")
-    assert summary_for("actor", workflow_document(), world) == {"kind": "workflow", "label": "Created by a workflow"}
-    assert provenance.resolve_origin_summary("actor", {"id": "document-1"}) is None
+    failed = summary_for("actor", workflow_document(), world)
+    assert failed == {"kind": "workflow", "label": "Created by a workflow"}
+    unstamped = provenance.resolve_origin_summary("actor", {"id": "document-1"})
+    assert unstamped is None
 
 
 def test_summaries_attach_only_to_the_matching_single_document_payload(world):
     world.conversations.records["conversation-1"] = {"id": "conversation-1", "user_id": "actor", "title": "Budget"}
     app = Flask(__name__)
     record = chat_document()
-    assert provenance.attached_origin_summary({"id": "document-1", "origin_kind": "chat"}) == {
-        "id": "document-1", "origin_kind": "chat",
-    }
+    outside_a_request = provenance.attached_origin_summary({"id": "document-1", "origin_kind": "chat"})
+    assert outside_a_request == {"id": "document-1", "origin_kind": "chat"}
     with app.test_request_context("/api/documents/document-1?origin_summary=1"):
         remembered = provenance.remember_document_origin_summary("actor", record)
         assert remembered["label"] == "Created in chat \u00b7 Budget"
         attached = provenance.attached_origin_summary({"id": "document-1", "origin_kind": "chat"})
         assert attached["origin_summary"] == remembered
-        assert "origin_summary" not in provenance.attached_origin_summary({"id": "document-1", "origin_kind": "workflow"})
-        assert "origin_summary" not in provenance.attached_origin_summary({"id": "document-1"})
-        assert "origin_summary" not in provenance.attached_origin_summary({"id": "document-2", "origin_kind": "chat"})
-        assert provenance.remember_document_origin_summary("actor", {"id": "document-3"}) is None
+        mismatched = [
+            provenance.attached_origin_summary(payload) for payload in (
+                {"id": "document-1", "origin_kind": "workflow"},
+                {"id": "document-1"},
+                {"id": "document-2", "origin_kind": "chat"},
+            )
+        ]
+        assert all("origin_summary" not in payload for payload in mismatched)
+        unstamped = provenance.remember_document_origin_summary("actor", {"id": "document-3"})
+        assert unstamped is None
 
 
 @pytest.mark.parametrize("value,expected", [
@@ -757,7 +788,8 @@ def test_summaries_attach_only_to_the_matching_single_document_payload(world):
 ])
 def test_the_summary_is_opt_in(value, expected):
     args = {} if value is None else {"origin_summary": value}
-    assert provenance.summary_requested(args) is expected
+    requested = provenance.summary_requested(args)
+    assert requested is expected
 
 
 # --- Origin list filters --------------------------------------------------------------
@@ -770,9 +802,12 @@ def filter_for(reader, world, group_id=None, **params):
 
 
 def test_no_filter_parameters_means_no_filter(world):
-    assert filter_for("actor", world) is None
-    assert provenance.origin_filter_requested(MultiDict({"origin_run_id": ""}))
-    assert not provenance.origin_filter_requested(MultiDict({"search": "origin"}))
+    unfiltered = filter_for("actor", world)
+    assert unfiltered is None
+    empty_value = provenance.origin_filter_requested(MultiDict({"origin_run_id": ""}))
+    unrelated = provenance.origin_filter_requested(MultiDict({"search": "origin"}))
+    assert empty_value
+    assert not unrelated
 
 
 def test_workflow_filters_are_parameterized_and_scoped_to_the_readers_workflow(world):
@@ -845,13 +880,20 @@ def test_conversation_filters_require_the_reader_to_own_or_share_the_chat(world)
             filter_for(reader, world, origin_conversation_id=conversation_id)
         assert raised.value.status_code == 404
     world.settings["enable_collaborative_conversations"] = True
-    assert filter_for("member", world, origin_conversation_id="shared-1") is not None
-    assert filter_for("member", world, origin_conversation_id="conversation-1") is not None
+    shared = filter_for("member", world, origin_conversation_id="shared-1")
+    source_copy = filter_for("member", world, origin_conversation_id="conversation-1")
+    assert shared is not None
+    assert source_copy is not None
 
 
 def test_links_quote_every_identifier():
-    assert provenance.workflow_origin_href("group", "g/1?x", "w&1", "r#1") == (
-        "/groups/g%2F1%3Fx/workflows?workflow_id=w%261&run_id=r%231"
+    hrefs = (
+        provenance.workflow_origin_href("group", "g/1?x", "w&1", "r#1"),
+        provenance.workflow_origin_href("personal", "actor", "w 1"),
+        provenance.chat_origin_href("c/1&x"),
     )
-    assert provenance.workflow_origin_href("personal", "actor", "w 1") == "/workspace/workflows?workflow_id=w%201"
-    assert provenance.chat_origin_href("c/1&x") == "/chat?conversationId=c%2F1%26x"
+    assert hrefs == (
+        "/groups/g%2F1%3Fx/workflows?workflow_id=w%261&run_id=r%231",
+        "/workspace/workflows?workflow_id=w%201",
+        "/chat?conversationId=c%2F1%26x",
+    )
