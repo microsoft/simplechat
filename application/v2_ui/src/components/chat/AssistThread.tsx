@@ -49,6 +49,13 @@ export interface AssistThreadProps {
     describedBy?: string;
     /** Shown between the input and the Send button, such as guidance the input refers to. */
     composerNote?: ReactNode;
+    /**
+     * Offer `#` documents and tags and the Add context control in the input.
+     *
+     * Off unless an editor opts in, and none does yet: an editor that turns it on must also send
+     * the references with its request, and the server must authorise them.
+     */
+    allowContext?: boolean;
     counterHint?: string;
     density?: 'compact' | 'comfortable';
     className?: string;
@@ -89,6 +96,7 @@ export function AssistThread({
     placeholder,
     describedBy,
     composerNote,
+    allowContext = false,
     counterHint,
     density = 'compact',
     className,
@@ -255,6 +263,7 @@ export function AssistThread({
                             onSubmit={submit}
                             textareaRef={thread.inputRef}
                             restricted
+                            allowContext={allowContext}
                             describedBy={[describedBy, counterId, thread.overLimit ? limitId : null]
                                 .filter(Boolean).join(' ')}
                             invalid={thread.overLimit}
