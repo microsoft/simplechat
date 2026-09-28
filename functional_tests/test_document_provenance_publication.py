@@ -1,8 +1,8 @@
 # test_document_provenance_publication.py
 """
 Functional tests for document provenance on published chat and workflow artifacts.
-Version: 0.261.196
-Implemented in: 0.261.196
+Version: 0.261.194
+Implemented in: 0.261.194
 
 This test ensures that every artifact publication path stamps the destination
 document with the right server-derived origin: ordinary chat artifacts and
@@ -213,7 +213,7 @@ def assert_no_update_names_an_origin(publication):
 
 
 def test_version_supports_document_provenance():
-    assert_app_version_at_least("0.261.196")
+    assert_app_version_at_least("0.261.194")
 
 
 # --- Chat artifacts -------------------------------------------------------------------

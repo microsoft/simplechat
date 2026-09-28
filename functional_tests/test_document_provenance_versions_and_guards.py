@@ -1,8 +1,8 @@
 # test_document_provenance_versions_and_guards.py
 """
 Functional tests for document provenance across versions, client guards, and list scopes.
-Version: 0.261.196
-Implemented in: 0.261.196
+Version: 0.261.194
+Implemented in: 0.261.194
 
 This test ensures that each document version stores only its own origin while
 keeping the carried-forward tags (including the removable ``workflow`` tag); that
@@ -148,7 +148,7 @@ def keyword_value(call, name):
 
 
 def test_version_supports_document_provenance():
-    assert_app_version_at_least("0.261.196")
+    assert_app_version_at_least("0.261.194")
 
 
 # --- Versions -------------------------------------------------------------------------

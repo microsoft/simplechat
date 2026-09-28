@@ -1,6 +1,6 @@
 # Document provenance
 
-Implemented in version: **0.261.196**.
+Implemented in version: **0.261.194**.
 
 Application version tracking: `application\single_app\config.py`.
 

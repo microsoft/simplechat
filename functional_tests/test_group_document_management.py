@@ -1,11 +1,11 @@
 # test_group_document_management.py
 """
 Functional tests for immutable-target group document management.
-Version: 0.261.196
+Version: 0.261.194
 Implemented in: 0.261.129
 A tag vocabulary conflict answers one coded sentence, from the pre-check or a lost patch: 0.261.167
 New tags are defined before any document carries them, so a conflict writes no document: 0.261.168
-The real document definitions receive the server-only document provenance helpers they import: 0.261.196
+The real document definitions receive the server-only document provenance helpers they import: 0.261.194
 
 Real Flask routes, management/access/policy modules, conditional document writes,
 revision deletion and canonical downloads run against isolated storage, queues,

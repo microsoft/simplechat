@@ -581,7 +581,7 @@ for readiness proof, screening and recovery limitations.
 
 ## Find documents a workflow saved
 
-Starting in **0.261.196**, a document that a workflow publishes to a workspace
+Starting in **0.261.194**, a document that a workflow publishes to a workspace
 records which workflow and run created it. In the V2 workspace, its document
 details show **Created by *workflow name* · run *date and time*** under
 **Origin**. Select it to open this Workflows section with that run expanded in

@@ -1,8 +1,8 @@
 # test_v2_document_provenance.py
 """
 Production-SPA coverage for where a V2 document came from.
-Version: 0.261.196
-Implemented in: 0.261.196
+Version: 0.261.194
+Implemented in: 0.261.194
 
 The real SPA runs against closed synthetic document, workflow and chat APIs, with no live data.
 A list row says only which kind of origin a document has (`origin_kind`). The details pane asks
