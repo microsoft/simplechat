@@ -1,8 +1,9 @@
 # test_ai_connection_credential_staging.py
 """
 Functional tests for credential isolation during concurrent image imports.
-Version: 0.261.105
+Version: 0.261.140
 Implemented in: 0.261.105
+The extracted save helper also carries its endpoint-keyed reference check: 0.261.140
 
 Run the real Key Vault save helper against an in-memory secret service. A losing
 settings writer must neither overwrite nor delete the winning writer's credential.
@@ -28,8 +29,19 @@ from test_ai_connection_image_migration import legacy_settings
 def load_secret_save_helper(vault):
     source = APP_ROOT / "functions_keyvault.py"
     tree = ast.parse(source.read_text(encoding="utf-8"))
-    names = {"keyvault_model_endpoint_save_helper", "_build_model_endpoint_secret_name"}
-    nodes = [node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name in names]
+    names = {
+        "keyvault_model_endpoint_save_helper",
+        "_build_model_endpoint_secret_name",
+        "_refuse_foreign_model_endpoint_references",
+    }
+    constants = {"MODEL_ENDPOINT_ENDPOINT_KEYED_SCOPES"}
+    nodes = [
+        node for node in tree.body
+        if (isinstance(node, ast.FunctionDef) and node.name in names)
+        or (isinstance(node, ast.Assign) and any(
+            isinstance(target, ast.Name) and target.id in constants for target in node.targets
+        ))
+    ]
 
     def store(name, value, scope_value, *, source, scope):
         reference = f"{scope_value}--{source}--{scope}--{name}"

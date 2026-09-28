@@ -33,8 +33,8 @@ interface BootstrapState {
      * those has to reload the browser before the change is visible without this.
      */
     refresh: () => Promise<void>;
-    /** Refresh before an explicit selection; failures must not reuse cached authorization. */
-    refreshRequired: () => Promise<BootstrapPayload>;
+    /** An identity-bound selection must not install a response from a different sign-in. */
+    refreshRequired: (expectedViewerId?: string) => Promise<BootstrapPayload>;
     /**
      * Put a prompt into the catalog straight away, before a refresh has been round-tripped.
      *
@@ -47,7 +47,7 @@ interface BootstrapState {
     upsertPromptInCatalog: (prompt: PromptOption) => void;
 }
 
-export const useBootstrapStore = create<BootstrapState>((set) => ({
+export const useBootstrapStore = create<BootstrapState>((set, get) => ({
     data: null,
     loading: true,
     error: null,
@@ -88,11 +88,15 @@ export const useBootstrapStore = create<BootstrapState>((set) => ({
         }
     },
 
-    refreshRequired: async () => {
+    refreshRequired: async (expectedViewerId) => {
         const sequence = ++refreshSequence;
         const data = await fetchBootstrap();
         if (sequence !== refreshSequence) {
             throw new Error('Application availability changed during refresh. Try again.');
+        }
+        if (expectedViewerId && (get().authExpired || get().data?.user?.id !== expectedViewerId
+            || data?.user?.id !== expectedViewerId)) {
+            throw new Error('Your sign-in changed during refresh. Reload the workspace.');
         }
         set({ data });
         return data;

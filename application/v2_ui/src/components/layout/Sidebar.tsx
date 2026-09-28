@@ -39,6 +39,7 @@ import { useUiStore } from '../../stores/uiStore';
 import { useBootstrapStore } from '../../stores/bootstrapStore';
 import { useChatStore } from '../../stores/chatStore';
 import { classicChatHref } from '../../lib/conversationUrl';
+import { DEFAULT_PUBLIC_WORKSPACE_LABELS, usePublicWorkspaceLabels } from '../../lib/publicWorkspaceLabels';
 import { ConversationRail } from '../chat/ConversationRail';
 import { NavExtras } from './NavExtras';
 import { UserAvatar } from './UserAvatar';
@@ -71,7 +72,7 @@ const NAV_ITEMS: NavItem[] = [
         hint: 'Your documents, prompts, agents and automation',
     },
     { to: '/groups', label: 'Group Workspaces', icon: Users },
-    { to: '/public', label: 'Public Workspaces', icon: Globe2 },
+    { to: '/public', label: DEFAULT_PUBLIC_WORKSPACE_LABELS.plural, icon: Globe2 },
     { to: '/content-review', label: 'Content review', icon: ShieldCheck, hint: 'Review screened knowledge, including existing holds when new scanning is disabled' },
 ];
 
@@ -274,6 +275,7 @@ function UserMenu({ collapsed }: { collapsed: boolean }) {
 export function Sidebar({ mobile = false }: { mobile?: boolean }) {
     const { railCollapsed, toggleRail, theme, toggleTheme, mobileNavOpen, setMobileNavOpen } = useUiStore();
     const startNewConversation = useChatStore((state) => state.startNewConversation);
+    const publicLabels = usePublicWorkspaceLabels();
     const activeConversationId = useChatStore((state) => state.activeConversationId);
     const location = useLocation();
     const expandRef = useRef<HTMLButtonElement>(null);
@@ -409,10 +411,13 @@ export function Sidebar({ mobile = false }: { mobile?: boolean }) {
             <ul className={clsx('space-y-0.5 px-3', onChatPage && 'mt-3')}>
                 {NAV_ITEMS.map((item) => (
                     <li key={item.to}>
+                        {(() => {
+                            const label = item.to === '/public' ? publicLabels.plural : item.label;
+                            return (
                         <NavLink
                             to={item.to}
                             onClick={item.to === '/chat' ? startNewChatOnArrival : undefined}
-                            title={collapsed ? item.label : item.hint}
+                            title={collapsed ? label : item.hint}
                             className={({ isActive }) =>
                                 clsx(
                                     'flex items-center gap-2.5 rounded-xl px-3 py-2 text-sm transition-colors',
@@ -424,8 +429,10 @@ export function Sidebar({ mobile = false }: { mobile?: boolean }) {
                             }
                         >
                             <item.icon size={17} className="shrink-0" />
-                            {!collapsed && <span className="truncate">{item.label}</span>}
+                            {!collapsed && <span className="truncate">{label}</span>}
                         </NavLink>
+                            );
+                        })()}
                     </li>
                 ))}
             </ul>

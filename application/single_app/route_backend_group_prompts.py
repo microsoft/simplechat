@@ -10,18 +10,40 @@ from functions_prompts import *
 from swagger_wrapper import swagger_route, get_auth_security
 
 
-def _get_active_group_or_error(user_id):
+# Every group role may read prompts.
+GROUP_PROMPT_MEMBER_ROLES = ("Owner", "Admin", "DocumentManager", "User")
+# Prompt writes are limited to managers, mirroring V1's canManageGroupPrompts()
+# and the policy public prompts already enforce. Reads keep the four-role default.
+GROUP_PROMPT_WRITE_ROLES = ("Owner", "Admin", "DocumentManager")
+
+
+def _get_active_group_or_error(user_id, allowed_roles=GROUP_PROMPT_MEMBER_ROLES):
     try:
         return require_active_group(
             user_id,
-            allowed_roles=("Owner", "Admin", "DocumentManager", "User"),
+            allowed_roles=allowed_roles,
         ), None
     except ValueError:
         return None, (jsonify({"error": "No active group selected"}), 400)
     except LookupError:
         return None, (jsonify({"error": "Active group not found"}), 404)
     except PermissionError:
+        # Tell a member who lacks the role apart from a non-member. Checking
+        # membership directly, rather than matching the exception's wording,
+        # keeps this correct if that wording ever changes.
+        if tuple(allowed_roles) != GROUP_PROMPT_MEMBER_ROLES and _is_active_group_member(user_id):
+            return None, (jsonify({
+                "error": "Only group owners, admins, and document managers can change group prompts",
+            }), 403)
         return None, (jsonify({"error": "You are not a member of the active group"}), 403)
+
+
+def _is_active_group_member(user_id):
+    try:
+        require_active_group(user_id, allowed_roles=GROUP_PROMPT_MEMBER_ROLES)
+    except (ValueError, LookupError, PermissionError):
+        return False
+    return True
 
 
 def register_route_backend_group_prompts(bp):
@@ -60,7 +82,7 @@ def register_route_backend_group_prompts(bp):
     @enabled_required("enable_group_workspaces")
     def create_group_prompt():
         user_id = get_current_user_id()
-        active_group, error_response = _get_active_group_or_error(user_id)
+        active_group, error_response = _get_active_group_or_error(user_id, allowed_roles=GROUP_PROMPT_WRITE_ROLES)
         if error_response:
             return error_response
 
@@ -120,7 +142,7 @@ def register_route_backend_group_prompts(bp):
     @enabled_required("enable_group_workspaces")
     def update_group_prompt(prompt_id):
         user_id = get_current_user_id()
-        active_group, error_response = _get_active_group_or_error(user_id)
+        active_group, error_response = _get_active_group_or_error(user_id, allowed_roles=GROUP_PROMPT_WRITE_ROLES)
         if error_response:
             return error_response
 
@@ -151,7 +173,7 @@ def register_route_backend_group_prompts(bp):
     @enabled_required("enable_group_workspaces")
     def delete_group_prompt(prompt_id):
         user_id = get_current_user_id()
-        active_group, error_response = _get_active_group_or_error(user_id)
+        active_group, error_response = _get_active_group_or_error(user_id, allowed_roles=GROUP_PROMPT_WRITE_ROLES)
         if error_response:
             return error_response
 

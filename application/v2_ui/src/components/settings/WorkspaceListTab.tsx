@@ -11,6 +11,8 @@ import { Check, Loader2, Search } from 'lucide-react';
 import { ApiError } from '../../lib/apiClient';
 import type { WorkspaceKind, WorkspaceSummary } from '../../lib/workspaces';
 import { GlassPanel, Skeleton } from '../ui/primitives';
+import { useBootstrapStore } from '../../stores/bootstrapStore';
+import { useGroupWorkspaceStore } from '../../stores/groupWorkspaceStore';
 
 const PAGE_SIZE = 10;
 const SEARCH_DEBOUNCE_MS = 300;
@@ -27,6 +29,7 @@ function RoleBadge({ role }: { role?: string }) {
 }
 
 export function WorkspaceListTab({ kind }: { kind: WorkspaceKind }) {
+    const needsReconciliation = useGroupWorkspaceStore((state) => kind.scope === 'group' && state.needsReconciliation);
     const [items, setItems] = useState<WorkspaceSummary[]>([]);
     const [page, setPage] = useState(1);
     const [totalCount, setTotalCount] = useState(0);
@@ -37,25 +40,31 @@ export function WorkspaceListTab({ kind }: { kind: WorkspaceKind }) {
     const [actionError, setActionError] = useState<string | null>(null);
 
     const searchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const listRequest = useRef<AbortController | null>(null);
     const [effectiveSearch, setEffectiveSearch] = useState('');
 
     const load = useCallback(
         async (targetPage: number, term: string) => {
+            listRequest.current?.abort();
+            const controller = new AbortController();
+            listRequest.current = controller;
             setLoading(true);
             setError(null);
             try {
-                const result = await kind.list(targetPage, PAGE_SIZE, term);
+                const result = await kind.list(targetPage, PAGE_SIZE, term, controller.signal);
+                if (controller.signal.aborted) return;
                 setItems(result.items);
                 setTotalCount(result.totalCount);
                 setPage(result.page);
             } catch (caught) {
+                if (controller.signal.aborted) return;
                 setError(
                     caught instanceof Error
                         ? caught.message
                         : `Failed to load your ${kind.pluralNoun}.`,
                 );
             } finally {
-                setLoading(false);
+                if (!controller.signal.aborted) setLoading(false);
             }
         },
         [kind],
@@ -63,7 +72,12 @@ export function WorkspaceListTab({ kind }: { kind: WorkspaceKind }) {
 
     useEffect(() => {
         void load(1, effectiveSearch);
+        return () => listRequest.current?.abort();
     }, [load, effectiveSearch]);
+
+    useEffect(() => () => {
+        if (searchTimer.current !== null) clearTimeout(searchTimer.current);
+    }, []);
 
     const onSearchChange = (value: string) => {
         setSearch(value);
@@ -77,16 +91,37 @@ export function WorkspaceListTab({ kind }: { kind: WorkspaceKind }) {
         setActivating(workspace.id);
         setActionError(null);
         try {
-            await kind.setActive(workspace.id);
+            if (kind.scope === 'group') {
+                await useGroupWorkspaceStore.getState().activate(workspace.id, () => true);
+            } else {
+                const viewerId = useBootstrapStore.getState().data?.user.id;
+                await kind.setActive(workspace.id);
+                await useBootstrapStore.getState().refreshRequired(viewerId);
+            }
             // Re-read rather than patching locally: which one is active is resolved
             // server-side against the caller's membership, so the server is authoritative.
             await load(page, effectiveSearch);
         } catch (caught) {
             setActionError(
-                caught instanceof ApiError
+                caught instanceof ApiError && caught.status < 500
                     ? caught.message
-                    : `Could not switch to that ${kind.noun}.`,
+                    : kind.scope === 'group'
+                        ? useGroupWorkspaceStore.getState().error || `Could not switch to that ${kind.noun}.`
+                        : `Could not switch to that ${kind.noun}.`,
             );
+        } finally {
+            setActivating(null);
+        }
+    };
+
+    const reconcile = async () => {
+        setActivating('reconciling');
+        setActionError(null);
+        try {
+            await useGroupWorkspaceStore.getState().reconcile();
+            await load(page, effectiveSearch);
+        } catch {
+            setActionError(useGroupWorkspaceStore.getState().error || 'Could not confirm the active workspace.');
         } finally {
             setActivating(null);
         }
@@ -114,6 +149,12 @@ export function WorkspaceListTab({ kind }: { kind: WorkspaceKind }) {
                     {actionError}
                 </p>
             )}
+            {needsReconciliation ? (
+                <button type="button" disabled={activating !== null} onClick={() => void reconcile()}
+                    className="rounded-lg border border-edge px-3 py-2 text-sm text-text-1 hover:bg-surface-2 disabled:opacity-50">
+                    Refresh workspace selection
+                </button>
+            ) : null}
 
             {error ? (
                 <p className="rounded-xl border border-danger/30 bg-danger-soft px-4 py-3 text-sm text-danger">
@@ -165,7 +206,7 @@ export function WorkspaceListTab({ kind }: { kind: WorkspaceKind }) {
                                     <button
                                         type="button"
                                         onClick={() => void activate(workspace)}
-                                        disabled={activating !== null}
+                                        disabled={activating !== null || needsReconciliation}
                                         className={clsx(
                                             'shrink-0 rounded-lg border border-edge px-2.5 py-1.5 text-xs font-medium text-text-1',
                                             'hover:bg-surface-2 disabled:opacity-60',

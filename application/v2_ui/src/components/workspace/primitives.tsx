@@ -10,7 +10,7 @@ import { useEffect, useRef, useState } from 'react';
 import { clsx } from 'clsx';
 import { Loader2, Search } from 'lucide-react';
 import type { ReactNode } from 'react';
-import { EmptyState, GlassPanel, Skeleton } from '../ui/primitives';
+import { EmptyState, GlassButton, GlassPanel, Skeleton } from '../ui/primitives';
 
 export function SectionIntro({
     title,
@@ -59,10 +59,10 @@ export function SectionSearch({
     );
 }
 
-export function SectionError({ message }: { message: string }) {
+export function SectionError({ message, action }: { message: string; action?: ReactNode }) {
     return (
-        <GlassPanel elevation="flat" className="p-3 text-sm text-danger" role="alert">
-            {message}
+        <GlassPanel elevation="flat" className={clsx('p-3 text-sm text-danger', action ? 'space-y-2' : null)} role="alert">
+            {action ? <><p>{message}</p>{action}</> : message}
         </GlassPanel>
     );
 }
@@ -83,11 +83,18 @@ export function SectionSkeleton({ rows = 4 }: { rows?: number }) {
  * The error is rendered above the rows rather than instead of them, which matters for the
  * delete flows: they put the list back as it was and then report why, and replacing the
  * list would hide the very rows the message refers to.
+ *
+ * A failed read is different from an empty one: it has no result to show. Its error offers a
+ * retry, and the empty state -- with its invitation to create the first item -- never stands in
+ * for the list that couldn't be read.
  */
 export function SectionList<T>({
     items,
     loading,
     error,
+    loadFailed = false,
+    onRetry,
+    retryLabel = 'Retry',
     emptyIcon,
     emptyTitle,
     emptyDescription,
@@ -98,6 +105,12 @@ export function SectionList<T>({
     items: T[];
     loading: boolean;
     error?: string | null;
+    /** The latest read failed (see useSectionResource). */
+    loadFailed?: boolean;
+    /** Re-reads the list, offered beside a failed read's error. */
+    onRetry?: () => void;
+    /** Names what the retry reloads, as the other sections do: "Retry members", "Retry tags". */
+    retryLabel?: string;
     emptyIcon?: ReactNode;
     emptyTitle: string;
     emptyDescription?: string;
@@ -107,11 +120,18 @@ export function SectionList<T>({
 }) {
     return (
         <div className="space-y-3">
-            {error ? <SectionError message={error} /> : null}
+            {error ? (
+                <SectionError
+                    message={error}
+                    action={loadFailed && onRetry ? (
+                        <GlassButton size="sm" disabled={loading} onClick={onRetry}>{retryLabel}</GlassButton>
+                    ) : undefined}
+                />
+            ) : null}
 
             {loading ? <SectionSkeleton /> : null}
 
-            {!loading && items.length === 0 ? (
+            {!loading && !loadFailed && items.length === 0 ? (
                 <EmptyState
                     icon={emptyIcon}
                     title={emptyTitle}

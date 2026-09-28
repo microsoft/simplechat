@@ -3,14 +3,14 @@
 import { useEffect, useRef, useState, type Dispatch, type SetStateAction } from 'react';
 import { RefreshCw } from 'lucide-react';
 import { ApiError } from '../../lib/apiClient';
-import type { AgentConfiguration, AgentEditorOptions, AuthoringResource } from '../../lib/workspaceAuthoring';
+import type { AgentConfiguration, AgentEditorOptions, AuthoringResource, WorkspaceAgentType } from '../../lib/workspaceAuthoring';
+import type { WorkspaceModelEndpoint } from '../../lib/types';
 import {
     AGENT_INPUT_CLASS, FOUNDRY_SETTINGS_KEYS, agentModelChoices, agentText, applyFoundryDiscovery, clearAgentDraftFields,
     foundryEndpointMatches, foundrySettings, selectAgentModel, selectedAgentModel, selectFoundryEndpoint,
     updateAgentSetting, type FoundryDiscoveryRecord,
 } from '../../lib/workspaceAgentAuthoring';
 import { normalizeAgentKnowledgeUrl } from '../../lib/workspaceAgentKnowledge';
-import { discoverAgentFoundryResources } from '../../lib/workspaceAgentCommands';
 import { GlassButton, Toggle } from '../ui/primitives';
 import { AgentField, AgentNotice, AgentSecretField, AgentTextField } from './AgentFields';
 
@@ -19,12 +19,36 @@ interface ModelFieldsProps {
     setDraft: Dispatch<SetStateAction<AgentConfiguration>>;
     options: AgentEditorOptions;
     original: AuthoringResource<AgentConfiguration> | null;
+    /**
+     * Whether custom model connections may be configured. Personal scope reads
+     * `allow_user_custom_endpoints`; a group agent editor passes its own
+     * `allow_group_custom_endpoints` so a group page never consults the personal flag. Omitted
+     * keeps the historical personal behaviour byte-identical.
+     */
+    allowCustomEndpoints?: boolean;
+    /**
+     * Discover Foundry resources for the selected saved connection, supplied by the scope's agent
+     * workbench adapter. Personal routes every connection through the legacy account-wide route;
+     * group routes a group-scoped connection through its named-group route so discovery resolves the
+     * page's group, while a global connection keeps the legacy route. Passing it here keeps this
+     * component free of any scope branching of its own.
+     */
+    discoverFoundryResources: (
+        endpoint: WorkspaceModelEndpoint, type: WorkspaceAgentType, signal?: AbortSignal,
+    ) => Promise<{ agents: FoundryDiscoveryRecord[]; responses_api_version?: string }>;
+    /**
+     * Whether to show neutral read-only copy in place of the personal authoring guidance: true only
+     * for a read-only group editor (a member). A group manager with an empty model list still needs
+     * the actionable "configure a custom connection" guidance and the "Saved connection unavailable"
+     * hint, so this stays false for them. Omitted keeps the historical personal behaviour identical.
+     */
+    neutralReadOnlyCopy?: boolean;
 }
 
-function LocalModelFields({ draft, setDraft, options, original }: ModelFieldsProps) {
+function LocalModelFields({ draft, setDraft, options, original, allowCustomEndpoints, neutralReadOnlyCopy }: ModelFieldsProps) {
     const choices = agentModelChoices(options);
     const selected = selectedAgentModel(draft, choices);
-    const customAllowed = options.settings.allow_user_custom_endpoints === true;
+    const customAllowed = allowCustomEndpoints ?? options.settings.allow_user_custom_endpoints === true;
     const [customOpen, setCustomOpen] = useState(Boolean(
         !draft.model_endpoint_id && (draft.azure_openai_gpt_endpoint || draft.azure_openai_gpt_key || draft.enable_agent_gpt_apim),
     ));
@@ -41,7 +65,9 @@ function LocalModelFields({ draft, setDraft, options, original }: ModelFieldsPro
                     {choices.map((choice) => <option key={choice.key} value={choice.key}>{choice.label}</option>)}
                 </select>
             </AgentField>
-            {!choices.length ? <AgentNotice>No enabled models are listed. You can retain the saved connection or configure a custom connection below.</AgentNotice> : null}
+            {!choices.length ? <AgentNotice>{neutralReadOnlyCopy
+                ? 'Uses a configured model.'
+                : 'No enabled models are listed. You can retain the saved connection or configure a custom connection below.'}</AgentNotice> : null}
             <dl className="grid gap-3 rounded-xl border border-edge p-3 text-xs sm:grid-cols-3">
                 <div className="min-w-0"><dt className="text-text-3">Endpoint ID</dt><dd className="break-all text-text-1">{draft.model_endpoint_id || 'Legacy / configured default'}</dd></div>
                 <div className="min-w-0"><dt className="text-text-3">Model ID</dt><dd className="break-all text-text-1">{draft.model_id || draft.azure_openai_gpt_deployment || draft.azure_agent_apim_gpt_deployment || 'Configured default'}</dd></div>
@@ -51,7 +77,7 @@ function LocalModelFields({ draft, setDraft, options, original }: ModelFieldsPro
                 <summary className="cursor-pointer text-sm font-medium text-text-2">Custom / legacy connection and APIM</summary>
                 <div className="mt-4 space-y-4">
                     <p className="text-xs text-text-3">A selected endpoint takes precedence. Custom values and stored credentials are retained when you choose a model; they are never copied from app settings.</p>
-                    {!customAllowed ? <AgentNotice>Your administrator has disabled personal custom-connection changes. Existing values and credentials remain stored.</AgentNotice> : null}
+                    {!customAllowed ? <AgentNotice>Your administrator has disabled custom-connection changes. Existing values and credentials remain stored.</AgentNotice> : null}
                     <fieldset disabled={!customAllowed} className="space-y-4">
                     <legend className="sr-only">Custom connection settings</legend>
                     {draft.model_endpoint_id ? (
@@ -96,7 +122,7 @@ function LocalModelFields({ draft, setDraft, options, original }: ModelFieldsPro
     );
 }
 
-function FoundryModelFields({ draft, setDraft, options }: ModelFieldsProps) {
+function FoundryModelFields({ draft, setDraft, options, neutralReadOnlyCopy, discoverFoundryResources }: ModelFieldsProps) {
     const [resources, setResources] = useState<FoundryDiscoveryRecord[]>([]);
     const [responseVersion, setResponseVersion] = useState('');
     const [loading, setLoading] = useState(false);
@@ -147,7 +173,7 @@ function FoundryModelFields({ draft, setDraft, options }: ModelFieldsProps) {
         setError(null);
         setAuthUrl('');
         try {
-            const result = await discoverAgentFoundryResources(selectedEndpoint, type, controller.signal);
+            const result = await discoverFoundryResources(selectedEndpoint, type, controller.signal);
             if (!controller.signal.aborted) {
                 setResources(result.agents);
                 setResponseVersion(result.responses_api_version || '');
@@ -176,7 +202,8 @@ function FoundryModelFields({ draft, setDraft, options }: ModelFieldsProps) {
                         else setDraft((current) => updateAgentSetting({ ...current, model_endpoint_id: '' }, key, { endpoint_id: '' }));
                     }}>
                     <option value="">Manual Foundry project connection</option>
-                    {endpointId && !selectedEndpoint ? <option value={endpointId}>Saved connection unavailable · {endpointId}</option> : null}
+                    {endpointId && !selectedEndpoint ? <option value={endpointId}>{neutralReadOnlyCopy
+                        ? 'Uses a configured model' : `Saved connection unavailable · ${endpointId}`}</option> : null}
                     {endpoints.map((endpoint) => <option key={endpoint.id} value={endpoint.id}>{endpoint.name || endpoint.id} · {agentText(endpoint.scope) || 'global'}</option>)}
                 </select>
             </AgentField>

@@ -42,6 +42,7 @@ from urllib.parse import unquote
 from azure.core.exceptions import HttpResponseError, ResourceNotFoundError, ServiceRequestError, ServiceResponseError
 from azure.cosmos.exceptions import CosmosResourceNotFoundError
 from requests.exceptions import ConnectionError as RequestsConnectionError, Timeout as RequestsTimeout
+from werkzeug.exceptions import HTTPException
 
 from content_screening.contracts import (
     SCREENING_FIELD,
@@ -82,6 +83,24 @@ PRIVATE_DOCUMENT_FIELDS = frozenset({
     "original_blob_container", "active_manifest_id", "active_content_manifest",
     PROVENANCE_FIELD,
     "generated_artifact_publication_binding", "generated_artifact_publication_processing",
+    "group_document_projection_writer",
+    "group_document_collaboration_operation", "document_share_details",
+    "public_document_projection_writer",
+    "public_document_collaboration_operation",
+    # Recomputed per request from current authorization, so a stored copy is
+    # always stale. The group projection re-adds them after serialization.
+    "document_actions", "document_collaboration_actions",
+    "generated_artifact_source_conversation_id", "generated_artifact_source_message_id",
+    "generated_artifact_source_blob_container", "generated_artifact_source_blob_path",
+    "generated_artifact_publication_receipt_id",
+    "generated_artifact_approved_by_user_id",
+    "generated_artifact_approved_by_display_name", "generated_artifact_approved_at",
+})
+# A pending generated artifact stays held, but the group review surface still
+# needs to say who requested it. Both allow-lists must name the same fields.
+GENERATED_ARTIFACT_REQUEST_FIELDS = frozenset({
+    "generated_artifact_promotion_status", "generated_artifact_requested_by_user_id",
+    "generated_artifact_requested_by_display_name", "generated_artifact_requested_at",
 })
 _SOURCE_AUTHORITY_SCOPE = ContextVar("content_screening_source_authority_scope", default=None)
 
@@ -966,13 +985,22 @@ def guard_model_callable(invoke, evidence, user_id=None):
     return guarded
 
 
+def is_public_document_field(key):
+    """Redaction is a property of the field, never of the screening toggle."""
+    return (
+        key not in PRIVATE_DOCUMENT_FIELDS and key != SCREENING_FIELD
+        and not key.startswith("_") and not key.startswith("screening_")
+    )
+
+
 def public_document_payload(document):
     if not isinstance(document, Mapping):
         return {}
     if SCREENING_FIELD not in document:
-        return {key: deepcopy(value) for key, value in document.items() if key not in {
-            "generated_artifact_publication_binding", "generated_artifact_publication_processing",
-        }}
+        return {
+            key: deepcopy(value) for key, value in document.items()
+            if is_public_document_field(key)
+        }
     try:
         _require_available_metadata(document)
         config = import_module("config")
@@ -982,15 +1010,10 @@ def public_document_payload(document):
         available = False
     public_fields = HELD_PUBLIC_FIELDS
     if document.get("generated_artifact_publication_binding"):
-        public_fields = public_fields | {
-            "generated_artifact_promotion_status", "generated_artifact_requested_by_user_id",
-            "generated_artifact_requested_by_display_name", "generated_artifact_requested_at",
-        }
+        public_fields = public_fields | GENERATED_ARTIFACT_REQUEST_FIELDS
     payload = {
         key: deepcopy(value) for key, value in document.items()
-        if (available or key in public_fields)
-        and key not in PRIVATE_DOCUMENT_FIELDS and key != SCREENING_FIELD
-        and not key.startswith("_") and not key.startswith("screening_")
+        if (available or key in public_fields) and is_public_document_field(key)
     }
     marker = document.get(SCREENING_FIELD)
     summary_source = document
@@ -1039,7 +1062,7 @@ def public_documents_payload(documents, user_id=None, *, metadata_reader=None):
     return payloads
 
 
-def register_document_api_guards(blueprint, *, user_resolver=None):
+def register_document_api_guards(blueprint, *, user_resolver=None, document_projector=None, source_validator=None):
     """Protect ordinary classic/V2 document responses and mutation requests."""
     flask = import_module("flask")
 
@@ -1056,26 +1079,30 @@ def register_document_api_guards(blueprint, *, user_resolver=None):
     @blueprint.after_request
     def enforce_document_response(response):
         try:
-            assert_current_request_sources_available()
+            (source_validator or assert_current_request_sources_available)()
             if response.is_json and response.status_code < 300:
                 payload = response.get_json()
                 if isinstance(payload, dict):
                     actor_id = user_resolver() if user_resolver else _current_user_id()
+                    project_documents = document_projector or public_documents_payload
                     if "id" in payload and ("file_name" in payload or "filename" in payload):
-                        refreshed = public_documents_payload([payload], actor_id)
+                        refreshed = project_documents([payload], actor_id)
                         payload = refreshed[0] if refreshed else {"error": "Document not found or access denied."}
                         if not refreshed:
                             response.status_code = 404
                     for key in ("documents", "versions"):
                         if isinstance(payload.get(key), list):
-                            payload[key] = public_documents_payload(payload[key], actor_id)
+                            payload[key] = project_documents(payload[key], actor_id)
                     response.set_data(flask.json.dumps(payload))
-        except (DocumentHeldError, ScreeningConflictError) as error:
+        except ScreeningError as error:
             response = flask.jsonify({"error": error.public_message, "error_code": error.code})
             response.status_code = error.status_code
         except (LookupError, PermissionError):
             response = flask.jsonify({"error": "Document not found or access denied."})
             response.status_code = 404
+        except HTTPException as error:
+            response = flask.jsonify({"error": error.description})
+            response.status_code = error.code
         response.headers["Cache-Control"] = "no-store, private"
         response.headers["Pragma"] = "no-cache"
         response.headers.pop("ETag", None)

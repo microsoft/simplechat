@@ -20,12 +20,16 @@ export function AgentDelegationManager({
     mode = 'both',
     revision = 0,
     onDirtyChange,
+    onBusyChange,
+    interactionDisabled = false,
 }: {
     scope: DelegationScope;
     allowManage?: boolean;
     mode?: 'actions' | 'bindings' | 'both';
     revision?: number;
     onDirtyChange?: (dirty: boolean) => void;
+    onBusyChange?: (busy: boolean) => void;
+    interactionDisabled?: boolean;
 }) {
     const [catalog, setCatalog] = useState<AgentTargetCatalog | null>(null);
     const [actions, setActions] = useState<WorkspaceAction[]>([]);
@@ -50,6 +54,19 @@ export function AgentDelegationManager({
         onDirtyChange?.(dirty);
         return () => onDirtyChange?.(false);
     }, [dirty, onDirtyChange]);
+
+    useEffect(() => {
+        onBusyChange?.(saving);
+        return () => onBusyChange?.(false);
+    }, [saving, onBusyChange]);
+
+    useEffect(() => {
+        if (!allowManage && dirty) {
+            setEditor(null);
+            setCaller(null);
+            setNotice('Management access changed. Your unsaved Call agent changes were not saved.');
+        }
+    }, [allowManage, dirty]);
 
     useEffect(() => {
         if (!dirty) {
@@ -96,6 +113,10 @@ export function AgentDelegationManager({
     }, [scopeType, groupId, reload, revision, mode]);
 
     const save = async (operation: () => Promise<unknown>, message: string) => {
+        if (interactionDisabled || !canManage) {
+            setError('Refresh workspace access before making changes.');
+            return;
+        }
         const version = loadVersion.current;
         setSaving(true);
         setError('');
@@ -127,6 +148,8 @@ export function AgentDelegationManager({
     const visibleAgents = agents.filter((agent) => matches(`${agent.display_name ?? ''} ${agent.name ?? ''}`));
 
     return (
+        <fieldset disabled={interactionDisabled} className="min-w-0">
+        <legend className="sr-only">Call agent controls</legend>
         <section aria-label="Call agent configuration" className="space-y-4">
             <div className="flex flex-wrap items-center justify-between gap-2">
                 <h2 className="text-base font-semibold text-text-1">Call agent</h2>
@@ -226,5 +249,6 @@ export function AgentDelegationManager({
                 </>
             ) : null}
         </section>
+        </fieldset>
     );
 }

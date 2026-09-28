@@ -1,10 +1,12 @@
 # test_v2_chat_context_selection.py
 """
 Browser regressions for V2 context selection and explicitly chosen inline mentions.
-Version: 0.261.139
+Version: 0.261.183
 Implemented in: 0.261.094
-Single orchestration contract updated in: 0.261.139
+Single orchestration contract updated in: 0.261.181 (the React V2 branch's 0.261.139)
 Shared editor and prompt dispatch regression coverage added in: 0.261.096
+The public chat list is answered as its route answers it (chat_list), with no generated artifact
+awaiting publication: 0.261.183
 
 The real Composer, DocumentExplorer, stores, router, and request builders run in the
 existing Playwright harness. The shared connection fixture supports a configured Azure
@@ -31,8 +33,10 @@ from playwright.sync_api import Page, Route, expect
 # The shared harness must also resolve when this file is run directly.
 sys.path.insert(0, str(Path(__file__).resolve().parent / "fixtures" / "orchestration"))
 sys.path.insert(0, str(Path(__file__).resolve().parent / "fixtures"))
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import harness_build as hb  # noqa: E402
 from playwright_connection import connect_options  # noqa: E402,F401
+from ui_tests.fixtures.public_documents import chat_list  # noqa: E402
 
 
 pytestmark = pytest.mark.ui
@@ -177,12 +181,16 @@ class ContextApi:
                     route.fulfill(json={"tags": [{"name": TAGS[scope]}]})
                     return
                 if path == collection:
+                    # A mock convenience: the real public chat list route ignores `search` and `page`.
                     query = parse_qs(url.query).get("search", [""])[0].casefold()
                     documents = [
                         document
                         for document in DOCUMENTS[scope]
                         if query in f"{document['title']} {document['file_name']}".casefold()
                     ]
+                    if scope == "public":
+                        route.fulfill(json=chat_list(documents))
+                        return
                     route.fulfill(
                         json={
                             "documents": documents,
@@ -543,20 +551,20 @@ def test_workspace_chat_action_hands_real_selection_to_pills_only(context_page):
 
 def test_router_state_handoff_deduplicates_and_retains_scoped_metadata(context_page):
     page, api = context_page
-    group_document = {"document": DOCUMENTS["group"][0], "scope": SCOPES["group"]}
+    public_document = {"document": DOCUMENTS["public"][0], "scope": SCOPES["public"]}
     mount_workflow(
         page,
         {
             "pathname": "/chat",
             "search": (
-                "?search_documents=true&doc_scope=all&document_ids=group-campaign,public-policy"
-                "&tags=urgent&group_id=group-1&workspace_id=public-1&keep=untouched"
+                "?search_documents=true&doc_scope=all&document_ids=personal-brief,public-policy"
+                "&tags=urgent&workspace_id=public-1&keep=untouched"
             ),
             "state": {
                 "contextDocuments": [
-                    group_document,
-                    group_document,
-                    {"document": DOCUMENTS["public"][0], "scope": SCOPES["public"]},
+                    {"document": DOCUMENTS["personal"][0], "scope": SCOPES["personal"]},
+                    public_document,
+                    public_document,
                 ],
                 "contextTags": [{"name": "urgent", "scope": SCOPES["personal"]}],
             },
@@ -566,17 +574,50 @@ def test_router_state_handoff_deduplicates_and_retains_scoped_metadata(context_p
     expect(page.get_by_label("Current route", exact=True)).to_have_text("/chat?keep=untouched")
     draft = page.get_by_role("textbox", name="Message", exact=True)
     expect(draft).to_have_value("")
-    expect_pills(page, "Campaign outline", "Travel policy", "urgent")
+    expect_pills(page, "Quarterly brief", "Travel policy", "urgent")
     assert not api.requests, "Router records should avoid document resolution requests."
     draft.fill("Use the handed-over sources.")
     payload = send_draft(page, api)
     expect_context_metadata(
         payload,
-        documents=["group-campaign", "public-policy"],
+        documents=["personal-brief", "public-policy"],
         tags=["urgent"],
-        group=True,
         public=True,
     )
+
+
+def test_router_state_group_documents_require_an_explicit_group_handoff(context_page):
+    """Group records carried in router state are refused unless the link names the group.
+
+    An explicit group handoff (doc_scope=group with its group_id) re-reads the group's access and
+    every document from the server, so a record held in router state under another scope would
+    skip that check. Group chat handoffs from the documents explorer are covered in
+    test_v2_group_documents.py.
+    """
+    page, api = context_page
+    mount_workflow(
+        page,
+        {
+            "pathname": "/chat",
+            "search": (
+                "?search_documents=true&doc_scope=all&document_ids=group-campaign,public-policy"
+                "&group_id=group-1&workspace_id=public-1&keep=untouched"
+            ),
+            "state": {
+                "contextDocuments": [
+                    {"document": DOCUMENTS["group"][0], "scope": SCOPES["group"]},
+                    {"document": DOCUMENTS["public"][0], "scope": SCOPES["public"]},
+                ],
+            },
+        },
+        strict_mode=True,
+    )
+    page.evaluate("() => window.OrchHarness.mount('mount-b', 'Toaster', {})")
+    expect(page.get_by_text(
+        "Could not load the selected context. Choose it again from Documents.", exact=True,
+    ).first).to_be_visible()
+    expect_pills(page)
+    assert not api.requests, "A refused handoff must not resolve any document."
 
 
 @pytest.mark.parametrize("strict_mode", [False, True], ids=["ordinary", "strict-mode"])
@@ -1290,6 +1331,34 @@ def test_shared_editor_grounded_prompt_values_and_undo_survive_inline_paging(con
     expect(card.get_by_text("AI-filled", exact=True)).to_have_count(0)
     assert len(fills) == 1
     assert read_inline_lifecycle_draft(page)["editors"]["details"]["text"] == "A separate answer."
+
+
+class _RecordedRoute:
+    """A route that records what the mock answers, for a check that needs no browser."""
+
+    def __init__(self, method, url):
+        self.request = type("Request", (), {"method": method, "url": url})()
+        self.fulfilled = None
+
+    def fulfill(self, **kwargs):
+        self.fulfilled = kwargs
+
+
+def test_the_public_chat_list_never_offers_an_artifact_awaiting_publication(monkeypatch):
+    """The mock answers the public chat list as its route does (chat_list, held to the route by
+    functional_tests/test_public_chat_document_list_pending_artifacts.py): a generated artifact awaiting
+    publication is left out for every caller, however well it matches."""
+    pending = {
+        "id": "public-pending", "title": "Travel policy draft", "file_name": "travel-policy-draft.pdf",
+        "status": "Pending approval", "generated_artifact_promotion_status": "pending_approval",
+        "public_workspace_id": "public-1", "tags": [],
+    }
+    monkeypatch.setitem(DOCUMENTS, "public", [*DOCUMENTS["public"], pending])
+    route = _RecordedRoute("GET", "https://example.test/api/public_workspace_documents?search=travel")
+    ContextApi().handle(route)
+    served = route.fulfilled["json"]
+    assert [document["id"] for document in served["documents"]] == ["public-policy"]
+    assert served == chat_list(DOCUMENTS["public"])
 
 
 if __name__ == "__main__":

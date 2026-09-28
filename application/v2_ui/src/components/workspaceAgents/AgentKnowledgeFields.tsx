@@ -14,7 +14,7 @@ import { SectionSearch } from '../workspace/primitives';
 import { AgentField, AgentNotice, AgentTextField } from './AgentFields';
 
 export function AgentKnowledgeFields({
-    draft, setDraft, catalog, loading, error, onRefresh, readOnly,
+    draft, setDraft, catalog, loading, error, onRefresh, readOnly, knowledgeScopes = ['personal', 'public'],
 }: {
     draft: AgentConfiguration;
     setDraft: Dispatch<SetStateAction<AgentConfiguration>>;
@@ -23,6 +23,7 @@ export function AgentKnowledgeFields({
     error: string | null;
     onRefresh: () => void;
     readOnly: boolean;
+    knowledgeScopes?: readonly string[];
 }) {
     const [sourceQuery, setSourceQuery] = useState('');
     const [documentQuery, setDocumentQuery] = useState('');
@@ -34,7 +35,7 @@ export function AgentKnowledgeFields({
     const [inputError, setInputError] = useState<string | null>(null);
     const config = readAgentKnowledge(draft);
     const selectedKeys = new Set(selectedKnowledgeSources(config));
-    const sources = (catalog?.sources ?? []).filter((source) => ['personal', 'public'].includes(source.scope));
+    const sources = (catalog?.sources ?? []).filter((source) => knowledgeScopes.includes(source.scope));
     const documents = (catalog?.documents ?? []).filter((document) =>
         sources.some((source) => source.scope === document.scope && source.id === document.source_id));
     const unavailableSourceKeys = [...selectedKeys].filter((key) => !sources.some((source) => knowledgeSourceKey(source) === key));
@@ -52,7 +53,7 @@ export function AgentKnowledgeFields({
             setInputError('You can assign at most 50 public workspaces.');
             return;
         }
-        setDraft((current) => toggleAgentKnowledgeSource(current, source, enabled));
+        setDraft((current) => toggleAgentKnowledgeSource(current, source, enabled, knowledgeScopes));
     };
     const addUrl = () => {
         setInputError(null);

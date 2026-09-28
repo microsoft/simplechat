@@ -16,11 +16,9 @@ from functions_appinsights import log_event
 from functions_artifact_publication import decide_artifact_publication
 from functions_document_access_index import (
     DOCUMENT_ACCESS_SCOPE_PUBLIC,
-    build_document_access_scope_key,
     is_document_access_shadow_validation_enabled,
     query_document_access_index_documents,
     query_document_access_index_legacy_count,
-    query_document_access_index_tag_counts,
     query_items_with_cosmos_diagnostics,
     validate_document_access_index_shadow,
 )
@@ -30,6 +28,7 @@ from functions_file_sync import (
     build_synced_document_delete_guard,
 )
 from functions_notifications import create_notification, delete_notifications_by_metadata
+from functions_public_document_policy import public_document_approval_pending
 from functions_simplechat_operations import download_blob_content, queue_generated_document_processing
 from utils_cache import invalidate_public_workspace_search_cache
 from flask import current_app
@@ -80,6 +79,117 @@ def _require_active_public_workspace_response(user_id, allowed_roles=PUBLIC_WORK
         return None, None, None, (jsonify({'error': 'Access denied'}), 403)
 
     return active_ws, ws_doc, role, None
+
+
+PUBLIC_TAG_PERMISSION_MESSAGE = 'You do not have permission to manage tags'
+
+
+class _PublicTagAnswer(Exception):
+    """Ends a guarded tag change without writing: with ``answer`` (payload, status), or none to carry on."""
+
+    def __init__(self, answer=None):
+        super().__init__("The public workspace tag change was answered without a write.")
+        self.answer = answer
+
+
+def _save_public_tag_definitions(workspace_id, user_id, change):
+    """Apply ``change`` to the tag definitions on the workspace's current copy.
+
+    The caller's tag role is checked again on that copy, so a role removed meanwhile
+    refuses the change, and everything else on the workspace (membership, status, the
+    other definitions) comes from that copy too. ``change`` edits the definitions in
+    place and returns whether it changed anything; nothing is written when it didn't.
+    It can raise ``_PublicTagAnswer`` to refuse. Returns an error response, or ``None``
+    to carry on. No chat bootstrap payload reads tag definitions, so nothing is bumped.
+    """
+    def apply_change(fresh):
+        if get_user_role_in_public_workspace(fresh, user_id) not in PUBLIC_WORKSPACE_MANAGER_ROLES:
+            raise _PublicTagAnswer(({'error': PUBLIC_TAG_PERMISSION_MESSAGE}, 403))
+        definitions = fresh.get('tag_definitions') or {}
+        if not change(definitions):
+            raise _PublicTagAnswer()
+        fresh['tag_definitions'] = definitions
+        return fresh
+
+    try:
+        saved = update_public_workspace_document_with_etag_guard(workspace_id, apply_change, cache_reason=None)
+    except _PublicTagAnswer as answered:
+        if answered.answer is None:
+            return None
+        payload, status = answered.answer
+        return jsonify(payload), status
+    except PublicWorkspaceDocumentWriteConflict:
+        return jsonify({
+            'error': PUBLIC_WORKSPACE_WRITE_CONFLICT_MESSAGE,
+            'error_code': PUBLIC_WORKSPACE_WRITE_CONFLICT_CODE,
+        }), 409
+    if saved is None:
+        return jsonify({'error': 'Active public workspace not found'}), 404
+    return None
+
+
+def _query_public_chat_documents(user_id, workspace_ids, *, context):
+    """The current documents of these public workspaces that a chat can use.
+
+    Read from the document access index, or from the source documents when the
+    index is not ready. A generated artifact awaiting publication is left out for
+    every caller: it has no content to chat with until its approval queues
+    processing, so listing it would only disclose it. The chat document list and
+    its tag counts are both taken from this one set.
+    """
+    workspace_conditions = " OR ".join([f"c.public_workspace_id = @ws_{i}" for i in range(len(workspace_ids))])
+    query = f'SELECT * FROM c WHERE {workspace_conditions} ORDER BY c._ts DESC'
+    params = [{'name': f'@ws_{i}', 'value': workspace_id} for i, workspace_id in enumerate(workspace_ids)]
+    index_read_result = query_document_access_index_documents(
+        source_scope=DOCUMENT_ACCESS_SCOPE_PUBLIC,
+        public_workspace_ids=workspace_ids,
+    )
+    if index_read_result.get('success'):
+        docs = sort_documents(index_read_result.get('documents', []))
+        if is_document_access_shadow_validation_enabled():
+            try:
+                source_docs, source_query_metrics = query_items_with_cosmos_diagnostics(
+                    cosmos_public_documents_container,
+                    diagnostics_label='source_documents',
+                    query=query,
+                    parameters=params,
+                    enable_cross_partition_query=True,
+                )
+                validate_document_access_index_shadow(
+                    sort_documents(select_current_documents(source_docs)),
+                    source_scope=DOCUMENT_ACCESS_SCOPE_PUBLIC,
+                    user_id=user_id,
+                    public_workspace_ids=workspace_ids,
+                    source_query_metrics=source_query_metrics,
+                    context=context,
+                )
+            except Exception as shadow_error:
+                log_event(
+                    '[DOCUMENT_ACCESS_INDEX] Shadow validation source query failed after DAI read succeeded.',
+                    extra={'source_scope': DOCUMENT_ACCESS_SCOPE_PUBLIC, 'error': str(shadow_error)},
+                    level=logging.WARNING,
+                    exceptionTraceback=True,
+                )
+    else:
+        source_docs, source_query_metrics = query_items_with_cosmos_diagnostics(
+            cosmos_public_documents_container,
+            diagnostics_label='source_documents',
+            collect_diagnostics=is_document_access_shadow_validation_enabled(),
+            query=query,
+            parameters=params,
+            enable_cross_partition_query=True,
+        )
+        docs = sort_documents(select_current_documents(source_docs))
+        validate_document_access_index_shadow(
+            docs,
+            source_scope=DOCUMENT_ACCESS_SCOPE_PUBLIC,
+            user_id=user_id,
+            public_workspace_ids=workspace_ids,
+            source_query_metrics=source_query_metrics,
+            context=context,
+        )
+    return [document for document in docs if not public_document_approval_pending(document)]
+
 
 def register_route_backend_public_documents(bp):
     """
@@ -404,7 +514,8 @@ def register_route_backend_public_documents(bp):
     def api_list_public_workspace_documents():
         """
         Endpoint specifically for chat functionality to load public workspace documents
-        Returns documents from ALL visible public workspaces for the chat interface
+        Returns documents from ALL visible public workspaces for the chat interface,
+        never a generated artifact awaiting publication
         """
         user_id = get_current_user_id()
         if not user_id:
@@ -433,58 +544,10 @@ def register_route_backend_public_documents(bp):
             page_size = 1000
 
         # Query documents from all visible public workspaces
-        workspace_conditions = " OR ".join([f"c.public_workspace_id = @ws_{i}" for i in range(len(workspace_ids))])
-        query = f'SELECT * FROM c WHERE {workspace_conditions} ORDER BY c._ts DESC'
-        params = [{'name': f'@ws_{i}', 'value': workspace_id} for i, workspace_id in enumerate(workspace_ids)]
         try:
-            index_read_result = query_document_access_index_documents(
-                source_scope=DOCUMENT_ACCESS_SCOPE_PUBLIC,
-                public_workspace_ids=workspace_ids,
+            docs = _query_public_chat_documents(
+                user_id, workspace_ids, context='api_list_public_workspace_documents',
             )
-            if index_read_result.get('success'):
-                docs = sort_documents(index_read_result.get('documents', []))
-                if is_document_access_shadow_validation_enabled():
-                    try:
-                        source_docs, source_query_metrics = query_items_with_cosmos_diagnostics(
-                            cosmos_public_documents_container,
-                            diagnostics_label='source_documents',
-                            query=query,
-                            parameters=params,
-                            enable_cross_partition_query=True,
-                        )
-                        validate_document_access_index_shadow(
-                            sort_documents(select_current_documents(source_docs)),
-                            source_scope=DOCUMENT_ACCESS_SCOPE_PUBLIC,
-                            user_id=user_id,
-                            public_workspace_ids=workspace_ids,
-                            source_query_metrics=source_query_metrics,
-                            context='api_list_public_workspace_documents',
-                        )
-                    except Exception as shadow_error:
-                        log_event(
-                            '[DOCUMENT_ACCESS_INDEX] Shadow validation source query failed after DAI read succeeded.',
-                            extra={'source_scope': DOCUMENT_ACCESS_SCOPE_PUBLIC, 'error': str(shadow_error)},
-                            level=logging.WARNING,
-                            exceptionTraceback=True,
-                        )
-            else:
-                source_docs, source_query_metrics = query_items_with_cosmos_diagnostics(
-                    cosmos_public_documents_container,
-                    diagnostics_label='source_documents',
-                    collect_diagnostics=is_document_access_shadow_validation_enabled(),
-                    query=query,
-                    parameters=params,
-                    enable_cross_partition_query=True,
-                )
-                docs = sort_documents(select_current_documents(source_docs))
-                validate_document_access_index_shadow(
-                    docs,
-                    source_scope=DOCUMENT_ACCESS_SCOPE_PUBLIC,
-                    user_id=user_id,
-                    public_workspace_ids=workspace_ids,
-                    source_query_metrics=source_query_metrics,
-                    context='api_list_public_workspace_documents',
-                )
         except Exception as e:
             log_event(
                 '[PUBLIC_DOCUMENTS] Error fetching public workspace chat documents.',
@@ -1251,6 +1314,8 @@ def register_route_backend_public_documents(bp):
         Accepts optional `workspace_ids` query param (comma-separated).
         Falls back to all visible public workspaces from user settings if not provided.
         Permission: only workspaces the user has visibility to are included.
+        Counts are taken over exactly the documents the chat document list returns, so
+        a generated artifact awaiting publication is never counted.
         """
         user_id = get_current_user_id()
         if not user_id:
@@ -1264,26 +1329,35 @@ def register_route_backend_public_documents(bp):
             workspace_ids = get_user_visible_public_workspace_ids_from_settings(user_id)
 
         visible_ids = set(get_user_visible_public_workspace_ids_from_settings(user_id))
-        validated_ids = [wid for wid in workspace_ids if wid in visible_ids]
+        validated_ids = list(dict.fromkeys(wid for wid in workspace_ids if wid in visible_ids))
 
-        from functions_documents import build_workspace_tags_from_counts, get_workspace_tags
+        from functions_documents import build_workspace_tags_from_counts, normalize_tag
 
-        index_tag_result = query_document_access_index_tag_counts(
-            DOCUMENT_ACCESS_SCOPE_PUBLIC,
-            public_workspace_ids=validated_ids,
-        ) if validated_ids else {'success': False}
+        tag_counts = {wid: {} for wid in validated_ids}
+        if validated_ids:
+            try:
+                documents = _query_public_chat_documents(
+                    user_id, validated_ids, context='api_get_public_workspace_document_tags',
+                )
+            except Exception as e:
+                log_event(
+                    '[PUBLIC_DOCUMENTS] Error fetching public workspace chat tags.',
+                    extra={'workspace_count': len(validated_ids), 'error': str(e)},
+                    level=logging.ERROR,
+                )
+                return jsonify({'error': 'Error fetching tags'}), 500
+            for document in documents:
+                counts = tag_counts.get(document.get('public_workspace_id'))
+                if counts is None:
+                    continue
+                for tag in document.get('tags') or []:
+                    normalized_tag = normalize_tag(tag)
+                    if normalized_tag:
+                        counts[normalized_tag] = counts.get(normalized_tag, 0) + 1
 
         all_tags = {}
         for wid in validated_ids:
-            if index_tag_result.get('success'):
-                scope_key = build_document_access_scope_key(DOCUMENT_ACCESS_SCOPE_PUBLIC, wid)
-                tags = build_workspace_tags_from_counts(
-                    index_tag_result.get('tag_counts_by_scope_key', {}).get(scope_key, {}),
-                    user_id,
-                    public_workspace_id=wid,
-                )
-            else:
-                tags = get_workspace_tags(user_id, public_workspace_id=wid)
+            tags = build_workspace_tags_from_counts(tag_counts[wid], user_id, public_workspace_id=wid)
             for tag in tags:
                 if tag['name'] in all_tags:
                     all_tags[tag['name']]['count'] += tag['count']
@@ -1341,17 +1415,22 @@ def register_route_backend_public_documents(bp):
             if not is_valid_color:
                 return jsonify({'error': color_error}), 400
 
-            tag_defs = ws_doc.get('tag_definitions', {})
+            created_at = datetime.now(timezone.utc).isoformat()
 
-            if normalized_tag in tag_defs:
-                return jsonify({'error': 'Tag already exists'}), 409
+            # Decided on the workspace's current copy, so a tag created meanwhile is
+            # refused rather than replaced, and nothing else is restored from an older copy.
+            def add_definition(definitions):
+                if normalized_tag in definitions:
+                    raise _PublicTagAnswer(({'error': 'Tag already exists'}, 409))
+                definitions[normalized_tag] = {
+                    'color': normalized_color,
+                    'created_at': created_at
+                }
+                return True
 
-            tag_defs[normalized_tag] = {
-                'color': normalized_color,
-                'created_at': datetime.now(timezone.utc).isoformat()
-            }
-            ws_doc['tag_definitions'] = tag_defs
-            cosmos_public_workspaces_container.upsert_item(ws_doc)
+            error_response = _save_public_tag_definitions(active_ws, user_id, add_definition)
+            if error_response:
+                return error_response
 
             return jsonify({
                 'message': f'Tag "{normalized_tag}" created successfully',
@@ -1532,6 +1611,21 @@ def register_route_backend_public_documents(bp):
 
                 normalized_new_tag = normalized_new[0]
 
+                # The definition moves first, on the workspace's current copy: a refusal
+                # there (the caller's tag role removed meanwhile, the workspace deleted,
+                # or one that kept changing) leaves every document untouched. A definition
+                # that has already moved is left alone, so repeating the request after a
+                # document failed finishes the documents that still carry the old name.
+                def rename_definition(definitions):
+                    if normalized_old_tag not in definitions:
+                        return False
+                    definitions[normalized_new_tag] = definitions.pop(normalized_old_tag)
+                    return True
+
+                error_response = _save_public_tag_definitions(active_ws, user_id, rename_definition)
+                if error_response:
+                    return error_response
+
                 query = "SELECT * FROM c WHERE c.public_workspace_id = @ws_id"
                 parameters = [{"name": "@ws_id", "value": active_ws}]
                 documents = list(cosmos_public_documents_container.query_items(
@@ -1566,13 +1660,6 @@ def register_route_backend_public_documents(bp):
 
                         updated_count += 1
 
-                tag_defs = ws_doc.get('tag_definitions', {})
-                if normalized_old_tag in tag_defs:
-                    old_def = tag_defs.pop(normalized_old_tag)
-                    tag_defs[normalized_new_tag] = old_def
-                ws_doc['tag_definitions'] = tag_defs
-                cosmos_public_workspaces_container.upsert_item(ws_doc)
-
                 invalidate_public_workspace_search_cache(active_ws)
 
                 return jsonify({
@@ -1581,23 +1668,27 @@ def register_route_backend_public_documents(bp):
                 }), 200
 
             if new_color:
+                from datetime import datetime, timezone
+
                 is_valid_color, color_error, normalized_color = validate_tag_color(new_color, normalized_old_tag)
                 if not is_valid_color:
                     return jsonify({'error': color_error}), 400
 
-                tag_defs = ws_doc.get('tag_definitions', {})
+                created_at = datetime.now(timezone.utc).isoformat()
 
-                if normalized_old_tag in tag_defs:
-                    tag_defs[normalized_old_tag]['color'] = normalized_color
-                else:
-                    from datetime import datetime, timezone
-                    tag_defs[normalized_old_tag] = {
-                        'color': normalized_color,
-                        'created_at': datetime.now(timezone.utc).isoformat()
-                    }
+                def recolor_definition(definitions):
+                    if normalized_old_tag in definitions:
+                        definitions[normalized_old_tag]['color'] = normalized_color
+                    else:
+                        definitions[normalized_old_tag] = {
+                            'color': normalized_color,
+                            'created_at': created_at
+                        }
+                    return True
 
-                ws_doc['tag_definitions'] = tag_defs
-                cosmos_public_workspaces_container.upsert_item(ws_doc)
+                error_response = _save_public_tag_definitions(active_ws, user_id, recolor_definition)
+                if error_response:
+                    return error_response
 
                 return jsonify({
                     'message': f'Tag color updated for "{normalized_old_tag}"',
@@ -1637,6 +1728,20 @@ def register_route_backend_public_documents(bp):
         try:
             normalized_tag = normalize_tag(tag_name)
 
+            # The definition goes first, on the workspace's current copy: a refusal there
+            # leaves every document untouched. A definition already removed is left alone,
+            # so repeating the request after a document failed finishes the documents that
+            # still carry the tag.
+            def remove_definition(definitions):
+                if normalized_tag not in definitions:
+                    return False
+                definitions.pop(normalized_tag)
+                return True
+
+            error_response = _save_public_tag_definitions(active_ws, user_id, remove_definition)
+            if error_response:
+                return error_response
+
             query = "SELECT * FROM c WHERE c.public_workspace_id = @ws_id"
             parameters = [{"name": "@ws_id", "value": active_ws}]
             documents = list(cosmos_public_documents_container.query_items(
@@ -1669,12 +1774,6 @@ def register_route_backend_public_documents(bp):
                         pass
 
                     updated_count += 1
-
-            tag_defs = ws_doc.get('tag_definitions', {})
-            if normalized_tag in tag_defs:
-                tag_defs.pop(normalized_tag)
-                ws_doc['tag_definitions'] = tag_defs
-                cosmos_public_workspaces_container.upsert_item(ws_doc)
 
             if updated_count > 0:
                 invalidate_public_workspace_search_cache(active_ws)

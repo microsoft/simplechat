@@ -1,5 +1,9 @@
 # functions_group.py
 
+import copy
+
+from azure.core import MatchConditions
+
 from config import *
 import functions_authentication
 import functions_settings
@@ -7,6 +11,21 @@ from typing import Iterable
 
 from functions_chat_bootstrap_cache import bump_chat_bootstrap_global_cache_version
 from functions_workspace_branding import DEFAULT_WORKSPACE_HERO_COLOR
+
+
+# How many times a conditional group-document write re-reads and re-applies its
+# change after losing a race to another writer before it reports a conflict.
+GROUP_DOCUMENT_WRITE_ATTEMPTS = 3
+
+
+class GroupDocumentWriteConflict(RuntimeError):
+    """The group document kept changing while a write was being applied to it."""
+
+
+# Every group route answers GroupDocumentWriteConflict the same way: 409 with this
+# code and this reviewed sentence. Other modules import these rather than copy them.
+GROUP_WRITE_CONFLICT_CODE = "group_write_conflict"
+GROUP_WRITE_CONFLICT_MESSAGE = "The group changed while your request was being saved. Try again."
 
 
 def create_group(name, description):
@@ -55,10 +74,10 @@ def create_group(name, description):
 
 def search_groups(search_query, user_id):
     """
-    Return a list of groups the user is in. 
-    For simplicity, this only returns groups where the user is a member.
+    Return the groups the user is a member of whose name or description contains the
+    search term, ignoring case, as the group directory and the admin search do.
     """
-    query = query = """
+    query = """
         SELECT *
         FROM c
         WHERE EXISTS (
@@ -71,9 +90,13 @@ def search_groups(search_query, user_id):
     params = [
         { "name": "@user_id", "value": user_id }
     ]
-    if search_query:
-        query += " AND CONTAINS(c.name, @search) "
-        params.append({"name": "@search", "value": search_query})
+    normalized_query = str(search_query or "").strip().lower()
+    if normalized_query:
+        query += (
+            " AND (CONTAINS(LOWER(c.name), @search)"
+            " OR (IS_DEFINED(c.description) AND CONTAINS(LOWER(c.description), @search))) "
+        )
+        params.append({"name": "@search", "value": normalized_query})
 
     results = list(cosmos_groups_container.query_items(
         query=query,
@@ -262,6 +285,33 @@ def get_user_role_in_group(group_doc, user_id):
     return None
 
 
+def get_group_document_reviewer_ids(group_doc):
+    group_doc = group_doc or {}
+    candidates = [
+        (group_doc.get("owner") or {}).get("id"),
+        *(group_doc.get("admins") or []),
+        *(group_doc.get("documentManagers") or []),
+    ]
+    return sorted({
+        user_id for user_id in candidates
+        if isinstance(user_id, str) and user_id
+        and get_user_role_in_group(group_doc, user_id) in {"Owner", "Admin", "DocumentManager"}
+    })
+
+
+def discover_group_records(search=""):
+    """The sharing directory uses the same all-group visibility as showAll=true."""
+    search = str(search or "").lower()
+    groups = list(cosmos_groups_container.query_items(
+        query="SELECT * FROM c WHERE c.type = 'group' or NOT IS_DEFINED(c.type)",
+        enable_cross_partition_query=True,
+    ))
+    return [
+        group for group in groups
+        if not search or any(search in str(group.get(field) or "").lower() for field in ("name", "description", "id"))
+    ]
+
+
 def require_active_group(
     user_id: str,
     allowed_roles: Iterable[str] = ("Owner", "Admin", "DocumentManager", "User"),
@@ -423,15 +473,103 @@ def get_group_model_endpoints(group_id: str):
     return []
 
 
-def update_group_model_endpoints(group_id: str, endpoints):
-    """Persist the model endpoints list onto the group document."""
-    group_doc = find_group_by_id(group_id)
-    if not group_doc:
-        raise ValueError("Group not found")
+def update_group_model_endpoints(group_id: str, endpoints, *, user_id=None, outcome=None):
+    """Replace the model endpoint list on the group document.
+
+    This is the collection writer behind the legacy ``POST /api/group/model-endpoints``.
+    The list replaces the stored one, so the last bulk or per-item endpoint writer
+    wins, as before. It is applied to the copy ``update_group_document_with_etag_guard``
+    reads: membership, status and every other field come from that copy, and a group
+    deleted meanwhile raises ``LookupError`` rather than being recreated. With
+    ``user_id``, the caller must still be the group's Owner or an Admin on that copy
+    (``PermissionError`` otherwise). ``outcome``, when given, receives the endpoints
+    the committed write replaced (``previous``) and wrote (``saved``), so the caller
+    removes superseded credentials only after the commit. A group that keeps changing
+    raises ``GroupDocumentWriteConflict``.
+    """
     if not isinstance(endpoints, list):
         raise ValueError("model_endpoints must be a list")
-    group_doc["model_endpoints"] = endpoints
-    group_doc["modifiedDate"] = datetime.utcnow().isoformat()
-    cosmos_groups_container.upsert_item(group_doc)
-    bump_chat_bootstrap_global_cache_version(reason="group_model_endpoints_updated")
-    return group_doc
+
+    def apply(group_doc):
+        if user_id is not None:
+            role = get_user_role_in_group(group_doc, user_id)
+            if not role:
+                raise PermissionError("User is not a member of this group")
+            if role not in ("Owner", "Admin"):
+                raise PermissionError("Insufficient permissions for this group")
+        previous = group_doc.get("model_endpoints")
+        if outcome is not None:
+            outcome.update(
+                previous=[endpoint for endpoint in previous if isinstance(endpoint, dict)]
+                if isinstance(previous, list) else [],
+                saved=endpoints,
+            )
+        group_doc["model_endpoints"] = endpoints
+        group_doc["modifiedDate"] = datetime.utcnow().isoformat()
+        return group_doc
+
+    committed = update_group_document_with_etag_guard(
+        group_id, apply, cache_reason="group_model_endpoints_updated",
+    )
+    if committed is None:
+        raise LookupError("Group not found")
+    return committed
+
+
+def _stored_group_fields(document):
+    """A group document without the Cosmos system properties (``_etag``, ``_ts``, ...)."""
+    return {key: value for key, value in (document or {}).items() if not key.startswith("_")}
+
+
+def update_group_document_with_etag_guard(group_id, apply_changes, *, cache_reason, attempts=GROUP_DOCUMENT_WRITE_ATTEMPTS):
+    """Apply one change to the stored group document and write it back conditionally.
+
+    The group document also carries membership, status and every other group-scoped
+    setting, so a writer that changes one part of it must never restore the rest from
+    an outdated copy. ``apply_changes`` receives a private copy of the document just
+    read and returns the document to write; the replace is conditional on that read's
+    ``_etag`` (``IfNotModified``). When another writer lands in between, the document
+    is read again and ``apply_changes`` is re-applied to the newer copy, up to
+    ``attempts`` writes, after which ``GroupDocumentWriteConflict`` is raised. Because
+    it can run more than once, ``apply_changes`` must derive its result only from the
+    copy it is given; raising from it abandons the write with nothing stored.
+
+    A group that is missing at read time or at replace time is never recreated: the
+    function returns ``None`` and writes nothing. When a re-read finds exactly the body
+    this call sent, the earlier replace committed and only its response was lost (a
+    transport retry of a committed write fails its own precondition), so that is
+    reported as the committed write rather than as a conflict.
+
+    A committed write returns the stored document and bumps the global chat bootstrap
+    cache with ``cache_reason``. ``cache_reason`` is required, and ``None`` is the
+    explicit choice for a change no bootstrap payload reads, such as a join request,
+    which commits without a bump.
+    """
+    attempted = None
+    for attempt in range(attempts + 1):
+        try:
+            current = cosmos_groups_container.read_item(item=group_id, partition_key=group_id)
+        except exceptions.CosmosResourceNotFoundError:
+            return None
+        if attempted is not None and _stored_group_fields(current) == _stored_group_fields(attempted):
+            if cache_reason is not None:
+                bump_chat_bootstrap_global_cache_version(reason=cache_reason)
+            return current
+        if attempt == attempts:
+            break
+        attempted = apply_changes(copy.deepcopy(current))
+        try:
+            written = cosmos_groups_container.replace_item(
+                item=group_id,
+                body=attempted,
+                etag=current.get("_etag"),
+                match_condition=MatchConditions.IfNotModified,
+            )
+        except exceptions.CosmosResourceNotFoundError:
+            return None
+        except exceptions.CosmosAccessConditionFailedError:
+            continue
+        if cache_reason is not None:
+            bump_chat_bootstrap_global_cache_version(reason=cache_reason)
+        return written
+    raise GroupDocumentWriteConflict("The group document kept changing while it was being saved.")

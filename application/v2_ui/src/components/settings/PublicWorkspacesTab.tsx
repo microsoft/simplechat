@@ -3,7 +3,9 @@
 
 import { PUBLIC_WORKSPACES } from '../../lib/workspaces';
 import { WorkspaceListTab } from './WorkspaceListTab';
+import { useBootstrapStore } from '../../stores/bootstrapStore';
 
 export function PublicWorkspacesTab() {
-    return <WorkspaceListTab kind={PUBLIC_WORKSPACES} />;
+    const viewerId = useBootstrapStore((state) => state.data?.user.id);
+    return <WorkspaceListTab key={viewerId} kind={PUBLIC_WORKSPACES} />;
 }

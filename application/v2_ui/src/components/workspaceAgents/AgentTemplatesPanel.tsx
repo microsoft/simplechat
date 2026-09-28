@@ -20,13 +20,14 @@ function templateSettingsPreview(template: AgentTemplate): string {
 }
 
 export function AgentTemplatesPanel({
-    draft, setDraft, actions, options, isNew, dirty, readOnly,
+    draft, setDraft, actions, options, isNew, dirty, readOnly, submissionAllowed, groupScope,
 }: {
     draft: AgentConfiguration; setDraft: Dispatch<SetStateAction<AgentConfiguration>>;
     actions: ActionConfiguration[]; options: AgentEditorOptions; isNew: boolean; dirty: boolean; readOnly: boolean;
+    submissionAllowed: boolean; groupScope: boolean;
 }) {
     const enabled = options.settings.enable_agent_template_gallery === true;
-    const submissionsAllowed = enabled && options.settings.agent_templates_allow_user_submission !== false && !readOnly;
+    const submissionsAllowed = enabled && submissionAllowed && !readOnly;
     const [templates, setTemplates] = useState<AgentTemplate[]>([]);
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
@@ -76,7 +77,9 @@ export function AgentTemplatesPanel({
         try {
             const payload = await api.post<{ template: AgentTemplate }>('/api/agent-templates', agentTemplateSubmission(draft), controller.signal);
             if (!payload.template) throw new Error('The template service returned an invalid response.');
-            if (!controller.signal.aborted) setNotice(payload.template.status === 'approved' ? 'Template published to the approved gallery.' : 'Personal template submitted for review.');
+            if (!controller.signal.aborted) setNotice(payload.template.status === 'approved'
+                ? 'Template published to the approved gallery.'
+                : groupScope ? 'Template submitted for review.' : 'Personal template submitted for review.');
         } catch (cause) {
             if (!controller.signal.aborted) setError(cause instanceof Error ? cause.message : 'Could not submit this template.');
         } finally {
@@ -93,7 +96,7 @@ export function AgentTemplatesPanel({
             <div className="flex flex-wrap gap-2">
                 <GlassButton type="button" size="sm" disabled={loading} onClick={() => setRevision((value) => value + 1)}>Refresh templates</GlassButton>
                 {submissionsAllowed ? <GlassButton type="button" size="sm" disabled={submitting} onClick={() => void submit()}>
-                    {submitting ? 'Submitting template…' : 'Submit personal template'}
+                    {submitting ? 'Submitting template…' : groupScope ? 'Submit template' : 'Submit personal template'}
                 </GlassButton> : null}
             </div>
             {error ? <AgentNotice error>{error}</AgentNotice> : null}

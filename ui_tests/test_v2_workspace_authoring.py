@@ -1,7 +1,7 @@
 # test_v2_workspace_authoring.py
 """
 Real-SPA browser workflows for native V2 My Workspace Agents and Actions.
-Version: 0.261.122
+Version: 0.261.137
 Implemented in: 0.261.096
 
 Run against a fresh production V2 build with the existing pytest-playwright
@@ -1376,6 +1376,83 @@ def test_failed_agent_authorization_refresh_retains_the_existing_conversation(wo
     expect(page.get_by_text("An earlier conversation.", exact=True)).to_be_visible()
     expect(page).to_have_url(f"{ORIGIN}/v2/chat?conversationId=existing-workspace-chat")
     assert ui.messages["existing-workspace-chat"] == original_messages
+    assert not any(request.path in ("/api/create_conversation", "/api/chat/stream") for request in ui.writes)
+    assert not ui.editor_writes
+
+
+GROUP_AGENT_ID = "00000000-0000-4000-8000-000000000041"
+RESEARCH_GROUP = {"id": "group-research", "name": "Research"}
+FINANCE_GROUP = {"id": "group-finance", "name": "Finance"}
+
+
+def group_catalogue_agent(group, display_name):
+    """A group agent exactly as build_accessible_agent_catalog serializes one for chat."""
+    return {
+        "id": GROUP_AGENT_ID, "name": "group-reviewer", "display_name": display_name,
+        "description": "Reviews evidence for the group.", "instructions": "", "agent_type": "local",
+        "is_global": False, "is_group": True, "scope_type": "group",
+        "scope_id": group["id"], "scope_name": group["name"],
+        "group_id": group["id"], "group_name": group["name"],
+        "tags": [], "icon": {}, "model_id": "", "model_endpoint_id": "", "model_provider": "",
+        "model_label": "", "actions_to_load": [], "action_labels": [],
+        "assigned_knowledge": {
+            "enabled": False,
+            "scopes": {"personal": False, "group_ids": [], "public_workspace_ids": []},
+            "document_ids": [], "tags": [], "web_sources": [], "allow_user_workspace_context": False,
+            "allowed_user_workspace_actions": ["search", "analyze", "compare"],
+        },
+        "catalog_key": f"group:{group['id']}:{GROUP_AGENT_ID}",
+    }
+
+
+def test_group_use_in_chat_link_selects_the_agent_from_the_named_group(workspace_ui):
+    ui, page = workspace_ui, workspace_ui.page
+    # The same agent id in two of the user's groups: only the group the link names may be used.
+    ui.groups = [RESEARCH_GROUP, FINANCE_GROUP]
+    ui.group_catalogue_agents = [
+        group_catalogue_agent(FINANCE_GROUP, "Finance reviewer"),
+        group_catalogue_agent(RESEARCH_GROUP, "Research reviewer"),
+    ]
+    ui.open(f"/chat?agent_id={GROUP_AGENT_ID}&agent_scope=group&agent_scope_id=group-research&new=1")
+    expect(page.locator("#composer-input")).to_be_enabled()
+    page.locator("#composer-input").fill("Review this evidence with the research agent.")
+    with page.expect_request(
+        lambda request: request.method == "POST" and urlsplit(request.url).path == "/api/chat/stream"
+    ) as stream_request:
+        page.get_by_role("button", name="Send message", exact=True).click()
+    body = stream_request.value.post_data_json
+    assert body["agent_info"] == {
+        "id": GROUP_AGENT_ID, "name": "group-reviewer", "display_name": "Research reviewer",
+        "is_global": False, "is_group": True, "group_id": "group-research", "group_name": "Research",
+    }
+    assert not {"model_deployment", "model_id", "model_endpoint_id", "model_provider"} & set(body)
+    expect(page.get_by_text("Workspace review response.", exact=True)).to_be_visible()
+    assert "agent_scope_id" not in page.url and "agent_id" not in page.url
+    assert not ui.editor_writes
+
+
+@pytest.mark.parametrize("group_id,named", [("group-research", "Research"), ("group-archived", "that group")])
+def test_stale_group_agent_link_names_the_group(workspace_ui, group_id, named):
+    ui, page = workspace_ui, workspace_ui.page
+    # Research is still listed but no longer has this agent; an archived group is not listed at all.
+    ui.groups = [RESEARCH_GROUP]
+    ui.group_catalogue_agents = [group_catalogue_agent(FINANCE_GROUP, "Finance reviewer")]
+    ui.open(f"/chat?agent_id={GROUP_AGENT_ID}&agent_scope=group&agent_scope_id={group_id}&new=1")
+    expect(page.get_by_text(f"That agent is no longer available in {named}.", exact=True)).to_be_visible()
+    assert not any(request.path in ("/api/create_conversation", "/api/chat/stream") for request in ui.writes)
+    assert not ui.editor_writes
+
+
+@pytest.mark.parametrize("query", [
+    f"agent_id={GROUP_AGENT_ID}&agent_scope=group&new=1",
+    f"agent_id={AGENT_ID}&agent_scope=personal&agent_scope_id=group-research&new=1",
+])
+def test_ambiguous_agent_links_are_not_valid(workspace_ui, query):
+    ui, page = workspace_ui, workspace_ui.page
+    ui.groups = [RESEARCH_GROUP]
+    ui.group_catalogue_agents = [group_catalogue_agent(RESEARCH_GROUP, "Research reviewer")]
+    ui.open(f"/chat?{query}")
+    expect(page.get_by_text("That agent link is not valid.", exact=True)).to_be_visible()
     assert not any(request.path in ("/api/create_conversation", "/api/chat/stream") for request in ui.writes)
     assert not ui.editor_writes
 

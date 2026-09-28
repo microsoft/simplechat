@@ -4,6 +4,8 @@
 
 The application version is tracked in `application/single_app/config.py`.
 
+This fix shipped in the React V2 branch as 0.261.141. On the V2 shared workspaces branch, which had already assigned 0.261.141 to its group workflow File Sync authoring, it arrives with the React V2 base merge in version **0.261.189**.
+
 ## Issue
 
 Three orchestration requests, retested on a deployed V2 environment running

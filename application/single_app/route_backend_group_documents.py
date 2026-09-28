@@ -1,15 +1,57 @@
 # route_backend_group_documents.py:
 
 from datetime import datetime, timezone
+from functools import wraps
+import json
 import logging
 
-from content_screening.access import register_document_api_guards
+from content_screening.access import (
+    assert_current_request_sources_available,
+    public_documents_payload,
+    register_document_api_guards,
+)
 from content_screening.contracts import ScreeningError
 from config import *
 from functions_authentication import *
 from functions_settings import *
 from functions_group import *
 from functions_documents import *
+from functions_group_document_reads import (
+    GroupDocumentReadError,
+    explicit_group_document_read_id,
+    get_group_document_facets,
+    get_group_document_read_metadata,
+    get_group_document_read_tags,
+    get_group_document_read_versions,
+    load_group_document_browser_documents,
+    query_group_document_list,
+    refresh_group_document_read_payloads,
+    require_group_document_read_context,
+)
+from functions_group_document_management import (
+    GroupDocumentOperationError,
+    change_group_document_tag,
+    create_group_document_tag,
+    delete_group_document,
+    delete_group_documents,
+    download_group_documents,
+    group_operation_error,
+    queue_group_document_jobs,
+    require_payload,
+    tag_group_documents,
+    update_group_document_metadata,
+    upload_group_documents,
+    validate_delete_options,
+    validate_group_download_response,
+    validate_metadata_changes,
+)
+from functions_group_document_collaboration import (
+    change_group_document_share,
+    collaboration_error_response,
+    group_document_sharing_state,
+    group_document_sharing_targets,
+)
+from functions_group_document_publication import decide_group_document_publication
 from content_screening.service import prepare_document_upload
 from functions_appinsights import log_event
 from functions_artifact_publication import decide_artifact_publication
@@ -32,7 +74,7 @@ from functions_simplechat_operations import download_blob_content, queue_generat
 from utils_cache import invalidate_group_search_cache
 from functions_debug import *
 from functions_activity_logging import log_document_upload
-from flask import current_app
+from flask import current_app, g
 from swagger_wrapper import swagger_route, get_auth_security
 
 
@@ -43,6 +85,119 @@ PENDING_GENERATED_ARTIFACT_NOTIFICATION_TYPES = [
 GROUP_DOCUMENT_SHARE_MANAGER_ROLES = ("Owner", "Admin", "DocumentManager")
 GROUP_DOCUMENT_DOWNLOAD_MANAGER_ROLES = ("Owner", "Admin", "DocumentManager")
 GROUP_DOCUMENT_SHARE_PENDING_NOTIFICATION_TYPES = ['group_document_share_pending']
+
+
+def _group_document_read_boundary(function):
+    @wraps(function)
+    def guarded(*args, **kwargs):
+        try:
+            return function(*args, **kwargs)
+        except GroupDocumentReadError as error:
+            return jsonify({"error": error.description}), error.code
+        except ScreeningError as error:
+            return jsonify({"error": error.public_message, "error_code": error.code}), error.status_code
+        except Exception as error:
+            log_event(
+                "[DOCUMENTS] Group document read failed.",
+                extra={"operation": function.__name__, "exception_type": type(error).__name__},
+                level=logging.ERROR,
+            )
+            return jsonify({"error": "Unable to retrieve group documents."}), 500
+    return guarded
+
+
+def _project_group_document_read_response(documents, user_id):
+    group_ids = getattr(g, "group_document_read_ids", None)
+    if not group_ids or request.method not in {"GET", "HEAD"}:
+        return public_documents_payload(documents, user_id)
+    try:
+        by_group = {group_id: [] for group_id in group_ids}
+        for document in documents:
+            if len(group_ids) == 1:
+                group_id = group_ids[0]
+            else:
+                group_id = (
+                    document.get("group_id") if document.get("group_id") in by_group
+                    else document.get("shared_group_active_id")
+                )
+            if group_id not in by_group:
+                raise GroupDocumentReadError("Document not found or access denied.", 404)
+            by_group[group_id].append(document)
+        refreshed = {}
+        for group_id, scoped_documents in by_group.items():
+            for document in refresh_group_document_read_payloads(scoped_documents, user_id, group_id):
+                refreshed[document["id"]] = document
+        return [refreshed[document["id"]] for document in documents]
+    except (GroupDocumentReadError, ScreeningError):
+        raise
+    except Exception as error:
+        log_event(
+            "[DOCUMENTS] Group document response revalidation failed.",
+            extra={"exception_type": type(error).__name__},
+            level=logging.ERROR,
+        )
+        raise GroupDocumentReadError("Unable to retrieve group documents.", 500) from error
+
+
+def _validate_group_document_response_sources():
+    binding = getattr(g, "group_document_download_binding", None)
+    if binding:
+        validate_group_download_response(
+            binding["user_id"], binding["group_id"], binding["documents"],
+        )
+    else:
+        assert_current_request_sources_available()
+
+
+def _group_document_management_boundary(function):
+    @wraps(function)
+    def guarded(group_id, *args, **kwargs):
+        try:
+            return function(group_id, *args, **kwargs)
+        except Exception as error:
+            payload, status = group_operation_error(
+                error, function.__name__, group_id=group_id, document_id=kwargs.get("document_id"),
+            )
+            return jsonify(payload), status
+    return guarded
+
+
+def _group_management_query(allowed=()):
+    if set(request.args) - set(allowed) or any(len(values) != 1 for _key, values in request.args.lists()):
+        raise GroupDocumentOperationError("Invalid query parameters for this group operation.", 400)
+    return request.args.to_dict()
+
+
+def _group_management_body(allowed, required=()):
+    return require_payload(request.get_json(silent=True), allowed, required)
+
+
+def _group_document_collaboration_boundary(function):
+    @wraps(function)
+    def guarded(group_id, document_id, *args, **kwargs):
+        try:
+            return function(group_id, document_id, *args, **kwargs)
+        except Exception as error:
+            payload, status = collaboration_error_response(error, group_id=group_id, document_id=document_id)
+            return jsonify(payload), status
+    return guarded
+
+
+def _group_document_collaboration_body():
+    def unique_fields(pairs):
+        payload = {}
+        for key, value in pairs:
+            if key in payload:
+                raise ValueError("Duplicate collaboration fields are not supported.")
+            payload[key] = value
+        return payload
+
+    if not request.is_json:
+        raise GroupDocumentOperationError("A JSON object is required for this action.", 400)
+    try:
+        return json.loads(request.get_data(), object_pairs_hook=unique_fields)
+    except (ValueError, UnicodeDecodeError) as error:
+        raise GroupDocumentOperationError("Provide valid JSON with no duplicate fields.", 400) from error
 
 
 def _cleanup_group_generated_artifact_notifications(document_id, group_id):
@@ -79,6 +234,51 @@ def _require_active_group_document_context(user_id, allowed_roles, permission_me
         return None, None, None, (jsonify({'error': 'Active group not found'}), 404)
 
     return active_group_id, group_doc, get_user_role_in_group(group_doc, user_id), None
+
+
+GROUP_TAG_MANAGER_ROLES = ("Owner", "Admin", "DocumentManager")
+GROUP_TAG_PERMISSION_MESSAGE = 'You do not have permission to manage tags'
+
+
+class _GroupTagAnswer(Exception):
+    """Ends a guarded tag change without writing: with ``answer`` (payload, status), or none to carry on."""
+
+    def __init__(self, answer=None):
+        super().__init__("The group tag change was answered without a write.")
+        self.answer = answer
+
+
+def _save_group_tag_definitions(group_id, user_id, change):
+    """Apply ``change`` to the tag definitions on the group's current copy.
+
+    The caller's tag role is checked again on that copy, so a role removed meanwhile
+    refuses the change, and everything else on the group (membership, status, the
+    other definitions) comes from that copy too. ``change`` edits the definitions in
+    place and returns whether it changed anything; nothing is written when it didn't.
+    It can raise ``_GroupTagAnswer`` to refuse. Returns an error response, or ``None``
+    to carry on. No chat bootstrap payload reads tag definitions, so nothing is bumped.
+    """
+    def apply_change(fresh):
+        if get_user_role_in_group(fresh, user_id) not in GROUP_TAG_MANAGER_ROLES:
+            raise _GroupTagAnswer(({'error': GROUP_TAG_PERMISSION_MESSAGE}, 403))
+        definitions = fresh.get('tag_definitions') or {}
+        if not change(definitions):
+            raise _GroupTagAnswer()
+        fresh['tag_definitions'] = definitions
+        return fresh
+
+    try:
+        saved = update_group_document_with_etag_guard(group_id, apply_change, cache_reason=None)
+    except _GroupTagAnswer as answered:
+        if answered.answer is None:
+            return None
+        payload, status = answered.answer
+        return jsonify(payload), status
+    except GroupDocumentWriteConflict:
+        return jsonify({'error': GROUP_WRITE_CONFLICT_MESSAGE, 'error_code': GROUP_WRITE_CONFLICT_CODE}), 409
+    if saved is None:
+        return jsonify({'error': 'Active group not found'}), 404
+    return None
 
 
 def _get_group_document_display_name(document_item):
@@ -138,19 +338,7 @@ def _get_group_name(group_doc, fallback='Unknown Group'):
 
 
 def _get_group_share_reviewer_user_ids(group_doc):
-    reviewer_ids = []
-
-    owner_id = str((group_doc or {}).get('owner', {}).get('id') or '').strip()
-    if owner_id:
-        reviewer_ids.append(owner_id)
-
-    for role_key in ('admins', 'documentManagers'):
-        for user_id in (group_doc or {}).get(role_key, []) or []:
-            normalized_user_id = str(user_id or '').strip()
-            if normalized_user_id and normalized_user_id not in reviewer_ids:
-                reviewer_ids.append(normalized_user_id)
-
-    return reviewer_ids
+    return get_group_document_reviewer_ids(group_doc)
 
 
 def _get_group_share_details(document_item):
@@ -293,7 +481,281 @@ def register_route_backend_group_documents(bp):
     - POST /api/group_documents/upload
     - DELETE /api/group_documents/<doc_id>
     """
-    register_document_api_guards(bp)
+    register_document_api_guards(
+        bp, document_projector=_project_group_document_read_response,
+        source_validator=_validate_group_document_response_sources,
+    )
+
+    @bp.route('/api/groups/<group_id>/documents/<document_id>/sharing', methods=['GET'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    @enabled_required("enable_group_workspaces")
+    @_group_document_collaboration_boundary
+    def api_scoped_group_document_sharing(group_id, document_id):
+        _group_management_query()
+        if request.get_data():
+            raise GroupDocumentOperationError("This read does not accept a request body.", 400)
+        return jsonify(group_document_sharing_state(get_current_user_id(), group_id, document_id)), 200
+
+    @bp.route('/api/groups/<group_id>/documents/<document_id>/sharing/targets', methods=['GET'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    @enabled_required("enable_group_workspaces")
+    @_group_document_collaboration_boundary
+    def api_scoped_group_document_sharing_targets(group_id, document_id):
+        args = _group_management_query({"search", "page", "page_size"})
+        if request.get_data():
+            raise GroupDocumentOperationError("This read does not accept a request body.", 400)
+        return jsonify(group_document_sharing_targets(get_current_user_id(), group_id, document_id, args)), 200
+
+    @bp.route('/api/groups/<group_id>/documents/<document_id>/share', methods=['POST'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    @enabled_required("enable_group_workspaces")
+    @_group_document_collaboration_boundary
+    def api_scoped_group_document_share(group_id, document_id):
+        _group_management_query()
+        payload, status = change_group_document_share(
+            get_current_user_id(), group_id, document_id, "share", _group_document_collaboration_body(),
+        )
+        return jsonify(payload), status
+
+    @bp.route('/api/groups/<group_id>/documents/<document_id>/share/<target_group_id>', methods=['DELETE'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    @enabled_required("enable_group_workspaces")
+    @_group_document_collaboration_boundary
+    def api_scoped_group_document_unshare(group_id, document_id, target_group_id):
+        _group_management_query()
+        payload, status = change_group_document_share(
+            get_current_user_id(), group_id, document_id, "unshare", _group_document_collaboration_body(),
+            target_group_id=target_group_id,
+        )
+        return jsonify(payload), status
+
+    @bp.route('/api/groups/<group_id>/documents/<document_id>/approve-share', methods=['POST'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    @enabled_required("enable_group_workspaces")
+    @_group_document_collaboration_boundary
+    def api_scoped_group_document_approve_share(group_id, document_id):
+        _group_management_query()
+        payload, status = change_group_document_share(
+            get_current_user_id(), group_id, document_id, "approve_share", _group_document_collaboration_body(),
+        )
+        return jsonify(payload), status
+
+    @bp.route('/api/groups/<group_id>/documents/<document_id>/received-share', methods=['DELETE'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    @enabled_required("enable_group_workspaces")
+    @_group_document_collaboration_boundary
+    def api_scoped_group_document_remove_share(group_id, document_id):
+        _group_management_query()
+        payload, status = change_group_document_share(
+            get_current_user_id(), group_id, document_id, "remove_share", _group_document_collaboration_body(),
+        )
+        return jsonify(payload), status
+
+    @bp.route('/api/groups/<group_id>/documents/<document_id>/artifact/approve', methods=['POST'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    @enabled_required("enable_group_workspaces")
+    @_group_document_collaboration_boundary
+    def api_scoped_group_document_approve_artifact(group_id, document_id):
+        _group_management_query()
+        payload, status = decide_group_document_publication(
+            get_current_user_id(), group_id, document_id, "approve_artifact", _group_document_collaboration_body(),
+        )
+        return jsonify(payload), status
+
+    @bp.route('/api/groups/<group_id>/documents/<document_id>/artifact/reject', methods=['POST'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    @enabled_required("enable_group_workspaces")
+    @_group_document_collaboration_boundary
+    def api_scoped_group_document_reject_artifact(group_id, document_id):
+        _group_management_query()
+        payload, status = decide_group_document_publication(
+            get_current_user_id(), group_id, document_id, "reject_artifact", _group_document_collaboration_body(),
+        )
+        return jsonify(payload), status
+
+    @bp.route('/api/groups/<group_id>/documents/<document_id>/artifact/cancel', methods=['POST'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    @enabled_required("enable_group_workspaces")
+    @_group_document_collaboration_boundary
+    def api_scoped_group_document_cancel_artifact(group_id, document_id):
+        _group_management_query()
+        payload, status = decide_group_document_publication(
+            get_current_user_id(), group_id, document_id, "cancel_artifact", _group_document_collaboration_body(),
+        )
+        return jsonify(payload), status
+
+    @bp.route('/api/groups/<group_id>/documents/upload', methods=['POST'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    @enabled_required("enable_group_workspaces")
+    @_group_document_management_boundary
+    def api_scoped_group_document_upload(group_id):
+        _group_management_query()
+        if request.form or set(request.files) - {"file"}:
+            raise GroupDocumentOperationError("Only file upload fields are accepted.", 400)
+        payload, status = upload_group_documents(
+            get_current_user_id(), group_id, request.files.getlist("file"), current_app.extensions["executor"],
+        )
+        return jsonify(payload), status
+
+    @bp.route('/api/groups/<group_id>/documents/<document_id>', methods=['PATCH'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    @enabled_required("enable_group_workspaces")
+    @_group_document_management_boundary
+    def api_scoped_group_document_metadata(group_id, document_id):
+        _group_management_query()
+        changes = validate_metadata_changes(request.get_json(silent=True))
+        receipt = update_group_document_metadata(get_current_user_id(), group_id, document_id, changes)
+        return jsonify(receipt), 202 if receipt["status"] == "queued" else 200
+
+    @bp.route('/api/groups/<group_id>/documents/<document_id>', methods=['DELETE'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    @enabled_required("enable_group_workspaces")
+    @_group_document_management_boundary
+    def api_scoped_group_document_delete(group_id, document_id):
+        options = validate_delete_options(_group_management_query({
+            "delete_mode", "conversation_linked_delete_confirmed", "file_sync_delete_action",
+        }), query=True)
+        if request.get_data():
+            raise GroupDocumentOperationError("Deletion options must be supplied in the query.", 400)
+        return jsonify(delete_group_document(get_current_user_id(), group_id, document_id, options)), 200
+
+    @bp.route('/api/groups/<group_id>/documents/bulk-delete', methods=['POST'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    @enabled_required("enable_group_workspaces")
+    @_group_document_management_boundary
+    def api_scoped_group_documents_delete(group_id):
+        _group_management_query()
+        payload, status = delete_group_documents(get_current_user_id(), group_id, request.get_json(silent=True))
+        return jsonify(payload), status
+
+    @bp.route('/api/groups/<group_id>/documents/<document_id>/download', methods=['GET'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    @enabled_required("enable_group_workspaces")
+    @_group_document_management_boundary
+    def api_scoped_group_document_download(group_id, document_id):
+        _group_management_query()
+        user_id = get_current_user_id()
+        response, documents = download_group_documents(user_id, group_id, [document_id])
+        g.group_document_download_binding = {"user_id": user_id, "group_id": group_id, "documents": documents}
+        return response
+
+    @bp.route('/api/groups/<group_id>/documents/download', methods=['POST'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    @enabled_required("enable_group_workspaces")
+    @_group_document_management_boundary
+    def api_scoped_group_documents_download(group_id):
+        _group_management_query()
+        payload = _group_management_body({"document_ids"}, {"document_ids"})
+        user_id = get_current_user_id()
+        response, documents = download_group_documents(user_id, group_id, payload["document_ids"])
+        g.group_document_download_binding = {"user_id": user_id, "group_id": group_id, "documents": documents}
+        return response
+
+    @bp.route('/api/groups/<group_id>/documents/extract_metadata', methods=['POST'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    @enabled_required("enable_group_workspaces")
+    @_group_document_management_boundary
+    def api_scoped_group_documents_extract(group_id):
+        _group_management_query()
+        payload, status = queue_group_document_jobs(
+            get_current_user_id(), group_id, request.get_json(silent=True),
+            "extract_metadata", current_app.extensions["executor"],
+        )
+        return jsonify(payload), status
+
+    @bp.route('/api/groups/<group_id>/documents/reprocess_extraction', methods=['POST'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    @enabled_required("enable_group_workspaces")
+    @_group_document_management_boundary
+    def api_scoped_group_documents_reprocess(group_id):
+        _group_management_query()
+        payload, status = queue_group_document_jobs(
+            get_current_user_id(), group_id, request.get_json(silent=True),
+            "reprocess", current_app.extensions["executor"],
+        )
+        return jsonify(payload), status
+
+    @bp.route('/api/groups/<group_id>/documents/tags', methods=['POST'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    @enabled_required("enable_group_workspaces")
+    @_group_document_management_boundary
+    def api_scoped_group_tag_create(group_id):
+        _group_management_query()
+        payload, status = create_group_document_tag(get_current_user_id(), group_id, request.get_json(silent=True))
+        return jsonify(payload), status
+
+    @bp.route('/api/groups/<group_id>/documents/tags/<path:tag_name>', methods=['PATCH'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    @enabled_required("enable_group_workspaces")
+    @_group_document_management_boundary
+    def api_scoped_group_tag_update(group_id, tag_name):
+        _group_management_query()
+        payload, status = change_group_document_tag(
+            get_current_user_id(), group_id, tag_name, request.get_json(silent=True),
+        )
+        return jsonify(payload), status
+
+    @bp.route('/api/groups/<group_id>/documents/tags/<path:tag_name>', methods=['DELETE'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    @enabled_required("enable_group_workspaces")
+    @_group_document_management_boundary
+    def api_scoped_group_tag_delete(group_id, tag_name):
+        _group_management_query()
+        if request.get_data():
+            raise GroupDocumentOperationError("A tag deletion does not accept a request body.", 400)
+        payload, status = change_group_document_tag(get_current_user_id(), group_id, tag_name, delete=True)
+        return jsonify(payload), status
+
+    @bp.route('/api/groups/<group_id>/documents/bulk-tag', methods=['POST'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    @enabled_required("enable_group_workspaces")
+    @_group_document_management_boundary
+    def api_scoped_group_documents_tag(group_id):
+        _group_management_query()
+        payload, status = tag_group_documents(get_current_user_id(), group_id, request.get_json(silent=True))
+        return jsonify(payload), status
 
     @bp.route('/api/group_documents/upload', methods=['POST'])
     @swagger_route(security=get_auth_security())
@@ -432,16 +894,31 @@ def register_route_backend_group_documents(bp):
     @login_required
     @user_required
     @enabled_required("enable_group_workspaces")
+    @_group_document_read_boundary
     def api_get_group_documents():
         """
         Return a paginated, filtered list of documents for the user's groups.
-        Accepts optional `group_ids` query param (comma-separated) to load from
-        multiple groups at once. Falls back to single active group from user settings.
-        Permission: user must be a member of each group (non-members silently excluded).
+        An explicit `group_id` selects one authorized group without an active fallback.
+        Otherwise, legacy `group_ids` (comma-separated) excludes inaccessible groups
+        and an omitted selection uses the saved active group.
         """
         user_id = get_current_user_id()
         if not user_id:
             return jsonify({'error': 'User not authenticated'}), 401
+
+        requested_group_id = explicit_group_document_read_id(request.args)
+        if requested_group_id is not None:
+            g.group_document_read_ids = [requested_group_id]
+            documents = load_group_document_browser_documents(user_id, requested_group_id)
+            payload = query_group_document_list(documents, requested_group_id, request.args)
+            group_doc, role = require_group_document_read_context(user_id, requested_group_id)
+            downloads_enabled = (
+                role in GROUP_DOCUMENT_DOWNLOAD_MANAGER_ROLES
+                and is_group_workspace_file_download_enabled(get_settings(), group_doc)
+            )
+            payload["file_downloads_enabled"] = downloads_enabled
+            payload["file_download_enabled_group_ids"] = [requested_group_id] if downloads_enabled else []
+            return jsonify(payload), 200
 
         group_ids_param = request.args.get('group_ids', '')
         validated_group_roles = {}
@@ -452,14 +929,11 @@ def register_route_backend_group_documents(bp):
             validated_group_ids = []
             for gid in requested_ids:
                 try:
-                    role = assert_group_role(
-                        user_id,
-                        gid,
-                        allowed_roles=("Owner", "Admin", "DocumentManager", "User"),
-                    )
-                except (LookupError, PermissionError):
+                    _, role = require_group_document_read_context(user_id, gid)
+                except GroupDocumentReadError:
                     continue
-                validated_group_ids.append(gid)
+                if gid not in validated_group_ids:
+                    validated_group_ids.append(gid)
                 validated_group_roles[gid] = role
 
             if not validated_group_ids:
@@ -480,8 +954,11 @@ def register_route_backend_group_documents(bp):
             if error_response:
                 return error_response
 
+            _, role = require_group_document_read_context(user_id, active_group_id)
             validated_group_ids = [active_group_id]
             validated_group_roles[active_group_id] = role
+
+        g.group_document_read_ids = validated_group_ids
 
         # --- 1) Read pagination and filter parameters ---
         page = request.args.get('page', default=1, type=int)
@@ -694,8 +1171,12 @@ def register_route_backend_group_documents(bp):
                         )
                     doc['owner_group_name'] = group_name_cache[owner_group_id]
         except Exception as e:
-            print(f"Error fetching group documents: {e}")
-            return jsonify({"error": f"Error fetching documents: {str(e)}"}), 500
+            log_event(
+                "[DOCUMENTS] Legacy group document list failed.",
+                extra={"exception_type": type(e).__name__},
+                level=logging.ERROR,
+            )
+            return jsonify({"error": "Unable to retrieve group documents."}), 500
 
 
         # --- new: do we have any legacy documents? ---
@@ -741,7 +1222,12 @@ def register_route_backend_group_documents(bp):
                         )
                         legacy_count += legacy_docs[0] if legacy_docs else 0
             except Exception as e:
-                print(f"Error executing legacy query: {e}")
+                log_event(
+                    "[DOCUMENTS] Legacy group document count failed.",
+                    extra={"exception_type": type(e).__name__},
+                    level=logging.ERROR,
+                )
+                return jsonify({"error": "Unable to retrieve group documents."}), 500
 
         # --- 5) Return results ---
         app_settings = get_settings()
@@ -765,73 +1251,59 @@ def register_route_backend_group_documents(bp):
             "needs_legacy_update_check": legacy_count > 0
         }), 200
 
+    @bp.route('/api/group_documents/facets', methods=['GET'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    @enabled_required("enable_group_workspaces")
+    @_group_document_read_boundary
+    def api_get_group_document_facets():
+        """Count the complete safe current-revision set of an explicitly selected group."""
+        user_id = get_current_user_id()
+        if not user_id:
+            return jsonify({'error': 'User not authenticated'}), 401
+        group_id = explicit_group_document_read_id(request.args, required=True)
+        return jsonify(get_group_document_facets(user_id, group_id)), 200
+
     @bp.route('/api/group_documents/<document_id>', methods=['GET'])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
     @enabled_required("enable_group_workspaces")
+    @_group_document_read_boundary
     def api_get_group_document(document_id):
-        """
-        Return metadata for a specific group document, validating group membership.
-        Mirrors logic of api_get_user_document.
-        """
+        """Read metadata in explicit group_id scope, or the validated legacy active scope."""
         user_id = get_current_user_id()
         if not user_id:
             return jsonify({'error': 'User not authenticated'}), 401
 
-        try:
-            active_group_id = require_active_group(
-                user_id,
-                allowed_roles=("Owner", "Admin", "DocumentManager", "User"),
+        group_id = explicit_group_document_read_id(request.args)
+        if group_id is None:
+            group_id, _, _, error_response = _require_active_group_document_context(
+                user_id, allowed_roles=("Owner", "Admin", "DocumentManager", "User"),
+                permission_message='You are not a member of the active group',
             )
-        except ValueError:
-            return jsonify({'error': 'No active group selected'}), 400
-        except LookupError:
-            return jsonify({'error': 'Active group not found'}), 404
-        except PermissionError:
-            return jsonify({'error': 'You are not a member of the active group'}), 403
+            if error_response:
+                return error_response
 
-        return get_document(user_id=user_id, document_id=document_id, group_id=active_group_id)
+        g.group_document_read_ids = [group_id]
+        return jsonify(get_group_document_read_metadata(user_id, group_id, document_id)), 200
 
     @bp.route('/api/group_documents/<document_id>/versions', methods=['GET'])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
     @enabled_required("enable_group_workspaces")
+    @_group_document_read_boundary
     def api_get_group_document_versions(document_id):
+        """Return only revisions individually authorized in the required group_id scope."""
         user_id = get_current_user_id()
         if not user_id:
             return jsonify({'error': 'User not authenticated'}), 401
 
-        requested_group_id = str(request.args.get('group_id') or '').strip()
-        if not requested_group_id:
-            return jsonify({'error': 'group_id is required'}), 400
-
-        try:
-            assert_group_role(
-                user_id,
-                requested_group_id,
-                allowed_roles=("Owner", "Admin", "DocumentManager", "User"),
-            )
-        except LookupError as exc:
-            return jsonify({'error': str(exc)}), 404
-        except PermissionError as exc:
-            return jsonify({'error': str(exc)}), 403
-
-        versions = get_document_versions(
-            user_id=user_id,
-            document_id=document_id,
-            group_id=requested_group_id,
-        )
-        if not versions:
-            return jsonify({'error': 'Document versions not found'}), 404
-
-        return jsonify({
-            'document_id': document_id,
-            'group_id': requested_group_id,
-            'revision_family_id': versions[0].get('revision_family_id'),
-            'versions': versions,
-        }), 200
+        group_id = explicit_group_document_read_id(request.args, required=True)
+        g.group_document_read_ids = [group_id]
+        return jsonify(get_group_document_read_versions(user_id, group_id, document_id)), 200
 
     def _authorize_group_document_download(user_id, document_id):
         try:
@@ -2087,16 +2559,20 @@ def register_route_backend_group_documents(bp):
     @login_required
     @user_required
     @enabled_required("enable_group_workspaces")
+    @_group_document_read_boundary
     def api_get_group_document_tags():
         """
         Get all unique tags used across one or more group workspaces with document counts.
-        Accepts optional `group_ids` query param (comma-separated).
-        Falls back to single active group from user settings if not provided.
-        Permission: user must be a member of each group (non-members silently excluded).
+        Explicit `group_id` uses the complete safe current-revision set, including shares.
+        Without it, retain the legacy `group_ids` and active-group tag contracts.
         """
         user_id = get_current_user_id()
         if not user_id:
             return jsonify({'error': 'User not authenticated'}), 401
+
+        group_id = explicit_group_document_read_id(request.args)
+        if group_id is not None:
+            return jsonify({"tags": get_group_document_read_tags(user_id, group_id)}), 200
 
         group_ids_param = request.args.get('group_ids', '')
 
@@ -2113,13 +2589,12 @@ def register_route_backend_group_documents(bp):
         all_tags = {}
         validated_group_ids = []
         for gid in group_ids:
-            group_doc = find_group_by_id(gid)
-            if not group_doc:
+            try:
+                require_group_document_read_context(user_id, gid)
+            except GroupDocumentReadError:
                 continue
-            role = get_user_role_in_group(group_doc, user_id)
-            if not role:
-                continue
-            validated_group_ids.append(gid)
+            if gid not in validated_group_ids:
+                validated_group_ids.append(gid)
 
         index_tag_result = query_document_access_index_tag_counts(
             DOCUMENT_ACCESS_SCOPE_GROUP,
@@ -2192,17 +2667,22 @@ def register_route_backend_group_documents(bp):
             if not is_valid_color:
                 return jsonify({'error': color_error}), 400
 
-            tag_defs = group_doc.get('tag_definitions', {})
+            created_at = datetime.now(timezone.utc).isoformat()
 
-            if normalized_tag in tag_defs:
-                return jsonify({'error': 'Tag already exists'}), 409
+            # Decided on the group's current copy, so a tag created meanwhile is refused
+            # rather than replaced, and nothing else is restored from an older copy.
+            def add_definition(definitions):
+                if normalized_tag in definitions:
+                    raise _GroupTagAnswer(({'error': 'Tag already exists'}, 409))
+                definitions[normalized_tag] = {
+                    'color': normalized_color,
+                    'created_at': created_at
+                }
+                return True
 
-            tag_defs[normalized_tag] = {
-                'color': normalized_color,
-                'created_at': datetime.now(timezone.utc).isoformat()
-            }
-            group_doc['tag_definitions'] = tag_defs
-            cosmos_groups_container.upsert_item(group_doc)
+            error_response = _save_group_tag_definitions(active_group_id, user_id, add_definition)
+            if error_response:
+                return error_response
 
             return jsonify({
                 'message': f'Tag "{normalized_tag}" created successfully',
@@ -2381,6 +2861,21 @@ def register_route_backend_group_documents(bp):
 
                 normalized_new_tag = normalized_new[0]
 
+                # The definition moves first, on the group's current copy: a refusal there
+                # (the caller's tag role removed meanwhile, the group deleted, or a group
+                # that kept changing) leaves every document untouched. A definition that
+                # has already moved is left alone, so repeating the request after a
+                # document failed finishes the documents that still carry the old name.
+                def rename_definition(definitions):
+                    if normalized_old_tag not in definitions:
+                        return False
+                    definitions[normalized_new_tag] = definitions.pop(normalized_old_tag)
+                    return True
+
+                error_response = _save_group_tag_definitions(active_group_id, user_id, rename_definition)
+                if error_response:
+                    return error_response
+
                 query = "SELECT * FROM c WHERE c.group_id = @group_id"
                 parameters = [{"name": "@group_id", "value": active_group_id}]
                 documents = list(cosmos_group_documents_container.query_items(
@@ -2415,13 +2910,6 @@ def register_route_backend_group_documents(bp):
 
                         updated_count += 1
 
-                tag_defs = group_doc.get('tag_definitions', {})
-                if normalized_old_tag in tag_defs:
-                    old_def = tag_defs.pop(normalized_old_tag)
-                    tag_defs[normalized_new_tag] = old_def
-                group_doc['tag_definitions'] = tag_defs
-                cosmos_groups_container.upsert_item(group_doc)
-
                 invalidate_group_search_cache(active_group_id)
 
                 return jsonify({
@@ -2430,23 +2918,27 @@ def register_route_backend_group_documents(bp):
                 }), 200
 
             if new_color:
+                from datetime import datetime, timezone
+
                 is_valid_color, color_error, normalized_color = validate_tag_color(new_color, normalized_old_tag)
                 if not is_valid_color:
                     return jsonify({'error': color_error}), 400
 
-                tag_defs = group_doc.get('tag_definitions', {})
+                created_at = datetime.now(timezone.utc).isoformat()
 
-                if normalized_old_tag in tag_defs:
-                    tag_defs[normalized_old_tag]['color'] = normalized_color
-                else:
-                    from datetime import datetime, timezone
-                    tag_defs[normalized_old_tag] = {
-                        'color': normalized_color,
-                        'created_at': datetime.now(timezone.utc).isoformat()
-                    }
+                def recolor_definition(definitions):
+                    if normalized_old_tag in definitions:
+                        definitions[normalized_old_tag]['color'] = normalized_color
+                    else:
+                        definitions[normalized_old_tag] = {
+                            'color': normalized_color,
+                            'created_at': created_at
+                        }
+                    return True
 
-                group_doc['tag_definitions'] = tag_defs
-                cosmos_groups_container.upsert_item(group_doc)
+                error_response = _save_group_tag_definitions(active_group_id, user_id, recolor_definition)
+                if error_response:
+                    return error_response
 
                 return jsonify({
                     'message': f'Tag color updated for "{normalized_old_tag}"',
@@ -2485,6 +2977,20 @@ def register_route_backend_group_documents(bp):
         try:
             normalized_tag = normalize_tag(tag_name)
 
+            # The definition goes first, on the group's current copy: a refusal there
+            # leaves every document untouched. A definition already removed is left
+            # alone, so repeating the request after a document failed finishes the
+            # documents that still carry the tag.
+            def remove_definition(definitions):
+                if normalized_tag not in definitions:
+                    return False
+                definitions.pop(normalized_tag)
+                return True
+
+            error_response = _save_group_tag_definitions(active_group_id, user_id, remove_definition)
+            if error_response:
+                return error_response
+
             query = "SELECT * FROM c WHERE c.group_id = @group_id"
             parameters = [{"name": "@group_id", "value": active_group_id}]
             documents = list(cosmos_group_documents_container.query_items(
@@ -2517,12 +3023,6 @@ def register_route_backend_group_documents(bp):
                         pass
 
                     updated_count += 1
-
-            tag_defs = group_doc.get('tag_definitions', {})
-            if normalized_tag in tag_defs:
-                tag_defs.pop(normalized_tag)
-                group_doc['tag_definitions'] = tag_defs
-                cosmos_groups_container.upsert_item(group_doc)
 
             if updated_count > 0:
                 invalidate_group_search_cache(active_group_id)

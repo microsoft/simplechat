@@ -53,7 +53,7 @@ from functions_group_assignment_ids import (
 )
 from functions_icon_utils import normalize_icon_payload
 from functions_latest_features_nav import LATEST_FEATURES_HIDDEN_VERSION_SETTING
-from functions_model_capabilities import normalize_model_budget_overrides
+from functions_model_capabilities import ModelTokenBudgetError, normalize_model_budget_overrides
 from functions_model_endpoint_identity_header import (
     DEFAULT_MODEL_ENDPOINT_IDENTITY_HEADER_NAME,
     DEFAULT_MODEL_ENDPOINT_IDENTITY_HEADER_VALUE_TYPE,

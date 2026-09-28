@@ -18,7 +18,10 @@ import { AdminSettingsPage } from './pages/AdminSettingsPage';
 import { SettingsPage } from './pages/SettingsPage';
 import { WorkspacePage } from './pages/workspace/WorkspacePage';
 import { PlaceholderPage } from './pages/PlaceholderPage';
-import { GroupAgentDelegationPage } from './pages/GroupAgentDelegationPage';
+import { GroupWorkspacePage } from './pages/GroupWorkspacePage';
+import { GroupDirectoryPage } from './pages/GroupDirectoryPage';
+import { PublicWorkspacePage } from './pages/PublicWorkspacePage';
+import { PublicDirectoryPage } from './pages/PublicDirectoryPage';
 import { clearWorkspaceEditorDrafts } from './lib/workspaceEditorDrafts';
 import { ContentReviewPage } from './pages/ContentReviewPage';
 
@@ -199,21 +202,19 @@ export function App() {
                         />
                     }
                 />
-                <Route
-                    path="/groups"
-                    element={<GroupAgentDelegationPage />}
-                />
+                <Route path="/groups" element={<GroupWorkspacePage />} />
+                <Route path="/groups/directory" element={<GroupDirectoryPage />} />
+                <Route path="/groups/:groupId" element={<GroupWorkspacePage />} />
+                <Route path="/groups/:groupId/:section" element={<GroupWorkspacePage />} />
+                <Route path="/groups/:groupId/:section/:resourceId" element={<GroupWorkspacePage />} />
                 <Route
                     path="/public"
-                    element={
-                        <PlaceholderPage
-                            title="Public workspaces"
-                            description="Public workspace browsing has not been rebuilt in the V2 interface yet."
-                            classicHref="/public_directory"
-                            classicLabel="Open public workspaces"
-                        />
-                    }
+                    element={<PublicWorkspacePage />}
                 />
+                <Route path="/public/directory" element={<PublicDirectoryPage />} />
+                <Route path="/public/:workspaceId" element={<PublicWorkspacePage />} />
+                <Route path="/public/:workspaceId/:section" element={<PublicWorkspacePage />} />
+                <Route path="/public/:workspaceId/:section/:resourceId" element={<PublicWorkspacePage />} />
                 <Route path="*" element={<Navigate to="/" replace />} />
                 </Routes>
             </ErrorBoundary>

@@ -25,7 +25,88 @@ Use public workspaces for curated materials intended for a broad audience, such 
 - Your role determines whether you can upload, manage prompts, tag documents, or only browse.
 - Downloads and File Sync for public workspaces have separate admin controls.
 
-## Steps
+## Use public workspaces in V2
+
+From version **0.261.175**, **Public Workspaces** in V2 opens a directory of
+every public workspace you can discover.
+- Switch between **All** and **My workspaces** (the ones you own, administer
+  or manage documents in), and search by name, description or id.
+- **Open** a workspace to go to its page.
+- **Visible for chat** chooses which public workspaces your public chat
+  searches. It's the same setting as the classic directory's, so a choice
+  made in one interface shows in the other. With no choices saved, every
+  workspace is visible.
+- The directory and the workspace pages use the names your administrator
+  gave public workspaces.
+
+Public workspace documents open in the same document explorer as My Workspace
+and group workspaces, from version **0.261.132**. Open **Public Workspaces** and
+choose a workspace. The address includes the workspace, so a bookmark opens the
+same one. Choosing a workspace also makes it your active public workspace for
+chat, but the page itself never depends on that selection: every request names
+the workspace it is for.
+
+- **Browse.** Search, filter, sort, and page through the workspace's documents,
+  and inspect a document's details and version history. Every member can do
+  this.
+- **Manage** (version **0.261.133**). Owners, Admins, and DocumentManagers can
+  upload files, edit metadata, and tag documents one at a time or in bulk. They
+  can also extract metadata, reprocess a document (including changing its
+  extraction mode), and delete the current revision or every version.
+  Ordinary members can read documents but cannot change them. From version
+  **0.261.186**, everyone who can read the workspace can download its documents
+  when the administrator allows downloads for it, as in classic; before, only
+  Owners, Admins and DocumentManagers could. From version **0.261.167**, an empty workspace tells them who
+  can add documents, or why no one can right now, rather than sending them to
+  the classic page.
+- **Review publish requests** (version **0.261.134**). When someone asks to
+  publish a generated file into the workspace, the request waits in the
+  explorer. A reviewer approves, rejects, or withdraws it without leaving the
+  workspace. From version **0.261.183**, only the Owner, Admins and
+  DocumentManagers see a request before it's approved; other readers don't see
+  it at all, in V2 or in chat's document picker.
+
+From version **0.261.177**, a public workspace's **Prompts** are in V2 too.
+Everyone can read them and use them in chat. Owners, Admins and
+DocumentManagers can create, edit and delete them while the workspace is
+active. **Use in chat** works even for a workspace you've hidden from chat. The
+classic page's prompt changes also need an active workspace from this version.
+
+From version **0.261.179**, the Owner and Admins manage the workspace's
+**Members** in V2, under **Manage**: add Admins and DocumentManagers, change
+roles, remove members, decide DocumentManager requests, and, for the Owner,
+transfer ownership. Nobody can remove themselves. DocumentManagers see members'
+names but not their emails. The directory offers **Create** to people allowed
+to create public workspaces.
+
+From version **0.261.182**, a workspace's Owner, Admins and DocumentManagers
+keep its **Identities** and **Sync** (File Sync sources) in V2, when File Sync
+is enabled for the workspace. They can create, edit and delete them, test and
+browse connections, and start a sync while the workspace is active. Readers
+don't see either section. See
+[V2 Public Connections]({{ '/explanation/features/V2_PUBLIC_CONNECTIONS/' | relative_url }}).
+
+From version **0.261.184**, the directory lets you ask to manage a workspace's
+documents, and cancel the request, from its row. It also shows or hides every
+workspace for chat at once, saves and reuses lists of visible workspaces, and
+opens classic chat over the visible ones.
+
+From version **0.261.185**, the Owner and Admins manage the workspace's
+**Settings** (name, description, color and logo for the Owner; file downloads
+and retention for both), read its **Activity**, and chart and export its
+**Statistics**, which DocumentManagers can also see, under **Manage**. Deleting
+the workspace still happens on the classic page, and removes only the workspace
+record: its documents and prompts stay behind. See
+[V2 Public Settings]({{ '/explanation/features/V2_PUBLIC_SETTINGS/' | relative_url }}).
+
+Sharing a public document with other workspaces is not available.
+
+From version **0.261.173**, the classic public workspace pages save changes
+conditionally. If someone else changes the same workspace at that moment, a
+save that can't be applied answers "The public workspace changed while your
+request was being saved. Try again." Nothing else is lost, so try again.
+
+## Use the classic workspace
 
 1. Open **Public Workspaces**.
 2. Use **Select a workspace...** to choose the public workspace.

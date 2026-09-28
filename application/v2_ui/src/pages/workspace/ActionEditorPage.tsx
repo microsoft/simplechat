@@ -19,32 +19,36 @@ import { ApiError } from '../../lib/apiClient';
 import {
     agentEditorReturnPath, type ActionConfiguration, type ActionTypeDefinition,
 } from '../../lib/workspaceAuthoring';
-import { fetchActionEditor, fetchActionTypes, saveActionConfiguration } from '../../lib/workspaceAuthoringApi';
 import { queueCreatedWorkspaceAction, useWorkspaceEditorDraft } from '../../lib/workspaceEditorDrafts';
 import {
     ACTION_AUTHORING_UNAVAILABLE, actionApiErrors, actionFieldError, actionForSave, actionTypeLabel, changeActionDisplayName,
     changeActionType, createActionDraft, expandActionFieldErrors, hasUsableActionRevision, validateActionDraft,
 } from '../../lib/workspaceActionLogic';
 import {
-    fetchActionEditorHints, fetchActionIdentities, validateWorkspaceAction, type ActionEditorHints,
+    validateWorkspaceAction, type ActionEditorHints,
 } from '../../lib/workspaceActionServices';
+import { PERSONAL_ACTION_WORKBENCH, IdentitiesNotPermittedError, type ActionWorkbenchAdapter } from '../../lib/actionWorkbench';
 import {
     connectorFeedback, validateConnectorAuthentication, validateConnectorConfiguration, type ConnectorFeedback,
 } from '../../lib/workspaceActionConnectors';
 import type { ActionConnectorProps, ActionIdentity } from '../../lib/workspaceActionTypes';
 import { useBootstrapStore } from '../../stores/bootstrapStore';
 
-export function ActionEditorPage() {
+export function ActionEditorPage({ adapter = PERSONAL_ACTION_WORKBENCH }: { adapter?: ActionWorkbenchAdapter }) {
     const { resourceId = 'new' } = useParams();
     const owner = useBootstrapStore((state) => state.data?.user?.id ?? '');
     const location = useLocation();
     const query = new URLSearchParams(location.search);
     const scope = query.get('scope') === 'global' ? 'global' : 'personal';
-    const returnTo = resourceId === 'new' ? agentEditorReturnPath(query.get('returnTo')) : null;
-    return <ActionEditor key={JSON.stringify([owner, resourceId, scope, returnTo])} resourceId={resourceId} scope={scope} returnTo={returnTo} />;
+    const returnTo = resourceId === 'new'
+        ? agentEditorReturnPath(query.get('returnTo'), adapter.scope.kind === 'group' ? adapter.scope.id : undefined)
+        : null;
+    return <ActionEditor key={JSON.stringify([owner, adapter.basePath, resourceId, scope, returnTo])}
+        resourceId={resourceId} scope={scope} returnTo={returnTo} adapter={adapter} />;
 }
 
-function ActionEditor({ resourceId, scope, returnTo }: { resourceId: string; scope: string; returnTo: string | null }) {
+function ActionEditor({ resourceId, scope, returnTo, adapter }: { resourceId: string; scope: string; returnTo: string | null; adapter: ActionWorkbenchAdapter }) {
+    const isGroup = adapter.scope.kind === 'group';
     const navigate = useNavigate();
     const location = useLocation();
     const id = useId();
@@ -52,7 +56,7 @@ function ActionEditor({ resourceId, scope, returnTo }: { resourceId: string; sco
     const refreshBootstrap = useBootstrapStore((state) => state.refresh);
     const {
         draft, setDraft, original, load, clear, dirty, restored,
-    } = useWorkspaceEditorDraft<ActionConfiguration>('actions', JSON.stringify([scope, resourceId, returnTo]), createActionDraft);
+    } = useWorkspaceEditorDraft<ActionConfiguration>('actions', JSON.stringify([scope, resourceId, returnTo]), createActionDraft, adapter.draftScope);
     const loadRef = useRef(load);
     loadRef.current = load;
     const draftRef = useRef(draft);
@@ -67,6 +71,10 @@ function ActionEditor({ resourceId, scope, returnTo }: { resourceId: string; sco
     const [identities, setIdentities] = useState<ActionIdentity[]>([]);
     const [identitiesLoading, setIdentitiesLoading] = useState(true);
     const [identitiesError, setIdentitiesError] = useState<string | null>(null);
+    // Identities start UNRESOLVABLE so nothing renders a bound identity as "Unavailable" while the
+    // list is still loading; only a successful group load flips this true. Personal scope ignores it
+    // (its neutral branches are keyed on groupScoped), so this is byte-identical for personal.
+    const [identitiesResolvable, setIdentitiesResolvable] = useState(false);
     const [hints, setHints] = useState<ActionEditorHints | null>(null);
     const [hintsError, setHintsError] = useState<string | null>(null);
     const [hintsLoading, setHintsLoading] = useState(true);
@@ -89,19 +97,27 @@ function ActionEditor({ resourceId, scope, returnTo }: { resourceId: string; sco
     useEffect(() => {
         const controller = new AbortController();
         setCatalogueLoading(true); setCatalogueError(null);
-        void fetchActionTypes(controller.signal).then((types) => {
+        void adapter.fetchTypes(controller.signal).then((types) => {
             if (!controller.signal.aborted) setCatalogue(types);
         }).catch((cause: unknown) => {
             if (!controller.signal.aborted) setCatalogueError(errorMessage(cause, 'Could not load the governed action catalogue.'));
         }).finally(() => { if (!controller.signal.aborted) setCatalogueLoading(false); });
-        setIdentitiesLoading(true); setIdentitiesError(null);
-        void fetchActionIdentities(controller.signal).then((items) => {
-            if (!controller.signal.aborted) setIdentities(items);
+        setIdentitiesLoading(true); setIdentitiesError(null); setIdentitiesResolvable(false);
+        void adapter.listIdentities(controller.signal).then((items) => {
+            if (!controller.signal.aborted) { setIdentities(items); setIdentitiesResolvable(true); }
         }).catch((cause: unknown) => {
-            if (!controller.signal.aborted) setIdentitiesError(errorMessage(cause, 'Could not load reusable identities.'));
+            if (controller.signal.aborted) return;
+            // A scope that forbids listing identities (a group member's 403) is not an error: the
+            // editor keeps neutral "kept as is" copy and never falls back to personal identities.
+            if (cause instanceof IdentitiesNotPermittedError) {
+                setIdentities([]); setIdentitiesResolvable(false); setIdentitiesError(null);
+            } else {
+                setIdentitiesResolvable(false);
+                setIdentitiesError(errorMessage(cause, 'Could not load reusable identities.'));
+            }
         }).finally(() => { if (!controller.signal.aborted) setIdentitiesLoading(false); });
         setHintsLoading(true); setHintsError(null);
-        void fetchActionEditorHints(controller.signal).then((options) => {
+        void adapter.fetchEditorHints(controller.signal).then((options) => {
             if (!controller.signal.aborted) { setHints(options); setHintsError(null); }
         }).catch((cause: unknown) => {
             if (!controller.signal.aborted) setHintsError(errorMessage(cause, 'Action authoring permissions and reminder defaults are unavailable.'));
@@ -112,7 +128,7 @@ function ActionEditor({ resourceId, scope, returnTo }: { resourceId: string; sco
         if (isNew) return;
         const controller = new AbortController();
         setLoading(!hasLoadedDraft.current); setLoadError(null);
-        void fetchActionEditor(resourceId, scope, controller.signal).then((resource) => {
+        void adapter.fetchEditor(resourceId, scope, controller.signal).then((resource) => {
             if (controller.signal.aborted) return;
             if (!resource?.record || !hasUsableActionRevision(resource, scope)) throw new Error('The action editor returned an invalid resource.');
             setLatestReadOnly(resource.read_only || Boolean(resource.record.is_global));
@@ -137,7 +153,15 @@ function ActionEditor({ resourceId, scope, returnTo }: { resourceId: string; sco
     }, []);
 
     const readOnly = scope === 'global' || latestReadOnly || original?.read_only === true || draft.is_global === true;
-    const canAuthor = !hintsLoading && !hintsError && hints?.canAuthor === true;
+    // Personal authoring is the tenant plugin permission; group authoring is the server's per-scope
+    // and per-action hint on the adapter, never the personal capability. Creating is workspace-level;
+    // editing an existing action additionally needs the loaded record to advertise the edit operation.
+    const canAuthor = isGroup
+        ? (isNew ? adapter.allows('create') : Boolean(original) && adapter.allows('edit', original?.record))
+        : !hintsLoading && !hintsError && hints?.canAuthor === true;
+    const authoringUnavailable = isGroup
+        ? (isNew ? 'Creating actions is not available in this workspace.' : 'Editing this action is not available.')
+        : (hintsError || ACTION_AUTHORING_UNAVAILABLE);
     const definition = catalogue.find((type) => type.type === draft.type);
     const visibleTypes = useMemo(() => catalogue.filter((type) => type.type === draft.type ||
         `${type.display} ${type.type} ${type.description}`.toLowerCase().includes(typeSearch.trim().toLowerCase()))
@@ -161,6 +185,8 @@ function ActionEditor({ resourceId, scope, returnTo }: { resourceId: string; sco
         draft, original, onChange: setDraft,
         readOnly: readOnly || !canAuthor || saving || catalogueLoading || Boolean(catalogueError) || Boolean(loadError) || !definition,
         errors: expandActionFieldErrors(fieldErrors), onValidityChange, identities, identitiesLoading, identitiesError,
+        identitiesResolvable,
+        groupScope: adapter.testScope,
     };
 
     const validateLocally = () => {
@@ -184,14 +210,14 @@ function ActionEditor({ resourceId, scope, returnTo }: { resourceId: string; sco
         validationController.current?.abort();
         setSaving(true); setError(null); setValidationFeedback(null);
         try {
-            const saved = await saveActionConfiguration(actionForSave(draft), original);
+            const saved = await adapter.save(actionForSave(draft), original);
             if (!mounted.current) return;
             if (!saved?.record?.id) throw new Error('The server did not return a saved action ID. Reload before retrying.');
-            if (returnTo) queueCreatedWorkspaceAction(returnTo, saved.record);
+            if (returnTo) queueCreatedWorkspaceAction(returnTo, saved.record, adapter.draftScope);
             load(saved);
             clear();
             void refreshBootstrap();
-            navigate(returnTo || '/workspace/actions', {
+            navigate(returnTo || adapter.basePath, {
                 state: { workspaceEditorSaved: true, workspaceEditorFrom: location.key, ...(returnTo ? { preserveWorkspaceDraft: true } : {}) },
             });
         } catch (cause) {
@@ -246,12 +272,12 @@ function ActionEditor({ resourceId, scope, returnTo }: { resourceId: string; sco
         <div className="space-y-5">
             {returnTo ? <p className="rounded-xl bg-accent-soft p-3 text-sm text-accent">Save this action to return to your agent draft with it selected. The agent itself will not be saved.</p> : null}
             {restored ? <p role="status" className="text-xs text-text-3">Your unsaved action draft has been restored in this tab.</p> : null}
-            {!readOnly && hintsLoading ? <p role="status" className="text-sm text-text-3">Checking action authoring permissions…</p> : null}
-            {!readOnly && !hintsLoading && !canAuthor ? <div role={hintsError ? 'alert' : 'status'}
+            {!readOnly && !isGroup && hintsLoading ? <p role="status" className="text-sm text-text-3">Checking action authoring permissions…</p> : null}
+            {!readOnly && !canAuthor && (isGroup || !hintsLoading) ? <div role={!isGroup && hintsError ? 'alert' : 'status'}
                 className="space-y-2 rounded-xl bg-warn-soft p-3 text-sm text-warn">
-                <p>{hintsError || ACTION_AUTHORING_UNAVAILABLE}</p>
+                <p>{authoringUnavailable}</p>
                 {dirty ? <p>Your unsaved draft has been retained. Reading it does not require creation permission.</p> : null}
-                {hintsError ? <GlassButton type="button" size="sm" onClick={() => setVersion((current) => current + 1)}>Retry authoring permissions</GlassButton> : null}
+                {!isGroup && hintsError ? <GlassButton type="button" size="sm" onClick={() => setVersion((current) => current + 1)}>Retry authoring permissions</GlassButton> : null}
             </div> : null}
             {catalogueError ? <div role="alert" className="space-y-2 rounded-xl bg-danger-soft p-3 text-sm text-danger">
                 <p>{catalogueError} Existing configuration has not been changed.</p>
@@ -309,7 +335,7 @@ function ActionEditor({ resourceId, scope, returnTo }: { resourceId: string; sco
         <p role="alert" className="text-sm text-danger">{loadError}</p>
         <div className="flex flex-wrap gap-2">
             <GlassButton type="button" onClick={() => setVersion((current) => current + 1)}>Retry action</GlassButton>
-            <GlassButton type="button" onClick={() => navigate(returnTo || '/workspace/actions')}>Back to actions</GlassButton>
+            <GlassButton type="button" onClick={() => navigate(returnTo || adapter.basePath)}>Back to actions</GlassButton>
         </div>
         {restored ? <p className="text-xs text-text-3">The unsaved draft remains in this tab; it has not been overwritten by this failed read.</p> : null}
     </GlassPanel>;
@@ -319,7 +345,7 @@ function ActionEditor({ resourceId, scope, returnTo }: { resourceId: string; sco
             <WorkspaceEditorFrame title={readOnly ? 'Action details' : isNew ? 'New action' : canAuthor ? 'Edit action' : 'Action details'}
                 description={readOnly ? 'This provided action is managed by an administrator.' :
                     isNew ? 'Configure an action, then explicitly save it. Connectors run only when you choose a discovery or test command.' : draft.displayName || draft.name}
-                backTo={returnTo || '/workspace/actions'} sections={sections.map((section) => ({
+                backTo={returnTo || adapter.basePath} sections={sections.map((section) => ({
                     ...section, content: <div key={editorGeneration} className="min-w-0">{section.content}</div>,
                 }))} dirty={dirty || Object.keys(validity).some((key) => key.startsWith('json:'))} saving={saving} readOnly={readOnly}
                 error={loadError || error} saveLabel="Save action" onSave={() => void save()} onDiscard={clear}

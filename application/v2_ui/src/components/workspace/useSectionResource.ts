@@ -21,6 +21,12 @@ export interface SectionResource<T> {
     items: T[];
     loading: boolean;
     error: string | null;
+    /**
+     * Whether the latest read failed. A failed read has no result to show, so a section offers its
+     * error with a retry and never its empty state: an empty result is never a failure, and a
+     * failure is never an empty result. Cleared when the next read starts.
+     */
+    loadFailed: boolean;
     /** Refetch from the server. */
     refresh: () => Promise<void>;
     /** Apply a local change, for optimistic updates that a failure can roll back. */
@@ -35,6 +41,7 @@ export function useSectionResource<T>(
     const [items, setItems] = useState<T[]>([]);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
+    const [loadFailed, setLoadFailed] = useState(false);
 
     // Identifies the newest request. A response whose token no longer matches belongs to a
     // superseded request and is dropped rather than rendered.
@@ -53,6 +60,7 @@ export function useSectionResource<T>(
 
         setLoading(true);
         setError(null);
+        setLoadFailed(false);
         try {
             const next = await loadRef.current(controller.signal);
             if (token === requestToken.current) {
@@ -63,6 +71,7 @@ export function useSectionResource<T>(
                 return;
             }
             setError(errorMessage(loadError, failureMessage));
+            setLoadFailed(true);
         } finally {
             if (token === requestToken.current) {
                 setLoading(false);
@@ -75,5 +84,5 @@ export function useSectionResource<T>(
         return () => abortRef.current?.abort();
     }, [refresh]);
 
-    return { items, loading, error, refresh, setItems, setError };
+    return { items, loading, error, loadFailed, refresh, setItems, setError };
 }

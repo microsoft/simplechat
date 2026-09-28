@@ -61,6 +61,8 @@ Read **Configured screening checks** before saving. It shows enabled determinist
 
 Choose the documents or workspaces to inspect. Only administrators can start an all-workspace scan across private and shared scopes.
 
+In V2, **Screening scans** in the Documents section scans the workspace you're in: your own documents in My Workspace, and, from version **0.261.174**, a group's documents for its Owner, Admins and DocumentManagers.
+
 Use the workload/progress view to distinguish queued, running, completed, flagged, incomplete, and failed documents. Queued documents remain in their previous state until their scan starts. Started documents remain held if a check cannot finish.
 
 Do not interpret a completed enumeration or a model timeout as evidence that every document passed. Correct the reported source, model, policy, or storage problem and resume or retry the work. Cancelling a job does not release documents that are already held.

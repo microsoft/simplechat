@@ -1,8 +1,9 @@
 # test_ai_connection_embedding_discovery.py
 """
 Functional tests for embedding discovery and chat-test capability isolation.
-Version: 0.261.122
+Version: 0.261.140
 Implemented in: 0.261.106
+Resolver fakes carry the optional named-group ``group_id`` (M5C §2.1): 0.261.140
 
 Exercise the actual global/personal/group Flask discovery and chat-test handlers
 with synthetic ARM/Foundry deployments. No Azure or inference service is called.
@@ -62,6 +63,7 @@ class EmbeddingDiscoveryTests(unittest.TestCase):
         self.foundry_calls = []
         self.inference_calls = []
         self.resolved_scopes = []
+        self.resolved_group_ids = []
         self.group_roles = []
         self.discovery_error = None
         self.inference_error = None
@@ -104,8 +106,11 @@ class EmbeddingDiscoveryTests(unittest.TestCase):
                 return wrapped
             return decorate
 
-        def resolve_payload(payload, scope, *, for_chat_test=False):
+        def resolve_payload(payload, scope, *, for_chat_test=False, group_id=None):
+            # ``group_id`` is only ever set by the immutable-target group routes (M5C
+            # §2.1); every legacy route these tests drive passes nothing.
             self.resolved_scopes.append(scope)
+            self.resolved_group_ids.append(group_id)
             if self.resolution_error:
                 raise self.resolution_error
             if self.stored_endpoint is not None:
@@ -202,7 +207,7 @@ class EmbeddingDiscoveryTests(unittest.TestCase):
 
     def use_actual_payload_resolver(self, credential_reads):
         self.namespace.update({
-            "resolve_endpoint_by_id": lambda _user_id, _scope, _endpoint_id: copy.deepcopy(self.stored_endpoint),
+            "resolve_endpoint_by_id": lambda _user_id, _scope, _endpoint_id, group_id=None: copy.deepcopy(self.stored_endpoint),
             "SecretReturnType": SimpleNamespace(VALUE="value"),
         })
 
@@ -366,6 +371,9 @@ class EmbeddingDiscoveryTests(unittest.TestCase):
                 self.assertEqual(400, response.status_code)
                 self.assertEqual("model_capability_unavailable", response.json["code"])
         self.assertEqual([], self.inference_calls)
+        # The legacy global, user and group routes never name a group (M5C §2.1).
+        self.assertEqual(["global", "user", "group"], self.resolved_scopes)
+        self.assertEqual([None, None, None], self.resolved_group_ids)
 
     def test_unrelated_manual_chat_aliases_remain_supported(self):
         response = self.client.post("/api/models/test-model", json={

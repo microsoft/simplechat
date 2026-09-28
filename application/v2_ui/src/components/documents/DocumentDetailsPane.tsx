@@ -22,14 +22,20 @@ import {
     Tag as TagIcon,
     Trash2,
 } from 'lucide-react';
-import type { ReactNode } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
+import { clsx } from 'clsx';
 import type { WorkspaceDocument } from '../../lib/types';
 import { isScreeningAvailable } from '../../lib/contentScreening';
+import {
+    documentSelectionReason, groupDocumentOrigin, type DocumentReadAdapter,
+} from '../../lib/documentReadAdapter';
+import type { DocumentOperation } from '../../lib/documentOperations';
 import { ScreeningStatusBadge } from '../screening/ScreeningStatusBadge';
 import {
     commonTags,
     documentDate,
     documentDisplayName,
+    documentId,
     extractionMode as documentExtractionMode,
     extractionModeLabel,
     formatAbsoluteDate,
@@ -41,6 +47,7 @@ import {
     type ExtractionMode,
 } from '../../lib/documentExplorer';
 import { GlassButton } from '../ui/primitives';
+import { errorMessage } from '../workspace/useSectionResource';
 import {
     ClassificationBadge,
     DocumentIcon,
@@ -69,6 +76,14 @@ function Section({ title, children }: { title: string; children: ReactNode }) {
 }
 
 export interface DocumentActionAvailability {
+    upload: boolean;
+    tagDocuments: boolean;
+    manageTags: boolean;
+    editMetadata: boolean;
+    deleteDocuments: boolean;
+    reprocess: boolean;
+    allows: (operation: DocumentOperation, documents?: readonly WorkspaceDocument[]) => boolean;
+    chat: boolean;
     downloads: boolean;
     extractMetadata: boolean;
     sharing: boolean;
@@ -80,6 +95,7 @@ export interface DocumentActionAvailability {
      * option is disabled with a reason rather than offered and refused.
      */
     enhancedExtraction: boolean;
+    canReview?: (document: WorkspaceDocument) => boolean;
 }
 
 export interface DocumentPaneActions {
@@ -93,50 +109,79 @@ export interface DocumentPaneActions {
     onDelete: (documents: WorkspaceDocument[]) => void;
     onSelectTag: (tag: string) => void;
     onRemoveTag: (documents: WorkspaceDocument[], tag: string) => void;
+    onReview?: (document: WorkspaceDocument) => void;
 }
 
 function ActionButtons({
     documents,
     availability,
     actions,
+    selectionReason,
 }: {
     documents: WorkspaceDocument[];
     availability: DocumentActionAvailability;
     actions: DocumentPaneActions;
+    selectionReason: (document: WorkspaceDocument) => string | null;
 }) {
     const single = documents.length === 1 ? documents[0] : null;
+    const review = single && actions.onReview && availability.canReview?.(single) ? (
+        <GlassButton variant="subtle" size="sm" onClick={() => actions.onReview?.(single)}>
+            <Share2 size={14} />Sharing and review
+        </GlassButton>
+    ) : null;
     if (documents.some((document) => !isScreeningAvailable(document))) {
+        // A held source is never chatted with, downloaded, tagged, edited, analyzed or shared from
+        // here. Only the cleanup its workspace authorizes for it remains: a group or public workspace
+        // may advertise deletion, and sharing inspection where collaboration allows it.
+        const removable = availability.deleteDocuments && availability.allows('delete', documents);
         return (
-            <p className="px-3 py-2.5 text-xs text-text-3">
-                Held sources cannot be selected, analyzed, shared, or downloaded here.
-                An authorized reviewer must resolve the hold in Content review.
-            </p>
+            <>
+                <p className="px-3 py-2.5 text-xs text-text-3">
+                    Held sources cannot be selected for chat, analyzed, shared, or downloaded here.
+                    An authorized reviewer must resolve the hold in Content review.
+                </p>
+                {review || removable ? (
+                    <div className="flex flex-wrap gap-1.5 px-3 pb-2.5">
+                        {review}
+                        {removable ? (
+                            <GlassButton variant="danger" size="sm" onClick={() => actions.onDelete(documents)}>
+                                <Trash2 size={14} />
+                                Delete
+                            </GlassButton>
+                        ) : null}
+                    </div>
+                ) : null}
+            </>
         );
     }
-
+    const blockedReason = documents.map(selectionReason).find(Boolean);
     return (
+        <>
+        {blockedReason ? <p className="px-3 py-2.5 text-xs text-text-3">{blockedReason}</p> : null}
         <div className="flex flex-wrap gap-1.5 px-3 py-2.5">
-            <GlassButton variant="primary" size="sm" onClick={() => actions.onChat(documents)}>
+            {review}
+            <GlassButton variant="primary" size="sm" disabled={!availability.chat || Boolean(blockedReason)} onClick={() => actions.onChat(documents)}>
                 <MessageSquare size={14} />
                 Chat
             </GlassButton>
 
             {availability.downloads ? (
-                <GlassButton variant="subtle" size="sm" onClick={() => actions.onDownload(documents)}>
+                <GlassButton variant="subtle" size="sm" disabled={!availability.allows('download', documents)} onClick={() => actions.onDownload(documents)}>
                     <Download size={14} />
                     Download
                 </GlassButton>
             ) : null}
 
-            <GlassButton variant="subtle" size="sm" onClick={() => actions.onManageTags(documents)}>
+            {availability.tagDocuments ? <GlassButton variant="subtle" size="sm" disabled={!availability.allows('tag_documents', documents)} onClick={() => actions.onManageTags(documents)}>
                 <TagIcon size={14} />
                 Tag
-            </GlassButton>
+            </GlassButton> : null}
 
-            {single ? (
+            {single && availability.editMetadata ? (
                 <GlassButton
                     variant="subtle"
                     size="sm"
+                    disabled={!availability.allows('edit_metadata', documents)}
                     onClick={() => actions.onEditMetadata(single)}
                 >
                     <Pencil size={14} />
@@ -149,6 +194,7 @@ function ActionButtons({
                     variant="subtle"
                     size="sm"
                     onClick={() => actions.onExtractMetadata(documents)}
+                    disabled={!availability.allows('extract_metadata', documents)}
                     title="Ask the model to re-read the file and fill in title, authors, keywords and abstract"
                 >
                     <Sparkles size={14} />
@@ -163,11 +209,12 @@ function ActionButtons({
                 </GlassButton>
             ) : null}
 
-            <GlassButton variant="danger" size="sm" onClick={() => actions.onDelete(documents)}>
+            {availability.deleteDocuments ? <GlassButton variant="danger" size="sm" disabled={!availability.allows('delete', documents)} onClick={() => actions.onDelete(documents)}>
                 <Trash2 size={14} />
                 Delete
-            </GlassButton>
+            </GlassButton> : null}
         </div>
+        </>
     );
 }
 
@@ -184,10 +231,14 @@ function ReextractSection({
     documents,
     enhancedEnabled,
     onReextract,
+    disabled = false,
+    requireAll = false,
 }: {
     documents: WorkspaceDocument[];
     enhancedEnabled: boolean;
     onReextract: (documents: WorkspaceDocument[], mode: ExtractionMode) => void;
+    disabled?: boolean;
+    requireAll?: boolean;
 }) {
     const { supported, unsupported, current } = summarizeExtraction(documents.filter(isScreeningAvailable));
 
@@ -252,10 +303,10 @@ function ReextractSection({
                             key={option.mode}
                             variant="subtle"
                             size="sm"
-                            disabled={blocked}
-                            onClick={() => onReextract(supported, option.mode)}
+                            disabled={blocked || disabled}
+                            onClick={() => onReextract(requireAll ? documents : supported, option.mode)}
                             title={
-                                blocked
+                                disabled ? 'Every selected document must permit reprocessing.' : blocked
                                     ? 'Enhanced extraction is switched off for this deployment.'
                                     : `${option.hint} Re-reads ${supported.length === 1 ? 'this document' : `these ${supported.length} documents`}.`
                             }
@@ -267,13 +318,71 @@ function ReextractSection({
                 })}
             </div>
 
-            {unsupported.length > 0 ? (
+            {unsupported.length > 0 && requireAll ? <p className="mt-1.5 text-xs text-text-3">
+                Choose only documents that support reprocessing; this selection will not be silently reduced.
+            </p> : unsupported.length > 0 ? (
                 <p className="mt-1.5 text-[11px] text-text-3">
                     {unsupported.length} of the selected{' '}
                     {unsupported.length === 1 ? 'document is' : 'documents are'} not a PDF or
                     image, so the extraction mode does not apply and{' '}
                     {unsupported.length === 1 ? 'it will' : 'they will'} be left alone.
                 </p>
+            ) : null}
+        </Section>
+    );
+}
+
+function DocumentVersions({
+    document, reader, enabled,
+}: {
+    document: WorkspaceDocument;
+    reader: DocumentReadAdapter;
+    enabled: boolean;
+}) {
+    const [open, setOpen] = useState(false);
+    const [versions, setVersions] = useState<WorkspaceDocument[] | null>(null);
+    const [error, setError] = useState('');
+    const [retry, setRetry] = useState(0);
+    const id = documentId(document);
+
+    useEffect(() => {
+        if (!open || !enabled) return;
+        const controller = new AbortController();
+        setVersions(null);
+        setError('');
+        void reader.versions(id, controller.signal).then((response) => {
+            if (!controller.signal.aborted) setVersions(response.versions ?? []);
+        }).catch((cause: unknown) => {
+            if (!controller.signal.aborted) setError(errorMessage(cause, 'Could not load version history.'));
+        });
+        return () => controller.abort();
+    }, [id, reader, open, enabled, retry]);
+
+    return (
+        <Section title="Versions">
+            <GlassButton size="sm" variant="subtle" disabled={!enabled} aria-expanded={open}
+                onClick={() => setOpen((value) => !value)}>
+                <FileStack size={14} />{open ? 'Hide version history' : 'Version history'}
+            </GlassButton>
+            {open ? (
+                error ? <div role="alert" className="mt-2 space-y-2 text-xs text-danger">
+                    <p>{error}</p>
+                    <GlassButton size="sm" disabled={!enabled} onClick={() => setRetry((value) => value + 1)}>Retry version history</GlassButton>
+                </div> : versions === null ? <p role="status" className="mt-2 text-xs text-text-3">Loading version history...</p>
+                    : versions.length === 0 ? <p className="mt-2 text-xs text-text-3">No accessible versions were returned.</p>
+                        : <ul className="mt-2 divide-y divide-edge">
+                            {versions.map((version) => (
+                                <li key={documentId(version)} className="space-y-1 py-2 text-xs">
+                                    <p className="break-words font-medium text-text-1">
+                                        Version {version.version ?? 'not recorded'}{version.is_current_version ? ' (current)' : ''}
+                                    </p>
+                                    <p className="break-words text-text-2">{documentDisplayName(version).primary}</p>
+                                    <p className="text-text-3">{formatAbsoluteDate(documentDate(version))}</p>
+                                    {reader.scope.kind === 'group' ? <p className="text-text-3">{groupDocumentOrigin(version, reader.scope.id)}</p> : null}
+                                    <DocumentStatusBadge document={version} />
+                                </li>
+                            ))}
+                        </ul>
             ) : null}
         </Section>
     );
@@ -286,6 +395,13 @@ export function DocumentDetailsPane({
     tagColors,
     classificationColors,
     onClose,
+    reader,
+    selectionReason,
+    onRefresh,
+    loading,
+    error,
+    interactionDisabled,
+    compact = false,
 }: {
     /** The current selection, resolved to documents. */
     documents: WorkspaceDocument[];
@@ -294,12 +410,25 @@ export function DocumentDetailsPane({
     tagColors: Record<string, string | undefined>;
     classificationColors: Record<string, string | undefined>;
     onClose: () => void;
+    reader: DocumentReadAdapter;
+    selectionReason: (document: WorkspaceDocument) => string | null;
+    onRefresh: () => void;
+    loading: boolean;
+    error: string | null;
+    interactionDisabled: boolean;
+    compact?: boolean;
 }) {
+    const paneClassName = clsx('flex h-full shrink-0 flex-col overflow-hidden rounded-xl border border-edge bg-surface-1', compact ? 'w-full' : 'w-80');
     const header = (
         <div className="flex items-center justify-between gap-2 px-3 py-2">
             <h3 className="truncate text-xs font-semibold tracking-wide text-text-3 uppercase">
                 Details
             </h3>
+            {documents.length === 1 ? <button type="button" onClick={onRefresh}
+                disabled={loading || interactionDisabled} aria-label="Refresh document details"
+                className="ml-auto rounded-lg p-1 text-text-3 hover:bg-surface-2 hover:text-text-1 disabled:opacity-50">
+                <RefreshCw size={15} className={loading ? 'animate-spin' : undefined} />
+            </button> : null}
             <button
                 type="button"
                 onClick={onClose}
@@ -311,9 +440,19 @@ export function DocumentDetailsPane({
         </div>
     );
 
+    if (error) return (
+        <aside className={paneClassName}>
+            {header}
+            <div role="alert" className="space-y-2 px-3 py-2 text-xs text-danger">
+                <p>{error}</p>
+                <GlassButton size="sm" disabled={interactionDisabled || loading} onClick={onRefresh}>Retry document details</GlassButton>
+            </div>
+        </aside>
+    );
+
     if (documents.length === 0) {
         return (
-            <aside className="flex w-80 shrink-0 flex-col overflow-hidden rounded-xl border border-edge bg-surface-1">
+            <aside className={paneClassName}>
                 {header}
                 <p className="px-3 py-6 text-center text-xs text-text-3">
                     Select a document to see its details.
@@ -325,7 +464,7 @@ export function DocumentDetailsPane({
     if (documents.length > 1) {
         const shared = commonTags(documents);
         return (
-            <aside className="flex w-80 shrink-0 flex-col overflow-hidden rounded-xl border border-edge bg-surface-1">
+            <aside className={paneClassName}>
                 {header}
                 <div className="min-h-0 flex-1 overflow-y-auto">
                     <div className="flex items-center gap-2.5 px-3 pb-3">
@@ -348,7 +487,7 @@ export function DocumentDetailsPane({
                                         key={tag}
                                         name={tag}
                                         color={tagColors[tag]}
-                                        onRemove={() => actions.onRemoveTag(documents, tag)}
+                                        onRemove={availability.allows('tag_documents', documents) ? () => actions.onRemoveTag(documents, tag) : undefined}
                                     />
                                 ))}
                             </div>
@@ -359,11 +498,13 @@ export function DocumentDetailsPane({
                         )}
                     </Section>
 
-                    <ReextractSection
+                    {availability.reprocess ? <ReextractSection
                         documents={documents}
                         enhancedEnabled={availability.enhancedExtraction}
                         onReextract={actions.onReextract}
-                    />
+                        disabled={!availability.allows('reprocess', documents)}
+                        requireAll={reader.scope.kind === 'group'}
+                    /> : null}
                 </div>
 
                 <div className="border-t border-edge">
@@ -371,6 +512,7 @@ export function DocumentDetailsPane({
                         documents={documents}
                         availability={availability}
                         actions={actions}
+                        selectionReason={selectionReason}
                     />
                 </div>
             </aside>
@@ -378,7 +520,7 @@ export function DocumentDetailsPane({
     }
 
     const document = documents[0];
-    const available = isScreeningAvailable(document);
+    const available = !documentSelectionReason(document, reader.scope);
     const { primary, secondary } = documentDisplayName(document);
     const tags = normalizeTags(document.tags);
     const authors = available ? normalizeStringList(document.authors) : [];
@@ -391,9 +533,10 @@ export function DocumentDetailsPane({
         : 0;
 
     return (
-        <aside className="flex w-80 shrink-0 flex-col overflow-hidden rounded-xl border border-edge bg-surface-1">
+        <aside className={paneClassName}>
             {header}
             <div className="min-h-0 flex-1 overflow-y-auto">
+                {loading ? <p role="status" className="px-3 pb-2 text-xs text-text-3">Refreshing document details...</p> : null}
                 <div className="flex items-start gap-2.5 px-3 pb-3">
                     <DocumentIcon document={document} size={22} className="mt-0.5" />
                     <div className="min-w-0">
@@ -406,6 +549,11 @@ export function DocumentDetailsPane({
                         </div>
                     </div>
                 </div>
+
+                {reader.scope.kind === 'group' ? <Section title="Group access">
+                    <p className="text-xs text-text-2">{groupDocumentOrigin(document, reader.scope.id)}</p>
+                    <p className="mt-1 text-xs text-text-3">Browsing {reader.scope.name}. Actions follow this group's current permissions.</p>
+                </Section> : null}
 
                 {Object.prototype.hasOwnProperty.call(document, 'content_screening') ? (
                     <Section title="Content screening">
@@ -422,7 +570,7 @@ export function DocumentDetailsPane({
                                     name={tag}
                                     color={tagColors[tag]}
                                     onClick={() => actions.onSelectTag(tag)}
-                                    onRemove={available ? () => actions.onRemoveTag([document], tag) : undefined}
+                                    onRemove={available && availability.allows('tag_documents', [document]) ? () => actions.onRemoveTag([document], tag) : undefined}
                                 />
                             ))}
                         </div>
@@ -500,11 +648,15 @@ export function DocumentDetailsPane({
                     </Section>
                 ) : null}
 
-                <ReextractSection
+                <DocumentVersions key={documentId(document)} document={document} reader={reader} enabled={!interactionDisabled} />
+
+                {availability.reprocess ? <ReextractSection
                     documents={[document]}
                     enhancedEnabled={availability.enhancedExtraction}
                     onReextract={actions.onReextract}
-                />
+                    disabled={!availability.allows('reprocess', [document])}
+                    requireAll={reader.scope.kind === 'group'}
+                /> : null}
             </div>
 
             <div className="border-t border-edge">
@@ -512,6 +664,7 @@ export function DocumentDetailsPane({
                     documents={documents}
                     availability={availability}
                     actions={actions}
+                    selectionReason={selectionReason}
                 />
             </div>
         </aside>

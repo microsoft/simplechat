@@ -1,7 +1,7 @@
 # test_v2_workflow_saved_output_publication.py
 """
 Closed V2 List coverage for exact saved-record file publication.
-Version: 0.261.119
+Version: 0.261.127
 Implemented in: 0.261.119
 
 The real production SPA saves through production definition validation. Fictional
@@ -62,7 +62,7 @@ def open_editor(ui, scope="user", **viewport):
     ui.workflow_runs[record["id"]] = []
     if scope == "group":
         ui.open("/groups", **viewport)
-        ui.page.get_by_label("Group workspace", exact=True).select_option(GROUP_ID)
+        ui.select_group(GROUP_ID)
         ui.page.get_by_role("button", name=f"Edit {record['name']}", exact=True).click()
     else:
         ui.open(f"/workspace/workflows?workflow_id={record['id']}", **viewport)
@@ -521,7 +521,7 @@ def test_saved_export_keeps_exact_attempt_completion_and_unavailable_readback(sa
         }
     ui.open("/groups" if scope == "group" else "/workspace/workflows", width=390, height=844)
     if scope == "group":
-        page.get_by_label("Group workspace", exact=True).select_option(GROUP_ID)
+        ui.select_group(GROUP_ID)
     row = page.get_by_role("listitem").filter(has_text=saved_workflow(ui, scope)["name"]).first
     row.get_by_role("button", name="Show run history", exact=True).click()
     row.get_by_role("button", name="Show run task results", exact=True).click()

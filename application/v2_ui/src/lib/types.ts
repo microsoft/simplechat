@@ -183,6 +183,10 @@ export interface PromptOption {
 }
 
 export interface WorkspaceDocument {
+    /** Fresh operation policy, never inferred from personal ownership or chat eligibility. */
+    document_actions?: string[];
+    document_collaboration_actions?: string[];
+    generated_artifact_promotion_status?: string;
     content_screening?: ContentScreeningSummary | null;
     id?: string;
     document_id?: string;
@@ -209,6 +213,13 @@ export interface WorkspaceDocument {
     /** Entries are `"<user id>,<approval status>"`, not bare ids. */
     shared_user_ids?: string[];
     shared_approval_status?: 'owner' | 'approved' | 'not_approved' | 'none' | string;
+    /** Group ownership is independent of the authenticated viewer's personal ownership. */
+    group_id?: string;
+    /** Public workspace ownership, the public-scope analogue of group_id. */
+    public_workspace_id?: string;
+    owner_group_id?: string;
+    owner_group_name?: string;
+    shared_group_active_id?: string;
     owner_id?: string;
     user_id?: string;
     created_from_chat_upload?: boolean;
@@ -237,6 +248,14 @@ export interface DocumentListResponse {
     total_count?: number;
     file_downloads_enabled?: boolean;
     needs_legacy_update_check?: boolean;
+}
+
+export interface DocumentVersionsResponse {
+    document_id?: string;
+    group_id?: string;
+    public_workspace_id?: string;
+    revision_family_id?: string;
+    versions?: WorkspaceDocument[];
 }
 
 /**
@@ -348,17 +367,58 @@ export interface WorkspacePrompt {
     is_favorite?: boolean;
     created_at?: string;
     updated_at?: string;
+    /**
+     * Group scope only. The owning group's id, echoed on every group prompt response so the
+     * client can prove a returned prompt belongs to the workspace it asked for -- the same
+     * identity check the group document reader makes. Absent on personal prompts.
+     */
+    group_id?: string;
+    /**
+     * Public scope only. The owning public workspace's id, echoed on every public prompt response
+     * so the client can prove a returned prompt belongs to the workspace it asked for -- the
+     * public-scope analogue of `group_id`, the same identity check the public document reader makes.
+     * Absent on personal and group prompts.
+     */
+    public_id?: string;
+    /**
+     * Group and public scope. The concurrency marker a conditional write sends back as
+     * `expected_etag`; a mismatch is the 409 that keeps a failed-save draft open.
+     */
+    etag?: string;
+    /**
+     * Group scope only. The per-prompt operation hint (`edit`, `delete`) computed fresh per
+     * request. A server hint, never authority: an empty or absent array gates the action off,
+     * and the client never enables one the server did not offer.
+     */
+    prompt_actions?: string[];
     [key: string]: unknown;
 }
 
 export interface WorkspaceIdentity {
     id: string;
+    identity_id?: string;
     name?: string;
     description?: string;
     auth_type?: string;
     username?: string;
     scope_type?: string;
     scope_id?: string;
+    /** Present on native group identities; the owning group, checked against the page group. */
+    group_id?: string;
+    /** Present on native public-workspace identities (M10B); checked against the page workspace. */
+    public_workspace_id?: string;
+    provider?: string;
+    source_type?: string;
+    /** Server-normalized capabilities, e.g. ["file_sync"], ["action"] or both. */
+    usage_contexts?: string[];
+    supported_source_types?: string[];
+    metadata?: Record<string, unknown>;
+    /** Masked credential summary; secrets never leave the server. */
+    credentials?: Record<string, unknown>;
+    /** Conditional-write marker on native group identities. */
+    etag?: string;
+    /** The operations policy permits on this identity, a subset of ["edit", "delete"]. */
+    identity_actions?: string[];
     created_at?: string;
     updated_at?: string;
     [key: string]: unknown;
@@ -369,13 +429,83 @@ export interface WorkspaceSyncSource {
     name?: string;
     source_type?: string;
     identity_id?: string;
+    /** Present on a bound source: the display name of the group identity it uses. */
+    identity_name?: string;
     remote_path?: string;
     enabled?: boolean;
+    recursive?: boolean;
     sync_interval_minutes?: number;
+    /** The per-type connection object (unc_path, account_url, share_name, blob_prefix, ...). */
+    connection?: Record<string, unknown>;
+    filters?: Record<string, unknown>;
+    schedule?: { enabled?: boolean; interval_minutes?: number; next_run_at?: string | null };
+    /** Masked credential summary; secrets never leave the server. */
+    credentials?: Record<string, unknown>;
+    remote_delete_policy?: string;
+    last_run_status?: string | null;
+    last_run_at?: string | null;
+    /** Conditional-write token on native group sources (config hash, not an etag). */
+    config_revision?: string;
+    /** The operations policy permits on this source, a subset of ["edit", "delete", "sync", "test"]. */
+    source_actions?: string[];
     created_at?: string;
     updated_at?: string;
     [key: string]: unknown;
 }
+
+/** One selectable source type from GET /api/groups/G/file-source-options. */
+export interface FileSourceTypeOption {
+    value: string;
+    label: string;
+    visible: boolean;
+}
+
+/** The server-decided options envelope for the group file source editor. */
+export interface FileSourceOptions {
+    source_types: FileSourceTypeOption[];
+    /** Identity ids eligible per source type; the picker filters against this. */
+    eligible_identity_ids: Record<string, string[]>;
+    schedule: { min_interval_minutes: number; max_interval_minutes: number };
+    limits: { max_sources: number };
+    recursive_allowed: boolean;
+}
+
+/**
+ * One entry returned by a browse of a source's remote location.
+ *
+ * Every real browse implementation (`_browse_smb_path`, `_browse_azure_files_path`,
+ * `_browse_azure_blob_path`, `_browse_onedrive_path`) returns this shape: a folder is
+ * `type === "folder"`. Browse carries no ignore state, so the editor tracks that separately from the
+ * ignore-path response.
+ */
+export interface FileSourceBrowseEntry {
+    name?: string;
+    /** The entry's path relative to the source root, as browse returns and accepts it. */
+    path?: string;
+    type?: string;
+    size?: number;
+    modified_at?: string;
+    /**
+     * A file's canonical remote path, the one the sync engine keys its item by. Ignore and restore
+     * send this, never `path`; a folder has none, since the engine keeps items only for files.
+     */
+    remote_path?: string;
+    [key: string]: unknown;
+}
+
+/**
+ * The File Sync item record the ignore-path route returns under `item`. Its `ignored` flag is the
+ * authoritative per-path ignore state, since a browse cannot report it.
+ */
+export interface FileSourceIgnoreItem {
+    id?: string;
+    source_id?: string;
+    remote_path?: string;
+    status?: string;
+    ignored?: boolean;
+    [key: string]: unknown;
+}
+
 
 export interface WorkspaceSyncRun {
     id: string;
@@ -396,6 +526,20 @@ export interface WorkspaceAgent {
     /** True for agents supplied by an administrator, which a user may not edit or delete. */
     is_global?: boolean;
     is_group?: boolean;
+    /**
+     * Group scope only. The owning group's id, echoed on every group agent response so the client
+     * can prove a returned agent belongs to the workspace it asked for -- the same identity check
+     * the group action and prompt readers make. Absent on personal agents.
+     */
+    group_id?: string;
+    /** True when the caller may only read this agent, echoing the editor resource's read_only. */
+    read_only?: boolean;
+    /**
+     * Group scope only. The per-agent operation hint (`edit`, `delete`, `chat`) computed fresh per
+     * request. A server hint, never authority: an empty or absent array gates the agent off, and
+     * the client never enables one the server did not offer. `chat` gates only the use-in-chat link.
+     */
+    agent_actions?: string[];
     agent_type?: string;
     tags?: string[];
     actions_to_load?: string[];
@@ -411,6 +555,22 @@ export interface WorkspaceAction {
     type?: string;
     endpoint?: string;
     is_global?: boolean;
+    /** True for actions owned by a group workspace. Set on every group action response. */
+    is_group?: boolean;
+    /**
+     * Group scope only. The owning group's id, echoed on every group action response so the
+     * client can prove a returned action belongs to the workspace it asked for -- the same
+     * identity check the group prompt and document readers make. Absent on personal actions.
+     */
+    group_id?: string;
+    /** True when the caller may only read this action, echoing the editor resource's read_only. */
+    read_only?: boolean;
+    /**
+     * Group scope only. The per-action operation hint (`edit`, `delete`, `test`) computed fresh
+     * per request. A server hint, never authority: an empty or absent array gates the action off,
+     * and the client never enables one the server did not offer.
+     */
+    action_actions?: string[];
     [key: string]: unknown;
 }
 
@@ -830,6 +990,29 @@ export interface OrchestrationBootstrap {
     capabilities: OrchestrationCapability[];
 }
 
+/**
+ * End-user Public Workspace label forms, resolved server-side by
+ * `get_public_workspace_label_context` and shipped inside sanitized bootstrap `settings`.
+ * The five string forms mirror the classic `getPublicWorkspaceLabel` selector so an admin's
+ * custom display name renders identically in both interfaces.
+ */
+export interface PublicWorkspaceLabels {
+    /** Title-case label, e.g. "Public Workspace". Used for headings and proper references. */
+    singular: string;
+    /** Title-case plural, e.g. "Public Workspaces". */
+    plural: string;
+    /** Mid-sentence singular, e.g. "public workspace". */
+    lower_singular: string;
+    /** Mid-sentence plural, e.g. "public workspaces". */
+    lower_plural: string;
+    /** Short nav label, e.g. "Public". */
+    short: string;
+    /** Whether an admin configured a custom display name. */
+    is_custom: boolean;
+    /** The admin field's max length, for the settings form. */
+    max_length: number;
+}
+
 export interface BootstrapPayload {
     version: string;
     user: {
@@ -931,8 +1114,13 @@ export interface BootstrapPayload {
     settings: Json;
 }
 
-/** The group a workspace section belongs to, as reported by the server. */
-export type WorkspaceSectionGroup = 'knowledge' | 'automation' | 'connections';
+/**
+ * The group a workspace section belongs to, as reported by the server.
+ *
+ * `manage` is group-only: the group workspace context reports its management sections
+ * (Members) there, and the personal workspace never uses it.
+ */
+export type WorkspaceSectionGroup = 'knowledge' | 'automation' | 'connections' | 'manage';
 
 export interface WorkspaceSectionAvailability {
     enabled: boolean;

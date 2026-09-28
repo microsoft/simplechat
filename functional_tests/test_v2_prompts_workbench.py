@@ -672,7 +672,7 @@ def test_the_prompt_handoff_has_a_single_url_writer():
 
     composer = _strip_comments(_read(COMPOSER_TSX))
     prompt_handoff = re.search(
-        r"if \(promptLinkConsumed\.current.*?\}, \[bootstrap, promptCatalog, linkedPromptId\]\)",
+        r"if \(promptLinkConsumed\.current.*?\}, \[bootstrap, promptCatalog, linkedPromptId, linkedPromptScope\]\)",
         composer,
         re.DOTALL,
     )
@@ -725,7 +725,7 @@ def test_a_created_prompt_stays_selected():
 
     workbench = _read(WORKBENCH_TSX)
     create_block = re.search(
-        r"const created = await createPrompt\(.*?syncCatalog\(\);",
+        r"const created = await adapter\.create\(.*?syncCatalog\(\);",
         workbench,
         re.DOTALL,
     )

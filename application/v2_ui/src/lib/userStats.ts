@@ -286,6 +286,37 @@ export const DEFAULT_EXPORT_SECTIONS: ExportSections = {
     tokens: true,
 };
 
+/**
+ * A scope's export contract for the shared export dialog.
+ *
+ * The dialog renders one checkbox per section and, on confirm, calls `build` for the finished CSV
+ * and file name. Personal keeps its behaviour by supplying no adapter (the dialog builds its own);
+ * group supplies one so the same dialog drives a different set of sections and a different loader
+ * without either scope forking the component.
+ */
+export interface StatsExportSectionLabel {
+    key: string;
+    label: string;
+    hint: string;
+}
+
+export interface StatsExportAdapter {
+    title: string;
+    description: string;
+    sections: StatsExportSectionLabel[];
+    defaultSections: Record<string, boolean>;
+    successMessage: string;
+    /** Classic group exports carry no BOM; personal does. Absent means a BOM is written. */
+    omitBom?: boolean;
+    /** An optional pre-check for the chosen window, to avoid a request that cannot succeed. */
+    validateWindow?: (window: StatsWindow) => string | null;
+    build: (
+        window: StatsWindow,
+        sections: Record<string, boolean>,
+        signal?: AbortSignal,
+    ) => Promise<{ csv: string; fileName: string }>;
+}
+
 /** A single CSV field, quoted only when it has to be. */
 function csvField(value: unknown): string {
     const text = value === null || value === undefined ? '' : String(value);

@@ -1,5 +1,7 @@
 // WorkflowsSection.tsx
 // Personal and group workflows: list, author, run, cancel, inspect history and delete.
+// A group section offers each control from the context's workflow hint, the routes' own rule: every
+// member may run and cancel, and only the management roles create, edit and delete.
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Ban, ChevronDown, ChevronRight, Edit3, GitBranch, Play, Plus, Trash2, Workflow } from 'lucide-react';
@@ -52,13 +54,28 @@ export function statusTone(status: unknown): 'ok' | 'warn' | 'danger' | 'neutral
 export function WorkflowsSection({
     scope = DEFAULT_WORKFLOW_SCOPE,
     onDirtyChange,
+    onBusyChange,
+    allowManage = true,
+    interactionDisabled = false,
+    operations,
 }: {
     scope?: WorkflowScope;
     onDirtyChange?: (dirty: boolean) => void;
+    onBusyChange?: (busy: boolean) => void;
+    allowManage?: boolean;
+    interactionDisabled?: boolean;
+    /** The group workflow hint's operations; without one, `allowManage` gates every control. */
+    operations?: readonly string[];
 }) {
+    const offered = Array.isArray(operations) ? new Set(operations) : null;
+    const canCreate = offered ? offered.has('create') : allowManage;
+    const canEdit = offered ? offered.has('edit') : allowManage;
+    const canDelete = offered ? offered.has('delete') : allowManage;
+    const canRun = offered ? offered.has('run') : allowManage;
+    const canCancel = offered ? offered.has('cancel') : allowManage;
     const scopeKey = workflowScopeKey(scope);
     const loadWorkflows = useCallback((signal?: AbortSignal) => fetchScopedWorkflows(scope, signal), [scopeKey]);
-    const { items, loading, error, refresh, setItems, setError } =
+    const { items, loading, error, loadFailed, refresh, setItems, setError } =
         useSectionResource<WorkflowDefinition>(loadWorkflows, 'Failed to load workflows.');
 
     const [query, setQuery] = useState('');
@@ -71,12 +88,18 @@ export function WorkflowsSection({
     const [optionsLoading, setOptionsLoading] = useState(false);
     const [optionsError, setOptionsError] = useState('');
     const [editorDirty, setEditorDirty] = useState(false);
+    const [editorSaving, setEditorSaving] = useState(false);
     const consumedInitialTargets = useRef(new Set<string>());
 
     useEffect(() => {
         onDirtyChange?.(editorDirty);
         return () => onDirtyChange?.(false);
     }, [editorDirty, onDirtyChange]);
+
+    useEffect(() => {
+        onBusyChange?.(editorSaving || busyId !== null);
+        return () => onBusyChange?.(false);
+    }, [editorSaving, busyId, onBusyChange]);
 
     const visible = useMemo(() => {
         const needle = query.trim().toLowerCase();
@@ -91,6 +114,10 @@ export function WorkflowsSection({
     }, [items, query]);
 
     const openEditor = useCallback(async (workflow: WorkflowDefinition | 'new') => {
+        if (interactionDisabled || (workflow === 'new' && !canCreate)) {
+            setOptionsError('You cannot create workflows with the current workspace access.');
+            return;
+        }
         if (workflow !== 'new' && workflow.active_run_id) {
             setOptionsError('This workflow has an active run. Cancel it or wait for it to finish before editing.');
             return;
@@ -105,7 +132,7 @@ export function WorkflowsSection({
         } finally {
             setOptionsLoading(false);
         }
-    }, [scopeKey]);
+    }, [scopeKey, interactionDisabled, canCreate]);
 
     useEffect(() => {
         const target = new URLSearchParams(window.location.search).get('workflow_id');
@@ -124,6 +151,10 @@ export function WorkflowsSection({
         action: (id: string) => Promise<unknown>,
         failure: string,
     ) => {
+        if (interactionDisabled || !canCancel) {
+            setError('You cannot change workflows with the current workspace access.');
+            return;
+        }
         if (!workflow.id) {
             setError('This workflow has no stable identifier. Reload before trying again.');
             return;
@@ -144,6 +175,10 @@ export function WorkflowsSection({
     };
 
     const onRun = async (workflow: WorkflowDefinition) => {
+        if (interactionDisabled || !canRun) {
+            setError('You cannot run workflows with the current workspace access.');
+            return;
+        }
         if (!workflow.id) {
             setError('This workflow has no stable identifier. Reload before trying again.');
             return;
@@ -175,6 +210,10 @@ export function WorkflowsSection({
     };
 
     const onDelete = async (workflow: WorkflowDefinition) => {
+        if (interactionDisabled || !canDelete) {
+            setError('You cannot delete workflows with the current workspace access.');
+            return;
+        }
         const previous = items;
         if (!workflow.id) {
             return;
@@ -192,24 +231,25 @@ export function WorkflowsSection({
     };
 
     return (
-        <div className="space-y-4">
+        <fieldset disabled={interactionDisabled} className="min-w-0 space-y-4">
+            <legend className="sr-only">Workspace workflows</legend>
             <SectionIntro
                 title="Workflows"
                 description="Repeatable tasks that run on their own, using a model or one of your agents. A workflow can run on a schedule or whenever you start it."
-                actions={
+                actions={canCreate ?
                     <GlassCreateButton
                         busy={optionsLoading}
                         onClick={() => void openEditor('new')}
-                    />
-                }
+                    /> : undefined}
             />
 
             <p className="text-xs text-text-3">
-                Native V2 authoring is available for manual and interval workflows. File sync,
-                alert and publication settings from existing workflows are preserved unchanged.
+                {scope.type === 'group'
+                    ? 'Native V2 authoring is available for manual, interval and Monitor File Sync changes workflows, and for their alerts. Publication settings from existing workflows are preserved unchanged.'
+                    : 'Native V2 authoring is available for manual and interval workflows, and for their alerts. File sync and publication settings from existing workflows are preserved unchanged.'}
             </p>
             {scope.type === 'group' ? (
-                <p className="text-xs text-text-3">Requests are scoped to group_id {scope.groupId}; selecting this page does not change your active group.</p>
+                <p className="text-xs text-text-3">Workflow requests stay scoped to this group, even if your active workspace changes elsewhere.</p>
             ) : null}
             {optionsError ? <p role="alert" className="text-sm text-danger">{optionsError}</p> : null}
 
@@ -219,6 +259,9 @@ export function WorkflowsSection({
                 items={visible}
                 loading={loading}
                 error={error}
+                loadFailed={loadFailed}
+                onRetry={() => void refresh()}
+                retryLabel="Retry workflows"
                 emptyIcon={<Workflow size={28} />}
                 emptyTitle={
                     items.length === 0 ? 'No workflows yet' : 'No workflows match your search'
@@ -228,7 +271,7 @@ export function WorkflowsSection({
                         ? 'A workflow repeats a task you would otherwise run by hand.'
                         : undefined
                 }
-                emptyAction={<GlassCreateButton busy={optionsLoading} onClick={() => void openEditor('new')} />}
+                emptyAction={canCreate ? <GlassCreateButton busy={optionsLoading} onClick={() => void openEditor('new')} /> : undefined}
                 getKey={(workflow, index) => String(workflow.id ?? index)}
                 renderItem={(workflow) => {
                     const running = Boolean(workflow.active_run_id);
@@ -257,7 +300,7 @@ export function WorkflowsSection({
                                         /> : null}
                                         <RowAction
                                             icon={<Edit3 size={15} />}
-                                            label={running ? `${workflow.name || 'Workflow'} is running; cancel or wait before editing` : `Edit ${workflow.name || 'workflow'}`}
+                                            label={!canEdit ? `View ${workflow.name || 'workflow'}` : running ? `${workflow.name || 'Workflow'} is running; cancel or wait before editing` : `Edit ${workflow.name || 'workflow'}`}
                                             disabled={optionsLoading || running}
                                             busy={optionsLoading && editing === workflow}
                                             onClick={() => void openEditor(workflow)}
@@ -280,7 +323,7 @@ export function WorkflowsSection({
                                             }
                                             disabled={!workflowId}
                                         />
-                                        {running ? (
+                                        {running ? (canCancel ? (
                                             <RowAction
                                                 icon={<Ban size={15} />}
                                                 label={`Cancel ${workflow.name ?? 'workflow'}`}
@@ -293,21 +336,21 @@ export function WorkflowsSection({
                                                     )
                                                 }
                                             />
-                                        ) : (
+                                        ) : null) : canRun ? (
                                             <RowAction
                                                 icon={<Play size={15} />}
                                                 label={`Run ${workflow.name ?? 'workflow'}`}
                                                 busy={busyId === workflow.id}
                                                 onClick={() => void onRun(workflow)}
                                             />
-                                        )}
-                                        <ConfirmAction
+                                        ) : null}
+                                        {canDelete ? <ConfirmAction
                                             icon={<Trash2 size={15} />}
                                             label={`Delete ${workflow.name ?? 'workflow'}`}
                                             confirmLabel="Delete"
                                             busy={busyId === workflow.id}
                                             onConfirm={() => void onDelete(workflow)}
-                                        />
+                                        /> : null}
                                     </>
                                 }
                             />
@@ -332,7 +375,9 @@ export function WorkflowsSection({
                     key={`${scopeKey}:${editing === 'new' ? 'new' : editing.id}`}
                     scope={scope}
                     workflow={editing === 'new' ? null : editing}
-                    options={options}
+                    options={{ ...options, can_manage: options.can_manage && (editing === 'new' ? canCreate : canEdit) }}
+                    interactionDisabled={interactionDisabled}
+                    onBusyChange={setEditorSaving}
                     onDirtyChange={setEditorDirty}
                     onClose={() => {
                         setEditing(null);
@@ -349,7 +394,7 @@ export function WorkflowsSection({
                     }}
                 />
             ) : null}
-        </div>
+        </fieldset>
     );
 }
 

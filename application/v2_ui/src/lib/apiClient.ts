@@ -57,14 +57,20 @@ interface RequestOptions {
     headers?: Record<string, string>;
 }
 
+/** A bare machine code, one lowercase token such as `document_propagation_incomplete`. */
+const MACHINE_CODE = /^[a-z][a-z0-9_]*$/;
+
 async function readErrorMessage(response: Response): Promise<{ message: string; payload: unknown }> {
     const contentType = response.headers.get('content-type') || '';
     if (contentType.includes('application/json')) {
         try {
             const payload = (await response.json()) as Record<string, unknown> | null;
+            const error = payload && typeof payload.error === 'string' ? payload.error : '';
+            const sentence = payload && typeof payload.message === 'string' ? payload.message : '';
+            // A coded failure carries its machine code in `error` and its sentence in `message`.
+            // The sentence is what a person reads; `payload` still carries the code for callers.
             const message =
-                (payload && typeof payload.error === 'string' && payload.error) ||
-                (payload && typeof payload.message === 'string' && payload.message) ||
+                (MACHINE_CODE.test(error) && sentence.trim() ? sentence : error || sentence) ||
                 `Request failed with status ${response.status}`;
             return { message, payload };
         } catch {
@@ -82,7 +88,12 @@ async function readErrorMessage(response: Response): Promise<{ message: string; 
  * Perform a JSON request. Throws ApiError on any non-2xx response so callers can handle
  * failure in one place rather than checking response.ok everywhere.
  */
-export async function request<T>(path: string, options: RequestOptions = {}): Promise<T> {
+export interface ApiResponse<T> {
+    data: T;
+    status: number;
+}
+
+export async function requestWithStatus<T>(path: string, options: RequestOptions = {}): Promise<ApiResponse<T>> {
     const { method = 'GET', body, signal, headers = {} } = options;
 
     const init: RequestInit = {
@@ -108,15 +119,19 @@ export async function request<T>(path: string, options: RequestOptions = {}): Pr
     }
 
     if (response.status === 204) {
-        return undefined as T;
+        return { data: undefined as T, status: response.status };
     }
 
     const contentType = response.headers.get('content-type') || '';
     if (!contentType.includes('application/json')) {
-        return (await response.text()) as unknown as T;
+        return { data: (await response.text()) as unknown as T, status: response.status };
     }
 
-    return (await response.json()) as T;
+    return { data: (await response.json()) as T, status: response.status };
+}
+
+export async function request<T>(path: string, options: RequestOptions = {}): Promise<T> {
+    return (await requestWithStatus<T>(path, options)).data;
 }
 
 export const api = {
@@ -137,11 +152,11 @@ export const api = {
  * Multipart upload. Deliberately does not set Content-Type so the browser can generate
  * the multipart boundary itself.
  */
-export async function uploadFile<T>(
+export async function uploadFileWithStatus<T>(
     path: string,
     formData: FormData,
     signal?: AbortSignal,
-): Promise<T> {
+): Promise<ApiResponse<T>> {
     const response = await fetch(apiUrl(path), {
         method: 'POST',
         credentials: CREDENTIALS_MODE,
@@ -154,5 +169,9 @@ export async function uploadFile<T>(
         throw new ApiError(message, response.status, payload);
     }
 
-    return (await response.json()) as T;
+    return { data: (await response.json()) as T, status: response.status };
+}
+
+export async function uploadFile<T>(path: string, formData: FormData, signal?: AbortSignal): Promise<T> {
+    return (await uploadFileWithStatus<T>(path, formData, signal)).data;
 }

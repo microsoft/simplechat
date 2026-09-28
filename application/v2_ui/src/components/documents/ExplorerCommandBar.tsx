@@ -13,6 +13,8 @@
 
 import { clsx } from 'clsx';
 import {
+    ArrowDown,
+    ArrowUp,
     Bookmark,
     Columns3,
     Download,
@@ -22,13 +24,16 @@ import {
     MessageSquare,
     PanelRight,
     Search,
+    SlidersHorizontal,
     Sparkles,
     Tag as TagIcon,
     Trash2,
     Upload,
+    Users,
     X,
 } from 'lucide-react';
-import type { DocumentExplorerPrefs } from '../../lib/types';
+import type { DocumentExplorerPrefs, DocumentQuery, DocumentSortField, WorkspaceDocument } from '../../lib/types';
+import type { DocumentActionAvailability } from './DocumentDetailsPane';
 import {
     DOCUMENT_PAGE_SIZES,
     describePage,
@@ -38,6 +43,17 @@ import {
 import { GlassButton } from '../ui/primitives';
 import { Dropdown } from '../ui/Dropdown';
 import { DOCUMENT_COLUMNS } from './DocumentTable';
+
+const SORT_LABELS: Record<DocumentSortField, string> = {
+    _ts: 'Modified',
+    file_name: 'File name',
+    title: 'Title',
+    upload_date: 'Uploaded',
+    file_size: 'Size',
+    number_of_pages: 'Pages',
+    version: 'Version',
+    document_classification: 'Classification',
+};
 
 export function ExplorerCommandBar({
     searchDraft,
@@ -56,13 +72,21 @@ export function ExplorerCommandBar({
     onDelete,
     onSaveView,
     onPrefsChange,
+    query,
+    sortFields,
+    onSort,
+    onShowFilters,
+    selectedDocuments,
+    onReview,
 }: {
     /** What the user has typed. Distinct from `query.search`, which lags it by the debounce. */
     searchDraft: string;
     prefs: DocumentExplorerPrefs;
     selectionCount: number;
     uploading: boolean;
-    availability: { downloads: boolean; extractMetadata: boolean };
+    availability: DocumentActionAvailability;
+    selectedDocuments: WorkspaceDocument[];
+    onReview?: () => void;
     canSaveView: boolean;
     onSearchChange: (value: string) => void;
     onSearchSubmit: (value: string) => void;
@@ -74,24 +98,55 @@ export function ExplorerCommandBar({
     onDelete: () => void;
     onSaveView: () => void;
     onPrefsChange: (change: Partial<DocumentExplorerPrefs>) => void;
+    query: DocumentQuery;
+    sortFields: readonly DocumentSortField[];
+    onSort: (field: DocumentSortField) => void;
+    onShowFilters?: () => void;
 }) {
     const hasSelection = selectionCount > 0;
+    const canReview = Boolean(onReview && selectedDocuments.length === 1 && availability.canReview?.(selectedDocuments[0]));
+    const compactActions = Boolean(onShowFilters && (
+        availability.upload || availability.downloads || availability.tagDocuments
+        || availability.extractMetadata || availability.deleteDocuments
+    ));
+    const actions = [
+        { value: 'chat', label: 'Chat', visible: true, enabled: hasSelection && availability.chat, run: onChat },
+        { value: 'download', label: 'Download', visible: availability.downloads, enabled: hasSelection && availability.allows('download', selectedDocuments), run: onDownload },
+        { value: 'tag', label: 'Tag', visible: availability.tagDocuments, enabled: hasSelection && availability.allows('tag_documents', selectedDocuments), run: onTag },
+        { value: 'extract', label: 'Extract', visible: availability.extractMetadata, enabled: hasSelection && availability.allows('extract_metadata', selectedDocuments), run: onExtractMetadata },
+        { value: 'delete', label: 'Delete', visible: availability.deleteDocuments, enabled: hasSelection && availability.allows('delete', selectedDocuments), run: onDelete },
+        { value: 'review', label: 'Review', visible: canReview, enabled: canReview, run: () => onReview?.() },
+    ].filter((action) => action.visible);
 
     return (
         <div className="flex flex-wrap items-center gap-2 border-b border-edge px-1 pb-2">
-            <GlassButton variant="primary" size="sm" onClick={onUpload} disabled={uploading}>
-                <Upload size={14} />
-                Upload
-            </GlassButton>
+            {availability.upload ? (
+                <>
+                    <GlassButton variant="primary" size="sm" onClick={onUpload} disabled={uploading || !availability.allows('upload')}>
+                        <Upload size={14} />
+                        Upload
+                    </GlassButton>
+                    {!compactActions ? <span aria-hidden="true" className="h-5 w-px bg-edge" /> : null}
+                </>
+            ) : null}
 
-            <span aria-hidden="true" className="h-5 w-px bg-edge" />
-
+            {compactActions ? (
+                <select aria-label="Document actions" value="" disabled={!actions.some((action) => action.enabled)}
+                    onChange={(event) => {
+                        const action = actions.find((entry) => entry.value === event.target.value);
+                        if (action?.enabled) action.run();
+                    }}
+                    className="h-8 min-w-0 rounded-lg border border-edge bg-surface-1 px-2 text-sm text-text-2 disabled:opacity-50">
+                    <option value="" disabled>Actions</option>
+                    {actions.map((action) => <option key={action.value} value={action.value} disabled={!action.enabled}>{action.label}</option>)}
+                </select>
+            ) : <>
             {availability.downloads ? (
                 <GlassButton
                     variant="ghost"
                     size="sm"
                     onClick={onDownload}
-                    disabled={!hasSelection}
+                    disabled={!hasSelection || !availability.allows('download', selectedDocuments)}
                     title={
                         selectionCount > 1
                             ? 'Download the selected documents as a ZIP'
@@ -103,12 +158,15 @@ export function ExplorerCommandBar({
                 </GlassButton>
             ) : null}
 
-            <GlassButton variant="ghost" size="sm" onClick={onTag} disabled={!hasSelection}>
-                <TagIcon size={14} />
-                Tag
-            </GlassButton>
+            {availability.tagDocuments ? (
+                <GlassButton variant="ghost" size="sm" onClick={onTag} disabled={!hasSelection || !availability.allows('tag_documents', selectedDocuments)}>
+                    <TagIcon size={14} />
+                    Tag
+                </GlassButton>
+            ) : null}
 
-            <GlassButton variant="ghost" size="sm" onClick={onChat} disabled={!hasSelection}>
+            <GlassButton variant={availability.upload ? 'ghost' : 'primary'} size="sm"
+                onClick={onChat} disabled={!hasSelection || !availability.chat} title="Chat with selected documents">
                 <MessageSquare size={14} />
                 Chat
             </GlassButton>
@@ -118,26 +176,41 @@ export function ExplorerCommandBar({
                     variant="ghost"
                     size="sm"
                     onClick={onExtractMetadata}
-                    disabled={!hasSelection}
+                    disabled={!hasSelection || !availability.allows('extract_metadata', selectedDocuments)}
                 >
                     <Sparkles size={14} />
                     Extract
                 </GlassButton>
             ) : null}
 
-            <GlassButton
+            {availability.deleteDocuments ? <GlassButton
                 variant="ghost"
                 size="sm"
                 onClick={onDelete}
-                disabled={!hasSelection}
+                disabled={!hasSelection || !availability.allows('delete', selectedDocuments)}
                 className="hover:bg-danger-soft hover:text-danger"
             >
                 <Trash2 size={14} />
                 Delete
-            </GlassButton>
+            </GlassButton> : null}
+            {canReview ? <GlassButton variant="ghost" size="sm" onClick={onReview}>
+                <Users size={14} />Sharing and review
+            </GlassButton> : null}
+            </>}
 
-            <div className="ml-auto flex items-center gap-2">
-                <div className="relative">
+            {onShowFilters && !compactActions ? <GlassButton variant="ghost" size="sm" onClick={onShowFilters}>
+                <SlidersHorizontal size={14} />Filters
+            </GlassButton> : null}
+
+            <div className="ml-auto flex min-w-0 flex-1 basis-full flex-wrap items-center gap-2 xl:basis-auto">
+                <div className="flex min-w-0 grow basis-full items-center gap-1 sm:basis-44">
+                    {compactActions && onShowFilters ? (
+                        <button type="button" aria-label="Filters" title="Filters" onClick={onShowFilters}
+                            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-edge bg-surface-1 text-text-2 hover:bg-surface-2">
+                            <SlidersHorizontal size={14} />
+                        </button>
+                    ) : null}
+                    <div className="relative min-w-0 flex-1">
                     <Search
                         size={14}
                         className="pointer-events-none absolute top-1/2 left-2.5 -translate-y-1/2 text-text-3"
@@ -162,8 +235,9 @@ export function ExplorerCommandBar({
                         }}
                         placeholder="Search name or title"
                         aria-label="Search documents. Press Enter to search immediately."
-                        className="h-8 w-56 rounded-lg border border-edge bg-surface-1 pr-2 pl-7 text-sm text-text-1 placeholder:text-text-3 focus:border-accent focus:outline-none"
+                        className="h-8 w-full rounded-lg border border-edge bg-surface-1 pr-2 pl-7 text-sm text-text-1 placeholder:text-text-3 focus:border-accent focus:outline-none"
                     />
+                    </div>
                 </div>
 
                 {canSaveView ? (
@@ -176,6 +250,24 @@ export function ExplorerCommandBar({
                         <Bookmark size={14} />
                         Save view
                     </GlassButton>
+                ) : null}
+
+                {sortFields.length > 0 ? (
+                    <div className="flex items-center gap-1">
+                        <select aria-label="Sort documents" value={query.sortBy}
+                            onChange={(event) => {
+                                const field = sortFields.find((entry) => entry === event.target.value);
+                                if (field) onSort(field);
+                            }}
+                            className="h-8 max-w-36 rounded-lg border border-edge bg-surface-1 px-2 text-xs text-text-2">
+                            {sortFields.map((field) => <option key={field} value={field}>{SORT_LABELS[field]}</option>)}
+                        </select>
+                        <button type="button" onClick={() => onSort(query.sortBy)}
+                            aria-label={`Sort ${query.sortOrder === 'asc' ? 'descending' : 'ascending'}`}
+                            className="rounded-lg border border-edge p-1.5 text-text-2 hover:bg-surface-2">
+                            {query.sortOrder === 'asc' ? <ArrowUp size={15} /> : <ArrowDown size={15} />}
+                        </button>
+                    </div>
                 ) : null}
 
                 <Dropdown
@@ -362,9 +454,9 @@ export function ExplorerStatusBar({
                 {selectionCount > 0 ? ` · ${selectionCount} selected` : ''}
             </p>
 
-            <div className="flex items-center gap-2">
+            <div className="flex min-w-0 max-w-full flex-wrap items-center gap-2">
                 {range.pageCount > 1 ? (
-                    <nav aria-label="Pagination" className="flex items-center gap-0.5">
+                    <nav aria-label="Pagination" className="flex max-w-full flex-wrap items-center gap-0.5">
                         <button
                             type="button"
                             onClick={() => onPageChange(page - 1)}
@@ -409,6 +501,7 @@ export function ExplorerStatusBar({
                 <label className="flex items-center gap-1">
                     <span className="sr-only">Documents per page</span>
                     <select
+                        aria-label="Documents per page"
                         value={pageSize}
                         onChange={(event) => onPageSizeChange(Number(event.target.value))}
                         className="rounded border border-edge bg-surface-1 px-1.5 py-1 text-xs text-text-2 focus:border-accent focus:outline-none"

@@ -6,6 +6,8 @@ Reason / Render made the only orchestration contract).
 
 Version reference: `application/single_app/config.py`.
 
+Those three versions are the React V2 branch's. The V2 shared workspaces branch had already assigned them to its public workspace artifact approval, its native group agents and its native group identities, so there these fixes arrive with the React V2 base merge in version **0.261.181**.
+
 ## Issue
 
 Orchestrated requests produced something other than what the user asked for:

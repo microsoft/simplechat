@@ -1,7 +1,7 @@
 # test_v2_workflow_m365_runtime.py
 """
 Closed-browser compatibility tests for Microsoft 365 workflow authorization waits.
-Version: 0.261.122
+Version: 0.261.127
 Implemented in: 0.261.122
 
 The production SPA must retain nonterminal states, keep polling, lock active
@@ -62,7 +62,7 @@ def authorization_gate():
 def open_runtime(ui, name, *, group=False, structured=False):
     ui.open("/groups" if group else "/workspace/workflows")
     if group:
-        ui.page.get_by_label("Group workspace", exact=True).select_option(GROUP_ID)
+        ui.select_group(GROUP_ID)
     row = ui.page.get_by_role("listitem").filter(has_text=name).first
     row.get_by_role("button", name="Show run history", exact=True).click()
     row.get_by_role("button", name="Show run task results", exact=True).click()
@@ -104,7 +104,7 @@ def test_authorization_waits_lock_authoring_poll_history_and_only_offer_cancel(w
     expect(row.get_by_text("Version 8", exact=True)).to_be_visible(timeout=10000)
     assert ui.runtime_get_count[(scope_type, workflow_id, RUN_ID)] >= 2
     assert_no_generic_continuation(page)
-    assert not ui.writes
+    assert not ui.non_navigation_writes
 
     runs_path = f"/api/{scope_type}/workflows/{workflow_id}/runs"
     with page.expect_response(
@@ -135,7 +135,7 @@ def test_stale_failure_flags_do_not_offer_resume_through_a_m365_gate(workflow_ui
     expect(page.get_by_text("Version 11", exact=True)).to_be_visible()
     expect(page.get_by_role("button", name="Cancel run", exact=True)).to_be_enabled()
     assert_no_generic_continuation(page)
-    assert not ui.writes
+    assert not ui.non_navigation_writes
 
 
 def test_flow_describes_m365_authorization_instead_of_a_repeat_limit(workflow_flow_ui):
@@ -156,4 +156,4 @@ def test_flow_describes_m365_authorization_instead_of_a_repeat_limit(workflow_fl
     expect(notice).not_to_contain_text("Retained Repeat progress")
     expect(notice).to_have_class("text-xs text-warn")
     assert_no_generic_continuation(page)
-    assert not ui.writes
+    assert not ui.non_navigation_writes

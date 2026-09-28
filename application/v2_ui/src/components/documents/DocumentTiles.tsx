@@ -7,7 +7,8 @@
 // to reach the same place.
 
 import { clsx } from 'clsx';
-import { isScreeningAvailable } from '../../lib/contentScreening';
+import { Users } from 'lucide-react';
+import { groupDocumentOrigin, type DocumentReadScope } from '../../lib/documentReadAdapter';
 import type { WorkspaceDocument } from '../../lib/types';
 import {
     documentDate,
@@ -34,6 +35,11 @@ export function DocumentTiles({
     onSelect,
     onOpen,
     onDragStart,
+    selectionReason,
+    scope,
+    canDrag,
+    canReview,
+    onReview,
 }: {
     documents: WorkspaceDocument[];
     selection: SelectionState;
@@ -41,7 +47,12 @@ export function DocumentTiles({
     classificationColors: Record<string, string | undefined>;
     onSelect: (id: string, intent: SelectionIntent) => void;
     onOpen: (document: WorkspaceDocument) => void;
-    onDragStart: (event: React.DragEvent, id: string) => void;
+    onDragStart?: (event: React.DragEvent, id: string) => void;
+    selectionReason: (document: WorkspaceDocument) => string | null;
+    scope: DocumentReadScope;
+    canDrag: (document: WorkspaceDocument) => boolean;
+    canReview?: (document: WorkspaceDocument) => boolean;
+    onReview?: (document: WorkspaceDocument) => void;
 }) {
     const selectedIds = new Set(selection.ids);
 
@@ -49,7 +60,8 @@ export function DocumentTiles({
         <ul className="grid grid-cols-1 gap-2 p-1 sm:grid-cols-2 xl:grid-cols-3">
             {documents.map((document) => {
                 const id = documentId(document);
-                const available = isScreeningAvailable(document);
+                const blockedReason = selectionReason(document);
+                const available = !blockedReason;
                 const selected = selectedIds.has(id);
                 const { primary, secondary } = documentDisplayName(document);
                 const tags = normalizeTags(document.tags);
@@ -58,8 +70,8 @@ export function DocumentTiles({
                 return (
                     <li key={id}>
                         <div
-                            draggable={available}
-                            onDragStart={(event) => onDragStart(event, id)}
+                            draggable={available && Boolean(onDragStart) && canDrag(document)}
+                            onDragStart={onDragStart ? (event) => onDragStart(event, id) : undefined}
                             onClick={(event) =>
                                 available ? onSelect(
                                     id,
@@ -84,7 +96,7 @@ export function DocumentTiles({
                                     type="checkbox"
                                     checked={selected}
                                     disabled={!available}
-                                    title={available ? undefined : 'Held sources cannot be selected for ordinary use.'}
+                                    title={blockedReason ?? undefined}
                                     onClick={(event) => event.stopPropagation()}
                                     onChange={(event) =>
                                         onSelect(
@@ -116,6 +128,18 @@ export function DocumentTiles({
                                     </button>
                                     {secondary ? (
                                         <p className="truncate text-xs text-text-3">{secondary}</p>
+                                    ) : null}
+                                    {scope.kind === 'group' ? (
+                                        <p className="text-[11px] text-text-3">
+                                            {groupDocumentOrigin(document, scope.id)}
+                                        </p>
+                                    ) : null}
+                                    {onReview && canReview?.(document) ? (
+                                        <button type="button" aria-label={`Review ${primary}`}
+                                            onClick={(event) => { event.stopPropagation(); onReview(document); }}
+                                            className="mt-1 inline-flex items-center gap-1 text-xs text-accent hover:underline">
+                                            <Users size={12} />Sharing and review
+                                        </button>
                                     ) : null}
                                 </div>
                             </div>

@@ -1,7 +1,7 @@
 # test_ai_connection_text_consumers.py
 """Behavioral regression tests for shared AI Connection text-consumer guards.
 
-Version: 0.261.122
+Version: 0.261.163
 Implemented in: 0.261.105
 Canonical endpoint protocol and strict credential regressions: 0.261.106
 Custom request identity and strict hydration merge coverage: 0.261.113
@@ -501,7 +501,11 @@ class AIConnectionTextConsumerTests(unittest.TestCase):
         governance = SimpleNamespace(
             ensure_governance_access=Mock(), filter_governed_model_endpoints=lambda user, values, feature: values,
         )
-        helpers = load_boundaries("functions_workspace_authoring.py", {"build_agent_editor_options"}, {
+        # The real Key Vault reminder helper both editor option builders share is loaded
+        # with the builder, so the test exercises the block the route actually returns.
+        helpers = load_boundaries("functions_workspace_authoring.py", {
+            "build_agent_editor_options", "build_secret_reminder_defaults",
+        }, {
             "ensure_editor_options_access": lambda user, settings: True,
             "ensure_editor_access": Mock(),
             "import_module": lambda name: {"functions_settings": settings_module, "functions_governance": governance}[name],
