@@ -5,6 +5,7 @@ import hashlib
 import json
 import re
 from collections.abc import Mapping
+from datetime import datetime
 
 from jsonschema import Draft202012Validator
 from jsonschema.exceptions import SchemaError
@@ -102,6 +103,28 @@ class WorkflowSourceUnavailableError(WorkflowPublicValidationError):
         super().__init__(public_message)
 
 
+class WorkflowCadenceError(WorkflowPublicValidationError):
+    """A workflow created from chat would run more often than its own administrator minimum allows."""
+
+    code = "cadence_below_minimum"
+
+
+# Server-owned provenance. Only a server create path sets ``origin``; no save or update payload can.
+WORKFLOW_ORIGIN_SOURCES = ("orchestration",)
+WORKFLOW_ORIGIN_FIELDS = ("source", "conversation_id", "orchestration_run_id", "proposal_id", "created_at", "edited")
+WORKFLOW_ORIGIN_ID_MAX_LENGTH = 128
+WORKFLOW_ORIGIN_TIMESTAMP_MAX_LENGTH = 64
+# The authored fields whose change means the owner edited what orchestration created: the name and
+# description, the alert settings, error handling and every execution fingerprint input except the
+# record's own ids. Enabling or pausing the workflow is not an edit, and neither is runtime progress.
+WORKFLOW_ORIGIN_MATERIAL_FIELDS = (
+    "name", "description", "alert_priority", "alert_mode", "alert_rules", "alert_evaluation", "error_handling",
+    "task_prompt", "tasks", "runner_type", "selected_agent", "schedule", "trigger_type", "document_action",
+    "file_sync", "chat_capabilities_enabled", "url_access_enabled", "model_endpoint_id", "model_id",
+    "definition_version", "reference_inputs", "durable_execution", "flow", "limits", "m365_run_as_user_id",
+)
+
+
 def normalize_publication_completion_policy(value):
     if not isinstance(value, str) or value not in WORKFLOW_PUBLICATION_COMPLETION_POLICIES:
         raise WorkflowDefinitionError("Publication completion must be submitted, approved, or indexed_ready.")
@@ -187,6 +210,90 @@ def _unique_identifiers(values, label):
     if len(set(identifiers)) != len(identifiers):
         raise WorkflowDefinitionError(f"{label} must not contain duplicates.")
     return identifiers
+
+
+def _origin_timestamp(value):
+    message = "Workflow origin created_at must be an ISO 8601 timestamp."
+    if not isinstance(value, str) or not value.strip() or len(value) > WORKFLOW_ORIGIN_TIMESTAMP_MAX_LENGTH:
+        raise WorkflowDefinitionError(message)
+    try:
+        datetime.fromisoformat(value.strip())
+    except ValueError as exc:
+        raise WorkflowDefinitionError(message) from exc
+    return value.strip()
+
+
+def normalize_workflow_origin(value):
+    """Validate the provenance a server create path records. It is never read from a save payload."""
+    origin = _object(value, set(WORKFLOW_ORIGIN_FIELDS), "Workflow origin")
+    if origin.get("source") not in WORKFLOW_ORIGIN_SOURCES:
+        raise WorkflowDefinitionError("Workflow origin source is not supported.")
+    return {
+        "source": origin["source"],
+        "conversation_id": _text(
+            origin.get("conversation_id"), "Workflow origin conversation id", WORKFLOW_ORIGIN_ID_MAX_LENGTH,
+        ),
+        "orchestration_run_id": _text(
+            origin.get("orchestration_run_id"), "Workflow origin run id", WORKFLOW_ORIGIN_ID_MAX_LENGTH,
+        ),
+        "proposal_id": _text(origin.get("proposal_id"), "Workflow origin proposal id", WORKFLOW_ORIGIN_ID_MAX_LENGTH),
+        "created_at": _origin_timestamp(origin.get("created_at")),
+        "edited": _boolean(origin.get("edited", False), "Workflow origin edited flag"),
+    }
+
+
+def _canonical_json(value):
+    return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=True, default=str)
+
+
+def workflow_origin_material_change(existing, workflow):
+    """Whether a save changes an authored field that marks a created-from-chat workflow as edited."""
+    existing = existing if isinstance(existing, Mapping) else {}
+    return any(
+        _canonical_json(workflow.get(field)) != _canonical_json(existing.get(field))
+        for field in WORKFLOW_ORIGIN_MATERIAL_FIELDS
+    )
+
+
+def apply_workflow_origin(workflow, existing=None, origin=None):
+    """Record server-owned provenance on a built workflow document.
+
+    A new workflow takes the ``origin`` its server create path supplies, never marked edited. A
+    save of an existing workflow leaves the stored origin to the store merge, which preserves it,
+    and writes it only once: to mark the owner's first material change as ``edited``. The origin
+    is outside the definition revision and the Microsoft 365 fingerprint, so recording it never
+    invalidates an editor's revision or a Run as approval.
+    """
+    if origin is not None:
+        if existing:
+            raise WorkflowDefinitionError("Only a new workflow can record where it came from.")
+        workflow["origin"] = {**normalize_workflow_origin(origin), "edited": False}
+        return workflow
+    stored = (existing or {}).get("origin")
+    if (
+        isinstance(stored, Mapping)
+        and stored.get("edited") is not True
+        and workflow_origin_material_change(existing, workflow)
+    ):
+        workflow["origin"] = {**stored, "edited": True}
+    return workflow
+
+
+def existing_server_created_workflow(record, proposal_id):
+    """Return the workflow a repeated server create found under its id, if the same proposal made it.
+
+    A server create path derives the workflow id from the proposal it accepts, so a record already
+    under that id normally means an earlier accept succeeded. A record from any other proposal, or
+    one being deleted, is a conflict: the create never adopts or revives it.
+    """
+    record = record if isinstance(record, Mapping) else {}
+    if record.get("deleting"):
+        raise WorkflowDefinitionConflict("This workflow is being deleted. Your draft was not saved.")
+    stored_origin = record.get("origin") if isinstance(record.get("origin"), Mapping) else {}
+    proposal_id = str(proposal_id or "").strip()
+    if not proposal_id or stored_origin.get("proposal_id") != proposal_id:
+        raise WorkflowDefinitionConflict("A different workflow already uses this id.")
+    return record
 
 
 def normalize_workflow_input_processing(value):
@@ -344,7 +451,7 @@ def normalize_workflow_definition(payload, existing, tasks, *, user_id, group_id
             "updated_at", "status", "last_run_started_at", "last_run_at", "last_run_status",
             "last_run_error", "last_run_response_preview", "last_run_trigger_source", "run_count",
             "active_run_id", "active_runtime_version", "last_run_id", "next_run_at",
-            "cancellation_requested_at", "cancellation_requested_by", "result_access",
+            "cancellation_requested_at", "cancellation_requested_by", "result_access", "origin",
         }
         extras = payload.keys() - set(WORKFLOW_DEFINITION_FIELDS) - managed_fields
         if any(key not in existing or payload[key] != existing[key] for key in extras):

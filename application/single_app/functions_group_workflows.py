@@ -60,6 +60,7 @@ from functions_workflow_alerts import normalize_workflow_alert_settings
 from functions_workflow_result_store import delete_workflow_run_results
 from functions_workflow_bindings import authorize_workflow_reference
 from functions_workflow_definition_store import (
+    create_workflow_definition_record_if_absent,
     refuse_save_of_deleted_workflow,
     save_workflow_definition_record,
     update_workflow_runtime_record,
@@ -67,6 +68,8 @@ from functions_workflow_definition_store import (
 from functions_workflow_definitions import (
     WorkflowPublicValidationError,
     WorkflowSourceUnavailableError,
+    apply_workflow_origin,
+    existing_server_created_workflow,
     normalize_workflow_definition,
     workflow_definition_for_editor,
 )
@@ -88,11 +91,13 @@ def _apply_group_document_action_scope(group_id, action_config):
     return action_config
 
 
-def _normalize_group_document_action_config(group_id, workflow_data, existing_workflow=None, allow_empty_file_sync_targets=False):
+def _normalize_group_document_action_config(group_id, workflow_data, existing_workflow=None, allow_empty_file_sync_targets=False,
+                                            settings=None):
     action_config = _normalize_document_action_config(
         workflow_data,
         existing_workflow=existing_workflow,
         allow_empty_file_sync_targets=allow_empty_file_sync_targets,
+        **({'settings': settings} if settings is not None else {}),
     )
     return _apply_group_document_action_scope(group_id, action_config)
 
@@ -122,7 +127,8 @@ def _normalize_group_workflow_conversation_id(group_id, workflow_data, existing_
     return conversation_id
 
 
-def _normalize_file_sync_config(actor_user_id, group_id, workflow_data, existing_workflow=None, user_info=None):
+def _normalize_file_sync_config(actor_user_id, group_id, workflow_data, existing_workflow=None, user_info=None,
+                                settings=None, sanitize_source=None):
     workflow_data = workflow_data if isinstance(workflow_data, dict) else {}
     existing_workflow = existing_workflow if isinstance(existing_workflow, dict) else {}
     existing_config = existing_workflow.get('file_sync') if isinstance(existing_workflow.get('file_sync'), dict) else {}
@@ -147,7 +153,7 @@ def _normalize_file_sync_config(actor_user_id, group_id, workflow_data, existing
         default=True,
     )
 
-    settings = get_settings()
+    settings = get_settings() if settings is None else settings
     if enabled and not is_file_sync_enabled_for_group(settings, group_id, user_info=user_info):
         raise WorkflowPublicValidationError(
             'Group File Sync must be enabled before a group workflow can use File Sync sources.'
@@ -177,7 +183,7 @@ def _normalize_file_sync_config(actor_user_id, group_id, workflow_data, existing
         except LookupError as exc:
             # A PermissionError still propagates as a 403; only a deleted source becomes this 400.
             raise WorkflowSourceUnavailableError() from exc
-        sanitized_source = sanitize_file_sync_source(source)
+        sanitized_source = (sanitize_source or sanitize_file_sync_source)(source)
         normalized_sources.append({
             'scope_type': scope_type,
             'scope_id': scope_id,
@@ -466,15 +472,33 @@ def get_due_group_workflows(limit=20):
         return []
 
 
-def save_group_workflow(group_id, workflow_data, actor_user_id, user_info=None):
-    """Create or update a group workflow."""
+def build_group_workflow_document(group_id, workflow_data, actor_user_id, user_info=None, *, settings=None,
+                                  workflow_id=None, origin=None, resolve_document=None, sanitize_source=None):
+    """Normalize and authorize a group workflow exactly as saving it would, without writing.
+
+    Returns ``(workflow, existing_workflow)``. Like ``build_personal_workflow_document``, it writes
+    nothing and needs no request context; a write-free caller passes ``settings``, the actor's
+    ``user_info`` (File Sync enablement reads the actor's roles from it), and the read-only
+    ``resolve_document`` and ``sanitize_source`` seams. A save passes none of them. ``workflow_id``
+    and ``origin`` belong to a server create path, never to a save payload.
+    """
     workflow_data = workflow_data if isinstance(workflow_data, dict) else {}
-    settings = get_settings()
+    settings_options = {'settings': settings} if settings is not None else {}
+    settings = get_settings() if settings is None else settings
     now_iso = _utc_now_iso()
 
-    workflow_id = str(workflow_data.get('id') or '').strip()
-    existing_workflow = get_group_workflow(group_id, workflow_id) if workflow_id else None
-    refuse_save_of_deleted_workflow(cosmos_group_workflows_container, group_id, workflow_data, existing_workflow)
+    if workflow_id is not None:
+        if str(workflow_data.get('id') or '').strip():
+            raise ValueError('A workflow created by the server cannot name its own id.')
+        try:
+            workflow_id = str(uuid.UUID(str(workflow_id)))
+        except ValueError as exc:
+            raise ValueError('A server-created workflow id must be a UUID.') from exc
+        existing_workflow = None
+    else:
+        workflow_id = str(workflow_data.get('id') or '').strip()
+        existing_workflow = get_group_workflow(group_id, workflow_id) if workflow_id else None
+        refuse_save_of_deleted_workflow(cosmos_group_workflows_container, group_id, workflow_data, existing_workflow)
 
     workflow_name = _normalize_text(workflow_data.get('name'), 'Workflow name', required=True)
     description = _normalize_text(workflow_data.get('description'), 'Description')
@@ -484,6 +508,8 @@ def save_group_workflow(group_id, workflow_data, actor_user_id, user_info=None):
         workflow_data,
         existing_workflow=existing_workflow,
         user_info=user_info,
+        **settings_options,
+        **({'sanitize_source': sanitize_source} if sanitize_source is not None else {}),
     )
     allow_empty_file_sync_targets = bool(file_sync.get('enabled') and file_sync.get('use_changed_documents'))
     document_action = _normalize_group_document_action_config(
@@ -491,6 +517,7 @@ def save_group_workflow(group_id, workflow_data, actor_user_id, user_info=None):
         workflow_data,
         existing_workflow=existing_workflow,
         allow_empty_file_sync_targets=allow_empty_file_sync_targets,
+        **settings_options,
     )
     tasks = _normalize_workflow_tasks(
         workflow_data,
@@ -518,10 +545,11 @@ def save_group_workflow(group_id, workflow_data, actor_user_id, user_info=None):
         workflow_data, existing_workflow, tasks, user_id=reference_owner_id, group_id=group_id,
     )
     tasks = definition_fields['tasks']
+    reference_options = {'resolve_document': resolve_document} if resolve_document is not None else {}
     for reference in definition_fields.get('reference_inputs', []):
         authorize_workflow_reference(
             {'user_id': reference_owner_id, 'group_id': group_id},
-            reference, actor_user_id=actor_user_id,
+            reference, actor_user_id=actor_user_id, **reference_options,
         )
     task_prompt = _normalize_text(
         workflow_data.get('task_prompt') or (
@@ -611,6 +639,7 @@ def save_group_workflow(group_id, workflow_data, actor_user_id, user_info=None):
             workflow_data.get('schedule'),
             existing_workflow=existing_workflow,
             settings=settings,
+            **({'orchestration': True} if origin is not None else {}),
         )
 
     owner_user_id = (existing_workflow or {}).get('user_id') or (existing_workflow or {}).get('created_by') or actor_user_id
@@ -692,12 +721,54 @@ def save_group_workflow(group_id, workflow_data, actor_user_id, user_info=None):
         from functions_workflow_loop_runners import validate_workflow_loop_runners
 
         validate_workflow_loop_runners(workflow, actor_user_id=actor_user_id, settings=settings)
+    if origin is not None or (existing_workflow or {}).get('origin'):
+        apply_workflow_origin(workflow, existing_workflow, origin)
+    return workflow, existing_workflow
+
+
+def save_group_workflow(group_id, workflow_data, actor_user_id, user_info=None):
+    """Create or update a group workflow."""
+    workflow, existing_workflow = build_group_workflow_document(
+        group_id, workflow_data, actor_user_id, user_info=user_info,
+    )
     result = save_workflow_definition_record(
         cosmos_group_workflows_container, group_id, workflow, existing_workflow,
     )
     cleaned_result = _strip_cosmos_metadata(result)
     debug_print(f"[GROUP_WORKFLOW_STORE] Saved workflow {cleaned_result.get('id')} for group {group_id}")
     return cleaned_result
+
+
+def create_group_workflow_if_absent(group_id, workflow_data, actor_user_id, user_info=None, *, workflow_id, origin,
+                                    settings=None, resolve_document=None, sanitize_source=None):
+    """Create a group workflow under a server-chosen id and origin, at most once.
+
+    The group counterpart of ``create_personal_workflow_if_absent``: repeating the create returns the
+    workflow the first one stored, and a different workflow under that id, or one being deleted, is
+    a conflict. Returns ``(workflow, created)``.
+    """
+    proposal_id = str((origin or {}).get('proposal_id') or '').strip() if isinstance(origin, dict) else ''
+    try:
+        workflow_id = str(uuid.UUID(str(workflow_id)))
+    except ValueError as exc:
+        raise ValueError('A server-created workflow id must be a UUID.') from exc
+
+    existing = get_group_workflow(group_id, workflow_id)
+    if existing:
+        return existing_server_created_workflow(existing, proposal_id), False
+    workflow, _existing = build_group_workflow_document(
+        group_id, {} if workflow_data is None else workflow_data, actor_user_id, user_info=user_info,
+        settings=settings, workflow_id=workflow_id, origin=origin, resolve_document=resolve_document,
+        sanitize_source=sanitize_source,
+    )
+    record, created = create_workflow_definition_record_if_absent(
+        cosmos_group_workflows_container, group_id, workflow,
+    )
+    record = _strip_cosmos_metadata(record)
+    if not created:
+        return existing_server_created_workflow(record, proposal_id), False
+    debug_print(f"[GROUP_WORKFLOW_STORE] Created workflow {record.get('id')} for group {group_id}")
+    return record, True
 
 
 def update_group_workflow_runtime_fields(group_id, workflow_id, updates):

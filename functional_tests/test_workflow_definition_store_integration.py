@@ -120,8 +120,8 @@ def load_group_store():
     names = {
         "_normalize_text", "_normalize_bool", "_strip_cosmos_metadata", "_normalize_workflow_tasks",
         "normalize_workflow_max_tasks", "_normalize_workflow_error_handling",
-        "_apply_group_document_action_scope", "save_group_workflow", "get_group_workflow",
-        "get_group_workflows", "update_group_workflow_runtime_fields",
+        "_apply_group_document_action_scope", "build_group_workflow_document", "save_group_workflow",
+        "get_group_workflow", "get_group_workflows", "update_group_workflow_runtime_fields",
     }
     nodes = []
     for file_name in ("functions_personal_workflows.py", "functions_group_workflows.py"):
@@ -142,8 +142,8 @@ def load_personal_store():
         "normalize_personal_workflow_task_runner": lambda *args, **kwargs: {"type": "inherit"},
     })
     names = {
-        "save_personal_workflow", "get_personal_workflow", "get_personal_workflows",
-        "update_personal_workflow_runtime_fields",
+        "build_personal_workflow_document", "save_personal_workflow", "get_personal_workflow",
+        "get_personal_workflows", "update_personal_workflow_runtime_fields",
     }
     nodes = [
         node for node in ast.parse((APP_ROOT / "functions_personal_workflows.py").read_text(encoding="utf-8")).body

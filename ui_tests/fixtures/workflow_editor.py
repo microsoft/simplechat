@@ -150,8 +150,9 @@ def _save_function_messages(module_name, function_name):
     return {node.value for node in ast.walk(function) if isinstance(node, ast.Constant) and isinstance(node.value, str)}
 
 
-for _module, _function in (("functions_personal_workflows.py", "save_personal_workflow"),
-                          ("functions_group_workflows.py", "save_group_workflow")):
+# The trigger rules are enforced where a workflow document is built; the save functions build, then persist.
+for _module, _function in (("functions_personal_workflows.py", "build_personal_workflow_document"),
+                          ("functions_group_workflows.py", "build_group_workflow_document")):
     _missing = {TRIGGER_REQUIRED, TRIGGER_UNKNOWN, MONITOR_NEEDS_FILE_SYNC, MONITOR_MUST_WAIT, MONITOR_ON_CHANGES}
     _missing -= _save_function_messages(_module, _function)
     assert not _missing, f"{_function} no longer raises {sorted(_missing)}; update this fixture's trigger rules."

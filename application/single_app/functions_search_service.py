@@ -134,9 +134,18 @@ def _resolve_active_group_ids(user_id, active_group_ids=None, fallback_to_member
     return accessible_group_ids
 
 
-def _resolve_public_workspace_ids(user_id, active_public_workspace_id=None):
+def _resolve_public_workspace_ids(user_id, active_public_workspace_id=None, visible_public_workspace_ids=None):
+    """Intersect the requested public workspaces with those the user has made visible.
+
+    A caller that must not write, such as a workflow dry run, passes ``visible_public_workspace_ids``
+    it computed from a read-only settings snapshot, because the settings lookup can repair the
+    user's settings document. The same validation and intersection apply either way.
+    """
     try:
-        visible_ids = get_user_visible_public_workspace_ids_from_settings(user_id)
+        if visible_public_workspace_ids is None:
+            visible_ids = get_user_visible_public_workspace_ids_from_settings(user_id)
+        else:
+            visible_ids = visible_public_workspace_ids
         if strict_source_authority_enabled() and (
             not isinstance(visible_ids, list) or any(not isinstance(value, str) or not value for value in visible_ids)
         ):
@@ -543,8 +552,13 @@ def resolve_document_context(
     active_public_workspace_id=None,
     conversation_id=None,
     include_content=True,
+    visible_public_workspace_ids=None,
 ):
     normalized_scope = normalize_search_scope(doc_scope)
+    public_visibility = (
+        {} if visible_public_workspace_ids is None
+        else {"visible_public_workspace_ids": visible_public_workspace_ids}
+    )
 
     if normalized_scope in ("all", "personal"):
         personal_context = _resolve_personal_document_context(document_id, user_id)
@@ -571,6 +585,7 @@ def resolve_document_context(
             _resolve_public_workspace_ids(
                 user_id,
                 active_public_workspace_id=active_public_workspace_id,
+                **public_visibility,
             ),
         )
         if public_context:

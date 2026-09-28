@@ -276,6 +276,7 @@ from functions_personal_workflows import (
     save_personal_workflow_run,
     save_personal_workflow_run_item,
 )
+from functions_workflow_schedules import WORKFLOW_SCHEDULED_TRIGGER_TYPES, workflow_run_time_context
 from functions_public_workspaces import get_user_visible_public_workspace_ids_from_settings
 from functions_search_service import (
     resolve_document_context,
@@ -7765,6 +7766,30 @@ def _apply_file_sync_context_to_workflow(workflow, file_sync_result):
     return prepared_workflow
 
 
+def _apply_workflow_run_time_context(workflow, started_at):
+    """Tell the model the run's local date and time when the stored schedule is a calendar schedule.
+
+    Scope follows the workflow's schedule, not how the run started, so a scheduled run, a catch-up
+    and a Run now all get the line. Manual-only and interval workflows are returned unchanged,
+    which keeps their prompts byte-identical. The line lives only on this run's prepared copy.
+    """
+    if str((workflow or {}).get('trigger_type') or '').strip().lower() not in WORKFLOW_SCHEDULED_TRIGGER_TYPES:
+        return workflow
+    run_time_context = workflow_run_time_context(workflow.get('schedule'), started_at)
+    if not run_time_context:
+        return workflow
+
+    prepared_workflow = dict(workflow)
+    prepared_workflow['task_prompt'] = (
+        f"{workflow.get('task_prompt', '')}\n\n[Workflow run time]\n{run_time_context}"
+    ).strip()
+    # Task-based workflows rebuild task_prompt per task, so the line also travels on its own key.
+    prepared_workflow['run_time_prompt_context'] = run_time_context
+    # The legacy path searches documents with the un-augmented prompt, as it does for File Sync context.
+    prepared_workflow.setdefault('task_search_query', str(workflow.get('task_prompt') or '').strip())
+    return prepared_workflow
+
+
 def _get_workflow_active_task(workflow):
     active_task = (workflow or {}).get('active_task')
     return active_task if isinstance(active_task, dict) else {}
@@ -10154,6 +10179,10 @@ def _build_workflow_task_execution_workflow(
             '[Workflow input context]\n'
             f'{file_sync_context}'
         ).strip()
+    run_time_context = str(workflow.get('run_time_prompt_context') or '').strip()
+    if run_time_context:
+        # Every task of a calendar workflow gets the run's local date, so "this week" means the same thing in each.
+        task_instructions = f'{task_instructions}\n\n[Workflow run time]\n{run_time_context}'.strip()
     previous_context = str(previous_reply or '')
     if previous_context:
         task_instructions = (
@@ -11887,6 +11916,7 @@ def _run_authorized_workflow_impl(workflow, trigger_source='manual', user_roles=
 
             execution_workflow = _apply_file_sync_context_to_workflow(workflow, file_sync_result)
 
+        execution_workflow = _apply_workflow_run_time_context(execution_workflow, started_at)
         _raise_if_workflow_run_cancelled(workflow, run_id)
         conversation = workflow_unit(
             'conversation', lambda: _ensure_workflow_conversation(execution_workflow),

@@ -134,6 +134,12 @@ from functions_terms_of_use import (
     normalize_terms_of_use_text,
 )
 from functions_workflow_limits import (
+    CHAT_ORCHESTRATION_MAX_WORKFLOWS_DEFAULT,
+    CHAT_ORCHESTRATION_MAX_WORKFLOWS_MAX,
+    CHAT_ORCHESTRATION_MAX_WORKFLOWS_MIN,
+    CHAT_ORCHESTRATION_MIN_WORKFLOW_INTERVAL_DEFAULT,
+    CHAT_ORCHESTRATION_MIN_WORKFLOW_INTERVAL_MAX,
+    CHAT_ORCHESTRATION_MIN_WORKFLOW_INTERVAL_MIN,
     WORKFLOW_LOOP_ITEMS_DEFAULT,
     WORKFLOW_LOOP_ITEMS_MAX,
     WORKFLOW_LOOP_ITEMS_MIN,
@@ -144,6 +150,8 @@ from functions_workflow_limits import (
     WORKFLOW_REPEAT_ITERATIONS_MAX,
     WORKFLOW_REPEAT_ITERATIONS_MIN,
     WorkflowLoopLimitError,
+    validate_chat_orchestration_max_workflows_per_user,
+    validate_chat_orchestration_min_workflow_interval_seconds,
     validate_workflow_max_loop_items,
     validate_workflow_max_repeat_iterations,
     validate_workflow_min_schedule_interval_seconds,
@@ -3865,6 +3873,39 @@ ADMIN_SETTINGS_FIELDS = {
             "depends_on": {"key": "enable_chat_orchestration", "equals": True},
             "group": {"id": "limits", "label": "Limits", "variant": "limits"},
         },
+        {
+            "key": "chat_orchestration_max_workflows_per_user",
+            "type": "number",
+            "label": "Workflows Created From Chat Per User",
+            "help": (
+                "The most workflows a chat plan may create for one user. Workflows a user "
+                "builds in the workflow editor do not count toward it. Default is 20; "
+                "supported range is 1-100."
+            ),
+            "default": CHAT_ORCHESTRATION_MAX_WORKFLOWS_DEFAULT,
+            "min": CHAT_ORCHESTRATION_MAX_WORKFLOWS_MIN,
+            "max": CHAT_ORCHESTRATION_MAX_WORKFLOWS_MAX,
+            "step": 1,
+            "depends_on": {"key": "enable_chat_orchestration", "equals": True},
+            "group": {"id": "limits", "label": "Limits", "variant": "limits"},
+        },
+        {
+            "key": "chat_orchestration_min_workflow_interval_seconds",
+            "type": "number",
+            "label": "Minimum Schedule Interval For Workflows Created From Chat (seconds)",
+            "help": (
+                "The shortest repeat interval a chat plan may give a workflow it creates. The "
+                "general Workflow Minimum Schedule Interval still applies when it is longer. "
+                "Daily, weekly and monthly schedules always pass. Default is 3,600 (hourly); "
+                "supported range is 60-86,400."
+            ),
+            "default": CHAT_ORCHESTRATION_MIN_WORKFLOW_INTERVAL_DEFAULT,
+            "min": CHAT_ORCHESTRATION_MIN_WORKFLOW_INTERVAL_MIN,
+            "max": CHAT_ORCHESTRATION_MIN_WORKFLOW_INTERVAL_MAX,
+            "step": 1,
+            "depends_on": {"key": "enable_chat_orchestration", "equals": True},
+            "group": {"id": "limits", "label": "Limits", "variant": "limits"},
+        },
     ],
     "chat-orchestration-planner-model-section": [
         # One dropdown writes the four planner keys below as a set. They stay declared, as
@@ -6768,6 +6809,18 @@ def _normalize_field_value(key, value, field):
     if key == "workflow_min_schedule_interval_seconds":
         try:
             return validate_workflow_min_schedule_interval_seconds(value), None, None
+        except WorkflowLoopLimitError as error:
+            return None, error.public_message, None
+
+    if key == "chat_orchestration_max_workflows_per_user":
+        try:
+            return validate_chat_orchestration_max_workflows_per_user(value), None, None
+        except WorkflowLoopLimitError as error:
+            return None, error.public_message, None
+
+    if key == "chat_orchestration_min_workflow_interval_seconds":
+        try:
+            return validate_chat_orchestration_min_workflow_interval_seconds(value), None, None
         except WorkflowLoopLimitError as error:
             return None, error.public_message, None
 

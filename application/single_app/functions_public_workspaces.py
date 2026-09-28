@@ -406,6 +406,25 @@ def get_user_visible_public_workspace_ids_from_settings(user_id: str) -> list:
     return get_user_visible_public_workspaces(user_id)
 
 
+def visible_public_workspace_ids_from_user_settings(user_settings, list_public_workspaces=None):
+    """Apply the visibility rule above to a settings document the caller already read.
+
+    It never reads or repairs user settings, so a write-free caller can pass a read-only snapshot.
+    With neither preference saved, every public workspace is visible, as above.
+    """
+    settings = user_settings.get("settings", {}) if isinstance(user_settings, dict) else {}
+    settings = settings if isinstance(settings, dict) else {}
+    public_directory_settings = settings.get("publicDirectorySettings", {})
+    if public_directory_settings:
+        return [ws_id for ws_id, is_visible in public_directory_settings.items() if is_visible]
+
+    visible_workspace_ids = settings.get("visiblePublicWorkspaceIds")
+    if visible_workspace_ids is None:
+        workspaces = (list_public_workspaces or get_all_public_workspaces)()
+        return [ws["id"] for ws in workspaces]
+    return visible_workspace_ids
+
+
 def set_user_visible_public_workspaces(user_id: str, workspace_ids: list) -> None:
     """
     Set the list of public workspace IDs that the user wants to be visible.

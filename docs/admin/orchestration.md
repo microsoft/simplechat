@@ -358,6 +358,12 @@ context.
 | Run timeout | How long a whole run may take before it is abandoned. Supported range is 60-7200 seconds. | 900 | `chat_orchestration_total_timeout_seconds` |
 | Earlier runs shown to the planner | How many previous run summaries the planner can see. Zero disables the activity ledger, not recent message history. Supported range is 0-50. | 10 | `chat_orchestration_ledger_max_runs` |
 | Earlier-run summary size | Caps the size of that summary. Older runs lose their detail first when the budget is reached. Supported range is 1024-131072 bytes. | 16384 | `chat_orchestration_ledger_max_bytes` |
+| Workflows created from chat per user | Caps how many workflows a chat plan may create for one user, so a conversation cannot fill a workspace with workflows. Workflows a user builds in the workflow editor never count toward it, and deleting a workflow created from chat frees its place. Supported range is 1-100. | 20 | `chat_orchestration_max_workflows_per_user`; since **0.261.197** |
+| Minimum schedule interval for workflows created from chat | The shortest repeat interval a chat plan may give a workflow it creates. When the general **Workflow Minimum Schedule Interval** on the Workflow tab is longer, that one applies instead. Daily, weekly and monthly schedules always pass. It is checked when the workflow is created; the owner's later edits follow the general minimum only. Supported range is 60-86,400 seconds. | 3600 | `chat_orchestration_min_workflow_interval_seconds`; since **0.261.197** |
+
+Since **0.261.197**, the last two settings are enforced by the workflow draft service
+that chat orchestration uses to turn a plan into a saved workflow. Workflows created any
+other way are not affected by either one.
 
 ### Planner Model {#chat-orchestration-planner-model-section}
 
