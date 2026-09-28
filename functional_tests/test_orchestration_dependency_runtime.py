@@ -1,15 +1,17 @@
 # test_orchestration_dependency_runtime.py
 """Real Gather / Reason / Render compiler, executor, composition, retained readers and checkpoints.
 
-Version: 0.261.139
+Version: 0.261.191
 Implemented in: 0.261.127
 Pending-Gather regression implemented in: 0.261.129
 Single orchestration contract updated in: 0.261.139
+Partial-input refusal diagnostics implemented in: 0.261.191
 External model/search/storage I/O is isolated; no paid or provider calls.
 """
 
 from copy import deepcopy
 from dataclasses import replace
+import hashlib
 import json
 import socket
 import sys
@@ -386,7 +388,7 @@ def test_pending_gather_requires_its_typed_wait_before_any_consumer(runtime, sta
 
 
 @pytest.mark.parametrize('allow_partial', [False, True])
-def test_partial_input_is_never_promoted(runtime, allow_partial):
+def test_partial_input_is_never_promoted(runtime, allow_partial, monkeypatch):
     case = runtime.make([
         compose('upstream'), compose('answer', inputs={'draft': source_input('upstream', 'answer', partial=allow_partial)}),
     ], ['Prepared limited answer.'], final_response=binding('answer'))
@@ -394,6 +396,14 @@ def test_partial_input_is_never_promoted(runtime, allow_partial):
         'partial', 1, 1, runtime.contracts.Coverage(2, 1, 'sources'), 'partial',
         ('retained_subset',), ('One required source could not be read.',),
     )
+    logs = []
+    monkeypatch.setattr(
+        runtime.executor, 'log_event', lambda message, **kwargs: logs.append((message, kwargs.get('extra') or {})),
+    )
+    monkeypatch.setattr(runtime.executor, 'workflow_log_context', lambda **ids: {
+        f'{name}_hash': hashlib.sha256(value.encode('utf-8')).hexdigest()
+        for name, value in ids.items() if isinstance(value, str) and value
+    })
 
     def produce(step, context, **kwargs):
         if step['step_id'] != 'upstream':
@@ -414,7 +424,27 @@ def test_partial_input_is_never_promoted(runtime, allow_partial):
         assert task.output('answer').completeness.status == 'partial'
         assert task.output('answer').completeness.limitations == partial.limitations
     else:
+        # The consumer names the partial-input refusal instead of a generic invalid result.
+        failure = result['steps'][1]['failure']
         assert result['steps'][1]['status'] == 'failed'
+        assert failure['code'] == 'input_partial_not_accepted'
+        assert failure['message'] == runtime.schema.FAILURE_MESSAGES['input_partial_not_accepted']
+        assert failure['message'] in result['message']
+        refused = [
+            extra for message, extra in logs
+            if message.endswith('A dependency-bound step could not complete.')
+        ]
+        assert len(refused) == 1
+        details = refused[0]
+        assert details['failure_code'] == 'input_partial_not_accepted'
+        assert details['execution_code'] == 'input_partial_not_accepted'
+        assert details['producer_capability_id'] == 'compose'
+        assert details['step_id_hash'] == hashlib.sha256(b'answer').hexdigest()
+        assert details['producer_step_id_hash'] == hashlib.sha256(b'upstream').hexdigest()
+        assert details['producer_expected_count'] == 1 and details['producer_actual_count'] == 1
+        assert details['producer_coverage_expected'] == 2 and details['producer_coverage_completed'] == 1
+        assert details['producer_limitation_count'] == 1
+        assert 'One required source could not be read.' not in json.dumps(logs)
 
 
 def test_successful_prose_does_not_hide_required_failure(runtime):

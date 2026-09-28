@@ -1,8 +1,9 @@
 # test_orchestration_single_contract.py
 """
 Functional tests for Gather / Reason / Render as the only chat orchestration contract.
-Version: 0.261.139
+Version: 0.261.191
 Implemented in: 0.261.139
+Per-source preparation guidance for mixed comparisons covered in: 0.261.191
 
 This test ensures that new plans always use the single contract with no admin toggle, that
 the toggle is gone from settings, admin fields and the admin template, that the legacy
@@ -279,6 +280,12 @@ def test_the_one_planner_prompt_has_no_legacy_phase_language(modules):
     "Only name a document ID that appears in candidate_documents or that the user selected",
     "Searching documents is much cheaper\nthan analysing them",
     "bind document_analyze's \"sources\" input\nto that search's \"sources\" output",
+    # Mixed-source comparisons: each preparation step reports only its own sources (#1540).
+    "For mixed narrative/tabular comparisons, prepare each\nsource with compatible offered capabilities "
+    "and compose their named results",
+    "Ask each\npreparation step only for its own sources' contribution",
+    "A preparation step sees only its own sources, so never ask it to compare them\nwith, or look for, "
+    "another source; compose performs the comparison",
     # Research depth selection.
     "web_search suits focused lookups and limited discovery",
     "Consider deep_research when deliberate\ndiscovery across different perspectives",

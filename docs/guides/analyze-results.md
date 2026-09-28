@@ -81,6 +81,11 @@ finding's identifier. Saved passages can include a filename, page or page range,
 and chunk location when those details were saved. A finding without supporting
 passages says **No supporting passage saved for this finding.**
 
+A saved passage is copied exactly from the source, so a passage from a table can
+include that table's markup. In the readable report, **Caveat:** lines under a
+finding qualify it without making the result partial, and **Analysis notes**
+record observations about a page or chunk range of a source.
+
 The **Limitations and validation issues** section appears when the saved result
 includes those notices. Read it alongside the findings, particularly when the
 analysis is incomplete.

@@ -1,6 +1,7 @@
 # functions_document_analysis.py
 """Shared document analysis services."""
 
+import hashlib
 import json
 import logging
 import re
@@ -16,6 +17,8 @@ from content_screening.contracts import ScreeningError
 from functions_appinsights import log_event
 from functions_debug import debug_print
 from functions_document_analysis_results import (
+    EVIDENCE_MATCH_TIERS,
+    EVIDENCE_MISS_REASONS,
     apply_document_analysis_options,
     build_analysis_source,
     build_analysis_work_unit,
@@ -462,20 +465,30 @@ def _build_window_analysis_prompt(
 
     if result_version == 'analyze-final-v1':
         output_guidance = (
-            'Return a JSON object with a "findings" list and an optional "issues" list of unresolved task requirements. '
+            'Return a JSON object with a "findings" list and optional top-level "issues" and "notes" lists. '
             'Zero, one or multiple findings are normal; an empty findings list still accounts for reading this slice. '
-            'Do not decide whether other slices or documents are missing. Each finding has:\n'
+            'Other slices, files and datasets in the task are analyzed separately and combined afterwards, so report '
+            'only what this slice contributes, such as values, periods, units and identifiers. Do not compare it '
+            'with another source, and do not decide whether other slices or sources are missing. Each finding has:\n'
             '- "finding_key": a short source-local key identifying the subject and finding. Reuse the same key '
             'for complementary evidence about the same finding in other slices; use different keys for distinct findings. '
             'Do not include window or attempt numbers in the key.\n'
             '- "values": an object containing the requested public output fields. For an ordinary narrative request, '
             'use "finding" and "explanation" with useful readable prose. Include only fields supported by this slice. '
             'Do not invent scores, weights, thresholds or a mandatory one-finding-per-source rule.\n'
-            '- "evidence": a list of objects with "chunk_sequence" (or "page_number") and an exact "quote" from this slice.\n'
+            '- "evidence": a list of objects with "chunk_sequence" (or "page_number") and a "quote": a short, '
+            'contiguous passage copied from that one chunk, keeping its words, numbers, signs and symbols as '
+            'written. Table cells may be quoted in reading order. Do not paraphrase, summarize, use ellipses or '
+            'join text from different chunks.\n'
             '- "status": "supported" for a finding supported by this slice, including a documented uncertainty '
             'as the finding itself; otherwise "unresolved".\n'
-            '- "issues": uncertainties or missing information that prevent these values being final. '
-            'Put ordinary recommendations and follow-up discussion in "values", not "issues".\n'
+            '- "caveats": optional qualifications that do not stop the values being final, such as an unstated '
+            'unit, currency, period or entity.\n'
+            '- "issues": only problems that prevent a requested value in this finding being concluded from this '
+            'slice, such as contradictory values. Values absent from this slice are not issues. Put ordinary '
+            'recommendations and follow-up discussion in "values", not "issues".\n'
+            'Top-level "issues" are only task requirements that this slice\'s own content leaves unresolved, never '
+            'sources analyzed separately; put other observations about the slice in "notes". '
             'Formatting of the final report and exports is handled separately. Put requested export fields inside '
             '"values", not alongside internal finding identities. Do not wrap the JSON in commentary.\n\n'
         )
@@ -1018,6 +1031,51 @@ def _complete_document_analysis(
     }
 
 
+def _log_analysis_validation_summary(final_result, evidence_matching, metrics, conversation_id=None):
+    """Explain a valid or partial final result with application codes and counts only."""
+    validation = final_result.get('analysis_validation') or {}
+    coverage = validation.get('coverage') or {}
+    diagnostics = final_result.get('analysis_diagnostics') or {}
+    records = (final_result.get('authoritative_result') or {}).get('value') or []
+    # Same correlation hash as workflow_log_context, which this module does not import.
+    correlation = {
+        'conversation_id_hash': hashlib.sha256(conversation_id.encode('utf-8', errors='replace')).hexdigest(),
+    } if isinstance(conversation_id, str) and conversation_id else {}
+    extra = {
+        **correlation,
+        'validation_code': validation.get('status'),
+        'finalized_record_count': validation.get('finalized_record_count', 0),
+        'unresolved_candidate_count': validation.get('unresolved_candidate_count', 0),
+        'candidate_count': len(diagnostics.get('candidates') or []),
+        'window_count': coverage.get('assigned_work_units', 0),
+        'completed_window_count': coverage.get('completed_work_units', 0),
+        'failed_window_count': coverage.get('failed_work_units', 0),
+        'pending_window_count': coverage.get('pending_work_units', 0),
+        'reused_window_count': ((metrics or {}).get('recovery') or {}).get('reused_windows', 0),
+        'caveat_count': sum(len(record.get('caveats') or []) for record in records if isinstance(record, dict)),
+        'note_count': sum(
+            len(item.get('notes') or []) for item in diagnostics.get('work_unit_notes') or []
+            if isinstance(item, dict)
+        ),
+    }
+    for name in (*EVIDENCE_MATCH_TIERS, *EVIDENCE_MISS_REASONS):
+        extra[f'evidence_{name}_count'] = int((evidence_matching or {}).get(name, 0))
+    # Validation issues already include candidate and work-unit issues; count each once.
+    issue_counts = {}
+    for issue in validation.get('issues') or []:
+        code = issue.get('code') if isinstance(issue, dict) else None
+        if isinstance(code, str) and re.fullmatch(r'[a-z][a-z0-9_]{0,60}', code):
+            issue_counts[code] = issue_counts.get(code, 0) + 1
+    for code, count in sorted(issue_counts.items()):
+        extra[f'issue_{code}_count'] = count
+    log_event(
+        '[DOCUMENT_ANALYSIS] Final findings validated',
+        extra=extra,
+        level=logging.INFO if validation.get('status') == 'valid' else logging.WARNING,
+    )
+    return extra
+
+
 def _finish_final_document_analysis(
     user_id, final_result, coverage, targets, raw_analysis_items, analysis_intent,
     activity_callback, cancel_requested, request_correlation_id, metrics,
@@ -1367,6 +1425,7 @@ def run_document_analysis(
     analysis_work_units = []
     analysis_candidates = []
     analysis_evidence = []
+    analysis_evidence_matching = {}
     analysis_metrics = {
         'durations_ms': {'source_loading': 0, 'extraction': 0, 'local_consolidation': 0, 'reporting': 0},
         'model_calls': {'planning': 0, 'extraction': 0, 'local_consolidation': 0, 'reporting': 0, 'retries': 0, 'total': 0},
@@ -1624,7 +1683,7 @@ def run_document_analysis(
                 f'document_name={document_name} | '
                 f"window={window_range.get('window_number')} | "
                 f"chunk_count={window_range.get('chunk_count', 0)} | "
-                f"page_range={window_range.get('page_start')}:{window_range.get('page_end')}"
+                f"page_range={window_range.get('start_page')}:{window_range.get('end_page')}"
             )
             document_summary['active_window_number'] = window_range.get('window_number')
             document_summary['active_attempt_number'] = 1
@@ -1805,6 +1864,10 @@ def run_document_analysis(
                     work_unit.pop('failure_code', None)
                     work_unit['candidate_count'] = len(candidate_result['candidates'])
                     work_unit['issues'] = candidate_result['issues']
+                    if candidate_result.get('notes'):
+                        work_unit['notes'] = list(candidate_result['notes'])
+                    else:
+                        work_unit.pop('notes', None)
                     if cached_unit is not None:
                         analysis_metrics['recovery']['reused_windows'] += 1
                     else:
@@ -1823,6 +1886,11 @@ def run_document_analysis(
                         analysis_metrics['recovery']['newly_completed_windows'] += 1
                     analysis_candidates.extend(candidate_result['candidates'])
                     analysis_evidence.extend(candidate_result['evidence'])
+                    for match_name, match_count in (candidate_result.get('evidence_matching') or {}).items():
+                        if isinstance(match_count, int):
+                            analysis_evidence_matching[match_name] = (
+                                analysis_evidence_matching.get(match_name, 0) + match_count
+                            )
                 debug_print(
                     '[DOCUMENT_ANALYSIS] Completed window | '
                     f'document_id={document_id} | '
@@ -2014,6 +2082,9 @@ def run_document_analysis(
         validation_started = time.perf_counter()
         apply_document_analysis_options(final_result, normalized_options)
         analysis_metrics['durations_ms']['validation'] = (time.perf_counter() - validation_started) * 1000
+        _log_analysis_validation_summary(
+            final_result, analysis_evidence_matching, analysis_metrics, conversation_id=conversation_id,
+        )
         raise_if_mixed_source_cancelled(
             cancel_requested, 'narrative_finalization', request_correlation_id=request_correlation_id,
         )

@@ -1,6 +1,6 @@
 # Saved Analyze results
 
-**Version: 0.261.129**
+**Version: 0.261.191**
 
 Implemented in version: **0.261.109**, recorded in
 `application/single_app/config.py`.
@@ -10,6 +10,9 @@ Planning, download, and responsive stabilization updated in version:
 
 Early orchestration acquisition-support checks were hardened in
 **0.261.129**. See [runtime boundary hardening](../fixes/ORCHESTRATION_RUNTIME_BOUNDARY_HARDENING_FIX.md).
+
+Evidence location, finding caveats, and analysis notes were updated in
+**0.261.191**. See [comparison evidence matching](../fixes/V2_COMPARISON_ANALYZE_EVIDENCE_MATCHING_FIX.md).
 
 ## Overview
 
@@ -395,6 +398,22 @@ identity, and evidence references. Duplicate delivery of completed work does not
 create another finding. Conflicting values remain unresolved rather than being
 silently overwritten by the longest or latest response.
 
+An evidence reference is accepted only when its quoted passage is found in the
+source chunk its citation names. The quote is compared verbatim first, then with
+presentation set aside, and then also ignoring case. Setting presentation aside
+means that markup, table rules and runs of whitespace separate words without
+merging them. Character entities, typographic quotes and dashes, compatibility
+forms, invisible characters, and emphasis marks at a word edge are ignored. Written
+signs, symbols and list markers must still match, and a match that needs this
+comparison must start and end on whole words and numbers, so `1,200` is not found
+inside `1,200,000`. The saved evidence is always the
+verbatim source span, not the model's quote. A paraphrase, a summary, text joined
+from different chunks, an ambiguous passage, or a quote found only under another
+chunk remains unresolved. Finding caveats and slice notes qualify or describe the
+evidence; neither makes an otherwise supported result partial. Each validation is
+logged with codes and counts only, as described in
+[Analyze validation and partial-input events](../../reference/logging-tags.md).
+
 Each batch is accountable for its assigned inputs. Global coverage is computed
 from source/work-unit outcomes, not from a model's statement that another batch
 was missing. Sources, windows, chunks, and findings are counted separately. A
@@ -409,8 +428,9 @@ found or that a qualitative conclusion is factually correct.
 
 Both classic chat and React V2 show the readable answer before supporting file
 actions. Large result views identify the displayed subset and load additional
-complete records. Evidence and limitations belong to the saved result;
-processing diagnostics are not appended to its normal Markdown report.
+complete records. Evidence and limitations belong to the saved result. Finding
+caveats appear with their findings and slice notes under **Analysis notes**;
+other processing diagnostics are not appended to its normal Markdown report.
 
 The result reader is
 `GET /api/analysis_results`, using the advertised conversation ID, message ID,

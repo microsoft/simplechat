@@ -50,8 +50,27 @@ class ResultContractError(ValueError):
 
 
 class ResultNotReadyError(ResultContractError):
-    def __init__(self):
-        super().__init__("result_not_ready")
+    def __init__(self, status=None, *, preview=False, code="result_not_ready"):
+        self.status = status
+        self.preview = preview is True
+        super().__init__(code)
+
+
+class PartialInputNotAcceptedError(ResultNotReadyError):
+    """A complete-only input was bound to a partial producer result; nothing was read."""
+
+    def __init__(self, reference=None, *, producer_step_id=None):
+        super().__init__("partial", code="input_partial_not_accepted")
+        producer = getattr(reference, "producer", None)
+        completeness = getattr(reference, "completeness", None)
+        coverage = getattr(completeness, "coverage", None)
+        self.producer_step_id = producer_step_id or getattr(producer, "step_id", None)
+        self.producer_capability_id = getattr(producer, "capability_id", None)
+        self.expected_count = getattr(completeness, "expected_count", None)
+        self.actual_count = getattr(completeness, "actual_count", None)
+        self.coverage_expected = getattr(coverage, "expected", None)
+        self.coverage_completed = getattr(coverage, "completed", None)
+        self.limitation_count = len(getattr(completeness, "limitations", None) or ())
 
 
 def identifier(value, *, limit=1024):
@@ -295,7 +314,7 @@ class Completeness(_Contract):
         if type(allow_partial) is not bool:
             raise ResultContractError()
         if self.preview or self.status not in ({"complete", "partial"} if allow_partial else {"complete"}):
-            raise ResultNotReadyError()
+            raise ResultNotReadyError(self.status, preview=self.preview)
 
     @classmethod
     def from_dict(cls, value):

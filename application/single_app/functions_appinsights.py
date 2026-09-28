@@ -123,11 +123,13 @@ LOGGER_SAFE_TEXT_KEYS = frozenset({
     "step",
     "taskname",
 })
-LOGGER_WORKFLOW_HASH_KEYS = frozenset({"conversationidhash", "turnidhash", "runidhash", "stepidhash"})
+LOGGER_WORKFLOW_HASH_KEYS = frozenset({
+    "conversationidhash", "turnidhash", "runidhash", "stepidhash", "producerstepidhash",
+})
 # Application-owned snake_case codes; any other text under these keys is dropped.
 LOGGER_WORKFLOW_CODE_KEYS = frozenset({
     "validationcode", "validationrule", "responsefailure", "executioncode", "outputcode", "durablestatus",
-    "failurecode", "authorityreason", "capabilityid", "outputformat",
+    "failurecode", "authorityreason", "capabilityid", "outputformat", "producercapabilityid",
 })
 
 
