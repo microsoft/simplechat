@@ -144,6 +144,7 @@ from functions_orchestration_plan_revisions import (
     read_revision_run,
     release_plan_revision,
 )
+from functions_assist_submissions import SubmissionIdError, normalize_submission_id
 from functions_orchestration_planner import (
     ConversationResolutionError,
     PlannerError,
@@ -2157,6 +2158,12 @@ def register_route_backend_orchestration(bp):
             settings = get_settings()
             data = request.get_json(silent=True)
             user_id, conversation_id = _plan_edit_identity(data, settings)
+            # The same id rule as the diagram, chart and image assist routes, checked before any
+            # plan is read. The id is stored on the editor's chat turns and echoed back to it.
+            try:
+                normalize_submission_id(data.get('submission_id'))
+            except SubmissionIdError as exc:
+                raise PlanRevisionError(str(exc), code='invalid_request', status_code=400) from exc
             record = read_revision_run(run_id, user_id, conversation_id)
             snapshot = _conversation_context_for_run(record, user_id, settings)
             claim = claim_plan_revision(run_id, user_id, conversation_id, data)

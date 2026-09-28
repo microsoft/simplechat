@@ -24,6 +24,7 @@ from azure.cosmos import exceptions
 
 import functions_orchestration_runs as run_store
 from functions_appinsights import log_event
+from functions_assist_submissions import SUBMISSION_ID_PATTERN
 from functions_orchestration_events import merge_reasoning_adjustments
 from functions_orchestration_registry import (
     required_capability_ids, resolve_admitted_export_catalog,
@@ -389,6 +390,11 @@ def _normalize_edits(plan, edits):
     }
 
 
+def _valid_submission_id(value):
+    # The assist editors' id rule, so a plan edit is held to the same one as a diagram or an image.
+    return isinstance(value, str) and SUBMISSION_ID_PATTERN.fullmatch(value) is not None
+
+
 def _bounded_chat(chat):
     if not isinstance(chat, list):
         return []
@@ -398,7 +404,10 @@ def _bounded_chat(chat):
             'content': entry['content'][:EDIT_CHAT_CONTENT_LIMIT],
             'timestamp': entry['timestamp'][:64] if isinstance(entry.get('timestamp'), str) else _now().isoformat(),
             # Kept so the editor can match a message it showed before the planner answered.
-            **({'submission_id': entry['submission_id']} if _valid_id(entry.get('submission_id')) else {}),
+            **(
+                {'submission_id': entry['submission_id']}
+                if _valid_submission_id(entry.get('submission_id')) else {}
+            ),
         }
         for entry in chat
         if isinstance(entry, dict) and entry.get('role') in ('user', 'assistant')
@@ -574,7 +583,7 @@ def _normalize_request(data, conversation_id):
         raise _invalid('Invalid plan edit request fields.')
     if data.get('conversation_id') != conversation_id:
         raise _not_found()
-    if not _valid_id(data.get('submission_id')):
+    if not _valid_submission_id(data.get('submission_id')):
         raise _invalid('A submission ID is required.')
     version = data.get('expected_version')
     if not isinstance(version, str) or len(version) > 200:
