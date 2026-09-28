@@ -1,9 +1,10 @@
 # test_content_screening_access.py
 """
 Behavioral regression tests for authoritative document quarantine access.
-Version: 0.261.189
+Version: 0.261.190
 Implemented in: 0.261.106
 Same-name revision location ownership added in: 0.261.189 (the React V2 branch's 0.261.141)
+Provenance-authoritative revision checks and conflict reasons added in: 0.261.190 (the React V2 branch's 0.261.143)
 
 Uses fake Cosmos/Blob containers, injected canonical storage, and a local Flask
 test client. No Azure resources, credentials, or application startup are used.
@@ -361,6 +362,47 @@ class AuthoritativeAvailabilityTests(ScreeningAccessFixture):
     def test_historical_version_cannot_borrow_a_current_approval(self):
         with self.assertRaises(ScreeningConflictError):
             access.assert_document_available({"document_id": "document-1", "version": 1}, "user-1")
+
+    def test_current_provenance_is_authoritative_over_a_carrier_schema_version(self):
+        # A replay descriptor carries its own schema ``version`` beside the source provenance.
+        descriptor = {
+            "document_id": "document-1", "version": 1,
+            access.PROVENANCE_FIELD: access.document_provenance(self.document),
+        }
+        self.assertEqual(access.assert_document_available(descriptor, "user-1")["version"], 2)
+        access.assert_evidence_available({"source_descriptor": descriptor}, "user-1")
+
+    def test_revision_conflicts_name_the_check_that_failed(self):
+        current = access.document_provenance(self.document)
+        stale_record = deepcopy(self.document)
+        stale_record["content_screening"]["availability_generation"] = 0
+        for source, reason in (
+            ({access.PROVENANCE_FIELD: {**current, "source_revision": "1"}}, "source_revision_changed"),
+            ({access.PROVENANCE_FIELD: {**current, "generation": "stale"}}, "screening_generation_changed"),
+            ({access.PROVENANCE_FIELD: {**current, "scope_id": "other-user"}}, "source_scope_changed"),
+            ({access.PROVENANCE_FIELD: {**current, "unexpected": "field"}}, "provenance_shape_invalid"),
+            (stale_record, "screened_record_changed"),
+            ({"document_id": "document-1", "version": 1}, "source_version_changed"),
+        ):
+            with self.subTest(reason=reason):
+                with self.assertRaises(ScreeningConflictError) as raised:
+                    access.assert_document_available(source, "user-1")
+                self.assertEqual(raised.exception.authority_reason, reason)
+
+    def test_cached_evidence_conflicts_name_the_missing_or_stale_proof(self):
+        with self.assertRaises(ScreeningConflictError) as unproven:
+            access.assert_evidence_available({"document_id": "document-1"}, "user-1", cached=True)
+        self.assertEqual(unproven.exception.authority_reason, "cached_evidence_unproven")
+        stale = {**access.document_provenance(self.document), "source_revision": "1"}
+        with self.assertRaises(ScreeningConflictError) as stale_proof:
+            access.assert_evidence_available(
+                {"document_ids": ["document-1"], "screening_sources": [{access.PROVENANCE_FIELD: stale}]},
+                "user-1", cached=True,
+            )
+        self.assertEqual(stale_proof.exception.authority_reason, "source_revision_changed")
+        with self.assertRaises(ScreeningConflictError) as cached_search:
+            access._check_source_revision(self.search_result(), self.document, cached=True)
+        self.assertEqual(cached_search.exception.authority_reason, "cached_evidence_unproven")
 
     def test_held_metadata_is_status_only_and_dai_projection_is_refreshed(self):
         stale = deepcopy(self.document)

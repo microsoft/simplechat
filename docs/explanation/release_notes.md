@@ -2,6 +2,19 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.190)**
+
+Merged from the React V2 branch at `01c728bf`. This change shipped there as 0.261.143. This branch had already used that number for its own change, so here it carries the merge's version. The version numbers inside its own documentation and tests are the React V2 branch's.
+
+#### Bug Fixes
+
+*   **Tabular Steps Work With Re-uploaded CSV And Workbook Files**
+    *   Fixed orchestration runs, such as a PDF-and-CSV comparison, stalling on the tabular step when the CSV or workbook had been re-uploaded under the same name. The step stopped before reading any rows, the run later reported that the step's saved result could not be confirmed (`result_commit_unconfirmed`), and the step kept showing **Reasoning**.
+    *   The tabular step's replay descriptor carries its own schema version, which was compared with the file's revision even after the source's screening provenance had matched. A matching provenance is now authoritative. Sources without provenance keep their existing checks, and a source that really changed still conflicts.
+    *   Revision conflicts now log `sc_authority_reason`, naming the check that failed, without logging document values.
+    *   Shipped in the React V2 branch as 0.261.143.
+    *   (Ref: `content_screening/access.py`, `docs/reference/logging-tags.md`, [Re-uploaded Tabular Source Revision Conflict Fix](fixes/REUPLOADED_TABULAR_SOURCE_REVISION_CONFLICT_FIX.md))
+
 ### **(v0.261.189)**
 
 Merged from the React V2 branch at `c9faeae0`. These changes shipped there as 0.261.141 and 0.261.142. This branch had already used those numbers for its own changes, so here they carry the merge's version. The version numbers inside their own documentation and tests are the React V2 branch's.
