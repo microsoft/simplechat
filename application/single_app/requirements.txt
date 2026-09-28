@@ -64,6 +64,8 @@ psycopg2-binary==2.9.10
 cython==3.2.4
 pyyaml==6.0.2
 aiohttp==3.14.3
+# AnyIO 4.11+ requires typing_extensions.sentinel, which older App Service agents can shadow.
+anyio==4.10.0
 html2text==2025.4.15
 matplotlib==3.10.7
 azure-cognitiveservices-speech==1.48.2

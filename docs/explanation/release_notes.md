@@ -6,6 +6,21 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
 
 #### Bug Fixes
 
+*   **Chat Upload File Access Errors Avoid Browser-Realm Checks**
+    *   Hardened chat upload recovery messaging so rejected browser upload requests no longer depend on a realm-specific `TypeError` check.
+    *   Fetch preparation and transport failures now consistently identify the selected file and show the same recovery guidance for locked files, cloud-placeholder files, and interrupted local upload requests.
+    *   Also removed unsafe HTML-string construction from the retry modal's model-option cloning and reasoning-level controls.
+    *   (Ref: chat upload file access handling, retry modal rendering, `chat-input-actions.js`, `chat-retry.js`, `test_chat_clipboard_paste_upload_support.py`)
+
+### **(v0.261.045)**
+
+#### Bug Fixes
+
+*   **Public Workspace Selector Dark Theme Styling**
+    *   Fixed the public workspace selector dropdown so its dark-theme background, border, search area, hover state, and active item styling match the group workspace selector.
+    *   Added the shared workspace selector row class to the public selector row and extended the existing group dropdown dark-theme rules to the public dropdown.
+    *   (Ref: public workspace selector, dark theme dropdown styling, `public_workspaces.html`, `styles.css`)
+
 *   **Revert Premature OneNote Rollout From Development**
     *   Removed native `.one` and `.onepkg` workspace uploads from Development pending Reactv2 testing, correcting the accidental merge of PR #1525.
     *   Restored the previous upload formats and container packaging. Existing document formats and the separately adapted Reactv2 OneNote implementation remain unchanged.

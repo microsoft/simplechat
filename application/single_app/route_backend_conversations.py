@@ -237,6 +237,41 @@ def _build_replayed_document_context(original_metadata):
         'active_public_workspace_ids': workspace_search.get('active_public_workspace_ids') or [],
     }
 
+def _build_replayed_model_context(original_metadata, request_data=None):
+    """Rebuild model endpoint routing from stored metadata for retry and edit."""
+    metadata = original_metadata if isinstance(original_metadata, dict) else {}
+    model_selection = metadata.get('model_selection')
+    model_selection = model_selection if isinstance(model_selection, dict) else {}
+    request_data = request_data if isinstance(request_data, dict) else {}
+
+    stored_request_model = str(
+        model_selection.get('frontend_requested_model')
+        or model_selection.get('selected_model')
+        or ''
+    ).strip()
+    stored_selected_model = str(model_selection.get('selected_model') or '').strip()
+    requested_model = str(request_data.get('model') or '').strip()
+    replayed_model = requested_model or stored_request_model
+    reuses_stored_selection = not requested_model or requested_model in {
+        stored_request_model,
+        stored_selected_model,
+    }
+
+    def requested_or_stored(request_key, metadata_key):
+        requested_value = request_data.get(request_key)
+        if requested_value not in (None, ''):
+            return requested_value
+        if reuses_stored_selection:
+            return model_selection.get(metadata_key)
+        return None
+
+    return {
+        'model_deployment': replayed_model or None,
+        'model_id': requested_or_stored('model_id', 'model_id'),
+        'model_endpoint_id': requested_or_stored('model_endpoint_id', 'model_endpoint_id'),
+        'model_provider': requested_or_stored('model_provider', 'model_provider'),
+        'model_icon': requested_or_stored('model_icon', 'model_icon'),
+    }
 
 def _get_requested_workspace_document_delete_ids_for_conversation(payload, conversation_id):
     if not isinstance(payload, dict):
@@ -2758,7 +2793,6 @@ def register_route_backend_conversations(bp):
         
         try:
             data = request.get_json() or {}
-            selected_model = data.get('model')
             reasoning_effort = data.get('reasoning_effort')
             agent_info = data.get('agent_info')  # Get agent info if provided
             
@@ -2915,10 +2949,11 @@ def register_route_backend_conversations(bp):
             )
             # Build chat request parameters from original message metadata
             replayed_document_context = _build_replayed_document_context(original_metadata)
+            replayed_model_context = _build_replayed_model_context(original_metadata, data)
             chat_request = {
                 'message': user_content,
                 'conversation_id': conversation_id,
-                'model_deployment': selected_model or original_metadata.get('model_selection', {}).get('selected_model'),
+                **replayed_model_context,
                 'reasoning_effort': reasoning_effort or original_metadata.get('reasoning_effort'),
                 **replayed_document_context,
                 'image_generation': original_metadata.get('image_generation', {}).get('enabled', False),
@@ -3139,10 +3174,11 @@ def register_route_backend_conversations(bp):
             # Build chat request parameters from original message metadata
             # Keep all original settings (model, reasoning, doc search, etc.)
             replayed_document_context = _build_replayed_document_context(original_metadata)
+            replayed_model_context = _build_replayed_model_context(original_metadata)
             chat_request = {
                 'message': edited_content,  # Use edited content
                 'conversation_id': conversation_id,
-                'model_deployment': original_metadata.get('model_selection', {}).get('selected_model'),
+                **replayed_model_context,
                 'reasoning_effort': original_metadata.get('reasoning_effort'),
                 **replayed_document_context,
                 'image_generation': original_metadata.get('image_generation', {}).get('enabled', False),
