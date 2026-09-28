@@ -8,8 +8,9 @@ doesn't change the version. Each phase records the version it ships in.
 Planning branch: `paullizer-orchestration-workflows-capability`.
 
 This is the master plan for letting chat orchestration propose, create, run and hand off saved workflows. It's the
-durable copy of the approved plan. GitHub tracks the work in an umbrella issue with one issue per phase and track
-item. Each phase after Phase 0 is its own change and PR, planned on its own when it starts (§10).
+durable copy of the approved plan. GitHub tracks the work in the umbrella issue
+[#1543](https://github.com/microsoft/simplechat/issues/1543), with one sub-issue per phase and track item. Each phase
+after Phase 0 is its own change and PR, planned on its own when it starts (§10).
 
 Dependencies: V2 chat orchestration (`functions_orchestration*.py`), durable workflows (M5B and M5C;
 [the M5C handover](WORKFLOW_M5C_COMPLETION_AND_NEXT_STEPS.md)), the notifications container
@@ -17,23 +18,23 @@ Dependencies: V2 chat orchestration (`functions_orchestration*.py`), durable wor
 
 ## Roadmap status
 
-| Phase | Name | Depends on | Status |
-|---|---|---|---|
-| 0 | Tracking: roadmap doc + GitHub issues | — | Not started |
-| 1 | Calendar schedules (day, time, timezone) | — | Not started |
-| 2 | Workflow draft service (dry-run build, blueprint builder, provenance) | 1 | Not started |
-| 3 | AI workflow assistant (Score-style assisted editing in the V2 editor) | 2, A1, A2 | Not started |
-| 4 | Orchestration proposes workflows (`workflow_propose` + Approve / Deny / Edit card) | 2 | Not started |
-| 5 | Orchestration runs existing workflows (`workflow_run`, start-and-link) | 4 | Not started |
-| 6 | Results back in chat: 6a results reader + **Follow up**; 6b post-back delivery, run card and chat-list indicator; 6c in-plan wait (later) | 6a: 4 · 6b: 5, 6a, N1 | Not started |
-| 7 | Hand-off of big one-time jobs | 4, 6b | Not started |
-| 8 | Follow-ons: group workflows, #1347 parity, plan-replay task | 4+ | Not started |
-| A1 | Shared AI-assist thread: immediate send, Cancel/Retry, one component for every assist editor | — | Not started |
-| A2 | `#` document references in AI-assist inputs: plan editor now, workflow assistant via Phase 3. Not the artifact editors (Mermaid, chart, image) | A1 | Not started |
-| N1 | V2 notifications: bell and panel with deep links; the existing Desktop notifications preference works in V2 | — | Not started |
-| N2 | Animated workflow alerts in V2: a notice with a visual bell jingle that opens into the full alert; two entrance styles tried in a dev-only lab, one ships | N1 | Not started |
-| P | Document provenance: hidden origin IDs on saved documents, a removable `workflow` tag, "Open the run / chat" links | — | Not started |
-| — | `#` references + document search in the orchestration question card | — | **Already done** (`7c355534f`). No new work; A1's Playwright run includes a regression check |
+| Phase | Name | Issue | Depends on | Status |
+|---|---|---|---|---|
+| 0 | Tracking: roadmap doc + GitHub issues | [#1543](https://github.com/microsoft/simplechat/issues/1543) (umbrella) | — | **Done** |
+| 1 | Calendar schedules (day, time, timezone) | [#1544](https://github.com/microsoft/simplechat/issues/1544) | — | Not started |
+| 2 | Workflow draft service (dry-run build, blueprint builder, provenance) | [#1545](https://github.com/microsoft/simplechat/issues/1545) | 1 | Not started |
+| 3 | AI workflow assistant (Score-style assisted editing in the V2 editor) | [#1548](https://github.com/microsoft/simplechat/issues/1548) | 2, A1, A2 | Not started |
+| 4 | Orchestration proposes workflows (`workflow_propose` + Approve / Deny / Edit card) | [#1547](https://github.com/microsoft/simplechat/issues/1547) | 2 | Not started |
+| 5 | Orchestration runs existing workflows (`workflow_run`, start-and-link) | [#1551](https://github.com/microsoft/simplechat/issues/1551) | 4 | Not started |
+| 6 | Results back in chat: 6a results reader + **Follow up**; 6b post-back delivery, run card and chat-list indicator; 6c in-plan wait (later) | [#1546](https://github.com/microsoft/simplechat/issues/1546) | 6a: 4 · 6b: 5, 6a, N1 | Not started |
+| 7 | Hand-off of big one-time jobs | [#1549](https://github.com/microsoft/simplechat/issues/1549) | 4, 6b | Not started |
+| 8 | Follow-ons: group workflows, #1347 parity, plan-replay task | [#1550](https://github.com/microsoft/simplechat/issues/1550) | 4+ | Not started |
+| A1 | Shared AI-assist thread: immediate send, Cancel/Retry, one component for every assist editor | [#1552](https://github.com/microsoft/simplechat/issues/1552) | — | Not started |
+| A2 | `#` document references in AI-assist inputs: plan editor now, workflow assistant via Phase 3. Not the artifact editors (Mermaid, chart, image) | [#1556](https://github.com/microsoft/simplechat/issues/1556) | A1 | Not started |
+| N1 | V2 notifications: bell and panel with deep links; the existing Desktop notifications preference works in V2 | [#1554](https://github.com/microsoft/simplechat/issues/1554) | — | Not started |
+| N2 | Animated workflow alerts in V2: a notice with a visual bell jingle that opens into the full alert; two entrance styles tried in a dev-only lab, one ships | [#1553](https://github.com/microsoft/simplechat/issues/1553) | N1 | Not started |
+| P | Document provenance: hidden origin IDs on saved documents, a removable `workflow` tag, "Open the run / chat" links | [#1555](https://github.com/microsoft/simplechat/issues/1555) | — | Not started |
+| — | `#` references + document search in the orchestration question card | — | — | **Already done** (`7c355534f`). No new work; A1's Playwright run includes a regression check |
 
 Track A (AI-assist UX) is independent of the workflow phases. It fixes a live UX bug in the existing editors and can
 ship first, in parallel with Phase 1. Phases 3 and 4 can proceed in parallel after Phase 2. If Phase 3 ships first, the
@@ -399,6 +400,14 @@ Rules for the assistant:
   `.github/prompts/create-github-issue.prompt.md` with a duplicate search. Cross-link #1347, #1493, #949, #1082, #1509,
   and #1021, and link every issue to the roadmap doc.
 - **Done when** the roadmap doc is committed and the issues link to each other.
+- **Status: done.** The duplicate search found no existing issue. The umbrella
+  [#1543](https://github.com/microsoft/simplechat/issues/1543) has the 13 phase and track issues as sub-issues (numbers
+  in the status table), with GitHub blocked-by links that match the "Depends on" column. Every issue is labeled
+  `enhancement` plus its priority, assigned to `paullizer`, and on the Simple Chat Roadmap project as Pending
+  Evaluation. Priorities and sizes:
+  - P1: the umbrella (XL), Phases 1 (L), 2 (L), 3 (XL), 4 (XL), 5 (L), 6 (XL) and 7 (L), A1 (M), A2 (M) and N1 (M).
+    A2 is P1 because Phase 3 depends on it.
+  - P2: Phase 8 (XL), N2 (M) and P (L).
 
 ### Track A — AI-assist UX (independent; can ship first)
 
@@ -1059,7 +1068,7 @@ chat later (decision #11). Nothing stays connected, and closing the browser does
 
 ## 10. How to resume in a new conversation
 
-1. Open this document and the umbrella issue.
+1. Open this document and the umbrella issue, [#1543](https://github.com/microsoft/simplechat/issues/1543).
 2. Pick the first phase whose dependencies are done. Settle its open decisions (§9), then plan that phase alone.
 3. Use one branch or PR per phase. At the end of the phase, update the roadmap status table, the phase issue, the
    release notes, and the `config.py` version.
