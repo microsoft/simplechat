@@ -67,11 +67,16 @@ def _turn_context(record):
     return context
 
 
-def _chat_turn(role, content):
-    return {
+def _chat_turn(role, content, submission_id=None):
+    turn = {
         'role': role, 'content': content,
         'timestamp': datetime.now(timezone.utc).isoformat(),
     }
+    # The request's id travels with the turns it produced, so the editor can match the message
+    # it showed before the planner answered to the one stored here. Never shown to the planner.
+    if submission_id:
+        turn['submission_id'] = submission_id
+    return turn
 
 
 def _add_usage(context, usage):
@@ -310,6 +315,7 @@ def build_plan_edit_outcome(
     validate_memory_audience(conversation, user_id, context.get('memory_audience'))
     chat = deepcopy(record.get('edit_chat') or [])
     action = data['action']
+    submission_id = data.get('submission_id')
     contract_version = context['planner_contract_version']
     instruction = data.get('instruction', '')
     user_content = instruction
@@ -317,7 +323,9 @@ def build_plan_edit_outcome(
     if action == 'discard':
         return {
             'kind': 'discard',
-            'chat': [*chat, _chat_turn('assistant', 'The proposed change was cancelled. The current plan is unchanged.')],
+            'chat': [*chat, _chat_turn(
+                'assistant', 'The proposed change was cancelled. The current plan is unchanged.', submission_id,
+            )],
         }
     if action == 'restore':
         source = read_revision_run(data['source_run_id'], user_id, context['conversation_id'])
@@ -343,7 +351,7 @@ def build_plan_edit_outcome(
         return {
             'kind': 'plan', 'document': deepcopy(source['plan']),
             'turn_context': restored_context, 'origin': 'restore', 'instruction': note,
-            'chat': [*chat, _chat_turn('user', note), _chat_turn('assistant', note)],
+            'chat': [*chat, _chat_turn('user', note, submission_id), _chat_turn('assistant', note, submission_id)],
         }
     current_plan = deepcopy(record['plan'])
     if action == 'answer':
@@ -361,7 +369,9 @@ def build_plan_edit_outcome(
         if validated['action'] == 'cancel':
             return {
                 'kind': 'discard',
-                'chat': [*chat, _chat_turn('assistant', 'The proposed change was cancelled. The current plan is unchanged.')],
+                'chat': [*chat, _chat_turn(
+                    'assistant', 'The proposed change was cancelled. The current plan is unchanged.', submission_id,
+                )],
             }
         context['answered_questions'] = [
             *(context.get('answered_questions') or []),
@@ -499,14 +509,14 @@ def build_plan_edit_outcome(
         context.get('reasoning_adjustments'), current_plan.get('reasoning_adjustments'),
         document.get('reasoning_adjustments'),
     )
-    chat.append(_chat_turn('user', user_content))
+    chat.append(_chat_turn('user', user_content, submission_id))
     if kind == 'elicitation':
         document.update({
             'conversation_id': context['conversation_id'], 'turn_id': context['turn_id'],
         })
         return {
             'kind': kind, 'document': document, 'turn_context': context,
-            'chat': [*chat, _chat_turn('assistant', document['message'])],
+            'chat': [*chat, _chat_turn('assistant', document['message'], submission_id)],
             'pending': {
                 'elicitation': document, 'turn_context': context,
                 'instruction': instruction, 'base_plan': current_plan,
@@ -515,7 +525,7 @@ def build_plan_edit_outcome(
     if kind == 'message':
         return {
             'kind': kind, 'turn_context': context,
-            'chat': [*chat, _chat_turn('assistant', document['message'])],
+            'chat': [*chat, _chat_turn('assistant', document['message'], submission_id)],
         }
     context['resolved_message'] = document.pop('revised_request').strip()
     count = sum(step.get('enabled', True) for step in document['steps'])
@@ -525,5 +535,5 @@ def build_plan_edit_outcome(
     return {
         'kind': 'plan', 'document': document, 'turn_context': context,
         'instruction': instruction, 'origin': 'ai',
-        'chat': [*chat, _chat_turn('assistant', summary)],
+        'chat': [*chat, _chat_turn('assistant', summary, submission_id)],
     }

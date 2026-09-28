@@ -69,6 +69,7 @@ from functions_message_masking import (
 )
 from functions_message_block_revisions import (
     BLOCK_REVISIONS_METADATA_KEY,
+    MAX_CHAT_CONTENT_LENGTH as BLOCK_MAX_CHAT_CONTENT_LENGTH,
     ORIGIN_AI,
     ORIGIN_CONTROL,
     ORIGIN_MANUAL,
@@ -94,6 +95,7 @@ from functions_block_revision_assist import (
 # revisions, and the two vocabularies are deliberately separate.
 from functions_message_image_revisions import (
     IMAGE_REVISIONS_METADATA_KEY,
+    MAX_CHAT_CONTENT_LENGTH as IMAGE_MAX_CHAT_CONTENT_LENGTH,
     ORIGIN_AI as IMAGE_ORIGIN_AI,
     ORIGIN_CONTROL as IMAGE_ORIGIN_CONTROL,
     ORIGIN_PROMPT as IMAGE_ORIGIN_PROMPT,
@@ -105,11 +107,21 @@ from functions_message_image_revisions import (
     normalize_instruction as normalize_image_instruction,
     read_image_chat,
     read_image_revisions,
+    resolve_current_revision as resolve_current_image_revision,
     resolve_served_revision,
     serialize_image_revisions,
     set_current_image_revision,
 )
 from functions_image_edit import revise_image_message
+from functions_assist_submissions import (
+    SUBMISSION_CONFLICT,
+    SUBMISSION_CONFLICT_CODE,
+    SUBMISSION_CONFLICT_MESSAGE,
+    SUBMISSION_REPLAY,
+    SubmissionIdError,
+    classify_submission,
+    normalize_submission_id,
+)
 from functions_image_api_route import ImageGenerationError
 from functions_image_generation import image_generation_error_response
 from functions_ai_connections import AIConnectionError
@@ -1934,6 +1946,10 @@ def register_route_backend_collaboration(bp):
                 validate_source_hash(source_hash, required=True)
             except BlockRevisionError as exc:
                 return jsonify({'error': str(exc)}), 400
+            try:
+                submission_id = normalize_submission_id(data.get('submission_id'))
+            except SubmissionIdError as exc:
+                return jsonify({'error': str(exc)}), 400
 
             # What the block is called in anything the reader sees, so an error about a chart
             # does not tell them their diagram is broken.
@@ -1948,6 +1964,26 @@ def register_route_backend_collaboration(bp):
             if not current_source:
                 return jsonify({'error': f'The {block_noun} source is required'}), 400
 
+            # Checked only once participation is established, and only against this block's own
+            # sub-conversation. A retry of a request already answered is answered from what was
+            # stored: no second completion, no second revision and no second event for the room.
+            submission = classify_submission(
+                (entry or {}).get('chat'), submission_id, instruction, BLOCK_MAX_CHAT_CONTENT_LENGTH
+            )
+            if submission == SUBMISSION_CONFLICT:
+                return jsonify({
+                    'error': SUBMISSION_CONFLICT_MESSAGE,
+                    'code': SUBMISSION_CONFLICT_CODE,
+                }), 409
+            if submission == SUBMISSION_REPLAY:
+                return jsonify({
+                    'success': True,
+                    'message_id': message_id,
+                    'conversation_id': conversation_id,
+                    'source': current_source,
+                    'block_revisions': make_json_serializable(read_block_revisions(message_doc)),
+                    'replayed': True,
+                }), 200
             try:
                 result = request_block_edit(
                     get_settings(),
@@ -1983,10 +2019,12 @@ def register_route_backend_collaboration(bp):
                     expected_revision_count=_read_collaboration_expected_revision_count(data),
                 )
                 append_block_chat_turn(
-                    message_doc, block_kind, block_index, 'user', instruction, source_hash
+                    message_doc, block_kind, block_index, 'user', instruction, source_hash,
+                    submission_id=submission_id,
                 )
                 append_block_chat_turn(
-                    message_doc, block_kind, block_index, 'assistant', result['source'], source_hash
+                    message_doc, block_kind, block_index, 'assistant', result['source'], source_hash,
+                    submission_id=submission_id,
                 )
             except BlockRevisionConflictError as exc:
                 return jsonify({
@@ -2051,6 +2089,45 @@ def register_route_backend_collaboration(bp):
                 current_user['user_id'], conversation_id, message_id
             )
             source_doc = loaded['source']
+            try:
+                submission_id = normalize_submission_id(data.get('submission_id'))
+            except SubmissionIdError as exc:
+                return jsonify({'error': str(exc)}), 400
+
+            # Only an instruction produces transcript turns to carry the id, so only an
+            # instruction can be recognised as a retry of a request that was already answered.
+            # Checked against the source image's own transcript, once participation is known.
+            revision_origin = data.get('origin') or IMAGE_ORIGIN_AI
+            if revision_origin != IMAGE_ORIGIN_AI:
+                submission_id = None
+            stored_entry = read_image_revisions(source_doc)
+            submission = classify_submission(
+                stored_entry.get('chat'),
+                submission_id,
+                data.get('instruction'),
+                IMAGE_MAX_CHAT_CONTENT_LENGTH,
+            )
+            if submission == SUBMISSION_CONFLICT:
+                return jsonify({
+                    'error': SUBMISSION_CONFLICT_MESSAGE,
+                    'code': SUBMISSION_CONFLICT_CODE,
+                }), 409
+            if submission == SUBMISSION_REPLAY:
+                current_revision = resolve_current_image_revision(stored_entry) or {}
+                return jsonify({
+                    'success': True,
+                    'message_id': message_id,
+                    'conversation_id': conversation_id,
+                    'method': current_revision.get('method') or '',
+                    'model_deployment_name': current_revision.get('model') or '',
+                    'image_url': build_collaboration_image_url(
+                        conversation_id, message_id, loaded['message']
+                    ),
+                    'image_revisions': make_json_serializable(
+                        serialize_image_revisions(stored_entry)
+                    ),
+                    'replayed': True,
+                }), 200
 
             try:
                 result = revise_image_message(
@@ -2061,7 +2138,7 @@ def register_route_backend_collaboration(bp):
                     owner_user_id=str(source_doc.get('user_id') or '').strip(),
                     conversation_id=loaded['source_conversation_id'],
                     complete_content=loaded['content'],
-                    origin=data.get('origin') or IMAGE_ORIGIN_AI,
+                    origin=revision_origin,
                     operation=data.get('operation', ''),
                     instruction=data.get('instruction') or '',
                     prompt=data.get('prompt') or '',
@@ -2105,8 +2182,12 @@ def register_route_backend_collaboration(bp):
 
             if result['instruction']:
                 try:
-                    append_image_chat_turn(source_doc, 'user', result['instruction'])
-                    append_image_chat_turn(source_doc, 'assistant', result['prompt'])
+                    append_image_chat_turn(
+                        source_doc, 'user', result['instruction'], submission_id=submission_id
+                    )
+                    append_image_chat_turn(
+                        source_doc, 'assistant', result['prompt'], submission_id=submission_id
+                    )
                 except ImageRevisionError:
                     pass
 

@@ -397,6 +397,8 @@ def _bounded_chat(chat):
             'role': entry['role'],
             'content': entry['content'][:EDIT_CHAT_CONTENT_LIMIT],
             'timestamp': entry['timestamp'][:64] if isinstance(entry.get('timestamp'), str) else _now().isoformat(),
+            # Kept so the editor can match a message it showed before the planner answered.
+            **({'submission_id': entry['submission_id']} if _valid_id(entry.get('submission_id')) else {}),
         }
         for entry in chat
         if isinstance(entry, dict) and entry.get('role') in ('user', 'assistant')
