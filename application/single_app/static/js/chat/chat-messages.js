@@ -106,6 +106,38 @@ const DEFAULT_DOCUMENT_ACTION_CAPABILITIES = {
   },
 };
 
+function getMarkdownRenderer() {
+  const purifier = globalThis.DOMPurify;
+  const markdown = globalThis.marked;
+  if (!purifier || typeof purifier.sanitize !== 'function') {
+    return null;
+  }
+  if (!markdown || typeof markdown.parse !== 'function') {
+    return null;
+  }
+  return { purifier, markdown };
+}
+
+function renderMarkdownSafely(markdownText, options = {}) {
+  const text = String(markdownText || '');
+  const renderer = getMarkdownRenderer();
+  if (!renderer) {
+    return escapeHtml(text);
+  }
+
+  const markdownInput = options.escapeInput ? escapeHtml(text) : text;
+  return renderer.purifier.sanitize(renderer.markdown.parse(markdownInput));
+}
+
+function sanitizeHtmlSafely(htmlText) {
+  const html = String(htmlText || '');
+  const purifier = globalThis.DOMPurify;
+  if (!purifier || typeof purifier.sanitize !== 'function') {
+    return escapeHtml(html);
+  }
+  return purifier.sanitize(html);
+}
+
 function getChatWorkspaceProgressValue(value) {
   const numericValue = Number(value);
   if (!Number.isFinite(numericValue)) {
@@ -2795,7 +2827,7 @@ function renderReplyQuoteHtml(fullMessageObject = null) {
     const withMarkdownTables = convertUnicodeTableToMarkdown(withUnwrappedTables);
     const withPSVTables = convertPSVCodeBlockToMarkdown(withMarkdownTables);
     const withASCIITables = convertASCIIDashTableToMarkdown(withPSVTables);
-    const sanitizedHtml = DOMPurify.sanitize(marked.parse(withASCIITables));
+    const sanitizedHtml = renderMarkdownSafely(withASCIITables);
     const htmlWithCharts = injectInlineChartHtml(sanitizedHtml, chartExtraction.blocks);
     const htmlWithImageProposals = injectInlineImageProposalHtml(htmlWithCharts, imageProposalExtraction.blocks);
     const copyMarkdown = restoreInlineChartTokens(
@@ -4198,9 +4230,9 @@ function renderReplyQuoteHtml(fullMessageObject = null) {
       return previewBlock;
     }
 
-    const sanitizedHtml = DOMPurify.sanitize(marked.parse(normalizedPreviewText));
+    const sanitizedHtml = renderMarkdownSafely(normalizedPreviewText);
     const linkedHtml = addTargetBlankToExternalLinks(sanitizedHtml);
-    previewBlock.innerHTML = DOMPurify.sanitize(linkedHtml);
+    previewBlock.innerHTML = sanitizeHtmlSafely(linkedHtml);
     return previewBlock;
   }
 
@@ -6284,9 +6316,7 @@ export function appendMessage(
       }
 
       const renderedMessageContent = stripMentionTextFromMessageContent(messageContent, fullMessageObject);
-      const sanitizedUserHtml = DOMPurify.sanitize(
-        marked.parse(escapeHtml(renderedMessageContent))
-      );
+      const sanitizedUserHtml = renderMarkdownSafely(renderedMessageContent, { escapeInput: true });
       messageContentHtml = addTargetBlankToExternalLinks(sanitizedUserHtml);
     } else if (sender === "Collaborator") {
       messageClass = "collaborator-message";
@@ -6296,9 +6326,7 @@ export function appendMessage(
       avatarAltText = `${senderLabel} Avatar`;
       avatarHtml = createCollaboratorAvatarHtml(fullMessageObject, senderLabel);
       const renderedMessageContent = stripMentionTextFromMessageContent(messageContent, fullMessageObject);
-      const sanitizedCollaboratorHtml = DOMPurify.sanitize(
-        marked.parse(escapeHtml(renderedMessageContent))
-      );
+      const sanitizedCollaboratorHtml = renderMarkdownSafely(renderedMessageContent, { escapeInput: true });
       messageContentHtml = addTargetBlankToExternalLinks(sanitizedCollaboratorHtml);
     } else if (sender === "File") {
       messageClass = "file-message";
@@ -6367,9 +6395,7 @@ export function appendMessage(
       avatarAltText = "Content Safety Avatar";
       avatarImg = "/static/images/alert.png";
       const linkToViolations = `<br><small><a href="/safety_violations" target="_blank" rel="noopener" style="font-size: 0.85em; color: #6c757d;">View My Safety Violations</a></small>`;
-      const sanitizedSafetyHtml = DOMPurify.sanitize(
-        marked.parse(messageContent + linkToViolations)
-      );
+      const sanitizedSafetyHtml = renderMarkdownSafely(messageContent + linkToViolations);
       messageContentHtml = addTargetBlankToExternalLinks(sanitizedSafetyHtml);
     } else if (sender === "Error") {
       messageClass = "error-message";

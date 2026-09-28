@@ -962,7 +962,7 @@ export function createConversationItem(convo) {
   }
   convoItem.dataset.hasUnreadAssistantResponse = convo.has_unread_assistant_response ? "true" : "false";
   const isCollaborativeConversation = convo.conversation_kind === 'collaborative';
-  const conversationChatType = convo.chat_type === 'personal' ? 'personal_single_user' : convo.chat_type;
+  const conversationChatType = ['personal', 'new'].includes(convo.chat_type) ? 'personal_single_user' : convo.chat_type;
   const canManageMembers = isCollaborativeConversation
     ? Boolean(convo.can_manage_members)
     : ['personal_single_user', 'group-single-user'].includes(conversationChatType || '');
@@ -995,7 +995,7 @@ export function createConversationItem(convo) {
   // Use the actual chat_type from conversation metadata if available
   console.log(`createConversationItem: Processing conversation ${convo.id}, chat_type="${convo.chat_type}"`);
   
-  const normalizedChatType = convo.chat_type === 'personal' ? 'personal_single_user' : convo.chat_type;
+  const normalizedChatType = ['personal', 'new'].includes(convo.chat_type) ? 'personal_single_user' : convo.chat_type;
   if (normalizedChatType) {
     convoItem.setAttribute("data-chat-type", normalizedChatType);
     console.log(`createConversationItem: Set data-chat-type to "${normalizedChatType}"`);
