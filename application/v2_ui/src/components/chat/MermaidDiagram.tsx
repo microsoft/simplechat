@@ -13,7 +13,7 @@
 // on purpose: it writes diagram markup to the DOM, and keeping every such sink in one reviewed
 // file is what test_v2_rich_rendering.py's sanitizer boundary check is protecting.
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import {
     ChevronDown,
     Copy,
@@ -540,20 +540,23 @@ export function MermaidDiagram({
         [messageId, blockIndex, shownSource, background],
     );
 
-    if (state.status === 'error') {
-        return <DiagramSource source={shownSource.trim()} reason={state.reason} />;
-    }
+    const title = shownSource.trim().split('\n', 1)[0] || 'Diagram';
 
-    if (state.status === 'pending') {
-        return (
+    // One fragment in every state, with the editor always in the same place, so a re-render
+    // cannot unmount it. An AI edit or a restore changes the source, which then renders behind
+    // a placeholder. Returned early, that placeholder replaced the editor as well, closing it
+    // and its Ask AI thread just as the reply arrived.
+    let body: ReactNode;
+    if (state.status === 'error') {
+        body = <DiagramSource source={shownSource.trim()} reason={state.reason} />;
+    } else if (state.status === 'pending') {
+        body = (
             <div className="my-3 flex h-24 items-center justify-center rounded-xl bg-surface-sunken text-xs text-text-3">
                 Rendering diagram…
             </div>
         );
-    }
-
-    return (
-        <>
+    } else {
+        body = (
             <figure
                 ref={containerRef}
                 // A definite width, so the diagram sizes the panel instead of the panel sizing
@@ -649,14 +652,20 @@ export function MermaidDiagram({
                     <p className="px-3 pb-2 text-right text-[11px] text-danger">{downloadError}</p>
                 )}
             </figure>
+        );
+    }
+
+    return (
+        <>
+            {body}
 
             {/* Outside the figure, which clips its overflow and would otherwise be an odd place
                 to nest a dialog. */}
-            {expanded && (
+            {expanded && state.status === 'ready' && (
                 <DiagramLightbox
                     svg={state.svg}
                     size={size}
-                    title={shownSource.trim().split('\n', 1)[0] || 'Diagram'}
+                    title={title}
                     background={styled ? background : undefined}
                     onDownload={(element) => void downloadPng(element)}
                     onClose={() => setExpanded(false)}
@@ -665,7 +674,7 @@ export function MermaidDiagram({
 
             {editing && (
                 <DiagramEditor
-                    title={shownSource.trim().split('\n', 1)[0] || 'Diagram'}
+                    title={title}
                     currentSource={shownSource}
                     revisions={revisions.revisions}
                     currentIndex={revisions.currentIndex}
