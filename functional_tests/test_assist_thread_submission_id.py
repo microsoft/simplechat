@@ -1,8 +1,8 @@
 # test_assist_thread_submission_id.py
 """
 Functional test for client submission ids on the scoped AI assist threads.
-Version: 0.261.195
-Implemented in: 0.261.195
+Version: 0.261.196
+Implemented in: 0.261.196
 Refs: microsoft/simplechat#1552
 
 This test ensures that the personal and shared diagram, chart and image assist routes accept an
@@ -689,7 +689,7 @@ class SharedImageRevisionRouteTests(ImageRevisionContract, RouteHarness):
 
 class SubmissionHelperTests(unittest.TestCase):
     def test_application_version(self):
-        assert_app_version_at_least('0.261.195')
+        assert_app_version_at_least('0.261.196')
 
     def test_ids_the_editors_mint_are_accepted(self):
         for value in (str(uuid.uuid4()), 'turn-1767225600000-k3j9x2', 'a' * 128, 'plan.edit:1_2-3'):

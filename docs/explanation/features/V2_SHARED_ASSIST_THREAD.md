@@ -1,6 +1,6 @@
 # V2 Shared Assist Thread
 
-Implemented in version: **0.261.195**.
+Implemented in version: **0.261.196**.
 
 Application version tracking: `application\single_app\config.py`.
 

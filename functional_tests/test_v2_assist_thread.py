@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
 Functional test for the shared AI-assist thread in the V2 revision editors.
-Version: 0.261.195
-Implemented in: 0.261.195
+Version: 0.261.196
+Implemented in: 0.261.196
 
 This test ensures the diagram, chart, image and plan editors share one assist thread that
 moves a sent message into the conversation at once, clears the input, and shows a pending
@@ -33,7 +33,7 @@ sys.path.insert(0, str(APP_DIR))
 
 from test_support.versioning import assert_app_version_at_least  # noqa: E402
 
-IMPLEMENTED_IN = "0.261.195"
+IMPLEMENTED_IN = "0.261.196"
 
 CHAT_COMPONENTS = V2_SRC / "components" / "chat"
 THREAD_TSX = CHAT_COMPONENTS / "AssistThread.tsx"

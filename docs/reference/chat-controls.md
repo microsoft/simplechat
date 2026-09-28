@@ -4,7 +4,7 @@ title: "Chat interface controls"
 description: "Reference for every documented control in the SimpleChat chat interface."
 section: "Reference"
 audience: user
-version: "0.261.195"
+version: "0.261.196"
 ---
 
 ## How to use this reference
@@ -156,7 +156,7 @@ are offered to planned image steps instead of being sent directly.
 
 ## Ask AI in editors (V2 interface)
 
-From version **0.261.195**, the **Ask AI** tab of the diagram, chart and image editors and the
+From version **0.261.196**, the **Ask AI** tab of the diagram, chart and image editors and the
 **Ask planner** tab of the plan editor share one conversation thread. Your message joins it the
 moment you send it, so you can see the request running instead of waiting on a full input box.
 These controls exist only in the V2 interface, so they are not part of the generated inventory

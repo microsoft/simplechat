@@ -1,8 +1,8 @@
 # test_v2_assist_thread.py
 """
 Browser tests for the shared AI-assist thread in the diagram and chart editors.
-Version: 0.261.195
-Implemented in: 0.261.195
+Version: 0.261.196
+Implemented in: 0.261.196
 
 This test ensures that a request sent from a diagram or chart editor's Ask AI tab joins the
 thread and clears the input at once, can be cancelled, retried, or edited and resent, is refused
@@ -364,7 +364,7 @@ def mount(api, *, shared=False, component="MessageList"):
             const H = window.OrchHarness;
             H.reset();
             H.stores.bootstrap.useBootstrapStore.setState({ data: {
-                version: '0.261.195',
+                version: '0.261.196',
                 user: { id: 'assist-tester', display_name: 'Assist Tester', roles: [] },
                 features: { enable_user_workspace: true, enable_chat_file_uploads: true },
                 settings: { max_file_size_mb: 25 },

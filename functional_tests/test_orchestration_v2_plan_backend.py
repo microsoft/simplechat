@@ -1,10 +1,10 @@
 # test_orchestration_v2_plan_backend.py
 """Saved plan editing, restoration, and private admission-context persistence.
 
-Version: 0.261.195
+Version: 0.261.196
 Implemented in: 0.261.127
 Single orchestration contract updated in: 0.261.139
-Submission ids kept out of the planner prompt: 0.261.195
+Submission ids kept out of the planner prompt: 0.261.196
 Refs: microsoft/simplechat#1509, microsoft/simplechat#1552
 
 Exercise the real planner/compiler, revision/run stores, immutable result readers,

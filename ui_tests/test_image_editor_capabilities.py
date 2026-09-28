@@ -1,9 +1,9 @@
 # test_image_editor_capabilities.py
 """
 Image editor operation, capability refresh, responsive and accessibility UI regression tests.
-Version: 0.261.195
+Version: 0.261.196
 Implemented in: 0.261.107
-Shared assist thread covered in: 0.261.195
+Shared assist thread covered in: 0.261.196
 
 Use the real source components and the shared local/Azure Playwright connection fixture.
 All image requests are fulfilled in memory, including personal and collaborative revisions.

@@ -1,9 +1,9 @@
 # image_editor.py
 """
 Source-backed, isolated image editor browser fixture.
-Version: 0.261.195
+Version: 0.261.196
 Implemented in: 0.261.107
-Held responses and stored assist turns added in: 0.261.195
+Held responses and stored assist turns added in: 0.261.196
 
 Compile the production component, hooks, store and theme in memory with the installed
 V2 toolchain. Never read or replace checked-in static bundles. All browser requests are

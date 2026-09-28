@@ -336,7 +336,7 @@ The editor opens with the image on one side and four tabs on the other:
   selection tools: a box, a freehand brush with three sizes, and a nine-region grid for keyboard
   use, plus undo and clear. The selected proportion of the image is reported, together with the
   reminder that areas outside it can still shift. Enter submits; Shift+Enter adds a line. From
-  0.261.195 the message joins the thread as soon as it is sent, with Cancel, Retry and a character
+  0.261.196 the message joins the thread as soon as it is sent, with Cancel, Retry and a character
   counter, and the thread keeps this visit's exchanges; see
   [V2 Shared Assist Thread](V2_SHARED_ASSIST_THREAD.md).
 - **Prompt** — the prompt behind the version showing, editable. Rebuilding from it produces a
