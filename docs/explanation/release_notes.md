@@ -22,6 +22,96 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
     *   Alert and File Sync settings are now authored fields: they apply, follow Undo and Redo, and are covered by Revert and Restore to here. Identity, scope, revision and runtime fields are still refused.
     *   (Ref: `WorkflowAuthoringHistory.tsx`, `WORKFLOW_AUTHORED_FIELDS`, [Structured Workflow Alert And File Sync Edits Fix](fixes/STRUCTURED_WORKFLOW_ALERT_FILE_SYNC_EDITS_FIX.md))
 
+### **(v0.261.202)**
+
+#### New Features
+
+*   **Workflow Draft Service For Workflows Proposed From Chat**
+    *   Chat orchestration can now check a proposed workflow exactly as saving it would, without writing anything: no workflow, conversation or notification, and no blob, Key Vault or Microsoft 365 call. The check needs no web request, so orchestration can run it in the background.
+    *   A proposed workflow is a small, closed blueprint: a name, a manual, calendar, interval or File Sync trigger, one to five tasks, alert preferences and a Run as choice. It can't name endpoints, URLs, models, secrets or document ids. Documents, agents and File Sync sources are handles that the server has already chosen for the user, and each is authorized for that user.
+    *   The same blueprint always builds the same workflow. Its results reach the notification bell and never pop up. File Sync workflows wait for the sync and continue only when documents changed. Tasks use the default model unless they name an agent the user can use.
+    *   A refusal carries a stable code, such as `cadence_below_minimum`, `agent_unavailable` or `reference_unknown`, a short message that never repeats the input, and the JSON path to fix, so a model can repair its proposal.
+    *   Accepting a proposal creates its workflow once, paused, even if it's accepted twice. The workflow records where it came from in a server-only `origin` that saves can't set or change, and that notes when the owner first edits the workflow. `origin` isn't part of the Microsoft 365 Run as fingerprint, so it never invalidates an approval.
+    *   Personal and group saves behave exactly as before. The save functions now build a workflow, then store it.
+    *   There's no new screen yet. The V2 workflow assistant (#1548) and orchestration's workflow proposals (#1547) will use the service.
+    *   (Ref: #1545, #1543, `functions_workflow_drafts.py`, `functions_personal_workflows.py`, `functions_group_workflows.py`, `functions_workflow_definitions.py`, `functions_workflow_definition_store.py`, [Workflow draft service](features/WORKFLOW_DRAFT_SERVICE.md))
+
+*   **Limits For Workflows Created From Chat**
+    *   **Admin Settings > Orchestration > Chat Orchestration > Limits** adds **Workflows Created From Chat Per User**, from 1 to 100 with a default of 20, and **Minimum Schedule Interval For Workflows Created From Chat (seconds)**, from 60 to 86,400 with a default of 3,600 (hourly), in the classic and V2 admin pages.
+    *   The larger of this minimum and **Workflow Minimum Schedule Interval** applies. Calendar schedules always pass. Both limits are checked when a workflow is created from chat; workflows users build themselves are unaffected.
+    *   (Ref: `functions_workflow_limits.py`, `functions_settings.py`, `admin_settings_fields.py`, `route_frontend_admin_settings.py`, `templates/admin/_panes/chat-orchestration.html`, [Orchestration settings](../admin/orchestration.md))
+
+*   **Calendar Workflow Runs Know The Local Date And Time**
+    *   Each run of a workflow with a calendar schedule now tells the model when it started, in the schedule's time zone, for example "Current date and time: Monday, 28 September 2026, 09:00 (America/New_York)". Instructions such as "list this week's to-dos" now mean the week of the run.
+    *   Scheduled runs, catch-up runs and **Run now** all include it, and so does every task of a multi-task workflow. It's never stored in the workflow or its fingerprint.
+    *   Workflows that run by hand or at a fixed interval keep exactly the prompts they had.
+    *   (Ref: `workflow_run_time_context`, `functions_workflow_schedules.py`, `functions_workflow_runner.py`, [Create a workflow](../guides/create-a-workflow.md))
+
+#### Bug Fixes
+
+*   **V2 Editor Keeps A Schedule It Can't Show**
+    *   The V2 editor used to put a schedule of its own in place of a stored one it had no fields for, which only a newer server, a direct write or a record saved before a rule existed can leave. A schedule of another kind showed as every 15 minutes, an unknown calendar frequency such as `fortnightly` as daily, and an unknown interval unit as minutes, so `{unit: 'days', value: 2}` became every 2 minutes. A unit stored as `HOURS` became minutes too, and a value it couldn't read became 15. Saving the workflow for any reason, such as editing its description, stored the substitute.
+    *   Now a workflow opens read-only, says why, and keeps its schedule exactly as stored when the editor can't show that schedule exactly: an unknown kind, frequency, unit or weekly day, a `seconds` or `minutes` unit stored other than exactly (the scheduler runs those as hours), or an interval value that isn't a whole number.
+    *   Only what the server's save canonicalizes changes on save, such as `HOURS` becoming `hours`. A whole-number value the save refuses, such as 0 minutes, is shown as stored and named by validation, which blocks the save until it's corrected. Manual workflows, which don't use a schedule, stay editable.
+    *   (Ref: `workflowScheduleForEditor`, `workflowScheduleSupported`, `normalizeWorkflowSchedule`, `normalizeWorkflowDefinition`, `WorkflowScheduleFields.tsx`, [V2 workflow unsupported schedule fix](fixes/V2_WORKFLOW_UNSUPPORTED_SCHEDULE_FIX.md))
+
+#### User Interface Enhancements
+
+*   **Schedule Trigger In The V2 Workflow Editor**
+    *   The V2 workflow editor's **Trigger** option for scheduled workflows is now **Schedule** instead of **Interval**, because it offers calendar schedules as well as fixed intervals. Workflows are stored exactly as before, and the classic editor keeps **Interval Schedule**.
+    *   (Ref: `WorkflowEditorDialog.tsx`, [Create a workflow](../guides/create-a-workflow.md), [Trigger a workflow](../guides/trigger-a-workflow.md))
+
+### **(v0.261.201)**
+
+#### New Features
+
+*   **`#` Documents And Tags In The Plan Editor's Ask Planner**
+    *   **Ask planner** in the V2 plan editor now offers `#` documents and tags and **Add context**, like the main composer. Type `#` and part of a name, or browse, and the pick becomes a chip. The request carries the chips you leave, and your turn in the thread shows them afterwards.
+    *   The server checks every pick for you when the request arrives. Only documents and tags you can read now are accepted: in your personal workspace, in groups you belong to and in public workspaces you can see, from workspace types that are turned on, and within a scope-locked conversation's workspaces. A document must also have finished processing. At most 20 go with one request, and a plan can gather at most 100.
+    *   Accepted picks are added to that revision's plan inputs, as question-card answers are. The planner sees them as selected, a document search that names no documents of its own searches them, and tags filter that search. If the plan searched everything you can read before, the planner's reply says its searches are now limited to what you attached. The plan's existing sources stay available.
+    *   A pick that can't be used, because it was deleted, is unready, is no longer readable by you or its workspace was turned off, fails the request before the planner runs, with a message that names it by the label you picked. The plan and its chat don't change, and **Edit and resend** brings back your text and chips.
+    *   Picks are part of the request's identity. A retry of the same request is answered from what was stored and never merges them twice, and the same submission id with different picks is refused with 409 `submission_conflict`. Uploads, `/` saved prompts, `@` mentions and whole workspaces aren't offered here, and the diagram, chart and image editors, the main composer and the question card are unchanged.
+    *   (Ref: #1556, #1543, `functions_assist_references.py`, `functions_orchestration_plan_editing.py` `resolve_plan_edit_references`, `functions_orchestration_plan_revisions.py`, `route_backend_orchestration.py`, `planReferences.ts`, `OrchestrationPlanEditor.tsx`, `AssistThread.tsx`, [V2 Shared Assist Thread](features/V2_SHARED_ASSIST_THREAD.md), [Chat interface controls](../reference/chat-controls.md), [Review and edit orchestration plans](../guides/review-and-edit-orchestration-plans.md))
+
+*   **Workspace Reference Authorizer Without A Conversation**
+    *   `resolve_scope_references` authorizes `#` document and tag references for a user with no conversation and no request state, so AI-assist inputs outside the chat, such as the plan editor now and the workflow assistant later, can share it. It refuses chat attachments, whole workspaces and the chat scope, keeps the question card's readiness checks and count bound, reads no document text, and reports a refusal by the label the user picked and a reason code, never by a title read from the server.
+    *   The question card's own check now runs on the same core. A golden test captured from the previous code holds its results and messages unchanged.
+    *   (Ref: `functions_orchestration_context.py` `resolve_scope_references`, `resolve_elicitation_references`, `functional_tests/test_orchestration_reference_authorizer_golden.py`, `functional_tests/test_orchestration_scope_reference_authorizer.py`)
+
+### **(v0.261.200)**
+
+#### New Features
+
+*   **Shared AI Assist Thread In The V2 Editors**
+    *   The **Ask AI** tab of the diagram, chart and image editors and the **Ask planner** tab of the plan editor now share one conversation thread. Your message joins it the moment you send it and the input clears, instead of both waiting for the server's answer.
+    *   While a request runs, its reply shows **Working…** with the seconds elapsed and a **Cancel** button. A failed or cancelled request stays in the thread with its error, **Retry** and **Edit and resend**, which puts your text back in the input.
+    *   Cancel in the plan editor discards the pending change on the server. In the other editors it stops waiting; if the server finishes the change anyway, the editor recognises it as yours and shows the latest version rather than reporting a conflict.
+    *   The image editor keeps a transcript of this visit's changes, held on the page only and never saved. **Create image from reference** keeps a separate one.
+    *   A thread lives outside its editor, so closing and reopening the editor keeps a running request and any unsent text.
+    *   (Ref: #1552, #1543, `AssistThread.tsx`, `assistThread.ts`, `assistThreadStore.ts`, `assistLimits.ts`, `DiagramEditor.tsx`, `ChartEditor.tsx`, `ImageEditor.tsx`, `OrchestrationPlanEditor.tsx`, [V2 Shared Assist Thread](features/V2_SHARED_ASSIST_THREAD.md))
+
+*   **Client Submission Ids For Assist Requests**
+    *   The diagram, chart and image assist routes, personal and shared, accept an optional `submission_id` and store it on both turns of the exchange. A request without one behaves exactly as before.
+    *   A retry whose id is already stored is answered from what was stored, with `"replayed": true`, without calling the model, writing a second revision or notifying a shared conversation twice. The same id sent with a different instruction is refused with 409 `submission_conflict`, and a malformed id with 400.
+    *   Stored ids let the editor match the message it showed early to the stored turn, so a shared conversation's live update arriving before your reply doesn't show the message twice. Ids are never shown to the model.
+    *   A retry sent while the request it repeats is still running is checked again after the model answers: the image routes check the copy they read after the call, and the personal diagram and chart route checks when its write loses to the first request's. The retry is then replayed or refused rather than storing a second version. An image conflict found after the model call returns the versions that won, and a personal diagram or chart write lost to another change returns 409 with the current revisions instead of a 500 when an id was sent.
+    *   The plan edit route holds its existing `submission_id` to the same format and stores it on the plan's edit chat turns. Because it holds an id to the first request it saw, the plan editor's **Retry** reuses an id only for the identical request, and sends a fresh one after Cancel or a step change instead of being refused for good.
+    *   (Ref: `functions_assist_submissions.py`, `functions_image_edit.py`, `functions_message_block_revisions.py`, `functions_message_image_revisions.py`, `functions_orchestration_plan_editing.py`, `functions_orchestration_plan_revisions.py`, `route_backend_chats.py`, `route_backend_collaboration.py`, `route_backend_orchestration.py`, `planSubmissionIds.ts`, `orchestrationController.ts`)
+
+#### Bug Fixes
+
+*   **Diagram And Chart Editors Closing On Their Own**
+    *   An open diagram or chart editor closed whenever its message changed, for example when a revision was saved. The message's masks were re-parsed on every change, which remounted each diagram and chart, and a diagram returned a different element tree while it re-rendered. Both now keep the editor mounted, so it stays open until you close it.
+    *   (Ref: `AssistantMarkdown.tsx`, `MermaidDiagram.tsx`)
+
+#### User Interface Enhancements
+
+*   **Keyboard, Limits And Announcements In Assist Inputs**
+    *   Enter sends and Shift+Enter adds a line in all four editors, with Ctrl+Enter and ⌘+Enter kept as aliases. The plan editor previously sent only with Ctrl+Enter or ⌘+Enter.
+    *   A counter shows the length against the 2,000-character limit and says how much to remove past it. Over-limit text is refused rather than silently cut off, as the old inputs' `maxLength` did.
+    *   The thread is announced politely to screen readers as a log. The assist inputs reuse the main composer's editor in a restricted mode without uploads, `/` saved prompts or `@` mentions.
+    *   (Ref: `ComposerEditor.tsx` `restricted`, `AssistThread.tsx`, [Chat interface controls](../reference/chat-controls.md))
+
 ### **(v0.261.199)**
 
 #### New Features

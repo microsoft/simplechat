@@ -13,13 +13,10 @@ import {
     WORKFLOW_FILE_SYNC_CONTINUE_MODES,
     WORKFLOW_FILE_SYNC_MAX_SOURCES,
     WORKFLOW_FILE_SYNC_WAIT_MODES,
-    WORKFLOW_SCHEDULE_DAYS,
-    WORKFLOW_SCHEDULE_FREQUENCIES,
-    WORKFLOW_SCHEDULE_UNITS,
+    workflowScheduleForEditor,
+    workflowScheduleSupported,
     workflowSettingsErrors,
     type WorkflowSchedule,
-    type WorkflowScheduleFrequency,
-    type WorkflowScheduleUnit,
 } from './workflowSettings';
 import {
     analyzeWorkflowFlow,
@@ -132,7 +129,9 @@ export interface WorkflowScheduleOptions {
 export {
     formatWorkflowScheduleDuration,
     isWorkflowCalendarSchedule,
+    workflowScheduleForEditor,
     workflowScheduleLabel,
+    workflowScheduleSupported,
     WORKFLOW_SCHEDULE_DAYS,
     WORKFLOW_SCHEDULE_FREQUENCIES,
 } from './workflowSettings';
@@ -862,37 +861,19 @@ export function newWorkflowDefinition(scope: WorkflowScope): WorkflowDefinition 
     };
 }
 
+export const WORKFLOW_UNSUPPORTED_SCHEDULE_REASON =
+    'This workflow uses a schedule this editor does not support. Its original schedule has been retained and editing is disabled.';
+
 /**
- * A stored or drafted schedule in the editor's shape. An interval schedule stays `{unit, value}`.
- * A calendar schedule keeps its time and time zone text as stored, so validation can name a bad
- * value instead of replacing it, and carries days only when weekly and a day of the month only
- * when monthly, which is the shape the server stores.
+ * A stored or drafted schedule in the editor's shape, read as `workflowScheduleForEditor` reads it.
+ * An interval schedule stays `{unit, value}`. A calendar schedule keeps its time and time zone text
+ * as stored, so validation can name a bad value instead of replacing it, and carries days only when
+ * weekly and a day of the month only when monthly, which is the shape the server stores. Only a
+ * schedule the editor can't show exactly falls back to the new-draft default; a scheduled workflow
+ * never reaches it, because `normalizeWorkflowDefinition` keeps such a schedule verbatim, read-only.
  */
 export function normalizeWorkflowSchedule(value: unknown): WorkflowSchedule {
-    const schedule = isRecord(value) ? value : {};
-    if (text(schedule.kind).trim().toLowerCase() === 'calendar') {
-        const stored = text(schedule.frequency).trim().toLowerCase();
-        const frequency = (WORKFLOW_SCHEDULE_FREQUENCIES as readonly string[]).includes(stored)
-            ? stored as WorkflowScheduleFrequency : 'daily';
-        const days = new Set((Array.isArray(schedule.days_of_week) ? schedule.days_of_week : [])
-            .map((day) => text(day).trim().toLowerCase()));
-        const dayOfMonth = schedule.day_of_month;
-        return {
-            kind: 'calendar',
-            frequency,
-            days_of_week: frequency === 'weekly' ? WORKFLOW_SCHEDULE_DAYS.filter((day) => days.has(day)) : [],
-            day_of_month: frequency === 'monthly' && typeof dayOfMonth === 'number' && Number.isInteger(dayOfMonth)
-                ? dayOfMonth : null,
-            time_of_day: text(schedule.time_of_day).trim(),
-            timezone: text(schedule.timezone).trim(),
-        };
-    }
-    return {
-        unit: (WORKFLOW_SCHEDULE_UNITS as readonly string[]).includes(String(schedule.unit))
-            ? schedule.unit as WorkflowScheduleUnit
-            : 'minutes',
-        value: numberInRange(schedule.value, 15, 1, 999999),
-    };
+    return workflowScheduleForEditor(value) ?? { unit: 'minutes', value: 15 };
 }
 
 function normalizeRunner(value: unknown, structured = false): WorkflowTaskRunner {
@@ -1108,6 +1089,18 @@ export function normalizeWorkflowDefinition(
             scope_id: text(entry.scope_id) || (scope.type === 'group' && entry.scope_type === 'group' ? scope.groupId : ''),
         }))
         .filter((entry) => entry.document_id);
+    // A scheduled workflow whose stored schedule this editor can't show exactly (a kind, unit,
+    // frequency or weekly day it doesn't define, a seconds or minutes unit stored other than
+    // exactly, or an interval value that isn't a whole number) keeps that schedule exactly as
+    // stored and opens read-only, so no save can replace it. A manual workflow does not use its
+    // schedule, and the server stores none for it.
+    const unsupportedSchedule = trigger !== 'manual' && !workflowScheduleSupported(record.schedule);
+    const readonlyReason = record.definition_version === 3 && tasks.some((task) =>
+        Object.hasOwn(task, 'unrecognized_inputs') || Object.hasOwn(task, 'unrecognized_configuration'))
+        ? 'This workflow contains task configuration or bindings from an unsupported schema. Its original configuration has been retained and editing is disabled.'
+        : unsupportedSchedule
+            ? WORKFLOW_UNSUPPORTED_SCHEDULE_REASON
+            : '';
     return {
         ...record,
         definition_version: numberInRange(record.definition_version, 2, 1, 999),
@@ -1122,7 +1115,9 @@ export function normalizeWorkflowDefinition(
         m365_run_as_user_id: text(record.m365_run_as_user_id),
         chat_capabilities_enabled: record.chat_capabilities_enabled === true,
         trigger_type: trigger,
-        schedule: normalizeWorkflowSchedule(record.schedule),
+        schedule: unsupportedSchedule
+            ? structuredClone(record.schedule) as unknown as WorkflowSchedule
+            : normalizeWorkflowSchedule(record.schedule),
         is_enabled: record.is_enabled !== false,
         error_handling: {
             strategy: errorHandling.strategy === 'continue' ? 'continue' : 'halt',
@@ -1130,10 +1125,7 @@ export function normalizeWorkflowDefinition(
         },
         tasks: tasks.length ? tasks : [legacyWorkflowTask(record) ?? createWorkflowTask(0)],
         reference_inputs: references,
-        ...(record.definition_version === 3 && tasks.some((task) =>
-            Object.hasOwn(task, 'unrecognized_inputs') || Object.hasOwn(task, 'unrecognized_configuration')) ? {
-            editor_readonly_reason: 'This workflow contains task configuration or bindings from an unsupported schema. Its original configuration has been retained and editing is disabled.',
-        } : {}),
+        ...(readonlyReason ? { editor_readonly_reason: readonlyReason } : {}),
         ...(Object.hasOwn(record, 'durable_execution') ? { durable_execution: record.durable_execution === true } : {}),
         ...(scope.type === 'group' ? { group_id: scope.groupId } : {}),
     };

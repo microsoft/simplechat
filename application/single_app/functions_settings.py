@@ -84,9 +84,13 @@ from functions_rate_limit import (
 from functions_service_health import get_default_service_health
 from json_schema_validation import validate_legacy_plugin_settings_update
 from functions_workflow_limits import (
+    CHAT_ORCHESTRATION_MAX_WORKFLOWS_DEFAULT,
+    CHAT_ORCHESTRATION_MIN_WORKFLOW_INTERVAL_DEFAULT,
     WORKFLOW_LOOP_ITEMS_DEFAULT,
     WORKFLOW_MIN_SCHEDULE_INTERVAL_DEFAULT,
     WORKFLOW_REPEAT_ITERATIONS_DEFAULT,
+    validate_chat_orchestration_max_workflows_per_user,
+    validate_chat_orchestration_min_workflow_interval_seconds,
     validate_workflow_max_loop_items,
     validate_workflow_max_repeat_iterations,
     validate_workflow_min_schedule_interval_seconds,
@@ -1406,6 +1410,10 @@ def get_settings(use_cosmos=False, include_source=False):
         'chat_orchestration_total_timeout_seconds': 900,
         'chat_orchestration_ledger_max_bytes': 16384,
         'chat_orchestration_ledger_max_runs': 10,
+        # Workflows that a chat plan creates for a user: how many one user may hold, and the
+        # shortest interval one may run on (also never shorter than the general workflow minimum).
+        'chat_orchestration_max_workflows_per_user': CHAT_ORCHESTRATION_MAX_WORKFLOWS_DEFAULT,
+        'chat_orchestration_min_workflow_interval_seconds': CHAT_ORCHESTRATION_MIN_WORKFLOW_INTERVAL_DEFAULT,
         # Planner model binding. Unset falls back to the deployment's default chat model,
         # so orchestration works before an administrator picks a dedicated planner.
         'chat_orchestration_planner_deployment': '',
@@ -2173,6 +2181,22 @@ def update_settings(new_settings, *, expected_etag=None):
             **new_settings,
             'workflow_min_schedule_interval_seconds': validate_workflow_min_schedule_interval_seconds(
                 new_settings['workflow_min_schedule_interval_seconds']
+            ),
+        }
+    if isinstance(new_settings, dict) and 'chat_orchestration_max_workflows_per_user' in new_settings:
+        new_settings = {
+            **new_settings,
+            'chat_orchestration_max_workflows_per_user': validate_chat_orchestration_max_workflows_per_user(
+                new_settings['chat_orchestration_max_workflows_per_user']
+            ),
+        }
+    if isinstance(new_settings, dict) and 'chat_orchestration_min_workflow_interval_seconds' in new_settings:
+        new_settings = {
+            **new_settings,
+            'chat_orchestration_min_workflow_interval_seconds': (
+                validate_chat_orchestration_min_workflow_interval_seconds(
+                    new_settings['chat_orchestration_min_workflow_interval_seconds']
+                )
             ),
         }
     expected_etag = expected_etag or new_settings.get("_etag")
@@ -3534,6 +3558,30 @@ def get_user_settings(user_id, allow_cross_user=False):
             exceptionTraceback=True
         )
         raise # Re-raise the exception to be handled by the route
+
+
+def read_user_settings_snapshot(user_id, allow_cross_user=False):
+    """Return a user's settings document without repairing, creating or profile-syncing it.
+
+    ``get_user_settings`` writes a missing or incomplete document back to Cosmos. A workflow dry run
+    must not write, so it reads here instead: the same defaults are filled in on the returned copy
+    only, and nothing is cached. It needs no request context.
+    """
+    _authorize_user_settings_access(user_id, "read", allow_cross_user=allow_cross_user)
+    cached_doc = _get_request_cached_user_settings(user_id)
+    if cached_doc is not None:
+        return cached_doc
+    try:
+        doc = cosmos_user_settings_container.read_item(item=user_id, partition_key=user_id)
+    except exceptions.CosmosResourceNotFoundError:
+        doc = {"id": user_id, "settings": {}}
+    snapshot = _clone_user_settings_doc(doc)
+    if not isinstance(snapshot.get("settings"), dict):
+        snapshot["settings"] = {}
+    snapshot["settings"].setdefault("personal_model_endpoints", [])
+    snapshot["settings"].setdefault("showTutorialButtons", True)
+    snapshot["settings"].setdefault("desktopNotificationsEnabled", True)
+    return snapshot
 
 
 def get_user_ui_settings(user_id, allow_cross_user=False):

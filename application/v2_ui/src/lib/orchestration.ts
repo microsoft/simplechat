@@ -24,11 +24,13 @@
 import { api, apiUrl, CREDENTIALS_MODE } from './apiClient';
 import { readSsePost, resolveStreamContent } from './sse';
 import type { ComposerReference } from './composerDraft';
+import type { PlanReferenceInput, PlanScopeNotice, PlanTurnReference } from './planReferences';
 import type { ChatStreamEvent, Json } from './types';
 import { normalizeReasoningAdjustments, type ReasoningResolution } from './reasoning';
 import { readGeneratedArtifacts, type GeneratedArtifact } from './generatedArtifacts';
 import type { ImageReferenceRequest, ImageReferenceScope } from './imageReferences';
 import type { OrchestrationExportFormat } from './orchestrationExports';
+import { ASSIST_INSTRUCTION_LIMITS } from './assistLimits';
 import {
     hasPendingOrchestrationOutputs, normalizeOrchestrationOutputs, type OrchestrationOutput,
 } from './orchestrationOutputs';
@@ -568,7 +570,17 @@ export interface PlanEditorState {
     plan: OrchestrationPlan;
     version: string;
     edits: PlanEdits;
-    chat: Array<{ role: 'user' | 'assistant'; content: string; timestamp: string }>;
+    chat: Array<{
+        role: 'user' | 'assistant';
+        content: string;
+        timestamp: string;
+        /** The client's id for the exchange this turn belongs to, when the browser sent one. */
+        submission_id?: string;
+        /** A user turn's `#` documents and tags, as the server authorized and labelled them. */
+        references?: PlanTurnReference[];
+        /** On the planner's turn when its revision first limited what the plan searches. */
+        scope_notice?: PlanScopeNotice;
+    }>;
     history: PlanEditorHistoryEntry[];
     next_before_revision: number | null;
     pending: Elicitation | null;
@@ -577,7 +589,12 @@ export interface PlanEditorState {
 }
 
 export type PlanRevisionAction =
-    | { action: 'ask'; instruction: string }
+    | {
+        action: 'ask';
+        instruction: string;
+        /** `#` documents and tags. Canonicalized before sending; see planReferences.ts. */
+        references?: readonly PlanReferenceInput[];
+    }
     | { action: 'restore'; source_run_id: string }
     | {
         action: 'answer';
@@ -602,7 +619,11 @@ export interface OrchestrationRequestError {
     current_run_id?: string;
 }
 
-export const MAX_PLAN_INSTRUCTION_LENGTH = 2000;
+/**
+ * Longest planner instruction the editor sends. Matches EDIT_INSTRUCTION_LIMIT on the server.
+ * Longer text is refused with a counter rather than cut short.
+ */
+export const MAX_PLAN_INSTRUCTION_LENGTH = ASSIST_INSTRUCTION_LIMITS.plan;
 
 /* -------------------------------------------------------------------------- */
 /* Request bodies                                                              */

@@ -432,6 +432,8 @@ export interface BlockRevisionChatTurn {
     role: 'user' | 'assistant';
     content: string;
     timestamp?: string;
+    /** The client's id for the exchange this turn belongs to, when the browser sent one. */
+    submission_id?: string;
 }
 
 /**
@@ -459,6 +461,8 @@ export interface BlockRevisionResponse {
 /** Response of the assist endpoint, which also returns the source it produced. */
 export interface BlockRevisionAssistResponse extends BlockRevisionResponse {
     source: string;
+    /** True when this `submission_id` was already applied, so nothing new was stored. */
+    replayed?: boolean;
 }
 
 /** Fields shared by every block revision request, which together address one diagram. */
@@ -516,6 +520,9 @@ export const setMessageBlockRevision = (
  *
  * The request carries only this diagram — its current source, its own sub-conversation and the
  * request that produced it. The conversation is not sent, and the reply does not join it.
+ *
+ * `submission_id` is optional. The server stores it on both chat turns, and a second request
+ * with the same id returns the stored result instead of calling the model again.
  */
 export const assistMessageBlockRevision = (
     messageId: string,
@@ -523,11 +530,14 @@ export const assistMessageBlockRevision = (
         instruction: string;
         original_source: string;
         expected_revision_count?: number;
+        submission_id?: string;
     },
+    signal?: AbortSignal,
 ) =>
     api.post<BlockRevisionAssistResponse>(
         `/api/message/${encodeURIComponent(messageId)}/block-revision/assist`,
         body,
+        signal,
     );
 
 /* -------------------------------------------------------------------------- */
@@ -575,6 +585,8 @@ export interface ImageRevisionChatTurn {
     role: 'user' | 'assistant';
     content: string;
     timestamp?: string;
+    /** The client's id for the exchange this turn belongs to, when the browser sent one. */
+    submission_id?: string;
 }
 
 /**
@@ -598,6 +610,8 @@ export interface ImageRevisionResponse {
     image_revisions: ImageRevisionEntry;
     method?: 'edit' | 'regenerate';
     model_deployment_name?: string;
+    /** True when this `submission_id` was already applied, so nothing new was stored. */
+    replayed?: boolean;
 }
 
 /** What an image revision request asks for. Only `ai` uses a mask. */
@@ -623,6 +637,8 @@ export interface ImageRevisionRequest {
      * never changes again.
      */
     expected_current_revision_id?: string;
+    /** Optional client id for an AI edit; a repeat with the same id returns the stored result. */
+    submission_id?: string;
 }
 
 /**
@@ -632,10 +648,11 @@ export interface ImageRevisionRequest {
  * cannot author an image: every version comes from the model, so creating one and asking for
  * one are the same call.
  */
-export const addMessageImageRevision = (messageId: string, body: ImageRevisionRequest) =>
+export const addMessageImageRevision = (messageId: string, body: ImageRevisionRequest, signal?: AbortSignal) =>
     api.post<ImageRevisionResponse>(
         `/api/message/${encodeURIComponent(messageId)}/image-revision`,
         body,
+        signal,
     );
 
 /** Point an image at one of its stored versions. Nothing is deleted; the pointer moves. */

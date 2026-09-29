@@ -81,6 +81,26 @@ def save_workflow_definition_record(container, partition_key, workflow, existing
     raise WorkflowDefinitionConflict("This workflow is being updated. Reload it before saving.")
 
 
+def create_workflow_definition_record_if_absent(container, partition_key, workflow):
+    """Create a workflow under the id a server create path chose, or return the one already there.
+
+    Chat orchestration derives the id from the proposal a user accepted, so accepting it twice
+    finds the first workflow instead of creating a second. Returns ``(record, created)``. A record
+    that is being deleted under that id is a conflict, never a success.
+    """
+    try:
+        created = container.create_item(body=workflow)
+    except CosmosResourceExistsError:
+        try:
+            current = container.read_item(item=workflow["id"], partition_key=partition_key)
+        except CosmosResourceNotFoundError as exc:
+            raise WorkflowDefinitionConflict("This workflow is being updated. Retry the operation.") from exc
+        if current.get("deleting"):
+            raise WorkflowDefinitionConflict("This workflow is being deleted. Your draft was not saved.")
+        return workflow_definition_for_editor(current), False
+    return workflow_definition_for_editor(created), True
+
+
 def update_workflow_runtime_record(container, partition_key, workflow_id, updates, updated_at):
     """Retry only read/replace conflicts; never replace a newly edited definition."""
     if set(updates) - WORKFLOW_RUNTIME_FIELDS:

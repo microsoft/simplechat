@@ -4,7 +4,7 @@ title: "Review and edit orchestration plans"
 description: "Refine proposed work with the planner before running it."
 section: "Guides"
 audience: user
-version: "0.261.192"
+version: "0.261.201"
 ---
 
 ## Decide what should run
@@ -178,10 +178,17 @@ does not substitute guessed formats or change the plan.
 3. In **Ask planner**, describe what should change. For example: "Add a second
    document search focused on pricing" or "Remove the extra research and compare
    only the selected contracts."
-4. Read the updated preview. Check the steps, source selections, assumptions,
+4. Press Enter to send, or Shift+Enter for a new line. Your request moves into the
+   conversation straight away while the planner works. Select **Cancel** there to
+   discard it and keep the current plan.
+5. Read the updated preview. Check the steps, source selections, assumptions,
    and any adjustments reported by the planner.
-5. Continue refining the same plan, or select **Run** when the current version
+6. Continue refining the same plan, or select **Run** when the current version
    describes the work you want.
+
+If a request fails, select **Retry** to send it again or **Edit and resend** to
+reword it first. Requests are limited to 2,000 characters; the counter under the
+box shows how many you've used.
 
 The planner may ask a clarifying question or explain why a requested capability
 is unavailable. Answer within the editor to continue the change. A request to add
@@ -195,6 +202,39 @@ remains intact.
 If an accepted edit removes an originally selected operation or document, the
 preview reports that change for review. It does not rewrite your standing
 composer preferences.
+
+### Point the planner at documents and tags
+
+Since **0.261.201**, **Ask planner** takes `#` documents and tags, as the main
+composer does.
+
+1. In **Ask planner**, type `#` and part of a document's name or a tag. Pick one
+   with the arrow keys and Enter, or with the mouse. To browse instead, select
+   **Add context**.
+2. Check the chips above the box. Remove any you don't want; a removed chip
+   isn't sent.
+3. Describe the change and send it. For example, "Compare the regional figures
+   with `#[Q4 pricing]`", where `#[Q4 pricing]` is the document you picked.
+
+The chips show under your message in the thread. The server checks each one when
+the request arrives, and accepts only documents and tags you can read now: in your
+personal workspace, in groups you belong to, and in public workspaces you can see.
+A conversation limited to certain workspaces accepts picks from those workspaces
+only. Whole workspaces, file uploads and `/` saved prompts aren't offered here.
+
+The planner is told which documents you picked, and a document search that
+doesn't name its own documents looks only at your picks. If the plan searched
+everything you can read before, the planner's reply says that it now doesn't. If
+the revised plan leaves out a document you picked, the reply says so, so you can
+ask again or remove it. Sources the plan already used stay available to it.
+
+If a pick can't be used, because the document was deleted, is still processing,
+or you've lost access to it, the request is refused before the planner runs and
+the plan doesn't change. The reply names the pick by the label you chose. Select
+**Edit and resend**, remove the chip, and send again.
+
+If the planner answers without changing the plan, your chips go back into the box
+so you can send them again or remove them.
 
 ## Understand reasoning adjustments
 

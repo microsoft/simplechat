@@ -30,6 +30,7 @@ import io
 from PIL import Image
 
 from functions_ai_connections import AIConnectionError
+from functions_assist_submissions import SUBMISSION_NEW, classify_submission
 from functions_image_api_route import (
     ImageGenerationError,
     resolve_image_generation_api_version,
@@ -370,6 +371,7 @@ def revise_image_message(
     expected_current_revision_id='',
     reload_message=None,
     operation='',
+    submission_id=None,
 ):
     """Produce a new version of an image message and store it, mutating ``message_doc``.
 
@@ -385,6 +387,14 @@ def revise_image_message(
 
     The revision is written only after the image comes back, so a failed generation leaves no
     version behind describing an edit that never happened.
+
+    ``submission_id`` is the id the client minted for an instruction. The caller checks it before
+    the model is called, but a retry sent while the request it repeats is still running passes
+    that check and only finds the first request's turns in the document read again afterwards.
+    It is checked there once more, and when the id is already stored no version is applied: the
+    result's ``submission`` says whether the request repeats that exchange or reused its id for a
+    different instruction, and ``message`` holds what was stored. The image generated for it is
+    left unused.
     """
     from functions_message_image_revisions import (
         ORIGIN_AI,
@@ -494,7 +504,30 @@ def revise_image_message(
         if isinstance(reloaded, dict):
             target_doc = reloaded
 
-    entry = apply_image_revision(
+    outcome = {
+        'submission': SUBMISSION_NEW,
+        'entry': None,
+        'message': target_doc,
+        'method': result['method'],
+        'model': result['model'],
+        'prompt': effective_prompt,
+        'instruction': normalized_instruction,
+        'capability': capability,
+    }
+    if submission_id and revision_origin == ORIGIN_AI:
+        # The only place the transcript is read, and only after the model has been called.
+        from functions_message_image_revisions import MAX_CHAT_CONTENT_LENGTH, read_image_revisions
+
+        outcome['submission'] = classify_submission(
+            read_image_revisions(target_doc).get('chat'),
+            submission_id,
+            normalized_instruction,
+            MAX_CHAT_CONTENT_LENGTH,
+        )
+        if outcome['submission'] != SUBMISSION_NEW:
+            return outcome
+
+    outcome['entry'] = apply_image_revision(
         target_doc,
         stored,
         origin=revision_origin,
@@ -514,16 +547,7 @@ def revise_image_message(
         expected_revision_count=expected_revision_count,
         expected_current_revision_id=expected_current_revision_id,
     )
-
-    return {
-        'entry': entry,
-        'message': target_doc,
-        'method': result['method'],
-        'model': result['model'],
-        'prompt': effective_prompt,
-        'instruction': normalized_instruction,
-        'capability': capability,
-    }
+    return outcome
 
 
 def store_revision_image(owner_user_id, conversation_id, message_id, image_bytes, mime_type):

@@ -1,10 +1,11 @@
 # test_orchestration_v2_plan_backend.py
 """Saved plan editing, restoration, and private admission-context persistence.
 
-Version: 0.261.139
+Version: 0.261.200
 Implemented in: 0.261.127
 Single orchestration contract updated in: 0.261.139
-Refs: microsoft/simplechat#1509
+Submission ids kept out of the planner prompt: 0.261.200
+Refs: microsoft/simplechat#1509, microsoft/simplechat#1552
 
 Exercise the real planner/compiler, revision/run stores, immutable result readers,
 and current source authorization. Replace only model, Cosmos, and unrelated
@@ -559,6 +560,37 @@ class V2PlanBackendTests(unittest.TestCase):
         self.assertEqual(payload['retained_results'][0]['alias'], 'saved_findings')
         self.assertNotIn('manifest_sha256', json.dumps(payload))
         self.assertNotIn('respond', [entry['id'] for entry in payload['capabilities']])
+
+    def test_submission_ids_stay_on_stored_turns_and_out_of_the_planner_prompt(self):
+        record = self.save()
+        record['edit_chat'] = [
+            {
+                'role': 'user', 'content': 'Earlier stored request.',
+                'timestamp': '2026-01-01T00:00:00+00:00', 'submission_id': 'stored-submission-id',
+            },
+            {
+                'role': 'assistant', 'content': 'Earlier stored reply.',
+                'timestamp': '2026-01-01T00:00:01+00:00', 'submission_id': 'stored-submission-id',
+            },
+        ]
+        outcome = self.edit(record, self.reply(record), data={
+            'action': 'ask', 'instruction': 'Focus on the main findings.',
+            'submission_id': 'new-submission-id',
+        })
+        requests = json.dumps(self.model_calls)
+        payload = json.loads(self.model_calls[0]['messages'][1]['content'])
+        self.assertIn('Earlier stored request.', requests)
+        self.assertIn('Earlier stored reply.', requests)
+        self.assertNotIn('stored-submission-id', requests)
+        self.assertNotIn('new-submission-id', requests)
+        self.assertNotIn('submission_id', requests)
+        for turn in payload['plan_edit']['chat']:
+            self.assertEqual(set(turn), {'role', 'content'})
+        self.assertEqual(outcome['chat'][0]['submission_id'], 'stored-submission-id')
+        self.assertEqual(
+            [(turn['role'], turn['submission_id']) for turn in outcome['chat'][-2:]],
+            [('user', 'new-submission-id'), ('assistant', 'new-submission-id')],
+        )
 
     def test_model_cannot_downgrade_a_v2_edit_or_invent_an_alias(self):
         record = self.save()

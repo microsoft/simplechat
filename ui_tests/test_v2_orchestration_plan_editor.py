@@ -1,8 +1,10 @@
 # test_v2_orchestration_plan_editor.py
 """
 Focused real-component browser tests for conversational orchestration plan editing.
-Version: 0.261.139
+Version: 0.261.201
 Implemented in: 0.261.102
+Shared assist thread covered in: 0.261.200
+Document references covered in: 0.261.201
 
 Only HTTP boundaries are mocked. The real store, shared SSE reader, controller,
 MessageList, Review drawer, editor, and elicitation inputs run in Chromium with
@@ -105,6 +107,8 @@ class EditorApi:
         self.unexpected = []
         self.expected_errors = set()
         self.submissions = {}
+        # Like the server, an id is held to the request it first came with, even if that failed.
+        self.attempts = {}
         self.waiting = []
         self.next_revision = "success"
         self.hold_response = "success"
@@ -210,10 +214,16 @@ class EditorApi:
             assert saved_body == body, "An idempotency token must not identify changed input."
             self.stream(route, event)
             return
+        attempted = self.attempts.get(submission)
+        if attempted is not None and attempted != body:
+            self.error(route, 409, "That submission ID was already used for a different edit.",
+                       "submission_conflict")
+            return
         if body["expected_version"] != editor["version"]:
             self.error(route, 409, "The plan changed. Review its current saved revision.",
                        "plan_changed", editor["plan"]["run_id"])
             return
+        self.attempts[submission] = copy.deepcopy(body)
         assert "plan" not in body and "elicitation" not in body, "Only server-owned identities may be submitted."
         if behavior == "error":
             self.error(route, 503, "Planner unavailable. Your last saved plan is unchanged.", "unavailable")
@@ -229,7 +239,10 @@ class EditorApi:
             editor["edits"] = copy.deepcopy(body["edits"])
         if action == "ask":
             instruction = body["instruction"]
-            editor["chat"].append({"role": "user", "content": instruction, "timestamp": "2026-09-07T15:00:00Z"})
+            editor["chat"].append({
+                "role": "user", "content": instruction, "timestamp": "2026-09-07T15:00:00Z",
+                "submission_id": submission,
+            })
             if behavior == "question":
                 editor["pending"] = {
                     "elicitation_id": f"question-{self.sequence}", "contract_version": 1,
@@ -244,7 +257,7 @@ class EditorApi:
             elif behavior == "explain":
                 editor["chat"].append({
                     "role": "assistant", "content": f"Kept the saved plan. Your request was: {instruction}",
-                    "timestamp": "2026-09-07T15:00:01Z",
+                    "timestamp": "2026-09-07T15:00:01Z", "submission_id": submission,
                 })
                 self.touch(editor)
             else:
@@ -267,7 +280,7 @@ class EditorApi:
             editor["chat"].append({
                 "role": "assistant",
                 "content": "Kept the current plan." if action == "discard" else editor["history"][0]["note"],
-                "timestamp": "2026-09-07T15:00:02Z",
+                "timestamp": "2026-09-07T15:00:02Z", "submission_id": submission,
             })
         event = self.result(editor)
         self.submissions[submission] = (copy.deepcopy(body), event)
@@ -537,6 +550,15 @@ def wait_revision(page, revision, conversation="editor-chat", turn="editor-turn"
     )
 
 
+def planner_log(dialog):
+    return dialog.get_by_role("log", name="Planner conversation")
+
+
+def thread_exchanges(dialog):
+    """The exchanges this page sent that the stored chat does not hold yet."""
+    return planner_log(dialog).get_by_test_id("assist-exchange")
+
+
 def test_review_entry_preserves_narrowing_and_stable_modal(editor_ui):
     page, api = editor_ui
     mount(page, api)
@@ -672,8 +694,12 @@ def test_failed_or_lost_response_keeps_instruction_and_idempotent_retry(editor_u
     dialog = open_editor(page)
     api.next_revision = failure
     ask(page, "Add web search before the comparison")
-    expect(dialog.get_by_role("alert")).to_be_visible()
-    expect(dialog.get_by_role("textbox", name="Ask planner", exact=True)).to_have_value("Add web search before the comparison")
+    failed = thread_exchanges(dialog)
+    expect(failed).to_have_attribute("data-status", "failed")
+    expect(failed).to_contain_text("Add web search before the comparison")
+    expect(failed.get_by_role("alert")).to_be_visible()
+    expect(dialog.get_by_role("alert")).to_have_count(1)
+    expect(dialog.get_by_role("textbox", name="Ask planner", exact=True)).to_have_value("")
     assert state(page)["plan"]["revision"] == 0
     assert len(state(page)["messages"]) == 1
     expect(dialog.get_by_role("button", name="Run saved revision")).to_be_enabled()
@@ -681,13 +707,63 @@ def test_failed_or_lost_response_keeps_instruction_and_idempotent_retry(editor_u
         dialog.get_by_role("button", name="Close the plan editor").click()
         dialog = open_editor(page)
         expect(dialog.get_by_role("alert")).to_have_text("Planner unavailable. Your last saved plan is unchanged.")
-        expect(dialog.get_by_role("textbox", name="Ask planner")).to_have_value("Add web search before the comparison")
-    dialog.get_by_role("button", name="Send planner request").click()
+        expect(thread_exchanges(dialog)).to_have_attribute("data-status", "failed")
+    dialog.get_by_role("button", name="Retry", exact=True).click()
     wait_revision(page, 1)
     calls = api.calls("/revisions")
     assert len(calls) == 2 and calls[0]["body"] == calls[1]["body"]
     assert api.editors["editor-chat"]["plan"]["revision"] == 1
+    # The stored chat now holds both turns of the exchange, and the thread shows them once.
+    expect(thread_exchanges(dialog)).to_have_count(0)
+    expect(planner_log(dialog).locator("li")).to_have_count(2)
+    expect(dialog.get_by_role("alert")).to_have_count(0)
     assert len(state(page)["messages"]) == 1
+
+
+def test_retry_after_the_plan_changed_is_sent_as_a_new_request(editor_ui):
+    """The server holds a submission id to the request it first came with, even one that failed,
+    and refuses it with any other. A reader who changes the plan before pressing Retry must not
+    be refused for good, so the retry goes out as a new request."""
+    page, api = editor_ui
+    mount(page, api)
+    dialog = open_editor(page)
+    api.next_revision = "error"
+    ask(page, "Add web search before the comparison")
+    expect(thread_exchanges(dialog)).to_have_attribute("data-status", "failed")
+
+    dialog.get_by_role("button", name="Close the plan editor").click()
+    page.get_by_role("button", name="Review the plan in the drawer").click()
+    review = page.get_by_role("complementary", name="Review drawer")
+    review.locator("ol > li").filter(has_text="Investigate context").locator("label").click()
+    assert state(page)["edits"]["disabled_step_ids"] == ["research"]
+    review.get_by_role("button", name="Edit the plan").click()
+    dialog = page.get_by_role("dialog", name="Edit orchestration plan")
+    failed = thread_exchanges(dialog)
+    expect(failed).to_have_attribute("data-status", "failed")
+    failed.get_by_role("button", name="Retry", exact=True).click()
+    wait_revision(page, 1)
+
+    first, retry = (call["body"] for call in api.calls("/revisions"))
+    assert first["instruction"] == retry["instruction"] == "Add web search before the comparison"
+    assert first["edits"] != retry["edits"]
+    assert first["submission_id"] != retry["submission_id"]
+    expect(thread_exchanges(dialog)).to_have_count(0)
+    turns = planner_log(dialog).locator("li")
+    expect(turns).to_have_count(2)
+    expect(turns.first).to_contain_text("Add web search before the comparison")
+    expect(dialog.get_by_role("alert")).to_have_count(0)
+    chat = api.editors["editor-chat"]["chat"]
+    assert [turn["submission_id"] for turn in chat] == [retry["submission_id"]] * 2
+
+    # Retrying the very same request keeps its id, so the server can replay it.
+    api.next_revision = "error"
+    ask(page, "Add a pricing search")
+    failed = thread_exchanges(dialog)
+    expect(failed).to_have_attribute("data-status", "failed")
+    failed.get_by_role("button", name="Retry", exact=True).click()
+    wait_revision(page, 2)
+    last_failed, last_retry = (call["body"] for call in api.calls("/revisions")[-2:])
+    assert last_failed == last_retry
 
 
 def test_editor_question_answer_retry_close_and_discard_keep_live_plan(editor_ui):
@@ -994,7 +1070,13 @@ def test_unusable_or_wrong_scope_editor_response_keeps_last_good_plan(editor_ui,
     snapshot = state(page)
     assert snapshot["plan"]["run_id"] == "editor-chat-run-0"
     assert snapshot["plan"]["conversation_id"] == "editor-chat"
-    expect(dialog.get_by_role("textbox", name="Ask planner")).to_have_value("Rework the plan")
+    textbox = dialog.get_by_role("textbox", name="Ask planner")
+    expect(textbox).to_have_value("")
+    dialog.get_by_role("button", name="Edit and resend", exact=True).click()
+    expect(textbox).to_have_value("Rework the plan")
+    expect(textbox).to_be_focused()
+    expect(thread_exchanges(dialog)).to_have_count(0)
+    expect(dialog.get_by_role("alert")).to_have_count(0)
     assert len(snapshot["messages"]) == 1
     expect(dialog.get_by_role("button", name="Run saved revision")).to_be_enabled()
 
@@ -1138,3 +1220,104 @@ def test_untouched_immediate_auto_plan_still_runs_without_editor_hold(editor_ui)
     assert len(api.successful_runs) == 1
     assert not api.calls("/edit") and not api.calls("/revisions")
     assert "expected_version" not in api.successful_runs[0]
+
+
+def test_sent_request_moves_into_the_thread_at_once_with_elapsed_time(editor_ui):
+    page, api = editor_ui
+    page.clock.install()
+    mount(page, api)
+    dialog = open_editor(page)
+    api.next_revision = "delay"
+    ask(page, "Add web search before the comparison")
+    textbox = dialog.get_by_role("textbox", name="Ask planner", exact=True)
+    exchange = thread_exchanges(dialog)
+    # Before the planner has answered: the message is in the thread and the input is clear.
+    expect(exchange).to_have_attribute("data-status", "pending")
+    expect(exchange).to_contain_text("Add web search before the comparison")
+    expect(exchange).to_contain_text("Working…")
+    expect(textbox).to_have_value("")
+    expect(textbox).to_be_focused()
+    assert len(api.calls("/revisions")) == 1 and api.waiting
+    page.clock.fast_forward(12000)
+    expect(exchange.get_by_test_id("assist-elapsed")).to_have_text(re.compile(r"^1[2-4] s$"))
+    expect(exchange.get_by_role("button", name="Cancel this request")).to_be_enabled()
+    expect(dialog.get_by_role("button", name="Send planner request")).to_be_disabled()
+    expect(planner_log(dialog)).to_have_attribute("aria-live", "polite")
+    textbox.fill("Typed while waiting")
+    api.release()
+    wait_revision(page, 1)
+    expect(exchange).to_have_count(0)
+    expect(planner_log(dialog).locator("li")).to_have_count(2)
+    expect(textbox).to_have_value("Typed while waiting")
+    stored = state(page)["editor"]["state"]["chat"]
+    sent = api.calls("/revisions")[0]["body"]["submission_id"]
+    assert [turn["submission_id"] for turn in stored] == [sent, sent]
+    assert len(state(page)["messages"]) == 1
+
+
+def test_cancel_from_the_pending_turn_discards_the_change_and_returns_the_text(editor_ui):
+    page, api = editor_ui
+    mount(page, api)
+    dialog = open_editor(page)
+    expect(dialog.get_by_role("button", name="Run saved revision")).to_be_enabled()
+    api.next_revision = "delay"
+    ask(page, "Add web search before the comparison")
+    exchange = thread_exchanges(dialog)
+    expect(exchange).to_have_attribute("data-status", "pending")
+    exchange.get_by_role("button", name="Cancel this request").click()
+    textbox = dialog.get_by_role("textbox", name="Ask planner", exact=True)
+    expect(textbox).to_have_value("Add web search before the comparison")
+    expect(exchange).to_have_count(0)
+    expect(dialog.get_by_role("button", name="Run saved revision")).to_be_enabled()
+    expect(textbox).to_be_focused()
+    discard = api.calls("/revisions")[-1]["body"]
+    assert discard["action"] == "discard"
+    assert [call["body"]["action"] for call in api.calls("/revisions")] == ["ask", "discard"]
+    api.release()
+    assert api.editors["editor-chat"]["plan"]["revision"] == 0
+    assert state(page)["plan"]["revision"] == 0
+    expect(dialog.get_by_role("alert")).to_have_count(0)
+    assert len(state(page)["messages"]) == 1 and not state(page)["streamError"]
+
+
+def test_enter_sends_shift_enter_adds_a_line_and_overlong_requests_are_refused(editor_ui):
+    page, api = editor_ui
+    mount(page, api)
+    dialog = open_editor(page)
+    dialog.get_by_role("tab", name="Ask planner", exact=True).click()
+    textbox = dialog.get_by_role("textbox", name="Ask planner", exact=True)
+    send = dialog.get_by_role("button", name="Send planner request")
+    # The plan editor's input is restricted: # documents and tags, but no uploads or prompts.
+    # test_v2_plan_editor_references.py covers the picker itself.
+    expect(dialog.get_by_role("button", name="Add context")).to_have_count(1)
+    expect(dialog.get_by_role("button", name="Attach a file")).to_have_count(0)
+    assert textbox.get_attribute("maxlength") is None
+
+    overlong = "x" * 2001
+    textbox.fill(overlong)
+    expect(textbox).to_have_value(overlong)
+    expect(textbox).to_have_attribute("aria-invalid", "true")
+    expect(dialog.get_by_text("This is 1 character over the limit. Shorten it to send.", exact=True)).to_be_visible()
+    expect(dialog.get_by_text(re.compile(r"^2001/2000 · Enter to send"))).to_be_visible()
+    expect(send).to_be_disabled()
+    textbox.press("Enter")
+    expect(textbox).to_have_value(overlong)
+    assert not api.calls("/revisions")
+    expect(thread_exchanges(dialog)).to_have_count(0)
+
+    textbox.fill("Add web search")
+    expect(textbox).not_to_have_attribute("aria-invalid", "true")
+    textbox.press("Shift+Enter")
+    textbox.press_sequentially("before the comparison")
+    expect(textbox).to_have_value("Add web search\nbefore the comparison")
+    assert not api.calls("/revisions")
+    textbox.press("Enter")
+    wait_revision(page, 1)
+    assert api.calls("/revisions")[-1]["body"]["instruction"] == "Add web search\nbefore the comparison"
+    expect(textbox).to_have_value("")
+
+    textbox.fill("Focus on pricing")
+    textbox.press("Control+Enter")
+    wait_revision(page, 2)
+    assert api.calls("/revisions")[-1]["body"]["instruction"] == "Focus on pricing"
+    assert len(api.calls("/revisions")) == 2

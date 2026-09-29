@@ -66,7 +66,7 @@ From version **0.261.193**, a scheduled workflow can run at a local time rather
 than at a fixed interval, for example every Monday at 08:00 in New York. This
 works in personal and group workflows, and you set it in the V2 editor:
 
-1. Set **Trigger** to **Interval**. A group workflow that watches File Sync can
+1. Set **Trigger** to **Schedule**. A group workflow that watches File Sync can
    use **Monitor File Sync changes** instead.
 2. In **Repeats**, choose how often it runs:
    - **At an interval** keeps a fixed interval, set with **Interval value** and
@@ -96,6 +96,13 @@ If a run was missed, for example while the app was stopped, the workflow runs
 once when the scheduler catches up, then waits for its next scheduled time. It
 doesn't make up each missed run.
 
+From version **0.261.202**, each run of a calendar workflow tells the model when
+it started, in the schedule's time zone, for example "Current date and time:
+Monday, 28 September 2026, 09:00 (America/New_York)". Instructions such as "list
+this week's to-dos" then mean the week of the run. Scheduled runs and **Run
+now** both include it. Workflows that run at a fixed interval, or only when
+started by hand, don't.
+
 Existing interval workflows keep their schedules, and their Microsoft 365 Run
 as approvals stay valid. The schedule is part of that approval, so changing it,
 including to a calendar schedule, is a material change that needs renewed
@@ -104,6 +111,12 @@ approval.
 The classic editor can't edit calendar schedules. Opening one there shows
 "This workflow uses a calendar schedule. Open V2 to edit it without losing its
 configuration. Run and Cancel remain available here."
+
+From version **0.261.202**, the V2 editor also opens a workflow read-only when
+it can't show the workflow's schedule exactly, such as a kind of schedule or a
+**Repeats** frequency saved by a newer version of SimpleChat, or an interval
+unit or value it doesn't recognize. The editor says so, and the schedule stays
+exactly as saved, so a save never swaps in a schedule you didn't choose.
 
 Your administrator can set a minimum interval. A new or changed interval that
 runs more often is refused with a message that names the minimum, such as

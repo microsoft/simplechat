@@ -38,7 +38,7 @@ A workflow only helps when it runs at the right moment and leaves evidence you c
                       capture="Capture the trigger a workflow task at this step in SimpleChat with realistic sample data and redact secrets." %}
 
 4. Use the workflow row **Actions** to start a manual run, or edit the workflow to adjust **Trigger**.
-5. For scheduled operation, choose the **Interval** trigger and leave the workflow enabled. It can repeat at a fixed interval or, in the V2 editor, at a local time on a calendar schedule; see [Run on a calendar schedule]({{ '/guides/create-a-workflow/' | relative_url }}#run-on-a-calendar-schedule).
+5. For scheduled operation, choose the **Schedule** trigger (**Interval Schedule** in the classic editor) and leave the workflow enabled. It can repeat at a fixed interval or, in the V2 editor, at a local time on a calendar schedule; see [Run on a calendar schedule]({{ '/guides/create-a-workflow/' | relative_url }}#run-on-a-calendar-schedule).
 6. After a run starts, open **Open workflow activity view** from the chat header when available.
 
 {% include media.html src="guides/trigger-a-workflow-step-6.png"

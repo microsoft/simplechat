@@ -278,7 +278,6 @@ export interface PlanEditorSession {
     cancellationStatus: 'idle' | 'cancelling' | 'failed';
     blocked: boolean;
     error: string | null;
-    instruction: string;
     pendingDraft: ElicitationDraft | null;
     submission: { id: string; fingerprint: string } | null;
     tab: 'ask' | 'history';
@@ -296,7 +295,6 @@ function newPlanEditorSession(): PlanEditorSession {
         cancellationStatus: 'idle',
         blocked: false,
         error: null,
-        instruction: '',
         pendingDraft: null,
         submission: null,
         tab: 'ask',
