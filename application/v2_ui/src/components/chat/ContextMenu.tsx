@@ -40,6 +40,11 @@ export interface ContextSearchScope {
     publicWorkspaces: WorkspaceRef[];
     groupsEnabled: boolean;
     publicEnabled: boolean;
+    /**
+     * Offer whole workspaces as well as documents and tags. False in an editor's restricted
+     * composer, whose requests can only use a document or a tag.
+     */
+    workspacesEnabled?: boolean;
 }
 
 /**
@@ -81,6 +86,7 @@ export function useContextSuggestions(
                 publicWorkspaces: scopeRef.current.publicWorkspaces,
                 groupsEnabled: scopeRef.current.groupsEnabled,
                 publicEnabled: scopeRef.current.publicEnabled,
+                includeWorkspaces: scopeRef.current.workspacesEnabled !== false,
                 signal: controller.signal,
             })
                 .then((found) => {
@@ -104,7 +110,7 @@ export function useContextSuggestions(
             window.clearTimeout(timer);
             controller.abort();
         };
-    }, [query, groupIds, publicIds, scope.groupsEnabled, scope.publicEnabled]);
+    }, [query, groupIds, publicIds, scope.groupsEnabled, scope.publicEnabled, scope.workspacesEnabled]);
 
     return { candidates, loading };
 }

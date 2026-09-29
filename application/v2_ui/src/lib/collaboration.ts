@@ -367,11 +367,14 @@ export const assistCollaborationBlockRevision = (
         instruction: string;
         original_source: string;
         expected_revision_count?: number;
+        submission_id?: string;
     },
+    signal?: AbortSignal,
 ) =>
     api.post<BlockRevisionAssistResponse>(
         `${base(conversationId)}/messages/${encodeURIComponent(messageId)}/block-revision/assist`,
         body,
+        signal,
     );
 
 /* -------------------------------------------------------------------------- */
@@ -391,10 +394,12 @@ export const addCollaborationImageRevision = (
     conversationId: string,
     messageId: string,
     body: ImageRevisionRequest,
+    signal?: AbortSignal,
 ) =>
     api.post<ImageRevisionResponse>(
         `${base(conversationId)}/messages/${encodeURIComponent(messageId)}/image-revision`,
         body,
+        signal,
     );
 
 export const setCollaborationImageRevision = (

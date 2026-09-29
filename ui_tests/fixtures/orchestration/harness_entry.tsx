@@ -18,6 +18,7 @@ import * as chatStore from '../../../application/v2_ui/src/stores/chatStore';
 import * as bootstrapStore from '../../../application/v2_ui/src/stores/bootstrapStore';
 import * as collaborationStore from '../../../application/v2_ui/src/stores/collaborationStore';
 import * as userSettingsStore from '../../../application/v2_ui/src/stores/userSettingsStore';
+import * as assistThreadStore from '../../../application/v2_ui/src/stores/assistThreadStore';
 import * as controller from '../../../application/v2_ui/src/lib/orchestrationController';
 import * as plan from '../../../application/v2_ui/src/lib/orchestrationPlan';
 import * as orchestration from '../../../application/v2_ui/src/lib/orchestration';
@@ -264,6 +265,9 @@ function reset(): void {
         saving: false,
         saveError: null,
     });
+    // Assist threads live in memory only, so a test reusing an editor would otherwise see
+    // the previous test's exchanges and draft.
+    assistThreadStore.useAssistThreadStore.getState().resetThreads();
     try {
         window.localStorage.clear();
     } catch {
@@ -285,6 +289,7 @@ const harness = {
         bootstrap: bootstrapStore,
         collaboration: collaborationStore,
         userSettings: userSettingsStore,
+        assistThread: assistThreadStore,
     },
     controller,
     plan,

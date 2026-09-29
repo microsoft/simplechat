@@ -1,11 +1,12 @@
 # test_orchestration_plan_revision_routes.py
 """
 Functional tests for conversational, pre-execution plan revisions.
-Version: 0.261.139
+Version: 0.261.200
 Implemented in: 0.261.102
 Authorized model routing through revisions and clarification: 0.261.103
 Unroutable Auto revisions report model_unavailable: 0.261.134
 Single orchestration contract updated in: 0.261.139
+Malformed plan edit submission ids refused before planning: 0.261.200
 
 Exercises the real Flask routes, planner, executor, and atomic revision persistence.
 Only model, search, source-access, and Cosmos service boundaries are replaced.
@@ -171,6 +172,24 @@ class PlanRevisionRouteTests(unittest.TestCase):
 
     def test_application_version(self):
         assert_app_version_at_least('0.261.103')
+
+    def test_malformed_submission_ids_are_refused_before_any_planning(self):
+        assert_app_version_at_least('0.261.200')
+        editor = self.open_editor()
+        run_id = editor['plan']['run_id']
+        before = deepcopy(self.runs.read_item(run_id, 'conv1'))
+        for submission_id in ('has space', '<script>', 'quote"id', 'x' * 129, 42):
+            with self.subTest(submission_id=submission_id):
+                response, events, _body = self.request_revision(editor, submission_id=submission_id)
+                self.assertEqual(response.status_code, 400, response.get_data(as_text=True))
+                self.assertEqual(response.get_json()['code'], 'invalid_request')
+                self.assertEqual(events, [])
+        self.assertEqual(self.edit_calls, [])
+        after = self.runs.read_item(run_id, 'conv1')
+        for key in ('edit_submissions', 'edit_attempts', 'edit_claim', 'edit_chat', 'edit_version'):
+            self.assertEqual(after.get(key), before.get(key), key)
+        revised, _body = self.revise(editor, revised_plan(), submission_id='client-id.1:ok')
+        self.assertEqual(revised['chat'][-1].get('submission_id'), 'client-id.1:ok')
 
     def test_editing_preserves_the_selected_model_through_execution(self):
         selection = self.use_modern_models()
