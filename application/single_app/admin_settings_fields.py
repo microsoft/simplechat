@@ -4004,6 +4004,19 @@ ADMIN_SETTINGS_FIELDS = {
             "depends_on": {"key": "allow_user_workflows", "equals": True},
         },
         {
+            "key": "enable_workflow_ai_assistant",
+            "type": "switch",
+            "label": "Enable AI Workflow Assistant",
+            "help": (
+                "Users can describe a change in plain language and review the "
+                "assistant's proposed edit in the V2 workflow editor before they "
+                "save it. The assistant never saves, runs or shares a workflow, "
+                "and it only uses documents the user can already open."
+            ),
+            "default": True,
+            "depends_on": {"key": "allow_user_workflows", "equals": True},
+        },
+        {
             "key": "allow_group_workflows",
             "type": "switch",
             "label": "Enable Group Workflows",

@@ -1160,6 +1160,14 @@ def is_user_workflows_enabled_for_user(settings, user_roles=None, authorization_
     return True
 
 
+def is_workflow_assistant_enabled_for_user(settings, user_roles=None):
+    """Return True when the AI workflow assistant is on and personal workflows are available to the user."""
+    source_settings = settings or {}
+    if not is_user_workflows_enabled_for_user(source_settings, user_roles=user_roles):
+        return False
+    return source_settings.get('enable_workflow_ai_assistant', False) is True
+
+
 def _authorize_user_settings_access(user_id, operation, allow_cross_user=False):
     """Authorize user-settings access for the current request context."""
     normalized_user_id = str(user_id or '').strip()
@@ -1436,6 +1444,8 @@ def get_settings(use_cosmos=False, include_source=False):
         'allow_user_plugins': False,
         'allow_user_workflows': False,
         'require_member_of_workflow_user': False,
+        # The AI workflow assistant in the V2 editor. It only applies where personal workflows do.
+        'enable_workflow_ai_assistant': True,
         'workflow_max_tasks': 50,
         'workflow_max_loop_items': WORKFLOW_LOOP_ITEMS_DEFAULT,
         'workflow_max_repeat_iterations': WORKFLOW_REPEAT_ITERATIONS_DEFAULT,
@@ -3853,6 +3863,21 @@ def workflow_user_required(f):
         if _is_api_request():
             return jsonify({'error': 'Forbidden', 'message': message}), 403
         return f'Forbidden: {message}', 403
+    return wrapper
+
+
+def workflow_assistant_required(f):
+    """Allow the route only when the AI workflow assistant is available to the signed-in user."""
+    @wraps(f)
+    def wrapper(*args, **kwargs):
+        settings = get_settings()
+        user_roles = (session.get('user') or {}).get('roles', [])
+        if is_workflow_assistant_enabled_for_user(settings, user_roles=user_roles):
+            return f(*args, **kwargs)
+        return jsonify({
+            'error': 'The AI workflow assistant is not available.',
+            'code': 'workflow_assistant_disabled',
+        }), 403
     return wrapper
 
 

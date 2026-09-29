@@ -2,7 +2,7 @@
 # test_v2_admin_workflow_parity.py
 """
 Functional test pinning V1/V2 parity for the Admin Settings Workflow group.
-Version: 0.261.193
+Version: 0.261.205
 Implemented in: 0.261.059
 
 The Workflow group rendered completely empty in the V2 React admin surface. The
@@ -55,6 +55,7 @@ ATTR_RE = re.compile(r'(\w[\w-]*)="([^"]*)"')
 # an administrator who only uses the other.
 EXPECTED_DEPENDENCIES = {
     "require_member_of_workflow_user": "allow_user_workflows",
+    "enable_workflow_ai_assistant": "allow_user_workflows",
     "require_group_assignment_for_group_workflows": "allow_group_workflows",
     "group_workflow_allowed_group_ids": "require_group_assignment_for_group_workflows",
 }
