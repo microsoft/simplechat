@@ -1,9 +1,10 @@
 # test_v2_orchestration_plan_editor.py
 """
 Focused real-component browser tests for conversational orchestration plan editing.
-Version: 0.261.196
+Version: 0.261.198
 Implemented in: 0.261.102
 Shared assist thread covered in: 0.261.196
+Document references covered in: 0.261.198
 
 Only HTTP boundaries are mocked. The real store, shared SSE reader, controller,
 MessageList, Review drawer, editor, and elicitation inputs run in Chromium with
@@ -1286,8 +1287,9 @@ def test_enter_sends_shift_enter_adds_a_line_and_overlong_requests_are_refused(e
     dialog.get_by_role("tab", name="Ask planner", exact=True).click()
     textbox = dialog.get_by_role("textbox", name="Ask planner", exact=True)
     send = dialog.get_by_role("button", name="Send planner request")
-    # The plan editor's input is restricted: no uploads, prompts or document references yet.
-    expect(dialog.get_by_role("button", name="Add context")).to_have_count(0)
+    # The plan editor's input is restricted: # documents and tags, but no uploads or prompts.
+    # test_v2_plan_editor_references.py covers the picker itself.
+    expect(dialog.get_by_role("button", name="Add context")).to_have_count(1)
     expect(dialog.get_by_role("button", name="Attach a file")).to_have_count(0)
     assert textbox.get_attribute("maxlength") is None
 
