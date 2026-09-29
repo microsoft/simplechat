@@ -31,6 +31,12 @@ export interface LaneDefinition {
     key: string;
     /** Heading on the progress card. */
     title: string;
+    /**
+     * Whether the lane draws a progress card at all. A lane whose progress is already shown
+     * somewhere else still claims its steps, so they are never counted as another lane's work,
+     * but draws nothing: two progress displays for the same run is noise, not reassurance.
+     */
+    showsCard: boolean;
     /** Introduces the activity currently running. */
     currentStepPrefix: string;
     /** Said before anything has been reported. */
@@ -71,6 +77,7 @@ const LANE_RULES: LaneRule[] = [
     {
         key: 'tabular',
         title: 'Tabular analysis',
+        showsCard: true,
         currentStepPrefix: 'Current tabular step',
         initialStatus: 'Gathering workbook evidence',
         completedStatus: 'Workbook evidence ready',
@@ -92,8 +99,14 @@ const LANE_RULES: LaneRule[] = [
         // would vanish into "Agent progress". Step executions are the countable unit here, the way
         // tool calls are for tabular; synthesis is the post-gathering phase, so it drives the same
         // wording switch tabular uses for its export.
+        //
+        // It draws no card, though. The plan card already counts a run's steps and names the one
+        // running, and the planner's own steps sit under the reasoning toggle; a card on top of
+        // those only repeated them, and during planning it sat at a meaningless percentage and then
+        // vanished the moment the plan arrived.
         key: 'orchestration',
         title: 'Orchestration',
+        showsCard: false,
         currentStepPrefix: 'Current step',
         initialStatus: 'Planning the work',
         completedStatus: 'Plan complete',
@@ -120,6 +133,7 @@ const LANE_RULES: LaneRule[] = [
     {
         key: 'agent',
         title: 'Agent progress',
+        showsCard: true,
         currentStepPrefix: 'Current tool',
         initialStatus: 'Connecting to the selected agent',
         completedStatus: 'Response ready',
@@ -352,6 +366,7 @@ export function buildLaneProgress(
         lane: {
             key: lane.key,
             title: lane.title,
+            showsCard: lane.showsCard,
             currentStepPrefix: lane.currentStepPrefix,
             initialStatus,
             completedStatus,

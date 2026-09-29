@@ -12,6 +12,16 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
     *   Selection, collapse, keyboard navigation, focus requests, dragged positions and change tracking behave as before.
     *   (Ref: #1573, #1543, `WorkflowFlowCanvas.tsx`, `workflowFlowNodeReuse.ts`, [V2 Workflow Flow Canvas Stable Re-renders Fix](fixes/V2_WORKFLOW_FLOW_CANVAS_STABLE_RERENDERS_FIX.md))
 
+### **(v0.261.204)**
+
+#### User Interface Enhancements
+
+*   **Simpler Orchestration Progress In The V2 Chat**
+    *   While Orchestrate plans a question, the reply now shows just the reasoning step toggle and **Thinking**. The **Orchestration** progress card that sat above them is gone. It showed "Current step: Building a plan", a percentage, a step count and a progress bar, which repeated the reasoning step, stayed at 45% while the planner worked, and disappeared as soon as the plan arrived.
+    *   While a plan runs, the plan card still shows how many steps are done and which one is running, with **Review** for the full list. The planner's steps are still under the reasoning toggle. Expanding a saved answer's reasoning no longer shows the card either.
+    *   Tabular analysis and agent replies keep their progress cards. Nothing changes on the server.
+    *   (Ref: `activityLanes.ts`, `ThoughtsList.tsx`, `showsCard`, [Orchestration Duplicate Progress Card Fix](fixes/ORCHESTRATION_DUPLICATE_PROGRESS_CARD_FIX.md))
+
 ### **(v0.261.203)**
 
 #### New Features

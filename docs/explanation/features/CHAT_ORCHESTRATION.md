@@ -1132,6 +1132,13 @@ unchanged and a live run draws identically to a reloaded one. Orchestration adds
 `step_type` values `orchestration_triage`, `orchestration_planning`, `orchestration_step`
 and `orchestration_synthesis`, each carrying `activity.lane_key = "orchestration"`.
 
+The client's orchestration lane claims these steps, so they are never counted as agent or
+tabular work, but it draws no progress card. The planner's steps sit under the reasoning
+toggle next to **Thinking**. A run's progress is on the plan card, which counts completed
+steps and names the running one, and in the drawer. A card on top repeated both, and during
+planning it stayed at 45% until the plan replaced it. See the
+[duplicate progress card fix](../fixes/ORCHESTRATION_DUPLICATE_PROGRESS_CARD_FIX.md).
+
 Execution terminal events also retain the actual outcome, safe failure
 information, and attempt/recovery identifiers. A final explanatory message does
 not imply that every step succeeded. The same information is saved with the
@@ -1364,6 +1371,8 @@ to the front.
 | `functional_tests/test_orchestration_conversation_context.py` | Message eligibility, bounds, snapshot validation, nullable unused clarifications, strict response validation, bounded repair, token accounting, provider/refusal handling, contextualized adapters, synthesis roles, and URL provenance |
 | `functional_tests/test_orchestration_conversation_context_routes.py` | New and existing conversations across HTTP/SSE planning and execution, all approval modes, null clarifications, bounded recovery, model selection and attribution, revocation, completion failures, stream cleanup, stale sources and legacy cutoffs |
 | `ui_tests/test_v2_orchestration_conversation_context.py` | Matching clarification/model transport, cancellation, original-turn continuity, all approval modes, visible answer model names and navigation |
+| `functional_tests/test_v2_orchestration_progress_lane.mjs` | Planner, plan-ready, saved-memory and reasoning-adjustment steps stay in the orchestration lane, which draws no progress card; an agent hand-off inside an orchestrated turn stays there; tabular and agent lanes keep their cards |
+| `ui_tests/test_v2_orchestration_streaming_bubble.py` | While planning, the streaming bubble shows only the reasoning toggle and **Thinking**; no orchestration progress card appears during a run or in a finished answer's reasoning; a tabular turn still draws its card |
 
 Research-selection evaluation distinguishes contract coverage from model behaviour. A
 mocked plan proves that the application preserves an allowed choice; it does not prove
@@ -1426,3 +1435,4 @@ research-selection rate is not itself a quality improvement.
 - [Model selection fix](../fixes/ORCHESTRATION_MODEL_SELECTION_FIX.md)
 - `docs/explanation/release_notes.md`
 - [Deep research selection and execution fix](../fixes/ORCHESTRATION_DEEP_RESEARCH_SELECTION_FIX.md)
+- [Duplicate progress card fix](../fixes/ORCHESTRATION_DUPLICATE_PROGRESS_CARD_FIX.md)
