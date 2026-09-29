@@ -430,12 +430,19 @@ export function workflowAlertEntryIds(entry: WorkflowAlertEntry): string[] {
     return entry.alerts.map((alert) => alert.id);
 }
 
-/** A time as the card shows it: "Mon 9:02 AM". */
-export function formatWorkflowAlertClock(ms: number): string {
-    return new Date(ms).toLocaleString([], { weekday: 'short', hour: 'numeric', minute: '2-digit' });
+/**
+ * A time as the notice and card show it: "9:02 AM" today, "Sun 11:40 PM" on another day. A
+ * popped-up alert is at most a day old, so the weekday is only needed once it crosses midnight.
+ */
+export function formatWorkflowAlertClock(ms: number, now: number = Date.now()): string {
+    const when = new Date(ms);
+    const sameDay = when.toDateString() === new Date(now).toDateString();
+    return when.toLocaleString([], sameDay
+        ? { hour: 'numeric', minute: '2-digit' }
+        : { weekday: 'short', hour: 'numeric', minute: '2-digit' });
 }
 
-/** "Failed 5 times since Mon 9:00 AM", or null for a single alert. */
+/** "Failed 5 times since 9:00 AM", or null for a single alert. */
 export function describeWorkflowAlertGroup(entry: WorkflowAlertEntry): string | null {
     if (entry.count < 2) {
         return null;

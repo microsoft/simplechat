@@ -26,6 +26,9 @@ import { PublicWorkspacePage } from './pages/PublicWorkspacePage';
 import { PublicDirectoryPage } from './pages/PublicDirectoryPage';
 import { clearWorkspaceEditorDrafts } from './lib/workspaceEditorDrafts';
 import { ContentReviewPage } from './pages/ContentReviewPage';
+// Dev only: the route below is registered only when import.meta.env.DEV, so a production
+// build drops the lab entirely. functional_tests/test_v2_alert_lab_excluded_from_build.py checks.
+import { AlertLabPage } from './dev/AlertLabPage';
 
 function BootScreen() {
     return (
@@ -223,6 +226,8 @@ export function App() {
                 <Route path="/public/:workspaceId" element={<PublicWorkspacePage />} />
                 <Route path="/public/:workspaceId/:section" element={<PublicWorkspacePage />} />
                 <Route path="/public/:workspaceId/:section/:resourceId" element={<PublicWorkspacePage />} />
+                {/* The workflow alert lab (dev/AlertLabPage.tsx). Never in a production build. */}
+                {import.meta.env.DEV ? <Route path="/dev/alert-lab" element={<AlertLabPage />} /> : null}
                 <Route path="*" element={<Navigate to="/" replace />} />
                 </Routes>
             </ErrorBoundary>
