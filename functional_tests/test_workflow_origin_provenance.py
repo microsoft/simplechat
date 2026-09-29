@@ -2,14 +2,16 @@
 #!/usr/bin/env python3
 """
 Functional test for server-owned workflow provenance (``origin``).
-Version: 0.261.202
+Version: 0.261.204
 Implemented in: 0.261.202
+Edited-at-accept provenance: 0.261.204
 
 This test ensures that the ``origin`` a chat orchestration create records on a workflow is
 server-only. The two save routes, ``POST /api/user/workflows`` and ``POST /api/group/workflows``,
 create and update workflows. Neither can set, change, reset or remove an origin, whether a
 version 2 or version 3 definition carries it. An ordinary save preserves the stored origin, and
-``edited`` becomes true, for good, only when the owner saves a material change. The origin is
+``edited`` becomes true, for good, only when the owner saves a material change, or from the
+start when the owner changed a proposal in the editor before accepting it. The origin is
 outside the definition revision and the Microsoft 365 execution fingerprint, so recording or
 changing it never invalidates an editor's revision or a Run as approval (gotcha 15). A server
 create happens at most once per proposal and never adopts or revives another workflow.
@@ -346,6 +348,19 @@ def test_a_server_create_happens_once_per_proposal(routes, scope):
     with pytest.raises(routes.definitions.WorkflowDefinitionConflict, match="A different workflow already uses this id."):
         routes.server_create(scope, _definition(), origin={**ORIGIN, "proposal_id": "another-proposal"})
     assert routes.writes() == 1
+
+
+@pytest.mark.parametrize("scope", SCOPES)
+def test_a_server_create_records_a_proposal_edited_before_accepting(routes, scope):
+    """A proposal changed in the editor before it was accepted is recorded as edited from the start."""
+    workflow, created = routes.server_create(scope, _definition(), origin=EDITED)
+
+    assert created is True
+    assert workflow["origin"] == EDITED
+    assert routes.stored(scope)["origin"] == EDITED
+    resaved = routes.post(scope, routes.load(scope))
+    assert resaved.status_code == 200, resaved.get_data(as_text=True)
+    assert routes.stored(scope)["origin"] == EDITED
 
 
 @pytest.mark.parametrize("scope", SCOPES)

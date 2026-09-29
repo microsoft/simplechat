@@ -45,6 +45,7 @@ from flask import Response, g, has_request_context, jsonify, request, session, s
 
 from config import cosmos_conversations_container, cosmos_messages_container
 from content_screening.contracts import DocumentHeldError, ScreeningError
+from functions_activity_logging import log_workflow_creation
 from functions_appinsights import log_event, workflow_log_context
 from functions_chat_content_checks import (
     CHECK_METADATA, check_chat_content, orchestration_input_text,
@@ -1434,6 +1435,41 @@ def _plan_editor_event(record, user_id):
     })
 
 
+def _workflow_proposals():
+    """The workflow proposal decisions module, imported on first use.
+
+    It builds on the workflow draft service, which cannot be imported until the settings module
+    has finished loading, so importing it here leaves this module's import order unchanged.
+    """
+    import functions_orchestration_workflow_proposals
+
+    return functions_orchestration_workflow_proposals
+
+
+def _proposal_identity(user_id):
+    """The requester's id, email, roles and tenant for a workflow proposal request.
+
+    Read from the session as the chat routes read them: absent roles are no roles.
+    """
+    try:
+        user = session.get('user') or {}
+    except Exception:
+        user = {}
+    user = user if isinstance(user, dict) else {}
+    try:
+        email = (get_current_user_info() or {}).get('email')
+    except Exception:
+        email = None
+    roles = user.get('roles')
+    tenant_id = user.get('tid')
+    return {
+        'user_id': user_id,
+        'email': email if isinstance(email, str) else None,
+        'roles': [role for role in roles if isinstance(role, str)] if isinstance(roles, (list, tuple)) else [],
+        'tenant_id': tenant_id if isinstance(tenant_id, str) and tenant_id else None,
+    }
+
+
 def register_route_backend_orchestration(bp):
     configure_orchestration_artifact_service(
         lambda user_id, conversation_id: _orchestration_services(user_id, conversation_id).rendering,
@@ -2724,3 +2760,117 @@ def register_route_backend_orchestration(bp):
             return jsonify({'error': 'The run steps could not be loaded.'}), 500
 
         return jsonify({'run_id': run_id, 'steps': steps}), 200
+
+    def _workflow_proposal_response(run_id, conversation_id, decide):
+        """Authorize a workflow proposal request's conversation and run, then answer it with ``decide``.
+
+        A conversation or run the requester cannot open is indistinguishable from a missing one.
+        Logs carry hashed ids and the error type only.
+        """
+        user_id = get_current_user_id()
+        if not user_id:
+            return jsonify({'error': 'User not authenticated'}), 401
+        proposals = _workflow_proposals()
+        if not conversation_id:
+            return jsonify(proposals.error_payload('invalid_request')), 400
+        try:
+            conversation = _authorize_context_conversation(conversation_id, user_id)
+            record = get_orchestration_run(run_id, user_id, conversation_id=conversation_id, strict=True)
+            if not record or record.get('conversation_id') != conversation_id:
+                return jsonify(proposals.error_payload('run_not_found')), 404
+            if is_legacy_plan(record.get('plan')):
+                return _legacy_plan_response()
+            status, payload = decide(proposals, record, conversation, _proposal_identity(user_id), get_settings())
+        except ConversationContextError:
+            return jsonify(proposals.error_payload('run_not_found')), 404
+        except proposals.ProposalError as exc:
+            return jsonify(exc.payload()), exc.status
+        except Exception as exc:
+            log_event(
+                '[ORCHESTRATION] A workflow proposal request could not be completed.', level=logging.ERROR,
+                extra={
+                    **workflow_log_context(run_id=run_id, conversation_id=conversation_id),
+                    'stage': 'workflow_proposal', 'error_type': type(exc).__name__,
+                },
+            )
+            return jsonify(proposals.error_payload(proposals.SERVICE_UNAVAILABLE_CODE)), 503
+        return jsonify(payload), status
+
+    def _proposal_body():
+        body = request.get_json(silent=True)
+        return body if isinstance(body, dict) else None
+
+    @bp.route("/api/v2/orchestration/runs/<run_id>/workflow-proposals", methods=["GET"])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    def orchestration_workflow_proposals(run_id):
+        """The workflow proposals a run shows, with each one's state and the actions its card offers.
+
+        Only the requester can read them. The full description, every task's instructions
+        included, is returned only while the requester may still act on proposals in this
+        private conversation.
+        """
+        def status(proposals, record, conversation, identity, settings):
+            return 200, proposals.proposal_status(
+                record, conversation, identity=identity, settings=settings,
+                response_removed=lambda: _run_response_removed(record),
+            )
+
+        return _workflow_proposal_response(run_id, _text(request.args.get('conversation_id')), status)
+
+    @bp.route("/api/v2/orchestration/runs/<run_id>/workflow-proposals/<proposal_id>/accept", methods=["POST"])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    def orchestration_accept_workflow_proposal(run_id, proposal_id):
+        """Create a proposal's personal workflow once, paused or enabled, as proposed or as edited."""
+        body = _proposal_body()
+
+        def accept(proposals, record, conversation, identity, settings):
+            status, payload, created = proposals.accept_proposal(
+                record, conversation, proposal_id, body, identity=identity, settings=settings,
+                response_removed=lambda: _run_response_removed(record),
+            )
+            if created is not None:
+                log_workflow_creation(
+                    user_id=identity['user_id'],
+                    workflow_id=created.get('id', ''),
+                    workflow_name=created.get('name', ''),
+                    runner_type=created.get('runner_type'),
+                    trigger_type=created.get('trigger_type'),
+                )
+            return status, payload
+
+        conversation_id = _text(body.get('conversation_id')) if body is not None else ''
+        return _workflow_proposal_response(run_id, conversation_id, accept)
+
+    @bp.route("/api/v2/orchestration/runs/<run_id>/workflow-proposals/<proposal_id>/deny", methods=["POST"])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    def orchestration_deny_workflow_proposal(run_id, proposal_id):
+        """Record that the requester declined a proposal. Nothing is created."""
+        body = _proposal_body()
+
+        def deny(proposals, record, conversation, identity, settings):
+            return proposals.deny_proposal(
+                record, conversation, proposal_id, body, identity=identity, settings=settings,
+            )
+
+        conversation_id = _text(body.get('conversation_id')) if body is not None else ''
+        return _workflow_proposal_response(run_id, conversation_id, deny)
+
+    @bp.route("/api/v2/orchestration/runs/<run_id>/workflow-proposals/<proposal_id>/draft", methods=["GET"])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    def orchestration_workflow_proposal_draft(run_id, proposal_id):
+        """A pending proposal as a workflow editor draft, for Edit before accepting. Writes nothing."""
+        def draft(proposals, record, conversation, identity, settings):
+            return proposals.proposal_draft(
+                record, conversation, proposal_id, identity=identity, settings=settings,
+                response_removed=lambda: _run_response_removed(record),
+            )
+
+        return _workflow_proposal_response(run_id, _text(request.args.get('conversation_id')), draft)
