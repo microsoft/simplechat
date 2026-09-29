@@ -2,9 +2,11 @@
 
 Implemented in version: **0.261.196**.
 
+Document and tag references in the plan editor added in version: **0.261.198**.
+
 Application version tracking: `application\single_app\config.py`.
 
-Related issue: #1552, part of #1543.
+Related issues: #1552 (the shared thread) and #1556 (`#` document references), part of #1543.
 
 ## Overview and dependencies
 
@@ -36,6 +38,11 @@ later. In a shared conversation the live update for your change can arrive befor
 and the id is what stops the message showing twice. The same id makes **Retry** safe: if the first
 attempt had already succeeded, the server answers from what it stored instead of making the change
 again.
+
+From version **0.261.198**, **Ask planner** also takes `#` documents and tags. The server checks
+them for the person asking as the request arrives, adds them to that revision's plan inputs
+exactly once, and stores them on the user turn so the thread can show them. The other three
+editors don't offer them. See **Document and tag references in the plan editor** below.
 
 Dependencies:
 
@@ -89,8 +96,11 @@ copy of it. Restricted mode hides what doesn't belong in a scoped edit:
 - `@` mentions.
 
 `#` document and tag references, and the **Add context** control, appear only when the thread also
-passes `allowContext`. No editor does in this version. The main composer and the orchestration
-question card don't pass `restricted`, so they're unchanged.
+passes `allowContext`. From 0.261.198 the plan editor does; the diagram, chart and image editors
+don't. A restricted input offers documents and tags only, never whole workspaces, because those are
+all the plan route accepts: its search scope sets `workspacesEnabled: false`, which
+`searchContextCandidates` (as `includeWorkspaces`) and `DocumentPickerPopover` honour. The main
+composer and the orchestration question card don't pass `restricted`, so they're unchanged.
 
 ### Stored and local threads
 
@@ -246,6 +256,149 @@ example when a revision was saved:
 
 An editor now stays open until you close it.
 
+### Document and tag references in the plan editor
+
+Added in **0.261.198** (#1556). **Ask planner** passes `allowContext`, so its restricted input
+offers `#` documents and tags and **Add context**. There's no new route, setting or container.
+
+#### The request
+
+The `ask` action of `POST /api/v2/orchestration/runs/<run_id>/revisions` takes an optional
+`references` list. Each entry is what the reader picked, which is a claim, not authorization:
+
+```json
+{"kind": "document", "id": "<document id>", "label": "Q4 pricing",
+ "scope": {"kind": "group", "id": "<group id>"}}
+```
+
+- `kind` is `document` or `tag`. A tag's `id` is its name.
+- `scope.kind` is `personal`, `group` or `public`. A group or public workspace needs its `id`; a
+  personal one needs none.
+- At most 20 distinct entries (`REQUEST_REFERENCE_LIMIT`) and 100 raw ones before duplicates are
+  removed. An id is at most 512 characters.
+- `label` is display text only. Control and bidirectional formatting characters are removed and
+  it's cut to 200 characters. A `scope.name` from the picker is accepted and dropped.
+- Chat attachments, whole workspaces (`kind: "scope"`) and the `chat` scope are refused.
+
+#### One canonical form
+
+`canonical_request_references` in `functions_assist_references.py` checks the shape, removes
+duplicates by kind, id and workspace (keeping the first label), and sorts by kind, workspace and
+id in code point order. `_normalize_request` keeps that form in the claimed request, so the
+submission fingerprint that already told a replay from a conflict now covers the references too.
+An Ask without references keeps the fingerprint it had before.
+
+The browser computes the same form with `canonicalPlanReferences` in `lib/planReferences.ts`,
+sends exactly that, and includes it in the fingerprint `choosePlanSubmissionId` compares. One
+fixture, `functional_tests/fixtures/plan_reference_canonicalization.json`, runs through both. So:
+
+- reordered or repeated chips are the same request, and **Retry** reuses its id;
+- the same id with different references is refused with 409 `submission_conflict`;
+- a request sent after the chips change goes out under a fresh id.
+
+#### The check
+
+The route claims the submission and then, unless the claim is a replay, calls
+`resolve_plan_edit_references` before anything streams. It authorizes each reference for the
+acting user as of now with `resolve_scope_references` (next section), applies the conversation's
+workspace lock exactly as the question card does, and caps what a plan has gathered at 100
+(`ELICITATION_REFERENCE_LIMIT`). Only a plan's owner can revise it, as before, so references are
+only checked for the owner.
+
+A refused reference releases the claim. The route answers with JSON `{"error": ..., "code": ...}`
+and changes neither the plan nor its chat:
+
+| Code | Status | When |
+|---|---|---|
+| `reference_unavailable` | 400 | A document was deleted, isn't finished processing, or can't be read by the user any more; a tag no longer exists; or the workspace is turned off, gone, or outside the conversation's lock. |
+| `reference_limit` | 400 | More than 20 references, or the plan would have more than 100. |
+| `invalid_request` | 400 | A malformed entry, a chat attachment, a whole workspace or the `chat` scope. |
+| `reference_check_failed` | 503 | The check itself failed. Nothing changed, and a retry is safe. |
+| `submission_conflict` | 409 | The submission id was already used for a different request. |
+
+The message names the reference by the label the reader picked, for example "“Q4 pricing” is no
+longer available to you. Remove it and pick another document.", never by a title read from the
+server. A deleted document and one the reader can no longer read get the same message, so an error
+doesn't reveal whether a document exists. The thread shows it in the planner's turn, where **Edit
+and resend** puts back both the text and the chips.
+
+#### Plan inputs
+
+`build_plan_edit_outcome` adds the authorized references to that revision's seeds with
+`merge_elicitation_context`, the function question-card answers use. Documents join
+`document_ids`, with their labels in `document_labels`; tags join `tags`; and group and public
+workspaces join the active workspace lists. The planner then sees the documents among its
+candidates, marked as selected. A document search step that names no documents of its own searches
+the selected ones, when the plan is checked and when it runs. A revision that leaves a selected
+document out isn't refused: the planner's turn says "The plan does not use all selected
+documents. Review this change before running."
+
+`merge_elicitation_context` narrows the search scope and the active workspace lists to the new
+references' workspaces when the plan had no selection. `_merge_ask_references` then widens them
+back just enough to keep every source the current plan already uses, each authorized again for
+the user, so a document from another workspace doesn't break an existing step.
+
+The seeds are saved with the new revision when the planner returns a plan, and with its question
+when it asks one, so an answer keeps them. A reply that changes nothing saves no seeds. The browser
+then puts the chips back in the input with a note, so they aren't lost.
+
+#### What's stored
+
+- The user turn stores the references as authorized: kind, id, the server's label, and the
+  workspace's kind and id.
+- When a revision first limits a plan that searched everything the reader can read, the planner's
+  turn stores a `scope_notice`, `{"kind": "search_limited", "documents": [...], "tags": [...],
+  "more": n}`. The thread shows it as "Searches in this plan now look only at what you attached:
+  …".
+
+Both are display data for the thread, bounded by `_bounded_chat`. The planner is shown only each
+turn's role and content, and reads the authorized seeds instead. Labels render as plain text,
+never as markdown or HTML.
+
+A replayed submission is answered from what was stored. Its references aren't checked or merged
+again, so a plan's seeds are never merged twice.
+
+#### Untrusted content
+
+Checking a reference reads document metadata only (`include_content=False`). Document text
+reaches the model only through the plan's existing bounded search and context steps, as untrusted
+content. Labels, ids and document text are never logged; a refusal logs its reason and position.
+
+### The scope reference authorizer
+
+`resolve_scope_references(references, user_id, settings=None, *, allowed_workspaces=None,
+limit=ELICITATION_REFERENCE_LIMIT)` in `functions_orchestration_context.py` authorizes `#`
+references outside a conversation; the default limit is 100. The plan editor uses it now; the
+workflow assistant is expected to reuse it. It reads no Flask request state and no conversation.
+
+- **Accepts** documents and tags in personal, group and public workspaces the user can read now.
+  Group membership and public visibility are checked again on every call, and the workspace type
+  must be turned on (`enable_user_workspace`, `enable_group_workspaces` or
+  `enable_public_workspaces`). A document must resolve in the workspace it was picked from,
+  through the document-context and source-manifest boundaries mixed-source reads use, and be
+  finished processing. A tag must still exist in its workspace.
+- **Refuses** chat attachments, whole workspaces and the `chat` scope.
+- **`allowed_workspaces`** is an allowlist shaped like a scope-locked conversation's
+  `locked_contexts`: items with `scope` and `id`. `None` adds no limit beyond the user's access
+  and the enabled workspace types.
+- **Returns** the references in order, without duplicates, in the question card's normalized
+  shape: `kind`, `id`, `scope` with the workspace's `kind`, `id` and `name`, and a `label` from
+  the server's record. `merge_elicitation_context` takes that shape as it is.
+- **Raises** `ScopeReferenceError`, a subclass of `ElicitationContextError`, with `message`,
+  `reason`, `reference_index` and the cleaned `label`. `reason` is one of `document_unavailable`,
+  `document_not_ready`, `tag_unavailable`, `workspace_disabled`, `workspace_unavailable`,
+  `workspace_locked`, `unsupported_kind`, `invalid_reference`, `too_many` or
+  `verification_failed`. The message names the reference by its label, or as "A selected
+  document" or "A selected tag" when it has none.
+
+The question card's `resolve_elicitation_references` is now its conversation checks plus the same
+private core, `_authorize_references`. A golden test captured from the code before the change,
+`functional_tests/fixtures/orchestration_elicitation_reference_golden.json`, holds its results and
+messages identical.
+
+Document provenance, the origin ids and `workflow` tag added in 0.261.194, is metadata. It never
+makes a document readable, and a document a workflow created is referenced like any other.
+
 ### Files
 
 Server:
@@ -276,6 +429,21 @@ V2 interface:
   `collaboration.ts`, `orchestration.ts` and `orchestrationController.ts`
 - `application/v2_ui/src/stores/chatStore.ts` and `orchestrationStore.ts`
 
+Added for document and tag references in 0.261.198:
+
+- `application/single_app/functions_assist_references.py` (new): the request's canonical form.
+- `application/single_app/functions_orchestration_context.py`: `resolve_scope_references` and the
+  shared core behind `resolve_elicitation_references`.
+- `application/single_app/functions_orchestration_plan_editing.py`,
+  `functions_orchestration_plan_revisions.py` and `route_backend_orchestration.py`: the check,
+  the seed merge, the stored chips and notice, and the request identity.
+- `application/v2_ui/src/lib/planReferences.ts` (new): the browser's canonical form, the chips a
+  request sends and a stored turn shows, and the notice text.
+- `application/v2_ui/src/components/chat/OrchestrationPlanEditor.tsx`, `AssistThread.tsx`,
+  `ComposerEditor.tsx`, `ContextMenu.tsx` and `DocumentPickerPopover.tsx`, and
+  `application/v2_ui/src/lib/contextMentions.ts`, `assistThread.ts`, `orchestration.ts`,
+  `orchestrationController.ts` and `planSubmissionIds.ts`.
+
 ## Usage
 
 ### Enable or configure
@@ -288,6 +456,10 @@ There's nothing to turn on. The thread appears wherever its editor does:
 | Image | `enable_image_generation` is on. Sending also needs an available image model. |
 | Plan | `enable_chat_orchestration` is on and the plan hasn't started. |
 
+`#` documents and tags in **Ask planner** need nothing more. A pick is accepted only from a
+workspace type that's turned on (`enable_user_workspace`, `enable_group_workspaces` or
+`enable_public_workspaces`); the server refuses the rest.
+
 ### Ask for a change
 
 1. Select **Edit** under a diagram, chart or generated image, or beside an orchestration plan.
@@ -299,6 +471,17 @@ There's nothing to turn on. The thread appears wherever its editor does:
 
 While you wait you can type your next message, but it won't send until the current one finishes.
 
+### Point the planner at a document
+
+1. In **Ask planner**, type `#` and part of a document or tag name, or select **Add context**.
+2. Pick one with the arrow keys and Enter or Tab, or click it. It becomes a chip in the input. Remove
+   a chip before sending to leave it out.
+3. Describe the change and send. The chips appear in your turn in the thread.
+
+If the plan searched everything you can read before, the planner's reply says its searches now
+look only at what you attached. If the planner answers without changing the plan, your chips go
+back in the input.
+
 ### When something goes wrong
 
 - **Cancel** stops waiting. In the diagram, chart and image editors, a change the server had
@@ -307,6 +490,8 @@ While you wait you can type your next message, but it won't send until the curre
 - **Retry** sends the same message again. It's safe after a dropped connection: a change that
   already went through isn't made twice.
 - **Edit and resend** puts the message back in the input so you can change it.
+- A document or tag the planner can't use is named in the planner's turn, by the name you picked.
+  **Edit and resend** puts back your text and chips, so you can remove it and send again.
 
 ### Keyboard
 
@@ -315,6 +500,14 @@ While you wait you can type your next message, but it won't send until the curre
 | Enter | Send the message. |
 | Shift+Enter | Add a new line. |
 | Ctrl+Enter or ⌘+Enter | Send the message. The plan editor used to send only this way. |
+
+In **Ask planner**, while the `#` list is open:
+
+| Key | Effect |
+|---|---|
+| Up and Down arrows | Move through the list. It wraps at either end. |
+| Enter or Tab | Attach the highlighted document or tag. Neither sends the message while the list is open, or while it's still loading. |
+| Escape | Close the list, or the **Add context** picker, and stay in the input. The editor stays open; Escape again closes it, as before. |
 
 ## Testing and validation
 
@@ -327,6 +520,12 @@ While you wait you can type your next message, but it won't send until the curre
 | `ui_tests/test_image_editor_capabilities.py` | The image editor's thread: immediate send, a local transcript, Cancel and Retry, a cancelled change that finished, and the counter. |
 | `ui_tests/test_v2_orchestration_plan_editor.py` | The plan editor's thread: immediate send with elapsed time, Cancel through the server, and the keys and counter. |
 | `ui_tests/test_v2_elicitation_composer.py` and `ui_tests/test_v2_prompt_composer_experience.py` | Regressions for the question card and the main composer, which share `ComposerEditor`. |
+| `functional_tests/test_orchestration_reference_authorizer_golden.py` | The question card's reference check gives the same results and messages as the code before the shared core, for every case in `fixtures/orchestration_elicitation_reference_golden.json`, success and each error family. |
+| `functional_tests/test_orchestration_scope_reference_authorizer.py` | `resolve_scope_references`: personal, group and public documents and tags accepted with server labels, and a result `merge_elicitation_context` and the question card's check both accept. Refused: chat attachments and whole workspaces, another user's documents and personal workspace, a group the user left, a public workspace they can't see, a document picked from the wrong workspace, turned-off workspace types, the allowlist, deleted, unready and missing items, and over-limit lists. Also the messages, which never use a server title, retryable failed checks, and logs without labels or ids. |
+| `functional_tests/test_orchestration_plan_revision_references.py` | The revision route end to end: a `#` document reaching the revised plan and its search at run time, a tag filtering that search, references surviving a planner question, a reply that changes nothing, a replay that isn't checked or merged again, a conflicting reuse of a submission id, refused references that change nothing and leave no turn, owner-only revision, the workspace lock, the search notice, the planner seeing only role and content, keeping the plan's own sources, and the per-plan limit. |
+| `functional_tests/test_assist_reference_canonicalization.py` | The server's canonical form against `fixtures/plan_reference_canonicalization.json`, the request identity it gives, `references` allowed only on `ask`, and the bounded chips and notice on stored turns. |
+| `functional_tests/test_v2_plan_editor_references.py` | Only the plan editor offers references, documents and tags only, canonical references on the request, the browser's limits, chips as text, chips never lost, Escape, and no remote assets. It runs `test_v2_plan_references_logic.ts`, which checks the browser's canonical form against the same fixture, the submission ids a changed selection goes out under, and the notice text. |
+| `ui_tests/test_v2_plan_editor_references.py` | In a browser with stubbed routes: `#` by keyboard to a chip, a chip in the thread and a plan that reads it; **Add context** with group documents and tags, and Escape keeping the editor open; a removed chip not sent; the refusal with **Edit and resend**; chips coming back; titles rendered as text; a lost reply retried under the same id; the main composer and question card keeping their tools; and no `#` in the diagram, chart and image editors. |
 
 ### Known limitations
 
@@ -340,5 +539,15 @@ While you wait you can type your next message, but it won't send until the curre
 - Threads belong to one browser tab. Another tab, or a reload, doesn't see a request in flight.
   Its stored result appears there when the conversation is reloaded, or through the live update in
   a shared conversation.
-- `#` references are off in every editor. Issue #1556 turns them on in the plan editor, together
-  with the server-side checks they need.
+- `#` references are offered only in **Ask planner**. The diagram, chart and image editors don't
+  offer them.
+- A planner reply that changes nothing doesn't keep the documents and tags you sent. The chips go
+  back in the input, and sending again uses them.
+- A revision can add documents and tags to a plan but not take them away. To search everything
+  again, restore an earlier version from **History** or start a new request.
+- A tag is matched by name in every workspace the plan searches, not only the one it was picked
+  from.
+- After text changes that come without key presses, such as a mouse paste or dictation, the first
+  arrow key or Escape in an open `#` list can be undone and the list reopens. Typing, or pressing
+  the key again, works. This comes from `ComposerEditor` and affects every composer, not only the
+  plan editor.

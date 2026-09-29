@@ -4,7 +4,7 @@ title: "Review and edit orchestration plans"
 description: "Refine proposed work with the planner before running it."
 section: "Guides"
 audience: user
-version: "0.261.196"
+version: "0.261.198"
 ---
 
 ## Decide what should run
@@ -202,6 +202,39 @@ remains intact.
 If an accepted edit removes an originally selected operation or document, the
 preview reports that change for review. It does not rewrite your standing
 composer preferences.
+
+### Point the planner at documents and tags
+
+Since **0.261.198**, **Ask planner** takes `#` documents and tags, as the main
+composer does.
+
+1. In **Ask planner**, type `#` and part of a document's name or a tag. Pick one
+   with the arrow keys and Enter, or with the mouse. To browse instead, select
+   **Add context**.
+2. Check the chips above the box. Remove any you don't want; a removed chip
+   isn't sent.
+3. Describe the change and send it. For example, "Compare the regional figures
+   with `#[Q4 pricing]`", where `#[Q4 pricing]` is the document you picked.
+
+The chips show under your message in the thread. The server checks each one when
+the request arrives, and accepts only documents and tags you can read now: in your
+personal workspace, in groups you belong to, and in public workspaces you can see.
+A conversation limited to certain workspaces accepts picks from those workspaces
+only. Whole workspaces, file uploads and `/` saved prompts aren't offered here.
+
+The planner is told which documents you picked, and a document search that
+doesn't name its own documents looks only at your picks. If the plan searched
+everything you can read before, the planner's reply says that it now doesn't. If
+the revised plan leaves out a document you picked, the reply says so, so you can
+ask again or remove it. Sources the plan already used stay available to it.
+
+If a pick can't be used, because the document was deleted, is still processing,
+or you've lost access to it, the request is refused before the planner runs and
+the plan doesn't change. The reply names the pick by the label you chose. Select
+**Edit and resend**, remove the chip, and send again.
+
+If the planner answers without changing the plan, your chips go back into the box
+so you can send them again or remove them.
 
 ## Understand reasoning adjustments
 
