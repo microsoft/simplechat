@@ -18,6 +18,7 @@ Dependencies:
 Architecture overview:
 
 - The workflow runs on `pull_request` events for `main`, `Development`, and `staging`.
+- It also runs on pull requests into the V2 React UI branch `paullizer-react-v2-ui`. That trigger is marked temporary in the workflow file and should be removed when the V2 branch merges into Development (#1571).
 - It scopes execution to changes in `application/single_app/**/*.py`, the checker script, and the workflow file itself.
 - The workflow uses `tj-actions/changed-files` to gather only edited Python files.
 - The checker script parses each changed file with Python AST and inspects route decorators on Flask route functions.

@@ -6,6 +6,7 @@ on:
       - main
       - Development
       - Staging
+      - paullizer-react-v2-ui  # Temporary: remove when paullizer-react-v2-ui merges into Development (#1571)
     paths:
       - 'application/single_app/**/*.py'
       - 'scripts/check_swagger_routes.py'

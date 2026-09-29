@@ -4,13 +4,19 @@ on:
   pull_request:
     branches:
       - Development
+      - paullizer-react-v2-ui  # Temporary: remove when paullizer-react-v2-ui merges into Development (#1571)
     paths:
       - 'application/**/*.js'
       - 'application/**/*.html'
       - 'application/**/*.py'
+      - 'application/**/*.ts'
+      - 'application/**/*.tsx'
+      - 'application/**/*.jsx'
+      - 'application/**/*.mjs'
       - 'scripts/check_xss_sinks.py'
       - 'functional_tests/test_xss_guardrails_checker.py'
       - '.github/workflows/xss-sink-check.yml'
+      - '.github/workflows/xss-full-scan.yml'
       - '.github/instructions/xss-prevention.instructions.md'
       - '.github/prompts/xss-full-audit-and-remediation.prompt.md'
 
@@ -38,10 +44,15 @@ jobs:
               - 'application/**/*.js'
               - 'application/**/*.html'
               - 'application/**/*.py'
+              - 'application/**/*.ts'
+              - 'application/**/*.tsx'
+              - 'application/**/*.jsx'
+              - 'application/**/*.mjs'
             xss_guardrails:
               - 'scripts/check_xss_sinks.py'
               - 'functional_tests/test_xss_guardrails_checker.py'
               - '.github/workflows/xss-sink-check.yml'
+              - '.github/workflows/xss-full-scan.yml'
               - '.github/instructions/xss-prevention.instructions.md'
               - '.github/prompts/xss-full-audit-and-remediation.prompt.md'
               - 'docs/explanation/features/v0.241.022/XSS_PR_GUARDRAILS.md'
