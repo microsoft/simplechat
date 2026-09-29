@@ -284,19 +284,30 @@ function readLinks(metadata: Record<string, unknown>, notification: AppNotificat
 }
 
 /**
- * The workflow's home. Written on the alert by the runner; an alert from before that is
- * placed by the conversation it posted into, and one that cannot be placed offers no
- * Open workflow rather than a guess.
+ * The workflow's home. Written on the alert by the runner: `workflow_scope`, and
+ * `workflow_group_id` for a group workflow. It is never read from `metadata.group_id`, which
+ * classic takes as the group to make active when a notification opens. An alert from before
+ * the runner wrote them is placed by the conversation it posted into, and one that cannot be
+ * placed offers no Open workflow rather than a guess.
  */
 function readScope(metadata: Record<string, unknown>): WorkflowAlertScope | null {
     const written = oneLine(metadata.workflow_scope).toLowerCase();
     if (written === 'group') {
-        const groupId = safeId(metadata.group_id);
-        return groupId ? { kind: 'group', groupId } : null;
+        const groupId = safeId(metadata.workflow_group_id);
+        if (groupId) {
+            return { kind: 'group', groupId };
+        }
+        const linked = readLinkedScope(metadata);
+        return linked?.kind === 'group' ? linked : null;
     }
     if (written === 'personal') {
         return { kind: 'personal' };
     }
+    return readLinkedScope(metadata);
+}
+
+/** The workspace of the conversation the workflow posted into, from its Open workflow link. */
+function readLinkedScope(metadata: Record<string, unknown>): WorkflowAlertScope | null {
     const targets = Array.isArray(metadata.link_targets) ? metadata.link_targets : [];
     const workflowTarget = targets.find((target) => isRecord(target) && oneLine(target.label).toLowerCase() === 'open workflow');
     const context = isRecord(workflowTarget) && isRecord(workflowTarget.link_context) ? workflowTarget.link_context : null;
@@ -533,8 +544,11 @@ export function workflowAlertFollowUpAction(alert: WorkflowAlert): WorkflowAlert
 /**
  * Read the unread pop-up alerts from the last 24 hours, newest first.
  *
- * The route answers every signed-in user, so a failure here is reported to the caller,
- * which keeps the alerts it already has rather than clearing them.
+ * `complete` is true when the answer is shorter than the page asked for: it is every unread
+ * pop-up alert there is, and the store retires a shown alert it no longer lists. So a failure
+ * must never look like a short answer. Asking with `since_hours` makes the route answer a
+ * failed storage read with a 500 rather than an empty list, and anything that is not a
+ * successful answer is thrown here. The caller then keeps the alerts it already has.
  */
 export async function fetchWorkflowAlerts(signal?: AbortSignal): Promise<{ alerts: WorkflowAlert[]; complete: boolean }> {
     const params = new URLSearchParams({
@@ -542,7 +556,7 @@ export async function fetchWorkflowAlerts(signal?: AbortSignal): Promise<{ alert
         since_hours: String(WORKFLOW_ALERT_POPUP_WINDOW_HOURS),
     });
     const payload = await api.get<unknown>(`/api/notifications/workflow-alerts?${params}`, signal);
-    if (!isRecord(payload) || !Array.isArray(payload.notifications)) {
+    if (!isRecord(payload) || payload.success === false || !Array.isArray(payload.notifications)) {
         throw new Error('Workflow alerts could not be read.');
     }
     const alerts = payload.notifications

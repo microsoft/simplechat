@@ -7,13 +7,17 @@
 // when that count says something may have changed:
 //
 // - the first count of the visit, and every read when the reader comes back to the tab;
-// - the count rising, which is a new notice of some kind;
+// - the count rising, which is a new notice of some kind, even on the way back to the tab;
 // - every poll while the count is at the cap, where a new alert cannot move it, with a safety
 //   read at most every five minutes otherwise;
 // - the count falling when this tab did not cause it, so an alert read in another tab or on
-//   another device leaves the notice here too.
+//   another device leaves the notice here too;
+// - the count reaching zero while an alert waits or shows, to confirm it.
 //
-// Nothing is read while the count is zero: there is nothing unread to pop up.
+// Only an alerts read retires an alert. The count route answers zero when it cannot count as
+// well as when nothing is unread, so a zero is checked against the alerts route, and a read
+// that fails keeps what is waiting and showing. With nothing waiting or showing, nothing is
+// read while the count is zero: there is nothing unread to pop up.
 //
 // Whether the notice may show is checked here too, and handed to the store as `suspended`.
 // It waits while the tab is hidden, while the mobile navigation is open, and while a dialog is
@@ -197,12 +201,19 @@ export function useWorkflowAlertRuntime(ready: boolean): void {
                 return;
             }
             if (change.count <= 0) {
-                again = false;
-                store.getState().clearAll();
+                // Never a reason on its own to retire an alert: see the header. A complete
+                // answer retires what it no longer lists, and a failed read keeps it. A read
+                // already on its way may have left before the alerts were read, so one is
+                // queued behind it too.
+                if (pending() || inFlight) {
+                    fetchNow();
+                }
                 return;
             }
             if (change.reason === 'initial' || change.reason === 'focus' || change.reason === 'visibility') {
-                fetchNow('return');
+                // A read for the return is skipped when one has just been made, but a rise
+                // is a new alert that read may have left too early to see.
+                fetchNow(change.rose ? 'change' : 'return');
                 return;
             }
             const now = Date.now();

@@ -148,7 +148,6 @@ Unread notifications lose unread styling after being marked read. Filters and se
 | A workflow alert didn't pop up in V2 | It is set to go to the bell only, it is more than 24 hours old, or another V2 tab already showed it | Open the bell, where it is still unread. To make a rule pop up, set its delivery to **Pop-up alert**. |
 | A workflow alert pops up later than expected | V2 checks for new notifications every 30 seconds, less often while nothing changes, and holds the notice while a dialog is open | Return to the tab or close the dialog. Switching back to the tab checks straight away. |
 | The notice tucked away before I read it | Info, low and medium notices tuck into the bell after about eight seconds | Open the bell; the alert is still unread there. Point at a notice to keep it open. |
-| **Open workflow** didn't open the run | That workspace's workflows list was already open | Reload the page, which now names the run. |
 | The full alert has no **Open workflow** | The alert was raised before 0.261.199 and doesn't say which workspace its workflow belongs to | Open the workflow from its workspace's workflows list. |
 
 ## Related

@@ -72,8 +72,11 @@ reports (`subscribeNotificationCount`) and reads
 count suggests something changed:
 
 - On the first count of the visit, and when the reader comes back to the tab.
-  Reads for a return that come within two seconds of each other count as one.
-- When the count rises.
+  Reads for a return that come within two seconds of each other count as one,
+  unless the count rose on the way back: a rise is a new alert, so it is always read.
+- When the count rises. A read asked for while another is on its way runs as soon
+  as that one lands, because the earlier read may have left before the new alert
+  was written.
 - On every poll while the count is at the server's cap of 10, where a new alert
   can't raise it. Otherwise there is one safety read at most every five minutes.
 - When the count falls while an alert is waiting or showing and the card didn't
@@ -81,10 +84,16 @@ count suggests something changed:
   too. A fall within three seconds of one of the card's own actions is taken to be
   that action.
 
-Nothing is read while the count is zero, and a count of zero clears the notice.
-When fewer than 10 alerts come back the answer is complete. Any alert missing from
-it is no longer unread and recent, perhaps read or dismissed elsewhere, so it is
-dropped.
+Only a successful alerts read retires an alert. When fewer than 10 alerts come back
+the answer is complete. Any alert missing from it is no longer unread and recent,
+perhaps read or dismissed elsewhere, so it is dropped. A read that fails changes
+nothing: what waits and what shows stay, and the next successful read decides.
+
+The count can't retire an alert either. The count route answers zero when it can't
+count as well as when nothing is unread, so a count of zero while an alert waits or
+shows is confirmed with an alerts read. If a read is already on its way, another
+follows it. With nothing waiting or showing, nothing is read while the count is
+zero, because there is nothing unread to pop up.
 
 When a tab that was hidden comes back, alerts that waited while it was away are held
 for up to three seconds for a fresh read. So an alert read in another tab meanwhile
@@ -164,6 +173,10 @@ The card shows:
   lives in and opens the run that raised the alert:
   `/workspace/workflows?workflow_id=<id>&run_id=<id>`, or
   `/groups/<group id>/workflows?workflow_id=<id>&run_id=<id>` for a group workflow.
+  It works when that list is already open, too. The workflows section acts on each
+  navigation that names a workflow once, so choosing Open workflow again, even for
+  the same run, opens the run again. Anything else that later changes the list, such
+  as running another workflow, doesn't reopen a run it has already opened.
   Alerts from before this release have no recorded scope. For those, it is taken
   from the workspace named on their **Open workflow** conversation link, and when
   that doesn't name one the button isn't shown rather than guessing.
@@ -250,7 +263,7 @@ links, however they are spelled.
 
 ## Server: the bounded query
 
-`get_unread_workflow_priority_notifications(user_id, limit=5, since_hours=None)` in
+`get_unread_workflow_priority_notifications(user_id, limit=5, since_hours=None, raise_on_error=False)` in
 `functions_notifications.py` used to read every workflow alert the user had within
 the 60-day TTL and filter it in Python. It now pushes these filters into one
 parameterized Cosmos query with `SELECT TOP @limit ... ORDER BY c.created_at DESC`:
@@ -277,18 +290,41 @@ The response shape is unchanged. V2 asks for `since_hours=24`. Classic doesn't p
 it, so it gets the same alerts as before, at the same cadence, from a bounded read.
 The route keeps its Blueprint, Swagger and authentication decorators.
 
+A read that fails is logged and answered with an empty list, as it always was. V2
+can't take an empty list at its word, though: it treats a short answer as every
+unread pop-up alert there is, and retires anything missing. So the route passes
+`raise_on_error=True` whenever `since_hours` is given, which only V2 does. For V2, a
+failed read reaches the route's existing `500` answer,
+`{ "success": false, "notifications": [] }`, and V2 keeps what it holds. Classic
+still gets the empty list.
+
 The workflow runner now records `workflow_scope` (`personal` or `group`) and
-`group_id` in the metadata of the alerts it creates, which is how Open workflow finds
-the right workflows list.
+`workflow_group_id` (empty for a personal workflow) in the metadata of the alerts it
+creates, which is how Open workflow finds the right workflows list. The key isn't
+`group_id`. When a notification is opened, classic makes `link_context.group_id` or
+`metadata.group_id` the active group. So a `group_id` in the metadata would switch
+groups whenever a group workflow's alert opens a link that names no group, such as a
+failure raised before the workflow's conversation existed, or an agent's personal
+conversation.
 
 ## The alert lab
 
 `/v2/dev/alert-lab` shows sample alerts with the real notice and card inside the
 real application shell, so changes to them can be tried without a workflow to
-trigger. It is registered only when `import.meta.env.DEV`, so it exists only on the
-Vite dev server (`npm run dev`, then `http://localhost:5174/v2/dev/alert-lab`).
-Production builds drop the page and its samples entirely.
-`functional_tests/test_v2_alert_lab_excluded_from_build.py` checks that.
+trigger. It exists only on the Vite dev server (`npm run dev`, then
+`http://localhost:5174/v2/dev/alert-lab`). `App.tsx` loads it with
+`lazy(() => import('./dev/AlertLabPage'))`, created only inside the
+`import.meta.env.DEV` branch, and renders it in `Suspense`. A production build
+defines `import.meta.env.DEV` as false, drops that branch, and never references the
+module, even if a lab file later does something when it is imported.
+
+`functional_tests/test_v2_alert_lab_excluded_from_build.py` checks both halves. In
+the source, that lazy import must be the only reference to `src/dev/`, and the check
+looks at every form one can take: `from`, a bare `import '...'`, a dynamic
+`import(...)` (including inside `lazy`), `require(...)` and `import.meta.glob(...)`.
+In a production build, no emitted file is named for the lab, and no emitted text
+file holds one of the lab's markers. The check searches an existing build and
+doesn't build one. With no build, or a build older than the notice, it is skipped.
 
 While the lab is open it feeds the notice itself. The server feed is paused, and the
 card's read, dismiss and open actions only record what they would have done, so
@@ -317,9 +353,9 @@ as Flask does in production. Before, it answered those with Vite's "did you mean
 
 | File | Change |
 |---|---|
-| `application/single_app/functions_notifications.py` | The bounded, parameterized query and `parse_workflow_alert_since_hours` |
-| `application/single_app/route_backend_notifications.py` | Validates `since_hours` and passes it through |
-| `application/single_app/functions_workflow_runner.py` | Records `workflow_scope` and `group_id` on new alerts |
+| `application/single_app/functions_notifications.py` | The bounded, parameterized query, `raise_on_error`, and `parse_workflow_alert_since_hours` |
+| `application/single_app/route_backend_notifications.py` | Validates `since_hours`, passes it through, and answers `500` when V2's read fails |
+| `application/single_app/functions_workflow_runner.py` | Records `workflow_scope` and `workflow_group_id` on new alerts |
 | `application/v2_ui/src/lib/workflowAlertNotices.ts` | New: reading and bounding alerts, eligibility, grouping, wording and paths |
 | `application/v2_ui/src/lib/useWorkflowAlertRuntime.ts` | New: when to read alerts, and when the page is free to show them |
 | `application/v2_ui/src/lib/workflowAlertClaims.ts` | New: one tab per alert |
@@ -332,8 +368,9 @@ as Flask does in production. Before, it answered those with Vite's "did you mean
 | `application/v2_ui/src/components/notifications/workflowAlertTone.ts` | New: priority colors and icons |
 | `application/v2_ui/src/components/ui/Modal.tsx` | A header that replaces the title row, for the card's band |
 | `application/v2_ui/src/components/layout/Sidebar.tsx`, `AppShell.tsx`, `NotificationBell.tsx` | The notice's slot under My Workspace, the card and live region, the bell's swing |
-| `application/v2_ui/src/App.tsx` | Mounts the runtime, and the lab route in development only |
+| `application/v2_ui/src/App.tsx` | Mounts the runtime, and loads the lab route lazily in development only |
 | `application/v2_ui/src/dev/AlertLabPage.tsx`, `alertLabSamples.ts` | New: the alert lab |
+| `application/v2_ui/src/pages/workspace/WorkflowsSection.tsx` | Acts on each navigation that names a workflow once, read from the router, so Open workflow works while the list is open |
 | `application/v2_ui/vite.config.ts` | Serves `/v2` page loads in development |
 | `ui_tests/fixtures/workflow_alerts/` | New: the harness build for the UI suite |
 | `ui_tests/fixtures/v2_notification_stubs.py` | Workflow alert answers for Playwright stubs |
@@ -346,9 +383,6 @@ as Flask does in production. Before, it answered those with Vite's "did you mean
 - The count is polled every 30 seconds, doubling while nothing changes, up to five
   minutes. So in a tab that has been quiet for a while an alert can take up to five
   minutes to appear. Focusing the window or returning to the tab reads it at once.
-- Open workflow adds the run to the address, but the workflows section reads it only
-  when the page opens. Choosing Open workflow while that workflows list is already
-  open changes the address without opening the run.
 - Open run and Ask about this arrive with Phases 6b and 6a.
 - The card's primary button (**Mark read**) pairs `--accent` with `--on-accent` at
   4.49:1 in the light theme, just under 4.5:1. That is a design-token matter shared
@@ -358,11 +392,12 @@ as Flask does in production. Before, it answered those with Vite's "did you mean
 
 | Suite | Cases | Coverage |
 |---|---|---|
-| `functional_tests/test_workflow_alert_bounded_query.py` | 11 functions | The query is parameterized, limited with `TOP`, and filtered in Cosmos; limits clamp to 1–10; `since_hours` adds a bounded `created_at` window, and the parser accepts whole hours inside the TTL and rejects everything else; the Python re-check and response decoration are unchanged; a query failure still returns an empty list; classic's request and cadence are unchanged; new alerts record their workflow's scope |
-| `functional_tests/route_tests/test_workflow_alert_since_hours_policy.py` | 6 functions | The route keeps its Blueprint, Swagger and authentication policy; classic's request is unchanged; V2's window is validated and passed through; out-of-range limits fall back as before; invalid windows are refused without reading; a reader failure keeps the existing error shape |
-| `functional_tests/test_v2_alert_lab_excluded_from_build.py` | 3 | The lab's markers exist only in lab code; only App.tsx imports the lab, behind `import.meta.env.DEV`; a built bundle that contains the notice contains no lab marker |
+| `functional_tests/test_workflow_alert_bounded_query.py` | 12 functions | The query is parameterized, limited with `TOP`, and filtered in Cosmos; limits clamp to 1–10; `since_hours` adds a bounded `created_at` window, and the parser accepts whole hours inside the TTL and rejects everything else; the Python re-check and response decoration are unchanged; a query failure still returns an empty list by default and is raised with `raise_on_error`; classic's request and cadence are unchanged; new alerts record their workflow's scope and `workflow_group_id`, never `group_id` |
+| `functional_tests/route_tests/test_workflow_alert_since_hours_policy.py` | 8 functions | The route keeps its Blueprint, Swagger and authentication policy; classic's request is unchanged; V2's window is validated and passed through; out-of-range limits fall back as before; invalid windows are refused without reading; a reader failure keeps the existing error shape; through the real reader with a failing Cosmos query, V2's read answers `500` and classic's still answers an empty list |
+| `functional_tests/test_v2_alert_lab_excluded_from_build.py` | 4 | The lab's markers exist only in lab code; the reference scanner recognizes every import form; the only reference to the lab is App.tsx's lazy import inside the `import.meta.env.DEV` branch; an existing production build has no file named for the lab and no lab marker (skipped without a build) |
 | `functional_tests/test_workflow_priority_alerts.py` | Existing | Classic's workflow alert contract, with the new signature |
-| `ui_tests/test_v2_workflow_alert_notices.py` | 26 | Pop-up versus notify-only and the 24-hour window against a server that leaves both filters out; one claim across two tabs of one browser, and a tab opened later; waiting behind a dialog, the bell's panel and a hidden tab; the eight-second tuck, its hover and focus pause, and high and critical staying; storm grouping; every card action; keyboard focus, Escape and the tuck on covering focus; motion with and without reduced motion, including the Web Animations' properties and every `wf-*` keyframe; the rail expanded, collapsed and on a 360 px phone in both themes; text contrast for every priority and category in both themes, with and without reduced transparency; hostile text rendered as text; refused off-site links; and Open workflow's personal, group and unplaceable cases |
+| `ui_tests/test_v2_workflow_alert_notices.py` | 28 | Pop-up versus notify-only and the 24-hour window against a server that leaves both filters out; one claim across two tabs of one browser, and a tab opened later; waiting behind a dialog, the bell's panel and a hidden tab; only a successful read retiring an alert, through a failed read on return and a zero count whose confirming read fails; a rise on return read behind a read already on its way; the eight-second tuck, its hover and focus pause, and high and critical staying; storm grouping; every card action; keyboard focus, Escape and the tuck on covering focus; motion with and without reduced motion, including the Web Animations' properties and every `wf-*` keyframe; the rail expanded, collapsed and on a 360 px phone in both themes; text contrast for every priority and category in both themes, with and without reduced transparency; hostile text rendered as text; refused off-site links; and Open workflow's personal, group and unplaceable cases |
+| `ui_tests/test_v2_document_provenance.py` | 2 added | Against the real workflows section, personal and group: Open workflow while the list is open expands the run; a second Open workflow for the same run opens it again; running another workflow afterwards doesn't reopen it |
 
 The UI suite mounts the real V2 frame in a harness build, following
 `ui_tests/test_v2_notifications_bell.py`. It stubs HTTP with `page.route` and fakes

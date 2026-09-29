@@ -1076,13 +1076,18 @@ def parse_workflow_alert_since_hours(value):
     return hours
 
 
-def get_unread_workflow_priority_notifications(user_id, limit=5, since_hours=None):
+def get_unread_workflow_priority_notifications(user_id, limit=5, since_hours=None, raise_on_error=False):
     """Return the most recent unread pop-up workflow alerts for a user.
 
     The unread, not-dismissed and not-notify-only filters run in Cosmos, so the read is
     bounded by ``limit`` instead of scanning every alert still inside the 60-day TTL.
     ``since_hours`` optionally keeps only alerts created within that many hours; None leaves
     the window open, which is what the classic interface asks for.
+
+    A failed read returns an empty list, as the classic interface has always had it. With
+    ``raise_on_error`` the failure is raised instead, for a caller that must not mistake it
+    for "nothing unread": the V2 interface treats a short list as every unread pop-up alert
+    there is, and would retire the ones it is showing.
     """
     try:
         normalized_limit = max(1, min(int(limit or 5), 10))
@@ -1145,6 +1150,8 @@ def get_unread_workflow_priority_notifications(user_id, limit=5, since_hours=Non
         return unread_notifications
     except Exception as e:
         debug_print(f"Error fetching unread workflow alerts for {user_id}: {e}")
+        if raise_on_error:
+            raise
         return []
 
 

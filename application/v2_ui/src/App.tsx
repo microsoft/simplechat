@@ -1,7 +1,7 @@
 // App.tsx
 // Loads bootstrap, then renders the shell and routes.
 
-import { useEffect } from 'react';
+import { lazy, Suspense, useEffect } from 'react';
 import { Navigate, Route, Routes, useLocation } from 'react-router-dom';
 import { LogIn, TriangleAlert } from 'lucide-react';
 import { AppShell } from './components/layout/AppShell';
@@ -26,9 +26,14 @@ import { PublicWorkspacePage } from './pages/PublicWorkspacePage';
 import { PublicDirectoryPage } from './pages/PublicDirectoryPage';
 import { clearWorkspaceEditorDrafts } from './lib/workspaceEditorDrafts';
 import { ContentReviewPage } from './pages/ContentReviewPage';
-// Dev only: the route below is registered only when import.meta.env.DEV, so a production
-// build drops the lab entirely. functional_tests/test_v2_alert_lab_excluded_from_build.py checks.
-import { AlertLabPage } from './dev/AlertLabPage';
+
+// Dev only: the workflow alert lab. Its one dynamic import is created only when
+// import.meta.env.DEV, which a production build replaces with false, so production never
+// references the module or emits a chunk for it, whatever the lab's files come to contain.
+// functional_tests/test_v2_alert_lab_excluded_from_build.py checks.
+const AlertLabPage = import.meta.env.DEV
+    ? lazy(() => import('./dev/AlertLabPage').then((lab) => ({ default: lab.AlertLabPage })))
+    : null;
 
 function BootScreen() {
     return (
@@ -227,7 +232,7 @@ export function App() {
                 <Route path="/public/:workspaceId/:section" element={<PublicWorkspacePage />} />
                 <Route path="/public/:workspaceId/:section/:resourceId" element={<PublicWorkspacePage />} />
                 {/* The workflow alert lab (dev/AlertLabPage.tsx). Never in a production build. */}
-                {import.meta.env.DEV ? <Route path="/dev/alert-lab" element={<AlertLabPage />} /> : null}
+                {import.meta.env.DEV && AlertLabPage ? <Route path="/dev/alert-lab" element={<Suspense fallback={<BootScreen />}><AlertLabPage /></Suspense>} /> : null}
                 <Route path="*" element={<Navigate to="/" replace />} />
                 </Routes>
             </ErrorBoundary>

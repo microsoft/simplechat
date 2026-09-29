@@ -70,8 +70,6 @@ interface WorkflowAlertState {
 
     receiveAlerts: (alerts: WorkflowAlert[], options?: { complete?: boolean }) => void;
     removeAlerts: (ids: Iterable<string>) => void;
-    /** Everything unread has gone; drop what is waiting and what is showing. */
-    clearAll: () => void;
     setSuspended: (suspended: boolean) => void;
     openCard: () => void;
     closeCard: () => void;
@@ -322,16 +320,6 @@ export const useWorkflowAlertStore = create<WorkflowAlertState>((set, get) => {
         },
 
         removeAlerts: (ids) => drop(ids),
-
-        clearAll: () => {
-            const state = get();
-            drop([
-                ...state.queue.map((alert) => alert.id),
-                ...state.entries.flatMap(workflowAlertEntryIds),
-                ...heldWinners.map((alert) => alert.id),
-            ]);
-            set({ queue: [] });
-        },
 
         setSuspended: (suspended) => {
             if (get().suspended === suspended) {

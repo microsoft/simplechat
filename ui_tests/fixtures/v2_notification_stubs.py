@@ -127,7 +127,7 @@ def workflow_alert_document(notification_id, *, created_at, user_id="user-1", wo
         "workflow_id": workflow_id,
         "workflow_name": workflow_name,
         "workflow_scope": scope,
-        "group_id": group_id if scope == "group" else None,
+        "workflow_group_id": group_id if scope == "group" else None,
         "priority": priority,
         "category": category,
         "delivery": delivery,
@@ -151,7 +151,7 @@ def workflow_alert_document(notification_id, *, created_at, user_id="user-1", wo
     }
     if scope is None:
         metadata.pop("workflow_scope")
-        metadata.pop("group_id")
+        metadata.pop("workflow_group_id")
     type_config = dict(WORKFLOW_ALERT_TYPE_CONFIG.get(priority, WORKFLOW_ALERT_TYPE_CONFIG["medium"]))
     if category == "failure":
         type_config["icon"] = WORKFLOW_ALERT_FAILURE_ICON

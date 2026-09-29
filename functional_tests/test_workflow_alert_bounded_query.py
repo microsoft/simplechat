@@ -8,8 +8,10 @@ Implemented in: 0.261.199
 This test ensures get_unread_workflow_priority_notifications pushes its unread,
 not-dismissed, not-notify-only and optional recency filters into one parameterized,
 TOP-limited Cosmos query, keeps the Python re-check and response decoration, validates
-the since_hours window, leaves the classic caller unchanged, and that new workflow
-alerts record the workflow's scope so V2 can link back to the right workflows list.
+the since_hours window, leaves the classic caller unchanged (a failed read is still an
+empty list there), raises a failed read for the V2 caller that asks it to, and that new
+workflow alerts record the workflow's scope so V2 can link back to the right workflows
+list, under keys classic does not read as the group to make active.
 """
 
 import ast
@@ -180,7 +182,9 @@ def test_python_recheck_still_stops_at_the_limit():
 def test_since_hours_parser_accepts_whole_hours_inside_the_ttl(value, expected):
     notifications, _, _ = load_notifications([])
 
-    assert notifications.parse_workflow_alert_since_hours(value) == expected
+    parsed = notifications.parse_workflow_alert_since_hours(value)
+
+    assert parsed == expected
     assert notifications.WORKFLOW_ALERT_SINCE_HOURS_MAX == 1440
 
 
@@ -205,15 +209,41 @@ def test_invalid_since_hours_raises_instead_of_widening_the_window():
     assert calls == []
 
 
-def test_query_failure_still_returns_an_empty_list():
-    notifications, _, debug = load_notifications([])
+def break_storage(notifications):
+    """Make every Cosmos query fail, and record that one was attempted."""
+    attempts = []
 
     def broken_query(*args, **kwargs):
+        attempts.append(kwargs.get("query") or (args[0] if args else None))
         raise RuntimeError("storage unavailable")
 
     notifications.cosmos_notifications_container = types.SimpleNamespace(query_items=broken_query)
+    return attempts
 
-    assert notifications.get_unread_workflow_priority_notifications("owner") == []
+
+def test_query_failure_still_returns_an_empty_list():
+    """The classic caller keeps the empty list it has always had for a failed read."""
+    notifications, _, debug = load_notifications([])
+    attempts = break_storage(notifications)
+
+    popups = notifications.get_unread_workflow_priority_notifications("owner")
+
+    assert popups == []
+    assert len(attempts) == 1
+    debug.assert_called_once()
+
+
+def test_query_failure_is_raised_for_a_caller_that_must_not_read_it_as_empty():
+    """V2 reads a short list as everything unread, so its failed read is raised, not emptied."""
+    notifications, _, debug = load_notifications([])
+    attempts = break_storage(notifications)
+
+    with pytest.raises(RuntimeError, match="storage unavailable"):
+        notifications.get_unread_workflow_priority_notifications(
+            "owner", limit=10, since_hours=24, raise_on_error=True,
+        )
+
+    assert len(attempts) == 1
     debug.assert_called_once()
 
 
@@ -275,7 +305,10 @@ def test_new_alerts_record_the_workflow_scope(workflow, scope, group_id):
     assert result == {"id": "n1"}
     metadata = captured[0]["metadata"]
     assert metadata["workflow_scope"] == scope
-    assert metadata["group_id"] == group_id
+    assert metadata["workflow_group_id"] == group_id
+    # Classic's notification click makes metadata.group_id the active group when the link it
+    # opens names none, so the workflow's group must not be written under that key.
+    assert "group_id" not in metadata
     assert metadata["workflow_id"] == workflow["id"]
     assert metadata["run_id"] == "run-1"
 

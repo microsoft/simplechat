@@ -141,7 +141,7 @@ function sample(stamp: string, index: number, now: number, input: AlertSampleInp
     };
     if (!input.legacy) {
         metadata.workflow_scope = input.workflow.scope;
-        metadata.group_id = input.workflow.groupId ?? '';
+        metadata.workflow_group_id = input.workflow.groupId ?? '';
     }
     if (input.agent) {
         metadata.agent_display_name = input.agent;

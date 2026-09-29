@@ -422,6 +422,13 @@ class AlertServer:
         # When set, the alerts route leaves out its delivery and recency filters, as a server
         # from before they existed would, so the client's own checks are what is tested.
         self.leaky = False
+        # When set, the alerts route answers as it does when storage cannot be read.
+        self.alerts_failing = False
+        # When not None, the count route answers this, as it answers 0 when it cannot count.
+        self.count_override = None
+        # While set, alert reads are answered as of their arrival, but only on release().
+        self.holding = False
+        self.held = []
 
     # Server state -----------------------------------------------------------------------------
 
@@ -439,6 +446,13 @@ class AlertServer:
         record = self.find(notice_id)
         record["is_read"] = True
         record["read_by"] = [USER_ID]
+
+    def release(self):
+        """Send the alert reads held back, each with the answer it would have had on arrival."""
+        self.holding = False
+        held, self.held = self.held, []
+        for route, payload in held:
+            route.fulfill(json=payload)
 
     def listed(self, include_read=True, include_dismissed=False):
         items = [
@@ -487,7 +501,8 @@ class AlertServer:
     def notification_route(self, route, method, path, query, tab):
         if method == "GET" and path == "/api/notifications/count":
             # get_unread_notification_count caps the count at 10.
-            route.fulfill(json=notification_count_payload(min(len(self.unread()), 10)))
+            count = min(len(self.unread()), 10) if self.count_override is None else self.count_override
+            route.fulfill(json=notification_count_payload(count))
         elif method == "GET" and path == WORKFLOW_ALERTS_PATH:
             self.answer_alerts(route, path, query, tab)
         elif method == "GET" and path == "/api/notifications":
@@ -540,6 +555,11 @@ class AlertServer:
     def answer_alerts(self, route, path, query, tab):
         """get_unread_workflow_priority_notifications behind api_get_workflow_alert_notifications."""
         self.alert_queries.append((tab, dict(query)))
+        if self.alerts_failing:
+            # With since_hours, a storage failure reaches the route's 500 answer.
+            self.expected_http_failures.add((path, 500))
+            route.fulfill(status=500, json={"success": False, "notifications": []})
+            return
         since = None
         if "since_hours" in query:
             hours = query["since_hours"]
@@ -566,7 +586,11 @@ class AlertServer:
             if since is not None:
                 items = [record for record in items if datetime.fromisoformat(record["created_at"]) >= since]
         items.sort(key=lambda record: record["created_at"], reverse=True)
-        route.fulfill(json=workflow_alerts_payload(copy.deepcopy(items[:limit])))
+        payload = workflow_alerts_payload(copy.deepcopy(items[:limit]))
+        if self.holding:
+            self.held.append((route, payload))
+            return
+        route.fulfill(json=payload)
 
     def answer_list(self, route, query):
         self.list_queries.append(query)
@@ -686,9 +710,23 @@ class AlertTab:
     def settle(self):
         """Wait until the count and every alert read it led to have landed and been claimed."""
         self.settle_count()
-        self.wait_for_js(ALERTS_SETTLED, f"{self.label}: a workflow alert read did not land.")
+        self.wait_alerts_settled()
         self.page.wait_for_timeout(100)
-        self.wait_for_js(ALERTS_SETTLED, f"{self.label}: a workflow alert read did not land.")
+        self.wait_alerts_settled()
+
+    def wait_alerts_settled(self):
+        try:
+            self.wait_for_js(ALERTS_SETTLED, "")
+        except AssertionError:
+            reads = self.js("""() => {
+                const state = window.WorkflowAlertHarness.stores.workflowAlert.useWorkflowAlertStore.getState();
+                return {...window.__alertFetches, received: window.__alertReceives,
+                        queued: state.queue.length, suspended: state.suspended};
+            }""")
+            raise AssertionError(
+                f"{self.label}: a workflow alert read did not land, a failed one was received as an "
+                f"answer, or what it found was not claimed: {reads}"
+            ) from None
 
     def wait_tucked(self):
         """
@@ -844,6 +882,7 @@ def harness_assets():
 def server(harness_assets):
     api = AlertServer(harness_assets)
     yield api
+    assert not api.held, "A test left alert reads held back."
     assert not api.errors, api.errors
     assert not api.unexpected, api.unexpected
 
@@ -1024,6 +1063,95 @@ def test_an_alert_read_while_the_tab_was_hidden_never_pops_up(tab, server, alert
     expect(tab.notice).to_be_visible()
     expect(tab.notice).to_contain_text("Canary error rate is up")
     assert len(tab.alert_queries()) == before + 1
+
+
+def test_only_a_successful_read_retires_an_alert(tab, server, alert):
+    """
+    A failed alerts read says nothing about what is still unread, and the count route answers
+    zero when it cannot count as well as when nothing is unread. Neither retires an alert: a
+    critical notice stays through a failed read on the reader's return, and through a zero count
+    whose confirming read fails. The next complete answer that leaves it out retires it.
+    """
+    tab.open()
+    server.add(alert("urgent", priority="critical", title="Production deploy blocked"))
+    tab.poll()
+    expect(tab.notice).to_be_visible()
+
+    def read_again(action, message):
+        before = len(tab.alert_queries())
+        action()
+        tab.wait_for(lambda: len(tab.alert_queries()) > before, message)
+        tab.settle()
+
+    def still_showing():
+        expect(tab.notice).to_be_visible()
+        expect(tab.notice).to_contain_text("Production deploy blocked")
+        state = tab.state()
+        assert state["phase"] == "notice" and state["entries"] == [["urgent"]], state
+
+    # The reader comes back, and the read on their return fails.
+    server.alerts_failing = True
+    tab.page.wait_for_timeout(2300)
+
+    def come_back():
+        tab.hide()
+        tab.show()
+
+    read_again(come_back, "Coming back did not read the alerts.")
+    still_showing()
+
+    # The count reads zero while the notice shows, and the read that would confirm it fails.
+    server.count_override = 0
+    read_again(tab.poll, "A zero count did not confirm with an alerts read.")
+    still_showing()
+    assert server.find("urgent")["is_read"] is False
+    assert server.read_calls == [] and server.dismiss_calls == []
+
+    # Read somewhere else: the next complete answer leaves it out, and that retires it.
+    server.alerts_failing = False
+    server.count_override = None
+    server.mark_read("urgent")
+    read_again(tab.poll, "A zero count did not confirm with an alerts read.")
+    expect(tab.notice).to_have_count(0)
+    state = tab.state()
+    assert state["phase"] == "idle" and state["entries"] == [] and state["queue"] == [], state
+    assert tab.alert_queries() == [ALERT_QUERY] * 4
+
+
+def test_a_rise_on_return_is_read_even_behind_another_read(tab, server, alert):
+    """
+    Coming back reads the alerts, but not twice in two seconds. A count that rose on the way back
+    means a new alert, though, and a read already on its way may have left before it was written,
+    so another read follows that one.
+    """
+    tab.open()
+    server.add(alert("first", title="Deploy gate is red"))
+    tab.poll()
+    expect(tab.notice).to_contain_text("Deploy gate is red")
+    tab.page.wait_for_timeout(2300)
+
+    # A new alert starts a read, and that read is slow to answer.
+    server.holding = True
+    server.add(alert("second", title="Canary error rate is up"))
+    before = len(tab.alert_queries())
+    tab.start_poll()
+    tab.wait_for(lambda: len(server.held) == 1, "The rise did not read the alerts.")
+
+    # Another alert is written after that read left, and the reader looks away and back.
+    server.add(alert("third", priority="critical", title="Ledger totals do not match"))
+    tab.page.wait_for_timeout(2300)
+    counts = tab.count_fetches()
+    tab.hide()
+    tab.show()
+    tab.wait_for(lambda: tab.count_fetches() > counts, "Coming back did not read the count.")
+    tab.settle_count()
+    assert len(tab.alert_queries()) == before + 1
+
+    server.release()
+    tab.settle()
+    assert len(tab.alert_queries()) == before + 2
+    expect(tab.notice).to_contain_text("Ledger totals do not match")
+    expect(tab.notice).to_have_attribute("data-priority", "critical")
 
 
 # Timers ----------------------------------------------------------------------------------------
