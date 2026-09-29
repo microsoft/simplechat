@@ -13,12 +13,18 @@ a malformed id is rejected with a 400, and a request without an id behaves exact
 failed model call leaves no transcript turn behind, and access is checked before a stored exchange
 is replayed.
 
+A retry sent while the request it repeats is still running passes the check made before the model
+call. The image routes check the id again in the document they read after the model call, and the
+personal diagram route checks it in the message as it stands when its write loses the race. Either
+way the retry is answered from what the first request stored, with no second version or exchange,
+and a version that beat an unrelated request is returned with its conflict.
+
 It also ensures submission ids never reach a model prompt, and that the plan editor keeps only ids
 that follow the same rule.
 
 The route handlers are the production functions, extracted from their modules and run against the
-real revision storage helpers. Only the model, Cosmos, authorization and event seams are replaced,
-and nothing touches the network.
+real revision storage helpers and the real image revision flow. Only the model, blob storage,
+Cosmos, authorization and event seams are replaced, and nothing touches the network.
 """
 
 import ast
@@ -31,7 +37,7 @@ import unittest
 import uuid
 from functools import lru_cache
 from pathlib import Path
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 from flask import Flask, jsonify, request
 
@@ -101,6 +107,18 @@ def error_response(message='An unexpected error occurred'):
 
 class FakeImageServiceError(Exception):
     code = 'image_unavailable'
+
+
+class FakeWriteConflict(Exception):
+    """Stands in for ``ChatContentReviewConflict``: the message changed since it was read."""
+
+
+# A generation-only model, so an instruction regenerates from the prompt and no source image
+# bytes have to be loaded.
+IMAGE_CAPABILITY = {
+    'enabled': True, 'editing': False, 'masking': False,
+    'input_formats': ['image/png'], 'reason': '',
+}
 
 
 SUBMISSION_NAMES = {
@@ -195,6 +213,16 @@ class RouteHarness(unittest.TestCase):
             response, status = result if isinstance(result, tuple) else (result, result.status_code)
             return status, response.get_json()
 
+    def land_during_model_call(self, body):
+        """Have a request with this body run to completion inside the next model call.
+
+        That is the window a retry races into: sent while the request it repeats is still
+        waiting on the model, it finds nothing stored when it is checked.
+        """
+        landed = []
+        self.during_model_call.append(lambda: landed.append(self.send(body)))
+        return landed
+
 
 class BlockAssistContract:
     """Behaviour both the personal and the shared diagram assist routes must have."""
@@ -211,9 +239,12 @@ class BlockAssistContract:
             'source': source, 'instruction': instruction,
             'chat_turns': copy.deepcopy(kwargs.get('chat_turns')),
         })
+        call_number = len(self.model_requests)
+        while self.during_model_call:
+            self.during_model_call.pop(0)()
         if self.model_failures:
             raise self.model_failures.pop(0)
-        return {'source': REVISED_SOURCE if len(self.model_requests) == 1 else f'{REVISED_SOURCE}\n  B --> C'}
+        return {'source': REVISED_SOURCE if call_number == 1 else f'{REVISED_SOURCE}\n  B --> C'}
 
     def stored_entry(self):
         return blocks.read_block_entry(self.stored, 'mermaid', 0, SOURCE_HASH) or {}
@@ -337,9 +368,15 @@ class PersonalBlockAssistRouteTests(BlockAssistContract, RouteHarness):
     def setUp(self):
         super().setUp()
         self.stored = block_message()
+        # Cosmos stamps every write; persist_chat_reply refuses to overwrite a newer one.
+        self.stored['_etag'] = 'etag-0'
+        self.saved = 0
         self.model_requests = []
         self.model_failures = []
+        self.during_model_call = []
         self.persist = Mock(side_effect=self._persist)
+        container = Mock()
+        container.read_item.side_effect = lambda item, partition_key: copy.deepcopy(self.stored)
         namespace = {
             **COMMON_NAMES, **SUBMISSION_NAMES, **BLOCK_NAMES,
             'log_event': self.logs,
@@ -350,9 +387,11 @@ class PersonalBlockAssistRouteTests(BlockAssistContract, RouteHarness):
             '_find_originating_user_request': Mock(return_value=''),
             'request_block_edit': self.edit,
             'persist_chat_reply': self.persist,
-            'cosmos_messages_container': Mock(),
+            'ChatContentReviewConflict': FakeWriteConflict,
+            'cosmos_messages_container': container,
         }
         load_route_function('route_backend_chats.py', '_read_expected_revision_count', namespace)
+        load_route_function('route_backend_chats.py', '_answer_raced_block_submission', namespace)
         self.handler = load_route_function('route_backend_chats.py', 'assist_message_block_revision_api', namespace)
 
     def _load(self, user_id, conversation_id, message_id):
@@ -361,14 +400,75 @@ class PersonalBlockAssistRouteTests(BlockAssistContract, RouteHarness):
         return copy.deepcopy(self.stored), None
 
     def _persist(self, container, message_doc):
-        self.stored = copy.deepcopy(message_doc)
-        return copy.deepcopy(message_doc)
+        # The same guard persist_chat_reply applies: a copy read before somebody else's write
+        # carries an etag that no longer matches, and writing it would discard theirs.
+        if message_doc.get('_etag') not in (None, self.stored.get('_etag')):
+            raise FakeWriteConflict('The message changed while this reply was being prepared')
+        self.saved += 1
+        written = copy.deepcopy(message_doc)
+        written['_etag'] = f'etag-{self.saved}'
+        self.stored = written
+        return copy.deepcopy(written)
 
     def send(self, body):
         return self.call(self.handler, body, 'message-1')
 
     def writes(self):
-        return self.persist.call_count
+        return self.saved
+
+    def test_a_retry_that_raced_the_request_it_repeats_is_answered_from_what_that_request_stored(self):
+        body = self.body(submission_id='submission-1')
+        landed = self.land_during_model_call(body)
+        status, replay = self.send(body)
+
+        landed_status, first = landed[0]
+        self.assertEqual(landed_status, 200, first)
+        self.assertNotIn('replayed', first)
+        self.assertEqual(status, 200, replay)
+        self.assertIs(replay['replayed'], True)
+        self.assertEqual(replay['source'], first['source'])
+        self.assertEqual(replay['block_revisions'], first['block_revisions'])
+        # Both reached the model -- the retry could not know yet -- but only one was stored.
+        self.assertEqual(len(self.model_requests), 2)
+        self.assertEqual(self.writes(), 1)
+        self.assertEqual([turn[2] for turn in self.stored_chat()], ['submission-1'] * 2)
+
+    def test_a_write_lost_to_another_request_returns_the_revisions_that_beat_it(self):
+        landed = self.land_during_model_call(
+            self.body(submission_id='submission-2', instruction='Make it vertical.')
+        )
+        status, payload = self.send(self.body(submission_id='submission-1'))
+
+        landed_status, winner = landed[0]
+        self.assertEqual(landed_status, 200, winner)
+        self.assertEqual(status, 409, payload)
+        self.assertNotIn('code', payload)
+        self.assertEqual(payload['error'], 'This diagram was changed by someone else')
+        self.assertEqual(payload['block_revisions'], winner['block_revisions'])
+        self.assertEqual(self.writes(), 1)
+        self.assertEqual([turn[2] for turn in self.stored_chat()], ['submission-2'] * 2)
+
+    def test_an_id_reused_for_a_different_message_during_the_model_call_is_refused(self):
+        landed = self.land_during_model_call(
+            self.body(submission_id='submission-1', instruction='Make it vertical.')
+        )
+        status, payload = self.send(self.body(submission_id='submission-1'))
+
+        self.assertEqual(landed[0][0], 200, landed)
+        self.assertEqual(status, 409, payload)
+        self.assertEqual(payload['code'], submissions.SUBMISSION_CONFLICT_CODE)
+        self.assertNotIn('block_revisions', payload)
+        self.assertEqual(self.writes(), 1)
+
+    def test_a_lost_write_without_an_id_fails_as_it_always_has(self):
+        landed = self.land_during_model_call(self.body(instruction='Make it vertical.'))
+        status, payload = self.send(self.body())
+
+        self.assertEqual(landed[0][0], 200, landed)
+        self.assertEqual(status, 500, payload)
+        self.assertEqual(payload['error'], 'Failed to update message')
+        self.assertEqual(self.writes(), 1)
+        self.assertEqual(self.stored_chat()[0][1], 'Make it vertical.')
 
     def test_the_chart_kind_follows_the_same_rule(self):
         chart = '{"type": "bar", "data": {"labels": ["A"], "datasets": [{"data": [1]}]}}'
@@ -394,6 +494,7 @@ class SharedBlockAssistRouteTests(BlockAssistContract, RouteHarness):
         self.stored = block_message()
         self.model_requests = []
         self.model_failures = []
+        self.during_model_call = []
         self.events = []
         namespace = {
             **COMMON_NAMES, **SUBMISSION_NAMES, **BLOCK_NAMES,
@@ -442,33 +543,48 @@ class SharedBlockAssistRouteTests(BlockAssistContract, RouteHarness):
 
 
 class ImageRevisionContract:
-    """Behaviour both the personal and the shared image revision routes must have."""
+    """Behaviour both the personal and the shared image revision routes must have.
+
+    The routes run the real ``revise_image_message``. Only the model call and the blob write
+    beneath it are replaced.
+    """
 
     def body(self, **overrides):
         return {'conversation_id': 'conversation-1', 'instruction': 'Make the chair blue.', **overrides}
 
-    def revise(self, settings, message_doc, **kwargs):
-        self.model_requests.append({key: copy.deepcopy(value) for key, value in kwargs.items() if key != 'reload_message'})
+    def use_image_model_seams(self):
+        self.model_requests = []
+        self.model_failures = []
+        self.during_model_call = []
+        self.blob_writes = 0
+        for name, replacement in (
+            ('resolve_image_edit_capability', lambda settings: dict(IMAGE_CAPABILITY)),
+            ('request_image_edit', self.request_image_edit),
+            ('store_revision_image', self.store_revision_image),
+        ):
+            patcher = patch.object(image_edit, name, replacement)
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
+    def request_image_edit(self, settings, source_image, prompt, **kwargs):
+        self.model_requests.append({'prompt': prompt, **copy.deepcopy(kwargs)})
+        while self.during_model_call:
+            self.during_model_call.pop(0)()
         if self.model_failures:
             raise self.model_failures.pop(0)
-        target = kwargs['reload_message']()
-        origin = kwargs['origin']
-        instruction = str(kwargs.get('instruction') or '').strip() if origin == images.ORIGIN_AI else ''
-        current = images.current_image_prompt(target)
-        prompt = image_edit.compose_edit_prompt(current, instruction) if instruction else (
-            kwargs.get('prompt') or current
-        )
-        images.apply_image_revision(
-            target,
-            {'blob_container': 'images', 'blob_path': f'owner/revision-{len(self.model_requests)}.png'},
-            origin=origin, prompt=prompt, instruction=instruction, model='gpt-image-1', method='edit',
-            author_id='user-1', author_name='Test User',
-            expected_revision_count=kwargs.get('expected_revision_count'),
-            expected_current_revision_id=kwargs.get('expected_current_revision_id') or '',
-        )
         return {
-            'message': target, 'method': 'edit', 'model': 'gpt-image-1',
-            'prompt': prompt, 'instruction': instruction,
+            'bytes': b'revised-image', 'mime_type': 'image/png', 'width': 1024, 'height': 1024,
+            'model': 'gpt-image-1', 'method': kwargs.get('operation') or 'regenerate',
+            'size': kwargs.get('size') or '', 'quality': kwargs.get('quality') or '',
+            'background': kwargs.get('background') or '',
+        }
+
+    def store_revision_image(self, owner_user_id, conversation_id, message_id, image_bytes, mime_type):
+        self.blob_writes += 1
+        return {
+            'blob_container': 'images',
+            'blob_path': f'{owner_user_id or "owner"}/{message_id}/revision-{self.blob_writes}.png',
+            'mime_type': mime_type,
         }
 
     def stored_chat(self):
@@ -497,7 +613,7 @@ class ImageRevisionContract:
         self.assertEqual(
             [turn['submission_id'] for turn in first['image_revisions']['chat']], ['submission-1'] * 2,
         )
-        self.assertNotIn('submission_id', self.model_requests[0])
+        self.assertNotIn('submission', json.dumps(self.model_requests))
 
         status, replay = self.send(self.body(submission_id='submission-1'))
         self.assertEqual(status, 200, replay)
@@ -559,6 +675,54 @@ class ImageRevisionContract:
         self.assertEqual(set(payload), {'error'})
         self.assertEqual(len(self.model_requests), 1)
 
+    def test_a_retry_that_raced_the_request_it_repeats_is_answered_from_what_that_request_stored(self):
+        body = self.body(submission_id='submission-1')
+        landed = self.land_during_model_call(body)
+        status, replay = self.send(body)
+
+        landed_status, first = landed[0]
+        self.assertEqual(landed_status, 200, first)
+        self.assertNotIn('replayed', first)
+        self.assertEqual(status, 200, replay)
+        self.assertIs(replay['replayed'], True)
+        self.assertEqual(replay['image_revisions'], first['image_revisions'])
+        self.assertEqual(replay['image_url'], first['image_url'])
+        # Both reached the model -- the retry could not know yet -- but only one version and
+        # one exchange were stored.
+        self.assertEqual(len(self.model_requests), 2)
+        self.assertEqual(self.writes(), 1)
+        self.assertEqual(self.stored_chat(), [('user', 'submission-1'), ('assistant', 'submission-1')])
+        self.assertEqual(len(images.read_revisions(images.read_image_revisions(self.stored))), 2)
+        self.assertNotIn('submission', json.dumps(self.model_requests))
+
+    def test_a_version_that_lands_during_the_model_call_is_returned_with_the_conflict(self):
+        landed = self.land_during_model_call(
+            self.body(submission_id='submission-2', instruction='Make it green.')
+        )
+        status, payload = self.send(self.body(submission_id='submission-1', expected_revision_count=0))
+
+        landed_status, winner = landed[0]
+        self.assertEqual(landed_status, 200, winner)
+        self.assertEqual(status, 409, payload)
+        self.assertNotIn('code', payload)
+        # The versions that beat this request, not the ones it was checked against beforehand.
+        self.assertEqual(payload['image_revisions'], winner['image_revisions'])
+        self.assertEqual(self.writes(), 1)
+        self.assertEqual(self.stored_chat(), [('user', 'submission-2'), ('assistant', 'submission-2')])
+
+    def test_an_id_reused_for_a_different_message_during_the_model_call_is_refused(self):
+        landed = self.land_during_model_call(
+            self.body(submission_id='submission-1', instruction='Make it green.')
+        )
+        status, payload = self.send(self.body(submission_id='submission-1'))
+
+        self.assertEqual(landed[0][0], 200, landed)
+        self.assertEqual(status, 409, payload)
+        self.assertEqual(payload['code'], submissions.SUBMISSION_CONFLICT_CODE)
+        self.assertNotIn('image_revisions', payload)
+        self.assertEqual(len(self.model_requests), 2)
+        self.assertEqual(self.writes(), 1)
+
 
 def image_error_response(exc):
     return {'error': str(exc), 'error_code': exc.code}, 503
@@ -568,8 +732,7 @@ class PersonalImageRevisionRouteTests(ImageRevisionContract, RouteHarness):
     def setUp(self):
         super().setUp()
         self.stored = image_message()
-        self.model_requests = []
-        self.model_failures = []
+        self.use_image_model_seams()
         self.persist = Mock(side_effect=self._persist)
         container = Mock()
         container.read_item.side_effect = lambda item, partition_key: copy.deepcopy(self.stored)
@@ -581,13 +744,14 @@ class PersonalImageRevisionRouteTests(ImageRevisionContract, RouteHarness):
             'get_settings': lambda: {'enable_image_generation': True},
             '_load_image_revision_message': self._load,
             '_image_revision_owner_id': lambda conversation, user_id: user_id,
-            'revise_image_message': self.revise,
+            'revise_image_message': image_edit.revise_image_message,
             'image_generation_error_log_context': lambda exc: {'error_code': exc.code},
             'image_generation_error_response': image_error_response,
             'persist_chat_reply': self.persist,
             'cosmos_messages_container': container,
         }
         load_route_function('route_backend_chats.py', '_read_expected_revision_count', namespace)
+        load_route_function('route_backend_chats.py', '_answer_stored_image_submission', namespace)
         self.handler = load_route_function('route_backend_chats.py', 'add_message_image_revision_api', namespace)
 
     def _load(self, user_id, conversation_id, message_id):
@@ -619,8 +783,7 @@ class SharedImageRevisionRouteTests(ImageRevisionContract, RouteHarness):
             'content': 'shared-image-placeholder',
             'metadata': {'source_conversation_id': 'owner-conversation', 'source_message_id': 'image-1'},
         }
-        self.model_requests = []
-        self.model_failures = []
+        self.use_image_model_seams()
         self.events = []
         container = Mock()
         container.read_item.side_effect = lambda item, partition_key: copy.deepcopy(self.stored)
@@ -633,12 +796,15 @@ class SharedImageRevisionRouteTests(ImageRevisionContract, RouteHarness):
             '_load_collaboration_image_revision_message': self._load,
             '_save_collaboration_image_revisions': self._save,
             'build_collaboration_image_url': self._image_url,
-            'revise_image_message': self.revise,
+            'revise_image_message': image_edit.revise_image_message,
             'image_generation_error_response': image_error_response,
             'cosmos_messages_container': container,
             'CosmosResourceNotFoundError': LookupError,
         }
         load_route_function('route_backend_collaboration.py', '_read_collaboration_expected_revision_count', namespace)
+        load_route_function(
+            'route_backend_collaboration.py', '_answer_stored_collaboration_image_submission', namespace,
+        )
         self.handler = load_route_function(
             'route_backend_collaboration.py', 'add_collaboration_image_revision_api', namespace,
         )
@@ -823,15 +989,29 @@ class ModelPromptTests(unittest.TestCase):
         for turn in images.read_image_chat(images.read_image_revisions(message)):
             self.assertEqual(set(turn), {'role', 'content'})
 
-    def test_the_image_edit_never_reads_the_transcript(self):
+    def test_the_image_model_is_never_shown_the_transcript_or_an_id(self):
+        """Nothing up to and including the model call reads the transcript or the id.
+
+        The id is checked again after the model call -- a retry that raced the request it repeats
+        only finds that request's turns then -- so this looks only at what precedes the call.
+        """
         tree = ast.parse(Path(image_edit.__file__).read_text(encoding='utf-8-sig'))
         function = next(
             node for node in ast.walk(tree)
             if isinstance(node, ast.FunctionDef) and node.name == 'revise_image_message'
         )
         body = function.body[1:] if ast.get_docstring(function) else function.body
+        model_call_index = next(
+            index for index, statement in enumerate(body)
+            if any(
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Name)
+                and node.func.id == 'request_image_edit'
+                for node in ast.walk(statement)
+            )
+        )
         names = set()
-        for statement in body:
+        for statement in body[:model_call_index + 1]:
             for node in ast.walk(statement):
                 if isinstance(node, ast.Name):
                     names.add(node.id)
@@ -839,6 +1019,7 @@ class ModelPromptTests(unittest.TestCase):
                     names.add(node.attr)
                 elif isinstance(node, ast.Constant) and isinstance(node.value, str):
                     names.add(node.value)
+        self.assertIn('effective_prompt', names)
         self.assertFalse({name for name in names if 'chat' in name.lower()}, names)
         self.assertFalse({name for name in names if 'submission' in name.lower()}, names)
 

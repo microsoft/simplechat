@@ -88,7 +88,16 @@ class ImageRevisionError(ValueError):
 
 
 class ImageRevisionConflictError(ImageRevisionError):
-    """Raised when the stored revisions moved on since the caller last read them."""
+    """Raised when the stored revisions moved on since the caller last read them.
+
+    ``message_doc`` is the document that was checked, so a caller can answer with the versions
+    that beat the request. After a slow model call those are in the copy read again then, not in
+    the one the caller loaded before it.
+    """
+
+    def __init__(self, message='This image was changed by someone else', message_doc=None):
+        super().__init__(message)
+        self.message_doc = message_doc
 
 
 def utc_now_iso():
@@ -497,13 +506,13 @@ def assert_revision_expectations(
     revisions = read_revisions(entry)
 
     if expected_revision_count is not None and len(revisions) != expected_revision_count:
-        raise ImageRevisionConflictError('This image was changed by someone else')
+        raise ImageRevisionConflictError('This image was changed by someone else', message_doc)
 
     expected_id = str(expected_current_revision_id or '').strip()
     if expected_id:
         current = resolve_current_revision(entry)
         if not current or current.get('id') != expected_id:
-            raise ImageRevisionConflictError('This image was changed by someone else')
+            raise ImageRevisionConflictError('This image was changed by someone else', message_doc)
 
 
 def apply_image_revision(

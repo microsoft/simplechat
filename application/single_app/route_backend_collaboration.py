@@ -724,6 +724,43 @@ def _save_collaboration_image_revisions(
     return revisions
 
 
+def _answer_stored_collaboration_image_submission(
+    submission,
+    conversation_id,
+    message_id,
+    source_doc,
+):
+    """Answer a shared image request its submission id shows was already handled, or return None.
+
+    The shared counterpart of the personal route's check. It answers from the source image,
+    which holds the transcript and the versions, so a retry that raced the request it repeats
+    sees what that request stored rather than the mirror as it was loaded.
+    """
+    if submission == SUBMISSION_CONFLICT:
+        return jsonify({
+            'error': SUBMISSION_CONFLICT_MESSAGE,
+            'code': SUBMISSION_CONFLICT_CODE,
+        }), 409
+    if submission != SUBMISSION_REPLAY:
+        return None
+    stored_entry = read_image_revisions(source_doc)
+    current_revision = resolve_current_image_revision(stored_entry) or {}
+    return jsonify({
+        'success': True,
+        'message_id': message_id,
+        'conversation_id': conversation_id,
+        'method': current_revision.get('method') or '',
+        'model_deployment_name': current_revision.get('model') or '',
+        # Only a stored version picks the URL. Without one the source's own content -- the
+        # owner's copy -- would come back in its place, and never belongs in a shared reply.
+        'image_url': build_collaboration_image_url(
+            conversation_id, message_id, source_doc if current_revision else None
+        ),
+        'image_revisions': make_json_serializable(serialize_image_revisions(stored_entry)),
+        'replayed': True,
+    }), 200
+
+
 def _load_collaboration_block_revision_message(user_id, conversation_id, message_id):
     """Return the shared message a block revision request targets, authorizing the caller.
 
@@ -2100,34 +2137,19 @@ def register_route_backend_collaboration(bp):
             revision_origin = data.get('origin') or IMAGE_ORIGIN_AI
             if revision_origin != IMAGE_ORIGIN_AI:
                 submission_id = None
-            stored_entry = read_image_revisions(source_doc)
-            submission = classify_submission(
-                stored_entry.get('chat'),
-                submission_id,
-                data.get('instruction'),
-                IMAGE_MAX_CHAT_CONTENT_LENGTH,
+            answered = _answer_stored_collaboration_image_submission(
+                classify_submission(
+                    read_image_revisions(source_doc).get('chat'),
+                    submission_id,
+                    data.get('instruction'),
+                    IMAGE_MAX_CHAT_CONTENT_LENGTH,
+                ),
+                conversation_id,
+                message_id,
+                source_doc,
             )
-            if submission == SUBMISSION_CONFLICT:
-                return jsonify({
-                    'error': SUBMISSION_CONFLICT_MESSAGE,
-                    'code': SUBMISSION_CONFLICT_CODE,
-                }), 409
-            if submission == SUBMISSION_REPLAY:
-                current_revision = resolve_current_image_revision(stored_entry) or {}
-                return jsonify({
-                    'success': True,
-                    'message_id': message_id,
-                    'conversation_id': conversation_id,
-                    'method': current_revision.get('method') or '',
-                    'model_deployment_name': current_revision.get('model') or '',
-                    'image_url': build_collaboration_image_url(
-                        conversation_id, message_id, loaded['message']
-                    ),
-                    'image_revisions': make_json_serializable(
-                        serialize_image_revisions(stored_entry)
-                    ),
-                    'replayed': True,
-                }), 200
+            if answered:
+                return answered
 
             try:
                 result = revise_image_message(
@@ -2158,12 +2180,16 @@ def register_route_backend_collaboration(bp):
                         item=str(source_doc.get('id') or ''),
                         partition_key=loaded['source_conversation_id'],
                     ),
+                    submission_id=submission_id,
                 )
             except ImageRevisionConflictError as exc:
+                # A conflict found after the model call was found in the source read again then,
+                # which holds the versions that beat this request.
+                latest_doc = getattr(exc, 'message_doc', None) or source_doc
                 return jsonify({
                     'error': str(exc),
                     'image_revisions': make_json_serializable(
-                        serialize_image_revisions(read_image_revisions(source_doc))
+                        serialize_image_revisions(read_image_revisions(latest_doc))
                     ),
                 }), 409
             except ImageRevisionError as exc:
@@ -2179,6 +2205,13 @@ def register_route_backend_collaboration(bp):
 
             # From here on the freshly re-read source document is the one being written.
             source_doc = result['message']
+            # Checked again in that document: a retry sent while the request it repeats was still
+            # running only finds that request's turns now.
+            answered = _answer_stored_collaboration_image_submission(
+                result.get('submission'), conversation_id, message_id, source_doc
+            )
+            if answered:
+                return answered
 
             if result['instruction']:
                 try:
