@@ -848,7 +848,9 @@ A long export runs in the background; its card polls the run endpoint, shows pro
 offers Continue and Cancel where the server permits them, then replaces itself with the
 finished files. Reasoning steps that describe staged work get a progress card above the list,
 driven by a lane table rather than a hardcoded branch so other kinds of staged work can adopt
-it. A prompt that would start an expensive row-level run is confirmed before it is sent.
+it. Orchestrated turns are the exception: their plan card already shows the run's progress, so
+their lane draws no card. A prompt that would start an expensive row-level run is confirmed
+before it is sent.
 
 See [V2 Tabular Analysis](V2_TABULAR_ANALYSIS.md) for the metadata contract, the download
 target rules, the lane table and the confirmation heuristic.
