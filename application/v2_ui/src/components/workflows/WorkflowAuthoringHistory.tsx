@@ -733,10 +733,14 @@ export class WorkflowAuthoringSession {
         }
         const names = keys.map((key) => workflowChangeKeyLabel(key, draft, baseline));
         const changes = diffWorkflowChanges(baseline, draft);
-        const restoring = keys.some((key) => !failed.has(key) && changes.byKey.get(key)?.kind === 'removed');
+        const restored = keys.filter((key) => !failed.has(key) && changes.byKey.get(key)?.kind === 'removed');
+        const restoring = restored.length > 0;
         const label = actionLabel(`${restoring ? 'Restore' : 'Revert'} ${names.join(', ')}`, 'Revert change');
         const partial = failed.size ? ` ${failed.size === 1 ? 'One part' : `${failed.size} parts`} could not be reverted.` : '';
-        return this.propose(candidate, { label, origin: 'restore' }, workflowRestoreStamper(this.opened.attribution), {
+        // A block put back is selected again, including after a restore that needed confirming first.
+        const targetId = draft.definition_version === 3 && restored.length === 1 ? restoredNodeId(baseline, restored[0]) : '';
+        return this.propose(candidate, { label, origin: 'restore', ...(targetId ? { targetId } : {}) },
+            workflowRestoreStamper(this.opened.attribution), {
             title: restoring ? 'Restore this item?' : 'Revert this change?',
             confirmLabel: restoring ? 'Restore' : 'Revert',
             announcement: `${label}.${partial} The workflow has not been saved.`,
@@ -893,6 +897,13 @@ export function isWorkflowTextControl(target: EventTarget | null): boolean {
     if (target.closest('textarea, [contenteditable]:not([contenteditable="false"]), [role="textbox"]')) return true;
     const input = target.closest('input');
     return Boolean(input && !['button', 'submit', 'reset', 'checkbox', 'radio', 'file', 'range', 'color'].includes(input.type));
+}
+
+/** The flow block that restoring a removed task or block puts back, found in the version it comes from. */
+function restoredNodeId(source: WorkflowDefinition, key: string): string {
+    const info = parseWorkflowChangeKey(key);
+    if (info.scope === 'node' && !info.field) return info.id;
+    return info.scope === 'task' && !info.field ? flowTaskNodeId(source, info.id) : '';
 }
 
 function eventAction(event: SyntheticEvent<HTMLElement>): WorkflowHistoryAction {

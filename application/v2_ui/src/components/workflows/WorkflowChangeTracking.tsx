@@ -11,7 +11,7 @@ import {
     type KeyboardEvent as ReactKeyboardEvent, type ReactNode, type RefObject,
 } from 'react';
 import { clsx } from 'clsx';
-import { ArrowRight, PenLine, RotateCcw, Sparkles } from 'lucide-react';
+import { AlertTriangle, ArrowRight, FileDiff, PenLine, RotateCcw, Sparkles } from 'lucide-react';
 import { GlassButton } from '../ui/primitives';
 import {
     diffWorkflowChanges, workflowChangeAuthors, workflowChangeItemKey, workflowRunAsConsequence, workflowSaveNeedsConfirmation,
@@ -616,13 +616,14 @@ export function WorkflowChangesToggle({ id, open, controls, onToggle }: {
     if (!tracking) return null;
     const count = tracking.changes.length;
     return (
-        <GlassButton id={id} type="button" className="mr-auto" aria-expanded={open} aria-controls={open ? controls : undefined}
-            onClick={onToggle}>
-            Changes
+        <GlassButton id={id} type="button" className="mr-auto shrink-0" aria-label={`Changes (${count} unsaved)`}
+            aria-expanded={open} aria-controls={open ? controls : undefined} onClick={onToggle}>
+            {/* Below sm an icon stands in for the label so Cancel and Save stay on one line. */}
+            <FileDiff size={16} aria-hidden="true" className="sm:hidden" />
+            <span className="hidden sm:inline">Changes</span>
             {count ? (
                 <span aria-hidden="true" className="rounded-full bg-surface-2 px-2 text-xs font-semibold text-text-1">{count}</span>
             ) : null}
-            <span className="sr-only">{` (${count} unsaved)`}</span>
         </GlassButton>
     );
 }
@@ -647,7 +648,7 @@ function WorkflowChangeRow({ change, tracking, disabled, onJump, onRevert }: {
             <p className="mt-1 break-words text-text-2">
                 <span className="sr-only">Before: </span>{summaryText(change.before)}
                 <ArrowRight size={12} aria-hidden="true" className="mx-1 inline-block align-[-2px]" />
-                <span className="sr-only">After: </span>{summaryText(change.after)}
+                <span className="sr-only"> After: </span>{summaryText(change.after)}
             </p>
             <div className="mt-2 flex flex-wrap gap-2">
                 <GlassButton type="button" size="sm" className="h-7 px-2 text-xs" aria-describedby={titleId}
@@ -721,6 +722,7 @@ export function WorkflowChangesTab({ confirming, disabled, onConfirmSave, onKeep
     const listRef = useRef<HTMLUListElement>(null);
     const ownHeadingRef = useRef<HTMLHeadingElement>(null);
     const headingRef = listHeadingRef ?? ownHeadingRef;
+    const historyHeadingRef = useRef<HTMLHeadingElement>(null);
     const focusAfter = useRef<number | null>(null);
     const changes = tracking?.changes;
     useEffect(() => {
@@ -741,15 +743,23 @@ export function WorkflowChangesTab({ confirming, disabled, onConfirmSave, onKeep
         if (result.status === 'applied') focusAfter.current = Math.max(0, index);
     };
     const restore = (step: number | 'opened') => {
-        tracking.session.restoreTo(step);
+        if (tracking.session.restoreTo(step).status !== 'applied') return;
+        // The restored point becomes Current and its button goes away, so focus stays in the history.
+        requestAnimationFrame(() => {
+            const active = document.activeElement;
+            if (!active || active === document.body || !active.isConnected) historyHeadingRef.current?.focus();
+        });
     };
     return (
         <div className="space-y-5">
             {tracking.runAsConsequence ? (
-                <p className="rounded-lg bg-warn-soft p-2 text-xs text-warn">
-                    <span className="font-semibold">Saving requires re-approving Run as.</span>
-                    {' '}These changes affect what this workflow does with its Microsoft 365 account, so the selected person
-                    must approve the new revision before it runs as them again.
+                <p className="flex gap-2 rounded-lg bg-warn-soft p-2 text-xs text-text-1">
+                    <AlertTriangle size={14} aria-hidden="true" className="mt-0.5 shrink-0 text-warn" />
+                    <span>
+                        <span className="font-semibold">Saving requires re-approving Run as.</span>
+                        {' '}These changes affect what this workflow does with its Microsoft 365 account, so the selected person
+                        must approve the new revision before it runs as them again.
+                    </span>
                 </p>
             ) : null}
             {confirming && aiCount ? (
@@ -795,7 +805,9 @@ export function WorkflowChangesTab({ confirming, disabled, onConfirmSave, onKeep
                 ) : null}
             </section>
             <section aria-labelledby={`${baseId}-history`}>
-                <h3 id={`${baseId}-history`} className="text-sm font-semibold text-text-1">This session</h3>
+                <h3 id={`${baseId}-history`} ref={historyHeadingRef} tabIndex={-1} className="text-sm font-semibold text-text-1">
+                    This session
+                </h3>
                 <p className="mt-1 text-xs text-text-3">Restoring an earlier point adds a new step, so nothing here is lost.</p>
                 {tracking.trimmed ? <p className="mt-1 text-xs text-text-3">Older steps from this session are no longer kept.</p> : null}
                 <ol className="mt-2 space-y-1">
