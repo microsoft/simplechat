@@ -23,12 +23,16 @@ import {
     Trash2,
 } from 'lucide-react';
 import { useEffect, useState, type ReactNode } from 'react';
+import { Link } from 'react-router-dom';
 import { clsx } from 'clsx';
-import type { WorkspaceDocument } from '../../lib/types';
+import type { DocumentOriginSummary, WorkspaceDocument } from '../../lib/types';
 import { isScreeningAvailable } from '../../lib/contentScreening';
 import {
     documentSelectionReason, groupDocumentOrigin, type DocumentReadAdapter,
 } from '../../lib/documentReadAdapter';
+import {
+    isDocumentOriginKind, originFallbackLabel, originSummaryText,
+} from '../../lib/documentProvenance';
 import type { DocumentOperation } from '../../lib/documentOperations';
 import { ScreeningStatusBadge } from '../screening/ScreeningStatusBadge';
 import {
@@ -388,6 +392,62 @@ function DocumentVersions({
     );
 }
 
+/**
+ * Where the document came from: a workflow run or a chat.
+ *
+ * The list only says which kind. The name, the run time and the link come from a detail read
+ * the server resolves for this reader, so a member who cannot open the creator's workflow or
+ * chat sees only "Created by a workflow" or "Created in a chat".
+ */
+function DocumentProvenance({
+    document, reader, enabled,
+}: {
+    document: WorkspaceDocument;
+    reader: DocumentReadAdapter;
+    enabled: boolean;
+}) {
+    const kind = isDocumentOriginKind(document.origin_kind) ? document.origin_kind : null;
+    const id = documentId(document);
+    const [summary, setSummary] = useState<DocumentOriginSummary | null>(null);
+    const [loading, setLoading] = useState(false);
+    const [failed, setFailed] = useState(false);
+    const [retry, setRetry] = useState(0);
+
+    useEffect(() => {
+        setSummary(null);
+        setFailed(false);
+        setLoading(false);
+        if (!kind || !id || !enabled) return;
+        const controller = new AbortController();
+        setLoading(true);
+        void reader.originSummary(id, controller.signal).then((result) => {
+            if (!controller.signal.aborted) setSummary(result?.kind === kind ? result : null);
+        }).catch(() => {
+            if (!controller.signal.aborted) setFailed(true);
+        }).finally(() => {
+            if (!controller.signal.aborted) setLoading(false);
+        });
+        return () => controller.abort();
+    }, [id, kind, reader, enabled, retry]);
+
+    if (!kind) return null;
+    const text = summary ? originSummaryText(summary) : originFallbackLabel(kind);
+    return (
+        <Section title="Origin">
+            {loading ? <p role="status" className="text-xs text-text-3">Checking where this document came from...</p>
+                : summary?.href ? (
+                    <Link to={summary.href} className="text-xs font-medium break-words text-accent underline underline-offset-2">
+                        {text}
+                    </Link>
+                ) : <p className="text-xs break-words text-text-2">{text}</p>}
+            {failed ? <div role="alert" className="mt-2 space-y-2 text-xs text-danger">
+                <p>Could not load where this document came from.</p>
+                <GlassButton size="sm" disabled={!enabled} onClick={() => setRetry((value) => value + 1)}>Retry origin</GlassButton>
+            </div> : null}
+        </Section>
+    );
+}
+
 export function DocumentDetailsPane({
     documents,
     availability,
@@ -636,7 +696,10 @@ export function DocumentDetailsPane({
                     </Section>
                 ) : null}
 
-                {document.created_from_chat_upload && document.conversation_id ? (
+                <DocumentProvenance key={`origin:${documentId(document)}`} document={document} reader={reader}
+                    enabled={!interactionDisabled} />
+
+                {!isDocumentOriginKind(document.origin_kind) && document.created_from_chat_upload && document.conversation_id ? (
                     <Section title="Source">
                         <p className="text-xs text-text-2">
                             Uploaded through chat
