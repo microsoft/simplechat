@@ -452,6 +452,28 @@ export function describeWorkflowAlertGroup(entry: WorkflowAlertEntry): string | 
     return allFailed ? `Failed ${entry.count} times${since}` : `${entry.count} alerts${since}`;
 }
 
+/**
+ * Why the reader is seeing the alert, in words: "Build watcher is set to alert at high
+ * priority when a run fails." or "Build watcher sent this alert at high priority." The rules
+ * that matched are listed under it.
+ */
+export function describeWorkflowAlertReason(alert: WorkflowAlert): string {
+    const priority = WORKFLOW_ALERT_PRIORITY_LABELS[alert.priority].toLowerCase();
+    return alert.category === 'failure'
+        ? `${alert.workflowName} is set to alert at ${priority} priority when a run fails.`
+        : `${alert.workflowName} sent this alert at ${priority} priority.`;
+}
+
+// The runner's own reason is a log line -- "HIGH alert triggered by: Rule A, Rule B" -- that
+// the sentence above and the matched rules already say better.
+const LOGGED_REASON = /^(?:info|low|medium|high|critical)\s+alert\s+triggered(?:\.|\s+by:.*)?$/i;
+
+/** The server's trigger reason, when it says more than the log line the runner writes. */
+export function workflowAlertServerReason(alert: WorkflowAlert): string | null {
+    const reason = alert.triggerReason.trim();
+    return reason && !LOGGED_REASON.test(reason) ? reason : null;
+}
+
 /** The workflows list the alert's workflow is in, or null when it cannot be placed. */
 export function workflowAlertWorkflowPath(alert: WorkflowAlert): string | null {
     if (!alert.scope) {

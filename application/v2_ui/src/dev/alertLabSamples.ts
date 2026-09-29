@@ -36,7 +36,7 @@ export function alertLabScenarios(): AlertLabScenario[] {
         { id: 'every-failure', label: 'Every priority, run failed', expect: 'Failed-run wording at each priority.' },
         { id: 'storm', label: 'Alert storm', expect: 'Six failures group into one entry with a count.' },
         { id: 'long', label: 'Long text', expect: 'The title clamps; Show more reveals the detail.' },
-        { id: 'short', label: 'Short, no links', expect: 'No links, no Open workflow, fallback reason.' },
+        { id: 'short', label: 'Short, no links', expect: 'No links, no Open workflow, no matched rules.' },
         { id: 'hostile', label: 'Hostile text and links', expect: 'Markup shows as text; off-site links are refused.' },
         { id: 'group', label: 'Group workflow', expect: 'Open workflow goes to the group\'s workflows.' },
         { id: 'dialog', label: 'While a dialog is open', expect: 'Waits until the dialog closes.' },
@@ -222,6 +222,17 @@ function severities(): WorkflowAlertSeverity[] {
     return ['info', 'low', 'medium', 'high', 'critical'];
 }
 
+/** The runner's trigger reason, as summarize_alert_decision writes it. */
+function loggedReason(priority: WorkflowAlertSeverity, ruleNames: string[]): string {
+    const severity = priority.toUpperCase();
+    return ruleNames.length ? `${severity} alert triggered by: ${ruleNames.join(', ')}` : `${severity} alert triggered.`;
+}
+
+/** The run-status rule a workflow uses to alert when a run fails. */
+function failedRunRule(priority: WorkflowAlertSeverity) {
+    return { name: 'Failed runs', severity: priority, reason: 'Run status is failed' };
+}
+
 /** One alert at one priority, as an alert or a failed run. */
 function priorityAlert(
     stamp: string,
@@ -234,6 +245,9 @@ function priorityAlert(
     const text = priorityText(priority);
     const workflow = workflows(stamp)[text.workflow];
     const failed = category === 'failure';
+    const rule = failed
+        ? failedRunRule(priority)
+        : { name: `${workflow.name} watch`, severity: priority, reason: 'The run\'s result matched the rule.' };
     return sample(stamp, index, now, {
         workflow,
         priority,
@@ -241,10 +255,8 @@ function priorityAlert(
         title: failed ? text.failure : text.alert,
         summary: failed ? `The ${workflow.name} run stopped before it finished.` : text.summary,
         error: failed ? text.error : '',
-        triggerReason: failed
-            ? `The run failed, and failed runs of ${workflow.name} alert at ${priority} priority.`
-            : `The rule "${workflow.name} watch" matched at ${priority} priority.`,
-        rules: failed ? [] : [{ name: `${workflow.name} watch`, severity: priority, reason: 'The run\'s result matched the rule.' }],
+        triggerReason: loggedReason(priority, [rule.name]),
+        rules: [rule],
         enrichments: failed ? ['Run failed'] : ['Summarised by the agent'],
         agent: failed ? undefined : 'Workflow assistant',
         links: [conversationLink('Open workflow', `lab-conv-${text.workflow}-${stamp}`, workflow.groupId)],
@@ -283,7 +295,8 @@ export function alertLabScenarioAlerts(id: AlertLabScenarioId, stamp: string, no
                 title: 'Build watcher could not reach the CI service',
                 summary: 'The run stopped before it finished.',
                 error: `Attempt ${6 - index}: the CI API refused the token (403).`,
-                triggerReason: 'The run failed, and failed runs of Build watcher alert at high priority.',
+                triggerReason: loggedReason('high', ['Failed runs']),
+                rules: [failedRunRule('high')],
                 enrichments: ['Run failed'],
                 links: [conversationLink('Open workflow', `lab-conv-build-${stamp}`, wf.build.groupId)],
                 minutesAgo: 2 + index * 9,
@@ -311,7 +324,7 @@ export function alertLabScenarioAlerts(id: AlertLabScenarioId, stamp: string, no
                     + 'Can we set up a call before Friday? Our legal team would like to join.\n\nThanks,\nMegan\n\n'
                     + '---\nThe agent read 14 messages in this thread and 3 attachments. '
                     + 'It matched the renewal amount from the CRM record and the deadline from the quarter\'s close date.',
-                triggerReason: 'Two rules matched: the message mentions a contract renewal over $1M, and it asks to pause a rollout.',
+                triggerReason: loggedReason('high', ['Renewals over $1M', 'Rollout paused or cancelled', 'Legal involvement']),
                 rules: [
                     { name: 'Renewals over $1M', severity: 'high', reason: 'The thread names a renewal amount of $1.2M, which is over the $1M threshold this rule sets.' },
                     { name: 'Rollout paused or cancelled', severity: 'medium', reason: 'The customer asks to pause the rollout in three regions.' },
@@ -344,6 +357,7 @@ export function alertLabScenarioAlerts(id: AlertLabScenarioId, stamp: string, no
                 title: '<script>alert("title")</script> Reset your password <a href="https://evil.example">here</a>',
                 summary: 'Quoted from an email: <img src=x onerror="alert(\'summary\')"> Click [this link](javascript:alert(1)) to claim.',
                 detail: '<iframe src="https://evil.example"></iframe>\n<style>body{display:none}</style>\n**Not bold**, `not code`.',
+                // Not the runner's log line, so the card shows it, as text.
                 triggerReason: 'The rule "Phishing words" matched: <em>reset your password</em>.',
                 rules: [{ name: '<u>Phishing</u> words', severity: 'high', reason: '"Click here" and "reset your password" appear together.' }],
                 enrichments: ['<b>chip</b>', 'javascript:alert(1)'],

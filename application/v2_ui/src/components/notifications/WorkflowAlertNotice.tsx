@@ -125,6 +125,33 @@ function NoticeBody({
         () => void tuck(),
     );
 
+    // The notice overlays the rail items below My Workspace, or the page beside the strip, so
+    // tabbing on from it lands on something it covers. Focus must never sit hidden under it
+    // (WCAG 2.2, 2.4.11), so it tucks into the bell and leaves focus where it went. The alert
+    // stays unread there, like any other tuck.
+    useEffect(() => {
+        if (phase !== 'notice' || suspended) {
+            return undefined;
+        }
+        const onFocusIn = (event: FocusEvent) => {
+            const root = rootRef.current;
+            const target = event.target;
+            if (!root || !(target instanceof Element) || root.contains(target)) {
+                return;
+            }
+            const notice = root.getBoundingClientRect();
+            const landed = target.getBoundingClientRect();
+            const covered = landed.width > 0 && landed.height > 0
+                && landed.left < notice.right && notice.left < landed.right
+                && landed.top < notice.bottom && notice.top < landed.bottom;
+            if (covered) {
+                void tuck();
+            }
+        };
+        document.addEventListener('focusin', onFocusIn);
+        return () => document.removeEventListener('focusin', onFocusIn);
+    }, [phase, suspended, tuck]);
+
     const close = async () => {
         const hadFocus = rootRef.current?.contains(document.activeElement) ?? false;
         await tuck();
@@ -182,13 +209,7 @@ function NoticeBody({
             )}
         >
             <span aria-hidden="true" className="wf-alert-notch" />
-            <div className="flex items-start gap-2.5 py-2.5 pr-1.5 pl-2.5">
-                <span aria-hidden="true" className={clsx('inline-flex shrink-0 rounded-full p-1.5', tone.chip)}>
-                    {/* Keyed on the batch, so the bell rings again when more alerts join. */}
-                    <span key={batchToken} className={clsx('inline-flex', !reduced && 'wf-bell-swing')}>
-                        <BellRing size={16} />
-                    </span>
-                </span>
+            <div className="flex items-start gap-2 py-2.5 pr-1.5 pl-3">
                 <button
                     type="button"
                     data-workflow-alert-open=""
@@ -196,7 +217,18 @@ function NoticeBody({
                     aria-label={openLabel}
                     className="min-w-0 flex-1 rounded-lg text-left"
                 >
-                    <span className="flex min-w-0 items-center gap-1.5">
+                    {/* The bell sits in the header rather than beside it, so the text has the
+                        notice's width. The header wraps, putting the workflow's name on a line of
+                        its own when the tags leave too little room; it is only cut short when it
+                        is longer than that whole line, and its title and the button's name carry
+                        it in full. */}
+                    <span className="flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-1">
+                        <span aria-hidden="true" className={clsx('inline-flex shrink-0 rounded-full p-1', tone.chip)}>
+                            {/* Keyed on the batch, so the bell rings again when more alerts join. */}
+                            <span key={batchToken} className={clsx('inline-flex', !reduced && 'wf-bell-swing')}>
+                                <BellRing size={14} />
+                            </span>
+                        </span>
                         <span
                             data-workflow-alert-priority-tag=""
                             className={clsx('shrink-0 rounded px-1.5 py-0.5 text-[11px] leading-none font-semibold', tone.tag)}
@@ -206,7 +238,13 @@ function NoticeBody({
                         {alert.category === 'failure' && (
                             <span className="shrink-0 text-[11px] font-semibold text-text-2">Run failed</span>
                         )}
-                        <span className="min-w-0 truncate text-xs text-text-2">{alert.workflowName}</span>
+                        <span
+                            data-workflow-alert-workflow=""
+                            title={alert.workflowName}
+                            className="max-w-full min-w-0 truncate text-xs text-text-2"
+                        >
+                            {alert.workflowName}
+                        </span>
                     </span>
                     <span className="mt-1 line-clamp-2 block text-sm font-medium break-words text-text-1">
                         {alert.title}

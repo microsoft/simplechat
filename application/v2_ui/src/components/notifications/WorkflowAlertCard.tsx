@@ -17,7 +17,7 @@
 import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { clsx } from 'clsx';
-import { ArrowUpRight, ChevronDown, ChevronRight, X } from 'lucide-react';
+import { ArrowRight, ChevronDown, ChevronRight, X } from 'lucide-react';
 import { Modal } from '../ui/Modal';
 import { GlassButton } from '../ui/primitives';
 import { resolveNotificationLink, type NotificationTarget } from '../../lib/notificationLinks';
@@ -26,9 +26,11 @@ import { growFromRect } from '../../lib/workflowAlertMotion';
 import {
     WORKFLOW_ALERT_PRIORITY_LABELS,
     describeWorkflowAlertGroup,
+    describeWorkflowAlertReason,
     formatWorkflowAlertClock,
     workflowAlertFollowUpAction,
     workflowAlertOpenRunPath,
+    workflowAlertServerReason,
     workflowAlertWorkflowPath,
     type WorkflowAlert,
     type WorkflowAlertEntry,
@@ -54,15 +56,6 @@ function severityLabel(value: string): string {
 function readable(value: string): string {
     const spaced = value.replace(/[_-]+/g, ' ').trim();
     return spaced.charAt(0).toUpperCase() + spaced.slice(1);
-}
-
-function whyText(alert: WorkflowAlert): string {
-    if (alert.triggerReason) {
-        return alert.triggerReason;
-    }
-    return alert.category === 'failure'
-        ? "The workflow's run failed."
-        : 'The workflow raised this alert when it ran.';
 }
 
 function chipsFor(alert: WorkflowAlert): string[] {
@@ -136,12 +129,16 @@ function CardBody({ alert }: { alert: WorkflowAlert }) {
     const detailId = useId();
     const whyId = useId();
     const chips = chipsFor(alert);
+    const serverReason = workflowAlertServerReason(alert);
 
     return (
         <div className="space-y-4">
             <section aria-labelledby={whyId} data-workflow-alert-why="">
                 <h3 id={whyId} className="text-xs font-semibold text-text-2">Why you&apos;re seeing this</h3>
-                <p className="mt-1 text-sm break-words text-text-1">{whyText(alert)}</p>
+                <p className="mt-1 text-sm break-words text-text-1">{describeWorkflowAlertReason(alert)}</p>
+                {serverReason && (
+                    <p data-workflow-alert-server-reason="" className="mt-1 text-xs break-words text-text-2">{serverReason}</p>
+                )}
                 {alert.matchedRules.length > 0 && (
                     <ul className="mt-2 space-y-1.5" aria-label="Rules that matched">
                         {alert.matchedRules.map((rule, index) => (
@@ -311,7 +308,7 @@ function WorkflowAlertCard({ onOpened }: { onOpened: () => void }) {
                                     className={BUSY_CLASS}
                                 >
                                     {link.label}
-                                    <ArrowUpRight size={14} aria-hidden="true" />
+                                    <ArrowRight size={14} aria-hidden="true" />
                                 </GlassButton>
                             ))}
                             {runPath ? (
@@ -325,7 +322,7 @@ function WorkflowAlertCard({ onOpened }: { onOpened: () => void }) {
                                     className={BUSY_CLASS}
                                 >
                                     Open run
-                                    <ArrowUpRight size={14} aria-hidden="true" />
+                                    <ArrowRight size={14} aria-hidden="true" />
                                 </GlassButton>
                             ) : workflowPath ? (
                                 <GlassButton
@@ -338,7 +335,7 @@ function WorkflowAlertCard({ onOpened }: { onOpened: () => void }) {
                                     className={BUSY_CLASS}
                                 >
                                     Open workflow
-                                    <ArrowUpRight size={14} aria-hidden="true" />
+                                    <ArrowRight size={14} aria-hidden="true" />
                                 </GlassButton>
                             ) : null}
                             {followUp && (
