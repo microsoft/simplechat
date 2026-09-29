@@ -163,6 +163,10 @@ payloads already describe both. A tabular turn opens with the agent hand-off sen
 more specific lane supersedes the general agent one — otherwise a workbook run would be
 labelled "Agent progress".
 
+A lane can claim steps without drawing a card. Orchestration's lane has `showsCard: false`.
+Its entry still keeps planner and run steps out of the agent and tabular lanes, but the plan
+card and the reasoning toggle already show that progress, and a third display repeated them.
+
 Every activity is emitted at least twice, running then completed, keyed by `activity_key`.
 They are folded into a map so a tool call is counted once rather than once per frame.
 
@@ -265,8 +269,9 @@ it under node, skipping that half when `application/v2_ui/node_modules` is absen
 - **Non-boolean tabular admin settings are still not editable in V2.** That is the general
   "admin settings edits boolean capabilities only" limitation rather than anything specific to
   tabular, and is unchanged by this work.
-- **Progress lanes cover tabular and agent work only.** Workflow activity emits compatible
-  payloads but is not yet wired end to end, so it has no lane entry.
+- **Progress cards cover tabular and agent work only.** Orchestration has a lane so its steps
+  are claimed, but it draws no card, because the plan card shows a run's progress. Workflow
+  activity emits compatible payloads but is not yet wired end to end, so it has no lane entry.
 
 ## See also
 

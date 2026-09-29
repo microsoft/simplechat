@@ -2,6 +2,16 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.204)**
+
+#### User Interface Enhancements
+
+*   **Simpler Orchestration Progress In The V2 Chat**
+    *   While Orchestrate plans a question, the reply now shows just the reasoning step toggle and **Thinking**. The **Orchestration** progress card that sat above them is gone. It showed "Current step: Building a plan", a percentage, a step count and a progress bar, which repeated the reasoning step, stayed at 45% while the planner worked, and disappeared as soon as the plan arrived.
+    *   While a plan runs, the plan card still shows how many steps are done and which one is running, with **Review** for the full list. The planner's steps are still under the reasoning toggle. Expanding a saved answer's reasoning no longer shows the card either.
+    *   Tabular analysis and agent replies keep their progress cards. Nothing changes on the server.
+    *   (Ref: `activityLanes.ts`, `ThoughtsList.tsx`, `showsCard`, [Orchestration Duplicate Progress Card Fix](fixes/ORCHESTRATION_DUPLICATE_PROGRESS_CARD_FIX.md))
+
 ### **(v0.261.203)**
 
 #### New Features
