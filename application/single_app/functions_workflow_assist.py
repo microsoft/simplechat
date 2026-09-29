@@ -871,35 +871,41 @@ def _advisory(check, *args):
 
 
 def build_warnings(run, attempt, baseline_projection):
-    """Advisory warnings for a changed candidate. None of them blocks the change."""
+    """Advisory warnings for a changed candidate. None of them blocks the change.
+
+    The checks that read stored records run only while time remains; the others always run.
+    """
     warnings = []
     candidate = attempt.candidate
-    if run.remaining() >= ASSIST_MIN_WARNING_SECONDS:
-        run_as = str(attempt.projection.get('m365_run_as_user_id') or '').strip()
-        if run_as and workflow_execution_fingerprint(baseline_projection) != workflow_execution_fingerprint(
-            attempt.projection,
-        ):
-            warnings.append({'code': 'run_as_reapproval', 'message': _WARNING_MESSAGES['run_as_reapproval']})
-        tasks = {task.get('id'): task for task in candidate.get('tasks') or [] if isinstance(task, dict)}
-        email_ids = email_task_ids(candidate, attempt.info or {})
-        capable = {}
-        for task_id in email_ids:
-            kind, agent = _email_runner(candidate, tasks[task_id])
-            if kind == 'agent':
-                key = json.dumps(agent, sort_keys=True, default=str)
-                if key not in capable:
-                    capable[key] = _advisory(run.services.agent_email_capable, run.user_id, agent)
-                warn = capable[key] is False
-            else:
-                warn = True
-            if warn:
-                warnings.append({
-                    'code': 'email_requires_m365_agent', 'message': _WARNING_MESSAGES['email_requires_m365_agent'],
-                    'target': _task_target(candidate, task_id),
-                })
-        if email_ids and (not run_as or run_as == run.user_id):
-            if _advisory(run.services.m365_connected, run.user_id) is False:
-                warnings.append({'code': 'm365_not_connected', 'message': _WARNING_MESSAGES['m365_not_connected']})
+
+    def lookup(check, *args):
+        return _advisory(check, *args) if run.remaining() >= ASSIST_MIN_WARNING_SECONDS else None
+
+    run_as = str(attempt.projection.get('m365_run_as_user_id') or '').strip()
+    if run_as and workflow_execution_fingerprint(baseline_projection) != workflow_execution_fingerprint(
+        attempt.projection,
+    ):
+        warnings.append({'code': 'run_as_reapproval', 'message': _WARNING_MESSAGES['run_as_reapproval']})
+    tasks = {task.get('id'): task for task in candidate.get('tasks') or [] if isinstance(task, dict)}
+    email_ids = email_task_ids(candidate, attempt.info or {})
+    capable = {}
+    for task_id in email_ids:
+        kind, agent = _email_runner(candidate, tasks[task_id])
+        if kind == 'agent':
+            key = json.dumps(agent, sort_keys=True, default=str)
+            if key not in capable:
+                capable[key] = lookup(run.services.agent_email_capable, run.user_id, agent)
+            warn = capable[key] is False
+        else:
+            warn = True
+        if warn:
+            warnings.append({
+                'code': 'email_requires_m365_agent', 'message': _WARNING_MESSAGES['email_requires_m365_agent'],
+                'target': _task_target(candidate, task_id),
+            })
+    if email_ids and (not run_as or run_as == run.user_id):
+        if lookup(run.services.m365_connected, run.user_id) is False:
+            warnings.append({'code': 'm365_not_connected', 'message': _WARNING_MESSAGES['m365_not_connected']})
     if attempt.tolerated:
         warnings.append({'code': 'draft_has_errors', 'message': _WARNING_MESSAGES['draft_has_errors']})
     return warnings
