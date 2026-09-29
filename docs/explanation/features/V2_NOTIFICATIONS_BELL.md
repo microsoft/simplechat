@@ -56,8 +56,9 @@ There is no event stream for personal notices, so the count is polled from
 
 `subscribeNotificationCount` in `stores/notificationStore.ts` reports every read as
 `{ count, previousCount, changed, rose, reason }`. The panel uses `rose` to list a
-notice that arrives while it is open. Track N2's workflow-alert pop-ups are meant
-to subscribe the same way; this release doesn't add them.
+notice that arrives while it is open. Track N2's workflow-alert pop-ups subscribe
+the same way. They were added in 0.261.199; see
+[V2 Workflow Alert Notices](V2_WORKFLOW_ALERT_NOTICES.md).
 
 `previousCount`, `changed` and `rose` compare two counts the server reported, never
 a count V2 worked out for itself after a read, dismissal or mark all read. So `rose`
@@ -312,6 +313,7 @@ data.
 ## Related
 
 - [Desktop Conversation Notifications](DESKTOP_CONVERSATION_NOTIFICATIONS.md)
+- [V2 Workflow Alert Notices](V2_WORKFLOW_ALERT_NOTICES.md)
 - [Chat Orchestration Workflows Roadmap](CHAT_ORCHESTRATION_WORKFLOWS_ROADMAP.md), Track N
 - [Manage notifications]({{ '/guides/manage-notifications/' | relative_url }})
 - [Chat settings]({{ '/admin/chat/' | relative_url }})

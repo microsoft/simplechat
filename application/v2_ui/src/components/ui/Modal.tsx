@@ -20,11 +20,11 @@
 // dialog closes focus returns to the control that opened it, so a keyboard user carries on
 // where they were rather than at the top of the page.
 
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { clsx } from 'clsx';
 import { X } from 'lucide-react';
-import type { ReactNode } from 'react';
+import type { MutableRefObject, ReactNode, Ref } from 'react';
 
 /**
  * How much room the dialog needs.
@@ -90,6 +90,8 @@ export function Modal({
     size = 'md',
     bodyClassName,
     tall = false,
+    banner,
+    panelRef: externalPanelRef,
 }: {
     title: string;
     description?: string;
@@ -106,11 +108,27 @@ export function Modal({
      * dialog jump every time a line is added, and the preview pane shrink as you type.
      */
     tall?: boolean;
+    /**
+     * Replaces the default title row, for a dialog whose header says more than a title -- the
+     * workflow alert card's priority band. The default close button goes with that row, so a
+     * banner brings its own. `title` still names the dialog for assistive technology.
+     */
+    banner?: ReactNode;
+    /** The dialog's panel, for a caller that animates it into place. */
+    panelRef?: Ref<HTMLDivElement>;
 }) {
     // Read while rendering: by the time an effect runs, a field's autoFocus has already moved
     // focus into the dialog, and it is the control that opened it that focus must return to.
     const [opener] = useState<HTMLElement | null>(currentOpener);
-    const panelRef = useRef<HTMLDivElement>(null);
+    const panelRef = useRef<HTMLDivElement | null>(null);
+    const setPanelRef = useCallback((node: HTMLDivElement | null) => {
+        panelRef.current = node;
+        if (typeof externalPanelRef === 'function') {
+            externalPanelRef(node);
+        } else if (externalPanelRef) {
+            (externalPanelRef as MutableRefObject<HTMLDivElement | null>).current = node;
+        }
+    }, [externalPanelRef]);
 
     useEffect(() => {
         const panel = panelRef.current;
@@ -173,7 +191,7 @@ export function Modal({
             onClick={onClose}
         >
             <div
-                ref={panelRef}
+                ref={setPanelRef}
                 tabIndex={-1}
                 onClick={(event) => event.stopPropagation()}
                 className={clsx(
@@ -182,6 +200,7 @@ export function Modal({
                     tall && 'h-[85vh]',
                 )}
             >
+                {banner ?? (
                 <div className="flex items-start justify-between gap-3 border-b border-edge px-4 py-3">
                     <div className="min-w-0">
                         <h2 className="text-sm font-semibold text-text-1">{title}</h2>
@@ -198,6 +217,7 @@ export function Modal({
                         <X size={16} />
                     </button>
                 </div>
+                )}
 
                 <div
                     className={clsx(

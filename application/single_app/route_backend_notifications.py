@@ -177,14 +177,40 @@ def register_route_backend_notifications(bp):
     @login_required
     @user_required
     def api_get_workflow_alert_notifications():
-        """Get unread workflow alert notifications for the current user."""
+        """
+        Get unread workflow alert notifications for the current user.
+
+        Query Parameters:
+            limit (int): Most alerts to return, 1-10 (default: 5)
+            since_hours (int): Only alerts created within this many hours, 1-1440 (optional).
+                The V2 interface asks for 24 so older alerts stay in the bell; the classic
+                interface leaves it out. With since_hours, a failed read answers 500 rather
+                than an empty list.
+        """
+        try:
+            since_hours = parse_workflow_alert_since_hours(request.args.get('since_hours'))
+        except ValueError as e:
+            return jsonify({
+                'success': False,
+                'notifications': [],
+                'error': str(e),
+            }), 400
+
         try:
             user_id = get_current_user_id()
             limit = int(request.args.get('limit', 5))
             if limit < 1 or limit > 10:
                 limit = 5
 
-            notifications = get_unread_workflow_priority_notifications(user_id, limit=limit)
+            # V2 is the caller that asks for since_hours, and it reads a short list as every
+            # unread pop-up alert there is. A failed read therefore answers 500 rather than an
+            # empty list it would take at its word; classic keeps the empty list it always had.
+            notifications = get_unread_workflow_priority_notifications(
+                user_id,
+                limit=limit,
+                since_hours=since_hours,
+                raise_on_error=since_hours is not None,
+            )
             return jsonify({
                 'success': True,
                 'notifications': notifications,
