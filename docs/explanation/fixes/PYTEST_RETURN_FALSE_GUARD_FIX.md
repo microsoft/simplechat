@@ -228,7 +228,7 @@ parentheses is how many files had a guard failure.
 
 ### Where the lists are
 
-The per-file lists are in the description of pull request #1574.
+The per-file lists are in the description of pull request #1579.
 
 ## Impact
 
