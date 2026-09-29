@@ -31,6 +31,7 @@ from functions_artifact_publication_readiness import (
     publication_screening_reservation,
 )
 from functions_collaboration import build_conversation_participation_context
+from functions_document_provenance import publication_origin_fields
 from functions_documents import allowed_file, create_document, update_document
 from functions_generated_file_approvals import assert_generated_file_approval_allows_download
 from functions_generated_artifact_sources import authorize_generated_artifact_source, has_generated_artifact_source
@@ -651,11 +652,16 @@ def _publish_generated_chat_artifact_for_user(
                         raise ValueError("The generated artifact bytes changed.")
                     source_file_path = _write_temp_generated_file(artifact_bytes, ".xsd")
                     cleanup.callback(os.remove, source_file_path)
+                # The origin comes only from the server-held artifact binding, producer, and
+                # receipt. The create stage runs once per receipt, so replays never restamp it.
+                origin_fields = publication_origin_fields(
+                    user_id, artifact, source_receipt=source_receipt, destination=destination,
+                )
                 create_document(
                     file_name=name, user_id=user_id, document_id=receipt["document_id"], num_file_chunks=0,
                     status="Queued for processing" if scope == "personal" else "Pending approval",
                     source_file_path=source_file_path, allow_deferred_xsd_source=scope != "personal",
-                    **scope_args,
+                    **scope_args, **origin_fields,
                 )
         except OrchestrationFilePolicyError:
             raise

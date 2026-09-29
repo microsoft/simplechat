@@ -305,6 +305,7 @@ export function GroupWorkspacePage() {
                 const params = new URLSearchParams(location.search);
                 if (groupId && id !== groupId) {
                     params.delete('workflow_id');
+                    params.delete('run_id');
                 }
                 if (id !== groupId) {
                     params.delete('document_id');

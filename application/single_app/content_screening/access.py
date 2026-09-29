@@ -95,6 +95,10 @@ PRIVATE_DOCUMENT_FIELDS = frozenset({
     "generated_artifact_publication_receipt_id",
     "generated_artifact_approved_by_user_id",
     "generated_artifact_approved_by_display_name", "generated_artifact_approved_at",
+    # Document provenance is server-only. Responses carry a coarse origin_kind that is
+    # recomputed from the stored origin, plus an access-checked origin_summary that only
+    # a single-document detail read attaches after projection.
+    "origin", "origin_kind", "origin_summary",
 })
 # A pending generated artifact stays held, but the group review surface still
 # needs to say who requested it. Both allow-lists must name the same fields.
@@ -993,14 +997,21 @@ def is_public_document_field(key):
     )
 
 
+def _with_origin_kind(payload, document):
+    origin_kind = import_module("functions_document_provenance").document_origin_kind(document)
+    if origin_kind is not None:
+        payload["origin_kind"] = origin_kind
+    return payload
+
+
 def public_document_payload(document):
     if not isinstance(document, Mapping):
         return {}
     if SCREENING_FIELD not in document:
-        return {
+        return _with_origin_kind({
             key: deepcopy(value) for key, value in document.items()
             if is_public_document_field(key)
-        }
+        }, document)
     try:
         _require_available_metadata(document)
         config = import_module("config")
@@ -1030,6 +1041,8 @@ def public_document_payload(document):
     if not available:
         payload["status"] = "Content screening: document unavailable"
         payload["enhanced_citations"] = False
+    else:
+        _with_origin_kind(payload, document)
     return payload
 
 
@@ -1062,9 +1075,13 @@ def public_documents_payload(documents, user_id=None, *, metadata_reader=None):
     return payloads
 
 
-def register_document_api_guards(blueprint, *, user_resolver=None, document_projector=None, source_validator=None):
+def register_document_api_guards(
+    blueprint, *, user_resolver=None, document_projector=None, source_validator=None,
+    attach_origin_summary=True,
+):
     """Protect ordinary classic/V2 document responses and mutation requests."""
     flask = import_module("flask")
+    provenance = import_module("functions_document_provenance")
 
     @blueprint.before_request
     def reject_client_screening_state():
@@ -1073,6 +1090,11 @@ def register_document_api_guards(blueprint, *, user_resolver=None, document_proj
                 reject_screening_fields(flask.request.get_json(silent=True))
                 reject_screening_fields(flask.request.form.to_dict())
             except ScreeningValidationError as error:
+                return flask.jsonify({"error": error.public_message, "error_code": error.code}), error.status_code
+            try:
+                provenance.reject_origin_fields(flask.request.get_json(silent=True))
+                provenance.reject_origin_fields(flask.request.form.to_dict())
+            except provenance.DocumentOriginError as error:
                 return flask.jsonify({"error": error.public_message, "error_code": error.code}), error.status_code
         return None
 
@@ -1090,6 +1112,8 @@ def register_document_api_guards(blueprint, *, user_resolver=None, document_proj
                         payload = refreshed[0] if refreshed else {"error": "Document not found or access denied."}
                         if not refreshed:
                             response.status_code = 404
+                        elif attach_origin_summary:
+                            payload = provenance.attached_origin_summary(payload)
                     for key in ("documents", "versions"):
                         if isinstance(payload.get(key), list):
                             payload[key] = project_documents(payload[key], actor_id)
