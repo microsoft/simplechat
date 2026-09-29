@@ -12,6 +12,7 @@ import { useUserSettingsStore } from './stores/userSettingsStore';
 import { initializeTheme, hydrateUiPreferences } from './stores/uiStore';
 import { startImageApprovalTracking } from './lib/imageProposalResume';
 import { useNotificationRuntime } from './lib/useNotificationRuntime';
+import { useWorkflowAlertRuntime } from './lib/useWorkflowAlertRuntime';
 import { restorePersistedRuns } from './stores/orchestrationStore';
 import { ChatPage } from './pages/ChatPage';
 import { HomePage } from './pages/HomePage';
@@ -171,6 +172,8 @@ export function App() {
     // The bell's unread count and desktop notifications for finished replies. Started only
     // once a session has loaded, and kept running across every page.
     useNotificationRuntime(Boolean(data) && !error);
+    // Workflow alerts that ask to pop up. It listens to the bell's count rather than polling.
+    useWorkflowAlertRuntime(Boolean(data) && !error);
 
     if (loading) {
         return <BootScreen />;

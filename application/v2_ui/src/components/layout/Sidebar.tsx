@@ -44,6 +44,7 @@ import { ConversationRail } from '../chat/ConversationRail';
 import { NavExtras } from './NavExtras';
 import { NotificationBell } from './NotificationBell';
 import { UserAvatar } from './UserAvatar';
+import { WorkflowAlertCalloutSlot, useWorkflowAlertCalloutShown } from '../notifications/WorkflowAlertNotice';
 
 interface NavItem {
     to: string;
@@ -281,6 +282,7 @@ export function Sidebar({ mobile = false }: { mobile?: boolean }) {
     const location = useLocation();
     const expandRef = useRef<HTMLButtonElement>(null);
     const collapseRef = useRef<HTMLButtonElement>(null);
+    const alertCalloutShown = useWorkflowAlertCalloutShown();
 
     const onChatPage = location.pathname.startsWith('/chat');
     const collapsed = mobile ? !mobileNavOpen : railCollapsed;
@@ -347,6 +349,8 @@ export function Sidebar({ mobile = false }: { mobile?: boolean }) {
                 collapsed ? 'w-[68px]' : 'w-[280px]',
                 mobile && 'absolute inset-y-0 left-0 z-50 max-w-full',
                 mobile && mobileNavOpen && 'glass-modal',
+                // A workflow alert's callout flies out past the collapsed strip, over the page.
+                !mobile && alertCalloutShown && 'z-40',
             )}
         >
             <div
@@ -420,7 +424,7 @@ export function Sidebar({ mobile = false }: { mobile?: boolean }) {
 
             <ul className={clsx('space-y-0.5 px-3', onChatPage && 'mt-3')}>
                 {NAV_ITEMS.map((item) => (
-                    <li key={item.to}>
+                    <li key={item.to} className={item.to === '/workspace' ? 'relative' : undefined}>
                         {(() => {
                             const label = item.to === '/public' ? publicLabels.plural : item.label;
                             return (
@@ -443,6 +447,8 @@ export function Sidebar({ mobile = false }: { mobile?: boolean }) {
                         </NavLink>
                             );
                         })()}
+                        {/* Workflows live in My Workspace, so a workflow's alert appears here. */}
+                        {item.to === '/workspace' && <WorkflowAlertCalloutSlot collapsed={collapsed} />}
                     </li>
                 ))}
             </ul>

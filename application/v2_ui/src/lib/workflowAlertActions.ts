@@ -1,13 +1,18 @@
 // workflowAlertActions.ts
-// Marking workflow alerts read or dismissed from the alert card.
+// What the alert card does to an alert: mark it read, dismiss it, or follow one of its links.
 //
-// The bell's store owns those actions for the notices it has loaded: it updates its list and
-// its count at once, and puts both back if the server refuses. An alert the bell has not
-// loaded -- its panel loads a page at a time, and only when opened -- is sent straight to the
-// same route, and the bell reads its count again afterwards. Either way the two interfaces
-// agree, because both read and write the same notification documents.
+// The bell's store owns reading and dismissing for the notices it has loaded: it updates its
+// list and its count at once, and puts both back if the server refuses. An alert the bell has
+// not loaded -- its panel loads a page at a time, and only when opened -- is sent straight to
+// the same route, and the bell reads its count again afterwards. Either way the two
+// interfaces agree, because both read and write the same notification documents.
+//
+// Links are followed by the bell's own navigation (notificationNavigation.ts), after the
+// bell's resolver has checked them, so the card never builds an address of its own.
 
 import { dismissNotification, markNotificationRead } from './notifications';
+import type { NotificationTarget } from './notificationLinks';
+import { openNotificationTarget, type NotificationNavigationContext } from './notificationNavigation';
 import { refreshNotificationCount, useNotificationStore } from '../stores/notificationStore';
 import { toast } from '../stores/toastStore';
 
@@ -16,6 +21,8 @@ export interface WorkflowAlertActions {
     markRead: (ids: string[]) => Promise<string[]>;
     /** Resolves to the ids that are now dismissed. */
     dismiss: (ids: string[]) => Promise<string[]>;
+    /** Follow a resolved link, or an open action's route. */
+    open: (target: NotificationTarget, context: NotificationNavigationContext) => Promise<void>;
 }
 
 let lastActionAt = 0;
@@ -74,4 +81,5 @@ export const workflowAlertServerActions: WorkflowAlertActions = {
         dismissNotification,
         ids.length > 1 ? 'Those alerts could not all be dismissed.' : 'That alert could not be dismissed.',
     ),
+    open: openNotificationTarget,
 };

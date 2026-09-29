@@ -20,6 +20,8 @@
 // alert takes the notice over from a medium one. The card keeps the entry it was showing.
 
 import { create } from 'zustand';
+import type { NotificationTarget } from '../lib/notificationLinks';
+import type { NotificationNavigationContext } from '../lib/notificationNavigation';
 import { claimWorkflowAlerts, resetWorkflowAlertClaims } from '../lib/workflowAlertClaims';
 import { tuckIntoTarget } from '../lib/workflowAlertMotion';
 import {
@@ -82,8 +84,11 @@ interface WorkflowAlertState {
     markEntryRead: () => Promise<void>;
     dismissEntry: () => Promise<void>;
     markAllRead: () => Promise<void>;
-    /** An open action on the card's current entry: its lead alert is marked read and the card closes. */
-    markLeadReadForOpen: () => Promise<void>;
+    /**
+     * Follow a link or an open action from the card. The entry's lead alert -- the one the
+     * card was showing -- is marked read, and the card closes.
+     */
+    openFromCard: (target: NotificationTarget, context: NotificationNavigationContext) => Promise<void>;
 }
 
 // Ids that must not be presented again: claimed by any tab, or acted on here.
@@ -367,19 +372,22 @@ export const useWorkflowAlertStore = create<WorkflowAlertState>((set, get) => {
             await act(get().entries.flatMap(workflowAlertEntryIds), (ids) => actions.markRead(ids));
         },
 
-        markLeadReadForOpen: async () => {
-            const entry = get().entries[get().cardIndex];
-            if (!entry) {
+        openFromCard: async (target, context) => {
+            const state = get();
+            const entry = state.entries[state.cardIndex];
+            if (state.phase !== 'card' || !entry || state.busy) {
                 return;
             }
             const leadId = entry.lead.id;
             settled.add(leadId);
             finish();
-            try {
-                await actions.markRead([leadId]);
-            } catch {
-                /* The adapter reports its own failures; the alert simply stays unread in the bell. */
+            const read = actions.markRead([leadId]).catch(() => [] as string[]);
+            // A full page load would cancel a request still on its way, so a link that leaves
+            // the application waits for the read first. Inside it the read carries on regardless.
+            if (target.kind === 'classic') {
+                await read;
             }
+            await actions.open(target, context);
         },
     };
 });
