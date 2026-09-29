@@ -140,6 +140,13 @@ planner had finished before the discard, its stored reply shows instead.
 reached the server and been stored, the server replays the stored result instead of calling the
 model a second time.
 
+In the plan editor, **Retry** reuses the id only while the request is still exactly the one it was
+sent with: the same plan version, step edits and action. The plan route holds an id to the first
+request it arrived with, even one that failed, and refuses it with anything else for good. Cancel
+moves the plan to a new version, so a retry after it, or after you toggle a step, goes out under a
+fresh id. The thread still recognises the stored turns of every id it sent
+(`application/v2_ui/src/lib/planSubmissionIds.ts`).
+
 **Edit and resend** removes the exchange and puts its text back into the input, above anything you
 had started typing, so you can change it before sending.
 
@@ -166,6 +173,23 @@ The rules live in `application/single_app/functions_assist_submissions.py`:
   `"code": "submission_conflict"`.
 - Only an image instruction carries an id. The **Prompt** and **Controls** tabs write no
   transcript turns, so the id is ignored for them.
+
+A retry can be sent while the request it repeats is still waiting on the model. It then finds
+nothing stored when it's first checked, so it's checked again once the model has answered:
+
+- The image routes check the id again in the copy of the image they read after the model call. A
+  repeat is answered from what the first request stored, and a reused id is refused, so neither
+  stores a second version or exchange. The model was called twice, and the second image is left
+  unused.
+- The personal diagram and chart route writes with a version check. When its write loses to the
+  first request's, it reads the message again and answers the same way. A write lost to an
+  unrelated change is the ordinary 409 with the current revisions. Without an id it's still a 500,
+  as before.
+- A revision conflict an image route finds after the model call returns the versions that beat
+  the request, from the copy read after the call, not the ones it started from.
+
+The shared diagram and chart route saves without a version check, so there a racing retry
+replaces the first request's result instead of adding a second one.
 
 The plan edit route, `POST /api/v2/orchestration/runs/<run_id>/edit`, already required a
 `submission_id` and already replayed or refused a repeated one. It now holds the id to the same
@@ -227,6 +251,7 @@ An editor now stays open until you close it.
 Server:
 
 - `application/single_app/functions_assist_submissions.py` (new)
+- `application/single_app/functions_image_edit.py`
 - `application/single_app/functions_message_block_revisions.py`
 - `application/single_app/functions_message_image_revisions.py`
 - `application/single_app/functions_orchestration_plan_editing.py`
@@ -240,6 +265,7 @@ V2 interface:
 - `application/v2_ui/src/components/chat/AssistThread.tsx` (new)
 - `application/v2_ui/src/lib/assistThread.ts` (new)
 - `application/v2_ui/src/lib/assistLimits.ts` (new)
+- `application/v2_ui/src/lib/planSubmissionIds.ts` (new)
 - `application/v2_ui/src/stores/assistThreadStore.ts` (new)
 - `application/v2_ui/src/components/chat/ComposerEditor.tsx`
 - `application/v2_ui/src/components/chat/DiagramEditor.tsx`,
@@ -294,9 +320,9 @@ While you wait you can type your next message, but it won't send until the curre
 
 | Test | Covers |
 |---|---|
-| `functional_tests/test_assist_thread_submission_id.py` | The optional id on the personal and shared diagram, chart and image routes: storage on both turns, replay without a second model call or room event, conflicting reuse, malformed ids, access before replay, ids kept out of model prompts, and the plan edit id rule. |
+| `functional_tests/test_assist_thread_submission_id.py` | The optional id on the personal and shared diagram, chart and image routes: storage on both turns, replay without a second model call or room event, conflicting reuse, malformed ids, access before replay, a retry that races the request it repeats, conflicts found after the model call, ids kept out of model prompts, and the plan edit id rule. The image routes run the real revision flow with only the model and blob storage replaced. |
 | `functional_tests/test_v2_assist_thread.py` | The four editors use the shared thread, sending doesn't wait for the server, the polite log, the restricted input, refusal instead of truncation, the client and server limits, the id on every request, local image transcripts, editors staying open, and no remote assets. |
-| `functional_tests/test_v2_assist_thread_logic.ts` | 116 checks of the thread logic, run by the test above: settling, Cancel, Retry, Edit and resend, the one-request rule, matching stored turns, and the store's caps. |
+| `functional_tests/test_v2_assist_thread_logic.ts` | The thread logic, run by the test above: settling, Cancel, Retry, Edit and resend, the one-request rule, matching stored turns, the ids a plan retry goes out under, and the store's caps. |
 | `ui_tests/test_v2_assist_thread.py` | The diagram and chart editors in a browser: immediate send, Cancel then Retry, failures, keys and the counter, a shared broadcast before the reply, a cancelled change that finished, and the restricted input beside the full main composer. |
 | `ui_tests/test_image_editor_capabilities.py` | The image editor's thread: immediate send, a local transcript, Cancel and Retry, a cancelled change that finished, and the counter. |
 | `ui_tests/test_v2_orchestration_plan_editor.py` | The plan editor's thread: immediate send with elapsed time, Cancel through the server, and the keys and counter. |
@@ -306,6 +332,8 @@ While you wait you can type your next message, but it won't send until the curre
 
 - Cancel in the diagram, chart and image editors can't stop a change the server has already
   started. The thread says so and recognises the change if it lands.
+- An image change refused after the model call, as a repeat or a conflict, leaves the image it
+  generated unused in storage. Conflicts already did this before this version.
 - The image editor's transcript isn't saved. It lasts until you reload the page, or use an editor
   in another conversation. The server keeps its own transcript for the model, and **Earlier changes
   to this image** shows what it stored.
