@@ -177,6 +177,10 @@ The card shows:
   navigation that names a workflow once, so choosing Open workflow again, even for
   the same run, opens the run again. Anything else that later changes the list, such
   as running another workflow, doesn't reopen a run it has already opened.
+  When the open list doesn't have the workflow, as when it was created in another tab
+  after the list was read, the section reads the list once more for that navigation.
+  If the workflow still isn't there, as when it was deleted after the run, nothing
+  opens and the list isn't read again until Open workflow is chosen again.
   Alerts from before this release have no recorded scope. For those, it is taken
   from the workspace named on their **Open workflow** conversation link, and when
   that doesn't name one the button isn't shown rather than guessing.
@@ -397,7 +401,7 @@ as Flask does in production. Before, it answered those with Vite's "did you mean
 | `functional_tests/test_v2_alert_lab_excluded_from_build.py` | 4 | The lab's markers exist only in lab code; the reference scanner recognizes every import form; the only reference to the lab is App.tsx's lazy import inside the `import.meta.env.DEV` branch; an existing production build has no file named for the lab and no lab marker (skipped without a build) |
 | `functional_tests/test_workflow_priority_alerts.py` | Existing | Classic's workflow alert contract, with the new signature |
 | `ui_tests/test_v2_workflow_alert_notices.py` | 28 | Pop-up versus notify-only and the 24-hour window against a server that leaves both filters out; one claim across two tabs of one browser, and a tab opened later; waiting behind a dialog, the bell's panel and a hidden tab; only a successful read retiring an alert, through a failed read on return and a zero count whose confirming read fails; a rise on return read behind a read already on its way; the eight-second tuck, its hover and focus pause, and high and critical staying; storm grouping; every card action; keyboard focus, Escape and the tuck on covering focus; motion with and without reduced motion, including the Web Animations' properties and every `wf-*` keyframe; the rail expanded, collapsed and on a 360 px phone in both themes; text contrast for every priority and category in both themes, with and without reduced transparency; hostile text rendered as text; refused off-site links; and Open workflow's personal, group and unplaceable cases |
-| `ui_tests/test_v2_document_provenance.py` | 2 added | Against the real workflows section, personal and group: Open workflow while the list is open expands the run; a second Open workflow for the same run opens it again; running another workflow afterwards doesn't reopen it |
+| `ui_tests/test_v2_document_provenance.py` | 6 added | Against the real workflows section, personal and group: Open workflow while the list is open expands the run; a second Open workflow for the same run opens it again; running another workflow afterwards doesn't reopen it; a workflow created after the list was read is found with exactly one more list read, which opens its run; a workflow missing from that read too costs one list read per navigation and no more, opens nothing, shows no error and leaves the list usable |
 
 The UI suite mounts the real V2 frame in a harness build, following
 `ui_tests/test_v2_notifications_bell.py`. It stubs HTTP with `page.route` and fakes

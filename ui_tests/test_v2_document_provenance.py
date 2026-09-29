@@ -4,6 +4,7 @@ Production-SPA coverage for where a V2 document came from.
 Version: 0.261.199
 Implemented in: 0.261.194
 A workflow alert's Open workflow, followed while that workflows list is already open: 0.261.199
+One more list read, and no more, for a workflow the open list lacks: 0.261.199
 
 The real SPA runs against closed synthetic document, workflow and chat APIs, with no live data.
 A list row says only which kind of origin a document has (`origin_kind`). The details pane asks
@@ -14,6 +15,8 @@ never send a raw `origin`.
 
 The workflows list acts on each navigation that names a run once, including one that only
 changes the address while the list is open, as a workflow alert's Open workflow does (Track N2).
+When the list lacks the workflow a navigation names, it reads the list once more for that
+navigation and no more.
 """
 
 import copy
@@ -465,6 +468,135 @@ def test_open_workflow_from_an_alert_while_the_list_is_open(alert_workflows_ui, 
     assert [entry.path for entry in ui.non_navigation_writes if entry.path != "/api/user/settings"] == [
         "/api/notifications/alert-1/read", "/api/notifications/alert-2/read",
         f"{list_api}/{'group-digest' if scope == 'group' else 'agent-workflow'}/run",
+    ]
+
+
+# Long enough for dozens of this fixture's list round trips, so a list read that repeated itself
+# would show.
+QUIET_MS = 1500
+
+
+def workflows_api(scope):
+    return "/api/group/workflows" if scope == "group" else "/api/user/workflows"
+
+
+def workflow_list_reads(ui, scope):
+    return sum(1 for entry in ui.requests if (entry.method, entry.path) == ("GET", workflows_api(scope)))
+
+
+def open_list_without_the_alerted_workflow(ui, scope):
+    """
+    Open the scope's workflows list while the server's list lacks the workflow the scope's alerts
+    name. Returns that workflow's collection and record, so a test can put the workflow back.
+    """
+    workflow_id, name, _, other, _ = ALERT_CASES[scope]
+    workflows = ui.group_workflows[GROUP_ID] if scope == "group" else ui.personal_workflows
+    record = workflows.pop(workflow_id)
+    if scope == "group":
+        ui.open("/groups")
+        ui.select_group(GROUP_ID)
+    else:
+        ui.open("/workspace/workflows")
+    expect(ui.page.get_by_role("button", name=f"Run {other}", exact=True)).to_be_visible()
+    expect(ui.page.get_by_role("button", name=f"Run {name}", exact=True)).to_have_count(0)
+    return workflows, record
+
+
+def follow_open_workflow_to_a_missing_workflow(ui, scope, identifier, title):
+    """
+    Follow a new alert's Open workflow to a workflow the list lacks. Returns how many more times
+    the list has been read once the page has stayed quiet for QUIET_MS after the first new read.
+    """
+    notice = raise_workflow_alert(ui, scope, identifier, title)
+    list_reads = workflow_list_reads(ui, scope)
+    open_workflow_from(ui, notice)
+    wait_until(
+        ui, lambda: workflow_list_reads(ui, scope) > list_reads,
+        lambda: "Open workflow never read the list again for a workflow the list lacked.",
+    )
+    ui.page.wait_for_timeout(QUIET_MS)
+    return workflow_list_reads(ui, scope) - list_reads
+
+
+@pytest.mark.parametrize("scope", ("personal", "group"))
+def test_open_workflow_reads_the_list_again_for_a_workflow_created_since(alert_workflows_ui, scope):
+    """The open list was read before the alert's workflow existed, as when it was created in
+    another tab. Open workflow reads the list once more, finds the workflow there and opens its
+    history on the alert's run. That one read is the only list read the navigation causes."""
+    ui = alert_workflows_ui
+    workflow_id, name, run_id, _, list_path = ALERT_CASES[scope]
+    workflows, record = open_list_without_the_alerted_workflow(ui, scope)
+    workflows[workflow_id] = record
+    history = ui.page.get_by_role("list", name="Workflow run history", exact=True)
+    linked = history.locator('li[aria-current="true"]')
+
+    notice = raise_workflow_alert(ui, scope, "alert-1", "Review found blocking items")
+    list_reads = workflow_list_reads(ui, scope)
+    open_workflow_from(ui, notice)
+    expect(ui.page).to_have_url(f"{ORIGIN}/v2{list_path}?workflow_id={workflow_id}&run_id={run_id}")
+    expect(linked).to_have_count(1)
+    expect(linked.get_by_role("button", name="Hide run task results", exact=True)).to_be_visible()
+    expect(linked).to_contain_text("Collect evidence")
+    expect(ui.page.get_by_role("button", name=f"Run {name}", exact=True)).to_be_visible()
+    expect(ui.page.get_by_role("dialog")).to_have_count(0)
+    wait_until(ui, lambda: ui.read_calls == ["alert-1"], lambda: f"Opening marked {ui.read_calls} as read.")
+    ui.page.wait_for_timeout(QUIET_MS)
+    extra_reads = workflow_list_reads(ui, scope) - list_reads
+    assert extra_reads == 1, f"Open workflow read the list {extra_reads} more times, not once."
+    assert [entry.path for entry in ui.requests if entry.path.endswith("/items")] == [
+        f"{workflows_api(scope)}/{workflow_id}/runs/{run_id}/items",
+    ]
+    assert [entry.path for entry in ui.non_navigation_writes if entry.path != "/api/user/settings"] == [
+        "/api/notifications/alert-1/read",
+    ]
+
+
+@pytest.mark.parametrize("scope", ("personal", "group"))
+def test_open_workflow_reads_the_list_only_once_more_for_a_workflow_it_lacks(alert_workflows_ui, scope):
+    """The alert's workflow is missing from the server's list as well, as when it was deleted
+    after the run. Open workflow reads the list once more and stops there: nothing opens, no error
+    shows and the list stays usable. Following the link again is a new navigation, which reads
+    the list once more."""
+    ui = alert_workflows_ui
+    workflow_id, _, run_id, other, list_path = ALERT_CASES[scope]
+    open_list_without_the_alerted_workflow(ui, scope)
+    target = f"{ORIGIN}/v2{list_path}?workflow_id={workflow_id}&run_id={run_id}"
+    section = ui.page.get_by_role("group", name="Workspace workflows", exact=True)
+    run_other = section.get_by_role("button", name=f"Run {other}", exact=True)
+    history = ui.page.get_by_role("list", name="Workflow run history", exact=True)
+
+    extra_reads = follow_open_workflow_to_a_missing_workflow(ui, scope, "alert-1", "Review found blocking items")
+    expect(ui.page).to_have_url(target)
+    assert extra_reads == 1, f"Open workflow read the list {extra_reads} more times, not once."
+    expect(ui.page.get_by_role("dialog")).to_have_count(0)
+    expect(history).to_have_count(0)
+    expect(section.get_by_role("alert")).to_have_count(0)
+    wait_until(ui, lambda: ui.read_calls == ["alert-1"], lambda: f"Opening marked {ui.read_calls} as read.")
+
+    # The list is still in use: a search filters it, and clearing the search brings the rows back.
+    search = section.get_by_role("searchbox", name="Search workflows", exact=True)
+    search.fill("no such workflow")
+    expect(section.get_by_text("No workflows match your search", exact=True)).to_be_visible()
+    expect(run_other).to_have_count(0)
+    search.fill("")
+    expect(run_other).to_be_enabled()
+
+    # Following the same link again is a new navigation, with one read of its own.
+    extra_reads = follow_open_workflow_to_a_missing_workflow(
+        ui, scope, "alert-2", "Review still has blocking items",
+    )
+    expect(ui.page).to_have_url(target)
+    assert extra_reads == 1, f"Following the link again read the list {extra_reads} more times, not once."
+    expect(ui.page.get_by_role("dialog")).to_have_count(0)
+    expect(history).to_have_count(0)
+    expect(section.get_by_role("alert")).to_have_count(0)
+    expect(run_other).to_be_enabled()
+    wait_until(
+        ui, lambda: ui.read_calls == ["alert-1", "alert-2"], lambda: f"Opening marked {ui.read_calls} as read.",
+    )
+    assert not [entry.path for entry in ui.requests if entry.path.endswith(("/runs", "/items"))]
+    assert [entry.path for entry in ui.non_navigation_writes if entry.path != "/api/user/settings"] == [
+        "/api/notifications/alert-1/read", "/api/notifications/alert-2/read",
     ]
 
 
