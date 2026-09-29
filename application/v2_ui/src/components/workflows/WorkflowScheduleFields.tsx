@@ -9,6 +9,7 @@ import {
     isWorkflowCalendarSchedule,
     workflowCalendarSchedulesOffered,
     workflowScheduleLabel,
+    workflowScheduleSupported,
     workflowScheduleTimezones,
     WORKFLOW_SCHEDULE_DAYS,
     type WorkflowCalendarSchedule,
@@ -80,16 +81,19 @@ export function WorkflowScheduleFields({
 }) {
     const baseId = useId();
     const zones = workflowScheduleTimezones(options);
-    const calendar = isWorkflowCalendarSchedule(schedule) ? schedule : null;
-    const interval = calendar ? null : schedule as WorkflowIntervalSchedule;
-    const calendarOffered = workflowCalendarSchedulesOffered(options) || Boolean(calendar);
+    // A stored schedule this editor can't show exactly is shown as neither kind, with no label; the
+    // editor keeps it as stored and opens the workflow read-only.
+    const supported = workflowScheduleSupported(schedule);
+    const calendar = supported && isWorkflowCalendarSchedule(schedule) ? schedule : null;
+    const interval = calendar || !supported ? null : schedule as WorkflowIntervalSchedule;
+    const calendarOffered = supported && (workflowCalendarSchedulesOffered(options) || Boolean(calendar));
     const [zoneDefault] = useState(() => defaultWorkflowScheduleTimezone(zones));
     const [zoneNote, setZoneNote] = useState(false);
     // What each kind last held, so switching to another cadence and back keeps the earlier values.
     const memory = useRef<ScheduleMemory>({
         interval: { unit: 'minutes', value: 15 }, calendar: null, days: ['monday'], dayOfMonth: 1,
     });
-    const label = scheduled ? workflowScheduleLabel('interval', schedule, zones) : '';
+    const label = scheduled && supported ? workflowScheduleLabel('interval', schedule, zones) : '';
 
     const updateCalendar = (changes: Partial<WorkflowCalendarSchedule>) => onChange((current) => (
         isWorkflowCalendarSchedule(current) ? { ...current, ...changes } : current
@@ -260,6 +264,11 @@ export function WorkflowScheduleFields({
                         ? `Your browser's time zone, ${zoneDefault.browser}, isn't available, so this schedule starts in UTC.`
                         : "Your browser didn't report a time zone, so this schedule starts in UTC."}
                     {' '}Choose the time zone it should follow.
+                </p>
+            ) : null}
+            {!supported ? (
+                <p role="status" className="text-xs text-text-3">
+                    This workflow&apos;s schedule can&apos;t be shown or changed in this editor.
                 </p>
             ) : null}
             {label ? (

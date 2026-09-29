@@ -22,7 +22,7 @@ from datetime import date, datetime, time, timedelta, timezone
 from functools import lru_cache
 from zoneinfo import ZoneInfo, available_timezones
 
-from functions_workflow_definitions import WorkflowPublicValidationError
+from functions_workflow_definitions import WorkflowCadenceError, WorkflowPublicValidationError
 
 
 WORKFLOW_SCHEDULE_UNITS = {'seconds', 'minutes', 'hours'}
@@ -39,6 +39,12 @@ _EXCLUDED_TIMEZONES = frozenset({'Factory', 'localtime', 'posixrules'})
 _UNIT_SECONDS = {'seconds': 1, 'minutes': 60, 'hours': 3600}
 _WEEKDAY_INDEX = {day: index for index, day in enumerate(WORKFLOW_SCHEDULE_DAYS)}
 _DAY_LABELS = {day: f'{day.capitalize()}s' for day in WORKFLOW_SCHEDULE_DAYS}
+# Fixed English names, so a run's time context never depends on the server's locale.
+_RUN_TIME_DAY_NAMES = tuple(day.capitalize() for day in WORKFLOW_SCHEDULE_DAYS)
+_RUN_TIME_MONTH_NAMES = (
+    'January', 'February', 'March', 'April', 'May', 'June',
+    'July', 'August', 'September', 'October', 'November', 'December',
+)
 
 SCHEDULE_KIND_ERROR = 'Schedule kind must be interval or calendar.'
 SCHEDULE_FREQUENCY_ERROR = 'Schedule frequency must be daily, weekdays, weekly or monthly.'
@@ -221,6 +227,22 @@ def enforce_workflow_schedule_minimum(schedule, min_interval_seconds):
     return schedule
 
 
+def enforce_orchestration_workflow_cadence(schedule, min_interval_seconds):
+    """Refuse an interval that runs a workflow created from chat more often than its own floor.
+
+    Calendar schedules repeat at most daily, so they always pass.
+    """
+    seconds = workflow_schedule_interval_seconds(schedule)
+    if seconds is not None and seconds < min_interval_seconds:
+        # The minimum is administrator policy, not caller text, so naming it is safe.
+        raise WorkflowCadenceError(
+            'Workflows created from chat cannot run this often. '
+            f'Choose an interval of at least {format_workflow_schedule_duration(min_interval_seconds)}, '
+            'or a daily, weekly or monthly schedule.'
+        )
+    return schedule
+
+
 def _utc_reference(from_time):
     reference = from_time or datetime.now(timezone.utc)
     if isinstance(reference, str):
@@ -271,6 +293,36 @@ def next_workflow_schedule_run(schedule, from_time=None):
         if candidate > reference:
             return candidate.isoformat()
     return None
+
+
+def workflow_run_time_context(schedule, run_started_at):
+    """Tell the model when a calendar workflow run started, in the schedule's own time zone.
+
+    Returns, for example, ``Current date and time: Monday, 28 September 2026, 09:00
+    (America/New_York)``, so a prompt such as "list this week's to-dos" resolves against the
+    run's local date. Any schedule that is not a valid calendar schedule, and any start time that
+    cannot be read, returns an empty string; this never raises. A naive start time is UTC. The line
+    is prompt context only: it is never stored in a workflow definition or its fingerprint.
+    """
+    if not isinstance(schedule, dict):
+        return ''
+    try:
+        normalized = normalize_workflow_schedule(schedule)
+        if normalized.get('kind') != WORKFLOW_SCHEDULE_KIND_CALENDAR:
+            return ''
+        started = datetime.fromisoformat(run_started_at.strip()) if isinstance(run_started_at, str) else run_started_at
+        if not isinstance(started, datetime):
+            return ''
+        if started.tzinfo is None:
+            started = started.replace(tzinfo=timezone.utc)
+        local = started.astimezone(ZoneInfo(normalized['timezone']))
+    except (WorkflowPublicValidationError, KeyError, ValueError, TypeError, OverflowError):
+        return ''
+    return (
+        f'Current date and time: {_RUN_TIME_DAY_NAMES[local.weekday()]}, {local.day} '
+        f'{_RUN_TIME_MONTH_NAMES[local.month - 1]} {local.year}, {local.hour:02d}:{local.minute:02d} '
+        f"({normalized['timezone']})"
+    )
 
 
 def _join_labels(labels):

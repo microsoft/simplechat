@@ -192,6 +192,18 @@ function intervalSchedule(schedule: Record<string, unknown>): ScheduleResult {
     return { schedule: { unit, value }, error: '' };
 }
 
+/** Weekly days as `_normalize_calendar_schedule` reads them, in Monday-to-Sunday order, or null when it refuses them. */
+function calendarDays(sent: unknown): WorkflowScheduleDay[] | null {
+    if (!Array.isArray(sent)) return null;
+    const selected = new Set<string>();
+    for (const day of sent) {
+        const name = typeof day === 'string' ? pyStrip(day).toLowerCase() : '';
+        if (!includes(WORKFLOW_SCHEDULE_DAYS, name)) return null;
+        selected.add(name);
+    }
+    return WORKFLOW_SCHEDULE_DAYS.filter((day) => selected.has(day));
+}
+
 /** `_normalize_calendar_schedule`, which checks frequency, days, time and time zone in that order. */
 function calendarSchedule(schedule: Record<string, unknown>, timezones: ReadonlySet<string> | null): ScheduleResult {
     const frequency = pyStrip(pyText(schedule.frequency)).toLowerCase();
@@ -199,16 +211,10 @@ function calendarSchedule(schedule: Record<string, unknown>, timezones: Readonly
     let days: WorkflowScheduleDay[] = [];
     let dayOfMonth: number | null = null;
     if (frequency === 'weekly') {
-        const sent = schedule.days_of_week ?? [];
-        if (!Array.isArray(sent)) return scheduleError(SCHEDULE_DAYS_ERROR);
-        const selected = new Set<string>();
-        for (const day of sent) {
-            const name = typeof day === 'string' ? pyStrip(day).toLowerCase() : '';
-            if (!includes(WORKFLOW_SCHEDULE_DAYS, name)) return scheduleError(SCHEDULE_DAYS_ERROR);
-            selected.add(name);
-        }
-        if (!selected.size) return scheduleError(SCHEDULE_DAYS_REQUIRED_ERROR);
-        days = WORKFLOW_SCHEDULE_DAYS.filter((day) => selected.has(day));
+        const selected = calendarDays(schedule.days_of_week ?? []);
+        if (!selected) return scheduleError(SCHEDULE_DAYS_ERROR);
+        if (!selected.length) return scheduleError(SCHEDULE_DAYS_REQUIRED_ERROR);
+        days = selected;
     } else if (frequency === 'monthly') {
         // JSON booleans are not numbers here, as Python refuses them; 31.0 is a whole number in both.
         const day = schedule.day_of_month;
@@ -236,10 +242,63 @@ function calendarSchedule(schedule: Record<string, unknown>, timezones: Readonly
  */
 export function workflowScheduleForSave(raw: unknown, timezones: ReadonlySet<string> | null = null): ScheduleResult {
     const schedule = isRecord(raw) ? raw : {};
-    const kind = pyStrip(pyText(schedule.kind, 'interval')).toLowerCase();
+    const kind = scheduleKind(schedule);
     if (kind === 'interval') return intervalSchedule(schedule);
     if (kind === 'calendar') return calendarSchedule(schedule, timezones);
     return scheduleError(SCHEDULE_KIND_ERROR);
+}
+
+/** The schedule kind `normalize_workflow_schedule` reads: a missing or empty `kind` is interval. */
+function scheduleKind(schedule: Record<string, unknown>): string {
+    return pyStrip(pyText(schedule.kind, 'interval')).toLowerCase();
+}
+
+/**
+ * The schedule this editor shows and saves for a stored or drafted schedule, or null when it can't
+ * show that schedule exactly, so a save could change when the workflow runs. Each field is read as
+ * `normalize_workflow_schedule` reads it, and only what that save canonicalizes changes: the case
+ * and surrounding whitespace of the kind, unit, frequency, days, time and time zone, the order and
+ * repeats of the days, and the fields a kind or frequency doesn't use.
+ *
+ * - Null: a kind, unit, frequency or weekly day the server doesn't define, weekly days that aren't
+ *   a list, or an interval value that isn't a JSON whole number (text, a fraction, a boolean, null
+ *   or no value), which the save would read differently from the scheduler, or refuse. Also null: a
+ *   seconds or minutes unit stored other than exactly, such as `' Minutes '`, because the scheduler
+ *   (`_build_schedule_delta`) runs any unit but exactly `seconds` or `minutes` as hours.
+ * - Kept for validation to name, with the save blocked until the author corrects it: a whole-number
+ *   interval value outside its range, an empty weekly day list, and a time or time zone the save
+ *   refuses. A day of the month that isn't a whole number shows as empty, and validation asks for one.
+ */
+export function workflowScheduleForEditor(raw: unknown): WorkflowSchedule | null {
+    const schedule = isRecord(raw) ? raw : {};
+    const kind = scheduleKind(schedule);
+    if (kind === 'interval') {
+        const unit = pyStrip(pyText(schedule.unit)).toLowerCase();
+        const value = schedule.value;
+        if (!includes(WORKFLOW_SCHEDULE_UNITS, unit) || (unit !== 'hours' && schedule.unit !== unit)) return null;
+        if (typeof value !== 'number' || !Number.isInteger(value)) return null;
+        return { unit, value };
+    }
+    if (kind !== 'calendar') return null;
+    const frequency = pyStrip(pyText(schedule.frequency)).toLowerCase();
+    if (!includes(WORKFLOW_SCHEDULE_FREQUENCIES, frequency)) return null;
+    const days = frequency === 'weekly' ? calendarDays(schedule.days_of_week ?? []) : [];
+    if (!days) return null;
+    const dayOfMonth = schedule.day_of_month;
+    return {
+        kind: 'calendar',
+        frequency,
+        days_of_week: days,
+        day_of_month: frequency === 'monthly' && typeof dayOfMonth === 'number' && Number.isInteger(dayOfMonth)
+            ? dayOfMonth : null,
+        time_of_day: typeof schedule.time_of_day === 'string' ? pyStrip(schedule.time_of_day) : '',
+        timezone: typeof schedule.timezone === 'string' ? pyStrip(schedule.timezone) : '',
+    };
+}
+
+/** Whether this editor can show a stored schedule exactly, which `workflowScheduleForEditor` decides. */
+export function workflowScheduleSupported(raw: unknown): boolean {
+    return workflowScheduleForEditor(raw) !== null;
 }
 
 export function isWorkflowCalendarSchedule(schedule: unknown): schedule is WorkflowCalendarSchedule {

@@ -1,7 +1,7 @@
 # test_v2_workflow_calendar_schedules.py
 """
 UI tests for calendar schedules in the native V2 workflow editor, in both workflow scopes.
-Version: 0.261.193
+Version: 0.261.202
 Implemented in: 0.261.193
 
 These tests use the real V2 SPA bundle with the closed workflow fixture, whose save routes validate
@@ -16,7 +16,10 @@ and whose editor options carry the server's schedule choices and IANA time zone 
 * a browser zone the server does not list, which starts the schedule in UTC with a note;
 * calendar problems named before saving with the server's messages;
 * the administrator's minimum, which refuses a new or changed interval but leaves a saved interval
-  and every calendar schedule alone.
+  and every calendar schedule alone;
+* from 0.261.202, a stored schedule the editor can't show exactly (a kind, calendar frequency or
+  interval unit it doesn't define), which opens read-only in both scopes with the schedule kept as
+  stored and nothing written.
 """
 
 import copy
@@ -71,6 +74,18 @@ HOURLY_MINIMUM = (
 ZONE_NOTE = "Your browser's time zone, Europe/Berlin, isn't available, so this schedule starts in UTC."
 DST_NOTE = "Runs follow local time in this zone, including daylight saving changes."
 WEEKDAYS = ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday")
+# Only a newer server or a direct write can store a schedule the editor can't show exactly, such as
+# a kind, calendar frequency or interval unit it doesn't define; the save routes refuse each of these.
+UNSUPPORTED_SCHEDULES = {
+    "kind": {"kind": "cron", "expression": "0 8 * * 1", "timezone": "America/New_York"},
+    "frequency": {**MONDAYS_NEW_YORK, "frequency": "fortnightly"},
+    "unit": {"unit": "days", "value": 2},
+}
+UNSUPPORTED_REASON = (
+    "This workflow uses a schedule this editor does not support. "
+    "Its original schedule has been retained and editing is disabled."
+)
+UNSUPPORTED_NOTE = "This workflow's schedule can't be shown or changed in this editor."
 
 
 def save(page):
@@ -341,3 +356,35 @@ def test_the_minimum_refuses_a_new_group_interval_but_not_a_calendar_schedule(wo
     body = workflow_post(ui).body
     assert body["group_id"] == GROUP_ID
     assert body["schedule"] == {**WEEKDAYS_LONDON, "time_of_day": "09:00", "timezone": "America/New_York"}
+
+
+@pytest.mark.browser_context_args(timezone_id="America/New_York")
+@pytest.mark.parametrize("schedule_name", sorted(UNSUPPORTED_SCHEDULES))
+@pytest.mark.parametrize("scope", ["personal", "group"])
+def test_a_schedule_the_editor_does_not_support_opens_read_only_and_is_kept(workflow_ui, scope, schedule_name):
+    ui, page = workflow_ui, workflow_ui.page
+    schedule = UNSUPPORTED_SCHEDULES[schedule_name]
+    if scope == "group":
+        record = monitored_workflow()
+        record["schedule"] = copy.deepcopy(schedule)
+        ui.group_workflows[GROUP_ID][MONITOR_ID] = record
+        name = "Monitor finance drops"
+    else:
+        record = ui.personal_workflows[WORKFLOW_ID]
+        record.update(trigger_type="interval", schedule=copy.deepcopy(schedule))
+        name = "Quarterly review workflow"
+    open_scope(ui, scope)
+
+    page.get_by_role("button", name=f"Edit {name}", exact=True).click()
+    dialog = page.get_by_role("dialog", name="Edit workflow", exact=True)
+    expect(dialog).to_be_visible()
+    expect(dialog.get_by_role("alert").filter(has_text=UNSUPPORTED_REASON)).to_be_visible()
+    expect(status(page, UNSUPPORTED_NOTE)).to_be_visible()
+    # Neither kind's fields are shown, so nothing can stand in for the stored schedule.
+    for field in ("Repeats", "Interval value", "Interval unit", "Time", "Time zone"):
+        expect(labelled(dialog, field)).to_have_count(0)
+    expect(dialog.get_by_text("Schedule:", exact=False)).to_have_count(0)
+    expect(page.get_by_role("button", name="Save workflow", exact=True)).to_have_count(0)
+
+    assert not ui.workflow_writes
+    assert record["schedule"] == schedule

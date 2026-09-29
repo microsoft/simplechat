@@ -43,6 +43,7 @@ from functions_workflow_alert_safety import sanitize_workflow_alert_record
 from functions_workflow_result_store import delete_workflow_run_results
 from functions_workflow_bindings import authorize_workflow_reference
 from functions_workflow_definition_store import (
+    create_workflow_definition_record_if_absent,
     refuse_save_of_deleted_workflow,
     save_workflow_definition_record,
     update_workflow_runtime_record,
@@ -50,12 +51,18 @@ from functions_workflow_definition_store import (
 from functions_workflow_definitions import (
     WorkflowPublicValidationError,
     WorkflowSourceUnavailableError,
+    apply_workflow_origin,
+    existing_server_created_workflow,
     normalize_publication_completion_policy, normalize_publication_source_kind,
     normalize_workflow_definition, workflow_definition_for_editor,
 )
-from functions_workflow_limits import get_workflow_min_schedule_interval_seconds
+from functions_workflow_limits import (
+    get_orchestration_workflow_min_interval_seconds,
+    get_workflow_min_schedule_interval_seconds,
+)
 from functions_workflow_runtime_store import workflow_runtime_store
 from functions_workflow_schedules import (
+    enforce_orchestration_workflow_cadence,
     enforce_workflow_schedule_minimum,
     is_calendar_workflow_schedule,
     next_workflow_schedule_run,
@@ -153,13 +160,16 @@ def _normalize_personal_workflow_conversation_id(user_id, workflow_data, existin
     return conversation_id
 
 
-def _normalize_schedule(schedule_payload, existing_workflow=None, settings=None):
+def _normalize_schedule(schedule_payload, existing_workflow=None, settings=None, orchestration=False):
     """Normalize an interval or calendar schedule for saving.
 
     The administrator's minimum interval governs only a new or changed interval schedule, so a
-    raised minimum never blocks re-saving a workflow on the interval it already runs on.
+    raised minimum never blocks re-saving a workflow on the interval it already runs on. A workflow
+    that chat orchestration is creating must also meet the higher minimum for such workflows.
     """
     schedule = normalize_workflow_schedule(schedule_payload)
+    if orchestration:
+        enforce_orchestration_workflow_cadence(schedule, get_orchestration_workflow_min_interval_seconds(settings))
     if workflow_schedule_minimum_applies(schedule, existing_workflow):
         enforce_workflow_schedule_minimum(schedule, get_workflow_min_schedule_interval_seconds(settings))
     return schedule
@@ -341,10 +351,11 @@ def _normalize_workflow_error_handling(workflow_data, existing_workflow=None):
     }
 
 
-def _normalize_document_action_config(workflow_data, existing_workflow=None, allow_empty_file_sync_targets=False):
+def _normalize_document_action_config(workflow_data, existing_workflow=None, allow_empty_file_sync_targets=False,
+                                      settings=None):
     workflow_data = workflow_data if isinstance(workflow_data, dict) else {}
     existing_workflow = existing_workflow if isinstance(existing_workflow, dict) else {}
-    settings = get_settings()
+    settings = get_settings() if settings is None else settings
     action_payload = workflow_data.get('document_action')
     if allow_empty_file_sync_targets and isinstance(action_payload, dict):
         action_type = str(action_payload.get('type') or '').strip().lower()
@@ -425,7 +436,7 @@ def _normalize_task_document_action_config(action_payload, allow_empty_file_sync
     )
 
 
-def _normalize_file_sync_config(user_id, workflow_data, existing_workflow=None):
+def _normalize_file_sync_config(user_id, workflow_data, existing_workflow=None, sanitize_source=None):
     workflow_data = workflow_data if isinstance(workflow_data, dict) else {}
     existing_workflow = existing_workflow if isinstance(existing_workflow, dict) else {}
     existing_config = existing_workflow.get('file_sync') if isinstance(existing_workflow.get('file_sync'), dict) else {}
@@ -474,7 +485,7 @@ def _normalize_file_sync_config(user_id, workflow_data, existing_workflow=None):
         except LookupError as exc:
             # A PermissionError still propagates as a 403; only a deleted source becomes this 400.
             raise WorkflowSourceUnavailableError() from exc
-        sanitized_source = sanitize_file_sync_source(source)
+        sanitized_source = (sanitize_source or sanitize_file_sync_source)(source)
         normalized_sources.append({
             'scope_type': scope_type,
             'scope_id': scope_id,
@@ -619,9 +630,9 @@ def _build_default_model_summary(settings):
     }
 
 
-def _build_model_endpoint_candidates(user_id, settings):
+def _build_model_endpoint_candidates(user_id, settings, user_settings_reader=None):
     candidates = []
-    user_settings = get_user_settings(user_id)
+    user_settings = (user_settings_reader or get_user_settings)(user_id)
 
     if settings.get('allow_user_custom_endpoints', False):
         personal_endpoints, _ = normalize_model_endpoints(
@@ -687,7 +698,7 @@ def _summarize_model_binding(candidates, endpoint_id, model_id):
     }
 
 
-def normalize_personal_workflow_task_runner(user_id, requested_runner, settings=None):
+def normalize_personal_workflow_task_runner(user_id, requested_runner, settings=None, user_settings_reader=None):
     """Resolve a task runner against the user's currently authorized options."""
     requested_runner = requested_runner if isinstance(requested_runner, dict) else {}
     runner_type = _normalize_text(requested_runner.get('type') or 'inherit', 'Task runner type').lower()
@@ -715,8 +726,9 @@ def normalize_personal_workflow_task_runner(user_id, requested_runner, settings=
 
     model_endpoint_id = _normalize_text(requested_runner.get('model_endpoint_id'), 'Task model endpoint')
     model_id = _normalize_text(requested_runner.get('model_id'), 'Task model')
+    reader_options = {'user_settings_reader': user_settings_reader} if user_settings_reader is not None else {}
     model_binding_summary = _summarize_model_binding(
-        _build_model_endpoint_candidates(user_id, settings),
+        _build_model_endpoint_candidates(user_id, settings, **reader_options),
         model_endpoint_id,
         model_id,
     )
@@ -837,25 +849,59 @@ def get_due_personal_workflows(limit=20):
         return []
 
 
-def save_personal_workflow(user_id, workflow_data, actor_user_id=None):
-    """Create or update a personal workflow."""
+def build_personal_workflow_document(user_id, workflow_data, actor_user_id=None, *, settings=None, workflow_id=None,
+                                     origin=None, user_settings_reader=None, resolve_document=None,
+                                     sanitize_source=None):
+    """Normalize and authorize a personal workflow exactly as saving it would, without writing.
+
+    Returns ``(workflow, existing_workflow)``: the document a save persists and the stored workflow
+    it replaces, or ``None`` for a new one. The build reads what authorization needs and writes
+    nothing: no workflow record, no conversation, no notification. It needs no request context.
+
+    A write-free caller, such as a dry run on an executor thread, passes ``settings`` and the
+    read-only seams: ``user_settings_reader`` (settings lookups can repair the settings document),
+    ``resolve_document`` for shared references and ``sanitize_source`` for File Sync sources (the
+    full sanitizer resolves workspace identities, which can read Key Vault). A save passes none of
+    them, so it performs the same reads, in the same order, as it always has.
+
+    ``workflow_id`` and ``origin`` belong to a server create path: the workflow is new, takes that
+    id, records where it came from and must meet the schedule minimum for workflows created from
+    chat. No save payload can set either.
+    """
     workflow_data = workflow_data if isinstance(workflow_data, dict) else {}
-    settings = get_settings()
+    settings_options = {'settings': settings} if settings is not None else {}
+    reader_options = {'user_settings_reader': user_settings_reader} if user_settings_reader is not None else {}
+    settings = get_settings() if settings is None else settings
     now_iso = _utc_now_iso()
     modifying_user_id = actor_user_id or user_id
 
-    workflow_id = str(workflow_data.get('id') or '').strip()
-    existing_workflow = get_personal_workflow(user_id, workflow_id) if workflow_id else None
-    refuse_save_of_deleted_workflow(cosmos_personal_workflows_container, user_id, workflow_data, existing_workflow)
+    if workflow_id is not None:
+        if str(workflow_data.get('id') or '').strip():
+            raise ValueError('A workflow created by the server cannot name its own id.')
+        try:
+            workflow_id = str(uuid.UUID(str(workflow_id)))
+        except ValueError as exc:
+            raise ValueError('A server-created workflow id must be a UUID.') from exc
+        existing_workflow = None
+    else:
+        workflow_id = str(workflow_data.get('id') or '').strip()
+        existing_workflow = get_personal_workflow(user_id, workflow_id) if workflow_id else None
+        refuse_save_of_deleted_workflow(cosmos_personal_workflows_container, user_id, workflow_data, existing_workflow)
 
     workflow_name = _normalize_text(workflow_data.get('name'), 'Workflow name', required=True)
     description = _normalize_text(workflow_data.get('description'), 'Description')
-    file_sync = _normalize_file_sync_config(user_id, workflow_data, existing_workflow=existing_workflow)
+    file_sync = _normalize_file_sync_config(
+        user_id,
+        workflow_data,
+        existing_workflow=existing_workflow,
+        **({'sanitize_source': sanitize_source} if sanitize_source is not None else {}),
+    )
     allow_empty_file_sync_targets = bool(file_sync.get('enabled') and file_sync.get('use_changed_documents'))
     document_action = _normalize_document_action_config(
         workflow_data,
         existing_workflow=existing_workflow,
         allow_empty_file_sync_targets=allow_empty_file_sync_targets,
+        **settings_options,
     )
     tasks = _normalize_workflow_tasks(
         workflow_data,
@@ -864,6 +910,7 @@ def save_personal_workflow(user_id, workflow_data, actor_user_id=None):
             user_id,
             runner,
             settings=settings,
+            **reader_options,
         ),
         max_tasks=get_workflow_max_tasks(settings),
         task_document_action_normalizer=lambda action_payload: _normalize_task_document_action_config(
@@ -878,8 +925,11 @@ def save_personal_workflow(user_id, workflow_data, actor_user_id=None):
         workflow_data, existing_workflow, tasks, user_id=user_id,
     )
     tasks = definition_fields['tasks']
+    reference_options = {'resolve_document': resolve_document} if resolve_document is not None else {}
     for reference in definition_fields.get('reference_inputs', []):
-        authorize_workflow_reference({'user_id': user_id}, reference, actor_user_id=modifying_user_id)
+        authorize_workflow_reference(
+            {'user_id': user_id}, reference, actor_user_id=modifying_user_id, **reference_options,
+        )
     task_prompt = _normalize_text(
         workflow_data.get('task_prompt') or (
             workflow_name if definition_fields['definition_version'] == 3
@@ -952,7 +1002,7 @@ def save_personal_workflow(user_id, workflow_data, actor_user_id=None):
             raise ValueError('User agents must be enabled before creating agent-based workflows.')
         selected_agent = _normalize_selected_agent(user_id, settings, workflow_data.get('selected_agent'))
     else:
-        model_candidates = _build_model_endpoint_candidates(user_id, settings)
+        model_candidates = _build_model_endpoint_candidates(user_id, settings, **reader_options)
         model_endpoint_id = _normalize_text(workflow_data.get('model_endpoint_id'), 'Model endpoint')
         model_id = _normalize_text(workflow_data.get('model_id'), 'Model')
         if model_endpoint_id or model_id:
@@ -968,6 +1018,7 @@ def save_personal_workflow(user_id, workflow_data, actor_user_id=None):
             workflow_data.get('schedule'),
             existing_workflow=existing_workflow,
             settings=settings,
+            **({'orchestration': True} if origin is not None else {}),
         )
 
     workflow = {
@@ -1047,12 +1098,87 @@ def save_personal_workflow(user_id, workflow_data, actor_user_id=None):
         from functions_workflow_loop_runners import validate_workflow_loop_runners
 
         validate_workflow_loop_runners(workflow, actor_user_id=modifying_user_id, settings=settings)
+    if origin is not None or (existing_workflow or {}).get('origin'):
+        apply_workflow_origin(workflow, existing_workflow, origin)
+    return workflow, existing_workflow
+
+
+def save_personal_workflow(user_id, workflow_data, actor_user_id=None):
+    """Create or update a personal workflow."""
+    workflow, existing_workflow = build_personal_workflow_document(user_id, workflow_data, actor_user_id)
     result = save_workflow_definition_record(
         cosmos_personal_workflows_container, user_id, workflow, existing_workflow,
     )
     cleaned_result = _strip_cosmos_metadata(result)
     debug_print(f"[WORKFLOW_STORE] Saved workflow {cleaned_result.get('id')} for user {user_id}")
     return cleaned_result
+
+
+def create_personal_workflow_if_absent(user_id, workflow_data, *, workflow_id, origin, actor_user_id=None,
+                                       settings=None, user_settings_reader=None, resolve_document=None,
+                                       sanitize_source=None):
+    """Create a personal workflow under a server-chosen id and origin, at most once.
+
+    Chat orchestration derives ``workflow_id`` from the proposal the user accepted, so accepting the
+    same proposal again returns the workflow the first accept created. Returns ``(workflow,
+    created)``. A different workflow already stored under that id, or one being deleted, is a
+    conflict. The read-only seams are those ``build_personal_workflow_document`` accepts. Like
+    ``save_personal_workflow``, it trusts the payload's URL Access authorization fields, so callers
+    prepare them as the save route does.
+    """
+    proposal_id = str((origin or {}).get('proposal_id') or '').strip() if isinstance(origin, dict) else ''
+    try:
+        workflow_id = str(uuid.UUID(str(workflow_id)))
+    except ValueError as exc:
+        raise ValueError('A server-created workflow id must be a UUID.') from exc
+
+    existing = get_personal_workflow(user_id, workflow_id)
+    if existing:
+        return existing_server_created_workflow(existing, proposal_id), False
+    workflow, _existing = build_personal_workflow_document(
+        user_id, {} if workflow_data is None else workflow_data, actor_user_id,
+        settings=settings, workflow_id=workflow_id, origin=origin,
+        user_settings_reader=user_settings_reader, resolve_document=resolve_document,
+        sanitize_source=sanitize_source,
+    )
+    record, created = create_workflow_definition_record_if_absent(
+        cosmos_personal_workflows_container, user_id, workflow,
+    )
+    record = _strip_cosmos_metadata(record)
+    if not created:
+        return existing_server_created_workflow(record, proposal_id), False
+    debug_print(f"[WORKFLOW_STORE] Created workflow {record.get('id')} for user {user_id}")
+    return record, True
+
+
+def count_personal_orchestration_workflows(user_id, source='orchestration'):
+    """Count a user's personal workflows that chat orchestration created, for its per-user cap.
+
+    A workflow being deleted no longer counts. A failed count raises, so a caller enforcing the cap
+    fails closed rather than treating an unknown count as zero.
+    """
+    try:
+        results = list(cosmos_personal_workflows_container.query_items(
+            query=(
+                'SELECT VALUE COUNT(1) FROM c '
+                'WHERE c.user_id = @user_id AND c.origin.source = @source '
+                'AND (NOT IS_DEFINED(c.deleting) OR c.deleting != true)'
+            ),
+            parameters=[
+                {'name': '@user_id', 'value': user_id},
+                {'name': '@source', 'value': source},
+            ],
+            partition_key=user_id,
+        ))
+    except Exception as exc:
+        log_event(
+            f'[WORKFLOW_STORE] Error counting orchestration workflows: {exc}',
+            extra={'user_id': user_id},
+            level=logging.ERROR,
+            exceptionTraceback=True,
+        )
+        raise
+    return int(results[0]) if results else 0
 
 
 def update_personal_workflow_runtime_fields(user_id, workflow_id, updates):

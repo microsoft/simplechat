@@ -2,6 +2,45 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.202)**
+
+#### New Features
+
+*   **Workflow Draft Service For Workflows Proposed From Chat**
+    *   Chat orchestration can now check a proposed workflow exactly as saving it would, without writing anything: no workflow, conversation or notification, and no blob, Key Vault or Microsoft 365 call. The check needs no web request, so orchestration can run it in the background.
+    *   A proposed workflow is a small, closed blueprint: a name, a manual, calendar, interval or File Sync trigger, one to five tasks, alert preferences and a Run as choice. It can't name endpoints, URLs, models, secrets or document ids. Documents, agents and File Sync sources are handles that the server has already chosen for the user, and each is authorized for that user.
+    *   The same blueprint always builds the same workflow. Its results reach the notification bell and never pop up. File Sync workflows wait for the sync and continue only when documents changed. Tasks use the default model unless they name an agent the user can use.
+    *   A refusal carries a stable code, such as `cadence_below_minimum`, `agent_unavailable` or `reference_unknown`, a short message that never repeats the input, and the JSON path to fix, so a model can repair its proposal.
+    *   Accepting a proposal creates its workflow once, paused, even if it's accepted twice. The workflow records where it came from in a server-only `origin` that saves can't set or change, and that notes when the owner first edits the workflow. `origin` isn't part of the Microsoft 365 Run as fingerprint, so it never invalidates an approval.
+    *   Personal and group saves behave exactly as before. The save functions now build a workflow, then store it.
+    *   There's no new screen yet. The V2 workflow assistant (#1548) and orchestration's workflow proposals (#1547) will use the service.
+    *   (Ref: #1545, #1543, `functions_workflow_drafts.py`, `functions_personal_workflows.py`, `functions_group_workflows.py`, `functions_workflow_definitions.py`, `functions_workflow_definition_store.py`, [Workflow draft service](features/WORKFLOW_DRAFT_SERVICE.md))
+
+*   **Limits For Workflows Created From Chat**
+    *   **Admin Settings > Orchestration > Chat Orchestration > Limits** adds **Workflows Created From Chat Per User**, from 1 to 100 with a default of 20, and **Minimum Schedule Interval For Workflows Created From Chat (seconds)**, from 60 to 86,400 with a default of 3,600 (hourly), in the classic and V2 admin pages.
+    *   The larger of this minimum and **Workflow Minimum Schedule Interval** applies. Calendar schedules always pass. Both limits are checked when a workflow is created from chat; workflows users build themselves are unaffected.
+    *   (Ref: `functions_workflow_limits.py`, `functions_settings.py`, `admin_settings_fields.py`, `route_frontend_admin_settings.py`, `templates/admin/_panes/chat-orchestration.html`, [Orchestration settings](../admin/orchestration.md))
+
+*   **Calendar Workflow Runs Know The Local Date And Time**
+    *   Each run of a workflow with a calendar schedule now tells the model when it started, in the schedule's time zone, for example "Current date and time: Monday, 28 September 2026, 09:00 (America/New_York)". Instructions such as "list this week's to-dos" now mean the week of the run.
+    *   Scheduled runs, catch-up runs and **Run now** all include it, and so does every task of a multi-task workflow. It's never stored in the workflow or its fingerprint.
+    *   Workflows that run by hand or at a fixed interval keep exactly the prompts they had.
+    *   (Ref: `workflow_run_time_context`, `functions_workflow_schedules.py`, `functions_workflow_runner.py`, [Create a workflow](../guides/create-a-workflow.md))
+
+#### Bug Fixes
+
+*   **V2 Editor Keeps A Schedule It Can't Show**
+    *   The V2 editor used to put a schedule of its own in place of a stored one it had no fields for, which only a newer server, a direct write or a record saved before a rule existed can leave. A schedule of another kind showed as every 15 minutes, an unknown calendar frequency such as `fortnightly` as daily, and an unknown interval unit as minutes, so `{unit: 'days', value: 2}` became every 2 minutes. A unit stored as `HOURS` became minutes too, and a value it couldn't read became 15. Saving the workflow for any reason, such as editing its description, stored the substitute.
+    *   Now a workflow opens read-only, says why, and keeps its schedule exactly as stored when the editor can't show that schedule exactly: an unknown kind, frequency, unit or weekly day, a `seconds` or `minutes` unit stored other than exactly (the scheduler runs those as hours), or an interval value that isn't a whole number.
+    *   Only what the server's save canonicalizes changes on save, such as `HOURS` becoming `hours`. A whole-number value the save refuses, such as 0 minutes, is shown as stored and named by validation, which blocks the save until it's corrected. Manual workflows, which don't use a schedule, stay editable.
+    *   (Ref: `workflowScheduleForEditor`, `workflowScheduleSupported`, `normalizeWorkflowSchedule`, `normalizeWorkflowDefinition`, `WorkflowScheduleFields.tsx`, [V2 workflow unsupported schedule fix](fixes/V2_WORKFLOW_UNSUPPORTED_SCHEDULE_FIX.md))
+
+#### User Interface Enhancements
+
+*   **Schedule Trigger In The V2 Workflow Editor**
+    *   The V2 workflow editor's **Trigger** option for scheduled workflows is now **Schedule** instead of **Interval**, because it offers calendar schedules as well as fixed intervals. Workflows are stored exactly as before, and the classic editor keeps **Interval Schedule**.
+    *   (Ref: `WorkflowEditorDialog.tsx`, [Create a workflow](../guides/create-a-workflow.md), [Trigger a workflow](../guides/trigger-a-workflow.md))
+
 ### **(v0.261.201)**
 
 #### New Features

@@ -527,6 +527,12 @@ def normalize_chat_orchestration_settings(form_data, settings=None):
         'chat_orchestration_ledger_max_bytes': _clamped(
             'chat_orchestration_ledger_max_bytes', 16384, 1024, 131072
         ),
+        'chat_orchestration_max_workflows_per_user': _clamped(
+            'chat_orchestration_max_workflows_per_user', 20, 1, 100
+        ),
+        'chat_orchestration_min_workflow_interval_seconds': _clamped(
+            'chat_orchestration_min_workflow_interval_seconds', 3600, 60, 86400
+        ),
         'chat_orchestration_planner_deployment': str(
             form_data.get('chat_orchestration_planner_deployment') or ''
         ).strip(),

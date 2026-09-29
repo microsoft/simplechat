@@ -1,0 +1,5967 @@
+{
+ "group_agents_and_overrides": [
+  {
+   "calls": [
+    [
+     "get_settings"
+    ],
+    [
+     "get_settings"
+    ],
+    [
+     "get_settings"
+    ],
+    [
+     "assert_group_role",
+     "owner-1",
+     "group-alpha",
+     [
+      "Owner",
+      "Admin",
+      "DocumentManager",
+      "User"
+     ]
+    ],
+    [
+     "get_group_agents",
+     "group-alpha"
+    ],
+    [
+     "assert_group_role",
+     "owner-1",
+     "group-alpha",
+     [
+      "Owner",
+      "Admin",
+      "DocumentManager",
+      "User"
+     ]
+    ],
+    [
+     "get_group_model_endpoints",
+     "group-alpha"
+    ],
+    [
+     "require_model_capability",
+     "model-team",
+     "aoai",
+     []
+    ],
+    [
+     "get_group_agents",
+     "group-alpha"
+    ]
+   ],
+   "error": null,
+   "label": "create",
+   "result_keys": [
+    "id",
+    "group_id",
+    "user_id",
+    "name",
+    "description",
+    "task_prompt",
+    "tasks",
+    "error_handling",
+    "runner_type",
+    "chat_capabilities_enabled",
+    "trigger_type",
+    "is_enabled",
+    "url_access_enabled",
+    "url_access_authorized",
+    "url_access_authorized_by",
+    "url_access_authorized_at",
+    "alert_priority",
+    "alert_mode",
+    "alert_rules",
+    "alert_evaluation",
+    "schedule",
+    "document_action",
+    "analyze",
+    "file_sync",
+    "selected_agent",
+    "model_endpoint_id",
+    "model_id",
+    "model_provider",
+    "model_binding_summary",
+    "conversation_id",
+    "created_at",
+    "created_by",
+    "modified_at",
+    "modified_by",
+    "updated_at",
+    "status",
+    "last_run_started_at",
+    "last_run_at",
+    "last_run_status",
+    "last_run_error",
+    "last_run_response_preview",
+    "last_run_trigger_source",
+    "run_count",
+    "active_run_id",
+    "cancellation_requested_at",
+    "cancellation_requested_by",
+    "next_run_at",
+    "definition_version",
+    "reference_inputs",
+    "durable_execution",
+    "m365_run_as_user_id",
+    "m365_revision",
+    "m365_binding_approval_id",
+    "definition_revision"
+   ],
+   "result_sha256": "c6b44d74adeacc61e4d58808d7358e14a2d21b2db4a16201f19d18530464d924",
+   "stored_sha256": "93c95750f674ec42367efe529651e71094b4c183e15a06e24539c542b3797fc1",
+   "summary": {
+    "alert_mode": "off",
+    "conversation_id": "",
+    "definition_version": 2,
+    "id": "00000000-0000-0000-0000-000000000001",
+    "is_enabled": true,
+    "m365_binding_approval_id": null,
+    "m365_run_as_user_id": "",
+    "modified_by": "owner-1",
+    "name": "Team analysis",
+    "next_run_at": null,
+    "schedule": {},
+    "trigger_type": "manual"
+   },
+   "writes": {
+    "group_workflows": [
+     [
+      "create_item",
+      "00000000-0000-0000-0000-000000000001"
+     ]
+    ]
+   }
+  },
+  {
+   "calls": [
+    [
+     "get_settings"
+    ],
+    [
+     "get_settings"
+    ],
+    [
+     "get_settings"
+    ],
+    [
+     "assert_group_role",
+     "owner-1",
+     "group-alpha",
+     [
+      "Owner",
+      "Admin",
+      "DocumentManager",
+      "User"
+     ]
+    ],
+    [
+     "get_group_agents",
+     "group-alpha"
+    ],
+    [
+     "assert_group_role",
+     "owner-1",
+     "group-alpha",
+     [
+      "Owner",
+      "Admin",
+      "DocumentManager",
+      "User"
+     ]
+    ],
+    [
+     "get_group_model_endpoints",
+     "group-alpha"
+    ],
+    [
+     "require_model_capability",
+     "model-team",
+     "aoai",
+     []
+    ],
+    [
+     "get_group_agents",
+     "group-alpha"
+    ]
+   ],
+   "error": null,
+   "label": "resave",
+   "result_keys": [
+    "id",
+    "group_id",
+    "user_id",
+    "name",
+    "description",
+    "task_prompt",
+    "tasks",
+    "error_handling",
+    "runner_type",
+    "chat_capabilities_enabled",
+    "trigger_type",
+    "is_enabled",
+    "url_access_enabled",
+    "url_access_authorized",
+    "url_access_authorized_by",
+    "url_access_authorized_at",
+    "alert_priority",
+    "alert_mode",
+    "alert_rules",
+    "alert_evaluation",
+    "schedule",
+    "document_action",
+    "analyze",
+    "file_sync",
+    "selected_agent",
+    "model_endpoint_id",
+    "model_id",
+    "model_provider",
+    "model_binding_summary",
+    "conversation_id",
+    "created_at",
+    "created_by",
+    "modified_at",
+    "modified_by",
+    "updated_at",
+    "status",
+    "last_run_started_at",
+    "last_run_at",
+    "last_run_status",
+    "last_run_error",
+    "last_run_response_preview",
+    "last_run_trigger_source",
+    "run_count",
+    "active_run_id",
+    "cancellation_requested_at",
+    "cancellation_requested_by",
+    "next_run_at",
+    "definition_version",
+    "reference_inputs",
+    "durable_execution",
+    "m365_run_as_user_id",
+    "m365_revision",
+    "m365_binding_approval_id",
+    "definition_revision"
+   ],
+   "result_sha256": "45d203f40fc8667c9dae09a9ab5ccd5c1f748e4936e1b298e0ebeeb7ef8c969f",
+   "stored_sha256": "6537e2e0b72b307cfde78427ef50104416077a30a4e5d6c89aa6f1c4dc11a4d4",
+   "summary": {
+    "alert_mode": "off",
+    "conversation_id": "",
+    "definition_version": 2,
+    "id": "00000000-0000-0000-0000-000000000001",
+    "is_enabled": true,
+    "m365_binding_approval_id": null,
+    "m365_run_as_user_id": "",
+    "modified_by": "owner-1",
+    "name": "Team analysis",
+    "next_run_at": null,
+    "schedule": {},
+    "trigger_type": "manual"
+   },
+   "writes": {
+    "group_workflows": [
+     [
+      "replace_item",
+      "00000000-0000-0000-0000-000000000001"
+     ]
+    ]
+   }
+  }
+ ],
+ "group_calendar_rules": [
+  {
+   "calls": [
+    [
+     "get_settings"
+    ],
+    [
+     "get_settings"
+    ],
+    [
+     "get_settings"
+    ],
+    [
+     "get_group_model_endpoints",
+     "group-alpha"
+    ]
+   ],
+   "error": null,
+   "label": "create",
+   "result_keys": [
+    "id",
+    "group_id",
+    "user_id",
+    "name",
+    "description",
+    "task_prompt",
+    "tasks",
+    "error_handling",
+    "runner_type",
+    "chat_capabilities_enabled",
+    "trigger_type",
+    "is_enabled",
+    "url_access_enabled",
+    "url_access_authorized",
+    "url_access_authorized_by",
+    "url_access_authorized_at",
+    "alert_priority",
+    "alert_mode",
+    "alert_rules",
+    "alert_evaluation",
+    "schedule",
+    "document_action",
+    "analyze",
+    "file_sync",
+    "selected_agent",
+    "model_endpoint_id",
+    "model_id",
+    "model_provider",
+    "model_binding_summary",
+    "conversation_id",
+    "created_at",
+    "created_by",
+    "modified_at",
+    "modified_by",
+    "updated_at",
+    "status",
+    "last_run_started_at",
+    "last_run_at",
+    "last_run_status",
+    "last_run_error",
+    "last_run_response_preview",
+    "last_run_trigger_source",
+    "run_count",
+    "active_run_id",
+    "cancellation_requested_at",
+    "cancellation_requested_by",
+    "next_run_at",
+    "definition_version",
+    "reference_inputs",
+    "durable_execution",
+    "m365_run_as_user_id",
+    "m365_revision",
+    "m365_binding_approval_id",
+    "definition_revision"
+   ],
+   "result_sha256": "2b00ffca85dc721307000d28330f495a0f5e462c70cec152a62c46d77ec558f7",
+   "stored_sha256": "1f92c87adf4a0ae93ded4ea811db618b5c998c93ed376e89a2f5247f4e027666",
+   "summary": {
+    "alert_mode": "rules",
+    "conversation_id": "",
+    "definition_version": 2,
+    "id": "00000000-0000-0000-0000-000000000003",
+    "is_enabled": true,
+    "m365_binding_approval_id": null,
+    "m365_run_as_user_id": "",
+    "modified_by": "owner-1",
+    "name": "Team digest",
+    "next_run_at": "2026-09-30T07:00:00+00:00",
+    "schedule": {
+     "day_of_month": 31,
+     "days_of_week": [],
+     "frequency": "monthly",
+     "kind": "calendar",
+     "time_of_day": "17:00",
+     "timezone": "Australia/Sydney"
+    },
+    "trigger_type": "interval"
+   },
+   "writes": {
+    "group_workflows": [
+     [
+      "create_item",
+      "00000000-0000-0000-0000-000000000003"
+     ]
+    ]
+   }
+  },
+  {
+   "calls": [
+    [
+     "get_settings"
+    ],
+    [
+     "get_settings"
+    ],
+    [
+     "get_settings"
+    ],
+    [
+     "get_group_model_endpoints",
+     "group-alpha"
+    ]
+   ],
+   "error": null,
+   "label": "resave",
+   "result_keys": [
+    "id",
+    "group_id",
+    "user_id",
+    "name",
+    "description",
+    "task_prompt",
+    "tasks",
+    "error_handling",
+    "runner_type",
+    "chat_capabilities_enabled",
+    "trigger_type",
+    "is_enabled",
+    "url_access_enabled",
+    "url_access_authorized",
+    "url_access_authorized_by",
+    "url_access_authorized_at",
+    "alert_priority",
+    "alert_mode",
+    "alert_rules",
+    "alert_evaluation",
+    "schedule",
+    "document_action",
+    "analyze",
+    "file_sync",
+    "selected_agent",
+    "model_endpoint_id",
+    "model_id",
+    "model_provider",
+    "model_binding_summary",
+    "conversation_id",
+    "created_at",
+    "created_by",
+    "modified_at",
+    "modified_by",
+    "updated_at",
+    "status",
+    "last_run_started_at",
+    "last_run_at",
+    "last_run_status",
+    "last_run_error",
+    "last_run_response_preview",
+    "last_run_trigger_source",
+    "run_count",
+    "active_run_id",
+    "cancellation_requested_at",
+    "cancellation_requested_by",
+    "next_run_at",
+    "definition_version",
+    "reference_inputs",
+    "durable_execution",
+    "m365_run_as_user_id",
+    "m365_revision",
+    "m365_binding_approval_id",
+    "definition_revision"
+   ],
+   "result_sha256": "03fa97f9aed9421a42b87cb49a477258e5d85d4c3d4738fab09717c87c666fd6",
+   "stored_sha256": "d7409547ed3b0e4c8c20625f83411858fa8272bb2cb4868153abfc24194f13de",
+   "summary": {
+    "alert_mode": "rules",
+    "conversation_id": "",
+    "definition_version": 2,
+    "id": "00000000-0000-0000-0000-000000000003",
+    "is_enabled": true,
+    "m365_binding_approval_id": null,
+    "m365_run_as_user_id": "",
+    "modified_by": "owner-1",
+    "name": "Team digest",
+    "next_run_at": "2026-09-30T07:00:00+00:00",
+    "schedule": {
+     "day_of_month": 31,
+     "days_of_week": [],
+     "frequency": "monthly",
+     "kind": "calendar",
+     "time_of_day": "17:00",
+     "timezone": "Australia/Sydney"
+    },
+    "trigger_type": "interval"
+   },
+   "writes": {
+    "group_workflows": [
+     [
+      "replace_item",
+      "00000000-0000-0000-0000-000000000003"
+     ]
+    ]
+   }
+  }
+ ],
+ "group_errors": [
+  {
+   "calls": [
+    [
+     "get_settings"
+    ],
+    [
+     "get_settings"
+    ],
+    [
+     "get_settings"
+    ]
+   ],
+   "error": {
+    "code": "invalid_workflow_settings",
+    "message": "Trigger type is required.",
+    "type": "WorkflowPublicValidationError"
+   },
+   "label": "missing_trigger",
+   "writes": {}
+  },
+  {
+   "calls": [
+    [
+     "get_settings"
+    ],
+    [
+     "get_settings"
+    ],
+    [
+     "get_settings"
+    ],
+    [
+     "assert_group_role",
+     "member-3",
+     "group-alpha",
+     [
+      "Owner",
+      "Admin",
+      "DocumentManager",
+      "User"
+     ]
+    ],
+    [
+     "get_group_model_endpoints",
+     "group-alpha"
+    ],
+    [
+     "require_model_capability",
+     "model-4o",
+     "aoai",
+     []
+    ],
+    [
+     "get_group_model_endpoints",
+     "group-alpha"
+    ]
+   ],
+   "error": null,
+   "label": "member_task_runner",
+   "result_keys": [
+    "id",
+    "group_id",
+    "user_id",
+    "name",
+    "description",
+    "task_prompt",
+    "tasks",
+    "error_handling",
+    "runner_type",
+    "chat_capabilities_enabled",
+    "trigger_type",
+    "is_enabled",
+    "url_access_enabled",
+    "url_access_authorized",
+    "url_access_authorized_by",
+    "url_access_authorized_at",
+    "alert_priority",
+    "alert_mode",
+    "alert_rules",
+    "alert_evaluation",
+    "schedule",
+    "document_action",
+    "analyze",
+    "file_sync",
+    "selected_agent",
+    "model_endpoint_id",
+    "model_id",
+    "model_provider",
+    "model_binding_summary",
+    "conversation_id",
+    "created_at",
+    "created_by",
+    "modified_at",
+    "modified_by",
+    "updated_at",
+    "status",
+    "last_run_started_at",
+    "last_run_at",
+    "last_run_status",
+    "last_run_error",
+    "last_run_response_preview",
+    "last_run_trigger_source",
+    "run_count",
+    "active_run_id",
+    "cancellation_requested_at",
+    "cancellation_requested_by",
+    "next_run_at",
+    "definition_version",
+    "reference_inputs",
+    "durable_execution",
+    "m365_run_as_user_id",
+    "m365_revision",
+    "m365_binding_approval_id",
+    "definition_revision"
+   ],
+   "result_sha256": "ebb1ab27210ddeb437e991cbf095ae4d6f35d5eeeebef3b80db8a5d9f2f8e9a5",
+   "stored_sha256": "457dc18e8e49b826c788c151db5bf31e7687d6bf3b17aa4a4aff12c38cda1d71",
+   "summary": {
+    "alert_mode": "off",
+    "conversation_id": "",
+    "definition_version": 2,
+    "id": "00000000-0000-0000-0000-000000000001",
+    "is_enabled": true,
+    "m365_binding_approval_id": null,
+    "m365_run_as_user_id": "",
+    "modified_by": "member-3",
+    "name": "Member",
+    "next_run_at": null,
+    "schedule": {},
+    "trigger_type": "manual"
+   },
+   "writes": {
+    "group_workflows": [
+     [
+      "create_item",
+      "00000000-0000-0000-0000-000000000001"
+     ]
+    ]
+   }
+  },
+  {
+   "calls": [
+    [
+     "get_settings"
+    ],
+    [
+     "get_settings"
+    ],
+    [
+     "get_settings"
+    ],
+    [
+     "get_group_model_endpoints",
+     "group-alpha"
+    ]
+   ],
+   "error": {
+    "code": "invalid_workflow_settings",
+    "message": "Schedule kind must be interval or calendar.",
+    "type": "WorkflowPublicValidationError"
+   },
+   "label": "unknown_kind",
+   "writes": {}
+  },
+  {
+   "calls": [
+    [
+     "get_settings"
+    ],
+    [
+     "get_settings"
+    ],
+    [
+     "is_file_sync_enabled_for_group",
+     "group-alpha",
+     {
+      "roles": [
+       "User"
+      ]
+     }
+    ]
+   ],
+   "error": {
+    "code": "invalid_workflow_settings",
+    "message": "Group workflows can only use File Sync sources from this group.",
+    "type": "WorkflowPublicValidationError"
+   },
+   "label": "other_group_source",
+   "writes": {}
+  },
+  {
+   "calls": [
+    [
+     "get_settings"
+    ],
+    [
+     "get_settings"
+    ],
+    [
+     "get_settings"
+    ]
+   ],
+   "error": {
+    "code": "invalid_workflow_definition",
+    "message": "Group workflow references must belong to the workflow's group.",
+    "type": "WorkflowDefinitionError"
+   },
+   "label": "personal_reference",
+   "writes": {}
+  },
+  {
+   "calls": [
+    [
+     "get_settings"
+    ],
+    [
+     "get_settings"
+    ],
+    [
+     "is_file_sync_enabled_for_group",
+     "group-alpha",
+     {
+      "roles": [
+       "User"
+      ]
+     }
+    ]
+   ],
+   "error": {
+    "code": "invalid_workflow_settings",
+    "message": "Group File Sync must be enabled before a group workflow can use File Sync sources.",
+    "type": "WorkflowPublicValidationError"
+   },
+   "label": "file_sync_disabled",
+   "writes": {}
+  },
+  {
+   "calls": [
+    [
+     "get_settings"
+    ],
+    [
+     "get_settings"
+    ],
+    [
+     "get_settings"
+    ]
+   ],
+   "error": {
+    "code": null,
+    "message": "Group agents must be enabled before creating agent-based group workflows.",
+    "type": "ValueError"
+   },
+   "label": "group_agents_disabled",
+   "writes": {}
+  }
+ ],
+ "group_file_sync_calendar": [
+  {
+   "calls": [
+    [
+     "get_settings"
+    ],
+    [
+     "get_settings"
+    ],
+    [
+     "is_file_sync_enabled_for_group",
+     "group-alpha",
+     {
+      "groups": [
+       "group-alpha"
+      ],
+      "roles": [
+       "User"
+      ]
+     }
+    ],
+    [
+     "get_authorized_sync_source",
+     "group",
+     "group-alpha",
+     "finance-share",
+     "owner-1",
+     []
+    ],
+    [
+     "assert_group_role",
+     "owner-1",
+     "group-alpha",
+     [
+      "Owner",
+      "Admin"
+     ]
+    ],
+    [
+     "get_settings"
+    ],
+    [
+     "get_group_model_endpoints",
+     "group-alpha"
+    ]
+   ],
+   "error": null,
+   "label": "create",
+   "result_keys": [
+    "id",
+    "group_id",
+    "user_id",
+    "name",
+    "description",
+    "task_prompt",
+    "tasks",
+    "error_handling",
+    "runner_type",
+    "chat_capabilities_enabled",
+    "trigger_type",
+    "is_enabled",
+    "url_access_enabled",
+    "url_access_authorized",
+    "url_access_authorized_by",
+    "url_access_authorized_at",
+    "alert_priority",
+    "alert_mode",
+    "alert_rules",
+    "alert_evaluation",
+    "schedule",
+    "document_action",
+    "analyze",
+    "file_sync",
+    "selected_agent",
+    "model_endpoint_id",
+    "model_id",
+    "model_provider",
+    "model_binding_summary",
+    "conversation_id",
+    "created_at",
+    "created_by",
+    "modified_at",
+    "modified_by",
+    "updated_at",
+    "status",
+    "last_run_started_at",
+    "last_run_at",
+    "last_run_status",
+    "last_run_error",
+    "last_run_response_preview",
+    "last_run_trigger_source",
+    "run_count",
+    "active_run_id",
+    "cancellation_requested_at",
+    "cancellation_requested_by",
+    "next_run_at",
+    "definition_version",
+    "reference_inputs",
+    "durable_execution",
+    "m365_run_as_user_id",
+    "m365_revision",
+    "m365_binding_approval_id",
+    "definition_revision"
+   ],
+   "result_sha256": "492878fd0ca96b8424adf4c16fea9cd292170c8ca7506b414d06c9089638f905",
+   "stored_sha256": "26c09cd2bf3dee19e99e12e4bba0bb88a5232a24536a814a0580728557a9e756",
+   "summary": {
+    "alert_mode": "off",
+    "conversation_id": "",
+    "definition_version": 2,
+    "id": "00000000-0000-0000-0000-000000000001",
+    "is_enabled": true,
+    "m365_binding_approval_id": null,
+    "m365_run_as_user_id": "",
+    "modified_by": "owner-1",
+    "name": "Finance drops",
+    "next_run_at": "2026-09-29T06:00:00+00:00",
+    "schedule": {
+     "day_of_month": null,
+     "days_of_week": [],
+     "frequency": "weekdays",
+     "kind": "calendar",
+     "time_of_day": "06:00",
+     "timezone": "UTC"
+    },
+    "trigger_type": "file_sync"
+   },
+   "writes": {
+    "group_workflows": [
+     [
+      "create_item",
+      "00000000-0000-0000-0000-000000000001"
+     ]
+    ]
+   }
+  },
+  {
+   "calls": [
+    [
+     "get_settings"
+    ],
+    [
+     "get_settings"
+    ],
+    [
+     "is_file_sync_enabled_for_group",
+     "group-alpha",
+     {
+      "roles": [
+       "User"
+      ]
+     }
+    ],
+    [
+     "get_authorized_sync_source",
+     "group",
+     "group-alpha",
+     "finance-share",
+     "admin-2",
+     []
+    ],
+    [
+     "assert_group_role",
+     "admin-2",
+     "group-alpha",
+     [
+      "Owner",
+      "Admin"
+     ]
+    ],
+    [
+     "get_settings"
+    ],
+    [
+     "get_group_model_endpoints",
+     "group-alpha"
+    ]
+   ],
+   "error": null,
+   "label": "editor_resave",
+   "result_keys": [
+    "id",
+    "group_id",
+    "user_id",
+    "name",
+    "description",
+    "task_prompt",
+    "tasks",
+    "error_handling",
+    "runner_type",
+    "chat_capabilities_enabled",
+    "trigger_type",
+    "is_enabled",
+    "url_access_enabled",
+    "url_access_authorized",
+    "url_access_authorized_by",
+    "url_access_authorized_at",
+    "alert_priority",
+    "alert_mode",
+    "alert_rules",
+    "alert_evaluation",
+    "schedule",
+    "document_action",
+    "analyze",
+    "file_sync",
+    "selected_agent",
+    "model_endpoint_id",
+    "model_id",
+    "model_provider",
+    "model_binding_summary",
+    "conversation_id",
+    "created_at",
+    "created_by",
+    "modified_at",
+    "modified_by",
+    "updated_at",
+    "status",
+    "last_run_started_at",
+    "last_run_at",
+    "last_run_status",
+    "last_run_error",
+    "last_run_response_preview",
+    "last_run_trigger_source",
+    "run_count",
+    "active_run_id",
+    "cancellation_requested_at",
+    "cancellation_requested_by",
+    "next_run_at",
+    "definition_version",
+    "reference_inputs",
+    "durable_execution",
+    "m365_run_as_user_id",
+    "m365_revision",
+    "m365_binding_approval_id",
+    "definition_revision"
+   ],
+   "result_sha256": "936b4f631d593e756f7e6f07372850af5e0744fdae68df511ac126e7cf20f93e",
+   "stored_sha256": "dcaed1222c5ca98bfa1cb5cb1a56f2bf047b3527128fc0415b1d07f4020c1cc9",
+   "summary": {
+    "alert_mode": "off",
+    "conversation_id": "",
+    "definition_version": 2,
+    "id": "00000000-0000-0000-0000-000000000001",
+    "is_enabled": true,
+    "m365_binding_approval_id": null,
+    "m365_run_as_user_id": "",
+    "modified_by": "admin-2",
+    "name": "Finance drops",
+    "next_run_at": "2026-09-29T06:00:00+00:00",
+    "schedule": {
+     "day_of_month": null,
+     "days_of_week": [],
+     "frequency": "weekdays",
+     "kind": "calendar",
+     "time_of_day": "06:00",
+     "timezone": "UTC"
+    },
+    "trigger_type": "file_sync"
+   },
+   "writes": {
+    "group_workflows": [
+     [
+      "replace_item",
+      "00000000-0000-0000-0000-000000000001"
+     ]
+    ]
+   }
+  }
+ ],
+ "group_interval_every_run": [
+  {
+   "calls": [
+    [
+     "get_settings"
+    ],
+    [
+     "get_settings"
+    ],
+    [
+     "get_settings"
+    ],
+    [
+     "get_group_model_endpoints",
+     "group-alpha"
+    ]
+   ],
+   "error": null,
+   "label": "create",
+   "result_keys": [
+    "id",
+    "group_id",
+    "user_id",
+    "name",
+    "description",
+    "task_prompt",
+    "tasks",
+    "error_handling",
+    "runner_type",
+    "chat_capabilities_enabled",
+    "trigger_type",
+    "is_enabled",
+    "url_access_enabled",
+    "url_access_authorized",
+    "url_access_authorized_by",
+    "url_access_authorized_at",
+    "alert_priority",
+    "alert_mode",
+    "alert_rules",
+    "alert_evaluation",
+    "schedule",
+    "document_action",
+    "analyze",
+    "file_sync",
+    "selected_agent",
+    "model_endpoint_id",
+    "model_id",
+    "model_provider",
+    "model_binding_summary",
+    "conversation_id",
+    "created_at",
+    "created_by",
+    "modified_at",
+    "modified_by",
+    "updated_at",
+    "status",
+    "last_run_started_at",
+    "last_run_at",
+    "last_run_status",
+    "last_run_error",
+    "last_run_response_preview",
+    "last_run_trigger_source",
+    "run_count",
+    "active_run_id",
+    "cancellation_requested_at",
+    "cancellation_requested_by",
+    "next_run_at",
+    "definition_version",
+    "reference_inputs",
+    "durable_execution",
+    "m365_run_as_user_id",
+    "m365_revision",
+    "m365_binding_approval_id",
+    "definition_revision"
+   ],
+   "result_sha256": "f4821a427fec711baa8c421ae73b86c13224bb568af6c6ea5978fb034c69f268",
+   "stored_sha256": "01f7e3e340b216fe64b939fab05f8f83d4751239e704d90c561d5136fb48d86e",
+   "summary": {
+    "alert_mode": "every_run",
+    "conversation_id": "",
+    "definition_version": 2,
+    "id": "00000000-0000-0000-0000-000000000001",
+    "is_enabled": true,
+    "m365_binding_approval_id": null,
+    "m365_run_as_user_id": "",
+    "modified_by": "owner-1",
+    "name": "Team queue",
+    "next_run_at": "2026-09-28T18:00:01+00:00",
+    "schedule": {
+     "unit": "hours",
+     "value": 6
+    },
+    "trigger_type": "interval"
+   },
+   "writes": {
+    "group_workflows": [
+     [
+      "create_item",
+      "00000000-0000-0000-0000-000000000001"
+     ]
+    ]
+   }
+  },
+  {
+   "calls": [
+    [
+     "get_settings"
+    ],
+    [
+     "get_settings"
+    ],
+    [
+     "get_settings"
+    ],
+    [
+     "get_group_model_endpoints",
+     "group-alpha"
+    ]
+   ],
+   "error": null,
+   "label": "disable",
+   "result_keys": [
+    "id",
+    "group_id",
+    "user_id",
+    "name",
+    "description",
+    "task_prompt",
+    "tasks",
+    "error_handling",
+    "runner_type",
+    "chat_capabilities_enabled",
+    "trigger_type",
+    "is_enabled",
+    "url_access_enabled",
+    "url_access_authorized",
+    "url_access_authorized_by",
+    "url_access_authorized_at",
+    "alert_priority",
+    "alert_mode",
+    "alert_rules",
+    "alert_evaluation",
+    "schedule",
+    "document_action",
+    "analyze",
+    "file_sync",
+    "selected_agent",
+    "model_endpoint_id",
+    "model_id",
+    "model_provider",
+    "model_binding_summary",
+    "conversation_id",
+    "created_at",
+    "created_by",
+    "modified_at",
+    "modified_by",
+    "updated_at",
+    "status",
+    "last_run_started_at",
+    "last_run_at",
+    "last_run_status",
+    "last_run_error",
+    "last_run_response_preview",
+    "last_run_trigger_source",
+    "run_count",
+    "active_run_id",
+    "cancellation_requested_at",
+    "cancellation_requested_by",
+    "next_run_at",
+    "definition_version",
+    "reference_inputs",
+    "durable_execution",
+    "m365_run_as_user_id",
+    "m365_revision",
+    "m365_binding_approval_id",
+    "definition_revision"
+   ],
+   "result_sha256": "e14226caf21f8e18923795de44b12bd626d4cb7baef41a2ed4c905e298d8a8ac",
+   "stored_sha256": "038a5b29f2acc6a5705509efcb56584e26c22ab522c95548bbfcf5a69b52b034",
+   "summary": {
+    "alert_mode": "every_run",
+    "conversation_id": "",
+    "definition_version": 2,
+    "id": "00000000-0000-0000-0000-000000000001",
+    "is_enabled": false,
+    "m365_binding_approval_id": null,
+    "m365_run_as_user_id": "",
+    "modified_by": "owner-1",
+    "name": "Team queue",
+    "next_run_at": null,
+    "schedule": {
+     "unit": "hours",
+     "value": 6
+    },
+    "trigger_type": "interval"
+   },
+   "writes": {
+    "group_workflows": [
+     [
+      "replace_item",
+      "00000000-0000-0000-0000-000000000001"
+     ]
+    ]
+   }
+  }
+ ],
+ "group_m365_run_as": [
+  {
+   "calls": [
+    [
+     "get_settings"
+    ],
+    [
+     "get_settings"
+    ],
+    [
+     "get_settings"
+    ],
+    [
+     "get_group_model_endpoints",
+     "group-alpha"
+    ]
+   ],
+   "error": null,
+   "label": "create",
+   "result_keys": [
+    "id",
+    "group_id",
+    "user_id",
+    "name",
+    "description",
+    "task_prompt",
+    "tasks",
+    "error_handling",
+    "runner_type",
+    "chat_capabilities_enabled",
+    "trigger_type",
+    "is_enabled",
+    "url_access_enabled",
+    "url_access_authorized",
+    "url_access_authorized_by",
+    "url_access_authorized_at",
+    "alert_priority",
+    "alert_mode",
+    "alert_rules",
+    "alert_evaluation",
+    "schedule",
+    "document_action",
+    "analyze",
+    "file_sync",
+    "selected_agent",
+    "model_endpoint_id",
+    "model_id",
+    "model_provider",
+    "model_binding_summary",
+    "conversation_id",
+    "created_at",
+    "created_by",
+    "modified_at",
+    "modified_by",
+    "updated_at",
+    "status",
+    "last_run_started_at",
+    "last_run_at",
+    "last_run_status",
+    "last_run_error",
+    "last_run_response_preview",
+    "last_run_trigger_source",
+    "run_count",
+    "active_run_id",
+    "cancellation_requested_at",
+    "cancellation_requested_by",
+    "next_run_at",
+    "definition_version",
+    "reference_inputs",
+    "durable_execution",
+    "m365_run_as_user_id",
+    "m365_revision",
+    "m365_binding_approval_id",
+    "definition_revision"
+   ],
+   "result_sha256": "170a99e2d8865d398e6805d164fd8077bd9bbe14008cb0af097310247ad8aac3",
+   "stored_sha256": "8996b1cfa76eb5371687743254a268138c13611b3078f4da5b61f079b66d7b6f",
+   "summary": {
+    "alert_mode": "off",
+    "conversation_id": "",
+    "definition_version": 2,
+    "id": "00000000-0000-0000-0000-000000000001",
+    "is_enabled": true,
+    "m365_binding_approval_id": null,
+    "m365_run_as_user_id": "admin-2",
+    "modified_by": "admin-2",
+    "name": "Team mail",
+    "next_run_at": null,
+    "schedule": {},
+    "trigger_type": "manual"
+   },
+   "writes": {
+    "group_workflows": [
+     [
+      "create_item",
+      "00000000-0000-0000-0000-000000000001"
+     ]
+    ]
+   }
+  },
+  {
+   "calls": [
+    [
+     "get_settings"
+    ],
+    [
+     "get_settings"
+    ],
+    [
+     "get_settings"
+    ],
+    [
+     "get_group_model_endpoints",
+     "group-alpha"
+    ]
+   ],
+   "error": null,
+   "label": "describe_keeps_approval",
+   "result_keys": [
+    "id",
+    "group_id",
+    "user_id",
+    "name",
+    "description",
+    "task_prompt",
+    "tasks",
+    "error_handling",
+    "runner_type",
+    "chat_capabilities_enabled",
+    "trigger_type",
+    "is_enabled",
+    "url_access_enabled",
+    "url_access_authorized",
+    "url_access_authorized_by",
+    "url_access_authorized_at",
+    "alert_priority",
+    "alert_mode",
+    "alert_rules",
+    "alert_evaluation",
+    "schedule",
+    "document_action",
+    "analyze",
+    "file_sync",
+    "selected_agent",
+    "model_endpoint_id",
+    "model_id",
+    "model_provider",
+    "model_binding_summary",
+    "conversation_id",
+    "created_at",
+    "created_by",
+    "modified_at",
+    "modified_by",
+    "updated_at",
+    "status",
+    "last_run_started_at",
+    "last_run_at",
+    "last_run_status",
+    "last_run_error",
+    "last_run_response_preview",
+    "last_run_trigger_source",
+    "run_count",
+    "active_run_id",
+    "cancellation_requested_at",
+    "cancellation_requested_by",
+    "next_run_at",
+    "definition_version",
+    "reference_inputs",
+    "durable_execution",
+    "m365_run_as_user_id",
+    "m365_revision",
+    "m365_binding_approval_id",
+    "definition_revision"
+   ],
+   "result_sha256": "8ef0429681069a1879e536e979b370c75d42b8e27b1db70fd6923ec5c71630bd",
+   "stored_sha256": "a0bd435fd14543c0aa9a78a8451813c5d01509d3084bc33852596cf2b639c721",
+   "summary": {
+    "alert_mode": "off",
+    "conversation_id": "",
+    "definition_version": 2,
+    "id": "00000000-0000-0000-0000-000000000001",
+    "is_enabled": true,
+    "m365_binding_approval_id": "approval-group",
+    "m365_run_as_user_id": "admin-2",
+    "modified_by": "admin-2",
+    "name": "Team mail",
+    "next_run_at": null,
+    "schedule": {},
+    "trigger_type": "manual"
+   },
+   "writes": {
+    "group_workflows": [
+     [
+      "replace_item",
+      "00000000-0000-0000-0000-000000000001"
+     ]
+    ]
+   }
+  },
+  {
+   "calls": [
+    [
+     "get_settings"
+    ],
+    [
+     "get_settings"
+    ],
+    [
+     "get_settings"
+    ],
+    [
+     "get_group_model_endpoints",
+     "group-alpha"
+    ]
+   ],
+   "error": null,
+   "label": "task_change_clears_approval",
+   "result_keys": [
+    "id",
+    "group_id",
+    "user_id",
+    "name",
+    "description",
+    "task_prompt",
+    "tasks",
+    "error_handling",
+    "runner_type",
+    "chat_capabilities_enabled",
+    "trigger_type",
+    "is_enabled",
+    "url_access_enabled",
+    "url_access_authorized",
+    "url_access_authorized_by",
+    "url_access_authorized_at",
+    "alert_priority",
+    "alert_mode",
+    "alert_rules",
+    "alert_evaluation",
+    "schedule",
+    "document_action",
+    "analyze",
+    "file_sync",
+    "selected_agent",
+    "model_endpoint_id",
+    "model_id",
+    "model_provider",
+    "model_binding_summary",
+    "conversation_id",
+    "created_at",
+    "created_by",
+    "modified_at",
+    "modified_by",
+    "updated_at",
+    "status",
+    "last_run_started_at",
+    "last_run_at",
+    "last_run_status",
+    "last_run_error",
+    "last_run_response_preview",
+    "last_run_trigger_source",
+    "run_count",
+    "active_run_id",
+    "cancellation_requested_at",
+    "cancellation_requested_by",
+    "next_run_at",
+    "definition_version",
+    "reference_inputs",
+    "durable_execution",
+    "m365_run_as_user_id",
+    "m365_revision",
+    "m365_binding_approval_id",
+    "definition_revision"
+   ],
+   "result_sha256": "7360f3ec7bfad833bf5b0fcc4de5336041a692de7cda403143f6dce2a8ac4762",
+   "stored_sha256": "10c196963f37e2ddabb6241286cb950c25b9c0f28c256653f3519b1389e026fb",
+   "summary": {
+    "alert_mode": "off",
+    "conversation_id": "",
+    "definition_version": 2,
+    "id": "00000000-0000-0000-0000-000000000001",
+    "is_enabled": true,
+    "m365_binding_approval_id": null,
+    "m365_run_as_user_id": "admin-2",
+    "modified_by": "admin-2",
+    "name": "Team mail",
+    "next_run_at": null,
+    "schedule": {},
+    "trigger_type": "manual"
+   },
+   "writes": {
+    "group_workflows": [
+     [
+      "replace_item",
+      "00000000-0000-0000-0000-000000000001"
+     ]
+    ]
+   }
+  }
+ ],
+ "group_manual_v2": [
+  {
+   "calls": [
+    [
+     "get_settings"
+    ],
+    [
+     "get_settings"
+    ],
+    [
+     "get_settings"
+    ],
+    [
+     "get_group_model_endpoints",
+     "group-alpha"
+    ]
+   ],
+   "error": null,
+   "label": "create",
+   "result_keys": [
+    "id",
+    "group_id",
+    "user_id",
+    "name",
+    "description",
+    "task_prompt",
+    "tasks",
+    "error_handling",
+    "runner_type",
+    "chat_capabilities_enabled",
+    "trigger_type",
+    "is_enabled",
+    "url_access_enabled",
+    "url_access_authorized",
+    "url_access_authorized_by",
+    "url_access_authorized_at",
+    "alert_priority",
+    "alert_mode",
+    "alert_rules",
+    "alert_evaluation",
+    "schedule",
+    "document_action",
+    "analyze",
+    "file_sync",
+    "selected_agent",
+    "model_endpoint_id",
+    "model_id",
+    "model_provider",
+    "model_binding_summary",
+    "conversation_id",
+    "created_at",
+    "created_by",
+    "modified_at",
+    "modified_by",
+    "updated_at",
+    "status",
+    "last_run_started_at",
+    "last_run_at",
+    "last_run_status",
+    "last_run_error",
+    "last_run_response_preview",
+    "last_run_trigger_source",
+    "run_count",
+    "active_run_id",
+    "cancellation_requested_at",
+    "cancellation_requested_by",
+    "next_run_at",
+    "definition_version",
+    "reference_inputs",
+    "durable_execution",
+    "m365_run_as_user_id",
+    "m365_revision",
+    "m365_binding_approval_id",
+    "definition_revision"
+   ],
+   "result_sha256": "438a77b60934f1d78ad06d2b63cd867bc82d5787ba472ae3d4da6a07196b2a1f",
+   "stored_sha256": "087cb6dca4cd0aef7d5c0644015c50d80a8b27c8b93ff6107bea2d9f91800efb",
+   "summary": {
+    "alert_mode": "off",
+    "conversation_id": "",
+    "definition_version": 2,
+    "id": "00000000-0000-0000-0000-000000000002",
+    "is_enabled": true,
+    "m365_binding_approval_id": null,
+    "m365_run_as_user_id": "",
+    "modified_by": "owner-1",
+    "name": "Team planning",
+    "next_run_at": null,
+    "schedule": {},
+    "trigger_type": "manual"
+   },
+   "writes": {
+    "group_workflows": [
+     [
+      "create_item",
+      "00000000-0000-0000-0000-000000000002"
+     ]
+    ]
+   }
+  },
+  {
+   "calls": [
+    [
+     "get_settings"
+    ],
+    [
+     "get_settings"
+    ],
+    [
+     "get_settings"
+    ],
+    [
+     "get_group_model_endpoints",
+     "group-alpha"
+    ]
+   ],
+   "error": null,
+   "label": "editor_describes",
+   "result_keys": [
+    "id",
+    "group_id",
+    "user_id",
+    "name",
+    "description",
+    "task_prompt",
+    "tasks",
+    "error_handling",
+    "runner_type",
+    "chat_capabilities_enabled",
+    "trigger_type",
+    "is_enabled",
+    "url_access_enabled",
+    "url_access_authorized",
+    "url_access_authorized_by",
+    "url_access_authorized_at",
+    "alert_priority",
+    "alert_mode",
+    "alert_rules",
+    "alert_evaluation",
+    "schedule",
+    "document_action",
+    "analyze",
+    "file_sync",
+    "selected_agent",
+    "model_endpoint_id",
+    "model_id",
+    "model_provider",
+    "model_binding_summary",
+    "conversation_id",
+    "created_at",
+    "created_by",
+    "modified_at",
+    "modified_by",
+    "updated_at",
+    "status",
+    "last_run_started_at",
+    "last_run_at",
+    "last_run_status",
+    "last_run_error",
+    "last_run_response_preview",
+    "last_run_trigger_source",
+    "run_count",
+    "active_run_id",
+    "cancellation_requested_at",
+    "cancellation_requested_by",
+    "next_run_at",
+    "definition_version",
+    "reference_inputs",
+    "durable_execution",
+    "m365_run_as_user_id",
+    "m365_revision",
+    "m365_binding_approval_id",
+    "definition_revision"
+   ],
+   "result_sha256": "c3826e6d0865c864c81f26ca9a122c87e511d79a7991931c71cd161b0c49fc2d",
+   "stored_sha256": "3a029003a8bb3d1ea96da97a6be42e377651f57e8844dcc2e813f4d08db85c87",
+   "summary": {
+    "alert_mode": "off",
+    "conversation_id": "",
+    "definition_version": 2,
+    "id": "00000000-0000-0000-0000-000000000002",
+    "is_enabled": true,
+    "m365_binding_approval_id": null,
+    "m365_run_as_user_id": "",
+    "modified_by": "admin-2",
+    "name": "Team planning",
+    "next_run_at": null,
+    "schedule": {},
+    "trigger_type": "manual"
+   },
+   "writes": {
+    "group_workflows": [
+     [
+      "replace_item",
+      "00000000-0000-0000-0000-000000000002"
+     ]
+    ]
+   }
+  },
+  {
+   "calls": [
+    [
+     "get_settings"
+    ],
+    [
+     "get_settings"
+    ],
+    [
+     "get_settings"
+    ],
+    [
+     "get_group_model_endpoints",
+     "group-alpha"
+    ]
+   ],
+   "error": null,
+   "label": "resave",
+   "result_keys": [
+    "id",
+    "group_id",
+    "user_id",
+    "name",
+    "description",
+    "task_prompt",
+    "tasks",
+    "error_handling",
+    "runner_type",
+    "chat_capabilities_enabled",
+    "trigger_type",
+    "is_enabled",
+    "url_access_enabled",
+    "url_access_authorized",
+    "url_access_authorized_by",
+    "url_access_authorized_at",
+    "alert_priority",
+    "alert_mode",
+    "alert_rules",
+    "alert_evaluation",
+    "schedule",
+    "document_action",
+    "analyze",
+    "file_sync",
+    "selected_agent",
+    "model_endpoint_id",
+    "model_id",
+    "model_provider",
+    "model_binding_summary",
+    "conversation_id",
+    "created_at",
+    "created_by",
+    "modified_at",
+    "modified_by",
+    "updated_at",
+    "status",
+    "last_run_started_at",
+    "last_run_at",
+    "last_run_status",
+    "last_run_error",
+    "last_run_response_preview",
+    "last_run_trigger_source",
+    "run_count",
+    "active_run_id",
+    "cancellation_requested_at",
+    "cancellation_requested_by",
+    "next_run_at",
+    "definition_version",
+    "reference_inputs",
+    "durable_execution",
+    "m365_run_as_user_id",
+    "m365_revision",
+    "m365_binding_approval_id",
+    "definition_revision"
+   ],
+   "result_sha256": "9fe5d5789db9228a66d498c8f715e94a8d7fe68d6936123b3a4110e40036e237",
+   "stored_sha256": "607621046265053d33468dc845c7f8130748bcb671bbd497dbbbd0cf37b9d0e7",
+   "summary": {
+    "alert_mode": "off",
+    "conversation_id": "",
+    "definition_version": 2,
+    "id": "00000000-0000-0000-0000-000000000002",
+    "is_enabled": true,
+    "m365_binding_approval_id": null,
+    "m365_run_as_user_id": "",
+    "modified_by": "owner-1",
+    "name": "Team planning",
+    "next_run_at": null,
+    "schedule": {},
+    "trigger_type": "manual"
+   },
+   "writes": {
+    "group_workflows": [
+     [
+      "replace_item",
+      "00000000-0000-0000-0000-000000000002"
+     ]
+    ]
+   }
+  }
+ ],
+ "group_references": [
+  {
+   "calls": [
+    [
+     "get_settings"
+    ],
+    [
+     "get_settings"
+    ],
+    [
+     "get_settings"
+    ],
+    [
+     "authorize_workflow_reference",
+     {
+      "group_id": "group-alpha",
+      "user_id": "owner-1"
+     },
+     {
+      "document_id": "doc-team-policy",
+      "id": "policy",
+      "name": "policy",
+      "scope_id": "group-alpha",
+      "scope_type": "group"
+     },
+     "owner-1",
+     [
+      "actor_user_id"
+     ]
+    ],
+    [
+     "get_group_model_endpoints",
+     "group-alpha"
+    ]
+   ],
+   "error": null,
+   "label": "create",
+   "result_keys": [
+    "id",
+    "group_id",
+    "user_id",
+    "name",
+    "description",
+    "task_prompt",
+    "tasks",
+    "error_handling",
+    "runner_type",
+    "chat_capabilities_enabled",
+    "trigger_type",
+    "is_enabled",
+    "url_access_enabled",
+    "url_access_authorized",
+    "url_access_authorized_by",
+    "url_access_authorized_at",
+    "alert_priority",
+    "alert_mode",
+    "alert_rules",
+    "alert_evaluation",
+    "schedule",
+    "document_action",
+    "analyze",
+    "file_sync",
+    "selected_agent",
+    "model_endpoint_id",
+    "model_id",
+    "model_provider",
+    "model_binding_summary",
+    "conversation_id",
+    "created_at",
+    "created_by",
+    "modified_at",
+    "modified_by",
+    "updated_at",
+    "status",
+    "last_run_started_at",
+    "last_run_at",
+    "last_run_status",
+    "last_run_error",
+    "last_run_response_preview",
+    "last_run_trigger_source",
+    "run_count",
+    "active_run_id",
+    "cancellation_requested_at",
+    "cancellation_requested_by",
+    "next_run_at",
+    "definition_version",
+    "reference_inputs",
+    "durable_execution",
+    "m365_run_as_user_id",
+    "m365_revision",
+    "m365_binding_approval_id",
+    "definition_revision"
+   ],
+   "result_sha256": "b80389195af9eb4fefc4d2752b40a7f11cc546d5318163fc0c2affee55621625",
+   "stored_sha256": "c2d3373ea7dacf9b34c7431ea8a4eb981858d998405057b1a9234f395a91dd47",
+   "summary": {
+    "alert_mode": "off",
+    "conversation_id": "",
+    "definition_version": 2,
+    "id": "00000000-0000-0000-0000-000000000001",
+    "is_enabled": true,
+    "m365_binding_approval_id": null,
+    "m365_run_as_user_id": "",
+    "modified_by": "owner-1",
+    "name": "Team policy",
+    "next_run_at": null,
+    "schedule": {},
+    "trigger_type": "manual"
+   },
+   "writes": {
+    "group_workflows": [
+     [
+      "create_item",
+      "00000000-0000-0000-0000-000000000001"
+     ]
+    ]
+   }
+  },
+  {
+   "calls": [
+    [
+     "get_settings"
+    ],
+    [
+     "get_settings"
+    ],
+    [
+     "get_settings"
+    ],
+    [
+     "authorize_workflow_reference",
+     {
+      "group_id": "group-alpha",
+      "user_id": "owner-1"
+     },
+     {
+      "document_id": "doc-team-policy",
+      "id": "policy",
+      "name": "policy",
+      "scope_id": "group-alpha",
+      "scope_type": "group"
+     },
+     "admin-2",
+     [
+      "actor_user_id"
+     ]
+    ],
+    [
+     "get_group_model_endpoints",
+     "group-alpha"
+    ]
+   ],
+   "error": null,
+   "label": "editor_resave",
+   "result_keys": [
+    "id",
+    "group_id",
+    "user_id",
+    "name",
+    "description",
+    "task_prompt",
+    "tasks",
+    "error_handling",
+    "runner_type",
+    "chat_capabilities_enabled",
+    "trigger_type",
+    "is_enabled",
+    "url_access_enabled",
+    "url_access_authorized",
+    "url_access_authorized_by",
+    "url_access_authorized_at",
+    "alert_priority",
+    "alert_mode",
+    "alert_rules",
+    "alert_evaluation",
+    "schedule",
+    "document_action",
+    "analyze",
+    "file_sync",
+    "selected_agent",
+    "model_endpoint_id",
+    "model_id",
+    "model_provider",
+    "model_binding_summary",
+    "conversation_id",
+    "created_at",
+    "created_by",
+    "modified_at",
+    "modified_by",
+    "updated_at",
+    "status",
+    "last_run_started_at",
+    "last_run_at",
+    "last_run_status",
+    "last_run_error",
+    "last_run_response_preview",
+    "last_run_trigger_source",
+    "run_count",
+    "active_run_id",
+    "cancellation_requested_at",
+    "cancellation_requested_by",
+    "next_run_at",
+    "definition_version",
+    "reference_inputs",
+    "durable_execution",
+    "m365_run_as_user_id",
+    "m365_revision",
+    "m365_binding_approval_id",
+    "definition_revision"
+   ],
+   "result_sha256": "c7a81e6899f87424603c307a27ea675f72e3c6fdf224510bc6550f04c52d2390",
+   "stored_sha256": "243e84eac3ecb0db3fb50bf98e75b3a596369b0d528b9370b1c4c264d5e01343",
+   "summary": {
+    "alert_mode": "off",
+    "conversation_id": "",
+    "definition_version": 2,
+    "id": "00000000-0000-0000-0000-000000000001",
+    "is_enabled": true,
+    "m365_binding_approval_id": null,
+    "m365_run_as_user_id": "",
+    "modified_by": "admin-2",
+    "name": "Team policy",
+    "next_run_at": null,
+    "schedule": {},
+    "trigger_type": "manual"
+   },
+   "writes": {
+    "group_workflows": [
+     [
+      "replace_item",
+      "00000000-0000-0000-0000-000000000001"
+     ]
+    ]
+   }
+  }
+ ],
+ "group_v1_classic": [
+  {
+   "calls": [
+    [
+     "get_settings"
+    ],
+    [
+     "get_settings"
+    ],
+    [
+     "get_settings"
+    ],
+    [
+     "get_group_model_endpoints",
+     "group-alpha"
+    ]
+   ],
+   "error": null,
+   "label": "create",
+   "result_keys": [
+    "id",
+    "group_id",
+    "user_id",
+    "name",
+    "description",
+    "task_prompt",
+    "tasks",
+    "error_handling",
+    "runner_type",
+    "chat_capabilities_enabled",
+    "trigger_type",
+    "is_enabled",
+    "url_access_enabled",
+    "url_access_authorized",
+    "url_access_authorized_by",
+    "url_access_authorized_at",
+    "alert_priority",
+    "alert_mode",
+    "alert_rules",
+    "alert_evaluation",
+    "schedule",
+    "document_action",
+    "analyze",
+    "file_sync",
+    "selected_agent",
+    "model_endpoint_id",
+    "model_id",
+    "model_provider",
+    "model_binding_summary",
+    "conversation_id",
+    "created_at",
+    "created_by",
+    "modified_at",
+    "modified_by",
+    "updated_at",
+    "status",
+    "last_run_started_at",
+    "last_run_at",
+    "last_run_status",
+    "last_run_error",
+    "last_run_response_preview",
+    "last_run_trigger_source",
+    "run_count",
+    "active_run_id",
+    "cancellation_requested_at",
+    "cancellation_requested_by",
+    "next_run_at",
+    "definition_version",
+    "m365_run_as_user_id",
+    "m365_revision",
+    "m365_binding_approval_id",
+    "definition_revision"
+   ],
+   "result_sha256": "21a026d2d0ca7d0d17fee6afbf965bd058e5fe285e286ba0ccd3e1f817568075",
+   "stored_sha256": "d1137051a86cd83e76e771fd380e9f9d32b93989190a822333387e3dc035f2dc",
+   "summary": {
+    "alert_mode": "off",
+    "conversation_id": "conv-group",
+    "definition_version": 1,
+    "id": "00000000-0000-0000-0000-000000000001",
+    "is_enabled": true,
+    "m365_binding_approval_id": null,
+    "m365_run_as_user_id": "",
+    "modified_by": "owner-1",
+    "name": "Team classic",
+    "next_run_at": null,
+    "schedule": {},
+    "trigger_type": "manual"
+   },
+   "writes": {
+    "group_workflows": [
+     [
+      "create_item",
+      "00000000-0000-0000-0000-000000000001"
+     ]
+    ]
+   }
+  },
+  {
+   "calls": [
+    [
+     "get_settings"
+    ],
+    [
+     "get_settings"
+    ],
+    [
+     "get_settings"
+    ]
+   ],
+   "error": {
+    "code": null,
+    "message": "Add at least one workflow task.",
+    "type": "ValueError"
+   },
+   "label": "resave",
+   "writes": {}
+  },
+  {
+   "calls": [
+    [
+     "get_settings"
+    ],
+    [
+     "get_settings"
+    ],
+    [
+     "get_settings"
+    ],
+    [
+     "get_group_model_endpoints",
+     "group-alpha"
+    ]
+   ],
+   "error": null,
+   "label": "classic_update",
+   "result_keys": [
+    "id",
+    "group_id",
+    "user_id",
+    "name",
+    "description",
+    "task_prompt",
+    "tasks",
+    "error_handling",
+    "runner_type",
+    "chat_capabilities_enabled",
+    "trigger_type",
+    "is_enabled",
+    "url_access_enabled",
+    "url_access_authorized",
+    "url_access_authorized_by",
+    "url_access_authorized_at",
+    "alert_priority",
+    "alert_mode",
+    "alert_rules",
+    "alert_evaluation",
+    "schedule",
+    "document_action",
+    "analyze",
+    "file_sync",
+    "selected_agent",
+    "model_endpoint_id",
+    "model_id",
+    "model_provider",
+    "model_binding_summary",
+    "conversation_id",
+    "created_at",
+    "created_by",
+    "modified_at",
+    "modified_by",
+    "updated_at",
+    "status",
+    "last_run_started_at",
+    "last_run_at",
+    "last_run_status",
+    "last_run_error",
+    "last_run_response_preview",
+    "last_run_trigger_source",
+    "run_count",
+    "active_run_id",
+    "cancellation_requested_at",
+    "cancellation_requested_by",
+    "next_run_at",
+    "definition_version",
+    "m365_run_as_user_id",
+    "m365_revision",
+    "m365_binding_approval_id",
+    "definition_revision"
+   ],
+   "result_sha256": "aba16e198e0e61407a537013364c6dcbf758133d57f79045db7fe35b346b3028",
+   "stored_sha256": "c7a3a5f40d5d40c7c3c501dede47f8a97b3aade491ccefb3024d935919e17c2d",
+   "summary": {
+    "alert_mode": "off",
+    "conversation_id": "conv-group",
+    "definition_version": 1,
+    "id": "00000000-0000-0000-0000-000000000001",
+    "is_enabled": true,
+    "m365_binding_approval_id": null,
+    "m365_run_as_user_id": "",
+    "modified_by": "owner-1",
+    "name": "Team classic renamed",
+    "next_run_at": null,
+    "schedule": {},
+    "trigger_type": "manual"
+   },
+   "writes": {
+    "group_workflows": [
+     [
+      "replace_item",
+      "00000000-0000-0000-0000-000000000001"
+     ]
+    ]
+   }
+  }
+ ],
+ "group_v3_structured": [
+  {
+   "calls": [
+    [
+     "get_settings"
+    ],
+    [
+     "get_settings"
+    ],
+    [
+     "get_settings"
+    ],
+    [
+     "get_group_model_endpoints",
+     "group-alpha"
+    ]
+   ],
+   "error": null,
+   "label": "create",
+   "result_keys": [
+    "id",
+    "group_id",
+    "user_id",
+    "name",
+    "description",
+    "task_prompt",
+    "tasks",
+    "error_handling",
+    "runner_type",
+    "chat_capabilities_enabled",
+    "trigger_type",
+    "is_enabled",
+    "url_access_enabled",
+    "url_access_authorized",
+    "url_access_authorized_by",
+    "url_access_authorized_at",
+    "alert_priority",
+    "alert_mode",
+    "alert_rules",
+    "alert_evaluation",
+    "schedule",
+    "document_action",
+    "analyze",
+    "file_sync",
+    "selected_agent",
+    "model_endpoint_id",
+    "model_id",
+    "model_provider",
+    "model_binding_summary",
+    "conversation_id",
+    "created_at",
+    "created_by",
+    "modified_at",
+    "modified_by",
+    "updated_at",
+    "status",
+    "last_run_started_at",
+    "last_run_at",
+    "last_run_status",
+    "last_run_error",
+    "last_run_response_preview",
+    "last_run_trigger_source",
+    "run_count",
+    "active_run_id",
+    "cancellation_requested_at",
+    "cancellation_requested_by",
+    "next_run_at",
+    "definition_version",
+    "reference_inputs",
+    "durable_execution",
+    "flow",
+    "limits",
+    "m365_run_as_user_id",
+    "m365_revision",
+    "m365_binding_approval_id",
+    "definition_revision"
+   ],
+   "result_sha256": "dda81232c4ff44d49fac3d1b367f0a7ebfb36fdec707112170a4ea8ec34f569c",
+   "stored_sha256": "a6270ed7c4f15b101383bd2d9f4ebd0513173d6c34a7dffbcff9c7e137061e5a",
+   "summary": {
+    "alert_mode": "off",
+    "conversation_id": "",
+    "definition_version": 3,
+    "id": "00000000-0000-0000-0000-000000000001",
+    "is_enabled": true,
+    "m365_binding_approval_id": null,
+    "m365_run_as_user_id": "",
+    "modified_by": "admin-2",
+    "name": "Team structured",
+    "next_run_at": null,
+    "schedule": {},
+    "trigger_type": "manual"
+   },
+   "writes": {
+    "group_workflows": [
+     [
+      "create_item",
+      "00000000-0000-0000-0000-000000000001"
+     ]
+    ]
+   }
+  },
+  {
+   "calls": [
+    [
+     "get_settings"
+    ],
+    [
+     "get_settings"
+    ],
+    [
+     "get_settings"
+    ],
+    [
+     "get_group_model_endpoints",
+     "group-alpha"
+    ]
+   ],
+   "error": null,
+   "label": "owner_resave",
+   "result_keys": [
+    "id",
+    "group_id",
+    "user_id",
+    "name",
+    "description",
+    "task_prompt",
+    "tasks",
+    "error_handling",
+    "runner_type",
+    "chat_capabilities_enabled",
+    "trigger_type",
+    "is_enabled",
+    "url_access_enabled",
+    "url_access_authorized",
+    "url_access_authorized_by",
+    "url_access_authorized_at",
+    "alert_priority",
+    "alert_mode",
+    "alert_rules",
+    "alert_evaluation",
+    "schedule",
+    "document_action",
+    "analyze",
+    "file_sync",
+    "selected_agent",
+    "model_endpoint_id",
+    "model_id",
+    "model_provider",
+    "model_binding_summary",
+    "conversation_id",
+    "created_at",
+    "created_by",
+    "modified_at",
+    "modified_by",
+    "updated_at",
+    "status",
+    "last_run_started_at",
+    "last_run_at",
+    "last_run_status",
+    "last_run_error",
+    "last_run_response_preview",
+    "last_run_trigger_source",
+    "run_count",
+    "active_run_id",
+    "cancellation_requested_at",
+    "cancellation_requested_by",
+    "next_run_at",
+    "definition_version",
+    "reference_inputs",
+    "durable_execution",
+    "flow",
+    "limits",
+    "m365_run_as_user_id",
+    "m365_revision",
+    "m365_binding_approval_id",
+    "definition_revision"
+   ],
+   "result_sha256": "ecfa327c1243ce08de5b4a5c35645117ea33f915f521565c4ef5f64b6e49d9f7",
+   "stored_sha256": "90134825e32bb2be53cb2848c14d0ac1199bfdf251ed7f00b1e6904e621b789d",
+   "summary": {
+    "alert_mode": "off",
+    "conversation_id": "",
+    "definition_version": 3,
+    "id": "00000000-0000-0000-0000-000000000001",
+    "is_enabled": true,
+    "m365_binding_approval_id": null,
+    "m365_run_as_user_id": "",
+    "modified_by": "owner-1",
+    "name": "Team structured",
+    "next_run_at": null,
+    "schedule": {},
+    "trigger_type": "manual"
+   },
+   "writes": {
+    "group_workflows": [
+     [
+      "replace_item",
+      "00000000-0000-0000-0000-000000000001"
+     ]
+    ]
+   }
+  }
+ ],
+ "personal_agents_and_overrides": [
+  {
+   "calls": [
+    [
+     "get_settings"
+    ],
+    [
+     "get_settings"
+    ],
+    [
+     "get_personal_agents",
+     "owner-1"
+    ],
+    [
+     "get_user_settings",
+     "owner-1",
+     [],
+     []
+    ],
+    [
+     "require_model_capability",
+     "model-mini",
+     "aoai",
+     []
+    ],
+    [
+     "get_personal_agents",
+     "owner-1"
+    ]
+   ],
+   "error": null,
+   "label": "create",
+   "result_keys": [
+    "id",
+    "user_id",
+    "name",
+    "description",
+    "task_prompt",
+    "tasks",
+    "error_handling",
+    "runner_type",
+    "chat_capabilities_enabled",
+    "trigger_type",
+    "is_enabled",
+    "url_access_enabled",
+    "url_access_authorized",
+    "url_access_authorized_by",
+    "url_access_authorized_at",
+    "alert_priority",
+    "alert_mode",
+    "alert_rules",
+    "alert_evaluation",
+    "schedule",
+    "document_action",
+    "analyze",
+    "file_sync",
+    "selected_agent",
+    "model_endpoint_id",
+    "model_id",
+    "model_provider",
+    "model_binding_summary",
+    "conversation_id",
+    "created_at",
+    "created_by",
+    "modified_at",
+    "modified_by",
+    "updated_at",
+    "status",
+    "last_run_started_at",
+    "last_run_at",
+    "last_run_status",
+    "last_run_error",
+    "last_run_response_preview",
+    "last_run_trigger_source",
+    "run_count",
+    "active_run_id",
+    "cancellation_requested_at",
+    "cancellation_requested_by",
+    "next_run_at",
+    "definition_version",
+    "reference_inputs",
+    "durable_execution",
+    "m365_run_as_user_id",
+    "m365_revision",
+    "m365_binding_approval_id",
+    "definition_revision"
+   ],
+   "result_sha256": "a5e8d15180b65fa5537ea3cfecc23eb20e911f616dbb813c4848529a43f275b3",
+   "stored_sha256": "b5e2bc45e4779b09a1106d3847500d7938a5782682f9e74e8c07e451b56fea10",
+   "summary": {
+    "alert_mode": "off",
+    "conversation_id": "",
+    "definition_version": 2,
+    "id": "00000000-0000-0000-0000-000000000001",
+    "is_enabled": true,
+    "m365_binding_approval_id": null,
+    "m365_run_as_user_id": "",
+    "modified_by": "owner-1",
+    "name": "Research and write",
+    "next_run_at": null,
+    "schedule": {},
+    "trigger_type": "manual"
+   },
+   "writes": {
+    "personal_workflows": [
+     [
+      "create_item",
+      "00000000-0000-0000-0000-000000000001"
+     ]
+    ]
+   }
+  },
+  {
+   "calls": [
+    [
+     "get_settings"
+    ],
+    [
+     "get_settings"
+    ],
+    [
+     "get_personal_agents",
+     "owner-1"
+    ],
+    [
+     "get_user_settings",
+     "owner-1",
+     [],
+     []
+    ],
+    [
+     "require_model_capability",
+     "model-mini",
+     "aoai",
+     []
+    ],
+    [
+     "get_personal_agents",
+     "owner-1"
+    ]
+   ],
+   "error": null,
+   "label": "resave",
+   "result_keys": [
+    "id",
+    "user_id",
+    "name",
+    "description",
+    "task_prompt",
+    "tasks",
+    "error_handling",
+    "runner_type",
+    "chat_capabilities_enabled",
+    "trigger_type",
+    "is_enabled",
+    "url_access_enabled",
+    "url_access_authorized",
+    "url_access_authorized_by",
+    "url_access_authorized_at",
+    "alert_priority",
+    "alert_mode",
+    "alert_rules",
+    "alert_evaluation",
+    "schedule",
+    "document_action",
+    "analyze",
+    "file_sync",
+    "selected_agent",
+    "model_endpoint_id",
+    "model_id",
+    "model_provider",
+    "model_binding_summary",
+    "conversation_id",
+    "created_at",
+    "created_by",
+    "modified_at",
+    "modified_by",
+    "updated_at",
+    "status",
+    "last_run_started_at",
+    "last_run_at",
+    "last_run_status",
+    "last_run_error",
+    "last_run_response_preview",
+    "last_run_trigger_source",
+    "run_count",
+    "active_run_id",
+    "cancellation_requested_at",
+    "cancellation_requested_by",
+    "next_run_at",
+    "definition_version",
+    "reference_inputs",
+    "durable_execution",
+    "m365_run_as_user_id",
+    "m365_revision",
+    "m365_binding_approval_id",
+    "definition_revision"
+   ],
+   "result_sha256": "69d04ceb5f2b5722f9c754e99caa7c86291974d06e55c66e4a2e151000a78fb5",
+   "stored_sha256": "159d1e291acac5ea97379ea46354a0a25fc2bb3d7d68b50ce4dce12c7c3f8139",
+   "summary": {
+    "alert_mode": "off",
+    "conversation_id": "",
+    "definition_version": 2,
+    "id": "00000000-0000-0000-0000-000000000001",
+    "is_enabled": true,
+    "m365_binding_approval_id": null,
+    "m365_run_as_user_id": "",
+    "modified_by": "owner-1",
+    "name": "Research and write",
+    "next_run_at": null,
+    "schedule": {},
+    "trigger_type": "manual"
+   },
+   "writes": {
+    "personal_workflows": [
+     [
+      "replace_item",
+      "00000000-0000-0000-0000-000000000001"
+     ]
+    ]
+   }
+  },
+  {
+   "calls": [
+    [
+     "get_settings"
+    ],
+    [
+     "get_settings"
+    ],
+    [
+     "get_personal_agents",
+     "owner-1"
+    ],
+    [
+     "get_global_agents"
+    ]
+   ],
+   "error": null,
+   "label": "global_agent",
+   "result_keys": [
+    "id",
+    "user_id",
+    "name",
+    "description",
+    "task_prompt",
+    "tasks",
+    "error_handling",
+    "runner_type",
+    "chat_capabilities_enabled",
+    "trigger_type",
+    "is_enabled",
+    "url_access_enabled",
+    "url_access_authorized",
+    "url_access_authorized_by",
+    "url_access_authorized_at",
+    "alert_priority",
+    "alert_mode",
+    "alert_rules",
+    "alert_evaluation",
+    "schedule",
+    "document_action",
+    "analyze",
+    "file_sync",
+    "selected_agent",
+    "model_endpoint_id",
+    "model_id",
+    "model_provider",
+    "model_binding_summary",
+    "conversation_id",
+    "created_at",
+    "created_by",
+    "modified_at",
+    "modified_by",
+    "updated_at",
+    "status",
+    "last_run_started_at",
+    "last_run_at",
+    "last_run_status",
+    "last_run_error",
+    "last_run_response_preview",
+    "last_run_trigger_source",
+    "run_count",
+    "active_run_id",
+    "cancellation_requested_at",
+    "cancellation_requested_by",
+    "next_run_at",
+    "definition_version",
+    "reference_inputs",
+    "durable_execution",
+    "m365_run_as_user_id",
+    "m365_revision",
+    "m365_binding_approval_id",
+    "definition_revision"
+   ],
+   "result_sha256": "84de4389c6b99fb730b0180acf5d10eefec3b14ea993daa7480c6aa1dbe95f45",
+   "stored_sha256": "e9b10784a7ae74aa4d448b955a26dae355bda338448fb82cdab6e11761c35162",
+   "summary": {
+    "alert_mode": "off",
+    "conversation_id": "",
+    "definition_version": 2,
+    "id": "00000000-0000-0000-0000-000000000002",
+    "is_enabled": true,
+    "m365_binding_approval_id": null,
+    "m365_run_as_user_id": "",
+    "modified_by": "owner-1",
+    "name": "Global helper",
+    "next_run_at": null,
+    "schedule": {},
+    "trigger_type": "manual"
+   },
+   "writes": {
+    "personal_workflows": [
+     [
+      "create_item",
+      "00000000-0000-0000-0000-000000000002"
+     ]
+    ]
+   }
+  }
+ ],
+ "personal_calendar_rules": [
+  {
+   "calls": [
+    [
+     "get_settings"
+    ],
+    [
+     "get_settings"
+    ],
+    [
+     "get_user_settings",
+     "owner-1",
+     [],
+     []
+    ]
+   ],
+   "error": null,
+   "label": "create",
+   "result_keys": [
+    "id",
+    "user_id",
+    "name",
+    "description",
+    "task_prompt",
+    "tasks",
+    "error_handling",
+    "runner_type",
+    "chat_capabilities_enabled",
+    "trigger_type",
+    "is_enabled",
+    "url_access_enabled",
+    "url_access_authorized",
+    "url_access_authorized_by",
+    "url_access_authorized_at",
+    "alert_priority",
+    "alert_mode",
+    "alert_rules",
+    "alert_evaluation",
+    "schedule",
+    "document_action",
+    "analyze",
+    "file_sync",
+    "selected_agent",
+    "model_endpoint_id",
+    "model_id",
+    "model_provider",
+    "model_binding_summary",
+    "conversation_id",
+    "created_at",
+    "created_by",
+    "modified_at",
+    "modified_by",
+    "updated_at",
+    "status",
+    "last_run_started_at",
+    "last_run_at",
+    "last_run_status",
+    "last_run_error",
+    "last_run_response_preview",
+    "last_run_trigger_source",
+    "run_count",
+    "active_run_id",
+    "cancellation_requested_at",
+    "cancellation_requested_by",
+    "next_run_at",
+    "definition_version",
+    "reference_inputs",
+    "durable_execution",
+    "m365_run_as_user_id",
+    "m365_revision",
+    "m365_binding_approval_id",
+    "definition_revision"
+   ],
+   "result_sha256": "4aaaa1d628a30e6a0d303f9ceb3c36efca3a6dd17f88b13712b1f5a8e4d3bf65",
+   "stored_sha256": "33071c1c018d0a4673490076dfc764ee005120cafddd669ef1d69ae773d237e3",
+   "summary": {
+    "alert_mode": "rules",
+    "conversation_id": "",
+    "definition_version": 2,
+    "id": "00000000-0000-0000-0000-000000000003",
+    "is_enabled": true,
+    "m365_binding_approval_id": null,
+    "m365_run_as_user_id": "",
+    "modified_by": "owner-1",
+    "name": "Monday digest",
+    "next_run_at": "2026-10-05T12:00:00+00:00",
+    "schedule": {
+     "day_of_month": null,
+     "days_of_week": [
+      "monday"
+     ],
+     "frequency": "weekly",
+     "kind": "calendar",
+     "time_of_day": "08:00",
+     "timezone": "America/New_York"
+    },
+    "trigger_type": "interval"
+   },
+   "writes": {
+    "personal_workflows": [
+     [
+      "create_item",
+      "00000000-0000-0000-0000-000000000003"
+     ]
+    ]
+   }
+  },
+  {
+   "calls": [
+    [
+     "get_settings"
+    ],
+    [
+     "get_settings"
+    ],
+    [
+     "get_user_settings",
+     "owner-1",
+     [],
+     []
+    ]
+   ],
+   "error": null,
+   "label": "retime",
+   "result_keys": [
+    "id",
+    "user_id",
+    "name",
+    "description",
+    "task_prompt",
+    "tasks",
+    "error_handling",
+    "runner_type",
+    "chat_capabilities_enabled",
+    "trigger_type",
+    "is_enabled",
+    "url_access_enabled",
+    "url_access_authorized",
+    "url_access_authorized_by",
+    "url_access_authorized_at",
+    "alert_priority",
+    "alert_mode",
+    "alert_rules",
+    "alert_evaluation",
+    "schedule",
+    "document_action",
+    "analyze",
+    "file_sync",
+    "selected_agent",
+    "model_endpoint_id",
+    "model_id",
+    "model_provider",
+    "model_binding_summary",
+    "conversation_id",
+    "created_at",
+    "created_by",
+    "modified_at",
+    "modified_by",
+    "updated_at",
+    "status",
+    "last_run_started_at",
+    "last_run_at",
+    "last_run_status",
+    "last_run_error",
+    "last_run_response_preview",
+    "last_run_trigger_source",
+    "run_count",
+    "active_run_id",
+    "cancellation_requested_at",
+    "cancellation_requested_by",
+    "next_run_at",
+    "definition_version",
+    "reference_inputs",
+    "durable_execution",
+    "m365_run_as_user_id",
+    "m365_revision",
+    "m365_binding_approval_id",
+    "definition_revision"
+   ],
+   "result_sha256": "830caea578b70707303a3efda8adfb5d0391cd93ecdaa0e7a051bf9ddfedb0cf",
+   "stored_sha256": "d549ebdd179d553534e70b0efd34352ff201cd681c2510e833f0f941051393fa",
+   "summary": {
+    "alert_mode": "rules",
+    "conversation_id": "",
+    "definition_version": 2,
+    "id": "00000000-0000-0000-0000-000000000003",
+    "is_enabled": true,
+    "m365_binding_approval_id": null,
+    "m365_run_as_user_id": "",
+    "modified_by": "owner-1",
+    "name": "Monday digest",
+    "next_run_at": "2026-09-28T13:15:00+00:00",
+    "schedule": {
+     "day_of_month": null,
+     "days_of_week": [
+      "monday",
+      "thursday"
+     ],
+     "frequency": "weekly",
+     "kind": "calendar",
+     "time_of_day": "09:15",
+     "timezone": "America/New_York"
+    },
+    "trigger_type": "interval"
+   },
+   "writes": {
+    "personal_workflows": [
+     [
+      "replace_item",
+      "00000000-0000-0000-0000-000000000003"
+     ]
+    ]
+   }
+  },
+  {
+   "calls": [
+    [
+     "get_settings"
+    ],
+    [
+     "get_settings"
+    ],
+    [
+     "get_user_settings",
+     "owner-1",
+     [],
+     []
+    ]
+   ],
+   "error": null,
+   "label": "resave",
+   "result_keys": [
+    "id",
+    "user_id",
+    "name",
+    "description",
+    "task_prompt",
+    "tasks",
+    "error_handling",
+    "runner_type",
+    "chat_capabilities_enabled",
+    "trigger_type",
+    "is_enabled",
+    "url_access_enabled",
+    "url_access_authorized",
+    "url_access_authorized_by",
+    "url_access_authorized_at",
+    "alert_priority",
+    "alert_mode",
+    "alert_rules",
+    "alert_evaluation",
+    "schedule",
+    "document_action",
+    "analyze",
+    "file_sync",
+    "selected_agent",
+    "model_endpoint_id",
+    "model_id",
+    "model_provider",
+    "model_binding_summary",
+    "conversation_id",
+    "created_at",
+    "created_by",
+    "modified_at",
+    "modified_by",
+    "updated_at",
+    "status",
+    "last_run_started_at",
+    "last_run_at",
+    "last_run_status",
+    "last_run_error",
+    "last_run_response_preview",
+    "last_run_trigger_source",
+    "run_count",
+    "active_run_id",
+    "cancellation_requested_at",
+    "cancellation_requested_by",
+    "next_run_at",
+    "definition_version",
+    "reference_inputs",
+    "durable_execution",
+    "m365_run_as_user_id",
+    "m365_revision",
+    "m365_binding_approval_id",
+    "definition_revision"
+   ],
+   "result_sha256": "fc91907883d7dc73543d20ee2eaaa4f68163fe740115f0c495b19c7b9ca0323e",
+   "stored_sha256": "612db08cc7fe2ce55c1178c2b33a6fb21d63269d265e61c104e8ae3132c6538a",
+   "summary": {
+    "alert_mode": "rules",
+    "conversation_id": "",
+    "definition_version": 2,
+    "id": "00000000-0000-0000-0000-000000000003",
+    "is_enabled": true,
+    "m365_binding_approval_id": null,
+    "m365_run_as_user_id": "",
+    "modified_by": "owner-1",
+    "name": "Monday digest",
+    "next_run_at": "2026-09-28T13:15:00+00:00",
+    "schedule": {
+     "day_of_month": null,
+     "days_of_week": [
+      "monday",
+      "thursday"
+     ],
+     "frequency": "weekly",
+     "kind": "calendar",
+     "time_of_day": "09:15",
+     "timezone": "America/New_York"
+    },
+    "trigger_type": "interval"
+   },
+   "writes": {
+    "personal_workflows": [
+     [
+      "replace_item",
+      "00000000-0000-0000-0000-000000000003"
+     ]
+    ]
+   }
+  }
+ ],
+ "personal_custom_model": [
+  {
+   "calls": [
+    [
+     "get_settings"
+    ],
+    [
+     "get_settings"
+    ],
+    [
+     "get_user_settings",
+     "owner-1",
+     [],
+     []
+    ],
+    [
+     "require_model_capability",
+     "model-4o",
+     "aoai",
+     []
+    ]
+   ],
+   "error": null,
+   "label": "create",
+   "result_keys": [
+    "id",
+    "user_id",
+    "name",
+    "description",
+    "task_prompt",
+    "tasks",
+    "error_handling",
+    "runner_type",
+    "chat_capabilities_enabled",
+    "trigger_type",
+    "is_enabled",
+    "url_access_enabled",
+    "url_access_authorized",
+    "url_access_authorized_by",
+    "url_access_authorized_at",
+    "alert_priority",
+    "alert_mode",
+    "alert_rules",
+    "alert_evaluation",
+    "schedule",
+    "document_action",
+    "analyze",
+    "file_sync",
+    "selected_agent",
+    "model_endpoint_id",
+    "model_id",
+    "model_provider",
+    "model_binding_summary",
+    "conversation_id",
+    "created_at",
+    "created_by",
+    "modified_at",
+    "modified_by",
+    "updated_at",
+    "status",
+    "last_run_started_at",
+    "last_run_at",
+    "last_run_status",
+    "last_run_error",
+    "last_run_response_preview",
+    "last_run_trigger_source",
+    "run_count",
+    "active_run_id",
+    "cancellation_requested_at",
+    "cancellation_requested_by",
+    "next_run_at",
+    "definition_version",
+    "reference_inputs",
+    "durable_execution",
+    "m365_run_as_user_id",
+    "m365_revision",
+    "m365_binding_approval_id",
+    "definition_revision"
+   ],
+   "result_sha256": "e6932cb2b2851c64486763a50e6555fbb56b49711370f6ded6ec3eb6ccd912a1",
+   "stored_sha256": "d1adda9d7bc6b13759610b04e6fa5147aeff3c4884f0b0f63d854b42151d5da4",
+   "summary": {
+    "alert_mode": "off",
+    "conversation_id": "",
+    "definition_version": 2,
+    "id": "00000000-0000-0000-0000-000000000001",
+    "is_enabled": true,
+    "m365_binding_approval_id": null,
+    "m365_run_as_user_id": "",
+    "modified_by": "owner-1",
+    "name": "Custom model",
+    "next_run_at": null,
+    "schedule": {},
+    "trigger_type": "manual"
+   },
+   "writes": {
+    "personal_workflows": [
+     [
+      "create_item",
+      "00000000-0000-0000-0000-000000000001"
+     ]
+    ]
+   }
+  },
+  {
+   "calls": [
+    [
+     "get_settings"
+    ],
+    [
+     "get_settings"
+    ],
+    [
+     "get_user_settings",
+     "owner-1",
+     [],
+     []
+    ]
+   ],
+   "error": {
+    "code": null,
+    "message": "The selected model endpoint is no longer available.",
+    "type": "ValueError"
+   },
+   "label": "unknown_endpoint",
+   "writes": {}
+  }
+ ],
+ "personal_errors": [
+  {
+   "calls": [
+    [
+     "get_settings"
+    ],
+    [
+     "get_settings"
+    ]
+   ],
+   "error": {
+    "code": "invalid_workflow_settings",
+    "message": "Trigger type is required.",
+    "type": "WorkflowPublicValidationError"
+   },
+   "label": "missing_trigger",
+   "writes": {}
+  },
+  {
+   "calls": [
+    [
+     "get_settings"
+    ],
+    [
+     "get_settings"
+    ]
+   ],
+   "error": {
+    "code": "invalid_workflow_settings",
+    "message": "Trigger type must be manual, interval or file_sync.",
+    "type": "WorkflowPublicValidationError"
+   },
+   "label": "unknown_trigger",
+   "writes": {}
+  },
+  {
+   "calls": [
+    [
+     "get_settings"
+    ],
+    [
+     "get_settings"
+    ]
+   ],
+   "error": {
+    "code": "invalid_workflow_settings",
+    "message": "Monitor File Sync Changes workflows require File Sync before run.",
+    "type": "WorkflowPublicValidationError"
+   },
+   "label": "file_sync_without_sources",
+   "writes": {}
+  },
+  {
+   "calls": [
+    [
+     "get_settings"
+    ],
+    [
+     "get_settings"
+    ]
+   ],
+   "error": {
+    "code": "invalid_workflow_alerts",
+    "message": "Add at least one alert rule, or choose a different alert mode.",
+    "type": "WorkflowAlertValidationError"
+   },
+   "label": "rules_without_rules",
+   "writes": {}
+  },
+  {
+   "calls": [
+    [
+     "get_settings"
+    ],
+    [
+     "get_settings"
+    ],
+    [
+     "get_user_settings",
+     "owner-1",
+     [],
+     []
+    ]
+   ],
+   "error": {
+    "code": "invalid_workflow_settings",
+    "message": "This schedule runs more often than the administrator allows. Choose an interval of at least 5 minutes.",
+    "type": "WorkflowPublicValidationError"
+   },
+   "label": "below_minimum",
+   "writes": {}
+  },
+  {
+   "calls": [
+    [
+     "get_settings"
+    ],
+    [
+     "get_settings"
+    ],
+    [
+     "get_user_settings",
+     "owner-1",
+     [],
+     []
+    ]
+   ],
+   "error": {
+    "code": "invalid_workflow_settings",
+    "message": "Schedule time zone must be an IANA time zone name, such as America/New_York.",
+    "type": "WorkflowPublicValidationError"
+   },
+   "label": "bad_timezone",
+   "writes": {}
+  },
+  {
+   "calls": [
+    [
+     "get_settings"
+    ],
+    [
+     "get_settings"
+    ],
+    [
+     "get_user_settings",
+     "owner-1",
+     [],
+     []
+    ]
+   ],
+   "error": {
+    "code": "invalid_workflow_settings",
+    "message": "Schedule kind must be interval or calendar.",
+    "type": "WorkflowPublicValidationError"
+   },
+   "label": "unknown_kind",
+   "writes": {}
+  },
+  {
+   "calls": [
+    [
+     "get_settings"
+    ],
+    [
+     "get_settings"
+    ]
+   ],
+   "error": {
+    "code": null,
+    "message": "Runner type is required.",
+    "type": "ValueError"
+   },
+   "label": "missing_runner",
+   "writes": {}
+  },
+  {
+   "calls": [
+    [
+     "get_settings"
+    ],
+    [
+     "get_settings"
+    ]
+   ],
+   "error": {
+    "code": null,
+    "message": "Workflows support up to 50 tasks.",
+    "type": "ValueError"
+   },
+   "label": "too_many_tasks",
+   "writes": {}
+  },
+  {
+   "calls": [
+    [
+     "get_settings"
+    ],
+    [
+     "get_settings"
+    ],
+    [
+     "get_user_settings",
+     "owner-1",
+     [],
+     []
+    ]
+   ],
+   "error": null,
+   "label": "create",
+   "result_keys": [
+    "id",
+    "user_id",
+    "name",
+    "description",
+    "task_prompt",
+    "tasks",
+    "error_handling",
+    "runner_type",
+    "chat_capabilities_enabled",
+    "trigger_type",
+    "is_enabled",
+    "url_access_enabled",
+    "url_access_authorized",
+    "url_access_authorized_by",
+    "url_access_authorized_at",
+    "alert_priority",
+    "alert_mode",
+    "alert_rules",
+    "alert_evaluation",
+    "schedule",
+    "document_action",
+    "analyze",
+    "file_sync",
+    "selected_agent",
+    "model_endpoint_id",
+    "model_id",
+    "model_provider",
+    "model_binding_summary",
+    "conversation_id",
+    "created_at",
+    "created_by",
+    "modified_at",
+    "modified_by",
+    "updated_at",
+    "status",
+    "last_run_started_at",
+    "last_run_at",
+    "last_run_status",
+    "last_run_error",
+    "last_run_response_preview",
+    "last_run_trigger_source",
+    "run_count",
+    "active_run_id",
+    "cancellation_requested_at",
+    "cancellation_requested_by",
+    "next_run_at",
+    "definition_version",
+    "reference_inputs",
+    "durable_execution",
+    "m365_run_as_user_id",
+    "m365_revision",
+    "m365_binding_approval_id",
+    "definition_revision"
+   ],
+   "result_sha256": "cef8f98dba2213af32efffc1878726977116b71e49f5aedc232757041a562cb0",
+   "stored_sha256": "c9ae41746e5ebe0ed1d53da2cbd7c0a0268e2a076193290daa8191e90e409983",
+   "summary": {
+    "alert_mode": "off",
+    "conversation_id": "",
+    "definition_version": 2,
+    "id": "00000000-0000-0000-0000-000000000001",
+    "is_enabled": true,
+    "m365_binding_approval_id": null,
+    "m365_run_as_user_id": "",
+    "modified_by": "owner-1",
+    "name": "Stale",
+    "next_run_at": null,
+    "schedule": {},
+    "trigger_type": "manual"
+   },
+   "writes": {
+    "personal_workflows": [
+     [
+      "create_item",
+      "00000000-0000-0000-0000-000000000001"
+     ]
+    ]
+   }
+  },
+  {
+   "calls": [
+    [
+     "get_settings"
+    ],
+    [
+     "get_settings"
+    ]
+   ],
+   "error": {
+    "code": "workflow_definition_conflict",
+    "message": "This workflow changed since it was opened. Reload it before saving.",
+    "type": "WorkflowDefinitionConflict"
+   },
+   "label": "stale_revision",
+   "writes": {}
+  },
+  {
+   "calls": [
+    [
+     "get_settings"
+    ]
+   ],
+   "error": {
+    "code": "workflow_deleted",
+    "message": "This workflow was deleted after it was opened, so your changes were not saved.",
+    "type": "WorkflowDeletedConflict"
+   },
+   "label": "deleted",
+   "writes": {}
+  },
+  {
+   "calls": [
+    [
+     "get_settings"
+    ],
+    [
+     "get_settings"
+    ]
+   ],
+   "error": {
+    "code": null,
+    "message": "Agents must be enabled before creating agent-based workflows.",
+    "type": "ValueError"
+   },
+   "label": "agents_disabled",
+   "writes": {}
+  }
+ ],
+ "personal_file_sync_calendar": [
+  {
+   "calls": [
+    [
+     "get_settings"
+    ],
+    [
+     "get_authorized_sync_source",
+     "personal",
+     "owner-1",
+     "my-share",
+     "owner-1",
+     []
+    ],
+    [
+     "get_settings"
+    ],
+    [
+     "get_user_settings",
+     "owner-1",
+     [],
+     []
+    ]
+   ],
+   "error": null,
+   "label": "create",
+   "result_keys": [
+    "id",
+    "user_id",
+    "name",
+    "description",
+    "task_prompt",
+    "tasks",
+    "error_handling",
+    "runner_type",
+    "chat_capabilities_enabled",
+    "trigger_type",
+    "is_enabled",
+    "url_access_enabled",
+    "url_access_authorized",
+    "url_access_authorized_by",
+    "url_access_authorized_at",
+    "alert_priority",
+    "alert_mode",
+    "alert_rules",
+    "alert_evaluation",
+    "schedule",
+    "document_action",
+    "analyze",
+    "file_sync",
+    "selected_agent",
+    "model_endpoint_id",
+    "model_id",
+    "model_provider",
+    "model_binding_summary",
+    "conversation_id",
+    "created_at",
+    "created_by",
+    "modified_at",
+    "modified_by",
+    "updated_at",
+    "status",
+    "last_run_started_at",
+    "last_run_at",
+    "last_run_status",
+    "last_run_error",
+    "last_run_response_preview",
+    "last_run_trigger_source",
+    "run_count",
+    "active_run_id",
+    "cancellation_requested_at",
+    "cancellation_requested_by",
+    "next_run_at",
+    "definition_version",
+    "reference_inputs",
+    "durable_execution",
+    "m365_run_as_user_id",
+    "m365_revision",
+    "m365_binding_approval_id",
+    "definition_revision"
+   ],
+   "result_sha256": "54b144bb57cdab66b3d338187bb03e912dd334adff30704ea4a43cf48a4dd2bf",
+   "stored_sha256": "14e314b7008ab703dea4e40517c84e4c883997cfcd88e9764894d966cf138e90",
+   "summary": {
+    "alert_mode": "off",
+    "conversation_id": "",
+    "definition_version": 2,
+    "id": "00000000-0000-0000-0000-000000000001",
+    "is_enabled": true,
+    "m365_binding_approval_id": null,
+    "m365_run_as_user_id": "",
+    "modified_by": "owner-1",
+    "name": "Contract watcher",
+    "next_run_at": "2026-09-29T06:30:00+00:00",
+    "schedule": {
+     "day_of_month": null,
+     "days_of_week": [],
+     "frequency": "daily",
+     "kind": "calendar",
+     "time_of_day": "07:30",
+     "timezone": "Europe/London"
+    },
+    "trigger_type": "file_sync"
+   },
+   "writes": {
+    "personal_workflows": [
+     [
+      "create_item",
+      "00000000-0000-0000-0000-000000000001"
+     ]
+    ]
+   }
+  }
+ ],
+ "personal_file_sync_group_source_interval": [
+  {
+   "calls": [
+    [
+     "get_settings"
+    ],
+    [
+     "get_authorized_sync_source",
+     "group",
+     "group-alpha",
+     "finance-share",
+     "owner-1",
+     []
+    ],
+    [
+     "assert_group_role",
+     "owner-1",
+     "group-alpha",
+     [
+      "Owner",
+      "Admin"
+     ]
+    ],
+    [
+     "get_settings"
+    ],
+    [
+     "get_user_settings",
+     "owner-1",
+     [],
+     []
+    ]
+   ],
+   "error": null,
+   "label": "create",
+   "result_keys": [
+    "id",
+    "user_id",
+    "name",
+    "description",
+    "task_prompt",
+    "tasks",
+    "error_handling",
+    "runner_type",
+    "chat_capabilities_enabled",
+    "trigger_type",
+    "is_enabled",
+    "url_access_enabled",
+    "url_access_authorized",
+    "url_access_authorized_by",
+    "url_access_authorized_at",
+    "alert_priority",
+    "alert_mode",
+    "alert_rules",
+    "alert_evaluation",
+    "schedule",
+    "document_action",
+    "analyze",
+    "file_sync",
+    "selected_agent",
+    "model_endpoint_id",
+    "model_id",
+    "model_provider",
+    "model_binding_summary",
+    "conversation_id",
+    "created_at",
+    "created_by",
+    "modified_at",
+    "modified_by",
+    "updated_at",
+    "status",
+    "last_run_started_at",
+    "last_run_at",
+    "last_run_status",
+    "last_run_error",
+    "last_run_response_preview",
+    "last_run_trigger_source",
+    "run_count",
+    "active_run_id",
+    "cancellation_requested_at",
+    "cancellation_requested_by",
+    "next_run_at",
+    "definition_version",
+    "reference_inputs",
+    "durable_execution",
+    "m365_run_as_user_id",
+    "m365_revision",
+    "m365_binding_approval_id",
+    "definition_revision"
+   ],
+   "result_sha256": "53aea2aa1512c288f774a6257df01900bd66e054292722b6e234af5ad4d12cd5",
+   "stored_sha256": "287eb00d9f27a46c9622c3e857faa6734d7e334e7ac4132a71e5591a79e422c8",
+   "summary": {
+    "alert_mode": "off",
+    "conversation_id": "",
+    "definition_version": 2,
+    "id": "00000000-0000-0000-0000-000000000001",
+    "is_enabled": true,
+    "m365_binding_approval_id": null,
+    "m365_run_as_user_id": "",
+    "modified_by": "owner-1",
+    "name": "Finance watcher",
+    "next_run_at": "2026-09-28T12:30:01+00:00",
+    "schedule": {
+     "unit": "minutes",
+     "value": 30
+    },
+    "trigger_type": "file_sync"
+   },
+   "writes": {
+    "personal_workflows": [
+     [
+      "create_item",
+      "00000000-0000-0000-0000-000000000001"
+     ]
+    ]
+   }
+  },
+  {
+   "calls": [
+    [
+     "get_settings"
+    ],
+    [
+     "get_authorized_sync_source",
+     "group",
+     "group-alpha",
+     "finance-share",
+     "owner-1",
+     []
+    ],
+    [
+     "assert_group_role",
+     "owner-1",
+     "group-alpha",
+     [
+      "Owner",
+      "Admin"
+     ]
+    ],
+    [
+     "get_settings"
+    ],
+    [
+     "get_user_settings",
+     "owner-1",
+     [],
+     []
+    ]
+   ],
+   "error": null,
+   "label": "resave",
+   "result_keys": [
+    "id",
+    "user_id",
+    "name",
+    "description",
+    "task_prompt",
+    "tasks",
+    "error_handling",
+    "runner_type",
+    "chat_capabilities_enabled",
+    "trigger_type",
+    "is_enabled",
+    "url_access_enabled",
+    "url_access_authorized",
+    "url_access_authorized_by",
+    "url_access_authorized_at",
+    "alert_priority",
+    "alert_mode",
+    "alert_rules",
+    "alert_evaluation",
+    "schedule",
+    "document_action",
+    "analyze",
+    "file_sync",
+    "selected_agent",
+    "model_endpoint_id",
+    "model_id",
+    "model_provider",
+    "model_binding_summary",
+    "conversation_id",
+    "created_at",
+    "created_by",
+    "modified_at",
+    "modified_by",
+    "updated_at",
+    "status",
+    "last_run_started_at",
+    "last_run_at",
+    "last_run_status",
+    "last_run_error",
+    "last_run_response_preview",
+    "last_run_trigger_source",
+    "run_count",
+    "active_run_id",
+    "cancellation_requested_at",
+    "cancellation_requested_by",
+    "next_run_at",
+    "definition_version",
+    "reference_inputs",
+    "durable_execution",
+    "m365_run_as_user_id",
+    "m365_revision",
+    "m365_binding_approval_id",
+    "definition_revision"
+   ],
+   "result_sha256": "e01842ac991a7441a1b178253741b8c5a43a1ed8accec1e30872114ec3c19a65",
+   "stored_sha256": "180ca3404f73c5c454b6ba795257ef6c4f880f8c73cc2f1878af735fc9392721",
+   "summary": {
+    "alert_mode": "off",
+    "conversation_id": "",
+    "definition_version": 2,
+    "id": "00000000-0000-0000-0000-000000000001",
+    "is_enabled": true,
+    "m365_binding_approval_id": null,
+    "m365_run_as_user_id": "",
+    "modified_by": "owner-1",
+    "name": "Finance watcher",
+    "next_run_at": "2026-09-28T12:30:01+00:00",
+    "schedule": {
+     "unit": "minutes",
+     "value": 30
+    },
+    "trigger_type": "file_sync"
+   },
+   "writes": {
+    "personal_workflows": [
+     [
+      "replace_item",
+      "00000000-0000-0000-0000-000000000001"
+     ]
+    ]
+   }
+  }
+ ],
+ "personal_interval_every_run": [
+  {
+   "calls": [
+    [
+     "get_settings"
+    ],
+    [
+     "get_settings"
+    ],
+    [
+     "get_user_settings",
+     "owner-1",
+     [],
+     []
+    ]
+   ],
+   "error": null,
+   "label": "create",
+   "result_keys": [
+    "id",
+    "user_id",
+    "name",
+    "description",
+    "task_prompt",
+    "tasks",
+    "error_handling",
+    "runner_type",
+    "chat_capabilities_enabled",
+    "trigger_type",
+    "is_enabled",
+    "url_access_enabled",
+    "url_access_authorized",
+    "url_access_authorized_by",
+    "url_access_authorized_at",
+    "alert_priority",
+    "alert_mode",
+    "alert_rules",
+    "alert_evaluation",
+    "schedule",
+    "document_action",
+    "analyze",
+    "file_sync",
+    "selected_agent",
+    "model_endpoint_id",
+    "model_id",
+    "model_provider",
+    "model_binding_summary",
+    "conversation_id",
+    "created_at",
+    "created_by",
+    "modified_at",
+    "modified_by",
+    "updated_at",
+    "status",
+    "last_run_started_at",
+    "last_run_at",
+    "last_run_status",
+    "last_run_error",
+    "last_run_response_preview",
+    "last_run_trigger_source",
+    "run_count",
+    "active_run_id",
+    "cancellation_requested_at",
+    "cancellation_requested_by",
+    "next_run_at",
+    "definition_version",
+    "reference_inputs",
+    "durable_execution",
+    "m365_run_as_user_id",
+    "m365_revision",
+    "m365_binding_approval_id",
+    "definition_revision"
+   ],
+   "result_sha256": "07e2acd994c37028336125a550da414ac791ae5aba6ed51d6159da48edcc7ee6",
+   "stored_sha256": "f07baadbdd3b80f1fcf40ddf0736886ef4bcaa2908ebc95920c1320ef48cd494",
+   "summary": {
+    "alert_mode": "every_run",
+    "conversation_id": "",
+    "definition_version": 2,
+    "id": "00000000-0000-0000-0000-000000000001",
+    "is_enabled": true,
+    "m365_binding_approval_id": null,
+    "m365_run_as_user_id": "",
+    "modified_by": "owner-1",
+    "name": "Queue check",
+    "next_run_at": "2026-09-28T14:00:01+00:00",
+    "schedule": {
+     "unit": "hours",
+     "value": 2
+    },
+    "trigger_type": "interval"
+   },
+   "writes": {
+    "personal_workflows": [
+     [
+      "create_item",
+      "00000000-0000-0000-0000-000000000001"
+     ]
+    ]
+   }
+  },
+  {
+   "calls": [
+    [
+     "get_settings"
+    ],
+    [
+     "get_settings"
+    ],
+    [
+     "get_user_settings",
+     "owner-1",
+     [],
+     []
+    ]
+   ],
+   "error": null,
+   "label": "reschedule",
+   "result_keys": [
+    "id",
+    "user_id",
+    "name",
+    "description",
+    "task_prompt",
+    "tasks",
+    "error_handling",
+    "runner_type",
+    "chat_capabilities_enabled",
+    "trigger_type",
+    "is_enabled",
+    "url_access_enabled",
+    "url_access_authorized",
+    "url_access_authorized_by",
+    "url_access_authorized_at",
+    "alert_priority",
+    "alert_mode",
+    "alert_rules",
+    "alert_evaluation",
+    "schedule",
+    "document_action",
+    "analyze",
+    "file_sync",
+    "selected_agent",
+    "model_endpoint_id",
+    "model_id",
+    "model_provider",
+    "model_binding_summary",
+    "conversation_id",
+    "created_at",
+    "created_by",
+    "modified_at",
+    "modified_by",
+    "updated_at",
+    "status",
+    "last_run_started_at",
+    "last_run_at",
+    "last_run_status",
+    "last_run_error",
+    "last_run_response_preview",
+    "last_run_trigger_source",
+    "run_count",
+    "active_run_id",
+    "cancellation_requested_at",
+    "cancellation_requested_by",
+    "next_run_at",
+    "definition_version",
+    "reference_inputs",
+    "durable_execution",
+    "m365_run_as_user_id",
+    "m365_revision",
+    "m365_binding_approval_id",
+    "definition_revision"
+   ],
+   "result_sha256": "bad40f1f10a301eee179f7cf85106d443e3490600a941f59a1fbc51c1803ef63",
+   "stored_sha256": "a0f7cebc0eb3b277935f20eaa57fa55c60f6a8ef87e8d9e4165f6b581f9d1802",
+   "summary": {
+    "alert_mode": "every_run",
+    "conversation_id": "",
+    "definition_version": 2,
+    "id": "00000000-0000-0000-0000-000000000001",
+    "is_enabled": true,
+    "m365_binding_approval_id": null,
+    "m365_run_as_user_id": "",
+    "modified_by": "owner-1",
+    "name": "Queue check",
+    "next_run_at": "2026-09-28T15:00:03+00:00",
+    "schedule": {
+     "unit": "hours",
+     "value": 3
+    },
+    "trigger_type": "interval"
+   },
+   "writes": {
+    "personal_workflows": [
+     [
+      "replace_item",
+      "00000000-0000-0000-0000-000000000001"
+     ]
+    ]
+   }
+  },
+  {
+   "calls": [
+    [
+     "get_settings"
+    ],
+    [
+     "get_settings"
+    ],
+    [
+     "get_user_settings",
+     "owner-1",
+     [],
+     []
+    ]
+   ],
+   "error": null,
+   "label": "disable",
+   "result_keys": [
+    "id",
+    "user_id",
+    "name",
+    "description",
+    "task_prompt",
+    "tasks",
+    "error_handling",
+    "runner_type",
+    "chat_capabilities_enabled",
+    "trigger_type",
+    "is_enabled",
+    "url_access_enabled",
+    "url_access_authorized",
+    "url_access_authorized_by",
+    "url_access_authorized_at",
+    "alert_priority",
+    "alert_mode",
+    "alert_rules",
+    "alert_evaluation",
+    "schedule",
+    "document_action",
+    "analyze",
+    "file_sync",
+    "selected_agent",
+    "model_endpoint_id",
+    "model_id",
+    "model_provider",
+    "model_binding_summary",
+    "conversation_id",
+    "created_at",
+    "created_by",
+    "modified_at",
+    "modified_by",
+    "updated_at",
+    "status",
+    "last_run_started_at",
+    "last_run_at",
+    "last_run_status",
+    "last_run_error",
+    "last_run_response_preview",
+    "last_run_trigger_source",
+    "run_count",
+    "active_run_id",
+    "cancellation_requested_at",
+    "cancellation_requested_by",
+    "next_run_at",
+    "definition_version",
+    "reference_inputs",
+    "durable_execution",
+    "m365_run_as_user_id",
+    "m365_revision",
+    "m365_binding_approval_id",
+    "definition_revision"
+   ],
+   "result_sha256": "5a7c886521bed3fe8b19e504e32ea9ce06e7f294c15810a9376dccdd14446697",
+   "stored_sha256": "e67d0a3c12ef342b1af3bd7f576ddf2c53a7ab5e0ba441a51a13b62fbbc04f33",
+   "summary": {
+    "alert_mode": "every_run",
+    "conversation_id": "",
+    "definition_version": 2,
+    "id": "00000000-0000-0000-0000-000000000001",
+    "is_enabled": false,
+    "m365_binding_approval_id": null,
+    "m365_run_as_user_id": "",
+    "modified_by": "owner-1",
+    "name": "Queue check",
+    "next_run_at": null,
+    "schedule": {
+     "unit": "hours",
+     "value": 3
+    },
+    "trigger_type": "interval"
+   },
+   "writes": {
+    "personal_workflows": [
+     [
+      "replace_item",
+      "00000000-0000-0000-0000-000000000001"
+     ]
+    ]
+   }
+  },
+  {
+   "calls": [
+    [
+     "get_settings"
+    ],
+    [
+     "get_settings"
+    ],
+    [
+     "get_user_settings",
+     "owner-1",
+     [],
+     []
+    ]
+   ],
+   "error": null,
+   "label": "enable",
+   "result_keys": [
+    "id",
+    "user_id",
+    "name",
+    "description",
+    "task_prompt",
+    "tasks",
+    "error_handling",
+    "runner_type",
+    "chat_capabilities_enabled",
+    "trigger_type",
+    "is_enabled",
+    "url_access_enabled",
+    "url_access_authorized",
+    "url_access_authorized_by",
+    "url_access_authorized_at",
+    "alert_priority",
+    "alert_mode",
+    "alert_rules",
+    "alert_evaluation",
+    "schedule",
+    "document_action",
+    "analyze",
+    "file_sync",
+    "selected_agent",
+    "model_endpoint_id",
+    "model_id",
+    "model_provider",
+    "model_binding_summary",
+    "conversation_id",
+    "created_at",
+    "created_by",
+    "modified_at",
+    "modified_by",
+    "updated_at",
+    "status",
+    "last_run_started_at",
+    "last_run_at",
+    "last_run_status",
+    "last_run_error",
+    "last_run_response_preview",
+    "last_run_trigger_source",
+    "run_count",
+    "active_run_id",
+    "cancellation_requested_at",
+    "cancellation_requested_by",
+    "next_run_at",
+    "definition_version",
+    "reference_inputs",
+    "durable_execution",
+    "m365_run_as_user_id",
+    "m365_revision",
+    "m365_binding_approval_id",
+    "definition_revision"
+   ],
+   "result_sha256": "8c02356004a87cc8bf9565d26fac893895d671d6bd3be55270337ba6cb37f6f8",
+   "stored_sha256": "1ef3a0bc3330258cb36709d49633a868894b0375052ddb2c5ec61692115242b5",
+   "summary": {
+    "alert_mode": "every_run",
+    "conversation_id": "",
+    "definition_version": 2,
+    "id": "00000000-0000-0000-0000-000000000001",
+    "is_enabled": true,
+    "m365_binding_approval_id": null,
+    "m365_run_as_user_id": "",
+    "modified_by": "owner-1",
+    "name": "Queue check",
+    "next_run_at": "2026-09-28T15:00:06+00:00",
+    "schedule": {
+     "unit": "hours",
+     "value": 3
+    },
+    "trigger_type": "interval"
+   },
+   "writes": {
+    "personal_workflows": [
+     [
+      "replace_item",
+      "00000000-0000-0000-0000-000000000001"
+     ]
+    ]
+   }
+  },
+  {
+   "calls": [
+    [
+     "get_settings"
+    ],
+    [
+     "get_settings"
+    ],
+    [
+     "get_user_settings",
+     "owner-1",
+     [],
+     []
+    ]
+   ],
+   "error": null,
+   "label": "create_disabled",
+   "result_keys": [
+    "id",
+    "user_id",
+    "name",
+    "description",
+    "task_prompt",
+    "tasks",
+    "error_handling",
+    "runner_type",
+    "chat_capabilities_enabled",
+    "trigger_type",
+    "is_enabled",
+    "url_access_enabled",
+    "url_access_authorized",
+    "url_access_authorized_by",
+    "url_access_authorized_at",
+    "alert_priority",
+    "alert_mode",
+    "alert_rules",
+    "alert_evaluation",
+    "schedule",
+    "document_action",
+    "analyze",
+    "file_sync",
+    "selected_agent",
+    "model_endpoint_id",
+    "model_id",
+    "model_provider",
+    "model_binding_summary",
+    "conversation_id",
+    "created_at",
+    "created_by",
+    "modified_at",
+    "modified_by",
+    "updated_at",
+    "status",
+    "last_run_started_at",
+    "last_run_at",
+    "last_run_status",
+    "last_run_error",
+    "last_run_response_preview",
+    "last_run_trigger_source",
+    "run_count",
+    "active_run_id",
+    "cancellation_requested_at",
+    "cancellation_requested_by",
+    "next_run_at",
+    "definition_version",
+    "reference_inputs",
+    "durable_execution",
+    "m365_run_as_user_id",
+    "m365_revision",
+    "m365_binding_approval_id",
+    "definition_revision"
+   ],
+   "result_sha256": "620ccc00ef22a174401132e4732d65eaa58e480d2f0eb27e7668c17e48b0d1de",
+   "stored_sha256": "5159d1389c9056580af9c15cf1383c0853428999db8e5b315b164e5861686d24",
+   "summary": {
+    "alert_mode": "off",
+    "conversation_id": "",
+    "definition_version": 2,
+    "id": "00000000-0000-0000-0000-000000000002",
+    "is_enabled": false,
+    "m365_binding_approval_id": null,
+    "m365_run_as_user_id": "",
+    "modified_by": "owner-1",
+    "name": "Paused check",
+    "next_run_at": null,
+    "schedule": {
+     "unit": "minutes",
+     "value": 45
+    },
+    "trigger_type": "interval"
+   },
+   "writes": {
+    "personal_workflows": [
+     [
+      "create_item",
+      "00000000-0000-0000-0000-000000000002"
+     ]
+    ]
+   }
+  }
+ ],
+ "personal_m365_run_as": [
+  {
+   "calls": [
+    [
+     "get_settings"
+    ],
+    [
+     "get_settings"
+    ],
+    [
+     "get_user_settings",
+     "owner-1",
+     [],
+     []
+    ]
+   ],
+   "error": null,
+   "label": "create",
+   "result_keys": [
+    "id",
+    "user_id",
+    "name",
+    "description",
+    "task_prompt",
+    "tasks",
+    "error_handling",
+    "runner_type",
+    "chat_capabilities_enabled",
+    "trigger_type",
+    "is_enabled",
+    "url_access_enabled",
+    "url_access_authorized",
+    "url_access_authorized_by",
+    "url_access_authorized_at",
+    "alert_priority",
+    "alert_mode",
+    "alert_rules",
+    "alert_evaluation",
+    "schedule",
+    "document_action",
+    "analyze",
+    "file_sync",
+    "selected_agent",
+    "model_endpoint_id",
+    "model_id",
+    "model_provider",
+    "model_binding_summary",
+    "conversation_id",
+    "created_at",
+    "created_by",
+    "modified_at",
+    "modified_by",
+    "updated_at",
+    "status",
+    "last_run_started_at",
+    "last_run_at",
+    "last_run_status",
+    "last_run_error",
+    "last_run_response_preview",
+    "last_run_trigger_source",
+    "run_count",
+    "active_run_id",
+    "cancellation_requested_at",
+    "cancellation_requested_by",
+    "next_run_at",
+    "definition_version",
+    "reference_inputs",
+    "durable_execution",
+    "m365_run_as_user_id",
+    "m365_revision",
+    "m365_binding_approval_id",
+    "definition_revision"
+   ],
+   "result_sha256": "2d39afcf805cd4f8b5aa74bb6e0253ea18ed464e444eeb8ca70e526ff963f16a",
+   "stored_sha256": "65a2dc4113efb8400b2f437bc90a8a5e8ef6dfecb605b76c720658d19292b138",
+   "summary": {
+    "alert_mode": "off",
+    "conversation_id": "",
+    "definition_version": 2,
+    "id": "00000000-0000-0000-0000-000000000001",
+    "is_enabled": true,
+    "m365_binding_approval_id": null,
+    "m365_run_as_user_id": "owner-1",
+    "modified_by": "owner-1",
+    "name": "Mail digest",
+    "next_run_at": null,
+    "schedule": {},
+    "trigger_type": "manual"
+   },
+   "writes": {
+    "personal_workflows": [
+     [
+      "create_item",
+      "00000000-0000-0000-0000-000000000001"
+     ]
+    ]
+   }
+  },
+  {
+   "calls": [
+    [
+     "get_settings"
+    ],
+    [
+     "get_settings"
+    ],
+    [
+     "get_user_settings",
+     "owner-1",
+     [],
+     []
+    ]
+   ],
+   "error": null,
+   "label": "describe_keeps_approval",
+   "result_keys": [
+    "id",
+    "user_id",
+    "name",
+    "description",
+    "task_prompt",
+    "tasks",
+    "error_handling",
+    "runner_type",
+    "chat_capabilities_enabled",
+    "trigger_type",
+    "is_enabled",
+    "url_access_enabled",
+    "url_access_authorized",
+    "url_access_authorized_by",
+    "url_access_authorized_at",
+    "alert_priority",
+    "alert_mode",
+    "alert_rules",
+    "alert_evaluation",
+    "schedule",
+    "document_action",
+    "analyze",
+    "file_sync",
+    "selected_agent",
+    "model_endpoint_id",
+    "model_id",
+    "model_provider",
+    "model_binding_summary",
+    "conversation_id",
+    "created_at",
+    "created_by",
+    "modified_at",
+    "modified_by",
+    "updated_at",
+    "status",
+    "last_run_started_at",
+    "last_run_at",
+    "last_run_status",
+    "last_run_error",
+    "last_run_response_preview",
+    "last_run_trigger_source",
+    "run_count",
+    "active_run_id",
+    "cancellation_requested_at",
+    "cancellation_requested_by",
+    "next_run_at",
+    "definition_version",
+    "reference_inputs",
+    "durable_execution",
+    "m365_run_as_user_id",
+    "m365_revision",
+    "m365_binding_approval_id",
+    "definition_revision"
+   ],
+   "result_sha256": "a7c47391ae3249ae5f79f7877b121e787a0adc641fefbd9f32435eba3b41921d",
+   "stored_sha256": "5ffd9f202c76f305282880e7e03e655a26ab8effd8de4a01f330ae28e12eb3ff",
+   "summary": {
+    "alert_mode": "off",
+    "conversation_id": "",
+    "definition_version": 2,
+    "id": "00000000-0000-0000-0000-000000000001",
+    "is_enabled": true,
+    "m365_binding_approval_id": "approval-1",
+    "m365_run_as_user_id": "owner-1",
+    "modified_by": "owner-1",
+    "name": "Mail digest",
+    "next_run_at": null,
+    "schedule": {},
+    "trigger_type": "manual"
+   },
+   "writes": {
+    "personal_workflows": [
+     [
+      "replace_item",
+      "00000000-0000-0000-0000-000000000001"
+     ]
+    ]
+   }
+  },
+  {
+   "calls": [
+    [
+     "get_settings"
+    ],
+    [
+     "get_settings"
+    ],
+    [
+     "get_user_settings",
+     "owner-1",
+     [],
+     []
+    ]
+   ],
+   "error": null,
+   "label": "task_change_clears_approval",
+   "result_keys": [
+    "id",
+    "user_id",
+    "name",
+    "description",
+    "task_prompt",
+    "tasks",
+    "error_handling",
+    "runner_type",
+    "chat_capabilities_enabled",
+    "trigger_type",
+    "is_enabled",
+    "url_access_enabled",
+    "url_access_authorized",
+    "url_access_authorized_by",
+    "url_access_authorized_at",
+    "alert_priority",
+    "alert_mode",
+    "alert_rules",
+    "alert_evaluation",
+    "schedule",
+    "document_action",
+    "analyze",
+    "file_sync",
+    "selected_agent",
+    "model_endpoint_id",
+    "model_id",
+    "model_provider",
+    "model_binding_summary",
+    "conversation_id",
+    "created_at",
+    "created_by",
+    "modified_at",
+    "modified_by",
+    "updated_at",
+    "status",
+    "last_run_started_at",
+    "last_run_at",
+    "last_run_status",
+    "last_run_error",
+    "last_run_response_preview",
+    "last_run_trigger_source",
+    "run_count",
+    "active_run_id",
+    "cancellation_requested_at",
+    "cancellation_requested_by",
+    "next_run_at",
+    "definition_version",
+    "reference_inputs",
+    "durable_execution",
+    "m365_run_as_user_id",
+    "m365_revision",
+    "m365_binding_approval_id",
+    "definition_revision"
+   ],
+   "result_sha256": "0559ffb7b20881dcabba3d3f179b69b13f8a3888d80c582841dcc21d09c04a85",
+   "stored_sha256": "653630b01052d544995b3300b0637aff560e96b9d65139225449a13bcb678faa",
+   "summary": {
+    "alert_mode": "off",
+    "conversation_id": "",
+    "definition_version": 2,
+    "id": "00000000-0000-0000-0000-000000000001",
+    "is_enabled": true,
+    "m365_binding_approval_id": null,
+    "m365_run_as_user_id": "owner-1",
+    "modified_by": "owner-1",
+    "name": "Mail digest",
+    "next_run_at": null,
+    "schedule": {},
+    "trigger_type": "manual"
+   },
+   "writes": {
+    "personal_workflows": [
+     [
+      "replace_item",
+      "00000000-0000-0000-0000-000000000001"
+     ]
+    ]
+   }
+  }
+ ],
+ "personal_manual_file_sync_defaults": [
+  {
+   "calls": [
+    [
+     "get_settings"
+    ],
+    [
+     "get_authorized_sync_source",
+     "personal",
+     "owner-1",
+     "my-share",
+     "owner-1",
+     []
+    ],
+    [
+     "get_settings"
+    ],
+    [
+     "get_user_settings",
+     "owner-1",
+     [],
+     []
+    ]
+   ],
+   "error": null,
+   "label": "create",
+   "result_keys": [
+    "id",
+    "user_id",
+    "name",
+    "description",
+    "task_prompt",
+    "tasks",
+    "error_handling",
+    "runner_type",
+    "chat_capabilities_enabled",
+    "trigger_type",
+    "is_enabled",
+    "url_access_enabled",
+    "url_access_authorized",
+    "url_access_authorized_by",
+    "url_access_authorized_at",
+    "alert_priority",
+    "alert_mode",
+    "alert_rules",
+    "alert_evaluation",
+    "schedule",
+    "document_action",
+    "analyze",
+    "file_sync",
+    "selected_agent",
+    "model_endpoint_id",
+    "model_id",
+    "model_provider",
+    "model_binding_summary",
+    "conversation_id",
+    "created_at",
+    "created_by",
+    "modified_at",
+    "modified_by",
+    "updated_at",
+    "status",
+    "last_run_started_at",
+    "last_run_at",
+    "last_run_status",
+    "last_run_error",
+    "last_run_response_preview",
+    "last_run_trigger_source",
+    "run_count",
+    "active_run_id",
+    "cancellation_requested_at",
+    "cancellation_requested_by",
+    "next_run_at",
+    "definition_version",
+    "reference_inputs",
+    "durable_execution",
+    "m365_run_as_user_id",
+    "m365_revision",
+    "m365_binding_approval_id",
+    "definition_revision"
+   ],
+   "result_sha256": "c24c14b171aa8b63971f83cc9b22f6fb3121a10f4498d342d0613219062a8c98",
+   "stored_sha256": "3efc74a5a98eb705a2ec522b3588d4f7cc1b910258d4f79b826cd11e185045e2",
+   "summary": {
+    "alert_mode": "off",
+    "conversation_id": "",
+    "definition_version": 2,
+    "id": "00000000-0000-0000-0000-000000000001",
+    "is_enabled": true,
+    "m365_binding_approval_id": null,
+    "m365_run_as_user_id": "",
+    "modified_by": "owner-1",
+    "name": "Sync then read",
+    "next_run_at": null,
+    "schedule": {},
+    "trigger_type": "manual"
+   },
+   "writes": {
+    "personal_workflows": [
+     [
+      "create_item",
+      "00000000-0000-0000-0000-000000000001"
+     ]
+    ]
+   }
+  },
+  {
+   "calls": [
+    [
+     "get_settings"
+    ],
+    [
+     "get_authorized_sync_source",
+     "personal",
+     "owner-1",
+     "my-share",
+     "owner-1",
+     []
+    ],
+    [
+     "get_settings"
+    ],
+    [
+     "get_user_settings",
+     "owner-1",
+     [],
+     []
+    ]
+   ],
+   "error": null,
+   "label": "resave",
+   "result_keys": [
+    "id",
+    "user_id",
+    "name",
+    "description",
+    "task_prompt",
+    "tasks",
+    "error_handling",
+    "runner_type",
+    "chat_capabilities_enabled",
+    "trigger_type",
+    "is_enabled",
+    "url_access_enabled",
+    "url_access_authorized",
+    "url_access_authorized_by",
+    "url_access_authorized_at",
+    "alert_priority",
+    "alert_mode",
+    "alert_rules",
+    "alert_evaluation",
+    "schedule",
+    "document_action",
+    "analyze",
+    "file_sync",
+    "selected_agent",
+    "model_endpoint_id",
+    "model_id",
+    "model_provider",
+    "model_binding_summary",
+    "conversation_id",
+    "created_at",
+    "created_by",
+    "modified_at",
+    "modified_by",
+    "updated_at",
+    "status",
+    "last_run_started_at",
+    "last_run_at",
+    "last_run_status",
+    "last_run_error",
+    "last_run_response_preview",
+    "last_run_trigger_source",
+    "run_count",
+    "active_run_id",
+    "cancellation_requested_at",
+    "cancellation_requested_by",
+    "next_run_at",
+    "definition_version",
+    "reference_inputs",
+    "durable_execution",
+    "m365_run_as_user_id",
+    "m365_revision",
+    "m365_binding_approval_id",
+    "definition_revision"
+   ],
+   "result_sha256": "8dec9cf65703cd554977ba0ba0772f617cb453200f2e904eb1871e34dbbcf153",
+   "stored_sha256": "271db7f44055cc08433b0a110648db7a4c38e8c9d4532639a4867757e5fd0baa",
+   "summary": {
+    "alert_mode": "off",
+    "conversation_id": "",
+    "definition_version": 2,
+    "id": "00000000-0000-0000-0000-000000000001",
+    "is_enabled": true,
+    "m365_binding_approval_id": null,
+    "m365_run_as_user_id": "",
+    "modified_by": "owner-1",
+    "name": "Sync then read",
+    "next_run_at": null,
+    "schedule": {},
+    "trigger_type": "manual"
+   },
+   "writes": {
+    "personal_workflows": [
+     [
+      "replace_item",
+      "00000000-0000-0000-0000-000000000001"
+     ]
+    ]
+   }
+  },
+  {
+   "calls": [
+    [
+     "get_settings"
+    ],
+    [
+     "get_authorized_sync_source",
+     "personal",
+     "owner-1",
+     "deleted-share",
+     "owner-1",
+     []
+    ]
+   ],
+   "error": {
+    "code": "file_sync_source_unavailable",
+    "message": "A selected File Sync source is no longer available. Remove it and save again.",
+    "type": "WorkflowSourceUnavailableError"
+   },
+   "label": "missing_source",
+   "writes": {}
+  }
+ ],
+ "personal_manual_v2": [
+  {
+   "calls": [
+    [
+     "get_settings"
+    ],
+    [
+     "get_settings"
+    ],
+    [
+     "get_user_settings",
+     "owner-1",
+     [],
+     []
+    ]
+   ],
+   "error": null,
+   "label": "create",
+   "result_keys": [
+    "id",
+    "user_id",
+    "name",
+    "description",
+    "task_prompt",
+    "tasks",
+    "error_handling",
+    "runner_type",
+    "chat_capabilities_enabled",
+    "trigger_type",
+    "is_enabled",
+    "url_access_enabled",
+    "url_access_authorized",
+    "url_access_authorized_by",
+    "url_access_authorized_at",
+    "alert_priority",
+    "alert_mode",
+    "alert_rules",
+    "alert_evaluation",
+    "schedule",
+    "document_action",
+    "analyze",
+    "file_sync",
+    "selected_agent",
+    "model_endpoint_id",
+    "model_id",
+    "model_provider",
+    "model_binding_summary",
+    "conversation_id",
+    "created_at",
+    "created_by",
+    "modified_at",
+    "modified_by",
+    "updated_at",
+    "status",
+    "last_run_started_at",
+    "last_run_at",
+    "last_run_status",
+    "last_run_error",
+    "last_run_response_preview",
+    "last_run_trigger_source",
+    "run_count",
+    "active_run_id",
+    "cancellation_requested_at",
+    "cancellation_requested_by",
+    "next_run_at",
+    "definition_version",
+    "reference_inputs",
+    "durable_execution",
+    "m365_run_as_user_id",
+    "m365_revision",
+    "m365_binding_approval_id",
+    "definition_revision"
+   ],
+   "result_sha256": "c2bcab4013c748f344af67ec3431ca6cb167db510368683035b18b539cf62cf0",
+   "stored_sha256": "6469c48681a61a8ddff654cbdfa18944b40f1eee6396bd7fa5f5569bb9e9202d",
+   "summary": {
+    "alert_mode": "off",
+    "conversation_id": "",
+    "definition_version": 2,
+    "id": "00000000-0000-0000-0000-000000000003",
+    "is_enabled": true,
+    "m365_binding_approval_id": null,
+    "m365_run_as_user_id": "",
+    "modified_by": "owner-1",
+    "name": "Weekly planning",
+    "next_run_at": null,
+    "schedule": {},
+    "trigger_type": "manual"
+   },
+   "writes": {
+    "personal_workflows": [
+     [
+      "create_item",
+      "00000000-0000-0000-0000-000000000003"
+     ]
+    ]
+   }
+  },
+  {
+   "calls": [
+    [
+     "get_settings"
+    ],
+    [
+     "get_settings"
+    ],
+    [
+     "get_user_settings",
+     "owner-1",
+     [],
+     []
+    ]
+   ],
+   "error": null,
+   "label": "describe",
+   "result_keys": [
+    "id",
+    "user_id",
+    "name",
+    "description",
+    "task_prompt",
+    "tasks",
+    "error_handling",
+    "runner_type",
+    "chat_capabilities_enabled",
+    "trigger_type",
+    "is_enabled",
+    "url_access_enabled",
+    "url_access_authorized",
+    "url_access_authorized_by",
+    "url_access_authorized_at",
+    "alert_priority",
+    "alert_mode",
+    "alert_rules",
+    "alert_evaluation",
+    "schedule",
+    "document_action",
+    "analyze",
+    "file_sync",
+    "selected_agent",
+    "model_endpoint_id",
+    "model_id",
+    "model_provider",
+    "model_binding_summary",
+    "conversation_id",
+    "created_at",
+    "created_by",
+    "modified_at",
+    "modified_by",
+    "updated_at",
+    "status",
+    "last_run_started_at",
+    "last_run_at",
+    "last_run_status",
+    "last_run_error",
+    "last_run_response_preview",
+    "last_run_trigger_source",
+    "run_count",
+    "active_run_id",
+    "cancellation_requested_at",
+    "cancellation_requested_by",
+    "next_run_at",
+    "definition_version",
+    "reference_inputs",
+    "durable_execution",
+    "m365_run_as_user_id",
+    "m365_revision",
+    "m365_binding_approval_id",
+    "definition_revision"
+   ],
+   "result_sha256": "9cd3981268b7a7dc7541c1240a06dcaffe4b378360326f0bd89a056ed43bb2e7",
+   "stored_sha256": "f620d6103321ccc3c6870ac1fd9cf387cb2284fd5d46ce0be1cad4b2bc0f4347",
+   "summary": {
+    "alert_mode": "off",
+    "conversation_id": "",
+    "definition_version": 2,
+    "id": "00000000-0000-0000-0000-000000000003",
+    "is_enabled": true,
+    "m365_binding_approval_id": null,
+    "m365_run_as_user_id": "",
+    "modified_by": "owner-1",
+    "name": "Weekly planning",
+    "next_run_at": null,
+    "schedule": {},
+    "trigger_type": "manual"
+   },
+   "writes": {
+    "personal_workflows": [
+     [
+      "replace_item",
+      "00000000-0000-0000-0000-000000000003"
+     ]
+    ]
+   }
+  },
+  {
+   "calls": [
+    [
+     "get_settings"
+    ],
+    [
+     "get_settings"
+    ],
+    [
+     "get_user_settings",
+     "owner-1",
+     [],
+     []
+    ]
+   ],
+   "error": null,
+   "label": "resave",
+   "result_keys": [
+    "id",
+    "user_id",
+    "name",
+    "description",
+    "task_prompt",
+    "tasks",
+    "error_handling",
+    "runner_type",
+    "chat_capabilities_enabled",
+    "trigger_type",
+    "is_enabled",
+    "url_access_enabled",
+    "url_access_authorized",
+    "url_access_authorized_by",
+    "url_access_authorized_at",
+    "alert_priority",
+    "alert_mode",
+    "alert_rules",
+    "alert_evaluation",
+    "schedule",
+    "document_action",
+    "analyze",
+    "file_sync",
+    "selected_agent",
+    "model_endpoint_id",
+    "model_id",
+    "model_provider",
+    "model_binding_summary",
+    "conversation_id",
+    "created_at",
+    "created_by",
+    "modified_at",
+    "modified_by",
+    "updated_at",
+    "status",
+    "last_run_started_at",
+    "last_run_at",
+    "last_run_status",
+    "last_run_error",
+    "last_run_response_preview",
+    "last_run_trigger_source",
+    "run_count",
+    "active_run_id",
+    "cancellation_requested_at",
+    "cancellation_requested_by",
+    "next_run_at",
+    "definition_version",
+    "reference_inputs",
+    "durable_execution",
+    "m365_run_as_user_id",
+    "m365_revision",
+    "m365_binding_approval_id",
+    "definition_revision"
+   ],
+   "result_sha256": "05b16f563a0003565226669790ee3e146b9c0e6031b53873a18cdc5006d905b4",
+   "stored_sha256": "c1d8737884374595af155a530c1feeaef56645d1b918fc743fad61fcd069e1a2",
+   "summary": {
+    "alert_mode": "off",
+    "conversation_id": "",
+    "definition_version": 2,
+    "id": "00000000-0000-0000-0000-000000000003",
+    "is_enabled": true,
+    "m365_binding_approval_id": null,
+    "m365_run_as_user_id": "",
+    "modified_by": "owner-1",
+    "name": "Weekly planning",
+    "next_run_at": null,
+    "schedule": {},
+    "trigger_type": "manual"
+   },
+   "writes": {
+    "personal_workflows": [
+     [
+      "replace_item",
+      "00000000-0000-0000-0000-000000000003"
+     ]
+    ]
+   }
+  }
+ ],
+ "personal_references": [
+  {
+   "calls": [
+    [
+     "get_settings"
+    ],
+    [
+     "get_settings"
+    ],
+    [
+     "authorize_workflow_reference",
+     {
+      "user_id": "owner-1"
+     },
+     {
+      "document_id": "doc-policy",
+      "id": "policy",
+      "name": "policy",
+      "scope_id": "owner-1",
+      "scope_type": "personal"
+     },
+     "owner-1",
+     [
+      "actor_user_id"
+     ]
+    ],
+    [
+     "authorize_workflow_reference",
+     {
+      "user_id": "owner-1"
+     },
+     {
+      "document_id": "doc-handbook",
+      "id": "handbook",
+      "name": "handbook",
+      "scope_id": "public-1",
+      "scope_type": "public"
+     },
+     "owner-1",
+     [
+      "actor_user_id"
+     ]
+    ],
+    [
+     "get_user_settings",
+     "owner-1",
+     [],
+     []
+    ]
+   ],
+   "error": null,
+   "label": "create",
+   "result_keys": [
+    "id",
+    "user_id",
+    "name",
+    "description",
+    "task_prompt",
+    "tasks",
+    "error_handling",
+    "runner_type",
+    "chat_capabilities_enabled",
+    "trigger_type",
+    "is_enabled",
+    "url_access_enabled",
+    "url_access_authorized",
+    "url_access_authorized_by",
+    "url_access_authorized_at",
+    "alert_priority",
+    "alert_mode",
+    "alert_rules",
+    "alert_evaluation",
+    "schedule",
+    "document_action",
+    "analyze",
+    "file_sync",
+    "selected_agent",
+    "model_endpoint_id",
+    "model_id",
+    "model_provider",
+    "model_binding_summary",
+    "conversation_id",
+    "created_at",
+    "created_by",
+    "modified_at",
+    "modified_by",
+    "updated_at",
+    "status",
+    "last_run_started_at",
+    "last_run_at",
+    "last_run_status",
+    "last_run_error",
+    "last_run_response_preview",
+    "last_run_trigger_source",
+    "run_count",
+    "active_run_id",
+    "cancellation_requested_at",
+    "cancellation_requested_by",
+    "next_run_at",
+    "definition_version",
+    "reference_inputs",
+    "durable_execution",
+    "m365_run_as_user_id",
+    "m365_revision",
+    "m365_binding_approval_id",
+    "definition_revision"
+   ],
+   "result_sha256": "c85cf3c01cdb655ee7dbbfbe666803c93710e7ed9c36409d47531cbe28d8fcbf",
+   "stored_sha256": "b0507923b7f6d34cd6373441e4450b35d899963c56bf60eeee96c37914c3e497",
+   "summary": {
+    "alert_mode": "off",
+    "conversation_id": "",
+    "definition_version": 2,
+    "id": "00000000-0000-0000-0000-000000000001",
+    "is_enabled": true,
+    "m365_binding_approval_id": null,
+    "m365_run_as_user_id": "",
+    "modified_by": "owner-1",
+    "name": "Policy review",
+    "next_run_at": null,
+    "schedule": {},
+    "trigger_type": "manual"
+   },
+   "writes": {
+    "personal_workflows": [
+     [
+      "create_item",
+      "00000000-0000-0000-0000-000000000001"
+     ]
+    ]
+   }
+  },
+  {
+   "calls": [
+    [
+     "get_settings"
+    ],
+    [
+     "get_settings"
+    ],
+    [
+     "authorize_workflow_reference",
+     {
+      "user_id": "owner-1"
+     },
+     {
+      "document_id": "doc-policy",
+      "id": "policy",
+      "name": "policy",
+      "scope_id": "owner-1",
+      "scope_type": "personal"
+     },
+     "owner-1",
+     [
+      "actor_user_id"
+     ]
+    ],
+    [
+     "authorize_workflow_reference",
+     {
+      "user_id": "owner-1"
+     },
+     {
+      "document_id": "doc-handbook",
+      "id": "handbook",
+      "name": "handbook",
+      "scope_id": "public-1",
+      "scope_type": "public"
+     },
+     "owner-1",
+     [
+      "actor_user_id"
+     ]
+    ],
+    [
+     "get_user_settings",
+     "owner-1",
+     [],
+     []
+    ]
+   ],
+   "error": null,
+   "label": "resave",
+   "result_keys": [
+    "id",
+    "user_id",
+    "name",
+    "description",
+    "task_prompt",
+    "tasks",
+    "error_handling",
+    "runner_type",
+    "chat_capabilities_enabled",
+    "trigger_type",
+    "is_enabled",
+    "url_access_enabled",
+    "url_access_authorized",
+    "url_access_authorized_by",
+    "url_access_authorized_at",
+    "alert_priority",
+    "alert_mode",
+    "alert_rules",
+    "alert_evaluation",
+    "schedule",
+    "document_action",
+    "analyze",
+    "file_sync",
+    "selected_agent",
+    "model_endpoint_id",
+    "model_id",
+    "model_provider",
+    "model_binding_summary",
+    "conversation_id",
+    "created_at",
+    "created_by",
+    "modified_at",
+    "modified_by",
+    "updated_at",
+    "status",
+    "last_run_started_at",
+    "last_run_at",
+    "last_run_status",
+    "last_run_error",
+    "last_run_response_preview",
+    "last_run_trigger_source",
+    "run_count",
+    "active_run_id",
+    "cancellation_requested_at",
+    "cancellation_requested_by",
+    "next_run_at",
+    "definition_version",
+    "reference_inputs",
+    "durable_execution",
+    "m365_run_as_user_id",
+    "m365_revision",
+    "m365_binding_approval_id",
+    "definition_revision"
+   ],
+   "result_sha256": "8402f38aa33421de1828a2de10b5db8ac903ca1e8d2c9c615bb156f374743385",
+   "stored_sha256": "aba44b461c7c273965740adc0a6775a8b0877e2bace15331f40e07c24d5affe0",
+   "summary": {
+    "alert_mode": "off",
+    "conversation_id": "",
+    "definition_version": 2,
+    "id": "00000000-0000-0000-0000-000000000001",
+    "is_enabled": true,
+    "m365_binding_approval_id": null,
+    "m365_run_as_user_id": "",
+    "modified_by": "owner-1",
+    "name": "Policy review",
+    "next_run_at": null,
+    "schedule": {},
+    "trigger_type": "manual"
+   },
+   "writes": {
+    "personal_workflows": [
+     [
+      "replace_item",
+      "00000000-0000-0000-0000-000000000001"
+     ]
+    ]
+   }
+  },
+  {
+   "calls": [
+    [
+     "get_settings"
+    ],
+    [
+     "get_settings"
+    ],
+    [
+     "authorize_workflow_reference",
+     {
+      "user_id": "owner-1"
+     },
+     {
+      "document_id": "forbidden-doc",
+      "id": "secret",
+      "name": "secret",
+      "scope_id": "owner-1",
+      "scope_type": "personal"
+     },
+     "owner-1",
+     [
+      "actor_user_id"
+     ]
+    ]
+   ],
+   "error": {
+    "code": null,
+    "message": "A shared reference is not available in the selected source scope.",
+    "type": "PermissionError"
+   },
+   "label": "forbidden",
+   "writes": {}
+  }
+ ],
+ "personal_v1_classic": [
+  {
+   "calls": [
+    [
+     "get_settings"
+    ],
+    [
+     "get_settings"
+    ],
+    [
+     "get_user_settings",
+     "owner-1",
+     [],
+     []
+    ]
+   ],
+   "error": null,
+   "label": "create",
+   "result_keys": [
+    "id",
+    "user_id",
+    "name",
+    "description",
+    "task_prompt",
+    "tasks",
+    "error_handling",
+    "runner_type",
+    "chat_capabilities_enabled",
+    "trigger_type",
+    "is_enabled",
+    "url_access_enabled",
+    "url_access_authorized",
+    "url_access_authorized_by",
+    "url_access_authorized_at",
+    "alert_priority",
+    "alert_mode",
+    "alert_rules",
+    "alert_evaluation",
+    "schedule",
+    "document_action",
+    "analyze",
+    "file_sync",
+    "selected_agent",
+    "model_endpoint_id",
+    "model_id",
+    "model_provider",
+    "model_binding_summary",
+    "conversation_id",
+    "created_at",
+    "created_by",
+    "modified_at",
+    "modified_by",
+    "updated_at",
+    "status",
+    "last_run_started_at",
+    "last_run_at",
+    "last_run_status",
+    "last_run_error",
+    "last_run_response_preview",
+    "last_run_trigger_source",
+    "run_count",
+    "active_run_id",
+    "cancellation_requested_at",
+    "cancellation_requested_by",
+    "next_run_at",
+    "definition_version",
+    "m365_run_as_user_id",
+    "m365_revision",
+    "m365_binding_approval_id",
+    "definition_revision"
+   ],
+   "result_sha256": "568cfc426f1b44ddd5cf99f00dab97451a040508a77cd65a197cdc0c965b0348",
+   "stored_sha256": "f257c5fe1c959c1c9bfadf104885da09b74a97d964e006a98bc2cefbfb08833a",
+   "summary": {
+    "alert_mode": "rules",
+    "conversation_id": "conv-personal",
+    "definition_version": 1,
+    "id": "00000000-0000-0000-0000-000000000001",
+    "is_enabled": true,
+    "m365_binding_approval_id": null,
+    "m365_run_as_user_id": "",
+    "modified_by": "owner-1",
+    "name": "Classic",
+    "next_run_at": null,
+    "schedule": {},
+    "trigger_type": "manual"
+   },
+   "writes": {
+    "personal_workflows": [
+     [
+      "create_item",
+      "00000000-0000-0000-0000-000000000001"
+     ]
+    ]
+   }
+  },
+  {
+   "calls": [
+    [
+     "get_settings"
+    ],
+    [
+     "get_settings"
+    ]
+   ],
+   "error": {
+    "code": null,
+    "message": "Add at least one workflow task.",
+    "type": "ValueError"
+   },
+   "label": "resave",
+   "writes": {}
+  },
+  {
+   "calls": [
+    [
+     "get_settings"
+    ],
+    [
+     "get_settings"
+    ],
+    [
+     "get_user_settings",
+     "owner-1",
+     [],
+     []
+    ]
+   ],
+   "error": null,
+   "label": "classic_update",
+   "result_keys": [
+    "id",
+    "user_id",
+    "name",
+    "description",
+    "task_prompt",
+    "tasks",
+    "error_handling",
+    "runner_type",
+    "chat_capabilities_enabled",
+    "trigger_type",
+    "is_enabled",
+    "url_access_enabled",
+    "url_access_authorized",
+    "url_access_authorized_by",
+    "url_access_authorized_at",
+    "alert_priority",
+    "alert_mode",
+    "alert_rules",
+    "alert_evaluation",
+    "schedule",
+    "document_action",
+    "analyze",
+    "file_sync",
+    "selected_agent",
+    "model_endpoint_id",
+    "model_id",
+    "model_provider",
+    "model_binding_summary",
+    "conversation_id",
+    "created_at",
+    "created_by",
+    "modified_at",
+    "modified_by",
+    "updated_at",
+    "status",
+    "last_run_started_at",
+    "last_run_at",
+    "last_run_status",
+    "last_run_error",
+    "last_run_response_preview",
+    "last_run_trigger_source",
+    "run_count",
+    "active_run_id",
+    "cancellation_requested_at",
+    "cancellation_requested_by",
+    "next_run_at",
+    "definition_version",
+    "m365_run_as_user_id",
+    "m365_revision",
+    "m365_binding_approval_id",
+    "definition_revision"
+   ],
+   "result_sha256": "4ff782cb7a8f1f40f933aa0890219690c4e042c564ab45980a1132ca305fcf0d",
+   "stored_sha256": "5b67d1005b1c0f2094d54524cf3350d7f7046ffb9e933498f32c4cabe25b012b",
+   "summary": {
+    "alert_mode": "rules",
+    "conversation_id": "conv-personal",
+    "definition_version": 1,
+    "id": "00000000-0000-0000-0000-000000000001",
+    "is_enabled": true,
+    "m365_binding_approval_id": null,
+    "m365_run_as_user_id": "",
+    "modified_by": "owner-1",
+    "name": "Classic renamed",
+    "next_run_at": null,
+    "schedule": {},
+    "trigger_type": "manual"
+   },
+   "writes": {
+    "personal_workflows": [
+     [
+      "replace_item",
+      "00000000-0000-0000-0000-000000000001"
+     ]
+    ]
+   }
+  },
+  {
+   "calls": [
+    [
+     "get_settings"
+    ],
+    [
+     "get_settings"
+    ],
+    [
+     "get_user_settings",
+     "owner-1",
+     [],
+     []
+    ]
+   ],
+   "error": {
+    "code": null,
+    "message": "Workflow conversation not found or access denied.",
+    "type": "ValueError"
+   },
+   "label": "chat_conversation",
+   "writes": {}
+  }
+ ],
+ "personal_v3_structured": [
+  {
+   "calls": [
+    [
+     "get_settings"
+    ],
+    [
+     "get_settings"
+    ],
+    [
+     "get_user_settings",
+     "owner-1",
+     [],
+     []
+    ]
+   ],
+   "error": null,
+   "label": "create",
+   "result_keys": [
+    "id",
+    "user_id",
+    "name",
+    "description",
+    "task_prompt",
+    "tasks",
+    "error_handling",
+    "runner_type",
+    "chat_capabilities_enabled",
+    "trigger_type",
+    "is_enabled",
+    "url_access_enabled",
+    "url_access_authorized",
+    "url_access_authorized_by",
+    "url_access_authorized_at",
+    "alert_priority",
+    "alert_mode",
+    "alert_rules",
+    "alert_evaluation",
+    "schedule",
+    "document_action",
+    "analyze",
+    "file_sync",
+    "selected_agent",
+    "model_endpoint_id",
+    "model_id",
+    "model_provider",
+    "model_binding_summary",
+    "conversation_id",
+    "created_at",
+    "created_by",
+    "modified_at",
+    "modified_by",
+    "updated_at",
+    "status",
+    "last_run_started_at",
+    "last_run_at",
+    "last_run_status",
+    "last_run_error",
+    "last_run_response_preview",
+    "last_run_trigger_source",
+    "run_count",
+    "active_run_id",
+    "cancellation_requested_at",
+    "cancellation_requested_by",
+    "next_run_at",
+    "definition_version",
+    "reference_inputs",
+    "durable_execution",
+    "flow",
+    "limits",
+    "m365_run_as_user_id",
+    "m365_revision",
+    "m365_binding_approval_id",
+    "definition_revision"
+   ],
+   "result_sha256": "f379c9af0f33fb662d0fdc8b931e57903a63daac5ebf90b67b7960f0938d6a90",
+   "stored_sha256": "94735602cf0f3a6ea8799a45988dfe989cfdf13793b3f1a5b17bd8d005afb680",
+   "summary": {
+    "alert_mode": "off",
+    "conversation_id": "",
+    "definition_version": 3,
+    "id": "00000000-0000-0000-0000-000000000001",
+    "is_enabled": true,
+    "m365_binding_approval_id": null,
+    "m365_run_as_user_id": "",
+    "modified_by": "owner-1",
+    "name": "Structured",
+    "next_run_at": null,
+    "schedule": {},
+    "trigger_type": "manual"
+   },
+   "writes": {
+    "personal_workflows": [
+     [
+      "create_item",
+      "00000000-0000-0000-0000-000000000001"
+     ]
+    ]
+   }
+  },
+  {
+   "calls": [
+    [
+     "get_settings"
+    ],
+    [
+     "get_settings"
+    ],
+    [
+     "get_user_settings",
+     "owner-1",
+     [],
+     []
+    ]
+   ],
+   "error": null,
+   "label": "resave",
+   "result_keys": [
+    "id",
+    "user_id",
+    "name",
+    "description",
+    "task_prompt",
+    "tasks",
+    "error_handling",
+    "runner_type",
+    "chat_capabilities_enabled",
+    "trigger_type",
+    "is_enabled",
+    "url_access_enabled",
+    "url_access_authorized",
+    "url_access_authorized_by",
+    "url_access_authorized_at",
+    "alert_priority",
+    "alert_mode",
+    "alert_rules",
+    "alert_evaluation",
+    "schedule",
+    "document_action",
+    "analyze",
+    "file_sync",
+    "selected_agent",
+    "model_endpoint_id",
+    "model_id",
+    "model_provider",
+    "model_binding_summary",
+    "conversation_id",
+    "created_at",
+    "created_by",
+    "modified_at",
+    "modified_by",
+    "updated_at",
+    "status",
+    "last_run_started_at",
+    "last_run_at",
+    "last_run_status",
+    "last_run_error",
+    "last_run_response_preview",
+    "last_run_trigger_source",
+    "run_count",
+    "active_run_id",
+    "cancellation_requested_at",
+    "cancellation_requested_by",
+    "next_run_at",
+    "definition_version",
+    "reference_inputs",
+    "durable_execution",
+    "flow",
+    "limits",
+    "m365_run_as_user_id",
+    "m365_revision",
+    "m365_binding_approval_id",
+    "definition_revision"
+   ],
+   "result_sha256": "36ac7bab0d297a9ce7ef5f77f445430e7721d0480a8957396b901753c0d3a078",
+   "stored_sha256": "72b547dd8b70d49c2c09996b8b893ec0b9e0d8d5b55fc8da9c3efd823e1bb65c",
+   "summary": {
+    "alert_mode": "off",
+    "conversation_id": "",
+    "definition_version": 3,
+    "id": "00000000-0000-0000-0000-000000000001",
+    "is_enabled": true,
+    "m365_binding_approval_id": null,
+    "m365_run_as_user_id": "",
+    "modified_by": "owner-1",
+    "name": "Structured",
+    "next_run_at": null,
+    "schedule": {},
+    "trigger_type": "manual"
+   },
+   "writes": {
+    "personal_workflows": [
+     [
+      "replace_item",
+      "00000000-0000-0000-0000-000000000001"
+     ]
+    ]
+   }
+  }
+ ]
+}
