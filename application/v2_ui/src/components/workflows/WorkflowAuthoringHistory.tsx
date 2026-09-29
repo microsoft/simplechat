@@ -3,13 +3,20 @@
 import { useEffect, useState, useSyncExternalStore, type ReactNode, type SyntheticEvent } from 'react';
 import { unstable_batchedUpdates } from 'react-dom';
 import {
-    WorkflowAuthoringHistory, type WorkflowHistoryAction, type WorkflowHistoryDirection, type WorkflowHistoryRecordResult,
+    WorkflowAuthoringHistory, historyActionOrigin, isWorkflowHistoryTurnId, type WorkflowHistoryAction,
+    type WorkflowHistoryDirection, type WorkflowHistoryEntry, type WorkflowHistoryOrigin, type WorkflowHistoryRecordResult,
 } from '../../lib/workflowAuthoringHistory';
 import {
     evaluateWorkflowRestore, workflowAuthoringEligibility, workflowCandidateEligibility, type WorkflowEditImpact,
 } from '../../lib/workflowAuthoring';
+import { WORKFLOW_ALERT_FIELDS } from '../../lib/workflowAlerts';
+import {
+    EMPTY_WORKFLOW_ATTRIBUTION, buildWorkflowKeyRevert, diffWorkflowChanges, nextWorkflowAttribution, parseWorkflowChangeKey,
+    planWorkflowTurnRevert, workflowChangedKeys, workflowChangeKeyLabel, workflowChangeStamp, workflowIdentityChange, workflowRestoreStamper,
+    type WorkflowAttribution, type WorkflowChangeStamp,
+} from '../../lib/workflowChangeTracking';
 import { flowTaskNodeId } from '../../lib/workflowFlow';
-import { sameEditorValue } from '../../lib/workspaceAuthoring';
+import { isRecord, sameEditorValue } from '../../lib/workspaceAuthoring';
 import type { WorkflowDefinition, WorkflowEditorOptions } from '../../lib/workflowEditor';
 import {
     WorkflowFieldDraftStore, sameWorkflowFieldDrafts, type WorkflowFieldDraftSnapshot,
@@ -18,7 +25,36 @@ import {
 interface Checkpoint {
     readonly draft: WorkflowDefinition;
     readonly fields: WorkflowFieldDraftSnapshot;
+    /** The last author of each key that differs from the opened baseline; derived, never compared. */
+    readonly attribution: WorkflowAttribution;
 }
+
+type Stamper = (key: string) => WorkflowChangeStamp;
+
+/** One retained history entry, as the Changes tab lists it. */
+export interface WorkflowSessionStep {
+    readonly id: number;
+    readonly label: string;
+    readonly origin: WorkflowHistoryOrigin;
+    readonly turnId?: string;
+    /** False for undone steps that Redo can bring back. */
+    readonly applied: boolean;
+}
+
+export type WorkflowChangeResult =
+    | { readonly status: 'applied' | 'confirmation_required' | 'noop' }
+    | { readonly status: 'rejected'; readonly message: string };
+
+export type WorkflowTurnRevertResult =
+    | { readonly status: 'unavailable' | 'noop' }
+    | { readonly status: 'rejected'; readonly message: string }
+    | {
+        readonly status: 'applied' | 'confirmation_required';
+        readonly reverted: number;
+        readonly skipped: number;
+        readonly revertedKeys: readonly { key: string; label: string }[];
+        readonly skippedKeys: readonly { key: string; label: string; reason?: string }[];
+    };
 
 interface ReplayProposal {
     kind: 'replay';
@@ -41,14 +77,37 @@ interface OverflowProposal {
     impact: WorkflowEditImpact[];
 }
 
+/** A revert, restore, or assist candidate that removes blocks or changes bindings, awaiting confirmation. */
+interface ChangeProposal {
+    kind: 'change';
+    source: number;
+    options: WorkflowEditorOptions;
+    candidate: WorkflowDefinition;
+    fields?: WorkflowFieldDraftSnapshot;
+    stamp: Stamper;
+    action: WorkflowHistoryAction;
+    title: string;
+    confirmLabel: string;
+    announcement: string;
+    label: string;
+    message: string;
+    impact: WorkflowEditImpact[];
+}
+
 interface SessionView {
     draft: WorkflowDefinition;
     revision: number;
     undoLabel: string;
     redoLabel: string;
-    pending: ReplayProposal | OverflowProposal | null;
+    pending: ReplayProposal | OverflowProposal | ChangeProposal | null;
     notice: string;
     announcement: string;
+    /** The saved definition the editor opened (or last saved), or a new workflow's initial draft. */
+    baseline: WorkflowDefinition;
+    attribution: WorkflowAttribution;
+    steps: readonly WorkflowSessionStep[];
+    /** Earlier steps were dropped by eviction, a cleared history, or a format change. */
+    trimmed: boolean;
 }
 
 interface SessionContext {
@@ -69,21 +128,103 @@ interface Transaction {
     event?: Event;
     selectionId?: string | null;
     rejected: boolean;
+    /** Set by reverts and restores: the stamps and field drafts the applied version brings back. */
+    stamp?: Stamper;
+    fields?: WorkflowFieldDraftSnapshot;
+    announcement?: string;
 }
 
-const authoredFields = [
+/** Top-level fields the editor authors. Everything else is identity, scope, or runtime state it keeps. */
+export const WORKFLOW_AUTHORED_FIELDS: readonly string[] = Object.freeze([
     'name', 'description', 'runner_type', 'selected_agent', 'model_endpoint_id', 'model_id',
     'chat_capabilities_enabled', 'trigger_type', 'schedule', 'is_enabled', 'error_handling', 'm365_run_as_user_id',
-    'tasks', 'reference_inputs', 'durable_execution', 'flow', 'limits',
-] as const;
+    'tasks', 'reference_inputs', 'durable_execution', 'flow', 'limits', 'file_sync', ...WORKFLOW_ALERT_FIELDS,
+]);
+
+/** Fields an AI assist candidate may never change (roadmap §5 "Never allowed"), even where the user can. */
+export const ASSIST_FORBIDDEN_FIELDS: readonly string[] = Object.freeze([
+    'is_enabled', 'm365_run_as_user_id', 'definition_version', 'id', 'user_id', 'group_id', 'url_access_enabled',
+]);
+
+/** Task fields tied to an approval, which an assist candidate may not add, change, or remove. */
+export const ASSIST_FORBIDDEN_TASK_FIELDS: readonly string[] = Object.freeze(['approval']);
+
+const AUTHORED_FIELD_SET = new Set(WORKFLOW_AUTHORED_FIELDS);
+const ASSIST_FORBIDDEN_FIELD_SET = new Set(ASSIST_FORBIDDEN_FIELDS);
+const ABSENT = Symbol('absent');
+const MAX_ACTION_LABEL = 100;
+
+function ownField(record: unknown, field: string): unknown {
+    return isRecord(record) && Object.hasOwn(record, field) ? record[field] : ABSENT;
+}
+
+// An absent or null approval is no approval.
+function taskFieldValue(task: unknown, field: string): unknown {
+    const value = ownField(task, field);
+    return value === ABSENT || value === null || value === undefined ? null : value;
+}
+
+function tasksById(workflow: WorkflowDefinition): Map<string, unknown> {
+    const result = new Map<string, unknown>();
+    for (const task of Array.isArray(workflow.tasks) ? workflow.tasks : []) {
+        if (isRecord(task) && typeof task.id === 'string' && !result.has(task.id)) result.set(task.id, task);
+    }
+    return result;
+}
+
+/**
+ * Why an AI assist candidate may not be applied to `current`, or '' when it may. The candidate
+ * may change only authored fields, never a forbidden field or a task approval, and every ID it
+ * keeps must keep its meaning.
+ */
+export function workflowAssistViolation(current: WorkflowDefinition, candidate: WorkflowDefinition): string {
+    if (!isRecord(candidate) || Array.isArray(candidate)) return 'The assist candidate is not a workflow.';
+    for (const field of new Set([...Object.keys(current), ...Object.keys(candidate)])) {
+        if (sameEditorValue(ownField(current, field), ownField(candidate, field))) continue;
+        if (ASSIST_FORBIDDEN_FIELD_SET.has(field)) return `AI assist cannot change ${field}. Change it yourself if it needs to change.`;
+        if (!AUTHORED_FIELD_SET.has(field)) return `AI assist cannot change ${field}, which the workflow editor does not author.`;
+    }
+    const before = tasksById(current);
+    const after = tasksById(candidate);
+    for (const id of new Set([...before.keys(), ...after.keys()])) {
+        for (const field of ASSIST_FORBIDDEN_TASK_FIELDS) {
+            if (!sameEditorValue(taskFieldValue(before.get(id), field), taskFieldValue(after.get(id), field))) {
+                return 'AI assist cannot add, change, or remove a task approval. Change approvals yourself.';
+            }
+        }
+    }
+    return workflowIdentityChange(current, candidate);
+}
+
+function actionLabel(label: string, fallback: string): string {
+    const text = label.replace(/\s+/g, ' ').trim();
+    return text ? Array.from(text).slice(0, MAX_ACTION_LABEL).join('') : fallback;
+}
+
+function stampFor(action: WorkflowHistoryAction): Stamper {
+    const stamp = workflowChangeStamp(historyActionOrigin(action), action.turnId);
+    return () => stamp;
+}
 
 function sameCheckpoint(left: Checkpoint, right: Checkpoint): boolean {
     return sameEditorValue(left.draft, right.draft) && sameWorkflowFieldDrafts(left.fields, right.fields);
 }
 
+/** Reverted fields show their restored value, not text typed before the revert. Undefined when nothing is dropped. */
+function withoutFieldDrafts(snapshot: WorkflowFieldDraftSnapshot, keys: readonly string[]): WorkflowFieldDraftSnapshot | undefined {
+    const targets = keys.map(parseWorkflowChangeKey).flatMap((info) => (info.scope === 'task' || info.scope === 'node') && 'id' in info
+        ? [{ scope: info.scope, id: info.id, field: info.field }] : []);
+    const fields = new Map(snapshot.fields);
+    for (const [id, draft] of snapshot.fields) {
+        if (targets.some((target) => draft.owner[0] === target.scope && draft.owner[1] === target.id &&
+            (!target.field || draft.path[0] === target.field))) fields.delete(id);
+    }
+    return fields.size === snapshot.fields.size ? undefined : { fields, repeatRows: snapshot.repeatRows };
+}
+
 function restoreAuthoredFields(current: WorkflowDefinition, saved: WorkflowDefinition): WorkflowDefinition {
     const result = { ...current };
-    for (const key of authoredFields) {
+    for (const key of WORKFLOW_AUTHORED_FIELDS) {
         if (Object.hasOwn(saved, key)) Object.defineProperty(result, key, {
             value: saved[key], configurable: true, enumerable: true, writable: true,
         });
@@ -104,11 +245,18 @@ export class WorkflowAuthoringSession {
     private composition = false;
     private mounts = 0;
     private eventTimer: ReturnType<typeof setTimeout> | null = null;
+    private opened: Checkpoint;
+    private stepSource: { entries: readonly WorkflowHistoryEntry<Checkpoint>[]; applied: number } | null = null;
+    private rolledBack = false;
 
     constructor(draft: WorkflowDefinition) {
         this.fields.reconcile(draft);
-        this.history = new WorkflowAuthoringHistory({ draft, fields: this.fields.capture() }, sameCheckpoint);
-        this.view = { draft, revision: 0, undoLabel: '', redoLabel: '', pending: null, notice: '', announcement: '' };
+        this.opened = { draft, fields: this.fields.capture(), attribution: EMPTY_WORKFLOW_ATTRIBUTION };
+        this.history = new WorkflowAuthoringHistory(this.opened, sameCheckpoint);
+        this.view = {
+            draft, revision: 0, undoLabel: '', redoLabel: '', pending: null, notice: '', announcement: '',
+            baseline: draft, attribution: EMPTY_WORKFLOW_ATTRIBUTION, steps: [], trimmed: false,
+        };
         this.fields.setMutationHandler((owner, path, change) => {
             const targetId = owner[0] === 'task' ? flowTaskNodeId(this.draft, owner[1]) : owner[1];
             this.edit({ label: `Edit ${path.join(' ')}`, group: JSON.stringify([owner, path]), targetId }, () => {
@@ -155,18 +303,33 @@ export class WorkflowAuthoringSession {
     }
 
     private publish(update: Partial<SessionView> = {}) {
+        // Every format keeps history for change tracking; only structured drafts offer Undo and Redo.
+        const structured = (update.draft ?? this.view.draft).definition_version === 3;
         this.view = {
             ...this.view, ...update, revision: this.view.revision + 1,
-            undoLabel: this.history?.peek('undo')?.action.label ?? '',
-            redoLabel: this.history?.peek('redo')?.action.label ?? '',
+            undoLabel: structured ? this.history?.peek('undo')?.action.label ?? '' : '',
+            redoLabel: structured ? this.history?.peek('redo')?.action.label ?? '' : '',
+            steps: this.steps(),
         };
         this.listeners.forEach((listener) => listener());
+    }
+
+    private steps(): readonly WorkflowSessionStep[] {
+        const entries = this.history?.retainedEntries ?? [];
+        const applied = this.history?.appliedCount ?? 0;
+        if (this.stepSource?.entries === entries && this.stepSource.applied === applied) return this.view.steps;
+        this.stepSource = { entries, applied };
+        return entries.map((entry, position) => Object.freeze({
+            id: entry.id, label: entry.action.label, origin: historyActionOrigin(entry.action),
+            ...(entry.action.turnId === undefined ? {} : { turnId: entry.action.turnId }),
+            applied: position < applied,
+        }));
     }
 
     private start(action: WorkflowHistoryAction, event?: Event) {
         this.fields.beginBatch();
         this.transaction = {
-            before: { draft: this.view.draft, fields: this.fields.capture() },
+            before: { draft: this.view.draft, fields: this.fields.capture(), attribution: this.view.attribution },
             draft: this.view.draft, action, event, selectionId: this.context?.selectionId, rejected: false,
         };
     }
@@ -219,6 +382,7 @@ export class WorkflowAuthoringSession {
     }
 
     private rollback(transaction: Transaction) {
+        this.rolledBack = true;
         this.fields.restore(transaction.before.fields);
         this.context?.onRollback?.(transaction.draft, transaction.before.draft, transaction.selectionId ?? undefined);
     }
@@ -251,8 +415,9 @@ export class WorkflowAuthoringSession {
                 }
                 let candidate: Checkpoint;
                 try {
+                    if (transaction.fields) this.fields.restore(transaction.fields);
                     this.fields.reconcile(transaction.draft);
-                    candidate = { draft: transaction.draft, fields: this.fields.capture() };
+                    candidate = { draft: transaction.draft, fields: this.fields.capture(), attribution: transaction.before.attribution };
                 } catch {
                     this.rollback(transaction);
                     this.context?.onError('The workflow edit could not be prepared. The previous draft and fields were retained.');
@@ -272,10 +437,20 @@ export class WorkflowAuthoringSession {
                         return;
                     }
                 }
-                const enabled = transaction.before.draft.definition_version === 3 && candidate.draft.definition_version === 3;
+                // History is kept for every format so changes stay attributed; a format change starts it again.
+                const sameVersion = transaction.before.draft.definition_version === candidate.draft.definition_version;
+                const structured = candidate.draft.definition_version === 3;
+                const redoDropped = sameVersion && Boolean(this.history?.peek('redo'));
                 let result: WorkflowHistoryRecordResult;
                 try {
-                    result = enabled && this.history
+                    // A coalescing edit extends its group's entry, so attribute the whole group from its start.
+                    const base = sameVersion ? this.history?.coalescingBase(transaction.action) ?? transaction.before : transaction.before;
+                    const stamp = transaction.stamp ?? stampFor(transaction.action);
+                    candidate = {
+                        ...candidate,
+                        attribution: nextWorkflowAttribution(base.attribution, base.draft, candidate.draft, this.view.baseline, stamp),
+                    };
+                    result = sameVersion && this.history
                         ? this.history.record(transaction.before, candidate, transaction.action)
                         : { status: 'applied', evicted: 0 };
                 } catch {
@@ -283,7 +458,7 @@ export class WorkflowAuthoringSession {
                     this.context?.onError('The workflow edit could not be recorded. The previous draft, fields, and history were retained.');
                     return;
                 }
-                if (result.status === 'overflow') {
+                if (result.status === 'overflow' && structured) {
                     this.rollback(transaction);
                     this.publish({ pending: {
                         kind: 'overflow', source: this.semanticRevision, candidate, action: transaction.action,
@@ -296,12 +471,20 @@ export class WorkflowAuthoringSession {
                     this.fields.restore(transaction.before.fields);
                     return;
                 }
-                if (!enabled) this.history?.clear();
+                // Classic drafts have no Undo/Redo, so an edit too large for history just clears it.
+                const cleared = !sameVersion || result.status === 'overflow';
+                if (cleared) this.history?.clear();
                 this.semanticRevision++;
                 this.publish({
                     draft: candidate.draft,
-                    ...(result.evicted ? { notice: 'Older workflow history steps were removed to keep history within 100 actions and 32 MiB. Your current draft is unchanged.' } : {}),
+                    attribution: candidate.attribution,
+                    ...(cleared || result.evicted ? { trimmed: true } : {}),
+                    ...(result.evicted && structured ? { notice: 'Older workflow history steps were removed to keep history within 100 actions and 32 MiB. Your current draft is unchanged.' } : {}),
+                    ...(transaction.announcement ? {
+                        announcement: `${transaction.announcement}${redoDropped && structured ? ' Redo steps after this point were cleared.' : ''}`,
+                    } : {}),
                 });
+                if (transaction.announcement) this.context?.onRestore(transaction.before.draft, candidate.draft, transaction.action.targetId);
                 applied = true;
             } finally {
                 this.fields.endBatch();
@@ -322,6 +505,8 @@ export class WorkflowAuthoringSession {
 
     request(direction: WorkflowHistoryDirection) {
         this.closeGroup();
+        // Classic drafts keep history for change tracking only.
+        if (this.view.draft.definition_version !== 3) return;
         const denial = this.denial(true);
         if (denial) {
             this.context?.onError(denial);
@@ -365,7 +550,7 @@ export class WorkflowAuthoringSession {
                 this.fields.restore(checkpoint.fields);
                 this.semanticRevision++;
                 this.publish({
-                    draft: candidate, pending: null,
+                    draft: candidate, attribution: checkpoint.attribution, pending: null,
                     announcement: `${direction === 'undo' ? 'Undid' : 'Redid'}: ${action.label}. The workflow has not been saved.`,
                 });
                 this.context?.onRestore(before, candidate, action.targetId);
@@ -404,6 +589,8 @@ export class WorkflowAuthoringSession {
                     this.semanticRevision++;
                     this.publish({
                         draft: pending.candidate.draft,
+                        attribution: pending.candidate.attribution,
+                        trimmed: true,
                         notice: 'The complete edit was applied. Workflow Undo/Redo history was cleared because this edit exceeded its memory budget.',
                     });
                     this.context?.onRestore(before, pending.candidate.draft, pending.action.targetId);
@@ -411,6 +598,24 @@ export class WorkflowAuthoringSession {
                     this.fields.endBatch();
                 }
             });
+            return;
+        }
+        if (pending.kind === 'change') {
+            const changedOptions = !sameEditorValue(pending.options, this.context.options);
+            const result = this.view.draft.definition_version === 3
+                ? evaluateWorkflowRestore(this.view.draft, pending.candidate, this.context.options, !changedOptions) : null;
+            if (result?.status === 'rejected') {
+                this.context.onError(result.message);
+                return;
+            }
+            if (changedOptions && result?.status === 'confirmation_required') {
+                this.publish({ pending: {
+                    ...pending, options: this.context.options, impact: result.impact,
+                    message: 'Editor capabilities changed. Review the current impact and confirm again; nothing was changed.',
+                } });
+                return;
+            }
+            this.commit(pending.candidate, pending.action, pending.stamp, pending.announcement, pending.fields);
             return;
         }
         const entry = this.history?.peek(pending.direction);
@@ -440,6 +645,190 @@ export class WorkflowAuthoringSession {
         this.publish({ pending: null });
     }
 
+    /** Checks shared by every revert, restore, and assist: the editor must be writable and idle. */
+    private refusal(): string {
+        this.closeGroup();
+        const denial = this.denial(true);
+        if (denial) this.context?.onError(denial);
+        return denial;
+    }
+
+    /**
+     * Apply a revert, restore, or assist candidate as one new, undoable history entry. Structured
+     * drafts go through the same impact confirmation as Undo and Redo first.
+     */
+    private propose(
+        candidate: WorkflowDefinition,
+        action: WorkflowHistoryAction,
+        stamp: Stamper,
+        copy: { title: string; confirmLabel: string; announcement: string },
+        fields?: WorkflowFieldDraftSnapshot,
+    ): WorkflowChangeResult {
+        const context = this.context;
+        if (!context) return { status: 'rejected', message: 'The workflow editor is not ready.' };
+        if (candidate === this.view.draft && !fields) return { status: 'noop' };
+        if (this.view.draft.definition_version === 3) {
+            const result = evaluateWorkflowRestore(this.view.draft, candidate, context.options);
+            if (result.status === 'rejected') {
+                context.onError(result.message);
+                return { status: 'rejected', message: result.message };
+            }
+            context.onError('');
+            if (result.status === 'confirmation_required') {
+                this.publish({ pending: {
+                    kind: 'change', source: this.semanticRevision, options: context.options, candidate, fields, stamp, action,
+                    ...copy, label: action.label, impact: result.impact,
+                    message: result.message.replace(/^This history step/, 'This change'),
+                } });
+                return { status: 'confirmation_required' };
+            }
+        }
+        return this.commit(candidate, action, stamp, copy.announcement, fields);
+    }
+
+    private commit(
+        candidate: WorkflowDefinition,
+        action: WorkflowHistoryAction,
+        stamp: Stamper,
+        announcement: string,
+        fields?: WorkflowFieldDraftSnapshot,
+    ): WorkflowChangeResult {
+        const pending = this.view.pending;
+        this.rolledBack = false;
+        this.start(action);
+        const transaction = this.transaction;
+        if (!transaction) return { status: 'rejected', message: 'The workflow editor is not ready.' };
+        transaction.draft = candidate;
+        transaction.stamp = stamp;
+        transaction.announcement = announcement;
+        if (fields) transaction.fields = fields;
+        if (this.finish()) return { status: 'applied' };
+        // An edit too large for history is proposed like any other edit.
+        if (this.view.pending && this.view.pending !== pending) return { status: 'confirmation_required' };
+        return this.rolledBack ? { status: 'rejected', message: 'The change could not be applied. The draft is unchanged.' } : { status: 'noop' };
+    }
+
+    private formatRefusal(): string {
+        if (this.view.baseline.definition_version === this.view.draft.definition_version) return '';
+        const message = 'The workflow format changed in this draft, so its changes can only be discarded together. Cancel to discard them.';
+        this.context?.onError(message);
+        return message;
+    }
+
+    /** Take change keys back to their opened values as one new history entry. Removed items return where they were. */
+    revertChange(keys: readonly string[]): WorkflowChangeResult {
+        const denial = this.refusal() || this.formatRefusal();
+        if (denial) return { status: 'rejected', message: denial };
+        const { baseline, draft } = this.view;
+        const { candidate, failed } = buildWorkflowKeyRevert(draft, baseline, keys);
+        if (candidate === draft) {
+            const reason = failed.values().next().value;
+            if (!reason) return { status: 'noop' };
+            this.context?.onError(`That change could not be reverted. ${reason}`);
+            return { status: 'rejected', message: reason };
+        }
+        const names = keys.map((key) => workflowChangeKeyLabel(key, draft, baseline));
+        const changes = diffWorkflowChanges(baseline, draft);
+        const restoring = keys.some((key) => !failed.has(key) && changes.byKey.get(key)?.kind === 'removed');
+        const label = actionLabel(`${restoring ? 'Restore' : 'Revert'} ${names.join(', ')}`, 'Revert change');
+        const partial = failed.size ? ` ${failed.size === 1 ? 'One part' : `${failed.size} parts`} could not be reverted.` : '';
+        return this.propose(candidate, { label, origin: 'restore' }, workflowRestoreStamper(this.opened.attribution), {
+            title: restoring ? 'Restore this item?' : 'Revert this change?',
+            confirmLabel: restoring ? 'Restore' : 'Revert',
+            announcement: `${label}.${partial} The workflow has not been saved.`,
+        }, withoutFieldDrafts(this.fields.capture(), keys.filter((key) => !failed.has(key))));
+    }
+
+    /**
+     * Apply an earlier version as one new history entry, so nothing is deleted. `step` is a
+     * retained entry ID (its state after that step) or 'opened' for the opened baseline.
+     */
+    restoreTo(step: number | 'opened'): WorkflowChangeResult {
+        const denial = this.refusal();
+        if (denial) return { status: 'rejected', message: denial };
+        const entries = this.history?.retainedEntries ?? [];
+        const position = step === 'opened' ? -1 : entries.findIndex((item) => item.id === step);
+        const entry = position < 0 ? null : entries[position];
+        const unavailable = step !== 'opened' && !entry ? 'That history step is no longer retained.'
+            : position >= (this.history?.appliedCount ?? 0) ? 'That step was undone. Use Redo to bring it back.' : '';
+        if (unavailable) {
+            this.context?.onError(unavailable);
+            return { status: 'rejected', message: unavailable };
+        }
+        const checkpoint = entry?.after ?? this.opened;
+        if (checkpoint.draft.definition_version !== this.view.draft.definition_version) {
+            const message = this.formatRefusal() || 'That version uses a different workflow format.';
+            return { status: 'rejected', message };
+        }
+        const candidate = restoreAuthoredFields(this.view.draft, checkpoint.draft);
+        const name = entry ? `after “${entry.action.label}”` : this.view.baseline.id ? 'the opened version' : 'the start';
+        const label = actionLabel(`Restore to ${name}`, 'Restore earlier version');
+        return this.propose(sameEditorValue(candidate, this.view.draft) ? this.view.draft : candidate,
+            { label, origin: 'restore' }, workflowRestoreStamper(checkpoint.attribution), {
+                title: 'Restore this version?', confirmLabel: 'Restore version',
+                announcement: `${label}. Your later steps stay in history. The workflow has not been saved.`,
+            }, sameWorkflowFieldDrafts(checkpoint.fields, this.fields.capture()) ? undefined : checkpoint.fields);
+    }
+
+    /**
+     * Revert what one assist turn changed, as one new history entry. Keys changed again after the
+     * turn are skipped, so reverting never discards later work.
+     */
+    revertTurn(turnId: string): WorkflowTurnRevertResult {
+        this.closeGroup();
+        const entries = this.history?.retainedEntries ?? [];
+        const applied = entries.slice(0, this.history?.appliedCount ?? 0);
+        const turn = (entry: WorkflowHistoryEntry<Checkpoint>) => historyActionOrigin(entry.action) === 'ai' && entry.action.turnId === turnId;
+        if (!entries.some(turn)) return { status: 'unavailable' };
+        const turnEntries = applied.filter(turn);
+        if (!turnEntries.length) return { status: 'noop' };
+        const denial = this.refusal();
+        if (denial) return { status: 'rejected', message: denial };
+        const current = this.view.draft;
+        const plan = planWorkflowTurnRevert(current, turnEntries.map((entry) => ({ before: entry.before.draft, after: entry.after.draft })));
+        const source = (key: string) => turnEntries[plan.entryFor(key)].before;
+        const { candidate, failed } = buildWorkflowKeyRevert(current, (key) => source(key).draft, plan.keys);
+        const describe = (key: string) => ({ key, label: workflowChangeKeyLabel(key, current, source(key).draft) });
+        const revertedKeys = plan.keys.filter((key) => !failed.has(key)).map(describe);
+        const skippedKeys = [
+            ...plan.skipped.map((key) => ({ ...describe(key), reason: 'Changed after this turn.' })),
+            ...plan.keys.filter((key) => failed.has(key)).map((key) => ({ ...describe(key), reason: failed.get(key) })),
+        ];
+        const counts = { reverted: revertedKeys.length, skipped: skippedKeys.length, revertedKeys, skippedKeys };
+        if (!revertedKeys.length || candidate === current) return { status: 'noop' };
+        const skipped = skippedKeys.length ? ` ${skippedKeys.length} skipped because they changed later or cannot be reverted alone.` : '';
+        const restoreStamp = workflowRestoreStamper(EMPTY_WORKFLOW_ATTRIBUTION);
+        const result = this.propose(candidate, { label: 'Revert AI assist turn', origin: 'restore', turnId },
+            (key) => source(key).attribution.get(key) ?? restoreStamp(key), {
+                title: 'Revert this AI assist turn?', confirmLabel: 'Revert turn',
+                announcement: `Reverted ${revertedKeys.length} AI assist ${revertedKeys.length === 1 ? 'change' : 'changes'}.${skipped} The workflow has not been saved.`,
+            }, withoutFieldDrafts(this.fields.capture(), revertedKeys.map((item) => item.key)));
+        if (result.status === 'rejected') return result;
+        if (result.status === 'noop') return { status: 'noop' };
+        return { status: result.status, ...counts };
+    }
+
+    /**
+     * Apply an AI assist candidate as one history entry attributed to the turn. The candidate may
+     * change only authored fields and never a forbidden one; it then takes the normal edit path:
+     * eligibility, impact confirmation, and the history budget.
+     */
+    applyAssist(candidate: WorkflowDefinition, { turnId, label }: { turnId: string; label: string }): WorkflowChangeResult {
+        if (!isWorkflowHistoryTurnId(turnId)) return { status: 'rejected', message: 'The AI assist turn ID is invalid.' };
+        const denial = this.refusal();
+        if (denial) return { status: 'rejected', message: denial };
+        const violation = workflowAssistViolation(this.view.draft, candidate);
+        if (violation) {
+            this.context?.onError(violation);
+            return { status: 'rejected', message: violation };
+        }
+        const action = { label: actionLabel(typeof label === 'string' ? label : '', 'AI assist'), origin: 'ai' as const, turnId };
+        return this.propose(candidate, action, stampFor(action), {
+            title: 'Apply AI assist changes?', confirmLabel: 'Apply changes',
+            announcement: `Applied AI assist changes: ${action.label}. Review them before saving.`,
+        }, withoutFieldDrafts(this.fields.capture(), [...workflowChangedKeys(this.view.draft, candidate)]));
+    }
+
     saved(draft: WorkflowDefinition) {
         this.closeGroup();
         unstable_batchedUpdates(() => {
@@ -447,8 +836,13 @@ export class WorkflowAuthoringSession {
             try {
                 this.history?.clear();
                 this.fields.acceptSavedFields();
+                // The saved version is the new baseline: its changes are no longer unsaved.
+                this.opened = { draft, fields: this.fields.capture(), attribution: EMPTY_WORKFLOW_ATTRIBUTION };
                 this.semanticRevision++;
-                this.publish({ draft, pending: null, notice: '', announcement: '' });
+                this.publish({
+                    draft, baseline: draft, attribution: EMPTY_WORKFLOW_ATTRIBUTION, trimmed: false,
+                    pending: null, notice: '', announcement: '',
+                });
             } finally {
                 this.fields.endBatch();
             }

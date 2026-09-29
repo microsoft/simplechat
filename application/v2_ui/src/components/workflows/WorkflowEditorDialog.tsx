@@ -704,9 +704,11 @@ export function WorkflowEditorDialog({
                 </ul> : <p className="text-xs text-text-2">No outside references are affected. This changes only the unsaved draft; retained edits can be undone before saving or closing.</p>}
             </ConfirmDialog> : null}
             {!accessLost && history.pending ? <ConfirmDialog
-                title={history.pending.kind === 'overflow' ? 'Apply edit and clear history?' : `${history.pending.direction === 'undo' ? 'Undo' : 'Redo'} workflow edit?`}
+                title={history.pending.kind === 'overflow' ? 'Apply edit and clear history?' : history.pending.kind === 'change' ? history.pending.title
+                    : `${history.pending.direction === 'undo' ? 'Undo' : 'Redo'} workflow edit?`}
                 description={history.pending.message}
-                confirmLabel={history.pending.kind === 'overflow' ? 'Apply and clear history' : history.pending.direction === 'undo' ? 'Undo change' : 'Redo change'}
+                confirmLabel={history.pending.kind === 'overflow' ? 'Apply and clear history' : history.pending.kind === 'change' ? history.pending.confirmLabel
+                    : history.pending.direction === 'undo' ? 'Undo change' : 'Redo change'}
                 cancelLabel="Keep draft unchanged" onClose={() => history.session.cancel()} onConfirm={() => history.session.confirm()}>
                 <p className="mb-2 text-sm text-text-2">{history.pending.label}</p>
                 {history.pending.impact.length ? <ul className="space-y-2 text-xs text-text-2" aria-label="Affected history references">
