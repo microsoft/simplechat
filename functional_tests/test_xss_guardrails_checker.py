@@ -107,6 +107,7 @@ def remove_tree(path: Path) -> None:
         try:
             os.chmod(child, stat.S_IREAD | stat.S_IWRITE)
         except OSError:
+            # Best effort only: rmtree below ignores errors, so a file left read-only just stays behind.
             pass
     shutil.rmtree(path, ignore_errors=True)
 
