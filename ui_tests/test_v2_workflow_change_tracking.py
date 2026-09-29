@@ -8,13 +8,16 @@ Covers the highlight on each unsaved change (its author badge, Previously value 
 Removed · Restore rows on the List and Flow surfaces, and the side panel's Changes tab with
 Jump, Revert and Restore to here. Also checks that Undo and Redo keep the highlights in step,
 that saving your own edits stays one click, the Run as note, that read-only editors show
-nothing, group workflows, and the light, dark, keyboard and narrow layouts.
+nothing, group workflows, and the light, dark, keyboard and narrow layouts. Fields whose
+highlight frames several controls (the schedule, Run when, an output contract, final outputs)
+keep focus and every keystroke as the highlight appears and goes.
 
 Reuses the closed Flow authoring harness, the local production assets and the real compiler.
 No live app, model, workflow admission, publication or Azure browser is contacted. Run with
 PLAYWRIGHT_SERVICE_URL='' and PYTHONPATH including ui_tests/fixtures.
 """
 
+import copy
 import re
 import sys
 from pathlib import Path
@@ -42,6 +45,11 @@ LONG_INSTRUCTIONS = " ".join(
 )
 PREVIOUS_CLIP = 280
 RUN_AS_NOTE = "Saving requires re-approving Run as."
+EVERY_30_MINUTES = {"unit": "minutes", "value": 30}
+DAILY_LONDON = {
+    "kind": "calendar", "frequency": "daily", "days_of_week": [], "day_of_month": None,
+    "time_of_day": "09:00", "timezone": "Europe/London",
+}
 
 # Resolves alpha against the actual ancestor surfaces, as the admin visual hierarchy test does.
 CONTRAST = """
@@ -104,6 +112,12 @@ def open_classic(ui, **options):
     expect(editor).to_be_visible()
     expect(editor.get_by_label("Workflow name", exact=True)).to_have_value(ui.personal_workflows[WORKFLOW_ID]["name"])
     return editor
+
+
+def open_scheduled(ui, schedule):
+    """The saved classic workflow on the Interval trigger, so its schedule fields are enabled."""
+    ui.personal_workflows[WORKFLOW_ID].update(trigger_type="interval", schedule=copy.deepcopy(schedule))
+    return open_classic(ui)
 
 
 def changed(scope, key):
@@ -590,4 +604,136 @@ def test_new_workflow_points_out_nothing_until_it_is_saved(authoring_ui):
     expect(unsaved_heading(panel, 0)).to_be_visible()
     expect(panel.get_by_text("No unsaved changes.", exact=True)).to_have_count(0)
     expect(panel.locator("li[data-workflow-history-step='opened']")).to_contain_text("New workflow")
+    assert not ui.workflow_writes
+
+
+# Keys go through page.keyboard, which types into whatever has focus, as a person's keyboard does.
+# A field that remounts when its highlight appears or goes loses focus, and the keys after it land
+# nowhere.
+
+
+@pytest.mark.parametrize("kind", ["interval", "calendar"])
+def test_typing_through_a_schedule_highlight_keeps_focus_and_every_character(authoring_ui, kind):
+    ui, page = authoring_ui, authoring_ui.page
+    if kind == "interval":
+        editor = open_scheduled(ui, EVERY_30_MINUTES)
+        field, opened, first, rest = editor.get_by_label("Interval value", exact=True), "30", "4", "52"
+    else:
+        editor = open_scheduled(ui, DAILY_LONDON)
+        field, opened, first, rest = editor.get_by_label("Time zone", exact=True), "Europe/London", "A", "sia/Tokyo"
+    expect(field).to_have_value(opened)
+    expect(changed(editor, "schedule")).to_have_count(0)
+
+    field.focus()
+    page.keyboard.press("Control+A")
+    page.keyboard.type(first)
+    frame = changed(editor, "schedule")
+    expect(author(frame)).to_have_text("Edited")
+    expect(field).to_be_focused()
+    page.keyboard.type(rest)
+    expect(field).to_have_value(first + rest)
+    expect(field).to_be_focused()
+    expect(frame).to_have_count(1)
+    expect(changes_toggle(editor)).to_have_accessible_name("Changes (1 unsaved)")
+    assert not ui.workflow_writes
+
+
+def test_arrow_keys_on_repeats_keep_focus_as_the_highlight_appears_and_goes(authoring_ui):
+    ui, page = authoring_ui, authoring_ui.page
+    editor = open_scheduled(ui, EVERY_30_MINUTES)
+    repeats = editor.get_by_label("Repeats", exact=True)
+    expect(repeats).to_have_value("interval")
+
+    repeats.focus()
+    page.keyboard.press("ArrowDown")
+    expect(repeats).to_have_value("daily")
+    expect(author(changed(editor, "schedule"))).to_have_text("Edited")
+    expect(editor.get_by_label("Time zone", exact=True)).to_be_visible()
+    expect(repeats).to_be_focused()
+
+    page.keyboard.press("ArrowUp")
+    expect(repeats).to_have_value("interval")
+    expect(changed(editor, "schedule")).to_have_count(0)
+    expect(editor.get_by_label("Interval value", exact=True)).to_have_value("30")
+    expect(repeats).to_be_focused()
+    assert not ui.workflow_writes
+
+
+def test_run_when_toggled_with_space_keeps_focus_and_shows_its_condition(authoring_ui):
+    ui, page = authoring_ui, authoring_ui.page
+    editor = authoring.open_editor(ui)
+    finish = authoring.list_block(editor, "finish")
+    toggle = finish.get_by_role("checkbox", name=re.compile("^Run when"))
+    condition = finish.get_by_label("Run when for Finish left input", exact=True)
+    expect(toggle).not_to_be_checked()
+
+    toggle.focus()
+    page.keyboard.press("Space")
+    expect(toggle).to_be_checked()
+    expect(author(changed(finish, "task:finish:run_when"))).to_have_text("Edited")
+    expect(condition).to_be_visible()
+    expect(toggle).to_be_focused()
+
+    page.keyboard.press("Space")
+    expect(toggle).not_to_be_checked()
+    expect(changed(finish, "task:finish:run_when")).to_have_count(0)
+    expect(condition).to_have_count(0)
+    expect(toggle).to_be_focused()
+    assert not ui.workflow_writes
+
+
+def test_typing_a_value_back_clears_its_highlight_and_keeps_focus(authoring_ui):
+    ui, page = authoring_ui, authoring_ui.page
+    editor = open_scheduled(ui, DAILY_LONDON)
+    zone = editor.get_by_label("Time zone", exact=True)
+    zone.focus()
+    page.keyboard.press("End")
+    page.keyboard.type("x")
+    expect(zone).to_have_value("Europe/Londonx")
+    expect(author(changed(editor, "schedule"))).to_have_text("Edited")
+    expect(changes_toggle(editor)).to_have_accessible_name("Changes (1 unsaved)")
+
+    # Focus is placed again, so this checks only the highlight going away.
+    zone.focus()
+    page.keyboard.press("End")
+    page.keyboard.press("Backspace")
+    expect(zone).to_have_value("Europe/London")
+    expect(changed(editor, "schedule")).to_have_count(0)
+    expect(changes_toggle(editor)).to_have_accessible_name("Changes (0 unsaved)")
+    expect(zone).to_be_focused()
+    page.keyboard.type("x")
+    expect(zone).to_have_value("Europe/Londonx")
+    assert not ui.workflow_writes
+
+
+@pytest.mark.parametrize("field", ["output_contract", "final_outputs"])
+def test_other_highlights_around_several_controls_keep_focus(authoring_ui, field):
+    ui, page = authoring_ui, authoring_ui.page
+    if field == "output_contract":
+        editor = open_classic(ui)
+        item = task_item(editor, "task-b")
+        authoring.open_details(item)
+        control, key = item.get_by_label("Output contract for Summarize evidence", exact=True), "task:task-b:output_contract"
+        expect(control).to_have_value("")
+        control.focus()
+        page.keyboard.press("ArrowDown")
+        expect(control).to_have_value("any")
+    else:
+        editor = authoring.open_editor(ui)
+        control, key = editor.get_by_label("Final outputs input 1 name", exact=True), "region:root:outputs"
+        expect(control).to_have_value("report")
+        control.focus()
+        page.keyboard.press("End")
+        page.keyboard.type("_")
+    expect(author(changed(editor, key))).to_have_text("Edited")
+    expect(control).to_be_focused()
+
+    if field == "output_contract":
+        page.keyboard.press("ArrowUp")
+        expect(control).to_have_value("")
+        expect(changed(editor, key)).to_have_count(0)
+    else:
+        page.keyboard.type("final")
+        expect(control).to_have_value("report_final")
+    expect(control).to_be_focused()
     assert not ui.workflow_writes

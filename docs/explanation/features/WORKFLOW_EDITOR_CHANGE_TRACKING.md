@@ -293,7 +293,8 @@ task. The panel reads the diff one deferred render later, so a keystroke never w
   Previously, Revert, and Removed · Restore on List and Flow; the Changes tab's Jump, Revert and
   Restore to here; highlights following Undo and Redo; structured alert edits; one-click save;
   the Run as note; read-only editors; a group workflow; light and dark themes; a narrow viewport;
-  and a new workflow.
+  a new workflow; and keyboard focus staying in a schedule, Run when, output contract or final
+  outputs control, with every typed character kept, while its highlight appears or clears.
 
 ## Related
 

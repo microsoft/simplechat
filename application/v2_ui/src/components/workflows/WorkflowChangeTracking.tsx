@@ -207,8 +207,10 @@ function refocusAfterRevert(root: RefObject<HTMLElement | null>, fallback?: HTML
  * the author, the value the field had when the editor opened, and its own Revert. A field inside a
  * newly added task or block shows only its author; the whole item is reverted from its header.
  *
- * It is always one block element around its children, so a field never remounts (or loses focus)
- * when its highlight appears or goes.
+ * The highlight never changes the element tree around the field. The same block element holds the
+ * children in the same place whether it is highlighted or not; only its attributes change, and the
+ * controls are appended after the children. Otherwise children with several controls, such as the
+ * schedule, would remount and lose focus, mid-typing, as their highlight appears or goes.
  */
 export function WorkflowChangedField({ changeKey, className, children }: {
     changeKey: string;
@@ -223,43 +225,45 @@ export function WorkflowChangedField({ changeKey, className, children }: {
     const itemKey = workflowChangeItemKey(changeKey);
     const addedRoot = tracking && itemKey && !change ? tracking.added.get(itemKey) : undefined;
     const fieldChange = isFieldChange(change) ? change : undefined;
-    const shown = Boolean(tracking && (fieldChange || addedRoot));
     useEffect(() => {
         if (!fieldChange) setOpen(false);
     }, [fieldChange]);
     if (children === null || children === undefined || children === false) return null;
-    if (!tracking || !shown) return <div ref={rootRef} className={className}>{children}</div>;
 
-    const stamp = fieldChange ? workflowChangeAuthors(fieldChange, tracking.attribution)[0]
-        : addedFieldStamp(tracking, changeKey, itemKey ?? changeKey, addedRoot ?? changeKey);
+    const stamp = !tracking ? undefined
+        : fieldChange ? workflowChangeAuthors(fieldChange, tracking.attribution)[0]
+            : addedRoot ? addedFieldStamp(tracking, changeKey, itemKey ?? changeKey, addedRoot) : undefined;
     const badgeId = `${baseId}-badge`;
     const noteId = `${baseId}-note`;
     const previousId = `${baseId}-previous`;
     const revert = () => {
-        if (!fieldChange) return;
+        if (!tracking || !fieldChange) return;
         const result = tracking.session.revertChange([fieldChange.key]);
         if (result.status === 'applied') refocusAfterRevert(rootRef);
     };
     return (
-        <div ref={rootRef} role="group" aria-labelledby={badgeId} data-workflow-change-key={changeKey}
-            className={clsx(className, 'rounded-lg border p-2', FRAME_CLASS[stamp.author])}>
+        <div ref={rootRef} role={stamp ? 'group' : undefined} aria-labelledby={stamp ? badgeId : undefined}
+            data-workflow-change-key={stamp ? changeKey : undefined}
+            className={clsx(className, stamp && ['rounded-lg border p-2', FRAME_CLASS[stamp.author]]) || undefined}>
             {children}
-            <div className="mt-2" data-workflow-history-controls>
-                <div className="flex flex-wrap items-center gap-2">
-                    <WorkflowChangeBadge id={badgeId} author={stamp.author} />
-                    <span id={noteId} className="sr-only">
-                        {fieldChange ? `Changed by ${authorName(stamp.author)}.` : `Added by ${authorName(stamp.author)}.`}
-                    </span>
-                    {fieldChange?.revertable ? (
-                        <GlassButton type="button" size="sm" variant="subtle" className="h-7 gap-1 px-2 text-xs"
-                            aria-describedby={noteId} onClick={revert}>
-                            <RotateCcw size={12} aria-hidden="true" /> Revert
-                        </GlassButton>
-                    ) : null}
-                    {fieldChange ? <PreviouslyToggle open={open} controls={previousId} onToggle={() => setOpen((value) => !value)} /> : null}
+            {stamp ? (
+                <div className="mt-2" data-workflow-history-controls>
+                    <div className="flex flex-wrap items-center gap-2">
+                        <WorkflowChangeBadge id={badgeId} author={stamp.author} />
+                        <span id={noteId} className="sr-only">
+                            {fieldChange ? `Changed by ${authorName(stamp.author)}.` : `Added by ${authorName(stamp.author)}.`}
+                        </span>
+                        {fieldChange?.revertable ? (
+                            <GlassButton type="button" size="sm" variant="subtle" className="h-7 gap-1 px-2 text-xs"
+                                aria-describedby={noteId} onClick={revert}>
+                                <RotateCcw size={12} aria-hidden="true" /> Revert
+                            </GlassButton>
+                        ) : null}
+                        {fieldChange ? <PreviouslyToggle open={open} controls={previousId} onToggle={() => setOpen((value) => !value)} /> : null}
+                    </div>
+                    {fieldChange && open ? <WorkflowPreviousValue id={previousId} value={fieldChange.before} /> : null}
                 </div>
-                {fieldChange && open ? <WorkflowPreviousValue id={previousId} value={fieldChange.before} /> : null}
-            </div>
+            ) : null}
         </div>
     );
 }
