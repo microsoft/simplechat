@@ -268,13 +268,19 @@ messages, including the minimum for a new or changed interval
 `normalizeWorkflowSchedule` in `lib/workflowEditor.ts` keeps an interval
 schedule as `{unit, value}` when the editor round-trips it.
 
-From version 0.261.197, a scheduled workflow whose stored schedule is of a kind
-the editor doesn't support, which only a newer server or a direct write can
-store, opens read-only. `normalizeWorkflowDefinition` keeps the schedule exactly
-as stored and sets the read-only reason, the schedule fields show "This
-workflow's schedule can't be shown or changed in this editor.", and
-`workflowForSave` refuses to build a payload. A manual workflow doesn't use its
-schedule, so it stays editable. See
+From version 0.261.197, a scheduled workflow whose stored schedule the editor
+can't show exactly opens read-only. That's a kind, calendar frequency, interval
+unit or weekly day the server doesn't define, a `seconds` or `minutes` unit
+stored other than exactly (the scheduler runs any other unit text as hours), or
+an interval value that isn't a whole number. Only a newer server, a direct write
+or a record saved before a rule existed can store one.
+`normalizeWorkflowDefinition` keeps the schedule exactly as stored and sets the
+read-only reason, the schedule fields show "This workflow's schedule can't be
+shown or changed in this editor.", and `workflowForSave` refuses to build a
+payload. `normalizeWorkflowSchedule` reads through `workflowScheduleForEditor`
+in `lib/workflowSettings.ts`, which changes only what the server's save
+canonicalizes and keeps a whole-number value the save refuses for validation to
+name. A manual workflow doesn't use its schedule, so it stays editable. See
 [the fix](../fixes/V2_WORKFLOW_UNSUPPORTED_SCHEDULE_FIX.md).
 
 ### Classic workspace editor

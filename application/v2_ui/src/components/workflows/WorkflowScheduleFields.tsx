@@ -8,8 +8,8 @@ import { useId, useRef, useState, type ReactNode } from 'react';
 import {
     isWorkflowCalendarSchedule,
     workflowCalendarSchedulesOffered,
-    workflowScheduleKindSupported,
     workflowScheduleLabel,
+    workflowScheduleSupported,
     workflowScheduleTimezones,
     WORKFLOW_SCHEDULE_DAYS,
     type WorkflowCalendarSchedule,
@@ -81,10 +81,10 @@ export function WorkflowScheduleFields({
 }) {
     const baseId = useId();
     const zones = workflowScheduleTimezones(options);
-    // A stored schedule of a kind this editor does not support is shown as neither kind; the
+    // A stored schedule this editor can't show exactly is shown as neither kind, with no label; the
     // editor keeps it as stored and opens the workflow read-only.
-    const supported = workflowScheduleKindSupported(schedule);
-    const calendar = isWorkflowCalendarSchedule(schedule) ? schedule : null;
+    const supported = workflowScheduleSupported(schedule);
+    const calendar = supported && isWorkflowCalendarSchedule(schedule) ? schedule : null;
     const interval = calendar || !supported ? null : schedule as WorkflowIntervalSchedule;
     const calendarOffered = supported && (workflowCalendarSchedulesOffered(options) || Boolean(calendar));
     const [zoneDefault] = useState(() => defaultWorkflowScheduleTimezone(zones));
@@ -93,7 +93,7 @@ export function WorkflowScheduleFields({
     const memory = useRef<ScheduleMemory>({
         interval: { unit: 'minutes', value: 15 }, calendar: null, days: ['monday'], dayOfMonth: 1,
     });
-    const label = scheduled ? workflowScheduleLabel('interval', schedule, zones) : '';
+    const label = scheduled && supported ? workflowScheduleLabel('interval', schedule, zones) : '';
 
     const updateCalendar = (changes: Partial<WorkflowCalendarSchedule>) => onChange((current) => (
         isWorkflowCalendarSchedule(current) ? { ...current, ...changes } : current

@@ -113,9 +113,10 @@ The classic editor can't edit calendar schedules. Opening one there shows
 configuration. Run and Cancel remain available here."
 
 From version **0.261.197**, the V2 editor also opens a workflow read-only when
-its schedule is of a kind the editor can't show, such as one saved by a newer
-version of SimpleChat. The editor says so, and the schedule stays exactly as
-saved.
+it can't show the workflow's schedule exactly, such as a kind of schedule or a
+**Repeats** frequency saved by a newer version of SimpleChat, or an interval
+unit or value it doesn't recognize. The editor says so, and the schedule stays
+exactly as saved, so a save never swaps in a schedule you didn't choose.
 
 Your administrator can set a minimum interval. A new or changed interval that
 runs more often is refused with a message that names the minimum, such as

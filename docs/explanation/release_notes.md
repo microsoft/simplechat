@@ -30,9 +30,10 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
 #### Bug Fixes
 
 *   **V2 Editor Keeps A Schedule It Can't Show**
-    *   A workflow whose stored schedule was neither an interval nor a calendar schedule, which only a newer server or a direct write can store, opened in the V2 editor as every 15 minutes. Saving it for any reason replaced the schedule with that interval.
-    *   Such a workflow now opens read-only, says why, and keeps its schedule exactly as stored. Manual workflows, which don't use a schedule, stay editable.
-    *   (Ref: `workflowScheduleKindSupported`, `normalizeWorkflowDefinition`, `WorkflowScheduleFields.tsx`, [V2 workflow unsupported schedule fix](fixes/V2_WORKFLOW_UNSUPPORTED_SCHEDULE_FIX.md))
+    *   The V2 editor used to put a schedule of its own in place of a stored one it had no fields for, which only a newer server, a direct write or a record saved before a rule existed can leave. A schedule of another kind showed as every 15 minutes, an unknown calendar frequency such as `fortnightly` as daily, and an unknown interval unit as minutes, so `{unit: 'days', value: 2}` became every 2 minutes. A unit stored as `HOURS` became minutes too, and a value it couldn't read became 15. Saving the workflow for any reason, such as editing its description, stored the substitute.
+    *   Now a workflow opens read-only, says why, and keeps its schedule exactly as stored when the editor can't show that schedule exactly: an unknown kind, frequency, unit or weekly day, a `seconds` or `minutes` unit stored other than exactly (the scheduler runs those as hours), or an interval value that isn't a whole number.
+    *   Only what the server's save canonicalizes changes on save, such as `HOURS` becoming `hours`. A whole-number value the save refuses, such as 0 minutes, is shown as stored and named by validation, which blocks the save until it's corrected. Manual workflows, which don't use a schedule, stay editable.
+    *   (Ref: `workflowScheduleForEditor`, `workflowScheduleSupported`, `normalizeWorkflowSchedule`, `normalizeWorkflowDefinition`, `WorkflowScheduleFields.tsx`, [V2 workflow unsupported schedule fix](fixes/V2_WORKFLOW_UNSUPPORTED_SCHEDULE_FIX.md))
 
 #### User Interface Enhancements
 
