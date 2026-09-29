@@ -318,6 +318,8 @@ export function InlineChart({
                     onSave={revisions.save}
                     onRestore={revisions.restore}
                     onAsk={revisions.ask}
+                    threadKey={revisions.threadKey}
+                    conversationId={revisions.conversationId}
                     onClose={() => setEditing(false)}
                 />
             )}

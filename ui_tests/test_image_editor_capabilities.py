@@ -1,8 +1,9 @@
 # test_image_editor_capabilities.py
 """
 Image editor operation, capability refresh, responsive and accessibility UI regression tests.
-Version: 0.261.107
+Version: 0.261.200
 Implemented in: 0.261.107
+Shared assist thread covered in: 0.261.200
 
 Use the real source components and the shared local/Azure Playwright connection fixture.
 All image requests are fulfilled in memory, including personal and collaborative revisions.
@@ -40,15 +41,28 @@ def select_region(page):
     expect(region).to_have_attribute("aria-pressed", "true")
 
 
+def instruction_box(page):
+    return page.get_by_label("Describe the change", exact=True)
+
+
+def image_thread(page):
+    return page.get_by_role("log", name="Changes to this image", exact=True)
+
+
 def expect_revision(image_ui, operation, origin, masked=False):
     page = image_ui.page
-    expect(page.get_by_label("Describe the change", exact=True)).to_have_value("")
+    # The input clears the moment a change is sent; the reply fills in once the server answers.
+    exchange = page.get_by_test_id("assist-exchange").last
+    expect(exchange).to_have_attribute("data-status", "done")
+    expect(exchange).to_contain_text("Created a new version.")
+    expect(instruction_box(page)).to_have_value("")
     request = image_ui.requests[-1]["body"]
     assert request["operation"] == operation
     assert request["origin"] == origin
     assert request["conversation_id"] == "conversation-1"
     assert request["expected_revision_count"] == 2
     assert request["expected_current_revision_id"] == "revision-1"
+    assert re.fullmatch(r"[A-Za-z0-9._:-]{1,128}", request["submission_id"])
     assert ("mask" in request) is masked
     assert ("mask_regions" in request) is masked
     assert "image" not in request and "source_image" not in request
@@ -206,12 +220,148 @@ def test_stale_hook_requests_fail_before_transport_and_concurrency_errors_stay_v
     assert image_ui.requests == []
     page.get_by_role("button", name="Dismiss the error", exact=True).click()
     image_ui.next_error = (409, "This image was revised elsewhere.")
-    page.get_by_label("Describe the change", exact=True).fill("Make it blue")
+    instruction_box(page).fill("Make it blue")
     page.get_by_role("button", name="Edit using source image", exact=True).click()
-    expect(page.get_by_role("alert")).to_contain_text("Someone else changed this image")
-    expect(page.get_by_label("Describe the change", exact=True)).to_have_value("Make it blue")
+    # The failure stays with the message that caused it, and nothing typed is lost.
+    exchange = page.get_by_test_id("assist-exchange")
+    expect(exchange).to_have_attribute("data-status", "failed")
+    expect(exchange.get_by_role("alert")).to_contain_text("Someone else changed this image")
+    expect(page.get_by_role("alert")).to_have_count(1)
+    expect(instruction_box(page)).to_have_value("")
+    exchange.get_by_role("button", name="Edit and resend", exact=True).click()
+    expect(instruction_box(page)).to_have_value("Make it blue")
+    expect(instruction_box(page)).to_be_focused()
+    expect(page.get_by_test_id("assist-exchange")).to_have_count(0)
+    expect(page.get_by_role("alert")).to_have_count(0)
     assert len(image_ui.requests) == 1
     assert image_ui.requests[0]["body"]["expected_current_revision_id"] == "revision-1"
+
+
+@pytest.mark.parametrize("shared", [False, True])
+def test_a_sent_change_moves_into_the_thread_at_once_and_its_transcript_stays_local(image_ui, shared):
+    image_ui.open(capability=reference_profile(), shared=shared)
+    page = image_ui.page
+    image_ui.hold = True
+    instruction_box(page).fill("Add a green path")
+    instruction_box(page).press("Enter")
+
+    log = image_thread(page)
+    exchange = log.get_by_test_id("assist-exchange")
+    expect(instruction_box(page)).to_have_value("")
+    expect(exchange).to_have_count(1)
+    expect(exchange).to_have_attribute("data-status", "pending")
+    expect(exchange).to_contain_text("Add a green path")
+    expect(exchange).to_contain_text("Working…")
+    expect(exchange.get_by_role("button", name="Cancel this request", exact=True)).to_be_visible()
+    expect(log).to_have_attribute("aria-live", "polite")
+    expect(page.get_by_role("button", name="Generating…", exact=True)).to_be_disabled()
+    image_ui.wait_for_requests(1)
+    submission = image_ui.requests[0]["body"]["submission_id"]
+    assert ("/collaboration/" in image_ui.requests[0]["path"]) is shared
+
+    image_ui.release()
+    expect(exchange).to_have_attribute("data-status", "done")
+    expect(exchange).to_contain_text("Created a new version.")
+    expect(page.get_by_role("img", name="Generated mountain", exact=True)).to_have_attribute(
+        "src", f"{image_ui.image_endpoint}?rev=revision-2",
+    )
+    assert [turn.get("submission_id") for turn in image_ui.entry["chat"]] == [submission, submission]
+    # The stored turns are this page's own, so they are not listed again as someone's earlier change.
+    expect(page.get_by_text("Earlier changes to this image", exact=True)).to_have_count(0)
+
+    # The transcript is the page's, not the server's: it survives closing the editor, not a reload.
+    page.keyboard.press("Escape")
+    expect(page.get_by_role("dialog")).to_have_count(0)
+    page.get_by_role("button", name="Open image editor", exact=True).click()
+    expect(image_thread(page).get_by_test_id("assist-exchange")).to_have_count(1)
+    expect(image_thread(page).get_by_test_id("assist-exchange")).to_contain_text("Created a new version.")
+    assert len(image_ui.requests) == 1
+
+
+def test_cancel_stops_waiting_and_retry_resends_under_the_same_submission_id(image_ui):
+    image_ui.open(capability=reference_profile())
+    page = image_ui.page
+    image_ui.hold = True
+    instruction_box(page).fill("Make it blue")
+    page.get_by_role("button", name="Edit using source image", exact=True).click()
+    exchange = image_thread(page).get_by_test_id("assist-exchange")
+    expect(exchange).to_have_attribute("data-status", "pending")
+    image_ui.wait_for_requests(1)
+
+    exchange.get_by_role("button", name="Cancel this request", exact=True).click()
+    expect(exchange).to_have_attribute("data-status", "cancelled")
+    expect(exchange).to_contain_text("Cancelled.")
+    expect(exchange.get_by_role("alert")).to_have_count(0)
+    expect(instruction_box(page)).to_be_focused()
+    expect(instruction_box(page)).to_have_value("")
+    image_ui.drop()
+    image_ui.hold = False
+
+    exchange.get_by_role("button", name="Retry", exact=True).click()
+    expect(exchange).to_have_attribute("data-status", "done")
+    expect(exchange).to_contain_text("Created a new version.")
+    assert len(image_ui.requests) == 2
+    assert image_ui.requests[1]["body"]["submission_id"] == image_ui.requests[0]["body"]["submission_id"]
+    assert image_ui.requests[1]["body"]["instruction"] == "Make it blue"
+
+
+def test_a_cancelled_change_that_finished_anyway_is_recognised_as_the_readers_own(image_ui):
+    image_ui.open(capability=reference_profile())
+    page = image_ui.page
+    image_ui.hold = True
+    instruction_box(page).fill("Make it blue")
+    page.get_by_role("button", name="Edit using source image", exact=True).click()
+    image_ui.wait_for_requests(1)
+    cancelled = image_ui.requests[0]["body"]["submission_id"]
+    image_thread(page).get_by_role("button", name="Cancel this request", exact=True).click()
+    expect(image_thread(page).get_by_test_id("assist-exchange")).to_have_attribute("data-status", "cancelled")
+    # The server finishes it anyway, after the page stopped waiting.
+    image_ui.release()
+    image_ui.hold = False
+
+    instruction_box(page).fill("Add a river")
+    instruction_box(page).press("Enter")
+    expect(page.get_by_text(re.compile("Your earlier request finished after you cancelled it"))).to_be_visible()
+    expect(instruction_box(page)).to_have_value("Add a river")
+    expect(image_thread(page).get_by_test_id("assist-exchange")).to_have_count(0)
+    expect(page.get_by_role("alert")).to_have_count(0)
+    expect(page.get_by_role("img", name="Generated mountain", exact=True)).to_have_attribute(
+        "src", f"{image_ui.image_endpoint}?rev=revision-2",
+    )
+    request = image_ui.requests[1]["body"]
+    assert request["instruction"] == "Add a river" and request["submission_id"] != cancelled
+    assert len(image_ui.entry["revisions"]) == 3
+    # The applied change now reads as an earlier change to the image.
+    expect(page.get_by_text("Earlier changes to this image", exact=True)).to_be_visible()
+    expect(image_thread(page)).to_contain_text("Make it blue")
+
+
+def test_overlong_changes_are_refused_with_a_counter_and_shift_enter_adds_a_line(image_ui):
+    image_ui.open(capability=reference_profile())
+    page = image_ui.page
+    box = instruction_box(page)
+    assert box.get_attribute("maxlength") is None
+    box.fill("x" * 2001)
+    expect(box).to_have_value("x" * 2001)
+    expect(box).to_have_attribute("aria-invalid", "true")
+    expect(page.get_by_text("This is 1 character over the limit. Shorten it to send.", exact=True)).to_be_visible()
+    expect(page.get_by_text(re.compile(r"^2001/2000 · Enter to send"))).to_be_visible()
+    expect(page.get_by_role("button", name="Edit using source image", exact=True)).to_be_disabled()
+    box.press("Enter")
+    page.wait_for_timeout(200)
+    assert image_ui.requests == []
+    expect(page.get_by_role("button", name="Add context")).to_have_count(0)
+    expect(page.get_by_role("button", name="Attach a file")).to_have_count(0)
+
+    box.fill("Add a trail")
+    box.press("Shift+Enter")
+    box.press_sequentially("and a bench")
+    expect(box).to_have_value("Add a trail\nand a bench")
+    page.wait_for_timeout(200)
+    assert image_ui.requests == []
+    box.press("Control+Enter")
+    expect(image_thread(page).get_by_test_id("assist-exchange")).to_have_attribute("data-status", "done")
+    assert image_ui.requests[0]["body"]["instruction"] == "Add a trail\nand a bench"
 
 
 @pytest.mark.parametrize("width", [1440, 390])

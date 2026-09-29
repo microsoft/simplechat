@@ -2,6 +2,57 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.201)**
+
+#### New Features
+
+*   **`#` Documents And Tags In The Plan Editor's Ask Planner**
+    *   **Ask planner** in the V2 plan editor now offers `#` documents and tags and **Add context**, like the main composer. Type `#` and part of a name, or browse, and the pick becomes a chip. The request carries the chips you leave, and your turn in the thread shows them afterwards.
+    *   The server checks every pick for you when the request arrives. Only documents and tags you can read now are accepted: in your personal workspace, in groups you belong to and in public workspaces you can see, from workspace types that are turned on, and within a scope-locked conversation's workspaces. A document must also have finished processing. At most 20 go with one request, and a plan can gather at most 100.
+    *   Accepted picks are added to that revision's plan inputs, as question-card answers are. The planner sees them as selected, a document search that names no documents of its own searches them, and tags filter that search. If the plan searched everything you can read before, the planner's reply says its searches are now limited to what you attached. The plan's existing sources stay available.
+    *   A pick that can't be used, because it was deleted, is unready, is no longer readable by you or its workspace was turned off, fails the request before the planner runs, with a message that names it by the label you picked. The plan and its chat don't change, and **Edit and resend** brings back your text and chips.
+    *   Picks are part of the request's identity. A retry of the same request is answered from what was stored and never merges them twice, and the same submission id with different picks is refused with 409 `submission_conflict`. Uploads, `/` saved prompts, `@` mentions and whole workspaces aren't offered here, and the diagram, chart and image editors, the main composer and the question card are unchanged.
+    *   (Ref: #1556, #1543, `functions_assist_references.py`, `functions_orchestration_plan_editing.py` `resolve_plan_edit_references`, `functions_orchestration_plan_revisions.py`, `route_backend_orchestration.py`, `planReferences.ts`, `OrchestrationPlanEditor.tsx`, `AssistThread.tsx`, [V2 Shared Assist Thread](features/V2_SHARED_ASSIST_THREAD.md), [Chat interface controls](../reference/chat-controls.md), [Review and edit orchestration plans](../guides/review-and-edit-orchestration-plans.md))
+
+*   **Workspace Reference Authorizer Without A Conversation**
+    *   `resolve_scope_references` authorizes `#` document and tag references for a user with no conversation and no request state, so AI-assist inputs outside the chat, such as the plan editor now and the workflow assistant later, can share it. It refuses chat attachments, whole workspaces and the chat scope, keeps the question card's readiness checks and count bound, reads no document text, and reports a refusal by the label the user picked and a reason code, never by a title read from the server.
+    *   The question card's own check now runs on the same core. A golden test captured from the previous code holds its results and messages unchanged.
+    *   (Ref: `functions_orchestration_context.py` `resolve_scope_references`, `resolve_elicitation_references`, `functional_tests/test_orchestration_reference_authorizer_golden.py`, `functional_tests/test_orchestration_scope_reference_authorizer.py`)
+
+### **(v0.261.200)**
+
+#### New Features
+
+*   **Shared AI Assist Thread In The V2 Editors**
+    *   The **Ask AI** tab of the diagram, chart and image editors and the **Ask planner** tab of the plan editor now share one conversation thread. Your message joins it the moment you send it and the input clears, instead of both waiting for the server's answer.
+    *   While a request runs, its reply shows **Working…** with the seconds elapsed and a **Cancel** button. A failed or cancelled request stays in the thread with its error, **Retry** and **Edit and resend**, which puts your text back in the input.
+    *   Cancel in the plan editor discards the pending change on the server. In the other editors it stops waiting; if the server finishes the change anyway, the editor recognises it as yours and shows the latest version rather than reporting a conflict.
+    *   The image editor keeps a transcript of this visit's changes, held on the page only and never saved. **Create image from reference** keeps a separate one.
+    *   A thread lives outside its editor, so closing and reopening the editor keeps a running request and any unsent text.
+    *   (Ref: #1552, #1543, `AssistThread.tsx`, `assistThread.ts`, `assistThreadStore.ts`, `assistLimits.ts`, `DiagramEditor.tsx`, `ChartEditor.tsx`, `ImageEditor.tsx`, `OrchestrationPlanEditor.tsx`, [V2 Shared Assist Thread](features/V2_SHARED_ASSIST_THREAD.md))
+
+*   **Client Submission Ids For Assist Requests**
+    *   The diagram, chart and image assist routes, personal and shared, accept an optional `submission_id` and store it on both turns of the exchange. A request without one behaves exactly as before.
+    *   A retry whose id is already stored is answered from what was stored, with `"replayed": true`, without calling the model, writing a second revision or notifying a shared conversation twice. The same id sent with a different instruction is refused with 409 `submission_conflict`, and a malformed id with 400.
+    *   Stored ids let the editor match the message it showed early to the stored turn, so a shared conversation's live update arriving before your reply doesn't show the message twice. Ids are never shown to the model.
+    *   A retry sent while the request it repeats is still running is checked again after the model answers: the image routes check the copy they read after the call, and the personal diagram and chart route checks when its write loses to the first request's. The retry is then replayed or refused rather than storing a second version. An image conflict found after the model call returns the versions that won, and a personal diagram or chart write lost to another change returns 409 with the current revisions instead of a 500 when an id was sent.
+    *   The plan edit route holds its existing `submission_id` to the same format and stores it on the plan's edit chat turns. Because it holds an id to the first request it saw, the plan editor's **Retry** reuses an id only for the identical request, and sends a fresh one after Cancel or a step change instead of being refused for good.
+    *   (Ref: `functions_assist_submissions.py`, `functions_image_edit.py`, `functions_message_block_revisions.py`, `functions_message_image_revisions.py`, `functions_orchestration_plan_editing.py`, `functions_orchestration_plan_revisions.py`, `route_backend_chats.py`, `route_backend_collaboration.py`, `route_backend_orchestration.py`, `planSubmissionIds.ts`, `orchestrationController.ts`)
+
+#### Bug Fixes
+
+*   **Diagram And Chart Editors Closing On Their Own**
+    *   An open diagram or chart editor closed whenever its message changed, for example when a revision was saved. The message's masks were re-parsed on every change, which remounted each diagram and chart, and a diagram returned a different element tree while it re-rendered. Both now keep the editor mounted, so it stays open until you close it.
+    *   (Ref: `AssistantMarkdown.tsx`, `MermaidDiagram.tsx`)
+
+#### User Interface Enhancements
+
+*   **Keyboard, Limits And Announcements In Assist Inputs**
+    *   Enter sends and Shift+Enter adds a line in all four editors, with Ctrl+Enter and ⌘+Enter kept as aliases. The plan editor previously sent only with Ctrl+Enter or ⌘+Enter.
+    *   A counter shows the length against the 2,000-character limit and says how much to remove past it. Over-limit text is refused rather than silently cut off, as the old inputs' `maxLength` did.
+    *   The thread is announced politely to screen readers as a log. The assist inputs reuse the main composer's editor in a restricted mode without uploads, `/` saved prompts or `@` mentions.
+    *   (Ref: `ComposerEditor.tsx` `restricted`, `AssistThread.tsx`, [Chat interface controls](../reference/chat-controls.md))
+
 ### **(v0.261.199)**
 
 #### New Features

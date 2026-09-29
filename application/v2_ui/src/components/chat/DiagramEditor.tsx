@@ -11,8 +11,10 @@
 // as `renderPreview`, already rendered, rather than drawn here.
 
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { History, PenLine, RotateCcw, Send, Sparkles, Wand2, X } from 'lucide-react';
+import { History, PenLine, RotateCcw, Sparkles, Wand2, X } from 'lucide-react';
 import { GlassPanel } from '../ui/primitives';
+import { AssistThread, type AssistThreadTurn } from './AssistThread';
+import { useAssistThread, type AssistSend } from '../../lib/assistThread';
 import { describeSourceProblem, MAX_INSTRUCTION_LENGTH } from '../../lib/blockRevisions';
 import type { BlockRevision, BlockRevisionChatTurn } from '../../lib/blockRevisions';
 import {
@@ -95,9 +97,14 @@ export interface DiagramEditorProps {
     onClearError: () => void;
     onSave: (source: string, origin?: 'manual' | 'control', note?: string) => Promise<boolean>;
     onRestore: (revisionId: string) => Promise<boolean>;
-    onAsk: (instruction: string) => Promise<boolean>;
+    /** Sends one message from the Ask tab. The thread shows how it went. */
+    onAsk: AssistSend;
+    /** The Ask tab's thread, or null while the diagram cannot be edited. */
+    threadKey: string | null;
+    conversationId: string | null;
     /** Renders a diagram. Passed in so the only markup sink stays in MermaidDiagram.tsx. */
-    renderPreview: (source: string) => React.ReactNode;    onClose: () => void;
+    renderPreview: (source: string) => React.ReactNode;
+    onClose: () => void;
 }
 
 export function DiagramEditor({
@@ -113,13 +120,33 @@ export function DiagramEditor({
     onSave,
     onRestore,
     onAsk,
+    threadKey,
+    conversationId,
     renderPreview,
     onClose,
 }: DiagramEditorProps) {
     const [tab, setTab] = useState<EditorTab>('source');
     const [draft, setDraft] = useState(currentSource);
-    const [instruction, setInstruction] = useState('');
     const closeRef = useRef<HTMLButtonElement>(null);
+    const thread = useAssistThread({
+        key: threadKey,
+        conversationId,
+        mode: 'stored',
+        maxLength: MAX_INSTRUCTION_LENGTH,
+        storedTurns: chat,
+        send: onAsk,
+    });
+    // A change the model is still making would land on top of anything saved meanwhile.
+    const working = busy || Boolean(thread.pending);
+    const chatTurns = useMemo<AssistThreadTurn[]>(
+        () => chat.map((turn, index) => ({
+            key: `${turn.submission_id ?? turn.timestamp ?? ''}-${turn.role}-${index}`,
+            role: turn.role === 'assistant' ? 'assistant' : 'user',
+            content: turn.role === 'assistant' ? 'Updated the diagram.' : turn.content,
+            mono: turn.role === 'assistant',
+        })),
+        [chat],
+    );
 
     // The stored source is the source of truth. When it changes underneath — an AI edit landed,
     // a revision was restored — the draft follows it, because the reader is now looking at
@@ -157,17 +184,6 @@ export function DiagramEditor({
     const applyLayout = async (next: string, note: string) => {
         setDraft(next);
         await onSave(next, 'control', note);
-    };
-
-    const submitInstruction = async () => {
-        const asked = instruction.trim();
-        if (!asked) {
-            return;
-        }
-        const ok = await onAsk(asked);
-        if (ok) {
-            setInstruction('');
-        }
     };
 
     return (
@@ -270,7 +286,7 @@ export function DiagramEditor({
                                     <div className="flex items-center gap-2">
                                         <button
                                             type="button"
-                                            disabled={!dirty || Boolean(problem) || busy || !canPersist}
+                                            disabled={!dirty || Boolean(problem) || working || !canPersist}
                                             onClick={() => void onSave(draft)}
                                             className="rounded-lg bg-accent px-3 py-1.5 text-xs font-medium text-white transition-opacity disabled:cursor-not-allowed disabled:opacity-50"
                                         >
@@ -278,7 +294,7 @@ export function DiagramEditor({
                                         </button>
                                         <button
                                             type="button"
-                                            disabled={!dirty || busy}
+                                            disabled={!dirty || working}
                                             onClick={() => setDraft(currentSource)}
                                             className="rounded-lg px-3 py-1.5 text-xs font-medium text-text-3 transition-colors hover:bg-surface-2 hover:text-text-1 disabled:cursor-not-allowed disabled:opacity-50"
                                         >
@@ -298,7 +314,7 @@ export function DiagramEditor({
                                                     <ChoiceButton
                                                         key={option}
                                                         active={direction === option}
-                                                        disabled={busy || !canPersist}
+                                                        disabled={working || !canPersist}
                                                         onClick={() =>
                                                             void applyLayout(
                                                                 setFlowDirection(draft, option),
@@ -324,7 +340,7 @@ export function DiagramEditor({
                                                 <ChoiceButton
                                                     key={option}
                                                     active={spacing === option}
-                                                    disabled={busy || !canPersist}
+                                                    disabled={working || !canPersist}
                                                     onClick={() =>
                                                         void applyLayout(
                                                             setSpacingPreset(draft, option),
@@ -348,62 +364,23 @@ export function DiagramEditor({
                             )}
 
                             {tab === 'ask' && (
-                                <div className="flex h-full flex-col gap-2">
-                                    {chat.length === 0 ? (
-                                        <p className="text-xs leading-relaxed text-text-3">
-                                            Describe a change and it is applied to this diagram
-                                            alone. Nothing here is added to the conversation, and
-                                            only the version you keep is used as context later.
-                                        </p>
-                                    ) : (
-                                        <ul className="flex min-h-0 flex-1 list-none flex-col gap-2 overflow-auto">
-                                            {chat.map((turn, index) => (
-                                                <li
-                                                    key={`${turn.timestamp ?? ''}-${index}`}
-                                                    className={
-                                                        turn.role === 'user'
-                                                            ? 'self-end rounded-lg bg-accent/10 px-2.5 py-1.5 text-xs text-text-1'
-                                                            : 'self-start rounded-lg bg-surface-sunken px-2.5 py-1.5 font-mono text-[11px] text-text-2'
-                                                    }
-                                                >
-                                                    {turn.role === 'assistant'
-                                                        ? 'Updated the diagram.'
-                                                        : turn.content}
-                                                </li>
-                                            ))}
-                                        </ul>
-                                    )}
-
-                                    <div className="mt-auto flex flex-col gap-2">
-                                        <label htmlFor="diagram-instruction" className="sr-only">
-                                            Describe the change you want
-                                        </label>
-                                        <textarea
-                                            id="diagram-instruction"
-                                            value={instruction}
-                                            rows={3}
-                                            maxLength={MAX_INSTRUCTION_LENGTH}
-                                            placeholder="Make it left to right and add a review step after approval"
-                                            onChange={(event) => setInstruction(event.target.value)}
-                                            onKeyDown={(event) => {
-                                                if (event.key === 'Enter' && !event.shiftKey) {
-                                                    event.preventDefault();
-                                                    void submitInstruction();
-                                                }
-                                            }}
-                                            className="resize-none rounded-lg border border-edge-strong bg-surface-sunken p-2 text-xs text-text-1 outline-none focus:border-accent"
-                                        />
-                                        <button
-                                            type="button"
-                                            disabled={!instruction.trim() || busy || !canPersist}
-                                            onClick={() => void submitInstruction()}
-                                            className="inline-flex items-center justify-center gap-1.5 rounded-lg bg-accent px-3 py-1.5 text-xs font-medium text-white transition-opacity disabled:cursor-not-allowed disabled:opacity-50"
-                                        >
-                                            <Send size={13} />
-                                            {busy ? 'Updating…' : 'Update diagram'}
-                                        </button>
-                                    </div>
-                                </div>
+                                <AssistThread
+                                    thread={thread}
+                                    conversationId={conversationId}
+                                    inputId="diagram-instruction"
+                                    label="Describe the change you want"
+                                    logLabel="Changes to this diagram"
+                                    assistantName="AI"
+                                    turns={chatTurns}
+                                    emptyState="Describe a change and it is applied to this diagram alone. Nothing here is added to the conversation, and only the version you keep is used as context later."
+                                    sendLabel="Update diagram"
+                                    busyLabel="Updating…"
+                                    busy={busy}
+                                    disabled={!canPersist}
+                                    placeholder="Make it left to right and add a review step after approval"
+                                    counterHint="Enter to send · Shift+Enter for a new line"
+                                    className="h-full gap-2"
+                                />
                             )}
 
                             {tab === 'history' && (
@@ -437,7 +414,7 @@ export function DiagramEditor({
                                                     {index !== currentIndex && (
                                                         <button
                                                             type="button"
-                                                            disabled={busy || !canPersist}
+                                                            disabled={working || !canPersist}
                                                             onClick={() => void onRestore(revision.id)}
                                                             className="ml-auto inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[11px] text-text-3 transition-colors hover:bg-surface-2 hover:text-text-1 disabled:cursor-not-allowed disabled:opacity-50"
                                                         >

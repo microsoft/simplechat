@@ -85,6 +85,8 @@ export interface ContextSearchOptions {
     documentFilter?: (document: WorkspaceDocument) => boolean;
     /** Leave out tags and whole workspaces, for pickers that can only use a document. */
     documentsOnly?: boolean;
+    /** Offer whole workspaces. Off for pickers whose requests can only use documents and tags. */
+    includeWorkspaces?: boolean;
 }
 
 /** Build the item a chosen candidate becomes. */
@@ -397,6 +399,10 @@ export async function searchContextCandidates(
             subtitle: `Tag · ${tag.scope.name}`,
             scope: tag.scope,
         });
+    }
+
+    if (options.includeWorkspaces === false) {
+        return candidates;
     }
 
     const allScopes: ContextScopeRef[] = [
