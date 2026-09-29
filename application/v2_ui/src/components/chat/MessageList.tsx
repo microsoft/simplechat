@@ -32,6 +32,7 @@ import { AnalysisResult } from './AnalysisResult';
 import { MessageActions } from './MessageActions';
 import { OrchestrationMessageRecovery } from './OrchestrationRecoveryNotice';
 import { OrchestrationOutputs } from './OrchestrationOutputs';
+import { WorkflowProposalCards } from './WorkflowProposalCard';
 import { MessageInspector, type InspectorSection } from './MessageInspector';
 import { ThoughtsList, ThoughtsProgressCard } from './ThoughtsList';
 import { OrchestrationPlanCard } from './OrchestrationPlanCard';
@@ -69,6 +70,7 @@ import {
 import { readGeneratedArtifacts, suppressesAssistantText } from '../../lib/generatedArtifacts';
 import { normalizeOrchestrationAttempt } from '../../lib/orchestration';
 import { isOrchestrationOutputArtifact } from '../../lib/orchestrationOutputs';
+import { orchestrationProposedWorkflow } from '../../lib/workflowProposals';
 import { analysisUnavailableMessage, readSavedAnalysis, sameAnalysis } from '../../lib/savedAnalysis';
 import { readMessagePrompt } from '../../lib/messagePrompt';
 import { PromptCard } from './PromptCard';
@@ -725,8 +727,7 @@ function MessageBubbleInner({
     const chatWidth = useUiStore((state) => state.chatWidth);
     const messages = useChatStore((state) => state.messages);
     const activeConversationId = useChatStore((state) => state.activeConversationId);
-
-    // Memoised because it walks the message's mask metadata and is read on every render of
+    const personalConversation = useChatStore((state) => state.activeConversationKind === 'personal');
     // the thread, which is often: the list re-renders on each streaming token.
     const masks = useMemo(() => readMaskState(message), [message]);
     // A stable list, so the image cards' shared scope is not rebuilt on every render.
@@ -1014,6 +1015,12 @@ function MessageBubbleInner({
                             <OrchestrationOutputs conversationId={message.conversation_id}
                                 runId={orchestration.run_id} metadata={message.metadata?.orchestration}
                                 artifacts={artifacts} />
+                        ) : null}
+                        {/* A proposed workflow is decided by the person who asked, in their own conversation. */}
+                        {orchestration.run_id && masks.ranges.length === 0 && personalConversation
+                            && message.conversation_id === activeConversationId
+                            && orchestrationProposedWorkflow(message.metadata?.orchestration) ? (
+                            <WorkflowProposalCards conversationId={message.conversation_id} runId={orchestration.run_id} />
                         ) : null}
                         {/* Inside the bubble, because a generated file belongs to the reply
                             that produced it rather than sitting loose in the thread. */}

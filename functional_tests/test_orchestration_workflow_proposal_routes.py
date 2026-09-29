@@ -981,3 +981,7 @@ def test_logs_carry_ids_and_codes_only(h):
     assert NAME not in json.dumps(ours, ensure_ascii=False)
     for entry in ours:
         assert CONVERSATION not in entry["extra"] and RUN not in entry["extra"]
+
+
+if __name__ == "__main__":
+    raise SystemExit(pytest.main([__file__, "-q"]))

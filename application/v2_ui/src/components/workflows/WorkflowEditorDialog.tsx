@@ -116,6 +116,8 @@ export function WorkflowEditorDialog({
     onDirtyChange,
     onBusyChange,
     interactionDisabled = false,
+    initialDraft = null,
+    onSaveOverride,
 }: {
     scope: WorkflowScope;
     workflow: WorkflowDefinition | null;
@@ -125,12 +127,19 @@ export function WorkflowEditorDialog({
     onDirtyChange?: (dirty: boolean) => void;
     onBusyChange?: (busy: boolean) => void;
     interactionDisabled?: boolean;
+    /** A new workflow's starting point, such as a proposal from chat; ignored when editing a saved workflow. */
+    initialDraft?: WorkflowDefinition | null;
+    /** Saves in place of the workflow save route, such as accepting a proposal with this draft. */
+    onSaveOverride?: (
+        draft: WorkflowDefinition,
+        original: WorkflowDefinition | null,
+    ) => Promise<{ success?: boolean; workflow?: WorkflowDefinition }>;
 }) {
     const [original] = useState<WorkflowDefinition | null>(() =>
         workflow ? structuredClone(workflow) : null,
     );
     const [baseline, setBaseline] = useState<WorkflowDefinition>(() =>
-        workflow ? structuredClone(workflow) : newWorkflowDefinition(scope),
+        workflow ? structuredClone(workflow) : initialDraft ? structuredClone(initialDraft) : newWorkflowDefinition(scope),
     );
     const history = useWorkflowAuthoringHistory(baseline);
     const draft = history.draft;
@@ -423,7 +432,9 @@ export function WorkflowEditorDialog({
         setSaving(true);
         setError('');
         try {
-            const response = await saveWorkflowDefinition(scope, savingDraft, original);
+            const response = onSaveOverride
+                ? await onSaveOverride(savingDraft, original)
+                : await saveWorkflowDefinition(scope, savingDraft, original);
             if (!history.session.active) return;
             const saved = response.workflow ? normalizeWorkflowDefinition(response.workflow, scope) : workflowForSave(savingDraft, original, scope);
             setBaseline(saved);

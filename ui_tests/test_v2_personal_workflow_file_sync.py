@@ -243,3 +243,7 @@ def test_personal_sources_are_chosen_by_keyboard_in_both_themes(workflow_ui, the
     assert workflow_post(ui).body["file_sync"]["sources"] == [
         PERSONAL_SOURCE, {"scope_type": "group", "scope_id": GROUP_ID, "source_id": "finance-share"},
     ]
+
+
+if __name__ == "__main__":
+    raise SystemExit(pytest.main([__file__, "-q"]))

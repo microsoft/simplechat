@@ -1149,3 +1149,7 @@ def test_the_proposal_module_creates_nothing_and_never_imports_flask():
     }
     assert not any(name.startswith(("functions_workflows", "functions_personal")) for name in imported)
     assert "cosmos_" not in source and "create_personal_workflow" not in source
+
+
+if __name__ == "__main__":
+    raise SystemExit(pytest.main([__file__, "-q"]))

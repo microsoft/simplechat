@@ -1115,3 +1115,7 @@ def test_real_http_runs_with_the_setting_off_carry_neither_value(real_http_harne
     assert seen and all(
         entry == {"run_id": "run-1", "time_zone": None, "workflow_planning": None} for entry in seen
     )
+
+
+if __name__ == "__main__":
+    raise SystemExit(pytest.main([__file__, "-q"]))

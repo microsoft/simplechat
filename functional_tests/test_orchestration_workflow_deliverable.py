@@ -412,3 +412,7 @@ def test_delivery_notes_cover_a_workflow_that_was_not_proposed(modules):
     )
     # A prepared proposal speaks for itself on its card.
     assert notes(failed, {"answer": "completed", "propose": "completed"}) == ""
+
+
+if __name__ == "__main__":
+    raise SystemExit(pytest.main([__file__, "-q"]))
