@@ -331,6 +331,27 @@ def test_structured_highlights_follow_undo_and_redo(authoring_ui):
     assert not ui.workflow_writes
 
 
+def test_structured_alert_edits_apply_and_undo(authoring_ui):
+    """Before 0.261.201 a structured draft rejected alert edits as a change to saved identity."""
+    ui = authoring_ui
+    editor = authoring.open_editor(ui)
+    region = editor.get_by_role("region", name="Alerts", exact=True)
+    mode = region.get_by_label("When to alert", exact=True)
+    expect(mode).to_have_value("off")
+    mode.select_option("rules")
+    expect(mode).to_have_value("rules")
+    expect(region.get_by_role("button", name="Add alert rule", exact=True)).to_be_visible()
+    expect(editor.get_by_text("cannot change saved identity", exact=False)).to_have_count(0)
+    expect(author(changed(editor, "alerts"))).to_have_text("Edited")
+    expect(changes_toggle(editor)).to_have_accessible_name("Changes (1 unsaved)")
+    replay(ui, editor, "Undo")
+    expect(mode).to_have_value("off")
+    expect(changed(editor, "alerts")).to_have_count(0)
+    replay(ui, editor, "Redo")
+    expect(mode).to_have_value("rules")
+    assert not ui.workflow_writes
+
+
 def test_flow_removed_block_can_be_restored_from_either_surface(authoring_ui):
     ui, page = authoring_ui, authoring_ui.page
     editor = authoring.open_editor(ui)
