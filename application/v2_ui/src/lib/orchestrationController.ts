@@ -56,6 +56,7 @@ import {
 import type { Json } from './types';
 import { normalizeReasoningAdjustments, type ReasoningResolution } from './reasoning';
 import { applyOrchestrationOutputEvent } from './orchestrationOutputController';
+import { announceCompletedReply } from './replyEvents';
 import { useChatStore } from '../stores/chatStore';
 import {
     selectEdits,
@@ -73,6 +74,24 @@ import {
 /** Mirrors `orchestrationStore`'s own `scopeKey`; the separator has to match to share a key space. */
 function scopeKey(conversationId: string, turnId: string): string {
     return `${conversationId}\u0000${turnId}`;
+}
+
+/**
+ * Tell the desktop notifier that a run this page started has delivered its answer.
+ *
+ * Only a completed run is announced. A plan waiting for approval, a failed or stopped run,
+ * and a run adopted from an earlier page are not replies this page is waiting on.
+ */
+function announceRunReply(conversationId: string, runId: string, event: RunStreamEvent): void {
+    const listed = useChatStore.getState().conversations.find((item) => item.id === conversationId);
+    announceCompletedReply({
+        conversationId,
+        messageId: typeof event.message_id === 'string' && event.message_id ? event.message_id : null,
+        runId,
+        conversationTitle: event.conversation_title || listed?.title || null,
+        blocked: event.blocked === true || event.role === 'safety',
+        source: 'orchestration',
+    });
 }
 
 /**
@@ -797,6 +816,9 @@ async function executeSavedPlan(
                     pendingUserMessageId: context?.pendingUserMessageId ?? null,
                 });
                 useOrchestrationStore.getState().endRun(runId, status);
+                if (status === 'completed') {
+                    announceRunReply(conversationId, runId, terminal);
+                }
                 // Generated images are saved as their own conversation messages, which the
                 // answer's image cards show. Reading the saved thread brings them in.
                 if (doneFrameHasGeneratedImages(event)) {
@@ -969,7 +991,13 @@ export async function reconcileOrchestrationRun(conversationId: string, runId: s
             const status = orchestrationTerminalStatus(event);
             current.updateRunRecovery(runId, { transportUnknown: false, checking: false, error: null });
             if (status === 'waiting') return;
+            // Read before endRun forgets it: only a run this page started, and was still
+            // waiting on when its stream dropped, is a reply to announce.
+            const tracked = current.inFlight[runId];
             current.endRun(runId, status);
+            if (status === 'completed' && tracked && !tracked.resumed) {
+                announceRunReply(conversationId, runId, event);
+            }
             const chat = useChatStore.getState();
             const otherRun = Object.values(current.inFlight)
                 .some((run) => run.conversationId === conversationId && run.runId !== runId);

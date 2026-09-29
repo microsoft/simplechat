@@ -1,8 +1,9 @@
 # group_documents.py
 """
 Closed M2A group document HTTP fixtures for the real production V2 SPA.
-Version: 0.261.161
+Version: 0.261.195
 Implemented in: 0.261.128
+Watched-reply read receipt permitted in: 0.261.195
 The served rows, read texts and restricted projections are the real read routes', held to them by
 functional_tests/test_group_document_fixture_parity.py.
 
@@ -18,6 +19,7 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 from ui_tests.fixtures.group_workspace import GroupWorkspaceFixture, connect_options, group_context  # noqa: F401
+from ui_tests.fixtures.v2_notification_stubs import mark_read_conversation
 
 
 SORT_FIELDS = (
@@ -324,8 +326,11 @@ class GroupDocumentsFixture(GroupWorkspaceFixture):
                     "v2DocumentsPrefs", "v2WorkspaceRailCollapsed", "v2RailCollapsed", "darkModeEnabled",
                 }, f"Only presentation preferences may be shared with group browsing: {request}"
                 continue
-            assert self.allow_chat_writes and request.path in (
-                "/api/create_conversation", "/api/chat/stream",
+            assert self.allow_chat_writes and (
+                request.path in ("/api/create_conversation", "/api/chat/stream")
+                # The read receipt for a reply the reader watched finish, which clears the
+                # conversation's unread marker and its "AI responded" notice.
+                or mark_read_conversation(request.method, request.path) is not None
             ), f"Unexpected mutation during read-only group browsing: {request}"
 
 

@@ -7,10 +7,18 @@
 // remaining classic preferences are deliberately left to that page until V2 implements the
 // behaviour behind them.
 
-import { useEffect } from 'react';
+import { useEffect, useSyncExternalStore } from 'react';
 import { clsx } from 'clsx';
 import { useUserSettingsStore } from '../../stores/userSettingsStore';
 import { useBootstrapStore } from '../../stores/bootstrapStore';
+import {
+    DESKTOP_NOTIFICATIONS_SETTING,
+    desktopNotificationPermission,
+    readDesktopNotificationPreference,
+    requestDesktopNotificationPermission,
+    subscribeDesktopNotificationPermission,
+    type DesktopNotificationPermission,
+} from '../../lib/desktopNotifications';
 import {
     FONT_SIZE_LABELS,
     FONT_SIZE_PREFERENCES,
@@ -166,10 +174,61 @@ function VisualStyleDefault({
     );
 }
 
+/**
+ * What this browser will do with the preference: a notification needs the browser's permission
+ * as well as the setting, and the setting alone gives no hint that it is missing.
+ */
+function DesktopNotificationPermissionStatus({
+    permission,
+}: {
+    permission: DesktopNotificationPermission;
+}) {
+    if (permission === 'granted') {
+        return null;
+    }
+    if (permission === 'unsupported') {
+        return (
+            <p data-desktop-notification-permission="unsupported" className="mt-1 text-xs text-text-3">
+                This browser cannot show desktop notifications.
+            </p>
+        );
+    }
+    if (permission === 'denied') {
+        return (
+            <p data-desktop-notification-permission="denied" className="mt-1 text-xs text-warn">
+                This browser is blocking notifications from this site. Allow them in the browser&apos;s
+                site settings, then come back to this tab.
+            </p>
+        );
+    }
+    return (
+        <div
+            data-desktop-notification-permission="default"
+            className="mt-1 flex flex-wrap items-center gap-2 text-xs text-text-3"
+        >
+            <span>This browser has not been given permission yet.</span>
+            <button
+                type="button"
+                onClick={() => void requestDesktopNotificationPermission({ explicit: true })}
+                className="rounded-lg border border-edge px-2.5 py-1 font-medium text-text-1 hover:bg-surface-2"
+            >
+                Allow notifications
+            </button>
+        </div>
+    );
+}
+
 export function PreferencesTab() {
     const { settings, loading, error, update, saveError } = useUserSettingsStore();
     const features = useBootstrapStore((state) => state.data?.features ?? {});
     const enabled = (key: string) => features[key] === true;
+    const notificationPermission = useSyncExternalStore(
+        subscribeDesktopNotificationPermission,
+        desktopNotificationPermission,
+    );
+    const desktopNotificationsOn = readDesktopNotificationPreference(
+        settings[DESKTOP_NOTIFICATIONS_SETTING],
+    );
 
     const fontSize = (settings.fontSizePreference as FontSizePreference) || 'm';
 
@@ -299,13 +358,22 @@ export function PreferencesTab() {
             {enabled('enable_desktop_notifications') && (
                 <SettingsSection
                     title="Desktop notifications"
-                    description="A notification from your operating system when a reply finishes while this tab is hidden or unfocused."
+                    description="A notification from your operating system when a reply finishes while this tab is hidden or unfocused. It names the conversation, never the reply. Shared with the classic interface."
                 >
                     <Toggle
-                        checked={settings.desktopNotificationsEnabled !== false}
-                        onChange={(next) => update({ desktopNotificationsEnabled: next })}
+                        checked={desktopNotificationsOn}
+                        onChange={(next) => {
+                            update({ [DESKTOP_NOTIFICATIONS_SETTING]: next });
+                            // In the same click: a browser only shows its prompt for one.
+                            if (next) {
+                                void requestDesktopNotificationPermission({ explicit: true });
+                            }
+                        }}
                         label="Notify me when a reply is ready"
                     />
+                    {desktopNotificationsOn && (
+                        <DesktopNotificationPermissionStatus permission={notificationPermission} />
+                    )}
                 </SettingsSection>
             )}
         </div>

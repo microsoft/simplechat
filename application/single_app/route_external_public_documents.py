@@ -64,7 +64,11 @@ def register_route_external_public_documents(bp):
     - POST /external/public_documents/upload
     - DELETE /external/public_documents/<doc_id>
     """
-    register_document_api_guards(bp, user_resolver=lambda: _get_external_request_value("user_id"))
+    register_document_api_guards(
+        bp,
+        user_resolver=lambda: _get_external_request_value("user_id"),
+        attach_origin_summary=False,
+    )
     @bp.route('/external/public_documents/upload', methods=['POST'])
     @swagger_route(security=get_auth_security())
     @accesstoken_required

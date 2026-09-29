@@ -71,6 +71,12 @@ from functions_document_access_index import (
     query_document_access_index_tag_counts,
 )
 from functions_simplechat_operations import download_blob_content, queue_generated_document_processing
+from functions_document_provenance import (
+    DocumentOriginFilterError,
+    origin_filter_requested,
+    origin_list_filter,
+    summary_requested,
+)
 from utils_cache import invalidate_group_search_cache
 from functions_debug import *
 from functions_activity_logging import log_document_upload
@@ -909,7 +915,17 @@ def register_route_backend_group_documents(bp):
         requested_group_id = explicit_group_document_read_id(request.args)
         if requested_group_id is not None:
             g.group_document_read_ids = [requested_group_id]
-            documents = load_group_document_browser_documents(user_id, requested_group_id)
+            origin_filter = None
+            if origin_filter_requested(request.args):
+                # Membership is checked before the origin, so non-members learn nothing about it.
+                require_group_document_read_context(user_id, requested_group_id)
+                try:
+                    origin_filter = origin_list_filter(user_id, request.args, group_id=requested_group_id)
+                except DocumentOriginFilterError as filter_error:
+                    return jsonify({'error': filter_error.public_message}), filter_error.status_code
+            documents = load_group_document_browser_documents(
+                user_id, requested_group_id, origin_filter=origin_filter,
+            )
             payload = query_group_document_list(documents, requested_group_id, request.args)
             group_doc, role = require_group_document_read_context(user_id, requested_group_id)
             downloads_enabled = (
@@ -919,6 +935,9 @@ def register_route_backend_group_documents(bp):
             payload["file_downloads_enabled"] = downloads_enabled
             payload["file_download_enabled_group_ids"] = [requested_group_id] if downloads_enabled else []
             return jsonify(payload), 200
+
+        if origin_filter_requested(request.args):
+            return jsonify({'error': 'Origin filters require a single group_id.'}), 400
 
         group_ids_param = request.args.get('group_ids', '')
         validated_group_roles = {}
@@ -1287,7 +1306,9 @@ def register_route_backend_group_documents(bp):
                 return error_response
 
         g.group_document_read_ids = [group_id]
-        return jsonify(get_group_document_read_metadata(user_id, group_id, document_id)), 200
+        return jsonify(get_group_document_read_metadata(
+            user_id, group_id, document_id, include_origin_summary=summary_requested(request.args),
+        )), 200
 
     @bp.route('/api/group_documents/<document_id>/versions', methods=['GET'])
     @swagger_route(security=get_auth_security())

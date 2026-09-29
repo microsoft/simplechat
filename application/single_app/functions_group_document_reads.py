@@ -39,6 +39,7 @@ from functions_group_document_access import (
     require_group_document_read_context,
 )
 from functions_settings import get_settings
+from functions_document_provenance import ORIGIN_KIND_FIELD, remember_document_origin_summary
 from functions_group_document_policy import group_document_approval_pending
 from functions_group_document_policy import GROUP_DOCUMENT_MANAGER_ROLES
 from functions_group_document_collaboration import (
@@ -61,7 +62,7 @@ def explicit_group_document_read_id(args, *, required=False):
     return group_id
 
 
-def _query_group_document_records(group_id, *, document_ids=None):
+def _query_group_document_records(group_id, *, document_ids=None, origin_filter=None):
     query = """
         SELECT * FROM c
         WHERE (c.group_id = @group_id
@@ -77,6 +78,11 @@ def _query_group_document_records(group_id, *, document_ids=None):
             return []
         query += " AND ARRAY_CONTAINS(@document_ids, c.id)"
         parameters.append({"name": "@document_ids", "value": list(document_ids)})
+    if origin_filter is not None:
+        # Parameterized origin conditions narrow the same group-scoped query; they never widen it.
+        origin_conditions, origin_parameters = origin_filter
+        query += "".join(f" AND {condition}" for condition in origin_conditions)
+        parameters.extend(origin_parameters)
     records = list(cosmos_group_documents_container.query_items(
         query=query, parameters=parameters, enable_cross_partition_query=True,
     ))
@@ -176,9 +182,9 @@ def count_current_group_documents(group_id):
     return len(current_group_document_records(records))
 
 
-def load_group_document_browser_documents(user_id, group_id):
+def load_group_document_browser_documents(user_id, group_id, *, origin_filter=None):
     require_group_document_read_context(user_id, group_id)
-    records = _query_group_document_records(group_id)
+    records = _query_group_document_records(group_id, origin_filter=origin_filter)
     context = require_group_document_read_context(user_id, group_id)
     current = current_group_document_records(records)
     group_names = {}
@@ -244,13 +250,16 @@ def get_group_document_read_tags(user_id, group_id):
     return sorted(tags, key=lambda tag: tag["name"])
 
 
-def get_group_document_read_metadata(user_id, group_id, document_id):
+def get_group_document_read_metadata(user_id, group_id, document_id, *, include_origin_summary=False):
     require_group_document_read_context(user_id, group_id)
     records = _query_group_document_records(group_id, document_ids=[document_id])
     if not records:
         raise GroupDocumentReadError("Document not found or access denied.", 404)
     payload = _project_group_document(records[0], group_id, {}, user_id=user_id)
     payload["is_current_version"] = is_current_group_document(records[0])
+    # Held or pending documents project no origin_kind, so they never resolve a summary.
+    if include_origin_summary and payload.get(ORIGIN_KIND_FIELD):
+        remember_document_origin_summary(user_id, records[0])
     require_group_document_read_context(user_id, group_id)
     return payload
 

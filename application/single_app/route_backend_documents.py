@@ -38,6 +38,7 @@ from functions_document_queries import (
     build_document_facets,
     filter_documents_by_place as filter_workspace_documents_by_place,
 )
+from functions_document_provenance import DocumentOriginFilterError, origin_list_filter, summary_requested
 from utils_cache import invalidate_personal_search_cache
 from functions_debug import *
 from functions_activity_logging import log_document_upload, log_document_metadata_update_transaction
@@ -937,6 +938,16 @@ def register_route_backend_documents(bp):
                     query_params.append({"name": param_name, "value": tag})
                 param_count += len(tags_list)
 
+        # Origin filters (workflow, run, or conversation) are checked against what this user may
+        # open, then appended as parameterized conditions inside the same ownership scope.
+        try:
+            origin_filter = origin_list_filter(user_id, request.args)
+        except DocumentOriginFilterError as filter_error:
+            return jsonify({'error': filter_error.public_message}), filter_error.status_code
+        if origin_filter is not None:
+            query_conditions.extend(origin_filter[0])
+            query_params.extend(origin_filter[1])
+
         # Combine conditions into the WHERE clause
         where_clause = " AND ".join(query_conditions)
         shadow_filters = {
@@ -959,11 +970,16 @@ def register_route_backend_documents(bp):
                 FROM c
                 WHERE {where_clause}
             """
-            index_read_result = query_document_access_index_documents(
-                source_scope=DOCUMENT_ACCESS_SCOPE_PERSONAL,
-                user_id=user_id,
-                filters=shadow_filters,
-            )
+            # The document access index holds no origin fields, so origin-filtered lists read the
+            # source container directly and skip shadow validation against the unfiltered index.
+            if origin_filter is None:
+                index_read_result = query_document_access_index_documents(
+                    source_scope=DOCUMENT_ACCESS_SCOPE_PERSONAL,
+                    user_id=user_id,
+                    filters=shadow_filters,
+                )
+            else:
+                index_read_result = {'success': False}
 
             if index_read_result.get('success'):
                 used_document_access_index = True
@@ -1005,7 +1021,7 @@ def register_route_backend_documents(bp):
                 matching_docs, source_query_metrics = query_items_with_cosmos_diagnostics(
                     cosmos_user_documents_container,
                     diagnostics_label='source_documents',
-                    collect_diagnostics=is_document_access_shadow_validation_enabled(),
+                    collect_diagnostics=origin_filter is None and is_document_access_shadow_validation_enabled(),
                     query=data_query_str,
                     parameters=query_params,
                     enable_cross_partition_query=True
@@ -1016,14 +1032,15 @@ def register_route_backend_documents(bp):
                     sort_by=sort_by,
                     sort_order=sort_order,
                 )
-                validate_document_access_index_shadow(
-                    current_docs,
-                    source_scope=DOCUMENT_ACCESS_SCOPE_PERSONAL,
-                    user_id=user_id,
-                    filters=shadow_filters,
-                    source_query_metrics=source_query_metrics,
-                    context='api_get_user_documents',
-                )
+                if origin_filter is None:
+                    validate_document_access_index_shadow(
+                        current_docs,
+                        source_scope=DOCUMENT_ACCESS_SCOPE_PERSONAL,
+                        user_id=user_id,
+                        filters=shadow_filters,
+                        source_query_metrics=source_query_metrics,
+                        context='api_get_user_documents',
+                    )
             # Narrow to the requested standing view before counting, so the total the client
             # paginates against describes the view it is actually looking at.
             current_docs = filter_documents_by_place(current_docs, place_filter, user_id)
@@ -1096,7 +1113,11 @@ def register_route_backend_documents(bp):
         if not user_id:
             return jsonify({'error': 'User not authenticated'}), 401
         
-        return get_document(user_id, document_id)
+        return get_document(
+            user_id,
+            document_id,
+            include_origin_summary=summary_requested(request.args),
+        )
 
     @bp.route('/api/documents/<document_id>/versions', methods=['GET'])
     @swagger_route(security=get_auth_security())

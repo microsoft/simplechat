@@ -40,6 +40,37 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
     *   The V2 workflow editor's **Trigger** option for scheduled workflows is now **Schedule** instead of **Interval**, because it offers calendar schedules as well as fixed intervals. Workflows are stored exactly as before, and the classic editor keeps **Interval Schedule**.
     *   (Ref: `WorkflowEditorDialog.tsx`, [Create a workflow](../guides/create-a-workflow.md), [Trigger a workflow](../guides/trigger-a-workflow.md))
 
+### **(v0.261.195)**
+
+#### New Features
+
+*   **V2 Notification Bell And Panel**
+    *   The V2 navigation rail has a notification bell beside the application's name. It shows the unread count, up to **9+**, or a dot when the rail is collapsed, and opens a panel of your notifications, newest first: workflow alerts, Microsoft 365 approval requests, "AI responded" notices, document processing results, share requests and the rest. Until now V2 users could only see these on the classic Notifications page.
+    *   Each notification can be opened, marked read or dismissed, and **Mark all read** clears the lot. Chat links open the conversation in V2, workspace and profile links open their V2 pages, and approvals, pending Microsoft 365 actions and workflow activity open in classic until V2 has those pages.
+    *   Links are followed only when they stay on this site and name a page. A link whose path would lead to another site once followed, such as `/.//host`, and an API endpoint however its path is escaped are refused, and a classic page's address is checked again just before it opens. Notification text is shown as plain text, because it can quote email or web content.
+    *   Changes hold. A slow answer from the server can't undo a read, dismissal or **Mark all read** you just made, **Load more** doesn't skip a notification after you dismiss one, and a change the server refuses is put back and the count read again.
+    *   The count refreshes when you return to the tab and every 30 seconds while it is visible, backing off to five minutes while nothing changes. It doesn't poll in a hidden tab, and stops once the session has signed out.
+    *   A reply you watch finish is marked read at once, so it doesn't add to the bell. A reply that finishes while you are in another tab or on another V2 page stays unread, with its "AI responded" notice, until you come back to it.
+    *   (Ref: #1554, #1543, `NotificationBell.tsx`, `NotificationPanel.tsx`, `notificationStore.ts`, `notificationLinks.ts`, `chatStore.ts`, [V2 Notification Bell and Desktop Notifications](features/V2_NOTIFICATIONS_BELL.md), [Manage notifications](../guides/manage-notifications.md))
+
+*   **V2 Desktop Notifications**
+    *   **User Settings > Preferences > Desktop notifications** now works. When an administrator has enabled desktop notifications and the preference is on, V2 raises one operating system notification per reply that finishes while the tab is hidden or unfocused. It names the conversation, never the reply, and clicking it opens the conversation.
+    *   The rules and the preference are shared with classic. Completed orchestrated answers notify too. V2 asks for browser permission when you send, when you turn the preference on, or from **Allow notifications**, and treats the preference as off until it has loaded.
+    *   (Ref: `desktopNotifications.ts`, `PreferencesTab.tsx`, `Composer.tsx`, `orchestrationController.ts`, [Desktop Conversation Notifications](features/DESKTOP_CONVERSATION_NOTIFICATIONS.md))
+
+### **(v0.261.194)**
+
+#### New Features
+
+*   **Documents Record Where They Came From**
+    *   Documents that a workflow or a chat creates now record their origin on each document version: the workflow and run, or the conversation and message, plus any orchestration run and step. The server derives it only from bindings it already holds (the artifact's source, its workflow or orchestration producer, the publication receipt, and chat-upload metadata), never from client input or model output.
+    *   Origins are recorded for generated artifacts published from chats, orchestrations, workflow saved outputs and workflow runs, and for files uploaded in chat and saved to a workspace. A workflow run that publishes through the chat artifact pipeline is recorded as workflow output. Workspace uploads, File Sync, the external API and SimpleChat action uploads record no origin, and a new version uploaded by hand has none.
+    *   Documents a workflow saves get a removable `workflow` tag. In group and public workspaces it's added only when the publisher can manage tags there; the origin is recorded either way. Chat-created documents get no tag.
+    *   The V2 document details pane shows **Created by *workflow* · run *time*** or **Created in chat · *conversation title***, linking to that run in the workflow history or to the conversation. Readers who can't open the origin, or whose origin was deleted, see only "Created by a workflow" or "Created in a chat", with no names, titles or IDs.
+    *   No client can set or edit an origin. Every guarded document mutation route, including the bearer-token external API, refuses origin fields with `document_origin_server_managed`. Responses carry at most `origin_kind`, and single-document reads can ask for an access-checked `origin_summary` with `origin_summary=1`.
+    *   The personal, group and public document list routes accept `origin_workflow_id`, `origin_run_id` and `origin_conversation_id` filters, applied inside each list's existing parameterized, scoped Cosmos query. No search-index or deployer changes are needed.
+    *   (Ref: #1555, #1543, `functions_document_provenance.py`, `functions_documents.py`, `functions_artifact_publication.py`, `content_screening/access.py`, `route_frontend_chats.py`, `DocumentDetailsPane.tsx`, `WorkflowRunHistory.tsx`, [Document Provenance](features/DOCUMENT_PROVENANCE.md), [Uploading and managing documents](../guides/upload-and-manage-documents.md))
+
 ### **(v0.261.193)**
 
 #### New Features
