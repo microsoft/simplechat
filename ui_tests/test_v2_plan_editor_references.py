@@ -1,8 +1,8 @@
 # test_v2_plan_editor_references.py
 """
 Browser tests for `#` document and tag references in the plan editor's Ask AI.
-Version: 0.261.198
-Implemented in: 0.261.198
+Version: 0.261.201
+Implemented in: 0.261.201
 
 The plan editor's input is restricted: it offers `#` documents and tags and Add context, but no
 uploads and no `/` prompts. A picked chip travels with the request, shows in the reader's turn,

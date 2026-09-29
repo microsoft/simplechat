@@ -4,7 +4,7 @@ title: "Review and edit orchestration plans"
 description: "Refine proposed work with the planner before running it."
 section: "Guides"
 audience: user
-version: "0.261.198"
+version: "0.261.201"
 ---
 
 ## Decide what should run
@@ -205,7 +205,7 @@ composer preferences.
 
 ### Point the planner at documents and tags
 
-Since **0.261.198**, **Ask planner** takes `#` documents and tags, as the main
+Since **0.261.201**, **Ask planner** takes `#` documents and tags, as the main
 composer does.
 
 1. In **Ask planner**, type `#` and part of a document's name or a tag. Pick one

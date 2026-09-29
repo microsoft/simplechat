@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
 Functional test for `#` document and tag references in the V2 plan editor's Ask AI.
-Version: 0.261.198
-Implemented in: 0.261.198
+Version: 0.261.201
+Implemented in: 0.261.201
 
 This test ensures the plan editor's Ask AI input offers `#` documents and tags, and only those,
 sends them with the request in the same canonical form the server compares a replayed submission
@@ -28,7 +28,7 @@ sys.path.insert(0, str(APP_DIR))
 
 from test_support.versioning import assert_app_version_at_least  # noqa: E402
 
-IMPLEMENTED_IN = "0.261.198"
+IMPLEMENTED_IN = "0.261.201"
 
 CHAT_COMPONENTS = V2_SRC / "components" / "chat"
 PLAN_EDITOR_TSX = CHAT_COMPONENTS / "OrchestrationPlanEditor.tsx"

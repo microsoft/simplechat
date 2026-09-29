@@ -4,7 +4,7 @@ title: "Chat interface controls"
 description: "Reference for every documented control in the SimpleChat chat interface."
 section: "Reference"
 audience: user
-version: "0.261.198"
+version: "0.261.201"
 ---
 
 ## How to use this reference
@@ -165,7 +165,7 @@ are offered to planned image steps instead of being sent directly.
 
 ## Ask AI in editors (V2 interface)
 
-From version **0.261.196**, the **Ask AI** tab of the diagram, chart and image editors and the
+From version **0.261.200**, the **Ask AI** tab of the diagram, chart and image editors and the
 **Ask planner** tab of the plan editor share one conversation thread. Your message joins it the
 moment you send it, so you can see the request running instead of waiting on a full input box.
 These controls exist only in the V2 interface, so they are not part of the generated inventory
@@ -188,7 +188,7 @@ editors don't.
 
 ### Documents and tags in Ask planner
 
-From version **0.261.198**, you can point the planner at the documents and tags a plan should use.
+From version **0.261.201**, you can point the planner at the documents and tags a plan should use.
 Picked documents and tags limit the plan's document searches to what you picked, the same way chips
 in the main composer limit a message's search. The server checks every pick for you when the
 request arrives, so a document you can no longer read is refused rather than quietly dropped.
@@ -460,7 +460,7 @@ plan rather than editing the main chat message. See
 | --- | --- | --- | --- |
 | Review | Opens the plan drawer with step details and narrowing-only controls. | Inspect the proposed sources and work, or remove something unnecessary. | `enable_chat_orchestration` |
 | Edit | Opens the full-screen plan editor and holds the plan for manual approval, stopping its countdown. | Change the proposed approach before it runs. | Same as Review; the plan must not have started |
-| Ask planner | Sends a change request to the planner for a validated revision, or answers its scoped clarification. Since **0.261.198**, the request can carry `#` documents and tags; see **Documents and tags in Ask planner** above. | Add a permitted step, remove work, or refine the task without duplicating the main conversation. | Same as Edit; existing capability and source permissions apply |
+| Ask planner | Sends a change request to the planner for a validated revision, or answers its scoped clarification. Since **0.261.201**, the request can carry `#` documents and tags; see **Documents and tags in Ask planner** above. | Add a permitted step, remove work, or refine the task without duplicating the main conversation. | Same as Edit; existing capability and source permissions apply |
 | History and restore | Shows previous plan versions and creates a newly validated current version when restoring one. | Return to an earlier approach without deleting later history. | Same as Edit |
 | Run after editing | Executes the saved current revision only after explicit approval. Closing the editor does not approve it. | Start the work once its steps and sources match your intent. | Same as Edit; no revision or clarification may be pending |
 | Run task switch (Gather / Reason / Render plans) | Skips or restores an eligible task without deleting its declared inputs or outputs. Required producers identify their consumers and cannot be silently disabled. | Remove independent work, or learn which consumers must change through Ask planner first. | A Gather / Reason / Render plan that has not started; the final-response step cannot be disabled |

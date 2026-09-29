@@ -1,8 +1,8 @@
 # test_orchestration_scope_reference_authorizer.py
 """
 Functional test for the scope-only `#` reference authorizer.
-Version: 0.261.198
-Implemented in: 0.261.198
+Version: 0.261.201
+Implemented in: 0.261.201
 
 ``resolve_scope_references`` authorizes the plan editor's Ask AI references (#1556), and
 later the workflow assistant's, with no conversation. This test pins what it accepts --
@@ -390,5 +390,5 @@ class ScopeReferenceAuthorizerTests(unittest.TestCase):
 
 
 if __name__ == '__main__':
-    assert_app_version_at_least('0.261.198')
+    assert_app_version_at_least('0.261.201')
     unittest.main(verbosity=2)

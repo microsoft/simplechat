@@ -1,8 +1,8 @@
 # V2 Shared Assist Thread
 
-Implemented in version: **0.261.196**.
+Implemented in version: **0.261.200**.
 
-Document and tag references in the plan editor added in version: **0.261.198**.
+Document and tag references in the plan editor added in version: **0.261.201**.
 
 Application version tracking: `application\single_app\config.py`.
 
@@ -39,7 +39,7 @@ and the id is what stops the message showing twice. The same id makes **Retry** 
 attempt had already succeeded, the server answers from what it stored instead of making the change
 again.
 
-From version **0.261.198**, **Ask planner** also takes `#` documents and tags. The server checks
+From version **0.261.201**, **Ask planner** also takes `#` documents and tags. The server checks
 them for the person asking as the request arrives, adds them to that revision's plan inputs
 exactly once, and stores them on the user turn so the thread can show them. The other three
 editors don't offer them. See **Document and tag references in the plan editor** below.
@@ -96,7 +96,7 @@ copy of it. Restricted mode hides what doesn't belong in a scoped edit:
 - `@` mentions.
 
 `#` document and tag references, and the **Add context** control, appear only when the thread also
-passes `allowContext`. From 0.261.198 the plan editor does; the diagram, chart and image editors
+passes `allowContext`. From 0.261.201 the plan editor does; the diagram, chart and image editors
 don't. A restricted input offers documents and tags only, never whole workspaces, because those are
 all the plan route accepts: its search scope sets `workspacesEnabled: false`, which
 `searchContextCandidates` (as `includeWorkspaces`) and `DocumentPickerPopover` honour. The main
@@ -258,7 +258,7 @@ An editor now stays open until you close it.
 
 ### Document and tag references in the plan editor
 
-Added in **0.261.198** (#1556). **Ask planner** passes `allowContext`, so its restricted input
+Added in **0.261.201** (#1556). **Ask planner** passes `allowContext`, so its restricted input
 offers `#` documents and tags and **Add context**. There's no new route, setting or container.
 
 #### The request
@@ -429,7 +429,7 @@ V2 interface:
   `collaboration.ts`, `orchestration.ts` and `orchestrationController.ts`
 - `application/v2_ui/src/stores/chatStore.ts` and `orchestrationStore.ts`
 
-Added for document and tag references in 0.261.198:
+Added for document and tag references in 0.261.201:
 
 - `application/single_app/functions_assist_references.py` (new): the request's canonical form.
 - `application/single_app/functions_orchestration_context.py`: `resolve_scope_references` and the

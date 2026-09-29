@@ -1,10 +1,10 @@
 # test_v2_orchestration_plan_editor.py
 """
 Focused real-component browser tests for conversational orchestration plan editing.
-Version: 0.261.198
+Version: 0.261.201
 Implemented in: 0.261.102
-Shared assist thread covered in: 0.261.196
-Document references covered in: 0.261.198
+Shared assist thread covered in: 0.261.200
+Document references covered in: 0.261.201
 
 Only HTTP boundaries are mocked. The real store, shared SSE reader, controller,
 MessageList, Review drawer, editor, and elicitation inputs run in Chromium with

@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
 Functional test for the shared AI-assist thread in the V2 revision editors.
-Version: 0.261.196
-Implemented in: 0.261.196
+Version: 0.261.200
+Implemented in: 0.261.200
 
 This test ensures the diagram, chart, image and plan editors share one assist thread that
 moves a sent message into the conversation at once, clears the input, and shows a pending
@@ -33,7 +33,7 @@ sys.path.insert(0, str(APP_DIR))
 
 from test_support.versioning import assert_app_version_at_least  # noqa: E402
 
-IMPLEMENTED_IN = "0.261.196"
+IMPLEMENTED_IN = "0.261.200"
 
 CHAT_COMPONENTS = V2_SRC / "components" / "chat"
 THREAD_TSX = CHAT_COMPONENTS / "AssistThread.tsx"
@@ -172,7 +172,7 @@ def test_the_editor_input_is_the_restricted_composer():
     )
     assert "allowContext = false" in thread, "# references must stay off unless an editor opts in"
 
-    # A2 (0.261.198) turns # references on in the plan editor only, which sends them with its
+    # A2 (0.261.201) turns # references on in the plan editor only, which sends them with its
     # request for the server to authorise. The diagram, chart and image editors stay without them.
     for kind, path in EDITORS.items():
         source = _read(path)

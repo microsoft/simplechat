@@ -1,12 +1,12 @@
 # test_orchestration_plan_revision_routes.py
 """
 Functional tests for conversational, pre-execution plan revisions.
-Version: 0.261.196
+Version: 0.261.200
 Implemented in: 0.261.102
 Authorized model routing through revisions and clarification: 0.261.103
 Unroutable Auto revisions report model_unavailable: 0.261.134
 Single orchestration contract updated in: 0.261.139
-Malformed plan edit submission ids refused before planning: 0.261.196
+Malformed plan edit submission ids refused before planning: 0.261.200
 
 Exercises the real Flask routes, planner, executor, and atomic revision persistence.
 Only model, search, source-access, and Cosmos service boundaries are replaced.
@@ -174,7 +174,7 @@ class PlanRevisionRouteTests(unittest.TestCase):
         assert_app_version_at_least('0.261.103')
 
     def test_malformed_submission_ids_are_refused_before_any_planning(self):
-        assert_app_version_at_least('0.261.196')
+        assert_app_version_at_least('0.261.200')
         editor = self.open_editor()
         run_id = editor['plan']['run_id']
         before = deepcopy(self.runs.read_item(run_id, 'conv1'))

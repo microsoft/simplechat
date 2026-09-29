@@ -1,8 +1,8 @@
 # test_assist_reference_canonicalization.py
 """
 Functional test for the canonical form of `#` references in a plan-editor Ask AI request.
-Version: 0.261.198
-Implemented in: 0.261.198
+Version: 0.261.201
+Implemented in: 0.261.201
 Refs: microsoft/simplechat#1556
 
 This test ensures that a request's `#` documents and tags have one canonical, bounded form,
@@ -314,5 +314,5 @@ class StoredTurnTests(unittest.TestCase):
 
 
 if __name__ == '__main__':
-    assert_app_version_at_least('0.261.198')
+    assert_app_version_at_least('0.261.201')
     unittest.main()

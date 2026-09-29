@@ -1,8 +1,8 @@
 // test_v2_plan_references_logic.ts
 // Behavioural checks for `#` documents and tags in the plan editor's Ask AI.
 //
-// Version: 0.261.198
-// Implemented in: 0.261.198
+// Version: 0.261.201
+// Implemented in: 0.261.201
 //
 // Bundled with the esbuild Vite already brings in and run under node by
 // test_v2_plan_editor_references.py, like test_v2_assist_thread_logic.ts.

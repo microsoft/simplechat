@@ -1,8 +1,8 @@
 # test_orchestration_reference_authorizer_golden.py
 """
 Golden parity for question-card (clarification) reference authorization.
-Version: 0.261.198
-Implemented in: 0.261.198
+Version: 0.261.201
+Implemented in: 0.261.201
 
 The plan editor's `#` references (#1556) share an authorization core with
 ``resolve_elicitation_references``. The fixture beside this test was captured from that
@@ -223,5 +223,5 @@ class ElicitationReferenceGoldenTests(unittest.TestCase):
 
 
 if __name__ == '__main__':
-    assert_app_version_at_least('0.261.198')
+    assert_app_version_at_least('0.261.201')
     unittest.main(verbosity=2)

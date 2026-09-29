@@ -1,8 +1,8 @@
 # test_orchestration_plan_revision_references.py
 """
 Functional tests for `#` document and tag references in the plan editor's Ask AI.
-Version: 0.261.198
-Implemented in: 0.261.198
+Version: 0.261.201
+Implemented in: 0.261.201
 Refs: microsoft/simplechat#1556
 
 An Ask AI request may carry `#` documents and tags. These tests ensure that:
@@ -279,7 +279,7 @@ class PlanReferenceRouteTests(unittest.TestCase):
     # ---- the whole path -----------------------------------------------------------------
 
     def test_application_version(self):
-        assert_app_version_at_least('0.261.198')
+        assert_app_version_at_least('0.261.201')
 
     def test_a_hashed_document_reaches_the_revised_plan_and_its_search(self):
         editor = self.open_editor()
@@ -898,5 +898,5 @@ class PlanReferenceRouteTests(unittest.TestCase):
 
 
 if __name__ == '__main__':
-    assert_app_version_at_least('0.261.198')
+    assert_app_version_at_least('0.261.201')
     unittest.main()

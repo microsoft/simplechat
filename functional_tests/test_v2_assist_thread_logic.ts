@@ -1,8 +1,8 @@
 // test_v2_assist_thread_logic.ts
 // Behavioural checks for the shared AI-assist thread.
 //
-// Version: 0.261.196
-// Implemented in: 0.261.196
+// Version: 0.261.200
+// Implemented in: 0.261.200
 //
 // The V2 interface has no unit test runner, so this follows test_v2_diagram_editor_logic.ts:
 // bundled with the esbuild Vite already brings in, run under node by test_v2_assist_thread.py,
