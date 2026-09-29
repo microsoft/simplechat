@@ -1373,6 +1373,18 @@ function reorderLike(list: readonly unknown[], sourceIds: readonly string[]): re
     return next;
 }
 
+/**
+ * Number tasks by their array position, copying only the tasks whose `order` changes, so an
+ * unchanged task keeps its identity and change tracking can skip it without a deep comparison.
+ */
+export function workflowTasksInOrder<T extends { order: number }>(tasks: readonly T[]): T[] {
+    let numbered: T[] | null = null;
+    tasks.forEach((task, position) => {
+        if (task.order !== position + 1) (numbered ??= [...tasks])[position] = { ...task, order: position + 1 };
+    });
+    return numbered ?? [...tasks];
+}
+
 /** Classic tasks run in array order; renumber `order` without copying tasks that already match. */
 function renumberTasks(definition: Definition): Definition {
     let tasks: unknown[] | null = null;

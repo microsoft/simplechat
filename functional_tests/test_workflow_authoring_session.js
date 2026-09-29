@@ -1,7 +1,7 @@
 // test_workflow_authoring_session.js
 /*
 Atomic authoring-session, buffer, replay, and Save payload contracts.
-Version: 0.261.124
+Version: 0.261.201
 Implemented in: 0.261.123
 
 Executes the production TypeScript session and field store, without a browser,
@@ -420,6 +420,93 @@ if (process.argv.includes('--emit-history-payloads')) {
         assert.equal(state.session.getSnapshot().redoLabel, '');
         state.session.request('undo');
         assert.equal(state.session.draft.definition_revision, 'new-server-revision');
+        assert.strictEqual(state.session.getSnapshot().baseline, saved, 'The saved version is the new change-tracking baseline.');
+        assert.equal(state.session.getSnapshot().attribution.size, 0);
+        assert.deepEqual(state.session.getSnapshot().steps, []);
+    });
+
+    test('alert and File Sync settings are authored fields that apply and replay', () => {
+        const state = setup();
+        const { session, original } = state;
+        assert.equal(session.changeDraft((draft) => ({ ...draft, alert_mode: 'every_run', alert_priority: 'high' })), true,
+            state.errors.filter(Boolean).join('; '));
+        assert.equal(session.draft.alert_mode, 'every_run');
+        replay(state, 'undo');
+        for (const key of ['alert_mode', 'alert_priority']) {
+            assert.equal(Object.hasOwn(session.draft, key), Object.hasOwn(original, key));
+            assert.deepEqual(session.draft[key], original[key]);
+        }
+        replay(state, 'redo');
+        assert.equal(session.draft.alert_priority, 'high');
+        const fileSync = { enabled: true, source_id: 'fictional-source', lookback_minutes: 60 };
+        assert.equal(session.changeDraft((draft) => ({ ...draft, file_sync: fileSync })), true, state.errors.filter(Boolean).join('; '));
+        replay(state, 'undo');
+        assert.equal(Object.hasOwn(session.draft, 'file_sync'), Object.hasOwn(original, 'file_sync'));
+        replay(state, 'redo');
+        assert.deepEqual(session.draft.file_sync, fileSync);
+        assert.deepEqual(state.errors.filter(Boolean), []);
+        assert.deepEqual(session.getSnapshot().steps.map((step) => step.origin), ['user', 'user']);
+        assert.equal(session.getSnapshot().attribution.get('alerts')?.author, 'user');
+        assert.equal(session.getSnapshot().attribution.get('file_sync')?.author, 'user');
+    });
+
+    test('assist, revert, and restore each add one undoable step with its own origin', () => {
+        const state = setup();
+        const { session, original } = state;
+        assert.equal(session.changeDraft((draft) => ({ ...draft, description: 'Typed by the user' })), true);
+        const assisted = { ...session.draft, name: 'Assisted name' };
+        assert.deepEqual(session.applyAssist(assisted, { turnId: 'turn-1', label: 'Rename workflow' }), { status: 'applied' });
+        assert.equal(session.draft.name, 'Assisted name');
+        assert.deepEqual(session.getSnapshot().attribution.get('name'), { author: 'ai', origin: 'ai', turnId: 'turn-1' });
+        assert.equal(session.getSnapshot().attribution.get('description').author, 'user');
+        const enabling = { ...session.draft, is_enabled: !session.draft.is_enabled };
+        assert.equal(session.applyAssist(enabling, { turnId: 'turn-2', label: 'Enable' }).status, 'rejected');
+        assert.equal(session.draft.is_enabled, original.is_enabled, 'A rejected assist changes nothing.');
+
+        assert.deepEqual(session.revertChange(['name']), { status: 'applied' });
+        assert.equal(session.draft.name, original.name);
+        assert.equal(session.getSnapshot().attribution.has('name'), false);
+        assert.deepEqual(session.restoreTo('opened'), { status: 'applied' });
+        assert.deepEqual(session.draft, original);
+        assert.deepEqual(session.getSnapshot().steps.map((step) => [step.origin, step.turnId ?? null]), [
+            ['user', null], ['ai', 'turn-1'], ['restore', null], ['restore', null],
+        ]);
+        replay(state, 'undo');
+        assert.equal(session.draft.description, 'Typed by the user', 'Undo steps back through a restore like any edit.');
+        replay(state, 'undo');
+        assert.equal(session.draft.name, 'Assisted name');
+        assert.equal(session.getSnapshot().attribution.get('name').origin, 'ai', 'Attribution follows Undo.');
+        replay(state, 'redo');
+        assert.equal(session.getSnapshot().attribution.has('name'), false, 'Attribution follows Redo.');
+        assert.equal(session.getSnapshot().steps.filter((step) => step.applied).length, 3);
+    });
+
+    test('reverting an assist turn skips keys a later step changed and reports both counts', () => {
+        const state = setup();
+        const { session, original } = state;
+        const candidate = { ...session.draft, name: 'Assisted name', description: 'Assisted description' };
+        assert.equal(session.applyAssist(candidate, { turnId: 'turn-1', label: 'Rewrite summary' }).status, 'applied');
+        assert.equal(session.changeDraft((draft) => ({ ...draft, description: 'My later description' })), true);
+        const result = session.revertTurn('turn-1');
+        assert.equal(result.status, 'applied');
+        assert.equal(result.reverted, 1);
+        assert.equal(result.skipped, 1);
+        assert.deepEqual(result.skippedKeys.map((item) => item.key), ['description']);
+        assert.equal(session.draft.name, original.name);
+        assert.equal(session.draft.description, 'My later description');
+        assert.deepEqual(session.revertTurn('unknown-turn'), { status: 'unavailable' });
+    });
+
+    test('read-only sessions refuse assist, revert, and restore without recording anything', () => {
+        const state = setup();
+        state.session.changeDraft((draft) => ({ ...draft, name: 'edited' }));
+        state.session.configure({ ...state.context, readOnly: true });
+        const steps = state.session.getSnapshot().steps;
+        assert.equal(state.session.revertChange(['name']).status, 'rejected');
+        assert.equal(state.session.restoreTo('opened').status, 'rejected');
+        assert.equal(state.session.applyAssist({ ...state.session.draft, description: 'x' }, { turnId: 't', label: 'x' }).status, 'rejected');
+        assert.equal(state.session.draft.name, 'edited');
+        assert.strictEqual(state.session.getSnapshot().steps, steps);
     });
 
     test('a Strict Mode release/reattach does not dispose a live editor', async () => {

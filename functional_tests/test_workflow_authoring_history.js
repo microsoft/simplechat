@@ -1,7 +1,7 @@
 // test_workflow_authoring_history.js
 /*
 Offline contracts for bounded, immutable workflow authoring history.
-Version: 0.261.123
+Version: 0.261.201
 Implemented in: 0.261.123
 
 Loads the production TypeScript model through the existing Node resolver.
@@ -843,6 +843,99 @@ function registerTests() {
         assert.ok(history.retainedBytes < historyApi.WORKFLOW_HISTORY_MAX_BYTES);
         assert.strictEqual(replay(history, 'undo'), baseline);
         assert.strictEqual(replay(history, 'redo'), deep);
+    });
+
+    test('origin and turn metadata are copied, validated, counted, and omitted when absent', () => {
+        const baseline = state(0);
+        const history = createHistory(baseline);
+        const action = { label: 'Apply AI assist', origin: 'ai', turnId: 'turn-1' };
+        const assisted = applied(history, baseline, state(1), action);
+        action.origin = 'user';
+        action.turnId = 'turn-2';
+        assert.deepEqual(assisted.action, { label: 'Apply AI assist', origin: 'ai', turnId: 'turn-1' });
+        assert.equal(Object.isFrozen(assisted.action), true);
+        const plain = applied(history, state(1), state(2), { label: 'edit' });
+        assert.deepEqual(plain.action, { label: 'edit' }, 'A user edit keeps its original shape; the origin defaults to user.');
+        assert.equal(historyApi.historyActionOrigin(plain.action), 'user');
+        assert.equal(historyApi.historyActionOrigin(assisted.action), 'ai');
+        assert.deepEqual([...historyApi.WORKFLOW_HISTORY_ORIGINS], ['user', 'ai', 'restore']);
+
+        const bare = createHistory(baseline);
+        applied(bare, baseline, state(1), { label: 'edit' });
+        const tagged = createHistory(baseline);
+        applied(tagged, baseline, state(1), { label: 'edit', origin: 'restore', turnId: 'turn-1' });
+        assert.ok(tagged.retainedBytes > bare.retainedBytes, 'Origin and turn metadata count toward the byte budget.');
+
+        let calls = 0;
+        const accessor = { label: 'edit', get origin() { calls++; return 'ai'; } };
+        const longTurn = 'x'.repeat(historyApi.WORKFLOW_HISTORY_MAX_TURN_ID_LENGTH + 1);
+        const invalid = [
+            { label: 'edit', origin: 'bot' }, { label: 'edit', origin: '' }, { label: 'edit', origin: 1 },
+            { label: 'edit', turnId: '' }, { label: 'edit', turnId: 7 }, { label: 'edit', turnId: 'line\nbreak' },
+            { label: 'edit', turnId: longTurn }, accessor,
+        ];
+        const fresh = createHistory(baseline);
+        for (const candidate of invalid) {
+            assert.throws(() => fresh.record(baseline, state(1), candidate), TypeError);
+            assert.equal(fresh.entryCount, 0);
+        }
+        assert.equal(calls, 0, 'Accessor metadata is rejected without being evaluated.');
+        const longest = 'y'.repeat(historyApi.WORKFLOW_HISTORY_MAX_TURN_ID_LENGTH);
+        assert.equal(historyApi.isWorkflowHistoryTurnId(longest), true);
+        applied(fresh, baseline, state(1), { label: 'edit', turnId: longest });
+        assert.equal(fresh.peek('undo').action.turnId, longest);
+    });
+
+    test('grouped edits never coalesce across a different origin or turn', () => {
+        const values = Array.from({ length: 9 }, (_, index) => state(index));
+        const history = createHistory(values[0]);
+        const typing = { label: 'Edit name', group: 'name' };
+        applied(history, values[0], values[1], typing);
+        assert.strictEqual(history.coalescingBase({ ...typing }), values[0]);
+        assert.strictEqual(history.coalescingBase({ ...typing, origin: 'user' }), values[0],
+            'An omitted origin and an explicit user origin are the same author.');
+        applied(history, values[1], values[2], { ...typing, origin: 'user' });
+        assert.equal(history.entryCount, 1, 'The same author typing in the same field coalesces.');
+
+        const assist = { ...typing, origin: 'ai', turnId: 'turn-1' };
+        assert.equal(history.coalescingBase(assist), null);
+        applied(history, values[2], values[3], assist);
+        assert.equal(history.entryCount, 2, 'An AI step never extends a user group.');
+        applied(history, values[3], values[4], { ...assist });
+        assert.equal(history.entryCount, 2, 'The same turn in the same group coalesces.');
+        applied(history, values[4], values[5], { ...assist, turnId: 'turn-2' });
+        assert.equal(history.entryCount, 3, 'A different turn starts a new step.');
+        applied(history, values[5], values[6], { ...typing, origin: 'restore', turnId: 'turn-2' });
+        assert.equal(history.entryCount, 4, 'A restore never extends an AI step, even for the same turn.');
+        applied(history, values[6], values[7], typing);
+        assert.equal(history.entryCount, 5, 'The user resumes typing in a new step after a restore.');
+        assert.deepEqual(history.retainedEntries.map((entry) => historyApi.historyActionOrigin(entry.action)),
+            ['user', 'ai', 'ai', 'restore', 'user']);
+        assert.deepEqual(history.retainedEntries.map((entry) => entry.action.turnId),
+            [undefined, 'turn-1', 'turn-2', 'turn-2', undefined]);
+        assert.strictEqual(history.retainedEntries[1].before, values[2]);
+        assert.strictEqual(history.retainedEntries[1].after, values[4]);
+    });
+
+    test('retained entries and the applied count follow undo, redo, and a new branch', () => {
+        const values = Array.from({ length: 5 }, (_, index) => state(index));
+        const history = createHistory(values[0]);
+        assert.deepEqual(history.retainedEntries, []);
+        assert.equal(history.appliedCount, 0);
+        applied(history, values[0], values[1]);
+        applied(history, values[1], values[2], { label: 'Apply AI assist', origin: 'ai', turnId: 'turn-1' });
+        const retained = history.retainedEntries;
+        assert.equal(history.appliedCount, 2);
+        replay(history, 'undo');
+        assert.equal(history.appliedCount, 1);
+        assert.equal(history.retainedEntries.length, 2, 'Undo keeps the step available for Redo.');
+        assert.equal(history.coalescingBase({ label: 'edit', group: 'x' }), null, 'Nothing coalesces behind a Redo step.');
+        applied(history, values[1], values[3]);
+        assert.equal(history.retainedEntries.length, 2, 'A new edit after Undo replaces the Redo step.');
+        assert.equal(history.appliedCount, 2);
+        assert.equal(history.retainedEntries[1].action.origin, undefined);
+        assert.equal(retained.length, 2, 'An earlier snapshot of the entries is never mutated.');
+        assert.equal(retained[1].action.origin, 'ai');
     });
 
     test('invalid metadata, limits, and directions fail explicitly without silently choosing defaults', () => {

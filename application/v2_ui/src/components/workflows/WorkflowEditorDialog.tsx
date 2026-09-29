@@ -21,6 +21,7 @@ import { WorkflowAlertEditor } from './WorkflowAlertEditor';
 import { WorkflowAlertSummary } from './WorkflowAlertSummary';
 import { useWorkflowAuthoring } from './useWorkflowAuthoring';
 import { ApiError } from '../../lib/apiClient';
+import { workflowTasksInOrder } from '../../lib/workflowChangeTracking';
 import {
     convertToStructuredWorkflow,
     enclosingFlowLoopControls,
@@ -69,9 +70,7 @@ function setTaskAt(
     taskId: string,
     update: (task: WorkflowTask) => WorkflowTask,
 ): WorkflowTask[] {
-    return tasks.map((task, index) =>
-        task.id === taskId ? { ...update(task), order: index + 1 } : { ...task, order: index + 1 },
-    );
+    return workflowTasksInOrder(tasks.map((task) => (task.id === taskId ? update(task) : task)));
 }
 
 function workflowRunnerSummary(workflow: WorkflowDefinition, options: WorkflowEditorOptions): string {
@@ -329,13 +328,13 @@ export function WorkflowEditorDialog({
             }
             const tasks = [...current.tasks];
             [tasks[index], tasks[nextIndex]] = [tasks[nextIndex], tasks[index]];
-            return { ...current, tasks: tasks.map((task, position) => ({ ...task, order: position + 1 })) };
+            return { ...current, tasks: workflowTasksInOrder(tasks) };
         });
     };
     const removeTask = (taskId: string) => {
         setWorkflow((current) => ({
             ...current,
-            tasks: current.tasks.filter((task) => task.id !== taskId).map((task, index) => ({ ...task, order: index + 1 })),
+            tasks: workflowTasksInOrder(current.tasks.filter((task) => task.id !== taskId)),
         }));
         fieldDrafts.store.clear(['task', taskId]);
     };

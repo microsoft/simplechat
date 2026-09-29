@@ -210,14 +210,18 @@ function sameCheckpoint(left: Checkpoint, right: Checkpoint): boolean {
     return sameEditorValue(left.draft, right.draft) && sameWorkflowFieldDrafts(left.fields, right.fields);
 }
 
+// A field draft's path starts with the editor segment for the definition field it edits.
+const DRAFT_PATH_FIELDS: ReadonlyMap<string, string> = new Map([['output', 'output_contract'], ['query', 'iterable'], ['state', 'state']]);
+
 /** Reverted fields show their restored value, not text typed before the revert. Undefined when nothing is dropped. */
 function withoutFieldDrafts(snapshot: WorkflowFieldDraftSnapshot, keys: readonly string[]): WorkflowFieldDraftSnapshot | undefined {
     const targets = keys.map(parseWorkflowChangeKey).flatMap((info) => (info.scope === 'task' || info.scope === 'node') && 'id' in info
         ? [{ scope: info.scope, id: info.id, field: info.field }] : []);
     const fields = new Map(snapshot.fields);
     for (const [id, draft] of snapshot.fields) {
+        const field = DRAFT_PATH_FIELDS.get(draft.path[0]) ?? draft.path[0];
         if (targets.some((target) => draft.owner[0] === target.scope && draft.owner[1] === target.id &&
-            (!target.field || draft.path[0] === target.field))) fields.delete(id);
+            (!target.field || field === target.field))) fields.delete(id);
     }
     return fields.size === snapshot.fields.size ? undefined : { fields, repeatRows: snapshot.repeatRows };
 }

@@ -34,7 +34,14 @@ import {
     WORKFLOW_TASK_ORDER_KEY,
     type WorkflowAttribution,
 } from '../application/v2_ui/src/lib/workflowChangeTracking';
-import type { WorkflowDefinition } from '../application/v2_ui/src/lib/workflowEditor';
+import {
+    ASSIST_FORBIDDEN_FIELDS,
+    WORKFLOW_AUTHORED_FIELDS,
+    WorkflowAuthoringSession,
+} from '../application/v2_ui/src/components/workflows/WorkflowAuthoringHistory';
+import { applyWorkflowEdit } from '../application/v2_ui/src/lib/workflowAuthoring';
+import { WORKFLOW_ALERT_FIELDS } from '../application/v2_ui/src/lib/workflowAlerts';
+import type { WorkflowDefinition, WorkflowEditorOptions } from '../application/v2_ui/src/lib/workflowEditor';
 
 let failures = 0;
 export function check(name: string, condition: boolean, detail?: unknown) {
@@ -294,7 +301,323 @@ export function runRevertChecks() {
     turnPlans();
 }
 
+// ---------------------------------------------------------------------------------------------
+// Session: assist, reverts, restores, and attribution through the real history
+// ---------------------------------------------------------------------------------------------
+
+interface SessionState {
+    session: WorkflowAuthoringSession;
+    errors: string[];
+}
+
+const fixtureOptions = () => structuredClone(fixture.options) as unknown as WorkflowEditorOptions;
+
+function openSession(draft: WorkflowDefinition = structured(), readOnly = false): SessionState {
+    const session = new WorkflowAuthoringSession(draft);
+    const errors: string[] = [];
+    session.configure({
+        options: fixtureOptions(), readOnly, saving: false, commandPending: false, selectionId: 'seed-node',
+        onError: (message: string) => { if (message) errors.push(message); },
+        onRestore: () => {},
+        onRollback: () => {},
+    });
+    return { session, errors };
+}
+
+const snapshotOf = (state: SessionState) => state.session.getSnapshot();
+const authorOf = (state: SessionState, key: string) => snapshotOf(state).attribution.get(key);
+const unsavedOf = (state: SessionState) => diffWorkflowChanges(snapshotOf(state).baseline, snapshotOf(state).draft);
+const lastStep = (state: SessionState) => snapshotOf(state).steps.at(-1);
+
+function taskOf(definition: WorkflowDefinition, id: string): Row | undefined {
+    return tasksOf(definition).find((task) => task.id === id);
+}
+
+function withTask(definition: WorkflowDefinition, id: string, patch: Row): WorkflowDefinition {
+    return withTasks(definition, tasksOf(definition).map((task) => task.id === id ? { ...task, ...patch } : task));
+}
+
+function rename(state: SessionState, name: string, group?: string) {
+    return state.session.changeDraft((current) => ({ ...current, name }), { label: 'Workflow name', ...(group ? { group } : {}) });
+}
+
+function assistChecks() {
+    check('assist can never change enablement or Run as',
+        ASSIST_FORBIDDEN_FIELDS.includes('is_enabled') && ASSIST_FORBIDDEN_FIELDS.includes('m365_run_as_user_id'));
+    check('the editor authors File Sync and every alert field',
+        WORKFLOW_AUTHORED_FIELDS.includes('file_sync') && WORKFLOW_ALERT_FIELDS.every((field) => WORKFLOW_AUTHORED_FIELDS.includes(field)));
+
+    const state = openSession();
+    const { session } = state;
+    const original = session.draft;
+    const candidate = withTask({ ...original, name: 'AI name' }, 'seed-task', { instructions: 'AI instructions.' });
+    const applied = session.applyAssist(candidate, { turnId: 'turn-1', label: 'Tighten the seed task' });
+    const step = snapshotOf(state).steps[0];
+    check('an assist candidate applies as one history entry', applied.status === 'applied' && snapshotOf(state).steps.length === 1, applied);
+    check('the assist entry carries its origin, turn, and label',
+        step?.origin === 'ai' && step.turnId === 'turn-1' && step.label === 'Tighten the seed task' && snapshotOf(state).undoLabel === step.label, step);
+    check('assist-changed keys are AI-authored for the turn',
+        authorOf(state, 'name')?.author === 'ai' && authorOf(state, workflowTaskKey('seed-task', 'instructions'))?.turnId === 'turn-1',
+        [...snapshotOf(state).attribution]);
+    check('unsaved AI changes make Save ask first', workflowSaveNeedsConfirmation(unsavedOf(state).changes, snapshotOf(state).attribution));
+
+    const current = session.draft;
+    const rejected: [string, WorkflowDefinition][] = [
+        ...ASSIST_FORBIDDEN_FIELDS.filter((field) => field !== 'definition_version')
+            .map((field): [string, WorkflowDefinition] => [field, { ...current, [field]: `changed-${field}` } as WorkflowDefinition]),
+        ['definition_version', { ...current, definition_version: 2 } as WorkflowDefinition],
+        ['revision', { ...current, revision: 'other' } as unknown as WorkflowDefinition],
+        ['approval', withTask(current, 'seed-task', { approval: { required: true, message: 'Check it.' } })],
+        ['root', { ...current, flow: { ...(current.flow as unknown as Row), id: 'other-root' } } as unknown as WorkflowDefinition],
+    ];
+    for (const [field, value] of rejected) {
+        const outcome = session.applyAssist(value, { turnId: 'turn-2', label: 'Bad' });
+        check(`an assist candidate cannot change ${field}`, outcome.status === 'rejected' && outcome.message.includes(field) &&
+            session.draft === current && snapshotOf(state).steps.length === 1, outcome);
+    }
+    const badTurns = ['', 'x'.repeat(257)].map((turnId) => session.applyAssist({ ...current, name: 'Other' }, { turnId, label: 'x' }).status);
+    check('an assist needs a valid turn ID', badTurns.every((status) => status === 'rejected') && session.draft === current, badTurns);
+
+    const large = openSession();
+    (large.session as unknown as { history: { record: () => unknown } }).history.record = () => ({ status: 'overflow' });
+    const proposal = large.session.applyAssist({ ...large.session.draft, name: 'Huge' }, { turnId: 'turn-9', label: 'Huge edit' });
+    check('an assist over the history budget asks before clearing history', proposal.status === 'confirmation_required' &&
+        snapshotOf(large).pending?.kind === 'overflow' && large.session.draft.name !== 'Huge', proposal);
+    large.session.confirm();
+    check('confirming the overflow applies the assist, still AI-attributed', large.session.draft.name === 'Huge' &&
+        authorOf(large, 'name')?.author === 'ai' && snapshotOf(large).trimmed && snapshotOf(large).steps.length === 0);
+
+    const impact = openSession();
+    const start = impact.session.draft;
+    let removal: { nodeId: string; workflow: WorkflowDefinition } | null = null;
+    for (const node of rootNodes(start)) {
+        const first = applyWorkflowEdit(start, { type: 'remove', nodeId: node.id }, fixtureOptions(), false);
+        const confirmed = first.status === 'confirmation_required'
+            ? applyWorkflowEdit(start, { type: 'remove', nodeId: node.id }, fixtureOptions(), true) : null;
+        if (confirmed?.status === 'applied') {
+            removal = { nodeId: node.id, workflow: confirmed.workflow };
+            break;
+        }
+    }
+    check('the fixture has a block whose removal affects outside references', removal !== null);
+    if (removal) {
+        const outcome = impact.session.applyAssist(removal.workflow, { turnId: 'turn-4', label: 'Remove a block' });
+        check('an assist that breaks references asks first, like Undo', outcome.status === 'confirmation_required' &&
+            snapshotOf(impact).pending?.kind === 'change' && impact.session.draft === start, outcome);
+        impact.session.confirm();
+        const removedNode = rootNodes(start).find((node) => node.id === removal?.nodeId);
+        const removedKey = removedNode?.kind === 'task' ? workflowTaskKey(String(removedNode.task_id)) : workflowNodeKey(removal.nodeId);
+        check('confirming applies the assist removal as an AI change', impact.session.draft === removal.workflow &&
+            authorOf(impact, removedKey)?.turnId === 'turn-4', [removedKey, ...snapshotOf(impact).attribution]);
+    }
+}
+
+function turnChecks() {
+    const state = openSession();
+    const { session } = state;
+    const original = session.draft;
+    const instructions = workflowTaskKey('seed-task', 'instructions');
+    session.applyAssist(withTask({ ...original, name: 'AI name', description: 'AI description' }, 'seed-task', { instructions: 'AI step.' }),
+        { turnId: 'turn-1', label: 'Assist' });
+    session.changeDraft((current) => ({ ...current, description: 'Mine' }), { label: 'Description' });
+    const result = session.revertTurn('turn-1');
+    check('a turn revert reports reverted and skipped counts',
+        result.status === 'applied' && result.reverted === 2 && result.skipped === 1, result);
+    check('each skipped key says why', result.status === 'applied' && result.skippedKeys[0]?.key === 'description' &&
+        result.skippedKeys[0]?.reason === 'Changed after this turn.' && result.skippedKeys[0]?.label === 'Description', result);
+    check('the turn revert keeps later work and reverts the rest', session.draft.name === original.name &&
+        session.draft.description === 'Mine' && taskOf(session.draft, 'seed-task')?.instructions === taskOf(original, 'seed-task')?.instructions);
+    check('the turn revert is a new, undoable restore entry', snapshotOf(state).steps.length === 3 &&
+        lastStep(state)?.origin === 'restore' && lastStep(state)?.turnId === 'turn-1' && snapshotOf(state).undoLabel === 'Revert AI assist turn');
+    check('reverted keys lose their author; later work keeps its own',
+        !snapshotOf(state).attribution.has('name') && !snapshotOf(state).attribution.has(instructions) &&
+        authorOf(state, 'description')?.author === 'user', [...snapshotOf(state).attribution]);
+    check('reverting the same turn again has nothing to do', session.revertTurn('turn-1').status === 'noop');
+    check('an unknown turn is unavailable', session.revertTurn('turn-x').status === 'unavailable');
+    session.request('undo');
+    check('undoing the turn revert brings the AI changes back, AI-attributed',
+        session.draft.name === 'AI name' && authorOf(state, 'name')?.turnId === 'turn-1');
+    session.request('undo');
+    session.request('undo');
+    check('a turn whose entries are all undone has nothing to revert', session.revertTurn('turn-1').status === 'noop');
+}
+
+function revertChangeChecks() {
+    const state = openSession();
+    const { session } = state;
+    const original = session.draft;
+    session.changeDraft((current) => ({ ...current, description: 'Edited' }), { label: 'Description' });
+    const result = session.revertChange(['description']);
+    check('Revert applies as one new restore entry', result.status === 'applied' && snapshotOf(state).steps.length === 2 &&
+        lastStep(state)?.origin === 'restore' && lastStep(state)?.label === 'Revert Description', lastStep(state));
+    check('the reverted key is back at its opened value with no author',
+        session.draft.description === original.description && !snapshotOf(state).attribution.has('description'));
+    session.request('undo');
+    check('undoing a revert brings the edit and its author back',
+        session.draft.description === 'Edited' && authorOf(state, 'description')?.author === 'user');
+    session.request('redo');
+    check('redoing the revert clears them again', session.draft.description === original.description && unsavedOf(state).changes.length === 0);
+
+    const removal = applyWorkflowEdit(session.draft, { type: 'remove', nodeId: 'report-node' }, fixtureOptions(), true);
+    if (removal.status === 'applied') session.changeDraft(removal.workflow, { label: 'Remove block', targetId: 'report-node' });
+    // A task block and its task are one item, keyed by the task.
+    const removed = unsavedOf(state).byKey.get(workflowTaskKey('report-task'));
+    check('a removed task block is one removed change anchored after its sibling', removed?.kind === 'removed' &&
+        removed.anchor?.regionId === 'root' && removed.anchor.afterId === 'constructor', removed ?? [...unsavedOf(state).byKey.keys()]);
+    const restored = session.revertChange([workflowTaskKey('report-task')]);
+    if (restored.status === 'confirmation_required') session.confirm();
+    check('Restore puts a removed block and its task back where they were', restored.status !== 'rejected' &&
+        rootNodes(session.draft).map((node) => node.id).join() === rootNodes(original).map((node) => node.id).join() &&
+        JSON.stringify(taskOf(session.draft, 'report-task')) === JSON.stringify(taskOf(original, 'report-task')), restored);
+    check('restoring a removed block is labelled as a restore', lastStep(state)?.label.startsWith('Restore ') === true, lastStep(state));
+    check('an unchanged key has nothing to revert', session.revertChange(['limits']).status === 'noop');
+}
+
+function restoreToChecks() {
+    const state = openSession();
+    const { session } = state;
+    const original = session.draft;
+    rename(state, 'One');
+    session.changeDraft((current) => ({ ...current, description: 'Two' }), { label: 'Description two' });
+    session.applyAssist({ ...session.draft, name: 'Three' }, { turnId: 'turn-r', label: 'Name three' });
+    const [first, , third] = snapshotOf(state).steps;
+    const result = session.restoreTo(first.id);
+    check('Restore to here applies that version as a new entry', result.status === 'applied' && session.draft.name === 'One' &&
+        session.draft.description === original.description && snapshotOf(state).steps.length === 4, result);
+    check('Restore to here keeps every later step in history',
+        snapshotOf(state).steps.slice(0, 3).map((step) => step.label).join() === 'Workflow name,Description two,Name three');
+    check('restored keys keep the author they had in that version', authorOf(state, 'name')?.author === 'user');
+    session.restoreTo(third.id);
+    check('restoring an AI version keeps it AI-authored', session.draft.name === 'Three' && authorOf(state, 'name')?.turnId === 'turn-r');
+    session.restoreTo('opened');
+    check('restoring the opened version leaves no unsaved change',
+        unsavedOf(state).changes.length === 0 && snapshotOf(state).attribution.size === 0 && lastStep(state)?.label === 'Restore to the opened version');
+    session.request('undo');
+    const undone = snapshotOf(state).steps.at(-1);
+    check('Restore to here is undoable', session.draft.name === 'Three' && undone?.applied === false);
+    check('an undone step cannot be restored to', undone !== undefined && session.restoreTo(undone.id).status === 'rejected');
+    check('a step no longer retained cannot be restored to', session.restoreTo(9999).status === 'rejected');
+}
+
+function attributionChecks() {
+    const state = openSession();
+    const { session } = state;
+    for (const name of ['a', 'ab', 'abc']) rename(state, name, 'workflow.name');
+    check('coalesced typing is one user entry', snapshotOf(state).steps.length === 1 && authorOf(state, 'name')?.author === 'user');
+    session.applyAssist({ ...session.draft, name: 'AI' }, { turnId: 'turn-a', label: 'Rename' });
+    check('an assist never coalesces into typing', snapshotOf(state).steps.length === 2 && authorOf(state, 'name')?.author === 'ai');
+    rename(state, 'AI!', 'workflow.name');
+    check('typing after an assist starts a new user entry', snapshotOf(state).steps.length === 3 && authorOf(state, 'name')?.author === 'user');
+    session.request('undo');
+    check('undo restores the AI author', session.draft.name === 'AI' && authorOf(state, 'name')?.turnId === 'turn-a');
+    session.request('undo');
+    check('undo restores the earlier user author', session.draft.name === 'abc' && authorOf(state, 'name')?.origin === 'user');
+    session.request('redo');
+    session.request('redo');
+    check('redo restores the later authors', session.draft.name === 'AI!' && authorOf(state, 'name')?.author === 'user');
+
+    const netZero = openSession();
+    const openedName = netZero.session.draft.name;
+    rename(netZero, 'temporary', 'workflow.name');
+    rename(netZero, openedName, 'workflow.name');
+    check('typing back to the opened value leaves no entry and no author',
+        snapshotOf(netZero).steps.length === 0 && snapshotOf(netZero).attribution.size === 0, snapshotOf(netZero).steps);
+
+    const evicting = openSession();
+    evicting.session.changeDraft((current) => ({ ...current, description: 'First' }), { label: 'Description' });
+    for (let index = 0; index <= 100; index++) {
+        evicting.session.applyAssist({ ...evicting.session.draft, name: `AI ${index}` }, { turnId: `turn-${index}`, label: `Rename ${index}` });
+    }
+    const steps = snapshotOf(evicting).steps;
+    check('eviction drops the oldest steps and marks history trimmed',
+        steps.length === 100 && snapshotOf(evicting).trimmed && steps[0].label === 'Rename 1', steps.slice(0, 2));
+    check('eviction keeps the authors of evicted steps', authorOf(evicting, 'description')?.author === 'user' &&
+        authorOf(evicting, 'name')?.turnId === 'turn-100');
+    check('a turn whose entries were evicted is unavailable', evicting.session.revertTurn('turn-0').status === 'unavailable');
+    check('a turn whose keys changed later reverts nothing', evicting.session.revertTurn('turn-1').status === 'noop');
+    while (snapshotOf(evicting).undoLabel) evicting.session.request('undo');
+    check('undoing to the oldest retained step keeps the evicted author', evicting.session.draft.name === 'AI 0' &&
+        authorOf(evicting, 'description')?.author === 'user' && authorOf(evicting, 'name')?.turnId === 'turn-0');
+}
+
+function saveAndAccessChecks() {
+    const state = openSession();
+    const { session } = state;
+    rename(state, 'Mine');
+    check('Save stays one click for your own edits', !workflowSaveNeedsConfirmation(unsavedOf(state).changes, snapshotOf(state).attribution));
+    session.applyAssist(withTask(session.draft, 'seed-task', { instructions: 'AI.' }), { turnId: 'turn-s', label: 'Assist' });
+    check('unsaved AI changes need confirmation', workflowSaveNeedsConfirmation(unsavedOf(state).changes, snapshotOf(state).attribution));
+    session.revertTurn('turn-s');
+    check('reverting the AI turn makes Save one click again', !workflowSaveNeedsConfirmation(unsavedOf(state).changes, snapshotOf(state).attribution));
+    session.saved(session.draft);
+    const saved = snapshotOf(state);
+    check('Save makes the saved version the new baseline', saved.baseline === session.draft && saved.attribution.size === 0 &&
+        saved.steps.length === 0 && !saved.trimmed && unsavedOf(state).changes.length === 0, saved);
+
+    const readOnly = openSession(structured(), true);
+    const outcomes = [
+        readOnly.session.applyAssist({ ...readOnly.session.draft, name: 'x' }, { turnId: 'turn-ro', label: 'x' }).status,
+        readOnly.session.revertChange(['name']).status,
+        readOnly.session.restoreTo('opened').status,
+    ];
+    check('a read-only editor refuses assist, revert, and restore', outcomes.every((status) => status === 'rejected') &&
+        readOnly.session.getSnapshot().steps.length === 0, outcomes);
+
+    const plain = openSession(classic());
+    rename(plain, 'Classic renamed');
+    check('classic drafts record history for tracking but offer no Undo', snapshotOf(plain).steps.length === 1 &&
+        snapshotOf(plain).undoLabel === '' && authorOf(plain, 'name')?.author === 'user', snapshotOf(plain).steps);
+    plain.session.changeDraft((current) => withTasks(current, tasksOf(current).filter((task) => task.id !== 't2')), { label: 'Remove task' });
+    const removed = unsavedOf(plain).byKey.get(workflowTaskKey('t2'));
+    check('a removed classic task is one revertable removed change', removed?.kind === 'removed' && removed.revertable, removed);
+    const restored = plain.session.revertChange([workflowTaskKey('t2')]);
+    check('Restore puts a classic task back in its place', restored.status === 'applied' &&
+        tasksOf(plain.session.draft).map((task) => `${task.id}@${task.order}`).join() === 't1@1,t2@2,t3@3,t4@4', tasksOf(plain.session.draft));
+    plain.session.applyAssist({ ...plain.session.draft, description: 'AI summary' }, { turnId: 'turn-c', label: 'Describe' });
+    const turn = plain.session.revertTurn('turn-c');
+    check('classic drafts take an assist and revert its turn', turn.status === 'applied' && turn.reverted === 1 &&
+        plain.session.draft.description === '', turn);
+}
+
+function fieldDraftChecks() {
+    const state = openSession();
+    const { session } = state;
+    const contract = taskOf(session.draft, 'seed-task')?.output_contract as Row;
+    const schema = { ...contract.schema, properties: { ...contract.schema.properties, note: { type: 'string' } } };
+    const key = workflowTaskKey('seed-task', 'output_contract');
+    session.edit({ label: 'Output schema', group: 'schema' }, () => {
+        session.fields.field(['task', 'seed-task'], ['output', 'schema'], JSON.stringify(contract.schema, null, 2))
+            .setValue(JSON.stringify(schema, null, 2));
+        session.changeDraft((current) => withTask(current, 'seed-task', { output_contract: { ...contract, schema } }));
+    });
+    check('typed schema text is held as a field draft',
+        session.fields.capture().fields.size === 1 && unsavedOf(state).byKey.has(key), [...unsavedOf(state).byKey.keys()]);
+    const reverted = session.revertChange([key]);
+    // A contract change can move downstream selectors, so it confirms first, exactly as Undo would.
+    const confirmed = reverted.status === 'confirmation_required' && snapshotOf(state).pending?.kind === 'change';
+    if (confirmed) session.confirm();
+    check('a field revert with downstream impact confirms first, like Undo', confirmed, reverted);
+    check('reverting a field drops its typed text so the restored value shows', snapshotOf(state).pending === null &&
+        session.fields.capture().fields.size === 0 &&
+        JSON.stringify(taskOf(session.draft, 'seed-task')?.output_contract) === JSON.stringify(contract), snapshotOf(state).steps);
+    session.request('undo');
+    if (snapshotOf(state).pending) session.confirm();
+    check('undoing the revert brings the typed text back',
+        session.fields.capture().fields.size === 1 && unsavedOf(state).byKey.has(key), snapshotOf(state).steps);
+}
+
+export function runSessionChecks() {
+    assistChecks();
+    turnChecks();
+    revertChangeChecks();
+    restoreToChecks();
+    attributionChecks();
+    saveAndAccessChecks();
+    fieldDraftChecks();
+}
+
 runLibraryChecks();
 runRevertChecks();
+runSessionChecks();
 console.log(`\n${failures ? `${failures} FAILED` : 'all passed'}`);
 if (failures) process.exitCode = 1;
