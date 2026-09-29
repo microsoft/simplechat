@@ -96,6 +96,8 @@ if __name__ == "__main__":
     sys.exit(0 if success else 1)
 ```
 
+Under pytest, the `return False` path in this template now fails the test; see **pytest return-False guard (#1572)** below. New checks should use `assert`.
+
 ### **Multi-Test Pattern:**
 ```python
 def test_feature_a():
@@ -118,6 +120,16 @@ if __name__ == "__main__":
     print(f"\n📊 Results: {sum(results)}/{len(results)} tests passed")
     sys.exit(0 if success else 1)
 ```
+
+### pytest return-False guard (#1572)
+
+pytest ignores a test function's return value, so under pytest a template-style test that returned `False` used to be reported as passed. `functional_tests/conftest.py` and `ui_tests/conftest.py` now fail a test that returns exactly `False` under pytest, with a message that names the test and refers to #1572. `True`, `None` and every other value are left alone. `python test_x.py` runs never load a conftest, so they behave as before.
+
+- Write new checks with `assert`. Where a check must still run under `python -O`, raise explicitly, for example `if not saved: raise AssertionError("settings were not saved")`.
+- Use `return True`/`return False` only to feed a `__main__` runner's exit code, as in the templates above. Under pytest, the `return False` path now fails the test, which is the intended outcome.
+- The guard does not cover `async def` tests or `unittest.TestCase` methods. A script whose `__main__` calls `pytest.main()` loads the conftest, so the guard applies to that run.
+- Keep the guard blocks identical. The code between `# --- begin pytest return-False guard (#1572) ---` and `# --- end pytest return-False guard (#1572) ---` must match in both conftest files, and `functional_tests/test_pytest_return_false_guard.py` fails if they differ. Put fixtures for one directory outside the block, and do not add collection hooks to either file.
+- A guard failure means the test returned `False` under pytest in that environment; it is not necessarily a product bug. Many older tests need Azure configuration, a running app, or setup that only their `__main__` runner performs, so run those with `python <file>`.
 
 ## 🔍 **Test Discovery & Reuse**
 
