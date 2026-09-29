@@ -47,16 +47,20 @@ def test_version_is_at_least_the_implementing_release():
     print("  ok  the configured version includes change tracking")
 
 
+ALLOWED_PACKAGES = {"react", "react-dom", "lucide-react", "clsx"}
+
+
 def test_change_tracking_adds_no_dependency():
     """Diffing is local code: no diff library, no remote asset, nothing outside the app."""
     for path in (CHANGE_TRACKING_TS, HISTORY_TS, FINGERPRINT_TS, SESSION_TSX, CHANGE_UI_TSX):
         source = path.read_text(encoding="utf-8")
         for module in IMPORT_RE.findall(source):
-            assert module.startswith(".") or module in {"react", "react-dom"}, (
-                f"{path.name} imports {module}; change tracking must stay local code"
+            assert module.startswith(".") or module in ALLOWED_PACKAGES, (
+                f"{path.name} imports {module}; change tracking may only use local modules and the "
+                f"packages the app already ships ({', '.join(sorted(ALLOWED_PACKAGES))})"
             )
         assert "http://" not in source and "https://" not in source, f"{path.name} references a remote URL"
-    print("  ok  change tracking imports only local modules and React")
+    print("  ok  change tracking imports only local modules and packages the app already ships")
 
 
 def test_before_and_after_values_render_as_text():

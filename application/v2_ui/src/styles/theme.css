@@ -91,6 +91,12 @@ html[data-font-size='xl'] {
        group badge is not mistaken for a selected control. */
     --info: #0e7490;
     --info-soft: rgb(14 116 144 / 0.12);
+    /* Workflow editor change tracking. AI assist changes read blue and the user's own
+       edits read violet; both stay at AA contrast as text over their soft fills. */
+    --change-ai: #1d4ed8;
+    --change-ai-soft: rgb(29 78 216 / 0.10);
+    --change-user: #6d28d9;
+    --change-user-soft: rgb(109 40 217 / 0.10);
 
     --shadow-glass: 0 8px 32px rgb(15 23 42 / 0.10), 0 2px 8px rgb(15 23 42 / 0.06);
     --shadow-lift: 0 16px 48px rgb(15 23 42 / 0.16), 0 4px 12px rgb(15 23 42 / 0.08);
@@ -137,6 +143,10 @@ html[data-font-size='xl'] {
     --ok-soft: rgb(52 211 153 / 0.16);
     --info: #22d3ee;
     --info-soft: rgb(34 211 238 / 0.16);
+    --change-ai: #93c5fd;
+    --change-ai-soft: rgb(147 197 253 / 0.16);
+    --change-user: #c4b5fd;
+    --change-user-soft: rgb(196 181 253 / 0.16);
 
     --shadow-glass: 0 8px 32px rgb(0 0 0 / 0.45), 0 2px 8px rgb(0 0 0 / 0.30);
     --shadow-lift: 0 16px 48px rgb(0 0 0 / 0.55), 0 4px 12px rgb(0 0 0 / 0.35);
@@ -173,6 +183,10 @@ html[data-font-size='xl'] {
     --color-ok-soft: var(--ok-soft);
     --color-info: var(--info);
     --color-info-soft: var(--info-soft);
+    --color-change-ai: var(--change-ai);
+    --color-change-ai-soft: var(--change-ai-soft);
+    --color-change-user: var(--change-user);
+    --color-change-user-soft: var(--change-user-soft);
 
     --shadow-glass: var(--shadow-glass);
     --shadow-lift: var(--shadow-lift);

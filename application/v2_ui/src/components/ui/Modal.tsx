@@ -31,14 +31,16 @@ import type { ReactNode } from 'react';
  *
  * `md` is a confirmation or a short form. `lg` is a form long enough to scroll. `xl` is for a
  * surface that puts two panes side by side, where a narrower dialog would leave each half too
- * cramped to be worth splitting.
+ * cramped to be worth splitting. `2xl` is for an `xl` surface that opens a side panel beside
+ * its panes, such as the workflow editor's Changes panel.
  */
-export type ModalSize = 'md' | 'lg' | 'xl';
+export type ModalSize = 'md' | 'lg' | 'xl' | '2xl';
 
 const SIZE_CLASS: Record<ModalSize, string> = {
     md: 'max-w-lg',
     lg: 'max-w-2xl',
     xl: 'max-w-5xl',
+    '2xl': 'max-w-7xl',
 };
 
 // What Tab can reach: enabled, shown, and not taken out of the tab order.

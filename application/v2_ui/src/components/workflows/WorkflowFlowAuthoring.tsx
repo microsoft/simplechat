@@ -11,9 +11,10 @@ import {
     type WorkflowAuthoringTarget, type WorkflowEditCommand, type WorkflowEditResult,
 } from '../../lib/workflowAuthoring';
 import {
-    flowRegions, flowTaskIds, isFlowRegion, supportsWorkflowRepeat,
+    flowRegions, flowTaskIds, flowTaskNodeId, isFlowRegion, supportsWorkflowRepeat,
     type WorkflowFlowNode, type WorkflowTaskNode,
 } from '../../lib/workflowFlow';
+import { parseWorkflowChangeKey, workflowNodeKey, workflowRegionKey } from '../../lib/workflowChangeTracking';
 import { fetchWorkflowFlowProjection, type WorkflowFlowProjection } from '../../lib/workflowInspection';
 import type { WorkflowExecutionRecord } from '../../lib/workflowExecutionHistory';
 import {
@@ -22,6 +23,7 @@ import {
 } from '../../lib/workflowEditor';
 import { GlassButton } from '../ui/primitives';
 import { WorkflowFlowCanvas } from './WorkflowFlowCanvas';
+import { WorkflowChangeNotice, WorkflowItemChangeBadge, WorkflowRemovedItemRows } from './WorkflowChangeTracking';
 import {
     WorkflowJoinFields, WorkflowRegionOutputFields, WorkflowStructuredNodeFields, WorkflowStructuredOutputFields,
 } from './WorkflowStructuredFields';
@@ -81,6 +83,7 @@ export function WorkflowFlowAuthoring({
     const [refresh, setRefresh] = useState(0);
     const [placement, setPlacement] = useState<Placement | null>(null);
     const [canvasFocus, setCanvasFocus] = useState<{ id: string; sequence: number } | null>(null);
+    const [restored, setRestored] = useState<string | null>(null);
     const configurationRef = useRef<HTMLElement>(null);
     const placementRef = useRef<HTMLFieldSetElement>(null);
     const generation = useRef(0);
@@ -154,6 +157,17 @@ export function WorkflowFlowAuthoring({
         if (placement) placementRef.current?.querySelector<HTMLElement>('select')?.focus();
     }, [placement?.action, placement?.nodeId]);
 
+    // A block put back from the Removed blocks list is selected and focused on the canvas.
+    useEffect(() => {
+        if (!restored) return;
+        setRestored(null);
+        const info = parseWorkflowChangeKey(restored);
+        const id = info.scope === 'task' ? flowTaskNodeId(workflow, info.id) : info.scope === 'node' ? info.id : '';
+        if (!id || !targets.has(id)) return;
+        onSelect(id);
+        setCanvasFocus((current) => ({ id, sequence: (current?.sequence ?? 0) + 1 }));
+    }, [restored, targets]);
+
     if (!model.structure || !selected) return <p role="alert" className="text-sm text-danger">{model.error || 'The draft has no selectable structure.'}</p>;
     const regions = isFlowRegion(workflow.flow) ? flowRegions(workflow.flow) : [];
     const placedRegion = placement ? targets.get(placement.regionId) : undefined;
@@ -192,6 +206,12 @@ export function WorkflowFlowAuthoring({
     };
     const selectedRegion = targets.get(selected.regionId);
     const inBranch = selectedRegion?.kind === 'region' && selectedRegion.owner?.kind === 'if';
+    // Changes the selected block's fields do not frame: block orders and the join.
+    const selectedNotices = selected.kind === 'region' ? [workflowRegionKey(selected.id, 'order')]
+        : selected.kind === 'join' ? [workflowNodeKey(selected.node.id, 'join')]
+            : selected.node.kind === 'if' ? [workflowRegionKey(selected.node.then.id, 'order'), workflowRegionKey(selected.node.else.id, 'order')]
+                : selected.node.kind === 'for_each' || selected.node.kind === 'repeat_until'
+                    ? [workflowRegionKey(selected.node.body.id, 'order')] : [];
 
     return <section className="min-w-0 space-y-4" aria-label="Workflow Flow authoring">
         <p role="status" className={`rounded-lg p-3 text-sm ${compiled ? 'bg-surface-sunken text-text-2' : 'bg-warn-soft text-text-1'}`}>
@@ -260,6 +280,8 @@ export function WorkflowFlowAuthoring({
                 <GlassButton size="sm" onClick={() => setPlacement(null)}>Cancel block placement</GlassButton>
             </div>
         </fieldset> : null}
+        <WorkflowRemovedItemRows list="flow" placement={{ at: 'all' }} heading="Removed blocks"
+            onRestored={(change) => setRestored(change.key)} />
         <div className="grid min-w-0 gap-4 xl:grid-cols-2">
             <WorkflowFlowCanvas projection={compiled ?? model.structure} sourceKind="draft"
                 diagramLabel="Editable workflow draft diagram" inspectLabel="Configure selected block"
@@ -278,6 +300,9 @@ export function WorkflowFlowAuthoring({
                         id: selected.id, sequence: (current?.sequence ?? 0) + 1,
                     }))}>Return to selected block</GlassButton>
                 </div>
+                {selected.kind === 'node' && selected.node.kind !== 'task'
+                    ? <WorkflowItemChangeBadge itemKey={workflowNodeKey(selected.node.id)} unframed="all" /> : null}
+                {selectedNotices.map((key) => <WorkflowChangeNotice key={key} changeKey={key} withOwner />)}
                 <fieldset disabled={disabled} className="min-w-0 space-y-3">
                     {selected.kind === 'region' ? <WorkflowRegionOutputFields workflow={workflow} region={selected.region}
                         owner={selected.owner} onEdit={onEdit} />
