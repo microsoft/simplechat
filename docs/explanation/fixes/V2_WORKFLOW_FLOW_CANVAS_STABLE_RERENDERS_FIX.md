@@ -1,6 +1,6 @@
-# V2 Workflow Flow Canvas Stable Re-renders Fix (v0.261.207)
+# V2 Workflow Flow Canvas Stable Re-renders Fix (v0.261.205)
 
-**Fixed in version: 0.261.207**
+**Fixed in version: 0.261.205**
 
 The application version is tracked in `application/single_app/config.py`.
 
@@ -133,7 +133,7 @@ node carries its measured size, so its arrows stay drawn.
 | `application/v2_ui/src/lib/workflowFlowNodeReuse.ts` | New: `sameFlowNode` and `reuseUnchangedFlowNodes` |
 | `functional_tests/test_v2_workflow_flow_node_reuse_logic.mjs` | New: unit tests for the helper |
 | `ui_tests/test_v2_workflow_flow_canvas_stability.py` | New: browser regression tests |
-| `application/single_app/config.py` | Version 0.261.207 |
+| `application/single_app/config.py` | Version 0.261.205 |
 
 ## Testing
 

@@ -1,8 +1,8 @@
 # test_v2_workflow_flow_canvas_stability.py
 """
 Offline real-bundle browser regressions for a stable workflow Flow canvas (#1573).
-Version: 0.261.207
-Implemented in: 0.261.207
+Version: 0.261.205
+Implemented in: 0.261.205
 
 A re-render that doesn't change the diagram must not rebuild the React Flow nodes. New node
 objects reset React Flow's measured handle bounds, so every edge is removed from the page
