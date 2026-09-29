@@ -15,7 +15,8 @@ This test ensures that a workflow blueprint proposed from chat:
   pointer, never echoing the caller's input;
 * builds deterministically, with digest alerts delivered to the bell and File Sync defaults;
 * is created at most once per proposal, within the per-user cap and the schedule minimum for
-  workflows created from chat, which leave every other workflow unaffected.
+  workflows created from chat, which leave every other workflow unaffected; when the cap cannot
+  be counted, the check and both creates raise and write nothing.
 
 The real workflow modules run over the recorded, deterministic doubles of the save parity test.
 """
@@ -625,6 +626,56 @@ def test_quota_exceeded_counts_only_live_orchestration_workflows(harness):
         }
         error = harness.drafts.check_orchestration_workflow_quota(OWNER_ID, harness.settings)
     assert error["message"].startswith("You already have 2 workflows created from chat")
+
+
+def test_a_failed_orchestration_count_fails_closed_wherever_the_cap_is_checked(harness, monkeypatch):
+    workflow_id = harness.drafts.orchestration_workflow_id(OWNER_ID, PROPOSAL_ID)
+    payload = harness.call(
+        "build_workflow_blueprint_payload", EMAIL_DIGEST, EMAIL_HANDLES, workflow_id=workflow_id,
+        user_id=OWNER_ID, settings=harness.settings,
+    )
+    # The real count function runs against a container whose queries fail, as when Cosmos DB is down.
+    container = harness.containers["personal_workflows"]
+    failure = RuntimeError("Cosmos DB is unavailable.")
+    queries = []
+    upserts = []
+
+    def unavailable(query=None, parameters=None, partition_key=None, **kwargs):
+        queries.append(query)
+        raise failure
+
+    monkeypatch.setattr(container, "query_items", unavailable, raising=False)
+    monkeypatch.setattr(container, "upsert_item", lambda body, **kwargs: upserts.append(body), raising=False)
+
+    def escaped(name, *args, **kwargs):
+        try:
+            harness.call(name, *args, **kwargs)
+        except Exception as exc:  # noqa: BLE001 - the test inspects what escaped the call.
+            return exc
+        return None
+
+    outcomes = {
+        "check_orchestration_workflow_quota": escaped(
+            "check_orchestration_workflow_quota", OWNER_ID, harness.settings,
+        ),
+        "create_personal_workflow_from_blueprint": escaped(
+            "create_personal_workflow_from_blueprint", OWNER_ID, copy.deepcopy(EMAIL_DIGEST), EMAIL_HANDLES,
+            origin=ORIGIN, settings=harness.settings, user_info=USER_INFO,
+        ),
+        "create_personal_workflow_from_payload": escaped(
+            "create_personal_workflow_from_payload", OWNER_ID, payload, origin=ORIGIN,
+            settings=harness.settings, user_info=USER_INFO,
+        ),
+    }
+    real_count = harness.drafts.count_personal_orchestration_workflows
+    writes = harness.writes()
+
+    assert real_count is harness.personal.count_personal_orchestration_workflows
+    assert real_count.__module__ == "functions_personal_workflows"
+    # The count's own failure escapes each call; an unknown count is never treated as zero.
+    assert {name: outcome is failure for name, outcome in outcomes.items()} == dict.fromkeys(outcomes, True), outcomes
+    assert len(queries) == len(outcomes) and all("COUNT(1)" in query for query in queries), queries
+    assert writes == {} and container.writes == [] and upserts == []
 
 
 def test_agent_unavailable_applies_the_existing_agent_rules_at_every_use(harness):

@@ -391,8 +391,13 @@ stored schedule is a calendar schedule:
   output.
 - **Unchanged prompts elsewhere.** Manual workflows, including one that still
   stores an unused calendar schedule, and interval workflows get byte-identical
-  prompts. Calendar schedules are new in 0.261.193, so no existing prompt
-  changes.
+  prompts. Calendar schedules are new in 0.261.193, so no new run of an existing
+  workflow gets a changed prompt. One run can notice the change: a durable
+  calendar run that was still in progress on a V2 build from 0.261.193 to
+  0.261.196 pauses when it resumes, with "The saved task inputs changed. Cancel
+  this run and start a new one.", because a task's prompt is part of the input
+  digest its checkpoint saved. Cancel it and start a new run. Upgrades from a
+  release without calendar schedules aren't affected.
 - **Prompt only.** The line is added to that run's copy of the workflow. It's
   never stored in the definition and never enters the fingerprint. Document
   search in legacy single-prompt workflows still uses the prompt without it.
