@@ -172,11 +172,18 @@ def test_the_editor_input_is_the_restricted_composer():
     )
     assert "allowContext = false" in thread, "# references must stay off unless an editor opts in"
 
-    # A2 turns # references on in the plan editor. Until then, no editor opts in.
+    # A2 (0.261.198) turns # references on in the plan editor only, which sends them with its
+    # request for the server to authorise. The diagram, chart and image editors stay without them.
     for kind, path in EDITORS.items():
-        assert "allowContext" not in _read(path), f"the {kind} editor must not turn on # references yet"
+        source = _read(path)
+        if kind == "plan":
+            assert re.search(r"<AssistThread[\s\S]*?\ballowContext\b[\s\S]*?/>", source), (
+                "the plan editor must offer # documents and tags"
+            )
+        else:
+            assert "allowContext" not in source, f"the {kind} editor must not turn on # references"
 
-    print("  ok  the editors use the restricted composer, with # references off")
+    print("  ok  the editors use the restricted composer, with # references in the plan editor only")
 
 
 def test_over_limit_input_is_refused_not_cut_short():

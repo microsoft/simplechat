@@ -4,7 +4,7 @@ title: "Chat interface controls"
 description: "Reference for every documented control in the SimpleChat chat interface."
 section: "Reference"
 audience: user
-version: "0.261.196"
+version: "0.261.198"
 ---
 
 ## How to use this reference
@@ -183,6 +183,27 @@ above. See [Generate images]({{ '/guides/generate-images/' | relative_url }}) an
 | Earlier changes to this image | Lists the recent instructions stored for the image, above the thread. The thread itself keeps only this visit's exchanges and isn't saved. | Recall what was already asked of the image. | [`enable_image_generation`]({{ '/admin/ai-models/' | relative_url }}) |
 
 These inputs don't offer uploads, `/` saved prompts or `@` mentions; the main composer still does.
+Only **Ask planner** offers `#` documents and tags, described next. The diagram, chart and image
+editors don't.
+
+### Documents and tags in Ask planner
+
+From version **0.261.198**, you can point the planner at the documents and tags a plan should use.
+Picked documents and tags limit the plan's document searches to what you picked, the same way chips
+in the main composer limit a message's search. The server checks every pick for you when the
+request arrives, so a document you can no longer read is refused rather than quietly dropped.
+
+| Control | What it does | Why you would use it | Enabled by |
+| --- | --- | --- | --- |
+| `#` in Ask planner | Searches the documents and tags you can read in your personal, group and public workspaces, and inserts the one you choose as `#[Name]` with a chip. Whole workspaces aren't offered. The arrow keys move through the list, Enter or Tab picks, and Escape closes the list without closing the editor. | Name the exact file the plan should work from, such as last quarter's pricing sheet, instead of hoping a search finds it. | [`enable_chat_orchestration`]({{ '/admin/orchestration/' | relative_url }}). A pick is accepted only from a workspace type that's turned on: [`enable_user_workspace`]({{ '/admin/workspaces/' | relative_url }}), [`enable_group_workspaces`]({{ '/admin/workspaces/' | relative_url }}) or [`enable_public_workspaces`]({{ '/admin/workspaces/' | relative_url }}) |
+| Add context | Opens a search panel of the same documents and tags. A pick becomes a chip without changing your text. Escape closes the panel first and returns you to the input. | Pick several documents, or browse for one whose name you don't remember. | Same as `#` in Ask planner |
+| Chips in the input | Show what the next request will carry. Removing a chip before you send means it isn't sent. | Drop a document you picked by mistake without rewriting the request. | Same as `#` in Ask planner |
+| Chips in your turn | Show, under your message in the thread, the documents and tags it was sent with, as the server named them. | Check afterwards what the planner was given. | Same as `#` in Ask planner |
+| Search notice | Appears under the planner's reply when that revision first limited the plan's searches to what you attached. | Know that the plan no longer searches everything you can read. | Same as `#` in Ask planner |
+| Refused document or tag | A document that was deleted, is still processing, or is no longer readable by you, or a tag that no longer exists, fails the request before the planner runs. The reply names it by the label you picked, and the plan stays as it was. **Edit and resend** brings back your text and chips so you can remove it. | Fix a stale pick without retyping the request. | Same as `#` in Ask planner |
+
+If the planner replies without changing the plan, your chips go back into the input with a note,
+so you can send them again or remove them. At most 20 documents and tags can go with one request.
 
 ## Prompt, model, agent, and reasoning selectors
 
@@ -439,7 +460,7 @@ plan rather than editing the main chat message. See
 | --- | --- | --- | --- |
 | Review | Opens the plan drawer with step details and narrowing-only controls. | Inspect the proposed sources and work, or remove something unnecessary. | `enable_chat_orchestration` |
 | Edit | Opens the full-screen plan editor and holds the plan for manual approval, stopping its countdown. | Change the proposed approach before it runs. | Same as Review; the plan must not have started |
-| Ask planner | Sends a change request to the planner for a validated revision, or answers its scoped clarification. | Add a permitted step, remove work, or refine the task without duplicating the main conversation. | Same as Edit; existing capability and source permissions apply |
+| Ask planner | Sends a change request to the planner for a validated revision, or answers its scoped clarification. Since **0.261.198**, the request can carry `#` documents and tags; see **Documents and tags in Ask planner** above. | Add a permitted step, remove work, or refine the task without duplicating the main conversation. | Same as Edit; existing capability and source permissions apply |
 | History and restore | Shows previous plan versions and creates a newly validated current version when restoring one. | Return to an earlier approach without deleting later history. | Same as Edit |
 | Run after editing | Executes the saved current revision only after explicit approval. Closing the editor does not approve it. | Start the work once its steps and sources match your intent. | Same as Edit; no revision or clarification may be pending |
 | Run task switch (Gather / Reason / Render plans) | Skips or restores an eligible task without deleting its declared inputs or outputs. Required producers identify their consumers and cannot be silently disabled. | Remove independent work, or learn which consumers must change through Ask planner first. | A Gather / Reason / Render plan that has not started; the final-response step cannot be disabled |

@@ -2,10 +2,11 @@
 // Which submission id a plan editor request goes out under.
 //
 // The server holds each submission id to the request it first arrived with: the plan version, the
-// step edits, the action and its instruction. The same id with any other request is refused for
-// good as a `submission_conflict`. So an id is sent again only with exactly the same request, which
-// is also the only time that helps, because a request the server already finished is then replayed
-// rather than run twice. Anything else needs a fresh id.
+// step edits, the action and its instruction, and the canonical form of any `#` references (see
+// planReferences.ts). The same id with any other request is refused for good as a
+// `submission_conflict`. So an id is sent again only with exactly the same request, which is also
+// the only time that helps, because a request the server already finished is then replayed rather
+// than run twice. Anything else needs a fresh id.
 //
 // That matters for the assist thread's Retry, which offers the id its exchange was last sent under.
 // By the time the reader retries, cancelling may have moved the plan to a new version, or they may

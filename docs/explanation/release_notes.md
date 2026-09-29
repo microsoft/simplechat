@@ -2,6 +2,23 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.198)**
+
+#### New Features
+
+*   **`#` Documents And Tags In The Plan Editor's Ask Planner**
+    *   **Ask planner** in the V2 plan editor now offers `#` documents and tags and **Add context**, like the main composer. Type `#` and part of a name, or browse, and the pick becomes a chip. The request carries the chips you leave, and your turn in the thread shows them afterwards.
+    *   The server checks every pick for you when the request arrives. Only documents and tags you can read now are accepted: in your personal workspace, in groups you belong to and in public workspaces you can see, from workspace types that are turned on, and within a scope-locked conversation's workspaces. A document must also have finished processing. At most 20 go with one request, and a plan can gather at most 100.
+    *   Accepted picks are added to that revision's plan inputs, as question-card answers are. The planner sees them as selected, a document search that names no documents of its own searches them, and tags filter that search. If the plan searched everything you can read before, the planner's reply says its searches are now limited to what you attached. The plan's existing sources stay available.
+    *   A pick that can't be used, because it was deleted, is unready, is no longer readable by you or its workspace was turned off, fails the request before the planner runs, with a message that names it by the label you picked. The plan and its chat don't change, and **Edit and resend** brings back your text and chips.
+    *   Picks are part of the request's identity. A retry of the same request is answered from what was stored and never merges them twice, and the same submission id with different picks is refused with 409 `submission_conflict`. Uploads, `/` saved prompts, `@` mentions and whole workspaces aren't offered here, and the diagram, chart and image editors, the main composer and the question card are unchanged.
+    *   (Ref: #1556, #1543, `functions_assist_references.py`, `functions_orchestration_plan_editing.py` `resolve_plan_edit_references`, `functions_orchestration_plan_revisions.py`, `route_backend_orchestration.py`, `planReferences.ts`, `OrchestrationPlanEditor.tsx`, `AssistThread.tsx`, [V2 Shared Assist Thread](features/V2_SHARED_ASSIST_THREAD.md), [Chat interface controls](../reference/chat-controls.md), [Review and edit orchestration plans](../guides/review-and-edit-orchestration-plans.md))
+
+*   **Workspace Reference Authorizer Without A Conversation**
+    *   `resolve_scope_references` authorizes `#` document and tag references for a user with no conversation and no request state, so AI-assist inputs outside the chat, such as the plan editor now and the workflow assistant later, can share it. It refuses chat attachments, whole workspaces and the chat scope, keeps the question card's readiness checks and count bound, reads no document text, and reports a refusal by the label the user picked and a reason code, never by a title read from the server.
+    *   The question card's own check now runs on the same core. A golden test captured from the previous code holds its results and messages unchanged.
+    *   (Ref: `functions_orchestration_context.py` `resolve_scope_references`, `resolve_elicitation_references`, `functional_tests/test_orchestration_reference_authorizer_golden.py`, `functional_tests/test_orchestration_scope_reference_authorizer.py`)
+
 ### **(v0.261.196)**
 
 #### New Features

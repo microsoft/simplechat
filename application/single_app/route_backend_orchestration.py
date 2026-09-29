@@ -131,6 +131,7 @@ from functions_orchestration_external_configuration import ExternalConfiguration
 from functions_orchestration_external_identity import ExternalIdentityServiceError
 from functions_orchestration_plan_editing import (
     build_plan_edit_outcome,
+    resolve_plan_edit_references,
     revision_allowed_urls,
     validate_edited_plan,
 )
@@ -2168,6 +2169,15 @@ def register_route_backend_orchestration(bp):
             snapshot = _conversation_context_for_run(record, user_id, settings)
             claim = claim_plan_revision(run_id, user_id, conversation_id, data)
             identity = _request_identity(user_id, seeded_agent=(record.get('seeds') or {}).get('agent'))
+            references = None
+            if not claim.get('replayed') and claim['request'].get('references'):
+                # Checked for this user now, before anything streams, so a stale or
+                # unreadable reference is a plain 4xx that leaves the plan unchanged. A
+                # replay returns its stored turn and is never checked or merged again.
+                references = resolve_plan_edit_references(
+                    claim['record'], claim['request']['references'], user_id, settings,
+                    conversation=_authorize_context_conversation(conversation_id, user_id),
+                )
         except (PlanRevisionError, ConversationContextError, ElicitationContextError, AzureError) as exc:
             release_plan_revision(claim)
             payload, status = _plan_edit_error(exc)
@@ -2187,6 +2197,7 @@ def register_route_backend_orchestration(bp):
                         identity=identity, conversation_context=snapshot,
                         conversation=_authorize_context_conversation(conversation_id, user_id),
                         ledger=_load_ledger(conversation_id, user_id, settings),
+                        references=references,
                         **result_options,
                     )
                     _conversation_context_for_run(record, user_id, settings)

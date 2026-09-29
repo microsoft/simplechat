@@ -1,0 +1,1531 @@
+{
+  "description": "Shared cases for the canonical form of `#` references in a plan-editor Ask AI request. functions_assist_references.py and application/v2_ui/src/lib/planReferences.ts must both produce exactly these results. A case with \"repeat\" sends \"item\" \"count\" times as its input. Version: 0.261.198",
+  "label_limit": 200,
+  "request_limit": 20,
+  "labels": [
+    {
+      "name": "plain",
+      "input": "Q3 report",
+      "expected": "Q3 report"
+    },
+    {
+      "name": "surrounding spaces",
+      "input": "  padded\u00a0 ",
+      "expected": "padded"
+    },
+    {
+      "name": "line breaks and tabs are removed",
+      "input": "line\nbreak\ttab",
+      "expected": "linebreaktab"
+    },
+    {
+      "name": "C1 controls are removed",
+      "input": "\u0085next\u009f",
+      "expected": "next"
+    },
+    {
+      "name": "bidi override is removed",
+      "input": "\u202eevil\u202c.pdf",
+      "expected": "evil.pdf"
+    },
+    {
+      "name": "bidi isolates are removed",
+      "input": "\u2066iso\u2069late",
+      "expected": "isolate"
+    },
+    {
+      "name": "bidi marks are removed",
+      "input": "\u200e\u200f\u061cmarks",
+      "expected": "marks"
+    },
+    {
+      "name": "byte order mark is removed",
+      "input": "\ufeffbom",
+      "expected": "bom"
+    },
+    {
+      "name": "zero width space is kept",
+      "input": "zero\u200bwidth",
+      "expected": "zero\u200bwidth"
+    },
+    {
+      "name": "unicode spaces are trimmed",
+      "input": "\u3000\u2003ideographic\u205f\u2028\u2029",
+      "expected": "ideographic"
+    },
+    {
+      "name": "inner spaces are kept",
+      "input": "two  words",
+      "expected": "two  words"
+    },
+    {
+      "name": "markup is plain text",
+      "input": "<b>markup</b> & \"quotes\"",
+      "expected": "<b>markup</b> & \"quotes\""
+    },
+    {
+      "name": "combining marks are kept",
+      "input": "cafe\u0301",
+      "expected": "cafe\u0301"
+    },
+    {
+      "name": "long label is cut to 200",
+      "input": "LLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLL",
+      "expected": "LLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLL"
+    },
+    {
+      "name": "a cut never ends in a space",
+      "input": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa bbbbbbbbbb",
+      "expected": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    },
+    {
+      "name": "astral characters count once",
+      "input": "\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00",
+      "expected": "\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00"
+    },
+    {
+      "name": "only spaces",
+      "input": "   ",
+      "expected": ""
+    },
+    {
+      "name": "only controls",
+      "input": "\u202e\u0000",
+      "expected": ""
+    },
+    {
+      "name": "empty",
+      "input": "",
+      "expected": ""
+    },
+    {
+      "name": "not a string",
+      "input": 123,
+      "expected": ""
+    },
+    {
+      "name": "null",
+      "input": null,
+      "expected": ""
+    }
+  ],
+  "requests": [
+    {
+      "name": "null is no references",
+      "input": null,
+      "expected": []
+    },
+    {
+      "name": "an empty list is no references",
+      "input": [],
+      "expected": []
+    },
+    {
+      "name": "a personal document keeps its label and drops the workspace name",
+      "input": [
+        {
+          "kind": "document",
+          "id": "doc-1",
+          "scope": {
+            "kind": "personal",
+            "id": null,
+            "name": "My workspace"
+          },
+          "label": "Pricing sheet"
+        }
+      ],
+      "expected": [
+        {
+          "kind": "document",
+          "id": "doc-1",
+          "scope": {
+            "kind": "personal",
+            "id": null
+          },
+          "label": "Pricing sheet"
+        }
+      ]
+    },
+    {
+      "name": "a blank personal workspace id means the user's own",
+      "input": [
+        {
+          "kind": "document",
+          "id": "doc-1",
+          "scope": {
+            "kind": "personal",
+            "id": ""
+          },
+          "label": "One"
+        },
+        {
+          "kind": "document",
+          "id": "doc-2",
+          "scope": {
+            "kind": "personal",
+            "id": " \t"
+          },
+          "label": "Two"
+        }
+      ],
+      "expected": [
+        {
+          "kind": "document",
+          "id": "doc-1",
+          "scope": {
+            "kind": "personal",
+            "id": null
+          },
+          "label": "One"
+        },
+        {
+          "kind": "document",
+          "id": "doc-2",
+          "scope": {
+            "kind": "personal",
+            "id": null
+          },
+          "label": "Two"
+        }
+      ]
+    },
+    {
+      "name": "a personal workspace id that is not blank is kept",
+      "input": [
+        {
+          "kind": "document",
+          "id": "doc-1",
+          "scope": {
+            "kind": "personal",
+            "id": "user-1"
+          },
+          "label": "One"
+        }
+      ],
+      "expected": [
+        {
+          "kind": "document",
+          "id": "doc-1",
+          "scope": {
+            "kind": "personal",
+            "id": "user-1"
+          },
+          "label": "One"
+        }
+      ]
+    },
+    {
+      "name": "group and public references keep their workspace",
+      "input": [
+        {
+          "kind": "tag",
+          "id": "pub-tag",
+          "scope": {
+            "kind": "public",
+            "id": "public-a",
+            "name": "Company handbook"
+          },
+          "label": "pub-tag"
+        },
+        {
+          "kind": "document",
+          "id": "grp-doc",
+          "scope": {
+            "kind": "group",
+            "id": "group-a",
+            "name": "Finance team"
+          },
+          "label": "Group budget"
+        }
+      ],
+      "expected": [
+        {
+          "kind": "document",
+          "id": "grp-doc",
+          "scope": {
+            "kind": "group",
+            "id": "group-a"
+          },
+          "label": "Group budget"
+        },
+        {
+          "kind": "tag",
+          "id": "pub-tag",
+          "scope": {
+            "kind": "public",
+            "id": "public-a"
+          },
+          "label": "pub-tag"
+        }
+      ]
+    },
+    {
+      "name": "duplicates keep the first label sent",
+      "input": [
+        {
+          "kind": "document",
+          "id": "doc-1",
+          "scope": {
+            "kind": "personal",
+            "id": null
+          },
+          "label": "First name"
+        },
+        {
+          "kind": "document",
+          "id": "doc-1",
+          "scope": {
+            "kind": "personal",
+            "id": ""
+          },
+          "label": "Second name"
+        },
+        {
+          "kind": "document",
+          "id": "doc-1",
+          "scope": {
+            "kind": "personal",
+            "id": null
+          }
+        }
+      ],
+      "expected": [
+        {
+          "kind": "document",
+          "id": "doc-1",
+          "scope": {
+            "kind": "personal",
+            "id": null
+          },
+          "label": "First name"
+        }
+      ]
+    },
+    {
+      "name": "the same id in two workspaces is two references",
+      "input": [
+        {
+          "kind": "tag",
+          "id": "review",
+          "scope": {
+            "kind": "group",
+            "id": "group-a"
+          },
+          "label": "review"
+        },
+        {
+          "kind": "tag",
+          "id": "review",
+          "scope": {
+            "kind": "personal",
+            "id": null
+          },
+          "label": "review"
+        }
+      ],
+      "expected": [
+        {
+          "kind": "tag",
+          "id": "review",
+          "scope": {
+            "kind": "group",
+            "id": "group-a"
+          },
+          "label": "review"
+        },
+        {
+          "kind": "tag",
+          "id": "review",
+          "scope": {
+            "kind": "personal",
+            "id": null
+          },
+          "label": "review"
+        }
+      ]
+    },
+    {
+      "name": "order is kind, workspace kind, workspace id, then id",
+      "input": [
+        {
+          "kind": "tag",
+          "id": "b-tag",
+          "scope": {
+            "kind": "personal",
+            "id": null
+          },
+          "label": "b-tag"
+        },
+        {
+          "kind": "document",
+          "id": "z-doc",
+          "scope": {
+            "kind": "public",
+            "id": "public-a"
+          },
+          "label": "Z"
+        },
+        {
+          "kind": "document",
+          "id": "b-doc",
+          "scope": {
+            "kind": "personal",
+            "id": null
+          },
+          "label": "B"
+        },
+        {
+          "kind": "document",
+          "id": "a-doc",
+          "scope": {
+            "kind": "personal",
+            "id": null
+          },
+          "label": "A"
+        },
+        {
+          "kind": "document",
+          "id": "c-doc",
+          "scope": {
+            "kind": "group",
+            "id": "group-b"
+          },
+          "label": "C"
+        },
+        {
+          "kind": "document",
+          "id": "d-doc",
+          "scope": {
+            "kind": "group",
+            "id": "group-a"
+          },
+          "label": "D"
+        },
+        {
+          "kind": "tag",
+          "id": "a-tag",
+          "scope": {
+            "kind": "group",
+            "id": "group-a"
+          },
+          "label": "a-tag"
+        }
+      ],
+      "expected": [
+        {
+          "kind": "document",
+          "id": "d-doc",
+          "scope": {
+            "kind": "group",
+            "id": "group-a"
+          },
+          "label": "D"
+        },
+        {
+          "kind": "document",
+          "id": "c-doc",
+          "scope": {
+            "kind": "group",
+            "id": "group-b"
+          },
+          "label": "C"
+        },
+        {
+          "kind": "document",
+          "id": "a-doc",
+          "scope": {
+            "kind": "personal",
+            "id": null
+          },
+          "label": "A"
+        },
+        {
+          "kind": "document",
+          "id": "b-doc",
+          "scope": {
+            "kind": "personal",
+            "id": null
+          },
+          "label": "B"
+        },
+        {
+          "kind": "document",
+          "id": "z-doc",
+          "scope": {
+            "kind": "public",
+            "id": "public-a"
+          },
+          "label": "Z"
+        },
+        {
+          "kind": "tag",
+          "id": "a-tag",
+          "scope": {
+            "kind": "group",
+            "id": "group-a"
+          },
+          "label": "a-tag"
+        },
+        {
+          "kind": "tag",
+          "id": "b-tag",
+          "scope": {
+            "kind": "personal",
+            "id": null
+          },
+          "label": "b-tag"
+        }
+      ]
+    },
+    {
+      "name": "order compares code points, not UTF-16 units",
+      "input": [
+        {
+          "kind": "document",
+          "id": "\ud83d\ude00",
+          "scope": {
+            "kind": "personal",
+            "id": null
+          },
+          "label": "Emoji"
+        },
+        {
+          "kind": "document",
+          "id": "\uffff",
+          "scope": {
+            "kind": "personal",
+            "id": null
+          },
+          "label": "Last BMP"
+        }
+      ],
+      "expected": [
+        {
+          "kind": "document",
+          "id": "\uffff",
+          "scope": {
+            "kind": "personal",
+            "id": null
+          },
+          "label": "Last BMP"
+        },
+        {
+          "kind": "document",
+          "id": "\ud83d\ude00",
+          "scope": {
+            "kind": "personal",
+            "id": null
+          },
+          "label": "Emoji"
+        }
+      ]
+    },
+    {
+      "name": "identifiers lose only ASCII whitespace",
+      "input": [
+        {
+          "kind": "document",
+          "id": " doc-1\t",
+          "scope": {
+            "kind": "group",
+            "id": "\ngroup-a "
+          },
+          "label": "One"
+        },
+        {
+          "kind": "document",
+          "id": "\u00a0doc-2",
+          "scope": {
+            "kind": "personal",
+            "id": null
+          },
+          "label": "Two"
+        }
+      ],
+      "expected": [
+        {
+          "kind": "document",
+          "id": "doc-1",
+          "scope": {
+            "kind": "group",
+            "id": "group-a"
+          },
+          "label": "One"
+        },
+        {
+          "kind": "document",
+          "id": "\u00a0doc-2",
+          "scope": {
+            "kind": "personal",
+            "id": null
+          },
+          "label": "Two"
+        }
+      ]
+    },
+    {
+      "name": "labels are sanitized and an empty label is left out",
+      "input": [
+        {
+          "kind": "document",
+          "id": "doc-1",
+          "scope": {
+            "kind": "personal",
+            "id": null
+          },
+          "label": "\u202eevil\u202c.pdf"
+        },
+        {
+          "kind": "document",
+          "id": "doc-2",
+          "scope": {
+            "kind": "personal",
+            "id": null
+          },
+          "label": "\u202e"
+        },
+        {
+          "kind": "document",
+          "id": "doc-3",
+          "scope": {
+            "kind": "personal",
+            "id": null
+          },
+          "label": 42
+        }
+      ],
+      "expected": [
+        {
+          "kind": "document",
+          "id": "doc-1",
+          "scope": {
+            "kind": "personal",
+            "id": null
+          },
+          "label": "evil.pdf"
+        },
+        {
+          "kind": "document",
+          "id": "doc-2",
+          "scope": {
+            "kind": "personal",
+            "id": null
+          }
+        },
+        {
+          "kind": "document",
+          "id": "doc-3",
+          "scope": {
+            "kind": "personal",
+            "id": null
+          }
+        }
+      ]
+    },
+    {
+      "name": "an identifier of 512 characters is accepted",
+      "input": [
+        {
+          "kind": "document",
+          "id": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+          "scope": {
+            "kind": "personal",
+            "id": null
+          },
+          "label": "Long id"
+        }
+      ],
+      "expected": [
+        {
+          "kind": "document",
+          "id": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+          "scope": {
+            "kind": "personal",
+            "id": null
+          },
+          "label": "Long id"
+        }
+      ]
+    },
+    {
+      "name": "twenty unique references are accepted",
+      "input": [
+        {
+          "kind": "document",
+          "id": "doc-00",
+          "scope": {
+            "kind": "personal",
+            "id": null
+          },
+          "label": "Doc 0"
+        },
+        {
+          "kind": "document",
+          "id": "doc-01",
+          "scope": {
+            "kind": "personal",
+            "id": null
+          },
+          "label": "Doc 1"
+        },
+        {
+          "kind": "document",
+          "id": "doc-02",
+          "scope": {
+            "kind": "personal",
+            "id": null
+          },
+          "label": "Doc 2"
+        },
+        {
+          "kind": "document",
+          "id": "doc-03",
+          "scope": {
+            "kind": "personal",
+            "id": null
+          },
+          "label": "Doc 3"
+        },
+        {
+          "kind": "document",
+          "id": "doc-04",
+          "scope": {
+            "kind": "personal",
+            "id": null
+          },
+          "label": "Doc 4"
+        },
+        {
+          "kind": "document",
+          "id": "doc-05",
+          "scope": {
+            "kind": "personal",
+            "id": null
+          },
+          "label": "Doc 5"
+        },
+        {
+          "kind": "document",
+          "id": "doc-06",
+          "scope": {
+            "kind": "personal",
+            "id": null
+          },
+          "label": "Doc 6"
+        },
+        {
+          "kind": "document",
+          "id": "doc-07",
+          "scope": {
+            "kind": "personal",
+            "id": null
+          },
+          "label": "Doc 7"
+        },
+        {
+          "kind": "document",
+          "id": "doc-08",
+          "scope": {
+            "kind": "personal",
+            "id": null
+          },
+          "label": "Doc 8"
+        },
+        {
+          "kind": "document",
+          "id": "doc-09",
+          "scope": {
+            "kind": "personal",
+            "id": null
+          },
+          "label": "Doc 9"
+        },
+        {
+          "kind": "document",
+          "id": "doc-10",
+          "scope": {
+            "kind": "personal",
+            "id": null
+          },
+          "label": "Doc 10"
+        },
+        {
+          "kind": "document",
+          "id": "doc-11",
+          "scope": {
+            "kind": "personal",
+            "id": null
+          },
+          "label": "Doc 11"
+        },
+        {
+          "kind": "document",
+          "id": "doc-12",
+          "scope": {
+            "kind": "personal",
+            "id": null
+          },
+          "label": "Doc 12"
+        },
+        {
+          "kind": "document",
+          "id": "doc-13",
+          "scope": {
+            "kind": "personal",
+            "id": null
+          },
+          "label": "Doc 13"
+        },
+        {
+          "kind": "document",
+          "id": "doc-14",
+          "scope": {
+            "kind": "personal",
+            "id": null
+          },
+          "label": "Doc 14"
+        },
+        {
+          "kind": "document",
+          "id": "doc-15",
+          "scope": {
+            "kind": "personal",
+            "id": null
+          },
+          "label": "Doc 15"
+        },
+        {
+          "kind": "document",
+          "id": "doc-16",
+          "scope": {
+            "kind": "personal",
+            "id": null
+          },
+          "label": "Doc 16"
+        },
+        {
+          "kind": "document",
+          "id": "doc-17",
+          "scope": {
+            "kind": "personal",
+            "id": null
+          },
+          "label": "Doc 17"
+        },
+        {
+          "kind": "document",
+          "id": "doc-18",
+          "scope": {
+            "kind": "personal",
+            "id": null
+          },
+          "label": "Doc 18"
+        },
+        {
+          "kind": "document",
+          "id": "doc-19",
+          "scope": {
+            "kind": "personal",
+            "id": null
+          },
+          "label": "Doc 19"
+        }
+      ],
+      "expected": [
+        {
+          "kind": "document",
+          "id": "doc-00",
+          "scope": {
+            "kind": "personal",
+            "id": null
+          },
+          "label": "Doc 0"
+        },
+        {
+          "kind": "document",
+          "id": "doc-01",
+          "scope": {
+            "kind": "personal",
+            "id": null
+          },
+          "label": "Doc 1"
+        },
+        {
+          "kind": "document",
+          "id": "doc-02",
+          "scope": {
+            "kind": "personal",
+            "id": null
+          },
+          "label": "Doc 2"
+        },
+        {
+          "kind": "document",
+          "id": "doc-03",
+          "scope": {
+            "kind": "personal",
+            "id": null
+          },
+          "label": "Doc 3"
+        },
+        {
+          "kind": "document",
+          "id": "doc-04",
+          "scope": {
+            "kind": "personal",
+            "id": null
+          },
+          "label": "Doc 4"
+        },
+        {
+          "kind": "document",
+          "id": "doc-05",
+          "scope": {
+            "kind": "personal",
+            "id": null
+          },
+          "label": "Doc 5"
+        },
+        {
+          "kind": "document",
+          "id": "doc-06",
+          "scope": {
+            "kind": "personal",
+            "id": null
+          },
+          "label": "Doc 6"
+        },
+        {
+          "kind": "document",
+          "id": "doc-07",
+          "scope": {
+            "kind": "personal",
+            "id": null
+          },
+          "label": "Doc 7"
+        },
+        {
+          "kind": "document",
+          "id": "doc-08",
+          "scope": {
+            "kind": "personal",
+            "id": null
+          },
+          "label": "Doc 8"
+        },
+        {
+          "kind": "document",
+          "id": "doc-09",
+          "scope": {
+            "kind": "personal",
+            "id": null
+          },
+          "label": "Doc 9"
+        },
+        {
+          "kind": "document",
+          "id": "doc-10",
+          "scope": {
+            "kind": "personal",
+            "id": null
+          },
+          "label": "Doc 10"
+        },
+        {
+          "kind": "document",
+          "id": "doc-11",
+          "scope": {
+            "kind": "personal",
+            "id": null
+          },
+          "label": "Doc 11"
+        },
+        {
+          "kind": "document",
+          "id": "doc-12",
+          "scope": {
+            "kind": "personal",
+            "id": null
+          },
+          "label": "Doc 12"
+        },
+        {
+          "kind": "document",
+          "id": "doc-13",
+          "scope": {
+            "kind": "personal",
+            "id": null
+          },
+          "label": "Doc 13"
+        },
+        {
+          "kind": "document",
+          "id": "doc-14",
+          "scope": {
+            "kind": "personal",
+            "id": null
+          },
+          "label": "Doc 14"
+        },
+        {
+          "kind": "document",
+          "id": "doc-15",
+          "scope": {
+            "kind": "personal",
+            "id": null
+          },
+          "label": "Doc 15"
+        },
+        {
+          "kind": "document",
+          "id": "doc-16",
+          "scope": {
+            "kind": "personal",
+            "id": null
+          },
+          "label": "Doc 16"
+        },
+        {
+          "kind": "document",
+          "id": "doc-17",
+          "scope": {
+            "kind": "personal",
+            "id": null
+          },
+          "label": "Doc 17"
+        },
+        {
+          "kind": "document",
+          "id": "doc-18",
+          "scope": {
+            "kind": "personal",
+            "id": null
+          },
+          "label": "Doc 18"
+        },
+        {
+          "kind": "document",
+          "id": "doc-19",
+          "scope": {
+            "kind": "personal",
+            "id": null
+          },
+          "label": "Doc 19"
+        }
+      ]
+    },
+    {
+      "name": "one hundred copies of one reference are one reference",
+      "repeat": {
+        "count": 100,
+        "item": {
+          "kind": "document",
+          "id": "doc-1",
+          "scope": {
+            "kind": "personal",
+            "id": null
+          },
+          "label": "One"
+        }
+      },
+      "expected": [
+        {
+          "kind": "document",
+          "id": "doc-1",
+          "scope": {
+            "kind": "personal",
+            "id": null
+          },
+          "label": "One"
+        }
+      ]
+    },
+    {
+      "name": "not a list",
+      "error": {
+        "code": "invalid_request",
+        "message": "Choose documents or tags from the # picker."
+      },
+      "input": "doc-1"
+    },
+    {
+      "name": "an item that is not an object",
+      "error": {
+        "code": "invalid_request",
+        "message": "Choose documents or tags from the # picker."
+      },
+      "input": [
+        123
+      ]
+    },
+    {
+      "name": "an unknown field",
+      "error": {
+        "code": "invalid_request",
+        "message": "Choose documents or tags from the # picker."
+      },
+      "input": [
+        {
+          "kind": "document",
+          "id": "doc-1",
+          "scope": {
+            "kind": "personal",
+            "id": null
+          },
+          "extra": true
+        }
+      ]
+    },
+    {
+      "name": "a chat attachment",
+      "error": {
+        "code": "invalid_request",
+        "message": "Only documents and tags from your workspaces can be attached here."
+      },
+      "input": [
+        {
+          "kind": "chat_attachment",
+          "id": "att-1",
+          "scope": {
+            "kind": "personal",
+            "id": null
+          }
+        }
+      ]
+    },
+    {
+      "name": "a whole workspace",
+      "error": {
+        "code": "invalid_request",
+        "message": "Only documents and tags from your workspaces can be attached here."
+      },
+      "input": [
+        {
+          "kind": "scope",
+          "id": "group-a",
+          "scope": {
+            "kind": "group",
+            "id": "group-a"
+          }
+        }
+      ]
+    },
+    {
+      "name": "the chat scope",
+      "error": {
+        "code": "invalid_request",
+        "message": "Only documents and tags from your workspaces can be attached here."
+      },
+      "input": [
+        {
+          "kind": "document",
+          "id": "doc-1",
+          "scope": {
+            "kind": "chat",
+            "id": "conv-1"
+          }
+        }
+      ]
+    },
+    {
+      "name": "an unknown workspace kind",
+      "error": {
+        "code": "invalid_request",
+        "message": "Only documents and tags from your workspaces can be attached here."
+      },
+      "input": [
+        {
+          "kind": "document",
+          "id": "doc-1",
+          "scope": {
+            "kind": "team",
+            "id": "team-1"
+          }
+        }
+      ]
+    },
+    {
+      "name": "a missing kind",
+      "error": {
+        "code": "invalid_request",
+        "message": "Only documents and tags from your workspaces can be attached here."
+      },
+      "input": [
+        {
+          "id": "doc-1",
+          "scope": {
+            "kind": "personal",
+            "id": null
+          }
+        }
+      ]
+    },
+    {
+      "name": "a scope that is not an object",
+      "error": {
+        "code": "invalid_request",
+        "message": "Choose documents or tags from the # picker."
+      },
+      "input": [
+        {
+          "kind": "document",
+          "id": "doc-1",
+          "scope": "personal"
+        }
+      ]
+    },
+    {
+      "name": "an unknown scope field",
+      "error": {
+        "code": "invalid_request",
+        "message": "Choose documents or tags from the # picker."
+      },
+      "input": [
+        {
+          "kind": "document",
+          "id": "doc-1",
+          "scope": {
+            "kind": "personal",
+            "id": null,
+            "owner": "x"
+          }
+        }
+      ]
+    },
+    {
+      "name": "a group without an id",
+      "error": {
+        "code": "invalid_request",
+        "message": "Choose documents or tags from the # picker."
+      },
+      "input": [
+        {
+          "kind": "document",
+          "id": "doc-1",
+          "scope": {
+            "kind": "group",
+            "id": null
+          }
+        }
+      ]
+    },
+    {
+      "name": "a public workspace with a blank id",
+      "error": {
+        "code": "invalid_request",
+        "message": "Choose documents or tags from the # picker."
+      },
+      "input": [
+        {
+          "kind": "document",
+          "id": "doc-1",
+          "scope": {
+            "kind": "public",
+            "id": "  "
+          }
+        }
+      ]
+    },
+    {
+      "name": "a workspace id that is not a string",
+      "error": {
+        "code": "invalid_request",
+        "message": "Choose documents or tags from the # picker."
+      },
+      "input": [
+        {
+          "kind": "document",
+          "id": "doc-1",
+          "scope": {
+            "kind": "group",
+            "id": 7
+          }
+        }
+      ]
+    },
+    {
+      "name": "a blank id",
+      "error": {
+        "code": "invalid_request",
+        "message": "Choose documents or tags from the # picker."
+      },
+      "input": [
+        {
+          "kind": "document",
+          "id": " \t",
+          "scope": {
+            "kind": "personal",
+            "id": null
+          }
+        }
+      ]
+    },
+    {
+      "name": "a missing id",
+      "error": {
+        "code": "invalid_request",
+        "message": "Choose documents or tags from the # picker."
+      },
+      "input": [
+        {
+          "kind": "document",
+          "scope": {
+            "kind": "personal",
+            "id": null
+          }
+        }
+      ]
+    },
+    {
+      "name": "an id that is not a string",
+      "error": {
+        "code": "invalid_request",
+        "message": "Choose documents or tags from the # picker."
+      },
+      "input": [
+        {
+          "kind": "document",
+          "id": 5,
+          "scope": {
+            "kind": "personal",
+            "id": null
+          }
+        }
+      ]
+    },
+    {
+      "name": "an id over 512 characters",
+      "error": {
+        "code": "invalid_request",
+        "message": "Choose documents or tags from the # picker."
+      },
+      "input": [
+        {
+          "kind": "document",
+          "id": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+          "scope": {
+            "kind": "personal",
+            "id": null
+          }
+        }
+      ]
+    },
+    {
+      "name": "twenty-one unique references",
+      "error": {
+        "code": "reference_limit",
+        "message": "Attach at most 20 documents or tags."
+      },
+      "input": [
+        {
+          "kind": "document",
+          "id": "doc-00",
+          "scope": {
+            "kind": "personal",
+            "id": null
+          },
+          "label": "Doc 0"
+        },
+        {
+          "kind": "document",
+          "id": "doc-01",
+          "scope": {
+            "kind": "personal",
+            "id": null
+          },
+          "label": "Doc 1"
+        },
+        {
+          "kind": "document",
+          "id": "doc-02",
+          "scope": {
+            "kind": "personal",
+            "id": null
+          },
+          "label": "Doc 2"
+        },
+        {
+          "kind": "document",
+          "id": "doc-03",
+          "scope": {
+            "kind": "personal",
+            "id": null
+          },
+          "label": "Doc 3"
+        },
+        {
+          "kind": "document",
+          "id": "doc-04",
+          "scope": {
+            "kind": "personal",
+            "id": null
+          },
+          "label": "Doc 4"
+        },
+        {
+          "kind": "document",
+          "id": "doc-05",
+          "scope": {
+            "kind": "personal",
+            "id": null
+          },
+          "label": "Doc 5"
+        },
+        {
+          "kind": "document",
+          "id": "doc-06",
+          "scope": {
+            "kind": "personal",
+            "id": null
+          },
+          "label": "Doc 6"
+        },
+        {
+          "kind": "document",
+          "id": "doc-07",
+          "scope": {
+            "kind": "personal",
+            "id": null
+          },
+          "label": "Doc 7"
+        },
+        {
+          "kind": "document",
+          "id": "doc-08",
+          "scope": {
+            "kind": "personal",
+            "id": null
+          },
+          "label": "Doc 8"
+        },
+        {
+          "kind": "document",
+          "id": "doc-09",
+          "scope": {
+            "kind": "personal",
+            "id": null
+          },
+          "label": "Doc 9"
+        },
+        {
+          "kind": "document",
+          "id": "doc-10",
+          "scope": {
+            "kind": "personal",
+            "id": null
+          },
+          "label": "Doc 10"
+        },
+        {
+          "kind": "document",
+          "id": "doc-11",
+          "scope": {
+            "kind": "personal",
+            "id": null
+          },
+          "label": "Doc 11"
+        },
+        {
+          "kind": "document",
+          "id": "doc-12",
+          "scope": {
+            "kind": "personal",
+            "id": null
+          },
+          "label": "Doc 12"
+        },
+        {
+          "kind": "document",
+          "id": "doc-13",
+          "scope": {
+            "kind": "personal",
+            "id": null
+          },
+          "label": "Doc 13"
+        },
+        {
+          "kind": "document",
+          "id": "doc-14",
+          "scope": {
+            "kind": "personal",
+            "id": null
+          },
+          "label": "Doc 14"
+        },
+        {
+          "kind": "document",
+          "id": "doc-15",
+          "scope": {
+            "kind": "personal",
+            "id": null
+          },
+          "label": "Doc 15"
+        },
+        {
+          "kind": "document",
+          "id": "doc-16",
+          "scope": {
+            "kind": "personal",
+            "id": null
+          },
+          "label": "Doc 16"
+        },
+        {
+          "kind": "document",
+          "id": "doc-17",
+          "scope": {
+            "kind": "personal",
+            "id": null
+          },
+          "label": "Doc 17"
+        },
+        {
+          "kind": "document",
+          "id": "doc-18",
+          "scope": {
+            "kind": "personal",
+            "id": null
+          },
+          "label": "Doc 18"
+        },
+        {
+          "kind": "document",
+          "id": "doc-19",
+          "scope": {
+            "kind": "personal",
+            "id": null
+          },
+          "label": "Doc 19"
+        },
+        {
+          "kind": "document",
+          "id": "doc-20",
+          "scope": {
+            "kind": "personal",
+            "id": null
+          },
+          "label": "Doc 20"
+        }
+      ]
+    },
+    {
+      "name": "more than one hundred items before duplicates are removed",
+      "error": {
+        "code": "reference_limit",
+        "message": "Attach at most 20 documents or tags."
+      },
+      "repeat": {
+        "count": 101,
+        "item": {
+          "kind": "document",
+          "id": "doc-1",
+          "scope": {
+            "kind": "personal",
+            "id": null
+          },
+          "label": "One"
+        }
+      }
+    }
+  ]
+}

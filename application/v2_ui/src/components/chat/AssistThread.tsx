@@ -7,9 +7,16 @@
 
 import { useEffect, useId, useRef, useState, type ReactNode } from 'react';
 import { clsx } from 'clsx';
-import { Loader2, PenLine, RotateCcw, Send, X } from 'lucide-react';
+import { FileText, FolderOpen, Loader2, PenLine, RotateCcw, Send, Tag as TagIcon, X } from 'lucide-react';
 import { ComposerEditor } from './ComposerEditor';
 import type { AssistExchange, AssistThreadController } from '../../lib/assistThread';
+
+/** A `#` chip a turn was sent with, shown read-only in the thread. */
+export interface AssistReferenceChip {
+    key: string;
+    kind: 'document' | 'tag' | 'scope';
+    label: string;
+}
 
 /** One turn of an editor's stored chat, already worded for the reader. */
 export interface AssistThreadTurn {
@@ -18,6 +25,10 @@ export interface AssistThreadTurn {
     content: ReactNode;
     /** Set for a turn that shows source code rather than prose. */
     mono?: boolean;
+    /** The documents and tags a user turn was sent with. */
+    references?: AssistReferenceChip[];
+    /** A note under the turn, such as what a revision changed about the plan's searches. */
+    notice?: string;
 }
 
 export interface AssistThreadProps {
@@ -52,8 +63,8 @@ export interface AssistThreadProps {
     /**
      * Offer `#` documents and tags and the Add context control in the input.
      *
-     * Off unless an editor opts in, and none does yet: an editor that turns it on must also send
-     * the references with its request, and the server must authorise them.
+     * Off unless an editor opts in; the plan editor does. An editor that turns it on must send
+     * the references with its request, and the server must authorise them for the acting user.
      */
     allowContext?: boolean;
     counterHint?: string;
@@ -72,6 +83,33 @@ function ElapsedSeconds({ startedAt }: { startedAt: number }) {
     }, []);
     const seconds = Math.max(0, Math.floor((now - startedAt) / 1000));
     return <span aria-hidden="true" className="tabular-nums" data-testid="assist-elapsed">{seconds} s</span>;
+}
+
+const REFERENCE_ICON = { document: FileText, tag: TagIcon, scope: FolderOpen };
+const REFERENCE_KIND_LABEL = { document: 'Document: ', tag: 'Tag: ', scope: 'Workspace: ' };
+
+/** The chips a message was sent with. Labels are untrusted and render as text. */
+function ReferenceChips({ chips }: { chips: readonly AssistReferenceChip[] }) {
+    return (
+        <ul aria-label="Attached context" className="mt-1.5 flex list-none flex-wrap gap-1">
+            {chips.map((chip) => {
+                const Icon = REFERENCE_ICON[chip.kind];
+                return (
+                    <li
+                        key={chip.key}
+                        data-testid="assist-reference-chip"
+                        data-kind={chip.kind}
+                        title={chip.label}
+                        className="inline-flex max-w-[16rem] items-center gap-1 rounded-md border border-edge bg-surface-1 px-1.5 py-0.5 text-[11px] text-text-2"
+                    >
+                        <Icon size={11} className="shrink-0 text-text-3" aria-hidden="true" />
+                        <span className="sr-only">{REFERENCE_KIND_LABEL[chip.kind]}</span>
+                        <span className="truncate">{chip.label}</span>
+                    </li>
+                );
+            })}
+        </ul>
+    );
 }
 
 export function AssistThread({
@@ -144,6 +182,11 @@ export function AssistThread({
             <div className={bubble('user')}>
                 {speaker('user')}
                 <p className="whitespace-pre-wrap break-words">{exchange.text}</p>
+                {exchange.draft.contextItems.length ? (
+                    <ReferenceChips chips={exchange.draft.contextItems.map((item) => ({
+                        key: item.key, kind: item.kind, label: item.label,
+                    }))} />
+                ) : null}
             </div>
             <div className={bubble('assistant')} aria-busy={exchange.status === 'pending' || undefined}>
                 {speaker('assistant')}
@@ -220,6 +263,12 @@ export function AssistThread({
                             <li key={turn.key} className={bubble(turn.role, turn.mono)}>
                                 {speaker(turn.role)}
                                 <div className="whitespace-pre-wrap break-words">{turn.content}</div>
+                                {turn.references?.length ? <ReferenceChips chips={turn.references} /> : null}
+                                {turn.notice ? (
+                                    <p data-testid="assist-scope-notice" className="mt-1.5 text-[11px] text-text-3">
+                                        {turn.notice}
+                                    </p>
+                                ) : null}
                             </li>
                         ))}
                         {exchanges.map(renderExchange)}

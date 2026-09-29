@@ -13,19 +13,24 @@ import json
 from copy import deepcopy
 from datetime import datetime, timezone
 
+from functions_assist_references import REQUEST_REFERENCE_LIMIT
 from functions_mixed_source_orchestration import resolve_authorized_source_manifest
 from functions_orchestration_context import (
+    ELICITATION_REFERENCE_LIMIT,
+    ScopeReferenceError,
     build_capability_request_context,
     build_conversation_signals,
     build_elicitation_user_request,
     build_planner_context,
     conversation_user_urls,
+    conversation_workspace_lock,
     merge_elicitation_context,
     normalize_elicitation_answer,
     resolve_action_catalog,
     resolve_agent_catalog,
     resolve_candidate_documents,
     resolve_elicitation_references,
+    resolve_scope_references,
     validate_clarification_answers,
 )
 from functions_model_catalog import ModelCatalogError
@@ -67,7 +72,7 @@ def _turn_context(record):
     return context
 
 
-def _chat_turn(role, content, submission_id=None):
+def _chat_turn(role, content, submission_id=None, references=None, scope_notice=None):
     turn = {
         'role': role, 'content': content,
         'timestamp': datetime.now(timezone.utc).isoformat(),
@@ -76,6 +81,18 @@ def _chat_turn(role, content, submission_id=None):
     # it showed before the planner answered to the one stored here. Never shown to the planner.
     if submission_id:
         turn['submission_id'] = submission_id
+    # So do a user turn's `#` chips and what they limited searches to: display data for the
+    # thread, never shown to the planner, which reads the authorized seeds instead.
+    if references:
+        turn['references'] = [
+            {
+                'kind': item['kind'], 'id': item['id'], 'label': item.get('label') or '',
+                'scope': {'kind': item['scope']['kind'], 'id': item['scope'].get('id')},
+            }
+            for item in references
+        ]
+    if scope_notice:
+        turn['scope_notice'] = deepcopy(scope_notice)
     return turn
 
 
@@ -114,17 +131,9 @@ def revision_allowed_urls(context):
     ]))[:8]
 
 
-def _available_sources(context, plan, user_id, settings, candidates=()):
+def _authorized_manifest(context, ids, user_id):
+    """The authorized manifest entries for ``ids`` under the context's current seeds."""
     seeds = context.get('seeds') or {}
-    offered = {item['document_id']: item for item in candidates}
-    ids = list(dict.fromkeys([
-        *(seeds.get('document_ids') or []),
-        *plan_document_ids(plan, include_disabled=True),
-        *(item.get('document_id') for item in seeds.get('image_reference_documents') or [] if isinstance(item, dict)),
-        *offered,
-    ]))
-    if not ids:
-        return []
     try:
         manifest = resolve_authorized_source_manifest(
             ids, user_id, conversation_id=context['conversation_id'],
@@ -137,10 +146,27 @@ def _available_sources(context, plan, user_id, settings, candidates=()):
             'The selected sources could not be used. Start a new request with fewer sources.',
             code='invalid_request', status_code=400,
         ) from exc
-    available = {
+    return {
         item['document_id']: item for item in manifest
         if item.get('authorization_status') == 'authorized'
     }
+
+
+def _plan_source_ids(seeds, plan):
+    return [
+        *(seeds.get('document_ids') or []),
+        *plan_document_ids(plan, include_disabled=True),
+        *(item.get('document_id') for item in seeds.get('image_reference_documents') or [] if isinstance(item, dict)),
+    ]
+
+
+def _available_sources(context, plan, user_id, settings, candidates=()):
+    seeds = context.get('seeds') or {}
+    offered = {item['document_id']: item for item in candidates}
+    ids = list(dict.fromkeys([*_plan_source_ids(seeds, plan), *offered]))
+    if not ids:
+        return []
+    available = _authorized_manifest(context, ids, user_id)
     if set(seeds.get('document_ids') or []) - set(available):
         raise PlanRevisionError(
             'A selected source is no longer available. Start a new request with accessible sources.',
@@ -158,6 +184,114 @@ def _available_sources(context, plan, user_id, settings, candidates=()):
         }
         for document_id, item in available.items()
     ]
+
+
+# How an Ask AI reference the authorizer refused is reported. Any other refusal means the
+# reference is stale, deleted or no longer readable, which the user fixes by removing it.
+_REFERENCE_ERROR_CODES = {
+    'too_many': ('reference_limit', 400),
+    'invalid_reference': ('invalid_request', 400),
+    'unsupported_kind': ('invalid_request', 400),
+    'verification_failed': ('reference_check_failed', 503),
+}
+_ACTIVE_WORKSPACE_FIELDS = {'group': 'active_group_ids', 'public': 'active_public_workspace_ids'}
+
+
+def _reference_key(reference):
+    scope = reference.get('scope') or {}
+    return (reference.get('kind'), reference.get('id'), scope.get('kind'), scope.get('id'))
+
+
+def resolve_plan_edit_references(record, references, user_id, settings, *, conversation):
+    """Authorize an Ask AI request's `#` documents and tags for the acting user, as of now.
+
+    Returns them in the question card's normalized shape, labeled from the server's
+    records, ready for ``build_plan_edit_outcome``. A reference that cannot be used fails
+    the whole request with a PlanRevisionError that names it by the label the user picked,
+    before the planner runs, so a refused request changes no plan, seed or turn. The
+    conversation's workspace lock applies exactly as it does to the question card.
+    """
+    if not references:
+        return []
+    try:
+        resolved = resolve_scope_references(
+            references, user_id, settings,
+            allowed_workspaces=conversation_workspace_lock(conversation),
+            limit=REQUEST_REFERENCE_LIMIT,
+        )
+    except ScopeReferenceError as exc:
+        code, status = _REFERENCE_ERROR_CODES.get(exc.reason, ('reference_unavailable', 400))
+        raise PlanRevisionError(exc.message, code=code, status_code=status) from exc
+    unique = {}
+    for reference in resolved:
+        unique.setdefault(_reference_key(reference), reference)
+    existing = {
+        _reference_key(item)
+        for item in (record.get('seeds') or {}).get('elicitation_references') or []
+        if isinstance(item, dict)
+    }
+    if len(existing | set(unique)) > ELICITATION_REFERENCE_LIMIT:
+        raise PlanRevisionError(
+            f'This plan already uses as many documents and tags as it can '
+            f'({ELICITATION_REFERENCE_LIMIT}). Start a new request to use others.',
+            code='reference_limit', status_code=400,
+        )
+    return list(unique.values())
+
+
+def _merge_ask_references(context, plan, references, user_id):
+    """Add authorized Ask AI references to a revision's seeds, keeping the plan's sources.
+
+    ``merge_elicitation_context`` narrows the search scope and the active workspace lists
+    to the new references' workspaces when the plan had no selection. A source the current
+    plan already relies on in another workspace would then stop resolving and the revision
+    would fail, so the scope is widened back just enough to keep every one of them.
+    Widening never grants access: each source is authorized again for this user.
+    """
+    ids = list(dict.fromkeys(_plan_source_ids(context.get('seeds') or {}, plan)))
+    covered = list(_authorized_manifest(context, ids, user_id).values()) if ids else []
+    merged = merge_elicitation_context(context.get('seeds'), {'instruction': {'references': references}})
+    scope = merged.get('doc_scope') or 'all'
+    if scope != 'all' and any(item.get('scope') != scope for item in covered):
+        merged['doc_scope'] = 'all'
+    for item in covered:
+        field = _ACTIVE_WORKSPACE_FIELDS.get(item.get('scope'))
+        scope_id = item.get('scope_id')
+        # An empty list already means every workspace of that kind the user can read.
+        if field and scope_id and merged.get(field) and scope_id not in merged[field]:
+            merged[field] = [*merged[field], scope_id]
+    return merged
+
+
+def _scope_notice(committed_seeds, seeds):
+    """What the plan's searches are now limited to, when this revision newly limited them.
+
+    Selected documents replace the default search, and selected tags filter it, so a plan
+    that searched everything the user can read now searches only these. Nothing is shown
+    when the plan was already limited, or when a whole selected workspace is still searched.
+    """
+    committed_seeds = committed_seeds or {}
+    if committed_seeds.get('document_ids') or committed_seeds.get('tags'):
+        return None
+    references = [item for item in seeds.get('elicitation_references') or [] if isinstance(item, dict)]
+    if any(item.get('kind') == 'scope' for item in references):
+        return None
+    document_ids = seeds.get('document_ids') or []
+    tags = seeds.get('tags') or []
+    if not document_ids and not tags:
+        return None
+    labels = seeds.get('document_labels') or {}
+    reference_labels = {item.get('id'): item.get('label') for item in references if item.get('kind') != 'tag'}
+    documents = [
+        labels.get(document_id) or reference_labels.get(document_id) or 'Selected document'
+        for document_id in document_ids
+    ]
+    listed_documents = documents[:REQUEST_REFERENCE_LIMIT]
+    listed_tags = list(tags)[:REQUEST_REFERENCE_LIMIT]
+    return {
+        'kind': 'search_limited', 'documents': listed_documents, 'tags': listed_tags,
+        'more': len(documents) - len(listed_documents) + len(tags) - len(listed_tags),
+    }
 
 
 def _revision_catalogs(
@@ -297,6 +431,7 @@ def validate_edited_plan(
 
 def build_plan_edit_outcome(
     record, data, user_id, settings, *, identity, conversation_context, conversation, ledger=None,
+    references=None,
     result_alias_resolver=None, export_catalog=None, composition_profiles=None,
     native_bridge_for_step=None, rendering_service=None,
     external_source_preflight=None,
@@ -309,6 +444,10 @@ def build_plan_edit_outcome(
     external-source callbacks have the same server-only contract as
     ``validate_edited_plan``. Supply current runtime dependencies again for
     restore/replan validation; none are persisted.
+
+    ``references`` are an Ask request's `#` documents and tags as returned by
+    ``resolve_plan_edit_references``: already authorized for this user. They are merged
+    into this revision's seeds, and shown on its user turn, exactly once.
     """
     context = _turn_context(record)
     context['conversation_context'] = conversation_context
@@ -320,6 +459,13 @@ def build_plan_edit_outcome(
     instruction = data.get('instruction', '')
     user_content = instruction
     allow_elicitation = True
+    ask_references = list(references or []) if action == 'ask' else []
+    if action == 'ask' and data.get('references') and references is None:
+        # References are authorized before the planner runs; never drop them silently.
+        raise PlanRevisionError(
+            'The selected documents or tags could not be checked right now. Please retry.',
+            code='reference_check_failed', status_code=503,
+        )
     if action == 'discard':
         return {
             'kind': 'discard',
@@ -403,6 +549,8 @@ def build_plan_edit_outcome(
         export_catalog=admitted_catalog, composition_profiles=composition_profiles,
     )
     validate_clarification_answers(context.get('answered_questions') or [])
+    if ask_references:
+        context['seeds'] = _merge_ask_references(context, current_plan, ask_references, user_id)
     seeds = context.get('seeds') or {}
     resolve_elicitation_references(
         seeds.get('elicitation_references') or [],
@@ -509,7 +657,7 @@ def build_plan_edit_outcome(
         context.get('reasoning_adjustments'), current_plan.get('reasoning_adjustments'),
         document.get('reasoning_adjustments'),
     )
-    chat.append(_chat_turn('user', user_content, submission_id))
+    chat.append(_chat_turn('user', user_content, submission_id, references=ask_references))
     if kind == 'elicitation':
         document.update({
             'conversation_id': context['conversation_id'], 'turn_id': context['turn_id'],
@@ -532,8 +680,9 @@ def build_plan_edit_outcome(
     summary = f"Updated the plan to {count} {'step' if count == 1 else 'steps'}. Review it before running."
     if document['validation']['repairs']:
         summary += ' Adjustments: ' + ' '.join(document['validation']['repairs'])
+    notice = _scope_notice(record.get('seeds'), context.get('seeds') or {})
     return {
         'kind': 'plan', 'document': document, 'turn_context': context,
         'instruction': instruction, 'origin': 'ai',
-        'chat': [*chat, _chat_turn('assistant', summary, submission_id)],
+        'chat': [*chat, _chat_turn('assistant', summary, submission_id, scope_notice=notice)],
     }
