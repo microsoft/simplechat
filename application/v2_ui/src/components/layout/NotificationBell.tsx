@@ -9,11 +9,17 @@ import { useCallback, useId, useRef, useState } from 'react';
 import { clsx } from 'clsx';
 import { Bell } from 'lucide-react';
 import { formatNotificationCount } from '../../lib/notifications';
+import { useReducedMotion } from '../../lib/workflowAlertMotion';
 import { useNotificationStore } from '../../stores/notificationStore';
+import { useWorkflowAlertStore } from '../../stores/workflowAlertStore';
 import { NotificationPanel } from './NotificationPanel';
+import '../notifications/WorkflowAlertNotice.css';
 
 export function NotificationBell({ collapsed, className }: { collapsed: boolean; className?: string }) {
     const count = useNotificationStore((state) => state.count);
+    // Bumped when a workflow alert's notice tucks in here; the bell swings once in answer.
+    const ringToken = useWorkflowAlertStore((state) => state.ringToken);
+    const reducedMotion = useReducedMotion();
     const [open, setOpen] = useState(false);
     const buttonRef = useRef<HTMLButtonElement>(null);
     const panelId = useId();
@@ -49,7 +55,14 @@ export function NotificationBell({ collapsed, className }: { collapsed: boolean;
                     className,
                 )}
             >
-                <Bell size={17} aria-hidden="true" />
+                <span
+                    key={ringToken}
+                    aria-hidden="true"
+                    data-notification-bell-ring={ringToken > 0 && !reducedMotion ? '' : undefined}
+                    className={clsx('inline-flex', ringToken > 0 && !reducedMotion && 'wf-bell-swing')}
+                >
+                    <Bell size={17} aria-hidden="true" />
+                </span>
                 {unread > 0 && collapsed && (
                     <span
                         aria-hidden="true"
