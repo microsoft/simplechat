@@ -333,6 +333,10 @@ class NotificationApi:
         self.fail_next = set()
         self.count_failure = None
         self.set_active_status = 200
+        self.hold_counts = False
+        self.held_counts = []
+        self.hold_lists = False
+        self.held_lists = []
         self.hold_kinds = set()
         self.held_kinds = {}
         self.hold_streams = False
@@ -489,7 +493,12 @@ class NotificationApi:
             route.fulfill(status=failure, json={"error": message})
         else:
             # get_unread_notification_count caps the count at 10.
-            route.fulfill(json=notification_count_payload(min(len(self.unread()), 10)))
+            payload = notification_count_payload(min(len(self.unread()), 10))
+            if self.hold_counts:
+                # Counted now and answered on release, as a slow server would.
+                self.held_counts.append((route, payload))
+            else:
+                route.fulfill(json=payload)
 
     def answer_list(self, route, query):
         self.list_queries.append(query)
@@ -497,14 +506,19 @@ class NotificationApi:
         per_page = int(query.get("per_page", 20))
         items = self.listed(query.get("include_read", "true") == "true", query.get("include_dismissed") == "true")
         start = (page_number - 1) * per_page
-        route.fulfill(json={
+        payload = {
             "success": True,
             "notifications": copy.deepcopy(items[start:start + per_page]),
             "total": len(items),
             "page": page_number,
             "per_page": per_page,
             "has_more": start + per_page < len(items),
-        })
+        }
+        if self.hold_lists:
+            # Read now and answered on release, as a slow server would.
+            self.held_lists.append((route, payload))
+        else:
+            route.fulfill(json=payload)
 
     def answer_notice_change(self, route, path, notice_id, change):
         (self.read_calls if change == "read" else self.dismiss_calls).append(notice_id)
@@ -584,6 +598,20 @@ class NotificationApi:
         route, body = self.held_streams.pop(0)
         self.answer_stream(route, body)
 
+    def release_counts(self):
+        """Answer the held count reads with what the server counted when each one arrived."""
+        assert self.held_counts, "No count request was held."
+        held, self.held_counts = self.held_counts, []
+        for route, payload in held:
+            route.fulfill(json=payload)
+
+    def release_lists(self):
+        """Answer the held list reads with the page each one was cut from when it arrived."""
+        assert self.held_lists, "No list request was held."
+        held, self.held_lists = self.held_lists, []
+        for route, payload in held:
+            route.fulfill(json=payload)
+
     def release_kind(self, conversation_id):
         assert conversation_id in self.held_kinds, f"No kind request for {conversation_id} was held."
         self.answer_kind(self.held_kinds.pop(conversation_id), conversation_id)
@@ -643,8 +671,7 @@ SEED = r"""
 COUNT_SETTLED = r"""
 () => {
     const started = window.__fetchLog.filter((item) => item.path === '/api/notifications/count').length;
-    const store = window.NotificationHarness.stores.notification.useNotificationStore.getState();
-    return started > 0 && (started === window.NotificationHarness.countChanges.length || store.halted);
+    return started > 0 && !window.NotificationHarness.stores.notification.isNotificationCountReading();
 }
 """
 
@@ -1111,6 +1138,123 @@ def test_failed_changes_are_put_back_and_explained(harness):
     assert harness.mark_all_calls == 1
 
 
+def test_a_refused_change_reads_the_count_again_rather_than_putting_an_old_one_back(harness):
+    harness.add(share_notice(), document_notice(), workflow_notice("n-workflow", "The digest step timed out."))
+    harness.open("/elsewhere")
+    bell = harness.bell
+    harness.open_panel()
+    harness.settle_count()
+    expect(bell).to_have_attribute("data-unread-count", "3")
+
+    # A notice arrives that the bell has not heard about, and then a change is refused. The
+    # count the bell showed before the change is out of date, so it is not put back.
+    harness.add(announcement_notice("n-new", "Planned maintenance"))
+    reads = harness.count_fetches()
+    harness.fail_next.add("read")
+    harness.action("n-doc", "read").click()
+    expect(harness.toast("Failed to mark notification as read")).to_be_visible()
+    expect(harness.row("n-doc")).to_have_attribute("data-unread", "true")
+    harness.settle_count()
+    assert harness.count_fetches() > reads
+    expect(bell).to_have_attribute("data-unread-count", "4")
+    assert harness.changes()[-1] == {
+        "count": 4, "previousCount": 3, "changed": True, "rose": True, "reason": "action",
+    }
+    # The server's count rose, so the open panel lists what arrived.
+    expect(harness.row("n-new")).to_have_count(1)
+    assert harness.read_calls == ["n-doc"]
+
+
+def test_load_more_after_a_dismissal_reads_back_so_no_notice_is_skipped(harness):
+    # Newest first: n-24 down to n-00. The first page ends at n-05; n-04 is the 21st.
+    for number in range(25):
+        harness.add(announcement_notice(f"n-{number:02d}", f"Notice {number:02d}", read=number % 2 == 1))
+    harness.open("/elsewhere")
+    harness.open_panel()
+    expect(harness.rows).to_have_count(20)
+    assert harness.row_ids()[-1] == "n-05"
+
+    # Pages are cut by position among the notices that are left, so the dismissal lifts n-04
+    # onto the first page. Asking for the second page alone would never show it.
+    harness.action("n-10", "dismiss").click()
+    expect(harness.row("n-10")).to_have_count(0)
+    harness.wait_for(lambda: harness.find("n-10")["is_dismissed"], "The notice was not dismissed on the server.")
+    queries = len(harness.list_queries)
+    load_more = harness.panel.locator('[data-notification-action="load-more"]')
+    load_more.click()
+    expect(harness.rows).to_have_count(24)
+    expect(load_more).to_have_count(0)
+    assert sorted(query["page"] for query in harness.list_queries[queries:]) == ["1", "2"]
+    assert harness.row_ids() == [f"n-{number:02d}" for number in range(24, -1, -1) if number != 10]
+    expect(harness.row("n-04")).to_have_attribute("data-unread", "true")
+    assert harness.js(
+        "() => window.NotificationHarness.stores.notification.useNotificationStore.getState().hasMore",
+    ) is False
+
+
+def test_load_more_reads_back_a_page_for_every_page_of_dismissals(harness):
+    # Newest first: n-64 down to n-00. Three pages hold n-64 to n-05.
+    for number in range(65):
+        harness.add(announcement_notice(f"n-{number:02d}", f"Notice {number:02d}", read=True))
+    harness.open("/elsewhere")
+    harness.open_panel()
+    load_more = harness.panel.locator('[data-notification-action="load-more"]')
+    load_more.click()
+    expect(harness.rows).to_have_count(40)
+    load_more.click()
+    expect(harness.rows).to_have_count(60)
+    expect(load_more).to_be_visible()
+
+    # Twenty-one dismissals lift n-04 two pages back, onto the second.
+    dismissed = [f"n-{number:02d}" for number in range(64, 43, -1)]
+    outcomes = harness.js("""(ids) => Promise.all(ids.map((id) =>
+        window.NotificationHarness.stores.notification.useNotificationStore.getState().dismiss(id)))""",
+        dismissed)
+    assert outcomes == [True] * 21
+    expect(harness.rows).to_have_count(39)
+    queries = len(harness.list_queries)
+    load_more.click()
+    expect(harness.rows).to_have_count(44)
+    expect(load_more).to_have_count(0)
+    assert sorted(query["page"] for query in harness.list_queries[queries:]) == ["2", "3", "4"]
+    assert harness.row_ids() == [f"n-{number:02d}" for number in range(43, -1, -1)]
+
+
+def test_mark_all_read_before_the_list_arrives_is_not_undone_by_it(harness):
+    harness.add(share_notice(), document_notice(), workflow_notice("n-workflow", "The digest step timed out."))
+    harness.open("/elsewhere")
+    bell = harness.bell
+    expect(bell).to_have_attribute("data-unread-count", "3")
+
+    harness.hold_lists = True
+    bell.click()
+    expect(harness.panel).to_be_visible()
+    harness.wait_for(lambda: harness.held_lists, "Opening the panel did not read the list.")
+    mark_all = harness.panel.locator('[data-notification-action="mark-all-read"]')
+    mark_all.click()
+    harness.wait_for(lambda: not harness.unread(), "Mark all read did not reach the server.")
+    harness.settle_count()
+    expect(bell).to_have_attribute("data-unread-count", "0")
+    # Nothing was reported as a rise, so the panel did not read the list again mid-action: every
+    # read so far is its opening one (made twice by React's development double start).
+    assert not any(change["rose"] for change in harness.changes()), harness.changes()
+    opened = len(harness.list_queries)
+    assert [query["page"] for query in harness.list_queries] == ["1"] * opened
+
+    # The page was cut before mark all read reached the server, so it lists all three unread.
+    harness.hold_lists = False
+    harness.release_lists()
+    harness.wait_for_js(LIST_SETTLED, "The notification list did not finish loading.")
+    expect(harness.rows).to_have_count(3)
+    assert unread_flags(harness) == ["false", "false", "false"]
+    expect(bell).to_have_attribute("data-unread-count", "0")
+    expect(harness.panel.locator("[data-notification-panel-count]")).to_have_count(0)
+    expect(mark_all).to_be_disabled()
+    assert harness.mark_all_calls == 1
+    harness.page.wait_for_timeout(200)
+    assert len(harness.list_queries) == opened
+
+
 # Deep links -----------------------------------------------------------------------------------
 
 
@@ -1265,10 +1409,19 @@ UNSAFE_LINKS = [
     ("n-scheme-relative", "//evil.example/phish", {}, OFF_SITE),
     ("n-backslash", "/\\evil.example/phish", {}, OFF_SITE),
     ("n-plain-http", "http://simplechat.test/chats", {}, OFF_SITE),
+    # Paths that name this site but, once their dot segments and doubled slashes are read the
+    # way the browser reads them, lead to another one.
+    ("n-dot-slash", "/.//evil.example/phish", {}, OFF_SITE),
+    ("n-dot-dot-slash", "/x/..//evil.example/phish", {}, OFF_SITE),
+    ("n-encoded-dots", "/%2e%2e//evil.example/phish", {}, OFF_SITE),
+    ("n-dot-backslash", "/./\\evil.example/phish", {}, OFF_SITE),
+    ("n-same-origin-double-slash", "https://simplechat.test//evil.example/phish", {}, OFF_SITE),
     ("n-script", "javascript:window.__xss=3", {}, UNSUPPORTED),
     ("n-data", "data:text/html,<script>window.__xss=4</script>", {}, UNSUPPORTED),
     ("n-credentials", "https://user:secret@simplechat.test/chats", {}, UNSUPPORTED),
     ("n-api", "/api/notifications/mark-all-read", {}, UNSUPPORTED),
+    # The server decodes %61 to "a" before it routes, so this is the API too.
+    ("n-encoded-api", "/%61pi/notifications/mark-all-read", {}, UNSUPPORTED),
     ("n-blank", "   ", {}, INVALID),
     ("n-traversal", "/chats?conversationId=../conv-a", {}, INVALID),
     ("n-bad-group", "/groups/a%2Fb", {}, INVALID),
@@ -1301,6 +1454,36 @@ def test_links_that_leave_the_site_or_cannot_be_trusted_are_explained_not_follow
     harness.action("n-script", "dismiss").click()
     expect(harness.row("n-script")).to_have_count(0)
     harness.wait_for(lambda: harness.dismiss_calls == ["n-script"], "The notice was not dismissed.")
+
+
+def test_the_address_is_checked_again_just_before_the_page_is_left(harness):
+    """A classic target the resolver would never build is still not followed off the site."""
+    harness.open("/elsewhere")
+    for href in (
+        "//evil.example/phish",
+        "/\\evil.example/phish",
+        "https://evil.example/phish",
+        "javascript:window.__xss=5",
+    ):
+        harness.js("""(href) => window.NotificationHarness.notificationNavigation.openNotificationTarget(
+            {kind: 'classic', href, groupId: 'grp-1'},
+            {navigate: (path) => { window.__navigatedTo = path; }, pathname: '/elsewhere'},
+        )""", href)
+    expect(harness.toast(OFF_SITE).first).to_be_visible()
+    harness.page.wait_for_timeout(200)
+    assert harness.page.url == f"{ORIGIN}/harness.html"
+    expect(current_route(harness)).to_have_text("/elsewhere")
+    assert harness.js("() => window.__navigatedTo") is None
+    assert harness.js("() => window.__xss") is None
+    # The group is not made active for a page that is never opened.
+    assert harness.set_active_calls == []
+
+    # What is followed is the absolute address the path names on this site, so a path that
+    # merely looks like another site -- which the resolver refuses anyway -- could not leave it.
+    assert harness.js("""(origin) => ['/profile?tab=notifications#top', '/.//evil.example/phish',
+            '//evil.example/phish', 'profile']
+        .map((href) => window.NotificationHarness.notificationLinks.sameSiteAddress(href, origin))""",
+        ORIGIN) == [f"{ORIGIN}/profile?tab=notifications#top", f"{ORIGIN}//evil.example/phish", None, None]
 
 
 def test_a_notice_for_a_conversation_that_is_gone_says_so_and_leaves_the_chat_alone(harness):
@@ -1339,8 +1522,8 @@ def test_a_notice_for_a_conversation_that_is_gone_says_so_and_leaves_the_chat_al
 
 
 def poll_now(harness):
-    """Read the count the way the poller's timer does."""
-    harness.js("() => window.NotificationHarness.stores.notification.refreshNotificationCount('poll')")
+    """Start a count read the way the poller's timer does, without waiting: a test may hold it."""
+    harness.js("() => { void window.NotificationHarness.stores.notification.refreshNotificationCount('poll'); }")
 
 
 def test_a_notice_that_arrives_while_the_panel_is_open_is_listed(harness):
@@ -1371,6 +1554,40 @@ def test_a_notice_that_arrives_while_the_panel_is_open_is_listed(harness):
     assert harness.changes()[-1] == {"count": 1, "previousCount": 2, "changed": True, "rose": False, "reason": "poll"}
     harness.page.wait_for_timeout(200)
     assert len(harness.list_queries) == queries + 1
+
+
+def test_a_count_read_before_a_change_landed_is_dropped_not_shown_or_reported_as_a_rise(harness):
+    harness.add(share_notice(), document_notice(), workflow_notice("n-workflow", "The digest step timed out."))
+    harness.open("/elsewhere")
+    bell = harness.bell
+    harness.open_panel()
+    harness.settle_count()
+    expect(bell).to_have_attribute("data-unread-count", "3")
+    heard = len(harness.changes())
+    queries = len(harness.list_queries)
+
+    # A poll leaves while the server still counts three, and is slow to come back. Meanwhile a
+    # notice is read here, and the server confirms it.
+    harness.hold_counts = True
+    poll_now(harness)
+    harness.wait_for(lambda: harness.held_counts, "The poll did not read the count.")
+    harness.action("n-doc", "read").click()
+    expect(bell).to_have_attribute("data-unread-count", "2")
+    harness.wait_for(lambda: harness.find("n-doc")["is_read"], "The notice was not marked read on the server.")
+    harness.page.wait_for_timeout(200)
+
+    # The poll's three lands last. Shown, it would put the read notice back on the bell, and
+    # measured against the two shown here it would look like a new notice to Track N2.
+    harness.hold_counts = False
+    harness.release_counts()
+    harness.settle_count()
+    expect(bell).to_have_attribute("data-unread-count", "2")
+    assert harness.changes()[heard:] == [
+        {"count": 2, "previousCount": 3, "changed": True, "rose": False, "reason": "action"},
+    ]
+    harness.page.wait_for_timeout(200)
+    assert len(harness.list_queries) == queries
+    assert unread_flags(harness) == ["true", "false", "true"]
 
 
 CLOCK_STEP = 5

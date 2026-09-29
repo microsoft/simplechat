@@ -59,6 +59,12 @@ There is no event stream for personal notices, so the count is polled from
 notice that arrives while it is open. Track N2's workflow-alert pop-ups are meant
 to subscribe the same way; this release doesn't add them.
 
+`previousCount`, `changed` and `rose` compare two counts the server reported, never
+a count V2 worked out for itself after a read, dismissal or mark all read. So `rose`
+means something new arrived, not that a change you made was confirmed. A read the
+server counted before one of your changes reached it is dropped rather than shown
+or reported, and the count is read again once the change lands.
+
 ## The panel
 
 Selecting the bell opens a panel with your notices, newest first, 20 at a time
@@ -70,8 +76,18 @@ which adds search and filters.
 
 Read, dismiss and mark all read call `POST /api/notifications/<id>/read`,
 `DELETE /api/notifications/<id>/dismiss` and
-`POST /api/notifications/mark-all-read`. Each change shows at once and is put back,
-with a message, if the server refuses it.
+`POST /api/notifications/mark-all-read`. Each change shows at once. If the server
+refuses it, the row is put back with a message and the count is read again, rather
+than restored from a number remembered before the change, which a later change may
+have overtaken. A page of the list that was already on its way when you made a
+change is shown with the change applied, so a slow answer can't bring back a
+dismissed notice or show a read one as unread.
+
+The server cuts pages by position among the notices you haven't dismissed, so each
+dismissal moves every later notice up one place, and the first notice not loaded
+yet can slide onto a page already shown. After a dismissal, **Load more** reads
+back one page for every page's worth of dismissals along with the next page, and
+drops the repeats, so that notice isn't skipped.
 
 Notification text is untrusted, because a workflow alert or a reply preview can
 quote email or web content. Titles and messages are rendered as plain text, never
@@ -135,6 +151,14 @@ to another site, a link carrying credentials or a scheme other than `http` or
 `https`, an `/api/` endpoint, and a malformed or mismatched link. Classic follows
 an off-site link; V2 deliberately doesn't, since a notice about your own work
 never needs to leave the site.
+
+Staying on the site is judged by where a link leads, not by how it is written. A
+same-site link whose path names another site once it is followed, such as
+`/.//host`, `/x/..//host` or this site's own address followed by `//host`, counts
+as a link to another site. An `/api/` endpoint is recognized however its path is
+escaped, for example `/%61pi/`, because the server decodes the path before
+routing it. The address of a classic page is checked once more just before it
+opens.
 
 On the chat page, a notice for another conversation opens it in place. A notice for
 a conversation that has been deleted, or that you can no longer see, says so and
@@ -268,14 +292,18 @@ conversations keep their own read tracking, so neither is affected.
 - V2 doesn't play the completion sound (`enable_chat_completion_audio_cues`), and
   doesn't use `GET /api/notifications/chat-completions`, which exists for that
   sound.
+- Dismissals made in another tab aren't counted for **Load more** in this one.
+  Reopening the panel reads the list fresh.
+- A notice that arrives while **Mark all read** is still on its way can show as read
+  in the open panel until the panel is reopened. The badge still counts it.
 
 ## Testing and validation
 
 | Suite | Cases | Coverage |
 |---|---|---|
-| `functional_tests/test_v2_notifications_bell.py` | 9 | The client's routes, methods, page size and count cap against the server; the administrator setting and preference reaching V2 through the bootstrap and settings sanitizer; the gating rules against classic's; permission asked only from a click or key press; the runtime starting once; the N2 and Phase 6b seams; no HTML sinks and same-site links only |
+| `functional_tests/test_v2_notifications_bell.py` | 10 | The client's routes, methods, page size and count cap against the server; the administrator setting and preference reaching V2 through the bootstrap and settings sanitizer; the gating rules against classic's; permission asked only from a click or key press; the runtime starting once; the N2 and Phase 6b seams; no HTML sinks; and the real link resolver, run under Node, refusing off-site paths however they are spelled, escaped `/api/` paths and malformed links while the links the server writes still open their pages |
 | `functional_tests/test_desktop_notification_settings.py` | Existing | Classic's desktop notifications, unchanged |
-| `ui_tests/test_v2_notifications_bell.py` | 37 | The bell and panel with the rail expanded, collapsed and on mobile; read, dismiss and mark all read, including refused changes; every link kind, refused links and a deleted conversation; backoff, hidden-tab rest, retry and sign-out; read receipts for watched, hidden, other-page and left-behind replies; desktop notifications with the Notification API stubbed, including once per reply, the lock-screen text, the click, permission on send, Enter and the preference, and each reason a browser can't notify |
+| `ui_tests/test_v2_notifications_bell.py` | 43 | The bell and panel with the rail expanded, collapsed and on mobile; read, dismiss and mark all read, including refused changes that read the count again; Load more after one dismissal and after more than a page of them; slow count and list answers that would otherwise undo a change or report a false rise; every link kind, refused links (including paths that only leave the site once their dot segments are read) and a deleted conversation; the address checked again just before the page is left; backoff, hidden-tab rest, retry and sign-out; read receipts for watched, hidden, other-page and left-behind replies; desktop notifications with the Notification API stubbed, including once per reply, the lock-screen text, the click, permission on send, Enter and the preference, and each reason a browser can't notify |
 
 The UI suite runs the real V2 components in a harness build with `page.route`
 stubs, following `ui_tests/test_v2_elicitation_composer.py`, and needs no live

@@ -4,10 +4,11 @@
 // Shared by the notification panel and the desktop notifier, so a notice opens the same
 // conversation the same way whichever of the two the user clicked.
 
-import type { NotificationTarget } from './notificationLinks';
+import { OFF_SITE_LINK, sameSiteAddress, type NotificationTarget } from './notificationLinks';
 import { chatHrefForConversation } from './conversationUrl';
 import { GROUP_WORKSPACES } from './workspaces';
 import { useChatStore } from '../stores/chatStore';
+import { toast } from '../stores/toastStore';
 
 export interface NotificationNavigationContext {
     navigate: (path: string) => void;
@@ -41,10 +42,12 @@ export function openConversationFromNotification(
 /**
  * Follow a target.
  *
- * A classic page is opened with a full navigation. Before it is, the group the notice is about
- * is made the active group -- best-effort, as classic does -- because classic group pages act
- * on the active group rather than on one named in their URL. V2 routes name their workspace in
- * the path, so they never need it.
+ * A classic page is opened with a full navigation. Its address is read back once more first,
+ * as the last step before the page is left: the resolver only builds addresses on this site,
+ * and nothing that leaves it is followed even if that ever changed. Then the group the notice
+ * is about is made the active group -- best-effort, as classic does -- because classic group
+ * pages act on the active group rather than on one named in their URL. V2 routes name their
+ * workspace in the path, so they never need it.
  */
 export async function openNotificationTarget(
     target: NotificationTarget,
@@ -58,6 +61,11 @@ export async function openNotificationTarget(
         context.navigate(target.path);
         return;
     }
+    const address = sameSiteAddress(target.href, window.location.origin);
+    if (!address) {
+        toast.error(OFF_SITE_LINK);
+        return;
+    }
     if (target.groupId) {
         try {
             await GROUP_WORKSPACES.setActive(target.groupId);
@@ -65,5 +73,5 @@ export async function openNotificationTarget(
             /* Advisory, as in classic: the page still opens, on whichever group was active. */
         }
     }
-    window.location.assign(target.href);
+    window.location.assign(address);
 }

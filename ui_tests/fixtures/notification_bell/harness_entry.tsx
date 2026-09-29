@@ -20,6 +20,8 @@ import * as userSettingsStore from '../../../application/v2_ui/src/stores/userSe
 import * as replyEvents from '../../../application/v2_ui/src/lib/replyEvents';
 import * as desktopNotifications from '../../../application/v2_ui/src/lib/desktopNotifications';
 import * as appNavigation from '../../../application/v2_ui/src/lib/appNavigation';
+import * as notificationLinks from '../../../application/v2_ui/src/lib/notificationLinks';
+import * as notificationNavigation from '../../../application/v2_ui/src/lib/notificationNavigation';
 import { useNotificationRuntime } from '../../../application/v2_ui/src/lib/useNotificationRuntime';
 import { AppShell } from '../../../application/v2_ui/src/components/layout/AppShell';
 import { ChatPage } from '../../../application/v2_ui/src/pages/ChatPage';
@@ -113,4 +115,6 @@ window.NotificationHarness = {
     replyEvents,
     desktopNotifications,
     appNavigation,
+    notificationLinks,
+    notificationNavigation,
 };

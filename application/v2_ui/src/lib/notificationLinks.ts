@@ -12,6 +12,11 @@
 // classic resolver will follow an absolute link to another origin, but a notification can
 // quote content from outside, and following it off-site is never what a notice about your
 // own work means. And a link that fails a check is reported, not guessed at.
+//
+// Staying on this site is checked on the address that is actually followed, not only on the
+// link as written. A same-origin link can still carry a path that, copied into a new address,
+// names another site -- `/.//host` parses to the path `//host` -- so every classic address is
+// read back before it is used, and read back again just before the page is left.
 
 import type { AppNotification } from './notifications';
 import { readConversationParam } from './conversationUrl';
@@ -43,7 +48,7 @@ const NO_LINK: ResolvedNotificationLink = { target: null, error: null };
 
 const INVALID_LINK = 'This notification has an invalid link. Open the destination directly.';
 const UNSUPPORTED_LINK = 'This notification has an unsupported link. Open the destination directly.';
-const OFF_SITE_LINK = 'This notification links to another site, so it is not opened from here.';
+export const OFF_SITE_LINK = 'This notification links to another site, so it is not opened from here.';
 const GROUP_DOCUMENT_MISMATCH =
     'This notification does not match its group and document. Refresh notifications or open the workspace directly.';
 
@@ -138,15 +143,71 @@ function looksLikeGroupDocument(url: URL): boolean {
         || (url.searchParams.has('document_id') && !workflowLink);
 }
 
-function classic(url: URL, notification: AppNotification): ResolvedNotificationLink {
-    return {
-        target: {
-            kind: 'classic',
-            href: `${url.pathname}${url.search}${url.hash}`,
-            groupId: groupIdFor(notification),
-        },
-        error: null,
-    };
+/**
+ * Why a path on this site is still not followed, or null when it is a path the server writes.
+ *
+ * The URL parser has already resolved the path's dot segments, `%2e` spellings included, and
+ * turned its backslashes into slashes. The path is decoded here as well, because the server
+ * decodes it before routing: `/%61pi/` reaches the same endpoint as `/api/`. After decoding:
+ *
+ * - A path that starts with two slashes is refused as off-site. Copied into an address,
+ *   `//host` names another site, however the link spelled it: `/.//host`, `/x/..//host`,
+ *   `/%2e%2e//host`, `/./\host`, and this site's own origin followed by `//host`, all parse
+ *   to that path.
+ * - An empty segment, a dot segment, a backslash or a control character anywhere else is
+ *   refused as invalid. The server writes none of them, and each makes one path read as another.
+ * - An API endpoint is refused: it is never a page to open.
+ */
+function refusedPathError(pathname: string): string | null {
+    let decoded: string;
+    try {
+        decoded = decodeURIComponent(pathname);
+    } catch {
+        return INVALID_LINK;
+    }
+    const slashed = decoded.replace(/\\/g, '/');
+    if (slashed.startsWith('//')) {
+        return OFF_SITE_LINK;
+    }
+    if (slashed !== decoded || /\/\/|\/\.{1,2}(?:\/|$)|[\u0000-\u001f\u007f]/.test(decoded)) {
+        return INVALID_LINK;
+    }
+    if (/^\/api(?:\/|$)/i.test(decoded)) {
+        return UNSUPPORTED_LINK;
+    }
+    return null;
+}
+
+/**
+ * The absolute address `href` leads to from a page on `origin`, or null when it would leave it.
+ *
+ * Only a path from this site's root is accepted, and it is parsed the way the browser will
+ * parse it, because a path is not safe on its own: written into an address, `//host/...` or
+ * `/\host/...` names another site. Used when a classic target is built, and again by the
+ * navigator immediately before it follows one.
+ */
+export function sameSiteAddress(href: string, origin: string): string | null {
+    if (!href.startsWith('/')) {
+        return null;
+    }
+    try {
+        const url = new URL(href, origin);
+        return url.origin === origin ? url.href : null;
+    } catch {
+        return null;
+    }
+}
+
+function classic(href: string, notification: AppNotification, origin: string): ResolvedNotificationLink {
+    if (!sameSiteAddress(href, origin)) {
+        return { target: null, error: OFF_SITE_LINK };
+    }
+    return { target: { kind: 'classic', href, groupId: groupIdFor(notification) }, error: null };
+}
+
+/** The link's own path, query and fragment, as they are opened in the classic interface. */
+function linkHref(url: URL): string {
+    return `${url.pathname}${url.search}${url.hash}`;
 }
 
 /**
@@ -186,20 +247,18 @@ export function resolveNotificationLink(
     if (url.origin !== origin) {
         return { target: null, error: OFF_SITE_LINK };
     }
+    const refused = refusedPathError(url.pathname);
+    if (refused) {
+        return { target: null, error: refused };
+    }
 
-    const path = url.pathname.replace(/\/{2,}/g, '/').replace(/(.)\/$/, '$1');
+    // No empty segments are left to collapse, so only a trailing slash is set aside.
+    const path = url.pathname.replace(/(.)\/$/, '$1');
 
     // A Microsoft 365 action waiting in a conversation is resolved on the classic chat page,
     // which is the only one that renders the pending-action card.
     if ((path === '/chats' || path === '/chat' || path === '/v2/chat') && url.searchParams.has('m365_pending_action')) {
-        return {
-            target: {
-                kind: 'classic',
-                href: `/chats${url.search}${url.hash}`,
-                groupId: groupIdFor(notification),
-            },
-            error: null,
-        };
+        return classic(`/chats${url.search}${url.hash}`, notification, origin);
     }
     if (path === '/chats' || path === '/chat' || path === '/v2/chat') {
         return chatTarget(url);
@@ -214,11 +273,11 @@ export function resolveNotificationLink(
             safeId(url.searchParams.get('workflowId')),
             safeId(url.searchParams.get('runId')),
         );
-        return runPath ? route(runPath) : classic(url, notification);
+        return runPath ? route(runPath) : classic(linkHref(url), notification, origin);
     }
 
     if (path === '/approvals') {
-        return classic(url, notification);
+        return classic(linkHref(url), notification, origin);
     }
 
     // My Workspace has no per-document link, so a document notice opens the document list.
@@ -272,10 +331,5 @@ export function resolveNotificationLink(
         return route(`${path.slice(3) || '/'}${url.search}${url.hash}`);
     }
 
-    // An API endpoint is never a page to open.
-    if (path === '/api' || path.startsWith('/api/')) {
-        return { target: null, error: UNSUPPORTED_LINK };
-    }
-
-    return classic(url, notification);
+    return classic(linkHref(url), notification, origin);
 }

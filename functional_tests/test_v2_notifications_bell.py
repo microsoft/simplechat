@@ -24,13 +24,19 @@ contracts across both of those lines:
     orchestrated send the browser suite does not drive;
   - the runtime runs from the application root and registers the navigator only once;
   - the seams later tracks build on are in place: the count-change feed Track N2's pop-ups
-    subscribe to, and the workflow-run link Phase 6b fills in; and
-  - notification text is never rendered as markup, links stay on this site, and no new file
-    names an off-site address.
+    subscribe to, and the workflow-run link Phase 6b fills in;
+  - notification text is never rendered as markup, and no new file names an off-site address;
+    and
+  - the real link resolver, run under Node, refuses every spelling of a link that would leave
+    this site or open an API endpoint -- including paths that only name another site once
+    copied into an address -- while the links the server writes still open their pages.
 """
 
 import ast
+import json
 import re
+import shutil
+import subprocess
 import sys
 from pathlib import Path
 
@@ -71,6 +77,110 @@ REQUIRED_CALLS = {
 }
 
 MARKUP_SINKS = ("dangerouslySetInnerHTML", "innerHTML", "outerHTML", "insertAdjacentHTML", "document.write")
+
+ORIGIN = "https://simplechat.test"
+
+# Links that would take the reader to another site. The first three are refused because they
+# parse to another origin. The rest parse to this origin with a path that starts `//`, which
+# names another site as soon as it is copied into an address; the last two spell the slashes
+# with escapes the server decodes before routing.
+OFF_SITE_LINKS = [
+    "//evil.example/phish",
+    "/\\evil.example/phish",
+    "https://evil.example/chats?conversationId=conv-1",
+    "/.//evil.example/phish",
+    "/x/..//evil.example/phish",
+    "/%2e%2e//evil.example/phish",
+    "/./\\evil.example/phish",
+    f"{ORIGIN}//evil.example/phish",
+    "/%2F%2Fevil.example/phish",
+    "/%5Cevil.example/phish",
+]
+
+# Links that are not pages. `/%61pi/` is decoded to `/api/` by the server before it routes.
+UNSUPPORTED_LINKS = [
+    "/api",
+    "/api/notifications/mark-all-read",
+    "/API/notifications",
+    "/%61pi/notifications/mark-all-read",
+    "javascript:alert(1)",
+    "data:text/html,hello",
+]
+
+# Links the server never writes, each of which reads as a different path once decoded.
+INVALID_LINKS = [
+    "   ",
+    "/x%2F..%2Fapi%2Fnotifications",
+    "/a%2F%2Fb",
+    "/chats%00",
+    "/%E0%A4%A",
+    "/groups/a%2Fb",
+]
+
+# Links the server does write, with where each one leads: (link, link context, target).
+FOLLOWED_LINKS = [
+    ("/chats?conversationId=conv-1", {}, {"kind": "conversation", "conversationId": "conv-1"}),
+    ("/chats?conversation_id=conv-2", {}, {"kind": "conversation", "conversationId": "conv-2"}),
+    (f"{ORIGIN}/v2/chat?conversationId=conv-3", {}, {"kind": "conversation", "conversationId": "conv-3"}),
+    # Dot segments are resolved by the parser before anything is checked.
+    ("/./chats?conversationId=conv-4", {}, {"kind": "conversation", "conversationId": "conv-4"}),
+    ("/chats", {}, {"kind": "route", "path": "/chat"}),
+    (
+        "/chats?conversationId=conv-5&m365_pending_action=act-1",
+        {},
+        {"kind": "classic", "href": "/chats?conversationId=conv-5&m365_pending_action=act-1", "groupId": None},
+    ),
+    (
+        "/approvals?approval_id=a-1",
+        {"group_id": "g-1"},
+        {"kind": "classic", "href": "/approvals?approval_id=a-1", "groupId": "g-1"},
+    ),
+    (
+        "/workflow-activity?workflowId=w-1&runId=r-1",
+        {},
+        {"kind": "classic", "href": "/workflow-activity?workflowId=w-1&runId=r-1", "groupId": None},
+    ),
+    ("/profile?tab=violations", {}, {"kind": "route", "path": "/settings?tab=violations"}),
+    ("/workspace", {}, {"kind": "route", "path": "/workspace/documents"}),
+    ("/public_directory", {}, {"kind": "route", "path": "/public/directory"}),
+    ("/v2/workspace/documents?x=1#top", {}, {"kind": "route", "path": "/workspace/documents?x=1#top"}),
+]
+
+# What the navigator follows for a classic page, checked again just before the page is left.
+# Only a path from this site's root is accepted, and it is judged by the address it becomes:
+# `/.//host` stays on this site as an absolute address, where `//host` and `/\host` do not.
+ADDRESSES = [
+    ("/profile?tab=notifications#top", f"{ORIGIN}/profile?tab=notifications#top"),
+    ("/.//evil.example/phish", f"{ORIGIN}//evil.example/phish"),
+    ("//evil.example/phish", None),
+    ("/\\evil.example/phish", None),
+    ("https://evil.example/phish", None),
+    (f"{ORIGIN}/profile", None),
+    ("profile", None),
+]
+
+# Runs the shipped resolver (lib/notificationLinks.ts) under Node's type stripping, so what is
+# checked is the code the browser runs rather than a description of it.
+RESOLVER_SCRIPT = r"""
+import { readFileSync } from 'node:fs';
+import path from 'node:path';
+import { pathToFileURL } from 'node:url';
+
+const root = process.argv[1];
+const input = JSON.parse(readFileSync(0, 'utf8'));
+await import(pathToFileURL(path.join(root, 'functional_tests', 'test_support', 'tsResolve.mjs')));
+const links = await import(pathToFileURL(path.join(root, 'application', 'v2_ui', 'src', 'lib', 'notificationLinks.ts')));
+const notice = (item) => ({
+    id: 'n-1', notification_type: 'system_announcement', title: 'Title', message: 'Message',
+    created_at: '2025-01-01T00:00:00Z', is_read: false, link_url: item.link,
+    link_context: item.context, metadata: {}, type_config: {},
+});
+process.stdout.write(JSON.stringify({
+    offSite: links.OFF_SITE_LINK,
+    resolved: input.links.map((item) => links.resolveNotificationLink(notice(item), input.origin)),
+    addresses: input.addresses.map((href) => links.sameSiteAddress(href, input.origin)),
+}));
+"""
 
 SERVER_ROUTE_RE = re.compile(r'@bp\.route\(\s*"(?P<path>[^"]+)"\s*,\s*methods=\[(?P<methods>[^\]]*)\]\s*\)')
 CLIENT_CALL_RE = re.compile(r"api\.(?P<method>get|post|put|patch|delete)<[^>]*>\(\s*[`'\"](?P<path>/api/[^`'\"?]*)")
@@ -276,7 +386,7 @@ def test_the_seams_later_tracks_build_on_are_in_place():
     print("  ok  the count-change feed and the workflow-run link are in place")
 
 
-def test_notification_text_is_never_markup_and_links_stay_on_this_site():
+def test_notification_text_is_never_markup():
     for relative in NOTIFICATION_SOURCES:
         source = read_v2(relative)
         for sink in MARKUP_SINKS:
@@ -287,10 +397,60 @@ def test_notification_text_is_never_markup_and_links_stay_on_this_site():
     # Every link in the panel is resolved against this page's own origin.
     assert "const origin = window.location.origin;" in panel
     assert "resolveNotificationLink(item, origin)" in panel
-    links = read_v2("lib/notificationLinks.ts")
-    assert "if (url.origin !== origin) {" in links
-    assert "if (path === '/api' || path.startsWith('/api/')) {" in links
-    print("  ok  notification text is plain text and links stay on this site")
+    print("  ok  notification text is plain text and links are resolved against this site")
+
+
+def resolve_links(links, addresses):
+    """Run the shipped resolver over `links` and `sameSiteAddress` over `addresses`."""
+    node = shutil.which("node")
+    assert node, "Node.js is required to run the V2 notification link resolver."
+    result = subprocess.run(
+        [node, "--input-type=module", "--eval", RESOLVER_SCRIPT, str(REPO_ROOT)],
+        input=json.dumps({"origin": ORIGIN, "links": links, "addresses": addresses}),
+        cwd=REPO_ROOT, text=True, capture_output=True, timeout=60, check=False,
+    )
+    assert result.returncode == 0, (
+        "The resolver could not be run. Its imports need the V2 packages "
+        f"(npm --prefix application/v2_ui ci):\n{result.stdout}\n{result.stderr}"
+    )
+    return json.loads(result.stdout)
+
+
+def test_links_are_followed_only_when_they_stay_on_this_site():
+    refused = [(link, {}) for link in OFF_SITE_LINKS + UNSUPPORTED_LINKS + INVALID_LINKS]
+    followed = [(link, context) for link, context, _ in FOLLOWED_LINKS]
+    output = resolve_links(
+        [{"link": link, "context": context} for link, context in refused + followed],
+        [href for href, _ in ADDRESSES],
+    )
+    results = dict(zip([link for link, _ in refused + followed], output["resolved"]))
+
+    expected_errors = (
+        [(link, output["offSite"]) for link in OFF_SITE_LINKS]
+        + [(link, "unsupported link") for link in UNSUPPORTED_LINKS]
+        + [(link, "invalid link") for link in INVALID_LINKS]
+    )
+    for link, reason in expected_errors:
+        result = results[link]
+        assert result["target"] is None, f"{link!r} is followed: {result}"
+        assert result["error"] and reason in result["error"], f"{link!r} is refused for the wrong reason: {result}"
+
+    for link, _, target in FOLLOWED_LINKS:
+        assert results[link] == {"target": target, "error": None}, f"{link!r} leads to {results[link]}"
+
+    # Every classic address the resolver builds is one the navigator would follow.
+    classic = [results[link]["target"]["href"] for link, _, target in FOLLOWED_LINKS if target["kind"] == "classic"]
+    check = resolve_links([], classic)
+    assert check["addresses"] == [f"{ORIGIN}{href}" for href in classic], check["addresses"]
+
+    assert output["addresses"] == [address for _, address in ADDRESSES], output["addresses"]
+
+    # The navigator follows only the address it has just checked, never the target as written.
+    navigation = read_v2("lib/notificationNavigation.ts")
+    assert "const address = sameSiteAddress(target.href, window.location.origin);" in navigation
+    assert navigation.count("window.location.assign(") == 1
+    assert "window.location.assign(address);" in navigation
+    print("  ok  links are followed only when they stay on this site and name a page")
 
 
 TESTS = [
@@ -302,7 +462,8 @@ TESTS = [
     test_permission_is_asked_for_from_gestures_that_can_show_a_prompt,
     test_the_runtime_runs_from_the_root_and_registers_the_navigator_once,
     test_the_seams_later_tracks_build_on_are_in_place,
-    test_notification_text_is_never_markup_and_links_stay_on_this_site,
+    test_notification_text_is_never_markup,
+    test_links_are_followed_only_when_they_stay_on_this_site,
 ]
 
 
