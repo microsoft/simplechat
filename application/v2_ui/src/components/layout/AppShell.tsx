@@ -12,7 +12,6 @@ import { Sidebar } from './Sidebar';
 import { Toaster } from '../ui/Toaster';
 import { WorkflowAlertCardHost } from '../notifications/WorkflowAlertCard';
 import { WorkflowAlertLiveRegion } from '../notifications/WorkflowAlertLiveRegion';
-import { WorkflowAlertPillSlot } from '../notifications/WorkflowAlertNotice';
 import { useBootstrapStore } from '../../stores/bootstrapStore';
 import { useUiStore } from '../../stores/uiStore';
 import { useCollaborationStore } from '../../stores/collaborationStore';
@@ -77,11 +76,7 @@ export function AppShell({ children }: { children: ReactNode }) {
                     />
                 )}
                 <Sidebar mobile={mobile} />
-                <main ref={contentRef} className="flex min-w-0 flex-1 flex-col">
-                    {/* Style B of the workflow-alert notice; it takes no room in the column. */}
-                    <WorkflowAlertPillSlot />
-                    {children}
-                </main>
+                <main ref={contentRef} className="flex min-w-0 flex-1 flex-col">{children}</main>
             </div>
             <Toaster />
             <WorkflowAlertCardHost />

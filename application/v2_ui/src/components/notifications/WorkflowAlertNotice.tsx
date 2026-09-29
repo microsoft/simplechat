@@ -1,20 +1,19 @@
 // WorkflowAlertNotice.tsx
 // The small notice a workflow alert first appears as, before it is opened into the card.
 //
-// Two entrance styles are built, to be compared in the alert lab (dev/AlertLabPage.tsx):
+// It is a callout from the My Workspace item in the rail, where workflows live, with a notch
+// pointing at the item. In the full rail it drops down below the item and overlays the items
+// under it rather than pushing them, so the conversation list never jumps. With the rail
+// collapsed to its icon strip, including mobile's, it flies out to the right of the icon
+// instead. (A top-centre pill was also built and compared in the alert lab; the callout was
+// chosen because the pill covered the page's own header and actions on a phone.)
 //
-// - A, the callout: it drops from under My Workspace in the rail, where workflows live, with
-//   a notch pointing at the item. It overlays the items below rather than pushing them, so
-//   the conversation list never jumps. With the rail collapsed to its icon strip, including
-//   mobile's, it flies out to the right of the My Workspace icon instead.
-// - B, the pill: it slides down from the top of the content column.
-//
-// Either way it shows one entry at a time, the loudest waiting, and says how many more are
-// behind it. It never takes focus, so typing is not interrupted, but it sits in the tab order
-// beside what it is anchored to. Info, low and medium alerts tuck into the bell after eight
-// seconds unless the pointer is over the notice or focus is inside it; high and critical stay
-// until they are opened or closed. Closing tucks it into the bell straight away. Either way
-// the alert stays unread there.
+// It shows one entry at a time, the loudest waiting, and says how many more are behind it. It
+// never takes focus, so typing is not interrupted, but it sits in the tab order beside what it
+// is anchored to. Info, low and medium alerts tuck into the bell after eight seconds unless
+// the pointer is over the notice or focus is inside it; high and critical stay until they are
+// opened or closed. Closing tucks it into the bell straight away. Either way the alert stays
+// unread there.
 //
 // Everything shown is the alert's own text, rendered as text.
 
@@ -45,12 +44,11 @@ export const WORKFLOW_ALERT_NOTICE_MS = 8_000;
  */
 const RESUME_MIN_MS = 2_500;
 
-export type WorkflowAlertNoticePlacement = 'below' | 'flyout' | 'pill';
+export type WorkflowAlertNoticePlacement = 'below' | 'flyout';
 
 const ENTRANCE: Record<WorkflowAlertNoticePlacement, string> = {
     below: 'wf-alert-enter-drop',
     flyout: 'wf-alert-enter-flyout',
-    pill: 'wf-alert-enter-slide',
 };
 
 /** Whether the notice is on screen, or on its way into the bell. */
@@ -176,15 +174,14 @@ function NoticeBody({
             }}
             onKeyDown={onKeyDown}
             className={clsx(
-                'glass-modal relative rounded-xl text-left',
+                'glass-modal relative w-full rounded-xl text-left',
                 tone.outline,
-                placement === 'pill' ? 'pointer-events-auto w-full max-w-md' : 'w-full',
                 reduced ? 'wf-alert-enter-fade' : ENTRANCE[placement],
                 phase === 'tucking' && 'pointer-events-none',
                 suspended && 'hidden',
             )}
         >
-            {placement !== 'pill' && <span aria-hidden="true" className="wf-alert-notch" />}
+            <span aria-hidden="true" className="wf-alert-notch" />
             <div className="flex items-start gap-2.5 py-2.5 pr-1.5 pl-2.5">
                 <span aria-hidden="true" className={clsx('inline-flex shrink-0 rounded-full p-1.5', tone.chip)}>
                     {/* Keyed on the batch, so the bell rings again when more alerts join. */}
@@ -264,13 +261,12 @@ export function WorkflowAlertNotice({ placement }: { placement: WorkflowAlertNot
 }
 
 /**
- * Style A's anchor, inside the My Workspace item. Below the item in the full rail; beside its
- * icon when the rail is a strip, capped so a phone's narrow screen still fits it.
+ * The notice's anchor, inside the My Workspace item. Below the item in the full rail; beside
+ * its icon when the rail is a strip, capped so a phone's narrow screen still fits it.
  */
 export function WorkflowAlertCalloutSlot({ collapsed }: { collapsed: boolean }) {
-    const style = useWorkflowAlertStore((state) => state.style);
     const shown = useNoticeShown();
-    if (style !== 'callout' || !shown) {
+    if (!shown) {
         return null;
     }
     return (
@@ -288,28 +284,7 @@ export function WorkflowAlertCalloutSlot({ collapsed }: { collapsed: boolean }) 
     );
 }
 
-/** Whether style A's callout is on screen, for the rail to lift itself above the page. */
+/** Whether the callout is on screen, for the rail to lift itself above the page. */
 export function useWorkflowAlertCalloutShown(): boolean {
-    const style = useWorkflowAlertStore((state) => state.style);
-    const shown = useNoticeShown();
-    return style === 'callout' && shown;
-}
-
-/**
- * Style B's anchor, at the top of the content column. It takes no room: the pill overlays
- * the page, and only the pill itself takes the pointer.
- */
-export function WorkflowAlertPillSlot() {
-    const style = useWorkflowAlertStore((state) => state.style);
-    const shown = useNoticeShown();
-    if (style !== 'pill' || !shown) {
-        return null;
-    }
-    return (
-        <div data-workflow-alert-slot="pill" className="pointer-events-none relative z-40 h-0 shrink-0">
-            <div className="absolute inset-x-0 top-3 flex justify-center px-3">
-                <WorkflowAlertNotice placement="pill" />
-            </div>
-        </div>
-    );
+    return useNoticeShown();
 }

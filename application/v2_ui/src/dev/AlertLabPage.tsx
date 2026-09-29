@@ -33,7 +33,6 @@ import {
     resetWorkflowAlertsForLab,
     setWorkflowAlertActions,
     useWorkflowAlertStore,
-    type WorkflowAlertNoticeStyle,
 } from '../stores/workflowAlertStore';
 import {
     alertLabScenarioAlerts,
@@ -113,8 +112,6 @@ function describeTarget(target: NotificationTarget): string {
 }
 
 export function AlertLabPage() {
-    const style = useWorkflowAlertStore((state) => state.style);
-    const setStyle = useWorkflowAlertStore((state) => state.setStyle);
     const phase = useWorkflowAlertStore((state) => state.phase);
     const entryCount = useWorkflowAlertStore((state) => state.entries.length);
     const alertCount = useWorkflowAlertStore((state) => state.entries.reduce((total, entry) => total + entry.count, 0));
@@ -144,7 +141,6 @@ export function AlertLabPage() {
 
     // Take the notice over while the lab is open, and hand it back on the way out.
     useEffect(() => {
-        const styleBefore = useWorkflowAlertStore.getState().style;
         const refuse = (verb: string): string[] => {
             toast.error(`Lab: the server refused to ${verb} the alert.`);
             note(`Refused to ${verb}.`);
@@ -182,7 +178,6 @@ export function AlertLabPage() {
             setWorkflowAlertActions(null);
             setWorkflowAlertMotionOverride(null);
             setWorkflowAlertFeedPaused(false);
-            useWorkflowAlertStore.getState().setStyle(styleBefore);
         };
     }, [note]);
 
@@ -258,15 +253,6 @@ export function AlertLabPage() {
             <div className="min-h-0 flex-1 overflow-y-auto p-4 md:p-5">
                 <div className="mx-auto grid max-w-5xl gap-4 lg:grid-cols-2">
                     <Section title="Notice">
-                        <Segmented<WorkflowAlertNoticeStyle>
-                            label="Entrance style"
-                            value={style}
-                            onChange={setStyle}
-                            choices={[
-                                { value: 'callout', label: 'A · Sidebar callout' },
-                                { value: 'pill', label: 'B · Top-center pill' },
-                            ]}
-                        />
                         <Segmented<'light' | 'dark'>
                             label="Theme"
                             value={theme}

@@ -37,9 +37,6 @@ import { workflowAlertServerActions, type WorkflowAlertActions } from '../lib/wo
 
 export type WorkflowAlertPhase = 'idle' | 'notice' | 'card' | 'tucking';
 
-/** A: a callout under My Workspace in the rail. B: a pill at the top of the content column. */
-export type WorkflowAlertNoticeStyle = 'callout' | 'pill';
-
 export interface WorkflowAlertAnnouncement {
     text: string;
     assertive: boolean;
@@ -60,7 +57,6 @@ interface WorkflowAlertState {
     cardIndex: number;
     /** True while something on the page means the notice must wait. */
     suspended: boolean;
-    style: WorkflowAlertNoticeStyle;
     /** Bumped when a notice tucks into the bell, which swings once in answer. */
     ringToken: number;
     /** Bumped when the presentation gains alerts, which restarts the notice's timer. */
@@ -76,7 +72,6 @@ interface WorkflowAlertState {
     /** Everything unread has gone; drop what is waiting and what is showing. */
     clearAll: () => void;
     setSuspended: (suspended: boolean) => void;
-    setStyle: (style: WorkflowAlertNoticeStyle) => void;
     openCard: () => void;
     closeCard: () => void;
     tuck: () => Promise<void>;
@@ -278,7 +273,6 @@ export const useWorkflowAlertStore = create<WorkflowAlertState>((set, get) => {
         phase: 'idle',
         cardIndex: 0,
         suspended: true,
-        style: 'callout',
         ringToken: 0,
         batchToken: 0,
         announcement: null,
@@ -316,8 +310,6 @@ export const useWorkflowAlertStore = create<WorkflowAlertState>((set, get) => {
                 pump();
             }
         },
-
-        setStyle: (style) => set({ style }),
 
         openCard: () => {
             if (get().phase !== 'notice' || !get().entries.length) {
