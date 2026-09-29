@@ -515,7 +515,7 @@ export function WorkflowEditorDialog({
                                             }}
                                         >
                                             <option value="manual">Manual</option>
-                                            <option value="interval">Interval</option>
+                                            <option value="interval">Schedule</option>
                                             {groupScope
                                                 ? fileSyncTriggerOffered ? <option value="file_sync">Monitor File Sync changes</option> : null
                                                 : draft.trigger_type === 'file_sync' ? <option value="file_sync">Existing file sync</option> : null}

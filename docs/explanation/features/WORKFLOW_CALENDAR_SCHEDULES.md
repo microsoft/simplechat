@@ -28,7 +28,8 @@ schedule may use, so authors can no longer create a workflow that runs every
 second. Saved schedules are never re-checked against it.
 
 Calendar schedules work in personal and group workflows, for both the
-**Interval** trigger and the group **Monitor File Sync changes** trigger.
+**Schedule** trigger (labelled **Interval** before version 0.261.197) and the
+group **Monitor File Sync changes** trigger.
 
 Dependencies:
 
@@ -244,7 +245,7 @@ The inbound MCP workflow summary (`_serialize_personal_workflow_summary` in
 
 - **Repeats** chooses **At an interval**, **Daily**, **Weekdays (Monday to
   Friday)**, **Weekly on chosen days** or **Monthly on a day of the month**. The
-  trigger stays **Interval**, or **Monitor File Sync changes** for a group
+  trigger stays **Schedule**, or **Monitor File Sync changes** for a group
   monitor.
 - **Days of the week** checkboxes appear for weekly schedules, and **Day of the
   month** for monthly schedules, with a note that months without the day run on
@@ -266,6 +267,15 @@ messages, including the minimum for a new or changed interval
 (`workflowScheduleForSave` and the save checks in `lib/workflowSettings.ts`).
 `normalizeWorkflowSchedule` in `lib/workflowEditor.ts` keeps an interval
 schedule as `{unit, value}` when the editor round-trips it.
+
+From version 0.261.197, a scheduled workflow whose stored schedule is of a kind
+the editor doesn't support, which only a newer server or a direct write can
+store, opens read-only. `normalizeWorkflowDefinition` keeps the schedule exactly
+as stored and sets the read-only reason, the schedule fields show "This
+workflow's schedule can't be shown or changed in this editor.", and
+`workflowForSave` refuses to build a payload. A manual workflow doesn't use its
+schedule, so it stays editable. See
+[the fix](../fixes/V2_WORKFLOW_UNSUPPORTED_SCHEDULE_FIX.md).
 
 ### Classic workspace editor
 
@@ -314,7 +324,7 @@ example, 300 refuses a new or changed interval shorter than 5 minutes. See
 
 1. In V2, open **Workflows** in a personal or group workspace, then choose
    **Create workflow** or edit a workflow.
-2. Set **Trigger** to **Interval**.
+2. Set **Trigger** to **Schedule**.
 3. Set **Repeats** to **Weekly on chosen days**, and select **Monday**.
 4. Set **Time** to 08:00 and **Time zone** to `America/New_York`.
 5. Save. The workflow list shows "Schedule: Mondays 08:00 America/New_York".

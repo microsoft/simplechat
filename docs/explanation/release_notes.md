@@ -27,6 +27,19 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
     *   Workflows that run by hand or at a fixed interval keep exactly the prompts they had.
     *   (Ref: `workflow_run_time_context`, `functions_workflow_schedules.py`, `functions_workflow_runner.py`, [Create a workflow](../guides/create-a-workflow.md))
 
+#### Bug Fixes
+
+*   **V2 Editor Keeps A Schedule It Can't Show**
+    *   A workflow whose stored schedule was neither an interval nor a calendar schedule, which only a newer server or a direct write can store, opened in the V2 editor as every 15 minutes. Saving it for any reason replaced the schedule with that interval.
+    *   Such a workflow now opens read-only, says why, and keeps its schedule exactly as stored. Manual workflows, which don't use a schedule, stay editable.
+    *   (Ref: `workflowScheduleKindSupported`, `normalizeWorkflowDefinition`, `WorkflowScheduleFields.tsx`, [V2 workflow unsupported schedule fix](fixes/V2_WORKFLOW_UNSUPPORTED_SCHEDULE_FIX.md))
+
+#### User Interface Enhancements
+
+*   **Schedule Trigger In The V2 Workflow Editor**
+    *   The V2 workflow editor's **Trigger** option for scheduled workflows is now **Schedule** instead of **Interval**, because it offers calendar schedules as well as fixed intervals. Workflows are stored exactly as before, and the classic editor keeps **Interval Schedule**.
+    *   (Ref: `WorkflowEditorDialog.tsx`, [Create a workflow](../guides/create-a-workflow.md), [Trigger a workflow](../guides/trigger-a-workflow.md))
+
 ### **(v0.261.193)**
 
 #### New Features

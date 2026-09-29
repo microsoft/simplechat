@@ -236,10 +236,20 @@ function calendarSchedule(schedule: Record<string, unknown>, timezones: Readonly
  */
 export function workflowScheduleForSave(raw: unknown, timezones: ReadonlySet<string> | null = null): ScheduleResult {
     const schedule = isRecord(raw) ? raw : {};
-    const kind = pyStrip(pyText(schedule.kind, 'interval')).toLowerCase();
+    const kind = scheduleKind(schedule);
     if (kind === 'interval') return intervalSchedule(schedule);
     if (kind === 'calendar') return calendarSchedule(schedule, timezones);
     return scheduleError(SCHEDULE_KIND_ERROR);
+}
+
+/** The schedule kind `normalize_workflow_schedule` reads: a missing or empty `kind` is interval. */
+function scheduleKind(schedule: Record<string, unknown>): string {
+    return pyStrip(pyText(schedule.kind, 'interval')).toLowerCase();
+}
+
+/** Whether a stored schedule is of a kind the server and this editor support: interval or calendar. */
+export function workflowScheduleKindSupported(raw: unknown): boolean {
+    return includes(WORKFLOW_SCHEDULE_KINDS, scheduleKind(isRecord(raw) ? raw : {}));
 }
 
 export function isWorkflowCalendarSchedule(schedule: unknown): schedule is WorkflowCalendarSchedule {

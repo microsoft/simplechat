@@ -174,7 +174,7 @@ def test_manager_authors_a_monitor_trigger_and_posts_the_server_shape(workflow_u
         request.path == FILE_SYNC_SOURCES_PATH and request.query == {"group_id": [GROUP_ID]}
         for request in source_requests(ui)
     )
-    assert trigger_options(page) == ["Manual", "Interval", "Monitor File Sync changes"]
+    assert trigger_options(page) == ["Manual", "Schedule", "Monitor File Sync changes"]
     fill_required_basics(page, "Monitor finance drops")
     labelled(page, "Trigger").select_option("file_sync")
 
@@ -386,7 +386,7 @@ def test_no_sources_hides_the_monitor_trigger_and_server_refusals_are_shown_as_r
     )).to_be_visible()
     expect(page.get_by_text("No File Sync sources are available to this group.", exact=True)).to_have_count(0)
     expect(before_run_toggle(page)).to_be_disabled()
-    assert trigger_options(page) == ["Manual", "Interval"]
+    assert trigger_options(page) == ["Manual", "Schedule"]
     page.get_by_role("dialog", name="Create workflow", exact=True).get_by_role("button", name="Cancel", exact=True).click()
 
     ui.group_file_sync_enabled[GROUP_ID] = True
@@ -536,7 +536,7 @@ def test_personal_workflows_keep_their_file_sync_unchanged(workflow_ui):
     ui.personal_workflows[WORKFLOW_ID]["file_sync"] = copy.deepcopy(PERSONAL_MONITOR_FILE_SYNC)
     ui.open("/workspace/workflows")
     page.get_by_role("button", name="Create workflow", exact=True).click()
-    assert trigger_options(page) == ["Manual", "Interval"]
+    assert trigger_options(page) == ["Manual", "Schedule"]
     expect(page.get_by_role("region", name="File Sync")).to_have_count(0)
     # Alerts are authored natively in both scopes since 0.261.144.
     expect(page.get_by_role("region", name="Alerts", exact=True).get_by_label("When to alert", exact=True)).to_have_value("off")
@@ -549,7 +549,7 @@ def test_personal_workflows_keep_their_file_sync_unchanged(workflow_ui):
 
     page.get_by_role("button", name="Edit Quarterly review workflow", exact=True).click()
     expect(labelled(page, "Trigger")).to_have_value("file_sync")
-    assert trigger_options(page) == ["Manual", "Interval", "Existing file sync"]
+    assert trigger_options(page) == ["Manual", "Schedule", "Existing file sync"]
     expect(labelled(page, "Interval value")).to_be_disabled()
     expect(page.get_by_text("file sync settings", exact=False)).to_be_visible()
     labelled(page, "Description").first.fill("Personal edit keeps legacy File Sync.")

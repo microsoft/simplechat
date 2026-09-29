@@ -8,6 +8,7 @@ import { useId, useRef, useState, type ReactNode } from 'react';
 import {
     isWorkflowCalendarSchedule,
     workflowCalendarSchedulesOffered,
+    workflowScheduleKindSupported,
     workflowScheduleLabel,
     workflowScheduleTimezones,
     WORKFLOW_SCHEDULE_DAYS,
@@ -80,9 +81,12 @@ export function WorkflowScheduleFields({
 }) {
     const baseId = useId();
     const zones = workflowScheduleTimezones(options);
+    // A stored schedule of a kind this editor does not support is shown as neither kind; the
+    // editor keeps it as stored and opens the workflow read-only.
+    const supported = workflowScheduleKindSupported(schedule);
     const calendar = isWorkflowCalendarSchedule(schedule) ? schedule : null;
-    const interval = calendar ? null : schedule as WorkflowIntervalSchedule;
-    const calendarOffered = workflowCalendarSchedulesOffered(options) || Boolean(calendar);
+    const interval = calendar || !supported ? null : schedule as WorkflowIntervalSchedule;
+    const calendarOffered = supported && (workflowCalendarSchedulesOffered(options) || Boolean(calendar));
     const [zoneDefault] = useState(() => defaultWorkflowScheduleTimezone(zones));
     const [zoneNote, setZoneNote] = useState(false);
     // What each kind last held, so switching to another cadence and back keeps the earlier values.
@@ -260,6 +264,11 @@ export function WorkflowScheduleFields({
                         ? `Your browser's time zone, ${zoneDefault.browser}, isn't available, so this schedule starts in UTC.`
                         : "Your browser didn't report a time zone, so this schedule starts in UTC."}
                     {' '}Choose the time zone it should follow.
+                </p>
+            ) : null}
+            {!supported ? (
+                <p role="status" className="text-xs text-text-3">
+                    This workflow&apos;s schedule can&apos;t be shown or changed in this editor.
                 </p>
             ) : null}
             {label ? (

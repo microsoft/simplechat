@@ -16,6 +16,7 @@ import {
     WORKFLOW_SCHEDULE_DAYS,
     WORKFLOW_SCHEDULE_FREQUENCIES,
     WORKFLOW_SCHEDULE_UNITS,
+    workflowScheduleKindSupported,
     workflowSettingsErrors,
     type WorkflowSchedule,
     type WorkflowScheduleFrequency,
@@ -132,6 +133,7 @@ export interface WorkflowScheduleOptions {
 export {
     formatWorkflowScheduleDuration,
     isWorkflowCalendarSchedule,
+    workflowScheduleKindSupported,
     workflowScheduleLabel,
     WORKFLOW_SCHEDULE_DAYS,
     WORKFLOW_SCHEDULE_FREQUENCIES,
@@ -862,6 +864,9 @@ export function newWorkflowDefinition(scope: WorkflowScope): WorkflowDefinition 
     };
 }
 
+export const WORKFLOW_UNSUPPORTED_SCHEDULE_REASON =
+    'This workflow uses a schedule this editor does not support. Its original schedule has been retained and editing is disabled.';
+
 /**
  * A stored or drafted schedule in the editor's shape. An interval schedule stays `{unit, value}`.
  * A calendar schedule keeps its time and time zone text as stored, so validation can name a bad
@@ -1108,6 +1113,16 @@ export function normalizeWorkflowDefinition(
             scope_id: text(entry.scope_id) || (scope.type === 'group' && entry.scope_type === 'group' ? scope.groupId : ''),
         }))
         .filter((entry) => entry.document_id);
+    // A scheduled workflow whose stored schedule is of a kind this editor does not support keeps
+    // that schedule exactly as stored and opens read-only, so no save can replace it. A manual
+    // workflow does not use its schedule, and the server stores none for it.
+    const unsupportedSchedule = trigger !== 'manual' && !workflowScheduleKindSupported(record.schedule);
+    const readonlyReason = record.definition_version === 3 && tasks.some((task) =>
+        Object.hasOwn(task, 'unrecognized_inputs') || Object.hasOwn(task, 'unrecognized_configuration'))
+        ? 'This workflow contains task configuration or bindings from an unsupported schema. Its original configuration has been retained and editing is disabled.'
+        : unsupportedSchedule
+            ? WORKFLOW_UNSUPPORTED_SCHEDULE_REASON
+            : '';
     return {
         ...record,
         definition_version: numberInRange(record.definition_version, 2, 1, 999),
@@ -1122,7 +1137,9 @@ export function normalizeWorkflowDefinition(
         m365_run_as_user_id: text(record.m365_run_as_user_id),
         chat_capabilities_enabled: record.chat_capabilities_enabled === true,
         trigger_type: trigger,
-        schedule: normalizeWorkflowSchedule(record.schedule),
+        schedule: unsupportedSchedule
+            ? structuredClone(record.schedule) as unknown as WorkflowSchedule
+            : normalizeWorkflowSchedule(record.schedule),
         is_enabled: record.is_enabled !== false,
         error_handling: {
             strategy: errorHandling.strategy === 'continue' ? 'continue' : 'halt',
@@ -1130,10 +1147,7 @@ export function normalizeWorkflowDefinition(
         },
         tasks: tasks.length ? tasks : [legacyWorkflowTask(record) ?? createWorkflowTask(0)],
         reference_inputs: references,
-        ...(record.definition_version === 3 && tasks.some((task) =>
-            Object.hasOwn(task, 'unrecognized_inputs') || Object.hasOwn(task, 'unrecognized_configuration')) ? {
-            editor_readonly_reason: 'This workflow contains task configuration or bindings from an unsupported schema. Its original configuration has been retained and editing is disabled.',
-        } : {}),
+        ...(readonlyReason ? { editor_readonly_reason: readonlyReason } : {}),
         ...(Object.hasOwn(record, 'durable_execution') ? { durable_execution: record.durable_execution === true } : {}),
         ...(scope.type === 'group' ? { group_id: scope.groupId } : {}),
     };

@@ -66,7 +66,7 @@ From version **0.261.193**, a scheduled workflow can run at a local time rather
 than at a fixed interval, for example every Monday at 08:00 in New York. This
 works in personal and group workflows, and you set it in the V2 editor:
 
-1. Set **Trigger** to **Interval**. A group workflow that watches File Sync can
+1. Set **Trigger** to **Schedule**. A group workflow that watches File Sync can
    use **Monitor File Sync changes** instead.
 2. In **Repeats**, choose how often it runs:
    - **At an interval** keeps a fixed interval, set with **Interval value** and
@@ -111,6 +111,11 @@ approval.
 The classic editor can't edit calendar schedules. Opening one there shows
 "This workflow uses a calendar schedule. Open V2 to edit it without losing its
 configuration. Run and Cancel remain available here."
+
+From version **0.261.197**, the V2 editor also opens a workflow read-only when
+its schedule is of a kind the editor can't show, such as one saved by a newer
+version of SimpleChat. The editor says so, and the schedule stays exactly as
+saved.
 
 Your administrator can set a minimum interval. A new or changed interval that
 runs more often is refused with a message that names the minimum, such as
