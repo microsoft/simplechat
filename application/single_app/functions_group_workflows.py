@@ -745,7 +745,8 @@ def create_group_workflow_if_absent(group_id, workflow_data, actor_user_id, user
 
     The group counterpart of ``create_personal_workflow_if_absent``: repeating the create returns the
     workflow the first one stored, and a different workflow under that id, or one being deleted, is
-    a conflict. Returns ``(workflow, created)``.
+    a conflict. Like ``save_group_workflow``, it trusts the payload's URL Access authorization
+    fields, so callers prepare them as the save route does. Returns ``(workflow, created)``.
     """
     proposal_id = str((origin or {}).get('proposal_id') or '').strip() if isinstance(origin, dict) else ''
     try:

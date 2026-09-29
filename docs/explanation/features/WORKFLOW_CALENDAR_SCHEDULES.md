@@ -346,5 +346,8 @@ Known limitations:
   being scheduled until it's saved again with a valid zone.
 - Runs start when the scheduler next checks, within a few seconds of the
   scheduled time.
-- Relative times in a workflow's instructions, such as "this week", aren't
-  resolved in the schedule's time zone yet. That's a follow-up in #1543.
+
+From version 0.261.197, every run of a calendar workflow tells the model the
+run's local date and time, so relative times in its instructions, such as "this
+week", resolve in the schedule's time zone. See
+[Workflow draft service](WORKFLOW_DRAFT_SERVICE.md#calendar-run-time-in-the-prompt).

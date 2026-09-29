@@ -2,6 +2,31 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.197)**
+
+#### New Features
+
+*   **Workflow Draft Service For Workflows Proposed From Chat**
+    *   Chat orchestration can now check a proposed workflow exactly as saving it would, without writing anything: no workflow, conversation or notification, and no blob, Key Vault or Microsoft 365 call. The check needs no web request, so orchestration can run it in the background.
+    *   A proposed workflow is a small, closed blueprint: a name, a manual, calendar, interval or File Sync trigger, one to five tasks, alert preferences and a Run as choice. It can't name endpoints, URLs, models, secrets or document ids. Documents, agents and File Sync sources are handles that the server has already chosen for the user, and each is authorized for that user.
+    *   The same blueprint always builds the same workflow. Its results reach the notification bell and never pop up. File Sync workflows wait for the sync and continue only when documents changed. Tasks use the default model unless they name an agent the user can use.
+    *   A refusal carries a stable code, such as `cadence_below_minimum`, `agent_unavailable` or `reference_unknown`, a short message that never repeats the input, and the JSON path to fix, so a model can repair its proposal.
+    *   Accepting a proposal creates its workflow once, paused, even if it's accepted twice. The workflow records where it came from in a server-only `origin` that saves can't set or change, and that notes when the owner first edits the workflow. `origin` isn't part of the Microsoft 365 Run as fingerprint, so it never invalidates an approval.
+    *   Personal and group saves behave exactly as before. The save functions now build a workflow, then store it.
+    *   There's no new screen yet. The V2 workflow assistant (#1548) and orchestration's workflow proposals (#1547) will use the service.
+    *   (Ref: #1545, #1543, `functions_workflow_drafts.py`, `functions_personal_workflows.py`, `functions_group_workflows.py`, `functions_workflow_definitions.py`, `functions_workflow_definition_store.py`, [Workflow draft service](features/WORKFLOW_DRAFT_SERVICE.md))
+
+*   **Limits For Workflows Created From Chat**
+    *   **Admin Settings > Orchestration > Chat Orchestration > Limits** adds **Workflows Created From Chat Per User**, from 1 to 100 with a default of 20, and **Minimum Schedule Interval For Workflows Created From Chat (seconds)**, from 60 to 86,400 with a default of 3,600 (hourly), in the classic and V2 admin pages.
+    *   The larger of this minimum and **Workflow Minimum Schedule Interval** applies. Calendar schedules always pass. Both limits are checked when a workflow is created from chat; workflows users build themselves are unaffected.
+    *   (Ref: `functions_workflow_limits.py`, `functions_settings.py`, `admin_settings_fields.py`, `route_frontend_admin_settings.py`, `templates/admin/_panes/chat-orchestration.html`, [Orchestration settings](../admin/orchestration.md))
+
+*   **Calendar Workflow Runs Know The Local Date And Time**
+    *   Each run of a workflow with a calendar schedule now tells the model when it started, in the schedule's time zone, for example "Current date and time: Monday, 28 September 2026, 09:00 (America/New_York)". Instructions such as "list this week's to-dos" now mean the week of the run.
+    *   Scheduled runs, catch-up runs and **Run now** all include it, and so does every task of a multi-task workflow. It's never stored in the workflow or its fingerprint.
+    *   Workflows that run by hand or at a fixed interval keep exactly the prompts they had.
+    *   (Ref: `workflow_run_time_context`, `functions_workflow_schedules.py`, `functions_workflow_runner.py`, [Create a workflow](../guides/create-a-workflow.md))
+
 ### **(v0.261.193)**
 
 #### New Features

@@ -1122,7 +1122,9 @@ def create_personal_workflow_if_absent(user_id, workflow_data, *, workflow_id, o
     Chat orchestration derives ``workflow_id`` from the proposal the user accepted, so accepting the
     same proposal again returns the workflow the first accept created. Returns ``(workflow,
     created)``. A different workflow already stored under that id, or one being deleted, is a
-    conflict. The read-only seams are those ``build_personal_workflow_document`` accepts.
+    conflict. The read-only seams are those ``build_personal_workflow_document`` accepts. Like
+    ``save_personal_workflow``, it trusts the payload's URL Access authorization fields, so callers
+    prepare them as the save route does.
     """
     proposal_id = str((origin or {}).get('proposal_id') or '').strip() if isinstance(origin, dict) else ''
     try:

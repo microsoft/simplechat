@@ -96,6 +96,13 @@ If a run was missed, for example while the app was stopped, the workflow runs
 once when the scheduler catches up, then waits for its next scheduled time. It
 doesn't make up each missed run.
 
+From version **0.261.197**, each run of a calendar workflow tells the model when
+it started, in the schedule's time zone, for example "Current date and time:
+Monday, 28 September 2026, 09:00 (America/New_York)". Instructions such as "list
+this week's to-dos" then mean the week of the run. Scheduled runs and **Run
+now** both include it. Workflows that run at a fixed interval, or only when
+started by hand, don't.
+
 Existing interval workflows keep their schedules, and their Microsoft 365 Run
 as approvals stay valid. The schedule is part of that approval, so changing it,
 including to a calendar schedule, is a material change that needs renewed
