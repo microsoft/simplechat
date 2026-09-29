@@ -321,6 +321,14 @@ A workflow created from chat stores:
   invalidates an open editor's revision or a Run as approval. A material change
   that is part of the fingerprint, such as a task change, still needs renewed
   approval as before.
+- **Not document provenance.** From 0.261.194, documents that a workflow or a
+  chat creates carry their own `origin`, described in
+  [Document Provenance](DOCUMENT_PROVENANCE.md). That field is stored on each
+  document version and names the workflow and run, or the conversation and
+  message, that produced it. A workflow's `origin` is stored on the workflow
+  record and names the chat proposal that created the workflow. Neither reads
+  or changes the other. The document routes refuse a client-sent `origin`,
+  while the workflow save routes ignore one.
 
 ### Creating a workflow at most once
 
