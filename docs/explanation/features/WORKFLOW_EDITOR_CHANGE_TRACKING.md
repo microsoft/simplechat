@@ -122,8 +122,9 @@ new revision before it runs as them again; the note says so before you save rath
 
 - **Read-only editors** show no highlights, no Revert, no Removed rows, and no Changes button.
   That covers viewers without edit rights, a workflow with an active run, and a workflow that
-  uses something this editor can't change, such as an unsupported flow feature. Change tracking
-  follows the editor's read-only state, so any later reason to open read-only is covered too.
+  uses something this editor can't change, such as an unsupported flow feature or a stored
+  schedule it can't show exactly. Change tracking follows the editor's read-only state, so any
+  later reason to open read-only is covered too.
 - **New workflows** point out only AI assist changes. Everything in a workflow that has never
   been saved is new, so highlighting all of it would point out nothing. The session list still
   works, and its first row reads **New workflow**.
@@ -292,7 +293,8 @@ task. The panel reads the diff one deferred render later, so a keystroke never w
 - `ui_tests/test_v2_workflow_change_tracking.py` (Playwright with stubbed routes): badges,
   Previously, Revert, and Removed · Restore on List and Flow; the Changes tab's Jump, Revert and
   Restore to here; highlights following Undo and Redo; structured alert edits; one-click save;
-  the Run as note; read-only editors; a group workflow; light and dark themes; a narrow viewport;
+  the Run as note; read-only editors, including one opened read-only for a stored schedule it
+  can't show; a group workflow; light and dark themes; a narrow viewport;
   a new workflow; and keyboard focus staying in a schedule, Run when, output contract or final
   outputs control, with every typed character kept, while its highlight appears or clears.
 

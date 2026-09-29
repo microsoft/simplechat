@@ -8,7 +8,8 @@ Covers the highlight on each unsaved change (its author badge, Previously value 
 Removed · Restore rows on the List and Flow surfaces, and the side panel's Changes tab with
 Jump, Revert and Restore to here. Also checks that Undo and Redo keep the highlights in step,
 that saving your own edits stays one click, the Run as note, that read-only editors show
-nothing, group workflows, and the light, dark, keyboard and narrow layouts. Fields whose
+nothing (including one opened read-only for a stored schedule it can't show), group workflows,
+and the light, dark, keyboard and narrow layouts. Fields whose
 highlight frames several controls (the schedule, Run when, an output contract, final outputs)
 keep focus and every keystroke as the highlight appears and goes.
 
@@ -50,6 +51,9 @@ DAILY_LONDON = {
     "kind": "calendar", "frequency": "daily", "days_of_week": [], "day_of_month": None,
     "time_of_day": "09:00", "timezone": "Europe/London",
 }
+# A schedule kind this editor doesn't define, which opens the editor read-only from 0.261.202.
+UNSUPPORTED_SCHEDULE = {"kind": "cron", "expression": "0 8 * * 1", "timezone": "America/New_York"}
+UNSUPPORTED_SCHEDULE_NOTE = "This workflow's schedule can't be shown or changed in this editor."
 
 # Resolves alpha against the actual ancestor surfaces, as the admin visual hierarchy test does.
 CONTRAST = """
@@ -115,7 +119,7 @@ def open_classic(ui, **options):
 
 
 def open_scheduled(ui, schedule):
-    """The saved classic workflow on the Interval trigger, so its schedule fields are enabled."""
+    """The saved classic workflow on the Schedule trigger, so its schedule fields are enabled."""
     ui.personal_workflows[WORKFLOW_ID].update(trigger_type="interval", schedule=copy.deepcopy(schedule))
     return open_classic(ui)
 
@@ -533,7 +537,7 @@ def test_run_as_note_names_the_reapproval_for_fingerprinted_changes(authoring_ui
     assert payload["tasks"][0]["instructions"] == "Collect only signed evidence."
 
 
-@pytest.mark.parametrize("restriction", ["reader", "unsupported"])
+@pytest.mark.parametrize("restriction", ["reader", "unsupported", "schedule"])
 def test_read_only_editors_show_no_change_tracking(authoring_ui, restriction):
     ui, page = authoring_ui, authoring_ui.page
     if restriction == "reader":
@@ -541,11 +545,17 @@ def test_read_only_editors_show_no_change_tracking(authoring_ui, restriction):
         ui.open("/groups")
         ui.select_group(GROUP_ID)
         page.get_by_role("button", name="View Alpha read-only Flow", exact=True).click()
-    else:
+    elif restriction == "unsupported":
         ui.personal_workflows[FLOW_WORKFLOW_ID]["flow"]["nodes"][0]["future_executor"] = {"unchanged": True}
         ui.open(f"/workspace/workflows?workflow_id={FLOW_WORKFLOW_ID}")
+    else:
+        ui.personal_workflows[WORKFLOW_ID].update(
+            trigger_type="interval", schedule=copy.deepcopy(UNSUPPORTED_SCHEDULE))
+        ui.open(f"/workspace/workflows?workflow_id={WORKFLOW_ID}")
     editor = page.get_by_role("dialog", name="Edit workflow", exact=True)
     expect(editor).to_contain_text("This workflow is read-only.")
+    if restriction == "schedule":
+        expect(editor.get_by_role("status").filter(has_text=UNSUPPORTED_SCHEDULE_NOTE)).to_be_visible()
     expect(editor.get_by_role("button", name="Close", exact=True).last).to_be_visible()
     expect(changes_toggle(editor)).to_have_count(0)
     expect(editor.locator("[data-workflow-change-key]")).to_have_count(0)
