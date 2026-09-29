@@ -21,6 +21,7 @@ import { v2WorkflowRunPath } from './notificationLinks';
 import { groupWorkspacePath } from './groupWorkspaceNavigation';
 import { requireWorkspaceId } from './workspaceContext';
 import { WORKFLOW_ALERT_SEVERITIES, type WorkflowAlertSeverity } from './workflowAlerts';
+import { WORKFLOW_LINK_PARAM, WORKFLOW_RUN_LINK_PARAM } from './workflowRunLink';
 
 export const WORKFLOW_ALERT_NOTIFICATION_TYPE = 'workflow_priority_alert';
 
@@ -474,19 +475,33 @@ export function workflowAlertServerReason(alert: WorkflowAlert): string | null {
     return reason && !LOGGED_REASON.test(reason) ? reason : null;
 }
 
-/** The workflows list the alert's workflow is in, or null when it cannot be placed. */
+/**
+ * Where Open workflow goes: the workflows list of the workspace the workflow lives in, naming
+ * the workflow and the run that raised the alert in Track P's link form (workflowRunLink.ts).
+ * The workflows section then opens that run's history with the run expanded, so a failed run
+ * lands on its own history. Without a run id it names the workflow alone, and without a
+ * workflow id it is the plain list. Null when the alert cannot be placed.
+ */
 export function workflowAlertWorkflowPath(alert: WorkflowAlert): string | null {
     if (!alert.scope) {
         return null;
     }
+    let listPath = '/workspace/workflows';
     if (alert.scope.kind === 'group') {
         try {
-            return groupWorkspacePath(alert.scope.groupId, 'workflows');
+            listPath = groupWorkspacePath(alert.scope.groupId, 'workflows');
         } catch {
             return null;
         }
     }
-    return '/workspace/workflows';
+    if (!alert.workflowId) {
+        return listPath;
+    }
+    const params = new URLSearchParams({ [WORKFLOW_LINK_PARAM]: alert.workflowId });
+    if (alert.runId) {
+        params.set(WORKFLOW_RUN_LINK_PARAM, alert.runId);
+    }
+    return `${listPath}?${params}`;
 }
 
 /**

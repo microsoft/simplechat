@@ -38,7 +38,7 @@ export function alertLabScenarios(): AlertLabScenario[] {
         { id: 'long', label: 'Long text', expect: 'The title clamps; Show more reveals the detail.' },
         { id: 'short', label: 'Short, no links', expect: 'No links, no Open workflow, no matched rules.' },
         { id: 'hostile', label: 'Hostile text and links', expect: 'Markup shows as text; off-site links are refused.' },
-        { id: 'group', label: 'Group workflow', expect: 'Open workflow goes to the group\'s workflows.' },
+        { id: 'group', label: 'Group workflow', expect: 'Open workflow goes to the run in the group\'s workflows.' },
         { id: 'dialog', label: 'While a dialog is open', expect: 'Waits until the dialog closes.' },
         { id: 'notify-only', label: 'Notify-only', expect: 'Never pops up; it waits in the bell.' },
         { id: 'old', label: 'Older than 24 hours', expect: 'Never pops up; it waits in the bell.' },
