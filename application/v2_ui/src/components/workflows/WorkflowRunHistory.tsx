@@ -300,11 +300,14 @@ export function WorkflowRunHistory({
     workflowId,
     refreshToken = 0,
     onWorkflowRefresh,
+    initialRunId = null,
 }: {
     scope: WorkflowScope;
     workflowId: string;
     refreshToken?: number;
     onWorkflowRefresh?: () => void;
+    /** A run a link named: expanded and scrolled into view once the history loads. */
+    initialRunId?: string | null;
 }) {
     const { items, loading, error, refresh } = useSectionResource<WorkflowRunSummary>(
         (signal) => fetchScopedWorkflowRuns(scope, workflowId, signal),
@@ -322,6 +325,34 @@ export function WorkflowRunHistory({
         setRuntimeSnapshot(null);
     }, [expandedRunId]);
     const shown = useMemo(() => items.slice(0, 10), [items]);
+    const initialRunHandled = useRef(false);
+    const runElements = useRef(new Map<string, HTMLLIElement>());
+    const [scrollTarget, setScrollTarget] = useState<string | null>(null);
+    const [linkedRunMissing, setLinkedRunMissing] = useState(false);
+
+    useEffect(() => {
+        if (!initialRunId || initialRunHandled.current || loading) {
+            return;
+        }
+        initialRunHandled.current = true;
+        if (error) {
+            return;
+        }
+        if (shown.some((run) => String(run.id ?? run.run_id ?? '') === initialRunId)) {
+            setExpandedRunId(initialRunId);
+            setScrollTarget(initialRunId);
+        } else {
+            setLinkedRunMissing(true);
+        }
+    }, [initialRunId, loading, error, shown]);
+
+    useEffect(() => {
+        if (!scrollTarget) {
+            return;
+        }
+        runElements.current.get(scrollTarget)?.scrollIntoView?.({ block: 'nearest' });
+        setScrollTarget(null);
+    }, [scrollTarget]);
 
     useEffect(() => {
         if (refreshToken > 0) {
@@ -349,17 +380,28 @@ export function WorkflowRunHistory({
     }
 
     return (
+        <>
+        {linkedRunMissing ? <p role="status" className="px-3 pb-2 text-xs text-text-3">
+            The linked run is not among the most recent runs shown here.
+        </p> : null}
         <ul className="space-y-2 px-3 pb-3" aria-label="Workflow run history">
             {shown.map((run, index) => {
                 const runId = String(run.id ?? run.run_id ?? index);
                 const expanded = expandedRunId === runId;
+                const linked = initialRunId === runId;
                 const status = String(run.status ?? 'unknown');
                 const validation = validationSummary(run.workflow_validation);
                 const definitionVersion = run.definition_version;
                 const isStructuredRun = definitionVersion === 3;
                 const unsupportedDefinitionVersion = definitionVersion !== undefined && ![1, 2, 3].includes(definitionVersion);
                 return (
-                    <li key={runId} className="rounded-xl border border-edge">
+                    <li key={runId}
+                        ref={(element) => {
+                            if (element) runElements.current.set(runId, element);
+                            else runElements.current.delete(runId);
+                        }}
+                        aria-current={linked ? 'true' : undefined}
+                        className={linked ? 'rounded-xl border border-accent' : 'rounded-xl border border-edge'}>
                         <div className="flex items-center gap-2 p-2 text-xs text-text-3">
                             <RowAction
                                 icon={expanded ? <ChevronDown size={15} /> : <ChevronRight size={15} />}
@@ -433,5 +475,6 @@ export function WorkflowRunHistory({
                 );
             })}
         </ul>
+        </>
     );
 }

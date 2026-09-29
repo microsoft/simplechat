@@ -202,6 +202,35 @@ When uploading a document with the same name:
 - **Keep both**: Rename one to keep separate versions
 - **Overwrite**: Replace completely (recommended for updates)
 
+### See Where a Document Came From
+
+Documents that a workflow or a chat creates remember where they came from, so
+you can trace a report back to the run that wrote it or the conversation that
+produced it. In the V2 workspace, open a document's details and look for
+**Origin**:
+
+- **Created by *workflow name* · run *date and time***: a workflow saved this
+  document. Select it to open the workflow with that run expanded in its
+  history.
+- **Created in chat · *conversation title***: a chat created this document,
+  either by publishing a generated file or from a file uploaded in the
+  conversation. Select it to open the conversation.
+
+You see names and links only for workflows and conversations you can open
+yourself. If a teammate's private workflow or chat created a shared document,
+or the workflow or conversation was deleted, you see only **Created by a
+workflow** or **Created in a chat**.
+
+Documents a workflow saves also get a `workflow` tag, so you can filter the
+workspace for them. It's an ordinary tag, so you can remove it; removing it
+doesn't change the recorded origin. In a group or public workspace, the tag is
+added only when the person publishing the document can manage tags there.
+Chat-created documents don't get a tag.
+
+Nobody can set or edit an origin by hand. Files you upload yourself don't have
+one, and a new version you upload by hand has no origin even when the earlier
+version came from a workflow. The classic workspace doesn't show origins yet.
+
 ## Step 6: Using Documents in Chat
 
 ### Select Workspace in Chat

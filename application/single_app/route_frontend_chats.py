@@ -53,6 +53,7 @@ from functions_public_workspaces import (
 )
 from functions_simplechat_operations import upload_chat_image_bytes_for_user
 from functions_appinsights import log_event
+from functions_document_provenance import chat_upload_origin
 from functions_chat_bootstrap_cache import (
     build_chat_bootstrap_cache_key,
     get_cached_chat_bootstrap_payload,
@@ -1200,6 +1201,12 @@ def register_route_frontend_chats(bp):
 
         workspace_document_info = None
         workspace_upload_scope = 'group' if group_upload_target else 'personal'
+        # Built only from the authorized conversation and the server-generated message id.
+        chat_document_origin = chat_upload_origin(
+            conversation_id=conversation_id,
+            message_id=file_message_id,
+            collaboration_conversation_id=(collaboration_conversation or {}).get('id'),
+        )
         workspace_upload_enabled = _is_setting_enabled(settings.get('enable_group_workspaces', False)) if group_upload_target else _is_setting_enabled(settings.get('enable_user_workspace', False))
         workspace_upload_supported = file_ext_nodot in CHAT_WORKSPACE_UPLOAD_EXTENSIONS and allowed_file(original_filename)
 
@@ -1264,6 +1271,7 @@ def register_route_frontend_chats(bp):
                         copy_source_file=True,
                         ensure_unique_file_name=True,
                         unique_file_name_suffix=file_message_id.rsplit('_file_', 1)[-1],
+                        origin=chat_document_origin,
                     )
                     workspace_document_info['scope'] = 'group'
                     workspace_document_info['group_name'] = group_upload_target.get('name')
@@ -1299,6 +1307,7 @@ def register_route_frontend_chats(bp):
                         copy_source_file=True,
                         ensure_unique_file_name=True,
                         unique_file_name_suffix=file_message_id.rsplit('_file_', 1)[-1],
+                        origin=chat_document_origin,
                     )
                     workspace_document_info['scope'] = 'personal'
                     invalidate_personal_search_cache(user_id)

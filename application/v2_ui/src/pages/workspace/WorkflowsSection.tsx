@@ -36,6 +36,7 @@ import {
     type WorkflowRunStartResponse,
     type WorkflowScope,
 } from '../../lib/workflowEditor';
+import { readWorkflowRunLink } from '../../lib/workflowRunLink';
 
 /** Map a run or workflow status onto a pill colour. */
 export function statusTone(status: unknown): 'ok' | 'warn' | 'danger' | 'neutral' {
@@ -90,6 +91,7 @@ export function WorkflowsSection({
     const [optionsError, setOptionsError] = useState('');
     const [editorDirty, setEditorDirty] = useState(false);
     const [editorSaving, setEditorSaving] = useState(false);
+    const [linkedRun, setLinkedRun] = useState<{ scopeKey: string; workflowId: string; runId: string } | null>(null);
     const consumedInitialTargets = useRef(new Set<string>());
 
     useEffect(() => {
@@ -136,16 +138,26 @@ export function WorkflowsSection({
     }, [scopeKey, interactionDisabled, canCreate]);
 
     useEffect(() => {
-        const target = new URLSearchParams(window.location.search).get('workflow_id');
-        if (!target || loading || editing || optionsLoading || consumedInitialTargets.current.has(target)) {
+        const link = readWorkflowRunLink(window.location.search);
+        if (!link || loading || editing || optionsLoading) {
             return;
         }
-        const workflow = items.find((item) => item.id === target);
-        if (workflow) {
-            consumedInitialTargets.current.add(target);
-            void openEditor(workflow);
+        const key = `${scopeKey}:${link.workflowId}:${link.runId ?? ''}`;
+        if (consumedInitialTargets.current.has(key)) {
+            return;
         }
-    }, [editing, items, loading, openEditor, optionsLoading]);
+        const workflow = items.find((item) => item.id === link.workflowId);
+        if (workflow) {
+            consumedInitialTargets.current.add(key);
+            if (link.runId) {
+                // A run link (document provenance) opens the run history, not the editor.
+                setLinkedRun({ scopeKey, workflowId: link.workflowId, runId: link.runId });
+                setExpandedId(link.workflowId);
+            } else {
+                void openEditor(workflow);
+            }
+        }
+    }, [editing, items, loading, openEditor, optionsLoading, scopeKey]);
 
     const runAction = async (
         workflow: WorkflowDefinition,
@@ -368,6 +380,7 @@ export function WorkflowsSection({
                                     scope={scope}
                                     workflowId={workflowId}
                                     refreshToken={historyRefreshToken}
+                                    initialRunId={linkedRun?.scopeKey === scopeKey && linkedRun.workflowId === workflowId ? linkedRun.runId : null}
                                     onWorkflowRefresh={() => void refresh()}
                                 />
                             ) : null}

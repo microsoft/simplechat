@@ -45,6 +45,14 @@ from content_screening.service import (
 )
 from config import *
 from functions_appinsights import log_event
+from functions_document_provenance import (
+    ORIGIN_FIELD_NAMES,
+    ORIGIN_KIND_FIELD,
+    DocumentOriginError,
+    apply_document_provenance,
+    remember_document_origin_summary,
+    validate_origin,
+)
 from functions_artifact_publication_readiness import (
     PUBLICATION_BINDING, begin_publication_processing, finish_publication_processing,
 )
@@ -1978,7 +1986,18 @@ def create_document(
     xsd_family_namespace=None,
     source_file_path=None,
     allow_deferred_xsd_source=False,
+    origin=None,
+    server_tags=None,
 ):
+    """Create or version a document record.
+
+    ``origin`` and ``server_tags`` are server-only: callers pass them only from server-held
+    workflow or chat bindings, never from client input. Each version stores only its own origin.
+    """
+    if origin is not None:
+        # Validated before any earlier revision is archived, so a malformed origin can never
+        # leave the document family without a current version.
+        origin = validate_origin(origin)
     current_time = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
     is_group = group_id is not None
     is_public_workspace = public_workspace_id is not None
@@ -2285,6 +2304,7 @@ def create_document(
                     "enhanced_citations": True,
                     "xsd_blob_etag": staged_xsd_source.get("blob_etag"),
                 })
+        apply_document_provenance(document_metadata, origin=origin, server_tags=server_tags)
         screening_marker = initial_document_marker(document_metadata)
         if screening_marker is not None:
             document_metadata[SCREENING_FIELD] = screening_marker
@@ -3455,6 +3475,9 @@ def calculate_processing_percentage(doc_metadata):
 def update_document(**kwargs):
     if SCREENING_FIELD in kwargs:
         raise ScreeningValidationError("Screening state is managed by the review workflow.")
+    if any(field_name in kwargs for field_name in ORIGIN_FIELD_NAMES):
+        # Origin is written only when a version is created; no update path may set or change it.
+        raise DocumentOriginError()
     document_id = kwargs.get('document_id')
     user_id = kwargs.get('user_id')
     group_id = kwargs.get('group_id')
@@ -4636,7 +4659,7 @@ def get_documents(user_id, group_id=None, public_workspace_id=None):
     except Exception as e:
         return jsonify({'error': f'Error retrieving documents: {str(e)}'}), 500
 
-def get_document(user_id, document_id, group_id=None, public_workspace_id=None):
+def get_document(user_id, document_id, group_id=None, public_workspace_id=None, include_origin_summary=False):
     try:
         document_record = get_document_record(
             user_id=user_id,
@@ -4648,7 +4671,11 @@ def get_document(user_id, document_id, group_id=None, public_workspace_id=None):
         if not document_record:
             return jsonify({'error': 'Document not found or access denied'}), 404
 
-        return jsonify(public_document_payload(document_record)), 200
+        payload = public_document_payload(document_record)
+        # Held documents project no origin_kind, so they never resolve an origin summary.
+        if include_origin_summary and payload.get(ORIGIN_KIND_FIELD):
+            remember_document_origin_summary(user_id, document_record)
+        return jsonify(payload), 200
 
     except Exception as e:
         return jsonify({'error': f'Error retrieving document: {str(e)}'}), 500
@@ -10992,6 +11019,7 @@ def queue_personal_workspace_upload_from_temp_file(
     extraction_mode_override=None,
     ensure_unique_file_name=False,
     unique_file_name_suffix=None,
+    origin=None,
 ):
     if not user_id:
         raise ValueError("user_id is required")
@@ -11028,6 +11056,7 @@ def queue_personal_workspace_upload_from_temp_file(
             num_file_chunks=0,
             status="Queued for processing",
             source_file_path=workspace_temp_file_path,
+            origin=origin,
         )
         document_created = True
 
@@ -11145,6 +11174,7 @@ def queue_group_workspace_upload_from_temp_file(
     extraction_mode_override=None,
     ensure_unique_file_name=False,
     unique_file_name_suffix=None,
+    origin=None,
 ):
     if not user_id:
         raise ValueError("user_id is required")
@@ -11184,6 +11214,7 @@ def queue_group_workspace_upload_from_temp_file(
             status="Queued for processing",
             group_id=group_id,
             source_file_path=workspace_temp_file_path,
+            origin=origin,
         )
         document_created = True
 
