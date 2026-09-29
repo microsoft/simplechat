@@ -642,6 +642,11 @@ export interface OrchestrationPlanRequest extends OrchestrationSeeds {
     elicitation?: Elicitation;
     revision?: number;
     approval_mode?: ApprovalMode;
+    /**
+     * The browser's IANA time zone. The server validates it and uses it only for workflow
+     * proposals, whose calendar schedules default to it; an unknown zone falls back to UTC.
+     */
+    time_zone?: string;
     [key: string]: unknown;
 }
 

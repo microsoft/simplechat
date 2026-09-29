@@ -1165,6 +1165,19 @@ def _allowed_ids(settings, allowed_ids):
     return narrowed
 
 
+def capability_allowlisted(settings, capability_id, allowed_ids=None):
+    """Whether the administrator's capability allowlist admits ``capability_id``.
+
+    An empty or missing allowlist admits every capability. A malformed one admits none, the same
+    answer ``resolve_available_capabilities`` reaches by refusing to resolve.
+    """
+    try:
+        narrowed = _allowed_ids(settings if isinstance(settings, dict) else {}, allowed_ids)
+    except CapabilityResolutionError:
+        return False
+    return narrowed is None or capability_id in narrowed
+
+
 def resolve_available_capabilities(
     settings, allowed_ids=None, request_context=None, candidate_ids=None, unavailable=None,
     *, contract_version=DEPENDENCY_PLAN_CONTRACT_VERSION, export_catalog=None,

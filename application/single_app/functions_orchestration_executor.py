@@ -348,6 +348,8 @@ class RunContext:
         capture_external_source_configuration=None,
         rendering_service=None,
         export_catalog=None,
+        workflow_planning=None,
+        time_zone=None,
     ):
         self.run_id = run_id
         self.plan_id = plan_id
@@ -388,6 +390,11 @@ class RunContext:
         self.capture_external_source_configuration = capture_external_source_configuration
         self.rendering_service = rendering_service
         self.export_catalog = deepcopy(export_catalog)
+        # The server-only workflow proposal context stored with the turn, including the map
+        # from each planner handle to the record it names, and the user's validated browser
+        # time zone. Both are None when workflow proposals do not apply to this request.
+        self.workflow_planning = deepcopy(workflow_planning) if isinstance(workflow_planning, dict) else None
+        self.time_zone = time_zone if isinstance(time_zone, str) and time_zone else None
 
         self.invoke_prompt = invoke_prompt
         self.planner_client = planner_client
@@ -627,7 +634,7 @@ def execute_plan(
 
 
 def _dependency_request_context(context):
-    return {
+    request_context = {
         'user_id': context.user_id, 'user_email': context.user_email, 'user_roles': context.user_roles,
         'agent_catalog': context.agent_catalog, 'action_catalog': context.action_catalog,
         'user_enable_agents': context.user_enable_agents,
@@ -643,6 +650,11 @@ def _dependency_request_context(context):
             r'https?://[^\s<>"]+', context.user_message,
         ),
     }
+    # Present only when the turn stored one, matching build_capability_request_context.
+    workflow_planning = getattr(context, 'workflow_planning', None)
+    if workflow_planning is not None:
+        request_context['workflow_planning'] = workflow_planning
+    return request_context
 
 
 def _dependency_source_manifest(context, document_ids, settings, cancel_probe):

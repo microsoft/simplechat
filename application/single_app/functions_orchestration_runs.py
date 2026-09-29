@@ -311,7 +311,7 @@ def create_orchestration_run(
         'answered_questions', 'conversation_context', 'request_resolution',
         'resolved_message', 'planning_token_usage', 'original_seeds', 'prompt_selection',
         'memory_audience', 'memory_scope',
-        'result_aliases',
+        'result_aliases', 'time_zone', 'workflow_planning',
     ):
         if isinstance(turn_context, dict) and key in turn_context:
             record[key] = deepcopy(turn_context[key])

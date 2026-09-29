@@ -129,6 +129,15 @@ from functions_orchestration_memory import (
 )
 from functions_orchestration_external_configuration import ExternalConfigurationServiceError
 from functions_orchestration_external_identity import ExternalIdentityServiceError
+from functions_orchestration_workflow_context import (
+    build_workflow_planning_context,
+    refresh_workflow_planning_privacy,
+    validated_request_time_zone,
+    workflow_planning_documents,
+    workflow_planning_option,
+    workflow_proposals_configured,
+    workflow_run_options,
+)
 from functions_orchestration_plan_editing import (
     build_plan_edit_outcome,
     revision_allowed_urls,
@@ -1213,6 +1222,20 @@ def _checkpoint_artifact_versions(artifacts, conversation_id, user_id):
     }
 
 
+def _current_workflow_planning(record, user_id, settings, conversation_id=None):
+    """The turn's stored workflow proposal context, with its privacy read again now.
+
+    None when workflow proposals are off or the turn has no such context, so the run's capability
+    context is exactly what it was before workflow proposals existed. A conversation that became
+    shared since planning makes the proposal capability unavailable.
+    """
+    stored = record.get('workflow_planning')
+    if not workflow_proposals_configured(settings) or not isinstance(stored, dict):
+        return None
+    conversation = _authorize_context_conversation(conversation_id or record['conversation_id'], user_id)
+    return refresh_workflow_planning_privacy(stored, conversation, user_id)
+
+
 def _validate_retry_context(record, user_id, settings, *, preparing=False):
     """Rebuild the same authorized execution inputs without invoking a model."""
     conversation_id = record['conversation_id']
@@ -1229,11 +1252,13 @@ def _validate_retry_context(record, user_id, settings, *, preparing=False):
         user_id, seeds=seeds, settings=settings, user_groups=seeds.get('active_group_ids') or None,
     )
     allowed_urls = revision_allowed_urls(record)
+    workflow_planning = _current_workflow_planning(record, user_id, settings, conversation_id)
     required = {step['capability_id'] for step in record['plan'].get('steps') or [] if step.get('enabled', True)}
     available = set(resolve_available_capability_ids(
         settings, allowed_ids=settings.get('chat_orchestration_enabled_capabilities'), candidate_ids=required,
         request_context=_capability_request_context(
             user_id, identity, record.get('user_message'), agents, actions, allowed_user_urls=allowed_urls,
+            **workflow_planning_option(workflow_planning),
             **services.capability_request_bindings(),
         ),
         contract_version=contract_version, export_catalog=services.export_catalog(),
@@ -1281,6 +1306,10 @@ def _validate_retry_context(record, user_id, settings, *, preparing=False):
                 'provider': model.provider, 'model_deployment': model.deployment,
             },
             agent_execution_identity=capture_execution_identity(user_id, conversation_id),
+            **workflow_run_options(
+                workflow_planning,
+                record.get('time_zone') if workflow_proposals_configured(settings) else None,
+            ),
         )
         context.validate_checkpoint_artifacts = lambda artifacts: _validate_checkpoint_artifacts(artifacts, conversation_id, user_id)
         context.checkpoint_artifact_versions = lambda artifacts: _checkpoint_artifact_versions(artifacts, conversation_id, user_id)
@@ -1574,6 +1603,12 @@ def register_route_backend_orchestration(bp):
             'replan_hint': replan_hint,
             'planner_contract_version': DEPENDENCY_PLAN_CONTRACT_VERSION,
         }
+        # Workflow proposals schedule in the user's browser time zone, validated here and kept
+        # with the turn. Nothing about the turn changes while proposals are off.
+        workflow_configured = workflow_proposals_configured(settings)
+        request_time_zone = validated_request_time_zone(data.get('time_zone')) if workflow_configured else None
+        if request_time_zone:
+            turn_context['time_zone'] = request_time_zone
         prior_elicitation = data.get('elicitation')
         if is_reply:
             try:
@@ -1645,6 +1680,8 @@ def register_route_backend_orchestration(bp):
                     turn_context = deepcopy(pending['prepared']['turn_context'])
                 else:
                     turn_context = deepcopy(pending['turn_context'])
+                    if request_time_zone and not turn_context.get('time_zone'):
+                        turn_context['time_zone'] = request_time_zone
                     question = pending['question']
                     validated, normalized_context = normalize_elicitation_answer(
                         question, response, answer_context,
@@ -1829,6 +1866,7 @@ def register_route_backend_orchestration(bp):
                         for key in (
                             'user_message_id', 'user_message_fingerprint', 'seeds', 'original_seeds',
                             'answered_questions', 'prompt_selection', 'memory_audience', 'memory_scope',
+                            'time_zone',
                         ):
                             if key in previous:
                                 turn_context[key] = deepcopy(previous[key])
@@ -1840,6 +1878,11 @@ def register_route_backend_orchestration(bp):
                         )
                 turn_context['conversation_context'] = snapshot
                 turn_context['revision'] = current_revision
+                # The workflow catalog is rebuilt for every planning pass, so a reply or replan
+                # never plans against a stale one.
+                turn_context.pop('workflow_planning', None)
+                if not workflow_configured:
+                    turn_context.pop('time_zone', None)
                 validate_clarification_answers(answered_record)
                 resolve_elicitation_references(
                     seeds.get('elicitation_references') or [],
@@ -1916,8 +1959,9 @@ def register_route_backend_orchestration(bp):
                 turn_context['request_resolution'] = resolution
                 turn_context['resolved_message'] = effective_message
                 effective_request = build_elicitation_user_request(effective_message, answered_record)
+                conversation_document = _authorize_context_conversation(resolved_conversation_id, user_id)
                 memory_context = load_orchestration_memory(
-                    user_id, _authorize_context_conversation(resolved_conversation_id, user_id),
+                    user_id, conversation_document,
                     effective_request, settings=settings, seeds=seeds,
                     expected_audience=turn_context.get('memory_audience'),
                 )
@@ -1935,8 +1979,10 @@ def register_route_backend_orchestration(bp):
                         effective_request, user_id, seeds=seeds,
                         conversation_id=resolved_conversation_id, settings=settings,
                     )
+                source_scopes = {} if workflow_configured else None
                 candidates = enrich_planner_candidates(
                     candidates, user_id, conversation_id=resolved_conversation_id, seeds=seeds,
+                    source_scopes=source_scopes,
                 )
                 if seeds.get('image_generation') or seeds.get('image_references'):
                     seeds = resolve_image_reference_candidates(
@@ -1967,6 +2013,22 @@ def register_route_backend_orchestration(bp):
                     user_id, seeds=seeds, settings=settings,
                     user_groups=seeds.get('active_group_ids') or None,
                 ) if planning_identity.get('user_enable_agents', True) else []
+                workflow_planning = None
+                if workflow_configured:
+                    workflow_planning = build_workflow_planning_context(
+                        settings, user_id=user_id,
+                        user_info={
+                            'userId': user_id,
+                            'email': identity.get('user_email'),
+                            'roles': identity.get('user_roles') or [],
+                        },
+                        conversation=conversation_document,
+                        time_zone=turn_context.get('time_zone'),
+                        documents=workflow_planning_documents(
+                            source_scopes, labels, seeds.get('document_ids'),
+                        ),
+                    )
+                    turn_context['workflow_planning'] = workflow_planning
 
                 context = build_planner_context(
                     effective_message, candidates=candidates, seeds=seeds, ledger=ledger,
@@ -2003,6 +2065,7 @@ def register_route_backend_orchestration(bp):
                     user_id, planning_identity, message, agent_catalog,
                     action_catalog,
                     allowed_user_urls=allowed_user_urls,
+                    **workflow_planning_option(workflow_planning),
                     **services.capability_request_bindings(),
                 )
                 capability_request_context['image_reference_documents'] = (
@@ -2298,6 +2361,7 @@ def register_route_backend_orchestration(bp):
                 user_id, conversation_id or record['conversation_id'], settings=settings,
             )
             existing_results = admitted_result_aliases(record, services.results)
+            workflow_planning = _current_workflow_planning(record, user_id, settings, conversation_id)
             if record.get('retry_of_run_id'):
                 if data.get('edits'):
                     raise CheckpointError('recovery_changed')
@@ -2395,6 +2459,7 @@ def register_route_backend_orchestration(bp):
                 request_context=_capability_request_context(
                     user_id, identity, user_message, agent_catalog, action_catalog,
                     allowed_user_urls=allowed_user_urls,
+                    **workflow_planning_option(workflow_planning),
                     **services.capability_request_bindings(),
                 ),
                 contract_version=contract_version, export_catalog=services.export_catalog(),

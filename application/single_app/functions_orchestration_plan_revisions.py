@@ -57,6 +57,9 @@ _IMMUTABLE_FIELDS = (
     'user_message', 'user_message_id', 'user_message_fingerprint', 'turn_id',
     'original_seeds', 'conversation_context', 'snapshot', 'request_fingerprint',
 )
+# Turn fields only some turns have, kept exactly like the immutable fields: a revision plans
+# the same request, in the same time zone, from the same server-built workflow context.
+_OPTIONAL_TURN_FIELDS = ('time_zone', 'workflow_planning')
 _PLAN_FIELDS = (
     'plan_id', 'run_id', 'turn_id', 'revision', 'conversation_id', 'user_id',
     'planner_contract_version', 'intent', 'assumptions', 'approval', 'status',
@@ -783,7 +786,7 @@ def _new_revision(record, document, turn_context, chat, instruction, origin):
         'revision_origin': origin,
         'revision_note': instruction[:EDIT_NOTE_LIMIT] if isinstance(instruction, str) else '',
     }
-    for key in (*_IMMUTABLE_FIELDS, *_CONTEXT_FIELDS):
+    for key in (*_IMMUTABLE_FIELDS, *_OPTIONAL_TURN_FIELDS, *_CONTEXT_FIELDS):
         if key in record:
             result[key] = deepcopy(record[key])
     result['turn_id'] = _turn_id(record)
