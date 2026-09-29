@@ -9,7 +9,8 @@
 // Steps that describe staged work additionally get a progress card above the list. A tabular
 // analysis reports one workbook tool call at a time and can run for minutes; as a flat list
 // that is a growing wall of sentences with no indication of how far along it is, which reads
-// the same whether the run is working or wedged. Which kinds of work qualify is decided by
+// the same whether the run is working or wedged. Which kinds of work qualify, and which of them
+// already show their progress somewhere else and so draw no card, is decided by
 // `lib/activityLanes.ts`, not here.
 
 import { useMemo } from 'react';
@@ -154,7 +155,8 @@ export function ThoughtsList({
 }
 
 /**
- * The progress card for these steps, or nothing when they do not describe staged work.
+ * The progress card for these steps, or nothing when they do not describe staged work or
+ * their lane shows its progress elsewhere.
  *
  * Separate from the list so the caller can place it outside the collapsed section. A run in
  * flight needs its progress visible without anyone expanding anything — that is the whole
@@ -182,7 +184,7 @@ export function ThoughtsProgressCard({
         [thoughts, live],
     );
 
-    if (!progress) {
+    if (!progress || !progress.lane.showsCard) {
         return null;
     }
 
