@@ -1,7 +1,7 @@
 # workflow_editor.py
 """
 Closed API fixtures for the native V2 workflow editor.
-Version: 0.261.193
+Version: 0.261.200
 Implemented in: 0.261.108
 Group File Sync, alert handoff and personal-scope trap modelling added in: 0.261.141
 Real alert normalizer on both save routes added in: 0.261.144
@@ -12,6 +12,7 @@ no generated artifact awaiting publication: 0.261.183
 Calendar schedules, the server's schedule editor options and the administrator's minimum interval
 (`min_schedule_interval_seconds`, applied only to a new or changed interval) added in: 0.261.193.
 `unlisted_schedule_timezones` leaves zones out of the options' list, as an older server tzdata would.
+The personal File Sync source list, answered by the real collector, added in: 0.261.200.
 
 Group File Sync requests are answered by the real server functions, compiled from source:
 `_serialize_workflow_file_sync_source` builds the source list, and `_normalize_file_sync_config`,
@@ -21,8 +22,14 @@ group save, with the save route's status mapping. Personal saves run the real pe
 and `_normalize_schedule` in the server's order; the trigger messages are copied from the save
 functions, and loading this module fails if any of them no longer appears there. A reviewed
 error returns `{"error": <message>, "code": <code>}`, as both save routes do. Only the source
-stores, group File Sync enablement and the viewer's group role are fixture state. A personal
-save stores the File Sync it was sent, not the server's normalization.
+stores, group and personal File Sync enablement, the active group and the viewer's group role are
+fixture state. A personal save stores the File Sync it was sent, not the server's normalization.
+
+The personal source list (`/api/user/workflows/file-sync-sources`) runs the real
+`collect_personal_workflow_file_sync_sources`, compiled from `functions_workflow_file_sync_sources.py`,
+with the real serializer. It lists the owner's sources while `personal_file_sync_enabled` is on, and
+the active group's sources when the viewer manages that group and File Sync is on for it. The
+fixture has no public workspace File Sync, so the active public workspace never adds sources.
 
 A save that names a deleted workflow with its opened revision gets the server's 409
 `workflow_deleted`. The source list returns `file_sync_enabled`, and the run-as account list
@@ -45,6 +52,7 @@ import re
 import sys
 import uuid
 from pathlib import Path
+from types import SimpleNamespace
 from urllib.parse import parse_qs, unquote, urlsplit
 
 import pytest
@@ -91,6 +99,7 @@ GROUP_ID = "group-alpha"
 SECOND_GROUP_ID = "group-beta"
 SPA_INDEX = STATIC_ROOT / "v2" / "index.html"
 FILE_SYNC_SOURCES_PATH = "/api/group/workflows/file-sync-sources"
+PERSONAL_FILE_SYNC_SOURCES_PATH = "/api/user/workflows/file-sync-sources"
 FILE_SYNC_FIXTURE_SECRET = "fixture-file-sync-password"
 # The group save route's status mapping (`save_group_workflow_route`).
 GROUP_SAVE_ERRORS = {
@@ -142,6 +151,10 @@ FILE_SYNC_CODE = (
     _production_code("route_backend_workflows.py", ("_serialize_workflow_file_sync_source",)),
 )
 PERSONAL_FILE_SYNC_CODE = _production_code("functions_personal_workflows.py", ("_normalize_file_sync_config",))
+# The collector behind the personal source list route.
+PERSONAL_FILE_SYNC_SOURCE_LIST_CODE = _production_code("functions_workflow_file_sync_sources.py", (
+    "_user_settings_block", "collect_personal_workflow_file_sync_sources",
+))
 
 
 def _save_function_messages(module_name, function_name):
@@ -469,6 +482,8 @@ class WorkflowEditorFixture(WorkspaceAuthoringFixture):
             "id": "home-share", "scope_type": "personal", "user_id": OWNER_ID, "name": "Home share",
             "source_type": "onedrive", "enabled": True, "auth": {"password": FILE_SYNC_FIXTURE_SECRET},
         }]
+        # `is_file_sync_enabled_for_user` for the owner: the personal source list's own gate.
+        self.personal_file_sync_enabled = True
         self.file_sync_source_reads = []
         self.classic_visits = []
         self.alert_refusals = []
@@ -479,6 +494,7 @@ class WorkflowEditorFixture(WorkspaceAuthoringFixture):
         # the server's tzdata release.
         self.unlisted_schedule_timezones = set()
         self.file_sync_rules, self.personal_file_sync_rules = self._bind_file_sync_rules()
+        self.personal_source_list_rules = self._bind_personal_source_list()
 
     def _group_role(self):
         return getattr(self, "group_role", "Admin" if getattr(self, "group_can_manage", True) else "User")
@@ -546,6 +562,59 @@ class WorkflowEditorFixture(WorkspaceAuthoringFixture):
         personal_rules = {**rules, "get_authorized_sync_source": get_personal_sync_source}
         exec(PERSONAL_FILE_SYNC_CODE, personal_rules)
         return rules, personal_rules
+
+    def _bind_personal_source_list(self):
+        """Run the compiled personal source collector against this fixture's source stores and group role."""
+
+        def list_file_sync_sources(scope_type, scope_id):
+            if scope_type == "personal":
+                return [
+                    copy.deepcopy(source) for source in self.personal_file_sync_sources
+                    if source.get("user_id") == scope_id
+                ]
+            if scope_type == "group":
+                return copy.deepcopy(self.group_file_sync_sources.get(scope_id, []))
+            return []
+
+        def assert_group_role(user_id, group_id, allowed_roles=None):
+            if group_id not in self.group_file_sync_sources:
+                raise LookupError("Group not found")
+            if self._group_role() not in (allowed_roles or ()):
+                raise PermissionError("Insufficient permissions for this group")
+
+        def assert_public_workspace_role(user_id, public_workspace_id, allowed_roles=None):
+            raise LookupError("Public workspace not found")
+
+        rules = {
+            **{
+                name: self.file_sync_rules[name] for name in (
+                    "FILE_SYNC_SCOPE_PERSONAL", "FILE_SYNC_SCOPE_GROUP", "FILE_SYNC_SCOPE_PUBLIC",
+                    "FILE_SYNC_MANAGER_ROLES", "is_file_sync_enabled_for_group",
+                )
+            },
+            # The route's default reader: the active workspaces come from the owner's user settings.
+            "functions_settings": SimpleNamespace(get_user_settings=lambda user_id: {
+                "settings": {"activeGroupOid": self.active_group_id or ""},
+            }),
+            "is_file_sync_enabled_for_user": lambda settings, user_id, email=None, user_info=None: bool(
+                self.personal_file_sync_enabled
+            ),
+            "is_file_sync_enabled_for_public_workspace": lambda settings, workspace_id, user_info=None: False,
+            "list_file_sync_sources": list_file_sync_sources,
+            "assert_group_role": assert_group_role,
+            "assert_public_workspace_role": assert_public_workspace_role,
+        }
+        exec(PERSONAL_FILE_SYNC_SOURCE_LIST_CODE, rules)
+        return rules
+
+    def _personal_file_sync_source_list(self, route, entry):
+        """GET /api/user/workflows/file-sync-sources: the route's collector with the real serializer."""
+        assert not entry.query, entry
+        enabled, sources = self.personal_source_list_rules["collect_personal_workflow_file_sync_sources"](
+            OWNER_ID, {}, {"roles": ["User"]},
+            serialize=self.file_sync_rules["_serialize_workflow_file_sync_source"],
+        )
+        self._json(route, {"sources": sources, "file_sync_enabled": enabled})
 
     def _group_file_sync_sources(self, route, entry):
         """GET /api/group/workflows/file-sync-sources, resolved like the real route with ?group_id."""
@@ -790,6 +859,8 @@ class WorkflowEditorFixture(WorkspaceAuthoringFixture):
             self._json(route, options)
         elif path == FILE_SYNC_SOURCES_PATH and method == "GET":
             self._group_file_sync_sources(route, entry)
+        elif path == PERSONAL_FILE_SYNC_SOURCES_PATH and method == "GET":
+            self._personal_file_sync_source_list(route, entry)
         elif path == "/api/workflows/m365-run-as-users" and method == "GET":
             if entry.query.get("scope") == ["group"]:
                 group_id = entry.query.get("group_id", [None])[0]

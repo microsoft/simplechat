@@ -127,11 +127,13 @@ keep running, and calendar schedules aren't affected.
 See [Workflow calendar schedules](../explanation/features/WORKFLOW_CALENDAR_SCHEDULES.md)
 for the stored format and the full rules.
 
-## Run a group workflow when File Sync finds changes
+## Run a workflow when File Sync finds changes
 
 From version **0.261.141**, the V2 editor for group workflows can author File
-Sync. Owners, Admins, and other workflow managers see these choices when the
-group has File Sync sources:
+Sync, and from version **0.261.200** so can the editor for personal workflows.
+Owners, Admins, and other workflow managers of a group, and anyone editing
+their own personal workflow, see these choices when there are File Sync
+sources to choose from:
 
 - **Monitor File Sync changes** is a trigger. On the schedule you set, it syncs
   the selected sources, waits for the sync to finish, and runs the workflow only
@@ -142,16 +144,24 @@ group has File Sync sources:
 - **Use changed files as Analyze targets** lets an Analyze task with no
   selected documents work on the files each sync changed.
 
-Choose between 1 and 10 of the group's own sources. A source the group no
-longer offers is marked **No longer available**; remove it before saving. From
-version **0.261.149**, if a source is deleted while you're editing, saving is
-refused with "A selected File Sync source is no longer available. Remove it and
-save again." Your changes stay in the editor, and the source is marked so you
-can remove it. When File Sync is turned off for the group, the editor says so
-instead of showing an empty list.
-Personal workflows keep the File Sync settings they already have, but can't
-create new ones in V2 yet. From version **0.261.144**, a personal workflow
-whose Analyze task works on the files File Sync changed can be saved in V2.
+A group workflow uses between 1 and 10 of the group's own sources. A source the
+group no longer offers is marked **No longer available**; remove it before
+saving. From version **0.261.149**, if a source is deleted while you're editing,
+saving is refused with "A selected File Sync source is no longer available.
+Remove it and save again." Your changes stay in the editor, and the source is
+marked so you can remove it. When File Sync is turned off for the group, the
+editor says so instead of showing an empty list.
+
+A personal workflow uses between 1 and 10 of the sources you may sync: your own
+personal sources, and those of your active group and active public workspace
+when you're an Owner, Admin or DocumentManager there. Each source is labelled
+with where it lives, such as "Home share (Personal)". Your personal sources are
+offered only while your administrator allows personal File Sync for you, which
+can require the **PersonalFileSyncUser** role. When it's off, the editor says so,
+and sources the workflow already uses stay selected so you can keep or remove
+them. The save checks every source again: a deleted source is refused with the
+same message as for a group, and a source you're no longer allowed to use with
+"Workflow settings or sources are not allowed for this account."
 
 ## Set up alerts
 

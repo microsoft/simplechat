@@ -12,6 +12,7 @@ import { WORKFLOW_ALERT_FIELDS, workflowAlertDraftErrors, workflowAlertsForSave 
 import {
     WORKFLOW_FILE_SYNC_CONTINUE_MODES,
     WORKFLOW_FILE_SYNC_MAX_SOURCES,
+    WORKFLOW_FILE_SYNC_SCOPE_TYPES,
     WORKFLOW_FILE_SYNC_WAIT_MODES,
     workflowScheduleForEditor,
     workflowScheduleSupported,
@@ -1168,7 +1169,7 @@ export function workflowForSave(
         ...(draft.definition_version === 3 ? { flow: structuredClone(draft.flow), limits: structuredClone(draft.limits) } : {}),
         ...(includeDurable ? { durable_execution: draft.durable_execution === true } : {}),
         ...(scope.type === 'group' ? { group_id: scope.groupId } : {}),
-        ...(scope.type === 'group' ? workflowFileSyncForSave(draft, original) : {}),
+        ...workflowFileSyncForSave(draft, original),
         ...workflowAlertsForSave(draft, original),
     };
     if (!includeDurable) {
@@ -1198,10 +1199,7 @@ export function workflowForFlowPreview(definition: WorkflowDefinition): Workflow
     return preview;
 }
 
-export function preservedWorkflowFieldLabels(
-    original: WorkflowDefinition | null,
-    scope: WorkflowScope = DEFAULT_WORKFLOW_SCOPE,
-): string[] {
+export function preservedWorkflowFieldLabels(original: WorkflowDefinition | null): string[] {
     if (!original) {
         return [];
     }
@@ -1228,12 +1226,11 @@ export function preservedWorkflowFieldLabels(
         'flow',
         'limits',
         'group_id',
-        // Alerts have their own section in both scopes; group editors also author File Sync.
+        // Alerts and File Sync have their own sections in both scopes.
         ...WORKFLOW_ALERT_FIELDS,
-        ...(scope.type === 'group' ? ['file_sync'] : []),
+        'file_sync',
     ]);
     const labels: Record<string, string> = {
-        file_sync: 'file sync settings',
         alerts: 'alert settings',
         alert_settings: 'alert settings',
         document_actions: 'document action settings',
@@ -1248,9 +1245,10 @@ export function preservedWorkflowFieldLabels(
 }
 
 // ---------------------------------------------------------------------------------------------
-// File Sync triggers. Group workflows author them here. The File Sync, trigger and schedule rules
-// for both scopes live in workflowSettings.ts, which mirrors the save path and returns the
-// server's reviewed messages; the names below are re-exported so importers keep one entry point.
+// File Sync triggers. Personal and group workflows author them here. The File Sync, trigger and
+// schedule rules for both scopes live in workflowSettings.ts, which mirrors the save path and
+// returns the server's reviewed messages; the names below are re-exported so importers keep one
+// entry point.
 // ---------------------------------------------------------------------------------------------
 
 export {
@@ -1262,10 +1260,15 @@ export {
 } from './workflowSettings';
 export type WorkflowFileSyncWaitMode = typeof WORKFLOW_FILE_SYNC_WAIT_MODES[number];
 export type WorkflowFileSyncContinueMode = typeof WORKFLOW_FILE_SYNC_CONTINUE_MODES[number];
+export type WorkflowFileSyncScopeType = typeof WORKFLOW_FILE_SYNC_SCOPE_TYPES[number];
 
-/** One File Sync source the server offers to this group's workflows. */
+/**
+ * One File Sync source the server offers to this scope's workflows. A group lists only its own
+ * sources. A personal workflow lists the user's own sources, and those of the active group and
+ * public workspace the user manages.
+ */
 export interface WorkflowFileSyncSource {
-    scope_type: 'group';
+    scope_type: WorkflowFileSyncScopeType;
     scope_id: string;
     source_id: string;
     name: string;
@@ -1331,15 +1334,14 @@ function workflowFileSyncActive(draft: WorkflowDefinition): boolean {
 /**
  * The server lets Analyze run without selected documents when File Sync supplies the changed
  * files: `allow_empty_file_sync_targets` in both `save_personal_workflow` and `save_group_workflow`
- * is `file_sync.enabled and file_sync.use_changed_documents`. Personal drafts carry their loaded
- * `file_sync` unchanged, since V2 authors File Sync for group workflows only.
+ * is `file_sync.enabled and file_sync.use_changed_documents`.
  */
 export function workflowFileSyncProvidesAnalyzeTargets(draft: WorkflowDefinition): boolean {
     const config = workflowFileSyncConfig(draft.file_sync);
     return config.enabled && config.use_changed_documents;
 }
 
-/** The `file_sync` a group save sends: the loaded value when untouched, else the edited configuration. */
+/** The `file_sync` a save sends: the loaded value when untouched, else the edited configuration. */
 function workflowFileSyncForSave(
     draft: WorkflowDefinition,
     original: WorkflowDefinition | null,
@@ -1362,9 +1364,12 @@ function workflowFileSyncForSave(
     };
 }
 
-/** A group's File Sync source list, as the sources route returns it. */
+/** A scope's File Sync source list, as its sources route returns it. */
 export interface WorkflowFileSyncSourceListing {
-    /** The File Sync gate a group workflow save applies for this caller. */
+    /**
+     * Group: the File Sync gate a group workflow save applies for this caller. Personal: whether
+     * File Sync is on for the user's own workspace, and so whether every personal source is listed.
+     */
     fileSyncEnabled: boolean;
     sources: WorkflowFileSyncSource[];
 }
@@ -1373,7 +1378,8 @@ export interface WorkflowFileSyncSourceListing {
  * The File Sync, trigger and schedule problems in the payload this draft would save, in the
  * server's order and words, for either scope. `listing` is the group's loaded source list, or
  * null when it is not loaded; with it the editor also applies the group File Sync gate and checks
- * each sent source, as the save will.
+ * each sent source, as the save will. A personal save has no File Sync gate and resolves sources
+ * the list may not show, such as another group's, so the server alone reports a missing one.
  */
 export function workflowSettingsDraftErrors(
     draft: WorkflowDefinition,
@@ -1401,54 +1407,68 @@ export function workflowSettingsDraftErrors(
     });
     const sent = isRecord(payload.file_sync) && Array.isArray(payload.file_sync.sources) ? payload.file_sync.sources : [];
     // The one deliberate difference: the server keeps the first 10 sources without saying so.
-    if (group && sent.length > WORKFLOW_FILE_SYNC_MAX_SOURCES) {
+    if (sent.length > WORKFLOW_FILE_SYNC_MAX_SOURCES) {
         errors.push(`Choose at most ${WORKFLOW_FILE_SYNC_MAX_SOURCES} File Sync sources.`);
     }
     return errors;
 }
 
-/** Selected sources the current source list no longer offers; a save would fail on each one. */
+/**
+ * Selected sources the current source list no longer offers; a save would fail on each one.
+ * `scopeTypes` limits the check to sources the list covers in full: a personal workflow's list
+ * shows only the active group and public workspace, so only its personal sources are checked.
+ */
 export function workflowUnavailableFileSyncSources(
     draft: WorkflowDefinition,
     available: WorkflowFileSyncSource[],
+    scopeTypes?: readonly string[],
 ): WorkflowFileSyncSourceRef[] {
     if (!workflowFileSyncActive(draft)) {
         return [];
     }
     const offered = new Set(available.map(workflowFileSyncSourceKey));
     return workflowFileSyncConfig(draft.file_sync).sources
+        .filter((source) => !scopeTypes || scopeTypes.includes(source.scope_type))
         .filter((source) => !offered.has(workflowFileSyncSourceKey(source)));
 }
 
+/**
+ * The File Sync sources this scope's workflows can use. A group lists its own sources, with the
+ * page's explicit group. A personal workflow lists the user's own sources and those of the active
+ * group and public workspace the user manages.
+ */
 export async function fetchWorkflowFileSyncSources(
     scope: WorkflowScope,
     signal?: AbortSignal,
 ): Promise<WorkflowFileSyncSourceListing> {
-    if (scope.type !== 'group') {
-        throw new Error('File Sync sources are listed only for group workflows.');
-    }
-    const response = await api.get<unknown>(withScopeQuery('/api/group/workflows/file-sync-sources', scope), signal);
+    const response = await api.get<unknown>(scope.type === 'group'
+        ? withScopeQuery('/api/group/workflows/file-sync-sources', scope)
+        : '/api/user/workflows/file-sync-sources', signal);
     const invalid = 'The File Sync source list returned an invalid response.';
     if (!isRecord(response) || !Array.isArray(response.sources) || typeof response.file_sync_enabled !== 'boolean') {
         throw new Error(invalid);
     }
     const sources = new Map<string, WorkflowFileSyncSource>();
     for (const entry of response.sources) {
-        if (!isRecord(entry) || entry.scope_type !== 'group' || entry.scope_id !== scope.groupId ||
+        if (!isRecord(entry) || typeof entry.scope_type !== 'string' ||
+            !(WORKFLOW_FILE_SYNC_SCOPE_TYPES as readonly string[]).includes(entry.scope_type) ||
+            typeof entry.scope_id !== 'string' || !entry.scope_id.trim() ||
+            scope.type === 'group' && (entry.scope_type !== 'group' || entry.scope_id !== scope.groupId) ||
             typeof entry.source_id !== 'string' || !entry.source_id.trim() ||
             typeof entry.name !== 'string' || typeof entry.label !== 'string' ||
             typeof entry.source_type !== 'string' || typeof entry.enabled !== 'boolean') {
             throw new Error(invalid);
         }
-        sources.set(entry.source_id, {
-            scope_type: 'group',
+        const source: WorkflowFileSyncSource = {
+            scope_type: entry.scope_type as WorkflowFileSyncScopeType,
             scope_id: entry.scope_id,
             source_id: entry.source_id,
             name: entry.name,
             source_type: entry.source_type,
             enabled: entry.enabled,
             label: entry.label || entry.name || entry.source_id,
-        });
+        };
+        sources.set(workflowFileSyncSourceKey(source), source);
     }
     return { fileSyncEnabled: response.file_sync_enabled, sources: [...sources.values()] };
 }

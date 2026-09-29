@@ -257,9 +257,7 @@ export function WorkflowsSection({
             />
 
             <p className="text-xs text-text-3">
-                {scope.type === 'group'
-                    ? 'Native V2 authoring is available for manual, interval and Monitor File Sync changes workflows, and for their alerts. Publication settings from existing workflows are preserved unchanged.'
-                    : 'Native V2 authoring is available for manual and interval workflows, and for their alerts. File sync and publication settings from existing workflows are preserved unchanged.'}
+                Native V2 authoring is available for manual, interval and Monitor File Sync changes workflows, and for their alerts. Publication settings from existing workflows are preserved unchanged.
             </p>
             {scope.type === 'group' ? (
                 <p className="text-xs text-text-3">Workflow requests stay scoped to this group, even if your active workspace changes elsewhere.</p>

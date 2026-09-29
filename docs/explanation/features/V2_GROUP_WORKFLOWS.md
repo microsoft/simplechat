@@ -16,6 +16,8 @@ Implemented in version: **0.261.141**, tracked in
 `application/single_app/config.py`.
 
 Personal workflows are unchanged. No new setting, route or container is added.
+From 0.261.200, the personal editor authors File Sync too; see
+[V2 Personal Workflow File Sync](V2_PERSONAL_WORKFLOW_FILE_SYNC.md).
 
 ## What changed
 
@@ -135,11 +137,6 @@ and cancel a group workflow. Before this version, V2 offered **Run** and
 
 ## Known limitations
 
-- **Personal workflows.** Personal File Sync authoring isn't part of this
-  release. From 0.261.144, a personal workflow that analyzes changed files can
-  be saved in V2; see the [Analyze changed files fix](../fixes/V2_GROUP_WORKFLOW_ANALYZE_CHANGED_FILES_FIX.md).
-  So a personal workflow whose stored source was deleted can't be fixed in V2:
-  the save is refused with a reviewed message and the draft is kept.
 - **Someone else saved the workflow first.** The editor sends the revision it
   opened, and the server refuses a save made from an older copy ("This workflow
   changed since it was opened. Reload it before saving."). So a save can never
@@ -148,6 +145,14 @@ and cancel a group workflow. Before this version, V2 offered **Run** and
   saved version, and your unsaved edits are lost. Note what you changed before
   reopening. The prompt, identity, endpoint and file source editors merge
   instead (version 0.261.152).
+
+Fixed in 0.261.200, and listed here as a limitation until then:
+- **Personal workflows.** Personal File Sync authoring wasn't part of this
+  release, so a personal workflow whose stored source was deleted couldn't be
+  fixed in V2. From 0.261.144, a personal workflow that analyzes changed files
+  could already be saved in V2; see the [Analyze changed files fix](../fixes/V2_GROUP_WORKFLOW_ANALYZE_CHANGED_FILES_FIX.md).
+  The personal editor now authors File Sync and marks a deleted source; see
+  [V2 Personal Workflow File Sync](V2_PERSONAL_WORKFLOW_FILE_SYNC.md).
 
 Fixed in 0.261.149, and listed here as limitations until then:
 - **Deleted sources.** A source deleted after the editor loaded its list made

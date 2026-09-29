@@ -131,12 +131,12 @@ export function WorkflowEditorDialog({
         task.runner.type === 'inherit' && !task.publication &&
         (task.input_processing === 'saved_record_report' || enclosingFlowLoopControls(draft, flowTaskNodeId(draft, task.id)).length > 0));
     const dirty = !sameWorkflowDefinition(baseline, draft) || fieldDrafts.pending;
-    const preserved = preservedWorkflowFieldLabels(original, scope);
+    const preserved = preservedWorkflowFieldLabels(original);
     const groupScope = scope.type === 'group';
-    const fileSyncSources = useWorkflowFileSyncSources(scope, groupScope && !readOnly);
-    const fileSyncTriggerOffered = groupScope && (draft.trigger_type === 'file_sync' ||
-        fileSyncSources.status === 'ready' && fileSyncSources.sources.length > 0);
-    const scheduled = draft.trigger_type === 'interval' || groupScope && draft.trigger_type === 'file_sync';
+    const fileSyncSources = useWorkflowFileSyncSources(scope, !readOnly);
+    const fileSyncTriggerOffered = draft.trigger_type === 'file_sync' ||
+        fileSyncSources.status === 'ready' && fileSyncSources.sources.length > 0;
+    const scheduled = draft.trigger_type === 'interval' || draft.trigger_type === 'file_sync';
     // Once loaded, the group's source list lets validation apply the save's File Sync gate and source checks.
     const fileSyncListing = useMemo<WorkflowFileSyncSourceListing | null>(() => (
         groupScope && fileSyncSources.status === 'ready' && fileSyncSources.fileSyncEnabled !== null
@@ -306,7 +306,7 @@ export function WorkflowEditorDialog({
                 return;
             }
             // A source deleted since the list loaded: reload it so the editor marks that source.
-            if (groupScope && workflowErrorCode(cause) === WORKFLOW_FILE_SYNC_SOURCE_UNAVAILABLE_CODE) fileSyncSources.retry();
+            if (workflowErrorCode(cause) === WORKFLOW_FILE_SYNC_SOURCE_UNAVAILABLE_CODE) fileSyncSources.retry();
             setError(workflowErrorMessage(cause, 'Could not save the workflow. Your draft has been retained.'));
         } finally {
             history.session.setSaving(false);
@@ -507,7 +507,7 @@ export function WorkflowEditorDialog({
                                             value={draft.trigger_type}
                                             onChange={(event) => {
                                                 const trigger = event.target.value as WorkflowDefinition['trigger_type'];
-                                                setWorkflow((current) => groupScope && trigger === 'file_sync' ? {
+                                                setWorkflow((current) => trigger === 'file_sync' ? {
                                                     ...current,
                                                     trigger_type: trigger,
                                                     file_sync: workflowMonitorFileSyncConfig(current.file_sync),
@@ -516,9 +516,7 @@ export function WorkflowEditorDialog({
                                         >
                                             <option value="manual">Manual</option>
                                             <option value="interval">Schedule</option>
-                                            {groupScope
-                                                ? fileSyncTriggerOffered ? <option value="file_sync">Monitor File Sync changes</option> : null
-                                                : draft.trigger_type === 'file_sync' ? <option value="file_sync">Existing file sync</option> : null}
+                                            {fileSyncTriggerOffered ? <option value="file_sync">Monitor File Sync changes</option> : null}
                                         </select>
                                     </label>
                                 )}
@@ -592,18 +590,16 @@ export function WorkflowEditorDialog({
                                 Effective runner: {workflowRunnerSummary(draft, options)}
                             </p>
                         </section>
-                        {scope.type === 'group' ? (
-                            <WorkflowFileSyncFields
-                                scope={scope}
-                                workflow={draft}
-                                sourceList={fileSyncSources}
-                                disabled={readOnly || saving}
-                                onChange={(update) => setWorkflow((current) => ({
-                                    ...current,
-                                    file_sync: update(workflowFileSyncConfig(current.file_sync)),
-                                }))}
-                            />
-                        ) : null}
+                        <WorkflowFileSyncFields
+                            scope={scope}
+                            workflow={draft}
+                            sourceList={fileSyncSources}
+                            disabled={readOnly || saving}
+                            onChange={(update) => setWorkflow((current) => ({
+                                ...current,
+                                file_sync: update(workflowFileSyncConfig(current.file_sync)),
+                            }))}
+                        />
                         <section className="rounded-2xl border border-edge p-4" aria-label="Workflow shared references">
                             <WorkflowDocumentPicker
                                 scope={scope}
