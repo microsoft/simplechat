@@ -20,6 +20,19 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
     *   The rules and the preference are shared with classic. Completed orchestrated answers notify too. V2 asks for browser permission when you send, when you turn the preference on, or from **Allow notifications**, and treats the preference as off until it has loaded.
     *   (Ref: `desktopNotifications.ts`, `PreferencesTab.tsx`, `Composer.tsx`, `orchestrationController.ts`, [Desktop Conversation Notifications](features/DESKTOP_CONVERSATION_NOTIFICATIONS.md))
 
+### **(v0.261.194)**
+
+#### New Features
+
+*   **Documents Record Where They Came From**
+    *   Documents that a workflow or a chat creates now record their origin on each document version: the workflow and run, or the conversation and message, plus any orchestration run and step. The server derives it only from bindings it already holds (the artifact's source, its workflow or orchestration producer, the publication receipt, and chat-upload metadata), never from client input or model output.
+    *   Origins are recorded for generated artifacts published from chats, orchestrations, workflow saved outputs and workflow runs, and for files uploaded in chat and saved to a workspace. A workflow run that publishes through the chat artifact pipeline is recorded as workflow output. Workspace uploads, File Sync, the external API and SimpleChat action uploads record no origin, and a new version uploaded by hand has none.
+    *   Documents a workflow saves get a removable `workflow` tag. In group and public workspaces it's added only when the publisher can manage tags there; the origin is recorded either way. Chat-created documents get no tag.
+    *   The V2 document details pane shows **Created by *workflow* · run *time*** or **Created in chat · *conversation title***, linking to that run in the workflow history or to the conversation. Readers who can't open the origin, or whose origin was deleted, see only "Created by a workflow" or "Created in a chat", with no names, titles or IDs.
+    *   No client can set or edit an origin. Every guarded document mutation route, including the bearer-token external API, refuses origin fields with `document_origin_server_managed`. Responses carry at most `origin_kind`, and single-document reads can ask for an access-checked `origin_summary` with `origin_summary=1`.
+    *   The personal, group and public document list routes accept `origin_workflow_id`, `origin_run_id` and `origin_conversation_id` filters, applied inside each list's existing parameterized, scoped Cosmos query. No search-index or deployer changes are needed.
+    *   (Ref: #1555, #1543, `functions_document_provenance.py`, `functions_documents.py`, `functions_artifact_publication.py`, `content_screening/access.py`, `route_frontend_chats.py`, `DocumentDetailsPane.tsx`, `WorkflowRunHistory.tsx`, [Document Provenance](features/DOCUMENT_PROVENANCE.md), [Uploading and managing documents](../guides/upload-and-manage-documents.md))
+
 ### **(v0.261.193)**
 
 #### New Features

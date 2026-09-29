@@ -69,6 +69,8 @@ the normal chat/workspace retention rules still apply.
 
 The response can reference the uploaded file when relevant. If enabled, **Open used documents** can show documents used by the conversation.
 
+When the upload is also saved to your personal or group workspace, the document remembers this conversation. Its V2 document details show **Created in chat · *conversation title*** under **Origin**, linking back here. See [Uploading and managing documents]({{ '/guides/upload-and-manage-documents/' | relative_url }}).
+
 ## Uploaded images (V2)
 
 From version **0.261.192**, an uploaded PNG, JPG, BMP, or TIFF image appears in the V2

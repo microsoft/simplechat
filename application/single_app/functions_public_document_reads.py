@@ -46,6 +46,14 @@ from functions_public_document_policy import (
     public_document_visible_to_role,
 )
 from functions_settings import get_settings
+from functions_document_provenance import (
+    ORIGIN_CONVERSATION_FILTER_PARAM,
+    ORIGIN_KIND_FIELD,
+    ORIGIN_RUN_FILTER_PARAM,
+    ORIGIN_SUMMARY_PARAM,
+    ORIGIN_WORKFLOW_FILTER_PARAM,
+    remember_document_origin_summary,
+)
 
 
 # Public workspaces have no cross-workspace share relationship in M3A, so there
@@ -60,8 +68,10 @@ PUBLIC_ARTIFACT_AWAITING_APPROVAL_STATUS = "Awaiting generated artifact approval
 PUBLIC_DOCUMENT_LIST_QUERY_PARAMS = frozenset({
     "place", "search", "tags", "classification", "page", "page_size",
     "sort_by", "sort_order", "author", "keywords", "abstract",
+    ORIGIN_WORKFLOW_FILTER_PARAM, ORIGIN_RUN_FILTER_PARAM, ORIGIN_CONVERSATION_FILTER_PARAM,
 })
 PUBLIC_DOCUMENT_NO_QUERY_PARAMS = frozenset()
+PUBLIC_DOCUMENT_DETAIL_QUERY_PARAMS = frozenset({ORIGIN_SUMMARY_PARAM})
 
 
 def validate_public_read_query(args, allowed):
@@ -73,7 +83,7 @@ def validate_public_read_query(args, allowed):
             raise PublicDocumentReadError("Duplicate query parameter.", 400)
 
 
-def _query_public_document_records(workspace_id, *, document_ids=None):
+def _query_public_document_records(workspace_id, *, document_ids=None, origin_filter=None):
     query = "SELECT * FROM c WHERE c.public_workspace_id = @workspace_id"
     parameters = [{"name": "@workspace_id", "value": workspace_id}]
     if document_ids is not None:
@@ -81,6 +91,11 @@ def _query_public_document_records(workspace_id, *, document_ids=None):
             return []
         query += " AND ARRAY_CONTAINS(@document_ids, c.id)"
         parameters.append({"name": "@document_ids", "value": list(document_ids)})
+    if origin_filter is not None:
+        # Parameterized origin conditions narrow the same workspace-scoped query; they never widen it.
+        origin_conditions, origin_parameters = origin_filter
+        query += "".join(f" AND {condition}" for condition in origin_conditions)
+        parameters.extend(origin_parameters)
     records = list(cosmos_public_documents_container.query_items(
         query=query, parameters=parameters, enable_cross_partition_query=True,
     ))
@@ -167,12 +182,12 @@ def count_current_public_documents(workspace_id):
     return len(current_public_document_records(_query_public_document_records(workspace_id)))
 
 
-def load_public_document_browser_documents(user_id, workspace_id):
+def load_public_document_browser_documents(user_id, workspace_id, *, origin_filter=None):
     """The current revisions the caller may see, projected. The list, its count,
     the facets and the tag counts are all computed from this one set, so an
     artifact the caller's role may not see is absent from every one of them."""
     require_public_document_read_context(user_id, workspace_id)
-    records = _query_public_document_records(workspace_id)
+    records = _query_public_document_records(workspace_id, origin_filter=origin_filter)
     _workspace, role = require_public_document_read_context(user_id, workspace_id)
     current = [
         document
@@ -242,13 +257,16 @@ def get_public_document_read_tags(user_id, workspace_id):
     return sorted(tags, key=lambda tag: tag["name"])
 
 
-def get_public_document_read_metadata(user_id, workspace_id, document_id):
+def get_public_document_read_metadata(user_id, workspace_id, document_id, *, include_origin_summary=False):
     _workspace, role = require_public_document_read_context(user_id, workspace_id)
     records = _query_public_document_records(workspace_id, document_ids=[document_id])
     if not records:
         raise PublicDocumentReadError("Document not found or access denied.", 404)
     payload = _project_public_document(records[0], workspace_id, role=role)
     payload["is_current_version"] = is_current_public_document(records[0])
+    # Held or pending documents project no origin_kind, so they never resolve a summary.
+    if include_origin_summary and payload.get(ORIGIN_KIND_FIELD):
+        remember_document_origin_summary(user_id, records[0])
     require_public_document_read_context(user_id, workspace_id)
     return payload
 

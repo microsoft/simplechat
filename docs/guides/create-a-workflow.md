@@ -579,6 +579,22 @@ prove that its destination has searchable content. See
 [Workflow publication completion](../explanation/features/WORKFLOW_PUBLICATION_COMPLETION.md)
 for readiness proof, screening and recovery limitations.
 
+## Find documents a workflow saved
+
+Starting in **0.261.194**, a document that a workflow publishes to a workspace
+records which workflow and run created it. In the V2 workspace, its document
+details show **Created by *workflow name* · run *date and time*** under
+**Origin**. Select it to open this Workflows section with that run expanded in
+the history. If the run isn't among the 10 most recent runs, the history says
+so.
+
+These documents also get a removable `workflow` tag, so you can filter a
+workspace for workflow output. In a group or public workspace the tag is added
+only when the person publishing can manage tags there; the origin is recorded
+either way. Workspace members who can't open your workflow see only **Created
+by a workflow**. See
+[Uploading and managing documents]({{ '/guides/upload-and-manage-documents/' | relative_url }}).
+
 ## Troubleshooting
 
 | Symptom | Likely cause | Fix |

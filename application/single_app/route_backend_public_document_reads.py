@@ -27,6 +27,7 @@ from functions_public_document_access import (
 )
 from functions_public_document_policy import public_document_capabilities
 from functions_public_document_reads import (
+    PUBLIC_DOCUMENT_DETAIL_QUERY_PARAMS,
     PUBLIC_DOCUMENT_LIST_QUERY_PARAMS,
     PUBLIC_DOCUMENT_NO_QUERY_PARAMS,
     get_public_document_facets,
@@ -38,6 +39,7 @@ from functions_public_document_reads import (
     refresh_public_document_read_payloads,
     validate_public_read_query,
 )
+from functions_document_provenance import DocumentOriginFilterError, origin_list_filter, summary_requested
 from swagger_wrapper import swagger_route, get_auth_security
 
 
@@ -115,7 +117,11 @@ def register_route_backend_public_document_reads(bp):
         validate_public_read_query(request.args, PUBLIC_DOCUMENT_LIST_QUERY_PARAMS)
         workspace, role = require_public_document_read_context(user_id, workspace_id)
         g.public_document_read_ids = [workspace_id]
-        documents = load_public_document_browser_documents(user_id, workspace_id)
+        try:
+            origin_filter = origin_list_filter(user_id, request.args)
+        except DocumentOriginFilterError as filter_error:
+            return jsonify({'error': filter_error.public_message}), filter_error.status_code
+        documents = load_public_document_browser_documents(user_id, workspace_id, origin_filter=origin_filter)
         payload = query_public_document_list(documents, workspace_id, request.args)
         # Derived from the same policy the workspace context advertises, so the
         # list flag and `document_management.operations` cannot disagree.
@@ -168,9 +174,11 @@ def register_route_backend_public_document_reads(bp):
         if not user_id:
             return jsonify({'error': 'User not authenticated'}), 401
         _reject_public_read_body()
-        validate_public_read_query(request.args, PUBLIC_DOCUMENT_NO_QUERY_PARAMS)
+        validate_public_read_query(request.args, PUBLIC_DOCUMENT_DETAIL_QUERY_PARAMS)
         g.public_document_read_ids = [workspace_id]
-        return jsonify(get_public_document_read_metadata(user_id, workspace_id, document_id)), 200
+        return jsonify(get_public_document_read_metadata(
+            user_id, workspace_id, document_id, include_origin_summary=summary_requested(request.args),
+        )), 200
 
     @bp.route('/api/public-workspaces/<workspace_id>/documents/<document_id>/versions', methods=['GET'])
     @swagger_route(security=get_auth_security())
