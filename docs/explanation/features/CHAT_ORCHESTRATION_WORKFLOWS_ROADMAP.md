@@ -7,7 +7,7 @@ doesn't change the version. Each phase records the version it ships in.
 
 Planning branch: `paullizer-orchestration-workflows-capability`.
 
-Status updated: **2026-09-29**, with `paullizer-react-v2-ui` at 0.261.195. The PRs for this work target that branch
+Status updated: **2026-09-29**, with `paullizer-react-v2-ui` at 0.261.203. The PRs for this work target that branch
 (§10).
 
 This is the master plan for letting chat orchestration propose, create, run and hand off saved workflows. It's the
@@ -25,26 +25,25 @@ Dependencies: V2 chat orchestration (`functions_orchestration*.py`), durable wor
 |---|---|---|---|---|
 | 0 | Tracking: roadmap doc + GitHub issues | [#1543](https://github.com/microsoft/simplechat/issues/1543) (umbrella) | — | **Done** ([#1557](https://github.com/microsoft/simplechat/pull/1557)) |
 | 1 | Calendar schedules (day, time, timezone) | [#1544](https://github.com/microsoft/simplechat/issues/1544) | — | **Done**: [#1561](https://github.com/microsoft/simplechat/pull/1561), v0.261.193 |
-| 2 | Workflow draft service (dry-run build, blueprint builder, provenance) | [#1545](https://github.com/microsoft/simplechat/issues/1545) | 1 | **In progress**. It also takes gotcha 13 and two V2 editor follow-ups from Phase 1 (§6) |
-| 3 | AI workflow assistant (Score-style assisted editing in the V2 editor) | [#1548](https://github.com/microsoft/simplechat/issues/1548) | 3a: — · 3b: 2, A2 · 3c: 3a, 3b, A1 | Not started. Ships as three PRs (§6); 3a, change tracking, needs nothing else and is next |
-| 4 | Orchestration proposes workflows (`workflow_propose` + Approve / Deny / Edit card) | [#1547](https://github.com/microsoft/simplechat/issues/1547) | 2 | Not started. Planned as a PR stacked on Phase 2's once that one is reviewed |
+| 2 | Workflow draft service (dry-run build, blueprint builder, provenance) | [#1545](https://github.com/microsoft/simplechat/issues/1545) | 1 | **Done**: [#1566](https://github.com/microsoft/simplechat/pull/1566), v0.261.202. It also took gotcha 13 and Phase 1's two V2 editor follow-ups |
+| 3 | AI workflow assistant (Score-style assisted editing in the V2 editor) | [#1548](https://github.com/microsoft/simplechat/issues/1548) | 3a: — · 3b: 2, A2 · 3c: 3a, 3b, A1 | **3a done**: [#1569](https://github.com/microsoft/simplechat/pull/1569), v0.261.203. **3b in progress**; 3c follows 3b |
+| 4 | Orchestration proposes workflows (`workflow_propose` + Approve / Deny / Edit card) | [#1547](https://github.com/microsoft/simplechat/issues/1547) | 2 | **In progress**. Its PR targets `paullizer-react-v2-ui` now that Phase 2 has landed, and it includes personal File Sync authoring in the V2 editor (gotcha 58) |
 | 5 | Orchestration runs existing workflows (`workflow_run`, start-and-link) | [#1551](https://github.com/microsoft/simplechat/issues/1551) | 4 | Not started |
 | 6 | Results back in chat: 6a results reader + **Follow up**; 6b post-back delivery, run card and chat-list indicator; 6c in-plan wait (later) | [#1546](https://github.com/microsoft/simplechat/issues/1546) | 6a: 4 · 6b: 5, 6a, N1 | Not started |
 | 7 | Hand-off of big one-time jobs | [#1549](https://github.com/microsoft/simplechat/issues/1549) | 4, 6b | Not started |
 | 8 | Follow-ons: group workflows, #1347 parity, plan-replay task | [#1550](https://github.com/microsoft/simplechat/issues/1550) | 4+ | Not started |
-| A1 | Shared AI-assist thread: immediate send, Cancel/Retry, one component for every assist editor | [#1552](https://github.com/microsoft/simplechat/issues/1552) | — | **In review**: [#1564](https://github.com/microsoft/simplechat/pull/1564) |
-| A2 | `#` document references in AI-assist inputs: plan editor now, workflow assistant via Phase 3. Not the artifact editors (Mermaid, chart, image) | [#1556](https://github.com/microsoft/simplechat/issues/1556) | A1 | **In progress** |
+| A1 | Shared AI-assist thread: immediate send, Cancel/Retry, one component for every assist editor | [#1552](https://github.com/microsoft/simplechat/issues/1552) | — | **Done**: [#1564](https://github.com/microsoft/simplechat/pull/1564), v0.261.200 |
+| A2 | `#` document references in AI-assist inputs: plan editor now, workflow assistant via Phase 3. Not the artifact editors (Mermaid, chart, image) | [#1556](https://github.com/microsoft/simplechat/issues/1556) | A1 | **Done**: [#1568](https://github.com/microsoft/simplechat/pull/1568), v0.261.201. It merged into A1's branch and landed with #1564 |
 | N1 | V2 notifications: bell and panel with deep links; the existing Desktop notifications preference works in V2 | [#1554](https://github.com/microsoft/simplechat/issues/1554) | — | **Done**: [#1563](https://github.com/microsoft/simplechat/pull/1563), v0.261.195 |
-| N2 | Animated workflow alerts in V2: a notice with a visual bell jingle that opens into the full alert; two entrance styles tried in a dev-only lab, one ships | [#1553](https://github.com/microsoft/simplechat/issues/1553) | N1 | **In progress**. The lab review picked style A, the sidebar callout |
+| N2 | Animated workflow alerts in V2: a notice with a visual bell jingle that opens into the full alert; two entrance styles tried in a dev-only lab, one ships | [#1553](https://github.com/microsoft/simplechat/issues/1553) | N1 | **Done**: [#1567](https://github.com/microsoft/simplechat/pull/1567), v0.261.199. Style A, the sidebar callout, shipped |
 | P | Document provenance: hidden origin IDs on saved documents, a removable `workflow` tag, "Open the run / chat" links | [#1555](https://github.com/microsoft/simplechat/issues/1555) | — | **Done**: [#1562](https://github.com/microsoft/simplechat/pull/1562), v0.261.194 |
 | — | `#` references + document search in the orchestration question card | — | — | **Already done** (`7c355534f`). No new work; A1's Playwright run includes a regression check |
 
-Track A (AI-assist UX) is independent of the workflow phases. It fixes a live UX bug in the existing editors and can
-ship first, in parallel with Phase 1. Phase 3 ships as three PRs: 3a (change tracking) is client-only and can start
-at any time, 3b follows Phase 2 and A2, and 3c follows 3a, 3b and A1. Phases 3 and 4 can proceed in parallel after
-Phase 2. If Phase 3 ships first, the proposal card's **Edit** opens the editor with the assistant available. Tracks N
-(V2 notifications) and P (document provenance) are independent too. N1 has landed, so 6b can rely on the V2 bell for
-undeliverable results. N2 follows N1.
+Track A (AI-assist UX) is independent of the workflow phases, and both of its parts have landed (#1564). Phase 3 ships
+as three PRs: 3a (change tracking) has landed, 3b is in progress now that Phase 2 and A2 have landed, and 3c follows 3b.
+Phases 3 and 4 proceed in parallel. If Phase 3 ships first, the proposal card's **Edit** opens the editor with the
+assistant available. Tracks N (V2 notifications) and P (document provenance) are independent too, and all three of
+their items have landed, so 6b can rely on the V2 bell for undeliverable results.
 
 Repository follow-ups found along the way, not tied to one phase:
 
@@ -52,6 +51,26 @@ Repository follow-ups found along the way, not tied to one phase:
   `test_docs_release_notes_integrity.py` fails on the base. The PRs above leave them alone; regenerate them once, in a
   docs-only change, after the in-flight PRs land.
 - Other docs pages have pre-existing broken relative links (`test_docs_link_integrity.py`).
+- The PR guardrail workflows (broken access control, XSS sinks, Swagger routes, Python syntax, the malicious-PR review
+  and CodeQL) run only for PRs into `Development` (a few also `main` or `Staging`), so none of them run on PRs into
+  `paullizer-react-v2-ui`. Until that changes, run the same scripts locally before opening each PR into that branch.
+- `scripts/check_xss_sinks.py` scans only `.js`, `.html` and `.py` files, so the V2 app's `.ts` and `.tsx` code has no
+  XSS sink check.
+- Under pytest, a test function that returns `False` passes with only a `PytestReturnNotNoneWarning`, and many
+  functional tests use that style, including the docs coverage, site-quality, link-integrity and release-notes tests.
+  Run those as `python <file>`, which exits non-zero on a `False` result. Treating that warning as an error would close
+  the gap.
+- Two functional tests take about ten minutes each and are CPU-bound in
+  `functions_workflow_node_results._cached_children`:
+  `test_workflow_flow_inspection.py::test_exact_repeat_round_1001_is_lifetime_not_current_batch_or_live_revision` and
+  `test_workflow_repeat_execution.py::test_real_thousand_round_batch_then_lifetime_round_1001`. Separately,
+  `test_workflow_document_picker_recent_targets.py` leaves a stub `functions_search` module in `sys.modules`, which
+  breaks later tests in the same process, such as `test_orchestration_research_pre_effect.py`.
+- The V2 Flow canvas rebuilds every node on each render of `WorkflowFlowAuthoring`: the `nodes` memo in
+  `WorkflowFlowCanvas.tsx` depends on callbacks that change every render (`onCollapse={collapse}`, and the dialog's
+  inline `onSelect`). React Flow drops a rebuilt node's handle bounds until it measures the node again, so the edges
+  detach briefly. Under load, the edge wait in `test_save_failures_retain_flow_fields…` (`ui_tests`) can time out.
+  Stable callbacks would fix it.
 
 ## 1. Goal
 
@@ -455,13 +474,14 @@ Rules for the assistant:
   - your message moves into the thread immediately and the input clears
   - Cancel and Retry work
   - existing revision behavior is unchanged
-- **Status: in review** in [#1564](https://github.com/microsoft/simplechat/pull/1564). Choices made there that later
-  phases build on:
+- **Shipped** in [#1564](https://github.com/microsoft/simplechat/pull/1564) (v0.261.200). Choices made there that
+  later phases build on:
   - A retry reuses its submission ID only while the request is unchanged, and otherwise gets a fresh one, because the
     server ties an ID to the first request it saw.
   - Cancel discards the plan revision on the server. In the block and image editors it aborts the request, and a late
     result is recognized by its submission ID.
-  - The restricted `#` mode stays off in all four editors until A2.
+  - Input over the 2,000-character limit is refused, not cut short.
+  - The restricted `#` mode stays off in the diagram, chart and image editors. A2 turned it on in the plan editor.
 - **Follow-ups** from #1564:
   - Shared diagram and chart saves are last-writer-wins (an upsert without an etag), so in a shared chat a retry that
     races its own first attempt can replace it. An etag-guarded save for shared block edits would close this.
@@ -491,9 +511,30 @@ Rules for the assistant:
 - **Done when**:
   - a user can `#` a document in the plan editor's Ask AI and the revised plan uses it
   - unauthorized or stale references are rejected with a clear message
-- **Status: in progress.** A `#` reference keeps the composer's meaning: a plan with no document or tag selection is
-  narrowed to the referenced items, and the editor says so when a revision narrows a search that was unrestricted
-  (gotcha 60).
+- **Shipped** in [#1568](https://github.com/microsoft/simplechat/pull/1568) (v0.261.201), which merged into A1's
+  branch and landed with #1564. A `#` reference keeps the composer's meaning: a plan with no document or tag selection
+  is narrowed to the referenced items, and the editor says so when a revision narrows a search that was unrestricted
+  (gotcha 60). Choices that Phase 3 builds on:
+  - The authorizer for surfaces without a conversation is `resolve_scope_references`
+    (`functions_orchestration_context.py`). It accepts documents and tags only: no whole workspaces, chat attachments
+    or `chat` scope. The plan editor applies the conversation's workspace lock, and the workflow assistant is expected
+    to pass `allowed_workspaces`.
+  - Limits: 20 distinct references per request (at most 100 entries before deduplication) and 100 per plan; IDs up to
+    512 characters and labels up to 200.
+  - Errors: 400 `reference_unavailable`, `reference_limit` or `invalid_request`; 503 `reference_check_failed`, which is
+    safe to retry.
+  - A revision widens the scope back to cover every source the current plan uses, each authorized again, so it never
+    narrows an existing source away.
+- **Follow-ups** from #1568:
+  - Answering an editor question merges references with the same narrowing hazard that A2's widening fixes for Ask
+    AI. It predates A2.
+  - `searchContextCandidates` attributes the tag vocabulary to the first group or public workspace, and tags match by
+    name across the plan's workspaces. The server refuses a misattributed tag with a clear message.
+  - The Escape guard for `#` pickers applies only to the plan editor dialog; generalize it.
+  - When the re-check before planning refuses a stored reference, the plan editor shows the question card's wording,
+    "The answers were not valid."
+  - In `ComposerEditor`, a text change without key events, such as a mouse paste or dictation, can undo the first arrow
+    key or Escape in an open `#` list.
 
 #### Already done: `#` references in the orchestration question card
 
@@ -630,6 +671,24 @@ that opens into the full alert.
   - notify-only alerts never pop up, and each alert shows once across tabs
   - the timers, grouping and actions work, and reduced motion is respected
   - the production bundle contains no lab code
+- **Shipped** in [#1567](https://github.com/microsoft/simplechat/pull/1567) (v0.261.199), with style A. Choices that
+  later phases build on:
+  - Closing the notice or the card never marks an alert read. The alerts stay claimed, so they don't pop up again.
+  - **Open workflow** carries the run through P's link parameters. The alert's own "Open workflow" conversation link is
+    labelled **Open workflow conversation** in V2, so the two don't clash.
+  - The workflow-alerts route takes `since_hours`, bounded to 1–1,440 (the alert TTL); V2 asks for 24.
+  - The alert lab stays at `/v2/dev/alert-lab`, registered only in development builds.
+- **Follow-ups** from #1567:
+  - **Open run** (6b): have `v2WorkflowRunPath()` return the run page's path; the card then shows Open run in place
+    of Open workflow.
+  - **Ask about this** (6a): have `workflowAlertFollowUpAction` return `{ label, run }`.
+  - Claims are per browser profile, and classic tabs keep their own pop-ups, so a user with classic and V2 both open
+    can see an alert in each.
+  - In a quiet tab an alert can take up to 5 minutes to appear, because of N1's poll backoff. Focusing the tab reads at
+    once.
+  - The light-theme primary button contrast is 4.49:1, just under 4.5:1. It's a design-token issue shared by every V2
+    primary button.
+  - The media slot `guides/manage-notifications-v2-alert-notice.png` is outstanding.
 
 ### Track P — Document provenance (independent)
 
@@ -730,6 +789,40 @@ that opens into the full alert.
   `interval` trigger is labeled "Schedule".
 - **Done when** a blueprint validates with zero writes, invalid or forbidden input is rejected with clear codes, and
   save behavior is byte-for-byte unchanged.
+- **Shipped** in [#1566](https://github.com/microsoft/simplechat/pull/1566) (v0.261.202). Choices that later phases
+  build on:
+  - Digest alerts are stored as two notify-only rules (`alert_mode: rules`): **Run completed** at the chosen severity
+    and **Run had errors** at `low`. A stored `every_run` mode would always pop up.
+  - Blueprint intervals are minutes (1–59) or hours (1–24). A model can't choose seconds or name a model; the model
+    runner is `inherit`, the default model.
+  - Created workflows are paused unless the caller enables them, and they're durable, with chat capabilities off and
+    `error_handling: halt`.
+  - The payload dry runs (`dry_run_personal_workflow`, `dry_run_group_workflow`) return the save routes' codes. When
+    the user edits a proposal before accepting it, `create_personal_workflow_from_payload` creates the edited workflow
+    under the proposal's ID and origin.
+  - The limits are `chat_orchestration_max_workflows_per_user` (default 20, range 1–100) and
+    `chat_orchestration_min_workflow_interval_seconds` (default 3,600, range 60–86,400). The cadence floor applies only
+    when a workflow is created, and the cap is soft: simultaneous accepts can exceed it by the number in flight.
+  - The run-time line is added only when the stored trigger is scheduled (interval or File Sync) and its schedule is a
+    calendar schedule. The line is part of a task's input digest, so after an upgrade from 0.261.193 through 0.261.201,
+    a durable calendar run that was still in progress pauses once when it resumes, with "The saved task inputs
+    changed".
+  - Phase 1's editor follow-ups are done: the V2 editor opens a schedule it can't show exactly as read-only and keeps
+    it unchanged (`V2_WORKFLOW_UNSUPPORTED_SCHEDULE_FIX.md`), and the scheduled trigger option is **Schedule**.
+- **Follow-ups** from #1566:
+  - For Phase 4: capability-aware agent matching (does the agent have the email, OpenAPI or MCP action a task
+    needs?), URL Access for workflows created from chat, a file-name-to-handle alias generator, and a structured-output
+    variant of the schema for the planner.
+  - For #1547: whether an accepted proposal stays spent after its workflow is deleted.
+  - Check that the default model is available when drafting, and that a blueprint whose tasks need Microsoft 365 sets
+    `run_as: self`.
+  - The scheduler reads a stored schedule's kind and unit exactly, while saves canonicalize them, so a kind of
+    ` Calendar ` is never scheduled and a unit of ` Minutes ` runs as hours. Normalizing in `compute_next_run_at` would
+    remove the difference. The workflow list normalizes before it describes a schedule, so it labels
+    `{unit: ' Minutes ', value: 2}` "Every 2 minutes".
+  - `normalizeWorkflowDefinition` still reads an unknown `trigger_type` as manual, the same kind of substitution the
+    unsupported-schedule fix removed.
+  - Pre-existing: a `DocumentHeldError` raised during a save surfaces as a 500 from the save routes.
 
 ### Phase 3 — AI workflow assistant
 
@@ -770,6 +863,24 @@ Phase 3 ships as three PRs. 3a needs nothing else, 3b needs Phase 2 and A2, and 
       applies
   - "Compare every new document against #checklist" adds `#checklist` as a shared reference that the review task
     uses, "investigate #incident-report" binds it to one task only, and an ambiguous request gets a question instead.
+- **3a shipped** in [#1569](https://github.com/microsoft/simplechat/pull/1569) (v0.261.203). What 3b and 3c build on:
+  - An AI candidate enters the editor only through `WorkflowAuthoringSession.applyAssist(candidate, {turnId, label})`
+    (`WorkflowAuthoringHistory.tsx`). It refuses the fields in `ASSIST_FORBIDDEN_FIELDS` (`is_enabled`,
+    `m365_run_as_user_id`, `definition_version`, `id`, `user_id`, `group_id` and `url_access_enabled`), any change to a
+    task's `approval`, and an ID that changes meaning. 3b's server enforces the same lists.
+  - `revertTurn` reverts a key only while it still holds the value the turn left, and returns the reverted and skipped
+    key lists. An unknown or evicted turn returns `unavailable`.
+  - Fix: the alert fields and `file_sync` became authored fields. Before, the editor refused alert edits and group File
+    Sync edits on structured (v3) workflows (`STRUCTURED_WORKFLOW_ALERT_FILE_SYNC_EDITS_FIX.md`).
+  - The schedule and trigger form one tracked key, `schedule`. File Sync has no inline highlight: it's listed in the
+    **Changes** tab, and Jump goes to its section. The Flow canvas lists removed blocks in a **Removed blocks** strip
+    above the canvas.
+  - A workflow that's never been saved points out only AI changes, and a read-only editor (viewers, active runs,
+    unsupported definitions or schedules) tracks nothing.
+  - History is recorded for every definition version, and Undo/Redo stays v3-only.
+  - The **Review before saving** step for AI changes can't be reached until 3c.
+- **Follow-ups** from #1569: a word-level diff for long text (§9); inline File Sync highlights once Phase 4's personal
+  File Sync authoring lands; inline removed rows on the Flow canvas if the canvas gains room.
 
 ### Phase 4 — Orchestration proposes workflows
 
@@ -1148,11 +1259,11 @@ chat later (decision #11). Nothing stays connected, and closing the browser does
 | Phase | Decision | Recommendation |
 |---|---|---|
 | 1 | Include monthly? Admin minimum interval for new interval schedules? | **Settled in #1561**: monthly is included (day of month, clamped), and `workflow_min_schedule_interval_seconds` applies only to new or changed interval schedules. |
-| 2 | Per-user cap and minimum cadence defaults for orchestration-created workflows | Cap 20, minimum hourly (admin-editable) |
+| 2 | Per-user cap and minimum cadence defaults for orchestration-created workflows | **Settled in #1566**: a cap of 20 (range 1–100) and a minimum interval of one hour (range 1 minute to 1 day), both admin-editable. The interval floor applies only when a workflow is created. |
 | A1 | Keep `/` prompts in assist inputs? Should the image editor's transcript be local only, or stored? | **Settled in #1564**: `/` prompts are hidden, and the image transcript stays in memory for the tab (up to 20 exchanges). |
 | A2 | Add a "search all my documents" toggle to the plan editor? | A later option, not part of A2. Grounding diagrams and charts in documents is decided: not planned (decision #8). |
 | 3 | Setting key and default for the assistant; persist the side-channel transcript? | Default on when `allow_user_workflows`; ephemeral in v1 |
-| 3 | Inline word diff for long text: a local helper or a bundled npm package? | Start with a small local helper. |
+| 3 | Inline word diff for long text: a local helper or a bundled npm package? | **Deferred in #1569**: long text shows its previous value under **Previously**. When the word diff is added, start with a small local helper. |
 | 4 | Proposal expiry; where Deny state persists | Expire after 14 days; persist with the run output |
 | 6a | How long run results stay available for Follow up | Until the run is deleted; add an admin retention setting later |
 | 6b | How long to keep trying to deliver | The durable deadline plus 24 hours, then the undeliverable notice |
@@ -1160,8 +1271,8 @@ chat later (decision #11). Nothing stays connected, and closing the browser does
 | 6c | Add an in-plan wait? | Only if planners need a workflow's output later in the same plan |
 | N1 | Where the bell sits in the sidebar | **Settled in #1563**: beside the brand mark in the header row, with a dot when collapsed |
 | N2 | Which entrance style ships | **Settled in the lab review**: A, the sidebar callout. It was judged with the rail collapsed and on a 360 px phone, not only on an expanded desktop |
-| N2 | How old an unread alert can be and still pop up | 24 hours; older ones stay in the bell |
-| N2 | Keep the alert lab after the choice? | Keep it, dev-only, as the test bed for later alert changes |
+| N2 | How old an unread alert can be and still pop up | **Settled in #1567**: 24 hours; older ones stay in the bell |
+| N2 | Keep the alert lab after the choice? | **Settled in #1567**: kept, dev-only, at `/v2/dev/alert-lab`, as the test bed for later alert changes |
 | P | Search-index provenance fields | **Deferred in #1562** until a search use case appears. It needs the index schema and deployer change |
 | — | Detached orchestration answers don't mark the chat unread today (gotcha #34) | A small, separate fix that reuses 6b's helper |
 | 7 | Auto-archive vs. disable one-time workflows | Disable and label; the user can delete |
@@ -1176,10 +1287,13 @@ chat later (decision #11). Nothing stays connected, and closing the browser does
    explicitly. Merging into `paullizer-react-v2-ui` doesn't close issues, because `Closes #N` only fires on the default
    branch.
 5. When a PR builds on another that hasn't merged yet, branch from that PR's head, open it against that PR's branch,
-   and register the pair as a native GitHub stack once both are open. Keep branches current by merging the base branch
-   in rather than rebasing, so no branch needs a force-push.
+   and register the pair as a native GitHub stack once both are open. A native stack needs both heads in this
+   repository, so when a head is pushed to a fork, the PR's base branch alone keeps the order. Keep branches current by
+   merging the base branch in rather than rebasing, so no branch needs a force-push.
 6. PRs open at the same time reserve the next free third-segment versions in their intended merge order. If the order
    changes, renumber before merging.
+7. `paullizer-react-v2-ui` has no required reviews or branch rules, so a mergeable PR into it can be merged as soon as
+   its checks pass. Open PRs as drafts, and mark them ready only after review.
 
 ## 11. Validation per phase
 
