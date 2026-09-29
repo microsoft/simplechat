@@ -2,8 +2,8 @@
 # test_workflow_run_as_fingerprint_parity.py
 """
 Functional test for the workflow editor's Run as fingerprint mirror.
-Version: 0.261.201
-Implemented in: 0.261.201
+Version: 0.261.203
+Implemented in: 0.261.203
 
 This test ensures that the V2 workflow editor's list of Run as fingerprint fields
 (application/v2_ui/src/lib/workflowRunAsFingerprint.ts) matches the fields the server
@@ -106,7 +106,7 @@ def measured_server_fields(candidates):
 
 
 def test_version_is_at_least_the_implementing_release():
-    assert_app_version_at_least("0.261.201")
+    assert_app_version_at_least("0.261.203")
     print("  ok  the configured version includes the Run as fingerprint mirror")
 
 

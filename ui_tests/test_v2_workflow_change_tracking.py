@@ -1,8 +1,8 @@
 # test_v2_workflow_change_tracking.py
 """
 Offline real-bundle browser regressions for change tracking in the V2 workflow editor.
-Version: 0.261.201
-Implemented in: 0.261.201
+Version: 0.261.203
+Implemented in: 0.261.203
 
 Covers the highlight on each unsaved change (its author badge, Previously value and Revert),
 Removed · Restore rows on the List and Flow surfaces, and the side panel's Changes tab with
@@ -332,7 +332,7 @@ def test_structured_highlights_follow_undo_and_redo(authoring_ui):
 
 
 def test_structured_alert_edits_apply_and_undo(authoring_ui):
-    """Before 0.261.201 a structured draft rejected alert edits as a change to saved identity."""
+    """Before 0.261.203 a structured draft rejected alert edits as a change to saved identity."""
     ui = authoring_ui
     editor = authoring.open_editor(ui)
     region = editor.get_by_role("region", name="Alerts", exact=True)

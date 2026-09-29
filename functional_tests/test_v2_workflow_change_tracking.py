@@ -2,15 +2,16 @@
 # test_v2_workflow_change_tracking.py
 """
 Functional test for change tracking in the V2 workflow editor.
-Version: 0.261.201
-Implemented in: 0.261.201
+Version: 0.261.203
+Implemented in: 0.261.203
 
 This test ensures the workflow editor tracks every unsaved change against the version it opened:
 each change is keyed by a stable ID, so a reorder is one change rather than an edit to every
 task; attribution always agrees with the authoring history through undo, redo, coalescing and
 eviction; a revert, restore, or AI assist is a new undoable history entry that never deletes a
-step or silently discards later work; and an assist candidate can never change enablement, Run
-as, identity, or a task approval.
+step or silently discards later work; an assist candidate can never change enablement, Run
+as, identity, or a task approval; and a keystroke re-diffs only the task it changed, so the
+editor stays responsive with 100 tasks.
 
 The behaviour lives in TypeScript, so the checks are bundled with esbuild and run under node by
 test_v2_workflow_change_tracking_logic.ts, following test_v2_chart_editor.py.
@@ -29,7 +30,7 @@ sys.path.insert(0, str(REPO_ROOT / "functional_tests"))
 
 from test_support.versioning import assert_app_version_at_least  # noqa: E402
 
-IMPLEMENTED_IN = "0.261.201"
+IMPLEMENTED_IN = "0.261.203"
 
 CHANGE_TRACKING_TS = V2_SRC / "lib" / "workflowChangeTracking.ts"
 HISTORY_TS = V2_SRC / "lib" / "workflowAuthoringHistory.ts"
@@ -116,7 +117,7 @@ def test_the_typescript_logic_checks_pass():
         raise AssertionError("the TypeScript logic checks failed")
 
     passed = result.stdout.count("  ok  ")
-    assert passed >= 120, f"expected the full check suite, saw {passed} checks"
+    assert passed >= 130, f"expected the full check suite, saw {passed} checks"
     print(f"  ok  {passed} TypeScript logic checks passed")
 
 

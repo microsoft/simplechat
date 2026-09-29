@@ -1,7 +1,7 @@
 // test_workflow_authoring_session.js
 /*
 Atomic authoring-session, buffer, replay, and Save payload contracts.
-Version: 0.261.201
+Version: 0.261.203
 Implemented in: 0.261.123
 
 Executes the production TypeScript session and field store, without a browser,
