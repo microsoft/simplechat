@@ -62,7 +62,7 @@ from functions_orchestration_context import (
 )
 from functions_orchestration_deliverables import explicit_image_shortfalls
 from functions_orchestration_registry import (
-    CAPABILITY_TABULAR_ANALYZE, DEPENDENCY_PLAN_CONTRACT_VERSION,
+    CAPABILITY_TABULAR_ANALYZE, CAPABILITY_WORKFLOW_PROPOSE, DEPENDENCY_PLAN_CONTRACT_VERSION,
     admitted_export_pairs, get_capability,
     resolve_available_capability_ids,
 )
@@ -580,7 +580,38 @@ def _step_record(context, step, index, status, result, started_at, completed_at,
         for field in ('outputs', 'output_error'):
             if field in result:
                 record[field] = deepcopy(result[field])
+    if step.get('capability_id') == CAPABILITY_WORKFLOW_PROPOSE and isinstance(result.get('workflow_proposal'), dict):
+        # Server-only: the proposal card and its accept route read it; public_step_record drops it.
+        record['workflow_proposal'] = deepcopy(result['workflow_proposal'])
     return record
+
+
+def _restore_workflow_proposal(step, context, status, result, *, settings, user_id):
+    """Describe again a completed workflow proposal whose step result came back without it.
+
+    A retained or recovered result is rebuilt from the task result alone, which does not carry
+    the proposal's description.
+    """
+    if (
+        step.get('capability_id') != CAPABILITY_WORKFLOW_PROPOSE or status != STEP_STATUS_COMPLETED
+        or not isinstance(result, dict) or result.get('task_result') is None
+        or isinstance(result.get('workflow_proposal'), dict)
+    ):
+        return result
+    try:
+        from functions_orchestration_workflows import rebuild_workflow_proposal
+
+        sidecar = rebuild_workflow_proposal(
+            step, context, settings=settings, user_id=user_id, task=result['task_result'],
+        )
+    except Exception as exc:
+        log_event(
+            f'{_LOG_PREFIX} A recovered workflow proposal could not be described.',
+            level=logging.WARNING,
+            extra={**_step_log_context(context, step), 'error_type': type(exc).__name__},
+        )
+        return result
+    return {**result, 'workflow_proposal': sidecar} if isinstance(sidecar, dict) else result
 
 
 def _persist(persist, record_type, record):
@@ -1425,6 +1456,7 @@ def _execute_dependency_plan(
             context._completed_result_step_ids.add(step_id)
         if step['role'] == 'render' and status == STEP_STATUS_COMPLETED:
             context.artifacts.extend(deepcopy(result['artifacts']))
+        result = _restore_workflow_proposal(step, context, status, result, settings=settings, user_id=user_id)
         record = _step_record(context, step, index, status, result, started_at, completed_at, elapsed)
         record.update({
             'checkpoint_available': checkpoints is not None

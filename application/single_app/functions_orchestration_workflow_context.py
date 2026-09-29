@@ -34,6 +34,13 @@ from functions_m365_operations import (
 )
 from functions_msgraph_operations import get_msgraph_enabled_function_names, resolve_msgraph_action_capabilities
 from functions_orchestration_memory import OrchestrationMemoryError, validate_memory_audience
+# One definition of each: the step schema, the deliverables and this module read the same values.
+from functions_orchestration_registry import (
+    CAPABILITY_WORKFLOW_PROPOSE as WORKFLOW_PROPOSE_CAPABILITY_ID,
+    WORKFLOW_PROPOSAL_MAX_TASKS as WORKFLOW_BLUEPRINT_MAX_TASKS,
+    WORKFLOW_PROPOSALS_SETTING,
+    WORKFLOW_TASK_ACTION_KINDS as WORKFLOW_ACTION_KINDS,
+)
 from functions_workflow_limits import (
     get_chat_orchestration_max_workflows_per_user,
     get_orchestration_workflow_min_interval_seconds,
@@ -46,9 +53,6 @@ from functions_workflow_schedules import (
 )
 
 
-WORKFLOW_PROPOSE_CAPABILITY_ID = 'workflow_propose'
-WORKFLOW_PROPOSALS_SETTING = 'enable_chat_orchestration_workflows'
-
 # Closed reasons. They are mapped to application-owned text; none of them carries caller data.
 WORKFLOW_REASON_DISABLED = 'workflow_proposals_disabled'
 WORKFLOW_REASON_ROLE_REQUIRED = 'workflow_role_required'
@@ -57,7 +61,6 @@ WORKFLOW_REASON_QUOTA_REACHED = 'workflow_quota_reached'
 WORKFLOW_REASON_CONTEXT_UNAVAILABLE = 'workflow_context_unavailable'
 
 WORKFLOW_DEFAULT_TIME_ZONE = 'UTC'
-WORKFLOW_BLUEPRINT_MAX_TASKS = 5
 
 CATALOG_MAX_AGENTS = 25
 CATALOG_MAX_SOURCES = 25
@@ -79,8 +82,7 @@ DOCUMENT_ID_MAX_LENGTH = 256
 HANDLE_SLUG_MAX_LENGTH = 40
 TIME_ZONE_MAX_LENGTH = 64
 
-# The closed set of action kinds the planner can match a task against.
-WORKFLOW_ACTION_KINDS = ('email', 'calendar', 'onedrive', 'sharepoint', 'directory', 'openapi', 'mcp', 'other')
+# WORKFLOW_ACTION_KINDS, imported above, is the closed set of action kinds a task can be matched against.
 WORKFLOW_M365_ACTION_KINDS = frozenset({'email', 'calendar', 'onedrive', 'sharepoint', 'directory'})
 WORKFLOW_SEND_FUNCTIONS = frozenset({'send_mail', 'create_calendar_invite'})
 
@@ -179,9 +181,12 @@ def _record_id(value, limit=RECORD_ID_MAX_LENGTH):
 # ---------------------------------------------------------------------------
 
 def workflow_proposals_configured(settings):
-    """Whether an administrator turned on workflow proposals for chat orchestration."""
+    """Whether an administrator turned on workflow proposals for chat orchestration.
+
+    Only a real boolean ``True`` turns them on, so a stored string such as ``"false"`` leaves them off.
+    """
     settings = settings if isinstance(settings, dict) else {}
-    return bool(settings.get('enable_chat_orchestration')) and bool(settings.get(WORKFLOW_PROPOSALS_SETTING))
+    return bool(settings.get('enable_chat_orchestration')) and settings.get(WORKFLOW_PROPOSALS_SETTING) is True
 
 
 def workflow_planning_option(workflow_planning):
@@ -809,6 +814,36 @@ def workflow_planning_ready(context):
         and isinstance(context.get('catalog'), dict)
         and isinstance(context.get('handles'), dict)
     )
+
+
+def workflow_planning_unavailable_reason(settings, request_context):
+    """Return None when this request may propose a workflow, else a closed reason. Never raises.
+
+    ``request_context`` is the capability request context: its ``user_roles`` gate personal
+    workflows, and its ``workflow_planning`` is the context stored with the turn. A context that
+    is missing or could not be built fails closed, so a proposal is never offered on a guess.
+    """
+    try:
+        request_context = request_context if isinstance(request_context, dict) else {}
+        reason = workflow_planning_gate(settings, request_context.get('user_roles'))
+        if reason is not None:
+            return reason
+        planning = request_context.get('workflow_planning')
+        if not isinstance(planning, dict):
+            return WORKFLOW_REASON_CONTEXT_UNAVAILABLE
+        if planning.get('conversation_private') is not True:
+            return WORKFLOW_REASON_SHARED_CONVERSATION
+        if planning.get('quota_reached') is True:
+            return WORKFLOW_REASON_QUOTA_REACHED
+        if not workflow_planning_ready(planning):
+            return WORKFLOW_REASON_CONTEXT_UNAVAILABLE
+        return None
+    except Exception as exc:
+        _log_context(
+            'Workflow proposal access could not be checked; proposals are unavailable for this request.',
+            logging.WARNING, reason=WORKFLOW_REASON_CONTEXT_UNAVAILABLE, error_type=type(exc).__name__,
+        )
+        return WORKFLOW_REASON_CONTEXT_UNAVAILABLE
 
 
 def workflow_planner_projection(context):

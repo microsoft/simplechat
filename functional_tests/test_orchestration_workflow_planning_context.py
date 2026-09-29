@@ -605,6 +605,20 @@ def test_workflow_handles_are_readable_deterministic_and_never_collide(wf):
                                   "workflows": "workflow-"}[kind])
 
 
+@pytest.mark.parametrize("name", ["2024 Report", "\u65e5\u672c\u8a9e", "!!!", "R" * 200, "", None])
+@pytest.mark.parametrize(("kind", "prefix"), [
+    ("agents", "agent-"), ("documents", "doc-"), ("sources", "source-"), ("workflows", "workflow-"),
+])
+def test_every_name_gives_a_handle_that_starts_with_a_letter(wf, kind, prefix, name):
+    # A name that starts with a digit, is not Latin or is only punctuation still gives a valid handle.
+    drafts = importlib.import_module("functions_workflow_drafts")
+    handle = wf.workflow_handle(kind, f"key:{name}", name, set())
+    assert handle.startswith(prefix)
+    assert re.fullmatch(drafts.BLUEPRINT_HANDLE_PATTERN, handle)
+    if name == "2024 Report":
+        assert handle.startswith(f"{prefix}2024-report-")
+
+
 def test_the_catalog_drops_workflows_then_documents_then_sources_then_agents(wf):
     many_agents = [
         {"id": f"agent-{index:02d}", "user_id": OWNER, "name": f"agent_{index:02d}",

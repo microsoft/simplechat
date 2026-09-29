@@ -47,6 +47,7 @@ from functions_orchestration_registry import (
     VISUAL_DIAGRAM,
     VISUAL_IMAGE_PROPOSAL,
     VISUAL_KINDS,
+    WORKFLOW_PROPOSALS_SETTING,
     resolve_admitted_export_catalog,
 )
 from functions_orchestration_result_contracts import (
@@ -63,7 +64,6 @@ KIND_WORKFLOW = 'workflow'
 DELIVERABLE_KINDS = (KIND_ANSWER, KIND_FILE, KIND_IMAGE, KIND_CHART, KIND_DIAGRAM)
 # The workflow kind is accepted only where the server describes it; see _parse_deliverables.
 WORKFLOW_DELIVERABLE_KINDS = (*DELIVERABLE_KINDS, KIND_WORKFLOW)
-WORKFLOW_PROPOSALS_SETTING = 'enable_chat_orchestration_workflows'
 MAX_WORKFLOWS_PER_PLAN = 1
 REQUESTED_EXPLICIT = 'explicit'
 REQUESTED_SUGGESTED = 'suggested'
@@ -320,7 +320,7 @@ def build_deliverable_availability(settings, *, capabilities, unavailable=None, 
     unavailable_reasons = dict(UNAVAILABLE_REASONS)
     # The workflow kind, its reasons, and how to plan one exist only while an administrator has
     # turned workflow proposals on; otherwise the planner is told exactly what it was before.
-    if settings.get(WORKFLOW_PROPOSALS_SETTING):
+    if settings.get(WORKFLOW_PROPOSALS_SETTING) is True:
         truth[KIND_WORKFLOW] = _workflow_availability(available, unavailable)
         unavailable_reasons.update(WORKFLOW_UNAVAILABLE_REASONS)
         if truth[KIND_WORKFLOW]['status'] == 'available':

@@ -400,6 +400,7 @@ def validate_edited_plan(
             agent_names=[item['name'] for item in agents], actions=actions,
             contract_version=contract_version, existing_results=existing_results,
             composition_profiles=composition_profiles, export_catalog=admitted_catalog,
+            **workflow_planning_option(caller.get('workflow_planning')),
         )
         validate_plan_document_source_kinds(checked, {
             item['document_id']: item['source_kind']

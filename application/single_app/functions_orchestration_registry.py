@@ -106,6 +106,16 @@ CAPABILITY_GENERATE_IMAGE = 'generate_image'
 CAPABILITY_RENDER_FILE = 'render_file'
 CAPABILITY_WORKFLOW_PROPOSE = 'workflow_propose'
 
+# The settings key that must be exactly True before workflow proposals exist in a deployment.
+WORKFLOW_PROPOSALS_SETTING = 'enable_chat_orchestration_workflows'
+# The tasks a workflow proposal may hold, and the action kinds the planner may say a task needs.
+# The workflow planning context and the deliverables import these, so each has one definition.
+# The draft service's own task limit (functions_workflow_drafts.BLUEPRINT_MAX_TASKS) stays a
+# separate literal, because importing it would pull in storage clients and the registry stays
+# importable on its own; a test keeps the two equal.
+WORKFLOW_PROPOSAL_MAX_TASKS = 5
+WORKFLOW_TASK_ACTION_KINDS = ('email', 'calendar', 'onedrive', 'sharepoint', 'directory', 'openapi', 'mcp', 'other')
+
 # Explicitly requested images are generated as planned steps. The executor is serial, so a
 # plan may generate at most this many images; a larger ask is reported, never silently cut.
 MAX_GENERATED_IMAGES_PER_PLAN = 4
@@ -261,6 +271,38 @@ def _agent_request_gate(settings, context):
 
 def _action_request_gate(settings, context):
     return bool(context.get('action_catalog'))
+
+
+def _workflow_request_gate(settings, context):
+    """Whether this request may propose a personal workflow.
+
+    It needs the workflow planning context stored with the turn: a private conversation, a user
+    below the per-user cap, and catalogs that were read successfully. A context that is missing or
+    cannot be checked makes proposals unavailable for this request only; unlike the gates above it
+    never raises, so a workflow problem never stops the rest of a plan.
+    """
+    try:
+        # The planning context module reads agents and actions; it is imported only when needed.
+        from functions_orchestration_workflow_context import workflow_planning_unavailable_reason
+
+        return workflow_planning_unavailable_reason(settings, context) is None
+    except Exception as exc:
+        log_event(
+            '[ORCHESTRATION_REGISTRY] Could not check workflow proposal access.',
+            level=logging.WARNING,
+            extra={'reason': 'workflow_context_unavailable', 'error_type': type(exc).__name__},
+        )
+        return False
+
+
+def _workflow_unavailable_reason(settings, context):
+    """The closed reason a workflow proposal is unavailable to this request."""
+    try:
+        from functions_orchestration_workflow_context import workflow_planning_unavailable_reason
+
+        return workflow_planning_unavailable_reason(settings, context) or 'workflow_context_unavailable'
+    except Exception:
+        return 'workflow_context_unavailable'
 
 
 def resolve_admitted_export_catalog(export_catalog=None):
@@ -962,6 +1004,54 @@ CAPABILITY_REGISTRY = (
         # image like Render publishes a file. It runs no tools; any other file fails closed.
         'publishes_generated_images': True,
     },
+    {
+        'id': CAPABILITY_WORKFLOW_PROPOSE,
+        'label': 'Propose workflow',
+        # Reason, not Render: Render delivers files, and a proposal is a card the user approves.
+        'role': ROLE_REASON,
+        'result_contract_version': 'workflow-proposal-v1',
+        'summary': (
+            'Propose one personal workflow for recurring or automated work. The user reviews it on a '
+            'card and nothing is created until they approve it.'
+        ),
+        'when_to_use': (
+            'Use one step when the user asks for work to repeat on a schedule, run when File Sync '
+            'finds changes, or be saved to run later. Write the blueprint from the request and the '
+            'workflow_planning catalog alone: this step takes no depends_on and no inputs, and no '
+            'other step may bind its output. When the request also wants a result now, answer it '
+            'once with the usual steps and select that answer as final_response.'
+        ),
+        'settings_gates': ('enable_chat_orchestration', 'allow_user_workflows', WORKFLOW_PROPOSALS_SETTING),
+        'settings_gates_any': (),
+        'gate': None,
+        'request_gate': _workflow_request_gate,
+        'requires_scope': (),
+        # Until an administrator turns proposals on, this capability is not part of the deployment:
+        # it is skipped before any other check and no reason is recorded for it.
+        'dormant_unless_setting': WORKFLOW_PROPOSALS_SETTING,
+        'inputs': {
+            'type': 'object',
+            'properties': {
+                'blueprint': {'type': 'object'},
+                'task_actions': {
+                    'type': 'array', 'maxItems': WORKFLOW_PROPOSAL_MAX_TASKS,
+                    'items': {
+                        'type': 'array', 'items': {'type': 'string', 'enum': list(WORKFLOW_TASK_ACTION_KINDS)},
+                        'uniqueItems': True, 'maxItems': len(WORKFLOW_TASK_ACTION_KINDS),
+                    },
+                },
+            },
+            'required': ['blueprint'],
+            'additionalProperties': False,
+        },
+        'result_input_kinds': {},
+        'partial_inputs_supported': False,
+        'result_outputs': {'proposal': 'structured-v1'},
+        'produces': (PRODUCES_RETAINED_RESULTS,),
+        'cost_class': COST_CLASS_LOW,
+        'max_per_plan': 1,
+        'adapter': CAPABILITY_WORKFLOW_PROPOSE,
+    },
 )
 
 _RENDER_SOURCE_KINDS = {
@@ -1220,6 +1310,11 @@ def resolve_available_capabilities(
 
     available = []
     for capability in _build_capabilities(candidate_ids):
+        dormant_setting = capability.get('dormant_unless_setting')
+        if dormant_setting and settings.get(dormant_setting) is not True:
+            # Not part of this deployment until an administrator turns it on, so it is skipped
+            # before every other check and records no reason: planning is exactly what it was.
+            continue
         if narrowed is not None and capability['id'] not in narrowed:
             if unavailable is not None:
                 unavailable[capability['id']] = 'not_enabled_for_orchestration'
@@ -1290,6 +1385,8 @@ def resolve_available_capabilities(
                     )
                 elif capability['id'] == CAPABILITY_ACTION_INVOKE:
                     reason = 'no_accessible_actions'
+                elif capability['id'] == CAPABILITY_WORKFLOW_PROPOSE:
+                    reason = _workflow_unavailable_reason(settings, request_context)
                 unavailable[capability['id']] = reason
             continue
         available.append(capability)

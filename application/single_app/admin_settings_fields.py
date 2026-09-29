@@ -3770,7 +3770,8 @@ ADMIN_SETTINGS_FIELDS = {
                 "those capabilities. Plans need Prepare content to write a chat answer or "
                 "the content of a file, and Create a file to deliver a downloadable file. "
                 "Generate images also requires Image Generation. Use an action also "
-                "requires Enable Action Access."
+                "requires Enable Action Access. Propose workflows also requires Propose "
+                "Workflows From Chat and personal workflows."
             ),
             "default": [],
             "options": [
@@ -3786,6 +3787,7 @@ ADMIN_SETTINGS_FIELDS = {
                 {"value": "compose", "label": "Prepare content"},
                 {"value": "render_file", "label": "Create a file"},
                 {"value": "generate_image", "label": "Generate images"},
+                {"value": "workflow_propose", "label": "Propose workflows"},
             ],
             "depends_on": {"key": "enable_chat_orchestration", "equals": True},
         },

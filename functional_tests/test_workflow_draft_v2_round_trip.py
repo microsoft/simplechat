@@ -2,15 +2,16 @@
 #!/usr/bin/env python3
 """
 Functional test for opening and re-saving workflows created from chat in the V2 editor.
-Version: 0.261.202
+Version: 0.261.204
 Implemented in: 0.261.202
 
 This test ensures that each workflow the draft service creates from a blueprint (a weekly
 calendar digest on an agent with bell-only alerts, an interval check and a manual task on the
-default model, and a personal File Sync review with a document input) opens in the production
-V2 editor without a read-only reason, and that saving it unchanged, through ``workflowForSave``
-and the real personal save, changes no field of the stored workflow except its update time, and
-leaves it unedited.
+default model, a personal File Sync review with a document input, and since 0.261.204 a monthly
+calendar task on the default model and a personal File Sync watch of a group source, which chat
+proposals can also produce) opens in the production V2 editor without a read-only reason, and
+that saving it unchanged, through ``workflowForSave`` and the real personal save, changes no
+field of the stored workflow except its update time, and leaves it unedited.
 
 The TypeScript runs unmodified in Node through ``test_support/tsResolve.mjs``. The workflows are
 created and saved by the real workflow modules over the doubles of the draft service test.
@@ -28,7 +29,7 @@ sys.path.append(str(Path(__file__).resolve().parent))
 
 from test_group_workflow_round_trip_preservation import REPO_ROOT  # noqa: E402
 from test_support.versioning import assert_app_version_at_least  # noqa: E402
-from test_workflow_draft_save_parity import OWNER_ID  # noqa: E402
+from test_workflow_draft_save_parity import GROUP_ID, OWNER_ID  # noqa: E402
 from test_workflow_draft_service import (  # noqa: E402  (the draft service harness and examples)
     DOCUMENT_REVIEW,
     EMAIL_DIGEST,
@@ -61,12 +62,36 @@ MANUAL_SUMMARY = {
     ],
     "alerts": {"mode": "failures_only"},
 }
+MONTHLY_REPORT = {
+    "name": "Monthly report",
+    "trigger": {
+        "type": "calendar", "frequency": "monthly", "day_of_month": 15, "time_of_day": "09:30",
+        "timezone": "Asia/Tokyo",
+    },
+    "tasks": [{"title": "Draft the report", "instructions": "Draft this month's status report outline."}],
+    "alerts": {"mode": "failures_only", "severity": "low"},
+}
+# A personal workflow can watch a File Sync source of a group the user manages.
+GROUP_SOURCE_WATCH = {
+    "name": "Finance watch",
+    "trigger": {
+        "type": "file_sync", "source_ids": ["finance"],
+        "schedule": {"kind": "interval", "unit": "hours", "value": 1},
+    },
+    "tasks": [{"title": "Summarize changes", "instructions": "Summarize what changed in the finance files."}],
+    "alerts": {"mode": "every_run", "severity": "info"},
+}
+GROUP_SOURCE_HANDLES = {
+    "sources": {"finance": {"scope_type": "group", "scope_id": GROUP_ID, "source_id": "finance-share"}},
+}
 
 CASES = {
     "weekly_agent_digest": (EMAIL_DIGEST, EMAIL_HANDLES),
     "interval_model_check": (INTERVAL_CHECK, {}),
     "manual_model_tasks": (MANUAL_SUMMARY, {}),
     "personal_file_sync_review": (DOCUMENT_REVIEW, REVIEW_HANDLES),
+    "monthly_model_report": (MONTHLY_REPORT, {}),
+    "personal_file_sync_group_source": (GROUP_SOURCE_WATCH, GROUP_SOURCE_HANDLES),
 }
 # A save always records when it happened (both timestamps) and gets a new container etag; nothing
 # else may change when nothing was edited.

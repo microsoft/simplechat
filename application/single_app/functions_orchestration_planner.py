@@ -31,6 +31,7 @@ Version: 0.261.140
 import json
 import logging
 import re
+from copy import deepcopy
 
 from openai import APIError, AzureOpenAI, BadRequestError
 from azure.core.exceptions import AzureError
@@ -46,12 +47,15 @@ from functions_orchestration_model_routing import (
     DEPENDENCY_ROUTING_INSTRUCTIONS, ROUTING_INSTRUCTIONS, assign_step_models, authorized_routing_candidates,
 )
 from functions_orchestration_registry import (
+    CAPABILITY_WORKFLOW_PROPOSE,
     DEPENDENCY_PLAN_CONTRACT_VERSION,
     build_planner_capability_projection,
     required_capability_ids,
     resolve_available_capabilities,
 )
 from functions_orchestration_schema import (
+    WORKFLOW_BLUEPRINT_INVALID_CODE,
+    WORKFLOW_PROPOSAL_NOT_CONSUMABLE_CODE,
     PlanValidationError,
     normalize_elicitation,
     normalize_plan,
@@ -69,7 +73,14 @@ PLANNER_MAX_TOKENS = 4000
 PLANNER_TEMPERATURE = 0.1
 # Known declaration and source-binding failures share one correction round.
 PLAN_REPAIR_ATTEMPTS = 1
-REPAIRABLE_PLAN_CODES = frozenset({'deliverables_invalid', 'source_kind_invalid', 'source_binding_required'})
+# A workflow proposal gets the same correction round; one that still fails is dropped from the
+# plan, and the rest of the plan runs without it.
+WORKFLOW_REPAIR_CODES = frozenset({WORKFLOW_BLUEPRINT_INVALID_CODE, WORKFLOW_PROPOSAL_NOT_CONSUMABLE_CODE})
+# A proposal whose check could not run is dropped at once: no correction can fix it.
+WORKFLOW_CONTEXT_UNAVAILABLE_RULE = 'workflow_context_unavailable'
+REPAIRABLE_PLAN_CODES = frozenset({
+    'deliverables_invalid', 'source_kind_invalid', 'source_binding_required', *WORKFLOW_REPAIR_CODES,
+})
 DELIVERABLES_FAILURE_MESSAGE = (
     'The plan could not account for everything you asked to receive. Please retry, or '
     'rephrase what you would like delivered.'
@@ -80,6 +91,10 @@ SOURCE_KIND_FAILURE_MESSAGE = (
 )
 SOURCE_BINDING_FAILURE_MESSAGE = (
     'The plan could not bind the selected documents. Please retry your request.'
+)
+WORKFLOW_FAILURE_MESSAGE = (
+    'The plan could not include the workflow you asked for. Please retry, or create the '
+    'workflow in Workflows.'
 )
 RESOLUTION_MAX_TOKENS = 1200
 RESOLUTION_MAX_ATTEMPTS = 2
@@ -209,6 +224,47 @@ If the user asks about the plan, or requests unavailable work, you may instead r
 That keeps the current plan unchanged. Do not silently substitute a different capability
 for one the user specifically requested. If necessary information is missing, return the
 existing elicitation shape; the editor will ask without discarding the current plan.
+"""
+
+# Appended to the system prompt only when the request offers "workflow_planning", so a request
+# that cannot propose a workflow sees exactly the prompt it always did.
+WORKFLOW_PROPOSAL_INSTRUCTIONS = """Workflows. "workflow_planning" is present because this user may be offered one personal
+workflow in this conversation. A workflow runs later, on its own, from saved instructions. Propose
+one only when the user asks for work to repeat on a schedule, to run when File Sync finds changes,
+or to be saved and run later; never turn a one-time request into a workflow. Deliverable kind
+"workflow" is available for it: declare one explicit workflow deliverable and plan exactly one
+workflow_propose step that lists it in "delivers". Nothing is created until the user approves the
+proposal card shown after the answer, so never say that a workflow was created or scheduled.
+
+The workflow_propose step takes no "depends_on" and no "inputs", and no other step, input binding
+or final_response may name it or its output. When the request also wants a result now, answer it
+once with the usual steps and select that answer as final_response; otherwise a short compose answer
+can say that a workflow is proposed for the user's approval.
+
+Its arguments are {"blueprint":{...},"task_actions":[[...],...]}. The blueprint has:
+- "name", and optionally "description".
+- "trigger": {"type":"manual"}; {"type":"calendar","frequency":"daily"|"weekdays"|"weekly"|"monthly",
+  "time_of_day":"HH:MM"}, adding "days_of_week" (monday to sunday) for weekly and "day_of_month" for
+  monthly; {"type":"interval","unit":"minutes"|"hours","value":N}; or {"type":"file_sync",
+  "source_ids":[source handles],"schedule":{"kind":"calendar",...} or {"kind":"interval",...}},
+  where the schedule is how often File Sync checks the sources for changes. Times are wall-clock
+  times in workflow_planning.time_zone, the user's time zone, and request_local_time is the user's
+  current local time; omit "timezone" to use that zone. An interval must be at least
+  limits.min_interval_seconds long.
+- "tasks": 1 to limits.max_tasks tasks in run order, each {"title","instructions","runner","inputs"}.
+  runner is {"type":"agent","agent_ref":<agent handle>} or {"type":"model"} for the default model;
+  inputs lists the document handles the task reads. Instructions must stand alone: a run sees no
+  part of this conversation. A calendar workflow's run tells each task its local date and time, so
+  words such as "this week" can stay relative.
+- optionally "alerts" {"mode":"every_run"|"failures_only","severity":"info"|"low"}, "run_as"
+  "self"|"none", and "durable": true.
+Refer to agents, documents and File Sync sources only by their workflow_planning.catalog handles,
+and never write a record id, model or endpoint into a blueprint. "task_actions" lists, for each task
+in order, the action kinds it needs from the capability's input schema, or [] when it needs none.
+Run a task that needs actions on an agent whose catalog action_kinds include them, and set run_as
+"self" when an agent uses email, calendar, onedrive, sharepoint or directory actions, which run with
+the user's access. catalog.workflows are the user's existing workflows: when one already does what
+the user asks, say so in the answer instead of proposing a duplicate, unless the user wants another.
 """
 
 PLANNER_SYSTEM_PROMPT = """Plan bounded work; do not execute or answer it. Return one JSON object.
@@ -484,6 +540,9 @@ def build_planner_messages(
                 if payload.get('model_routing') == 'auto' else ''
             ) + (
                 '\n\n' + PLAN_EDIT_INSTRUCTIONS if edit_context is not None else ''
+            ) + (
+                '\n\n' + WORKFLOW_PROPOSAL_INSTRUCTIONS
+                if isinstance(payload.get('workflow_planning'), dict) else ''
             ),
         },
         {'role': 'user', 'content': user_content},
@@ -831,6 +890,14 @@ def describe_planner_model(planner_model, deployment):
 
 def plan_repair_message(error):
     """The planner-facing correction request after the server rejected a plan's deliverables."""
+    if getattr(error, 'code', None) in WORKFLOW_REPAIR_CODES:
+        return (
+            f'The server rejected the workflow proposal in that plan: {error}\n'
+            'Fix every rule listed, not just the first. Name agents, documents and File Sync sources '
+            'only by workflow_planning.catalog handles, give the workflow_propose step no depends_on and '
+            'no inputs, and let no other step, input binding or final_response name it.\n'
+            'Return the complete corrected plan as one JSON object for the same request.'
+        )
     return (
         f'The server rejected that plan: {error}\n'
         'The server reports the first validation failure. Recheck every deliverable\'s '
@@ -841,6 +908,21 @@ def plan_repair_message(error):
         'exact unavailable_reason capability_availability.deliverables gives, instead of dropping '
         'it or promising it.'
     )
+
+
+def _workflow_planning_for(request_context):
+    """The turn's workflow planning context and what the planner may see of it.
+
+    Called only when workflow_propose is available, which requires a ready context. A context
+    that still cannot be projected comes back as an empty dict, which fails every proposal check
+    closed instead of letting a proposal through without its catalog.
+    """
+    # The planning context module reads agents and sources; it is imported only when needed.
+    from functions_orchestration_workflow_context import workflow_planner_projection
+
+    planning = request_context.get('workflow_planning') if isinstance(request_context, dict) else None
+    projection = workflow_planner_projection(planning)
+    return (planning if projection is not None else {}), projection
 
 
 def plan_request(
@@ -920,6 +1002,13 @@ def plan_request(
         'visual_outputs': planner_visual_outputs(settings),
         'deliverables': deliverable_truth,
     }
+    workflow_planning = None
+    # Only the projection below reaches the planner; the stored context holds server ids.
+    context.pop('workflow_planning', None)
+    if CAPABILITY_WORKFLOW_PROPOSE in available_ids:
+        workflow_planning, projection = _workflow_planning_for(request_context)
+        if projection is not None:
+            context['workflow_planning'] = projection
     image_selected = image_requested_by_user(seeds)
     if image_selected:
         context['user_selected'] = {**(context.get('user_selected') or {}), 'images': True}
@@ -950,6 +1039,37 @@ def plan_request(
 
     required = required_capability_ids(seeds)
     context['required_capabilities'] = required
+    document_source_kinds = {
+        candidate['document_id']: candidate['source_kind']
+        for candidate in context.get('candidate_documents') or []
+        if isinstance(candidate, dict) and candidate.get('source_kind')
+    }
+
+    def _normalize(raw, capability_ids, availability, selected_image, **options):
+        normalized = normalize_plan(
+            raw,
+            conversation_id,
+            user_id,
+            settings=settings,
+            approval_mode=approval_mode,
+            authorized_document_ids=authorized_document_ids,
+            available_capability_ids=capability_ids,
+            turn_id=turn_id,
+            seeds=seeds,
+            document_labels=document_labels,
+            agent_names=agent_names,
+            actions=actions,
+            contract_version=contract_version,
+            existing_results=existing_results,
+            composition_profiles=composition_profiles,
+            export_catalog=export_catalog,
+            deliverable_availability=availability,
+            image_selected=selected_image,
+            **options,
+        )
+        validate_plan_document_source_kinds(normalized, document_source_kinds)
+        return normalized
+
     log_event(
         '[ORCHESTRATION_PLANNER] Resolved capability availability and positive selections.',
         extra={
@@ -1085,35 +1205,20 @@ def plan_request(
             if set(plan_document_ids(parsed, include_disabled=True)) - set(authorized_document_ids):
                 return _failure('unavailable_revision_sources')
 
+        # normalize_plan may rewrite the reply in place; a proposal that cannot be repaired is
+        # dropped from the planner's own words, not from a half-normalized copy.
+        pristine = deepcopy(parsed) if workflow_planning is not None else None
         try:
-            plan = normalize_plan(
-                parsed,
-                conversation_id,
-                user_id,
-                settings=settings,
-                approval_mode=approval_mode,
-                authorized_document_ids=authorized_document_ids,
-                available_capability_ids=available_ids,
-                turn_id=turn_id,
-                seeds=seeds,
-                document_labels=document_labels,
-                agent_names=agent_names,
-                actions=actions,
-                contract_version=contract_version,
-                existing_results=existing_results,
-                composition_profiles=composition_profiles,
-                export_catalog=export_catalog,
-                deliverable_availability=deliverable_truth,
+            plan = _normalize(
+                parsed, available_ids, deliverable_truth,
                 # A revision may drop images the user no longer wants; it is flagged below.
-                image_selected=image_selected and edit_context is None,
+                image_selected and edit_context is None,
+                **({'workflow_planning': workflow_planning} if workflow_planning is not None else {}),
             )
-            validate_plan_document_source_kinds(plan, {
-                candidate['document_id']: candidate['source_kind']
-                for candidate in context.get('candidate_documents') or []
-                if isinstance(candidate, dict) and candidate.get('source_kind')
-            })
         except PlanValidationError as exc:
-            repairable = exc.code in REPAIRABLE_PLAN_CODES
+            workflow_error = workflow_planning is not None and exc.code in WORKFLOW_REPAIR_CODES
+            context_failed = workflow_error and exc.rule == WORKFLOW_CONTEXT_UNAVAILABLE_RULE
+            repairable = exc.code in REPAIRABLE_PLAN_CODES and not context_failed
             if repairable and attempt <= PLAN_REPAIR_ATTEMPTS:
                 # One correction round: the planner sees exactly why the server refused the
                 # plan, such as a promised file no step renders, and answers the same request.
@@ -1131,14 +1236,44 @@ def plan_request(
                     {'role': 'user', 'content': plan_repair_message(exc)},
                 ]
                 continue
-            return _failure(
-                'invalid_plan_or_missing_requirement', exc, stage='plan_normalization',
-                message={
-                    'deliverables_invalid': DELIVERABLES_FAILURE_MESSAGE,
-                    'source_kind_invalid': SOURCE_KIND_FAILURE_MESSAGE,
-                    'source_binding_required': SOURCE_BINDING_FAILURE_MESSAGE,
-                }.get(exc.code),
-                attempt=attempt,
+            if not (workflow_error and edit_context is None):
+                return _failure(
+                    'invalid_plan_or_missing_requirement', exc, stage='plan_normalization',
+                    message={
+                        'deliverables_invalid': DELIVERABLES_FAILURE_MESSAGE,
+                        'source_kind_invalid': SOURCE_KIND_FAILURE_MESSAGE,
+                        'source_binding_required': SOURCE_BINDING_FAILURE_MESSAGE,
+                        **{code: WORKFLOW_FAILURE_MESSAGE for code in WORKFLOW_REPAIR_CODES},
+                    }.get(exc.code),
+                    attempt=attempt,
+                )
+            # A proposal that still breaks the rules, or could not be checked, is dropped: the
+            # rest of the plan runs and the workflow is reported as not delivered. A plan edit
+            # never gets here; it fails and keeps the previous plan.
+            from functions_orchestration_workflows import drop_workflow_proposals
+
+            unavailable_reason = 'workflow_context_unavailable' if context_failed else 'workflow_draft_invalid'
+            degraded, degraded_truth = drop_workflow_proposals(
+                pristine, deliverable_truth, reason=unavailable_reason,
+            )
+            try:
+                plan = _normalize(
+                    degraded,
+                    [value for value in available_ids if value != CAPABILITY_WORKFLOW_PROPOSE],
+                    degraded_truth, image_selected,
+                )
+            except PlanValidationError as degraded_exc:
+                return _failure(
+                    'invalid_plan_or_missing_requirement', degraded_exc, stage='plan_normalization',
+                    message=WORKFLOW_FAILURE_MESSAGE, attempt=attempt,
+                )
+            log_event(
+                '[ORCHESTRATION_PLANNER] Planning without a workflow proposal that could not be prepared.',
+                level=logging.WARNING, extra={
+                    **correlation, 'reason': 'workflow_proposal_dropped', 'attempt': attempt,
+                    'revision': revision, 'stage': 'plan_normalization', 'validation_code': exc.code,
+                    'validation_rule': exc.rule, 'unavailable_reason': unavailable_reason,
+                },
             )
         break
     try:

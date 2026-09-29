@@ -322,10 +322,24 @@ def test_every_workflow_reason_has_application_owned_text(modules):
 def test_the_reasons_and_names_match_the_planning_context(modules):
     context = importlib.import_module("functions_orchestration_workflow_context")
     registry = importlib.import_module("functions_orchestration_registry")
+    drafts = importlib.import_module("functions_workflow_drafts")
     deliverables = _deliverables()
 
-    assert deliverables.WORKFLOW_PROPOSALS_SETTING == context.WORKFLOW_PROPOSALS_SETTING == SETTING
+    # Each value has one definition in the registry; a local copy added later would fail here.
+    assert (
+        registry.WORKFLOW_PROPOSALS_SETTING == deliverables.WORKFLOW_PROPOSALS_SETTING
+        == context.WORKFLOW_PROPOSALS_SETTING == SETTING
+    )
     assert registry.CAPABILITY_WORKFLOW_PROPOSE == context.WORKFLOW_PROPOSE_CAPABILITY_ID == "workflow_propose"
+    assert context.WORKFLOW_ACTION_KINDS == registry.WORKFLOW_TASK_ACTION_KINDS
+    task_actions = registry.get_capability("workflow_propose")["inputs"]["properties"]["task_actions"]
+    assert task_actions["items"]["items"]["enum"] == list(registry.WORKFLOW_TASK_ACTION_KINDS)
+    assert set(context.WORKFLOW_M365_ACTION_KINDS) <= set(registry.WORKFLOW_TASK_ACTION_KINDS)
+    # The draft service keeps its own literal, so the registry stays importable without storage.
+    assert (
+        registry.WORKFLOW_PROPOSAL_MAX_TASKS == context.WORKFLOW_BLUEPRINT_MAX_TASKS
+        == drafts.BLUEPRINT_MAX_TASKS == task_actions["maxItems"] == 5
+    )
     context_reasons = [
         getattr(context, name) for name in dir(context) if name.startswith("WORKFLOW_REASON_")
     ]
