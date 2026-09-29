@@ -1,13 +1,14 @@
 # group_document_management.py
 """
 Closed M2B group document management responses for the real production V2 SPA.
-Version: 0.261.174
+Version: 0.261.195
 Implemented in: 0.261.129
 Every receipt builder, an Owner's rows and the tag list are the real management routes', held to
 them by functional_tests/test_group_document_fixture_parity.py.
 A tag vocabulary conflict refusal carries its code (`tag_vocabulary_refusal`): 0.261.167
 The refusal also answers a bulk tagging batch and, naming the document, a metadata save: 0.261.168
 The group-scoped content screening routes, modelled in group_screening.py: 0.261.174
+The V2 notification bell's unread count is an expected shell read: 0.261.195
 
 Reuse M2A reads, local production assets, request recording, response gates and
 Azure Playwright connection options. Every management request must consume an
@@ -55,6 +56,8 @@ SHELL_READS = {
     "/api/v2/bootstrap", "/api/user/settings", "/api/groups", "/api/conversations/feed",
     "/api/agents/catalog", "/api/prompts", "/api/orchestration_types",
     "/api/orchestration_settings",
+    # The rail's notification bell, on every page since 0.261.195.
+    "/api/notifications/count",
 }
 
 
