@@ -1,7 +1,7 @@
 # workflow_editor.py
 """
 Closed API fixtures for the native V2 workflow editor.
-Version: 0.261.204
+Version: 0.261.206
 Implemented in: 0.261.108
 Group File Sync, alert handoff and personal-scope trap modelling added in: 0.261.141
 Real alert normalizer on both save routes added in: 0.261.144
@@ -12,7 +12,7 @@ no generated artifact awaiting publication: 0.261.183
 Calendar schedules, the server's schedule editor options and the administrator's minimum interval
 (`min_schedule_interval_seconds`, applied only to a new or changed interval) added in: 0.261.193.
 `unlisted_schedule_timezones` leaves zones out of the options' list, as an older server tzdata would.
-The personal File Sync source list, answered by the real collector, added in: 0.261.204.
+The personal File Sync source list, answered by the real collector, added in: 0.261.206.
 
 Group File Sync requests are answered by the real server functions, compiled from source:
 `_serialize_workflow_file_sync_source` builds the source list, and `_normalize_file_sync_config`,

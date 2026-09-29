@@ -2,8 +2,8 @@
 # test_orchestration_workflow_proposal_editor_round_trip.py
 """
 Functional test for editing a workflow proposal in the V2 workflow editor before accepting it.
-Version: 0.261.204
-Implemented in: 0.261.204
+Version: 0.261.206
+Implemented in: 0.261.206
 
 The proposal card's Edit opens the draft route's workflow in the V2 workflow editor, and Save
 accepts the proposal with the editor's payload. The accept route records the workflow as edited
@@ -100,7 +100,7 @@ def schedule_fields(workflow):
 
 
 def test_version_includes_editing_a_proposal_before_accepting_it():
-    assert_app_version_at_least("0.261.204")
+    assert_app_version_at_least("0.261.206")
 
 
 @pytest.mark.parametrize("trigger", sorted(TRIGGERS))

@@ -1,10 +1,10 @@
 # test_orchestration_dependency_allowlist.py
 """Functional tests for authoritative capability allowlists and admin metadata.
 
-Version: 0.261.204
+Version: 0.261.206
 Implemented in: 0.261.127
 Single orchestration contract updated in: 0.261.139
-Workflow proposal capability described in: 0.261.204
+Workflow proposal capability described in: 0.261.206
 A capability list saved before Gather / Reason / Render became the only contract keeps
 its answering ability, because a stored `respond` reads as `compose`, and never silently
 opts into file publication. The stored list itself is never rewritten.

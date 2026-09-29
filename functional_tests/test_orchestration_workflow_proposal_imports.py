@@ -2,8 +2,8 @@
 # test_orchestration_workflow_proposal_imports.py
 """
 Functional test for cold imports of the workflow proposal decisions module.
-Version: 0.261.204
-Implemented in: 0.261.204
+Version: 0.261.206
+Implemented in: 0.261.206
 
 This test ensures that the workflow proposal module, which the orchestration routes import
 lazily, loads in fresh normal and optimized interpreters in every order the application uses:

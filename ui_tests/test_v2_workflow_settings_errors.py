@@ -1,7 +1,7 @@
 # test_v2_workflow_settings_errors.py
 """
 UI tests for reviewed workflow settings errors, deleted File Sync sources and deleted workflows.
-Version: 0.261.204
+Version: 0.261.206
 Implemented in: 0.261.149
 
 These tests use the real V2 SPA bundle with the closed workflow fixture. The fixture validates both
@@ -11,7 +11,7 @@ server's 409. They cover:
 
 * a group File Sync source deleted after the editor opened: the reviewed 400 keeps the draft,
   the editor reloads the source list and marks the source, and removing it lets the save succeed;
-* the same deletion in a personal workflow. Since 0.261.204 V2 authors personal File Sync, so
+* the same deletion in a personal workflow. Since 0.261.206 V2 authors personal File Sync, so
   the personal list is reloaded and marks the source the same way;
 * a workflow deleted after the editor opened it: the 409 keeps the draft, says what to do, and
   neither recreates the workflow nor treats the editor as having lost access;
@@ -110,7 +110,7 @@ def test_a_group_source_deleted_after_opening_keeps_the_draft_and_marks_the_sour
 
 
 def test_a_personal_source_deleted_after_opening_keeps_the_draft_and_marks_the_source(workflow_ui):
-    """0.261.204: V2 authors personal File Sync, so the reloaded personal list marks the deleted source."""
+    """0.261.206: V2 authors personal File Sync, so the reloaded personal list marks the deleted source."""
     ui, page = workflow_ui, workflow_ui.page
     ui.personal_workflows[WORKFLOW_ID]["file_sync"] = copy.deepcopy(PERSONAL_MONITOR_FILE_SYNC)
     ui.open("/workspace/workflows")

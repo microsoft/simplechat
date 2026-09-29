@@ -2,8 +2,8 @@
 #!/usr/bin/env python3
 """
 Functional test for the File Sync sources a personal workflow can use.
-Version: 0.261.204
-Implemented in: 0.261.204
+Version: 0.261.206
+Implemented in: 0.261.206
 
 This test ensures that ``collect_personal_workflow_file_sync_sources`` lists the sources a personal
 workflow may sync, by the rules the personal workflow sources route has always applied:
@@ -177,7 +177,7 @@ def harness():
 
 
 def test_every_workspace_the_user_manages_is_listed_once_with_trimmed_ids(harness):
-    assert_app_version_at_least("0.261.204")
+    assert_app_version_at_least("0.261.206")
     enabled, sources = harness.collect()
     assert enabled is True
     assert _keys(sources) == [

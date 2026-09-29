@@ -1,8 +1,8 @@
 # functions_orchestration_workflow_proposals.py
 """Decisions on workflow proposals from chat orchestration: status, accept, deny and draft.
 
-Version: 0.261.204
-Implemented in: 0.261.204
+Version: 0.261.206
+Implemented in: 0.261.206
 
 A plan's ``workflow_propose`` step describes a personal workflow and creates nothing
 (``functions_orchestration_workflows``). The server-only sidecar on its step record is what the

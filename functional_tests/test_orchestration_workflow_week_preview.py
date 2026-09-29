@@ -2,8 +2,8 @@
 # test_orchestration_workflow_week_preview.py
 """
 Functional test for answering a recurring request's current period while proposing its workflow.
-Version: 0.261.204
-Implemented in: 0.261.204
+Version: 0.261.206
+Implemented in: 0.261.206
 
 This test ensures that a request such as "every Monday, tell me what to focus on this week" is
 planned as an answer for the current week plus a workflow proposal for the weeks to come. The
@@ -61,7 +61,7 @@ RELATIVE_INSTRUCTIONS = "List what I should focus on this week from my email."
 
 
 def test_version_includes_the_week_preview():
-    assert_app_version_at_least("0.261.204")
+    assert_app_version_at_least("0.261.206")
 
 
 # ---------------------------------------------------------------------------

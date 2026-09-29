@@ -130,7 +130,7 @@ for the stored format and the full rules.
 ## Run a workflow when File Sync finds changes
 
 From version **0.261.141**, the V2 editor for group workflows can author File
-Sync, and from version **0.261.204** so can the editor for personal workflows.
+Sync, and from version **0.261.206** so can the editor for personal workflows.
 Owners, Admins, and other workflow managers of a group, and anyone editing
 their own personal workflow, see these choices when there are File Sync
 sources to choose from:

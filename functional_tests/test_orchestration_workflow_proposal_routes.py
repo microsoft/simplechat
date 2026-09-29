@@ -2,8 +2,8 @@
 # test_orchestration_workflow_proposal_routes.py
 """
 Functional test for the workflow proposal routes: status, accept, deny and draft.
-Version: 0.261.204
-Implemented in: 0.261.204
+Version: 0.261.206
+Implemented in: 0.261.206
 
 This test ensures that only the requester, in a private conversation where workflow proposals
 are turned on, can read or decide a workflow proposal from chat orchestration. Accepting creates
@@ -304,7 +304,7 @@ def writes(h):
 
 
 def test_version_includes_the_workflow_proposal_routes():
-    assert_app_version_at_least("0.261.204")
+    assert_app_version_at_least("0.261.206")
 
 
 def test_the_decision_field_and_claim_window_are_the_runs_and_modules_own(h):

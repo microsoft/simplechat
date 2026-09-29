@@ -2,8 +2,8 @@
 # test_orchestration_workflow_deliverable.py
 """
 Functional test for the orchestration ``workflow`` deliverable kind.
-Version: 0.261.204
-Implemented in: 0.261.204
+Version: 0.261.206
+Implemented in: 0.261.206
 
 This test ensures that a plan can declare a proposed workflow as a deliverable only while
 ``enable_chat_orchestration_workflows`` is on, and that the server owns its truth:
@@ -43,7 +43,7 @@ WORKFLOW_REASONS = (
 
 
 def test_version_includes_the_workflow_deliverable():
-    assert_app_version_at_least("0.261.204")
+    assert_app_version_at_least("0.261.206")
 
 
 # ------------------------------------------------------------------------------------------
