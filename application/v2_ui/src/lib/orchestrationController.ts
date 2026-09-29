@@ -57,6 +57,7 @@ import type { Json } from './types';
 import { normalizeReasoningAdjustments, type ReasoningResolution } from './reasoning';
 import { applyOrchestrationOutputEvent } from './orchestrationOutputController';
 import { choosePlanSubmissionId, rememberPlanSubmission } from './planSubmissionIds';
+import { canonicalPlanReferences, PlanReferenceError, type PlanReference } from './planReferences';
 import { announceCompletedReply } from './replyEvents';
 import { useChatStore } from '../stores/chatStore';
 import {
@@ -1450,14 +1451,28 @@ export async function submitPlanRevision(
         return { ok: false, error: 'Answer or cancel the current edit question first.' };
     }
     if (action.action === 'ask') {
-        action = { ...action, instruction: action.instruction.trim() };
-        if (!action.instruction || action.instruction.length > MAX_PLAN_INSTRUCTION_LENGTH) {
+        const instruction = action.instruction.trim();
+        if (!instruction || instruction.length > MAX_PLAN_INSTRUCTION_LENGTH) {
             const error = `Enter an instruction of 1–${MAX_PLAN_INSTRUCTION_LENGTH} characters.`;
             if (!options.inlineError) {
                 store.updatePlanEditor(conversationId, turnId, (editor) => ({ ...editor, error }));
             }
             return { ok: false, error };
         }
+        // The canonical form is what the server compares a replayed submission id against, so it
+        // is also what the fingerprint below covers: reordered chips reuse an id, changed ones do not.
+        let references: PlanReference[];
+        try {
+            references = canonicalPlanReferences(action.references);
+        } catch (problem) {
+            const error = problem instanceof PlanReferenceError ? problem.message
+                : 'Choose documents or tags from the # picker.';
+            if (!options.inlineError) {
+                store.updatePlanEditor(conversationId, turnId, (editor) => ({ ...editor, error }));
+            }
+            return { ok: false, error };
+        }
+        action = { action: 'ask', instruction, ...(references.length ? { references } : {}) };
     }
     const controller = new AbortController();
     const previousController = editorControllers.get(key);

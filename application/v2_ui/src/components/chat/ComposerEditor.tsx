@@ -223,7 +223,10 @@ export function ComposerEditor({
         publicWorkspaces: (bootstrap?.scope?.public_workspaces ?? []) as WorkspaceRef[],
         groupsEnabled: Boolean(features.enable_group_workspaces),
         publicEnabled: Boolean(features.enable_public_workspaces),
-    }), [bootstrap?.scope, features.enable_group_workspaces, features.enable_public_workspaces]);
+        // A restricted composer's requests can use only documents and tags, so whole
+        // workspaces are not offered there.
+        workspacesEnabled: !restricted,
+    }), [bootstrap?.scope, features.enable_group_workspaces, features.enable_public_workspaces, restricted]);
     const { candidates, loading } = useContextSuggestions(
         disabled || !contextEnabled ? null : contextQuery?.query ?? null, scope,
     );

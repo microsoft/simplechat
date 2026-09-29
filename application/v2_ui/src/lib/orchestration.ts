@@ -24,6 +24,7 @@
 import { api, apiUrl, CREDENTIALS_MODE } from './apiClient';
 import { readSsePost, resolveStreamContent } from './sse';
 import type { ComposerReference } from './composerDraft';
+import type { PlanReferenceInput, PlanScopeNotice, PlanTurnReference } from './planReferences';
 import type { ChatStreamEvent, Json } from './types';
 import { normalizeReasoningAdjustments, type ReasoningResolution } from './reasoning';
 import { readGeneratedArtifacts, type GeneratedArtifact } from './generatedArtifacts';
@@ -575,6 +576,10 @@ export interface PlanEditorState {
         timestamp: string;
         /** The client's id for the exchange this turn belongs to, when the browser sent one. */
         submission_id?: string;
+        /** A user turn's `#` documents and tags, as the server authorized and labelled them. */
+        references?: PlanTurnReference[];
+        /** On the planner's turn when its revision first limited what the plan searches. */
+        scope_notice?: PlanScopeNotice;
     }>;
     history: PlanEditorHistoryEntry[];
     next_before_revision: number | null;
@@ -584,7 +589,12 @@ export interface PlanEditorState {
 }
 
 export type PlanRevisionAction =
-    | { action: 'ask'; instruction: string }
+    | {
+        action: 'ask';
+        instruction: string;
+        /** `#` documents and tags. Canonicalized before sending; see planReferences.ts. */
+        references?: readonly PlanReferenceInput[];
+    }
     | { action: 'restore'; source_run_id: string }
     | {
         action: 'answer';

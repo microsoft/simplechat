@@ -22,6 +22,8 @@ import {
     type SetStateAction,
 } from 'react';
 import type { ComposerDraft } from './composerDraft';
+import { addContextItem, type ContextItem } from './chatContext';
+import { reconcileContextItems } from './chatContextTokens';
 import {
     blankDraft,
     capAbandonedIds,
@@ -177,12 +179,16 @@ function withoutIds(ids: string[], remove: readonly string[]): string[] {
     return next.length === ids.length ? ids : next;
 }
 
-/** Put an exchange's text back in the input without losing what is there now. */
+/** Put an exchange's text and chips back in the input without losing what is there now. */
 function restoreDraft(current: ComposerDraft, exchange: AssistExchange): ComposerDraft {
     if (!draftHasContent(current)) {
         return exchange.draft;
     }
-    return { ...current, text: `${exchange.text}\n${current.text}` };
+    const text = current.text.trim() ? `${exchange.text}\n${current.text}` : exchange.text;
+    const merged = exchange.draft.contextItems.reduce<ContextItem[]>(
+        (items, item) => addContextItem(items, item), [...current.contextItems],
+    );
+    return { ...current, text, contextItems: reconcileContextItems(text, merged) };
 }
 
 /**
@@ -447,6 +453,34 @@ export function editAssistExchange(key: string, id: string): boolean {
         draft: restoreDraft(current.draft, exchange),
     }));
     return true;
+}
+
+/**
+ * Put chips back in a thread's input, beside whatever it holds now.
+ *
+ * For an editor whose answer did not use the chips it was sent with, so they are not lost. They
+ * come back as selections, because their `#` text is not restored with them.
+ */
+export function restoreAssistContext(
+    key: string,
+    conversationId: string | null,
+    items: readonly ContextItem[],
+    notice?: string,
+): void {
+    if (!items.length) {
+        return;
+    }
+    updateThread(key, conversationId, (current) => ({
+        ...current,
+        draft: {
+            ...current.draft,
+            contextItems: items.reduce<ContextItem[]>(
+                (merged, item) => addContextItem(merged, { ...item, attachment: 'selection' }),
+                [...current.draft.contextItems],
+            ),
+        },
+        notice: notice ?? current.notice,
+    }));
 }
 
 /** Whether a request of this page is still waiting on the network. For tests. */

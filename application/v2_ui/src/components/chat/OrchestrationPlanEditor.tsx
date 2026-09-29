@@ -20,7 +20,13 @@ import {
 } from '../../stores/orchestrationStore';
 import { applyPlanEdits, isPlanRunnable } from '../../lib/orchestrationPlan';
 import { MAX_PLAN_INSTRUCTION_LENGTH } from '../../lib/orchestration';
-import { planThreadKey, useAssistThread, type AssistSend } from '../../lib/assistThread';
+import {
+    planThreadKey,
+    restoreAssistContext,
+    useAssistThread,
+    type AssistSend,
+} from '../../lib/assistThread';
+import { planDraftReferences, scopeNoticeText, storedTurnReferences } from '../../lib/planReferences';
 import {
     approveAndRunPlan,
     loadPlanEditorHistory,
@@ -32,6 +38,9 @@ import {
 } from '../../lib/orchestrationController';
 
 const originLabels = { original: 'Original plan', ai: 'Planner revision', restore: 'Restored plan' };
+
+const CHIPS_RETURNED_NOTICE = 'The planner answered without changing the plan, so your documents and tags '
+    + 'are back in the input. Send again to use them, or remove them.';
 
 function timestampLabel(value: string): string {
     const date = new Date(value);
@@ -71,11 +80,26 @@ function OrchestrationPlanEditor({ conversationId, turnId }: PlanEditorTarget) {
             elicitation_revision: pendingQuestion.revision ?? 0,
         } : {}),
     });
-    const sendInstruction: AssistSend = async ({ text, submissionId, ownSubmissionIds }) => {
+    const sendInstruction: AssistSend = async ({ text, draft, submissionId, ownSubmissionIds }) => {
+        const runBefore = selectPlanEditor(useOrchestrationStore.getState(), conversationId, turnId)?.state?.plan.run_id;
+        const references = planDraftReferences(draft);
         const result = await submitPlanRevision(
-            target, { action: 'ask', instruction: text }, { submissionId, inlineError: true },
+            target,
+            { action: 'ask', instruction: text, ...(references.length ? { references } : {}) },
+            { submissionId, inlineError: true },
         );
         if (result.ok) {
+            // A reply that neither revised the plan nor asked a question used none of the chips,
+            // and the server keeps nothing of them for later, so they go back in the input.
+            const after = selectPlanEditor(useOrchestrationStore.getState(), conversationId, turnId)?.state;
+            if (references.length && after && !after.pending && after.plan.run_id === runBefore) {
+                restoreAssistContext(
+                    planThreadKey(conversationId, turnId),
+                    conversationId,
+                    draft.contextItems.filter((item) => item.kind === 'document' || item.kind === 'tag'),
+                    CHIPS_RETURNED_NOTICE,
+                );
+            }
             return { ok: true, submissionId: result.submissionId };
         }
         if (!result.stale) {
@@ -107,6 +131,8 @@ function OrchestrationPlanEditor({ conversationId, turnId }: PlanEditorTarget) {
         key: `${entry.timestamp}:${index}`,
         role: entry.role,
         content: entry.content,
+        references: entry.role === 'user' ? storedTurnReferences(entry.references) : undefined,
+        notice: entry.role === 'assistant' ? scopeNoticeText(entry.scope_notice) ?? undefined : undefined,
     })), [storedChat]);
 
     useEffect(() => {
@@ -119,6 +145,20 @@ function OrchestrationPlanEditor({ conversationId, turnId }: PlanEditorTarget) {
                 return;
             }
             if (event.key === 'Escape') {
+                // Both listen on the document, and this one was added first: an open `#` picker
+                // closes itself on this Escape, and the editor stays open.
+                const picker = dialogRef.current?.querySelector('[data-context-picker]');
+                if (picker) {
+                    if (picker.contains(document.activeElement)) {
+                        // The picker's search box goes with it, so carry on in the input.
+                        window.setTimeout(() => {
+                            if (!dialogRef.current?.contains(document.activeElement)) {
+                                document.getElementById(`${id}-instruction`)?.focus();
+                            }
+                        }, 0);
+                    }
+                    return;
+                }
                 event.preventDefault();
                 event.stopPropagation();
                 useOrchestrationStore.getState().setEditorTarget(null);
@@ -340,6 +380,7 @@ function OrchestrationPlanEditor({ conversationId, turnId }: PlanEditorTarget) {
                                     emptyState={(
                                         <p>
                                             Ask to add, remove, or rework steps. The planner checks available capabilities before saving a revision.
+                                            Type # to attach a document or tag for the plan to use.
                                             This conversation stays in the editor.
                                         </p>
                                     )}
@@ -383,6 +424,7 @@ function OrchestrationPlanEditor({ conversationId, turnId }: PlanEditorTarget) {
                                     sendAriaLabel="Send planner request"
                                     busy={!canRequest}
                                     hideComposer={Boolean(pending)}
+                                    allowContext
                                     placeholder="For example: add a web search, then focus the comparison on pricing."
                                     counterHint="Enter to send · Shift+Enter for a new line"
                                     density="comfortable"

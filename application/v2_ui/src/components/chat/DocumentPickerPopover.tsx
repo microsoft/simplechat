@@ -59,6 +59,7 @@ export function DocumentPickerPopover({
     const [loading, setLoading] = useState(true);
     const holder = useRef<HTMLDivElement>(null);
     const searchRef = useRef<HTMLInputElement>(null);
+    const includeWorkspaces = scope.workspacesEnabled !== false;
 
     useEffect(() => {
         searchRef.current?.focus();
@@ -95,6 +96,7 @@ export function DocumentPickerPopover({
                 publicWorkspaces: scope.publicWorkspaces,
                 groupsEnabled: scope.groupsEnabled,
                 publicEnabled: scope.publicEnabled,
+                includeWorkspaces,
                 signal: controller.signal,
                 includeUnavailable: true,
                 documentFilter: imagesOnly ? isReferenceImageDocument : undefined,
@@ -120,7 +122,7 @@ export function DocumentPickerPopover({
         };
         // The scope arrays are rebuilt on every bootstrap read, so this keys on the flags and
         // the query rather than on array identity.
-    }, [query, scope.groupsEnabled, scope.publicEnabled, imagesOnly]);
+    }, [query, scope.groupsEnabled, scope.publicEnabled, includeWorkspaces, imagesOnly]);
 
     // Grouped by workspace, which is how the chip row groups them too: a reader scanning for
     // "the contract in Marketing" is looking for the workspace first.
@@ -138,6 +140,8 @@ export function DocumentPickerPopover({
     return (
         <div
             ref={holder}
+            // Marks an open picker, so a dialog around it lets Escape close the picker first.
+            data-context-picker=""
             className={clsx(
                 'glass-modal absolute left-2 z-50 flex max-h-[26rem] w-96 max-w-[calc(100vw-3rem)] flex-col rounded-xl p-1.5',
                 placement === 'up' ? 'bottom-full mb-2' : 'top-full mt-2',
@@ -160,7 +164,8 @@ export function DocumentPickerPopover({
                             event.stopPropagation();
                         }
                     }}
-                    placeholder={imagesOnly ? 'Search images…' : 'Search documents, tags and workspaces…'}
+                    placeholder={imagesOnly ? 'Search images…'
+                        : includeWorkspaces ? 'Search documents, tags and workspaces…' : 'Search documents and tags…'}
                     aria-label={imagesOnly ? 'Search images' : 'Search documents'}
                     className={clsx(
                         'w-full rounded-lg border border-edge bg-surface-1 py-1.5 pl-7 pr-2',
