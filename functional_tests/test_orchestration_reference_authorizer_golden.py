@@ -223,5 +223,5 @@ class ElicitationReferenceGoldenTests(unittest.TestCase):
 
 
 if __name__ == '__main__':
-    assert_app_version_at_least('0.261.196')
+    assert_app_version_at_least('0.261.198')
     unittest.main(verbosity=2)
