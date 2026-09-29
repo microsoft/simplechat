@@ -121,6 +121,10 @@ import {
     retryOrchestrationPlanning,
 } from '../lib/orchestrationController';
 import { foundryAuthUrl } from '../lib/foundryAuth';
+import { announceCompletedReply } from '../lib/replyEvents';
+import { getAppNavigator, subscribeRouteChanges, type AppRoute } from '../lib/appNavigation';
+import { readConversationParam } from '../lib/conversationUrl';
+import { refreshNotificationCount } from './notificationStore';
 import { useBootstrapStore } from './bootstrapStore';
 import { useCollaborationStore, participantName } from './collaborationStore';
 import type { MaskAction, MaskSelection } from '../lib/masking';
@@ -927,6 +931,182 @@ type StreamStateSetter = (
 ) => void;
 
 /**
+ * Read receipts sent for replies the reader watched finish, by conversation.
+ *
+ * A brand-new conversation reloads the rail once its first reply lands, and that reload
+ * waits for the receipt. The server marks a personal conversation unread as it finishes a
+ * reply, so a rail read that beat the receipt would show the reader's own open conversation
+ * as unread.
+ */
+const watchedReplyReads = new Map<string, Promise<void>>();
+
+/** Replies that finished in the open conversation while the reader was not looking at it. */
+const deferredReplyReads = new Set<string>();
+let stopWaitingForReader: (() => void) | null = null;
+/**
+ * The conversation a link is opening, from the moment it is followed until it has opened or
+ * failed to. A notice brings the reader back to the chat page by naming a conversation that is
+ * not the open one until its messages have loaded, and that is the one they are about to see.
+ */
+let linkedConversationOpening: string | null = null;
+
+/**
+ * Whether the reader can see a reply that finishes in the open conversation: the tab is
+ * showing and the chat page is the page in it.
+ *
+ * Without a registered navigator there is no telling which page is showing, so the answer
+ * is no. The application registers one before any reply can finish; only a test fixture
+ * without the notification runtime lacks one.
+ */
+function replyIsWatched(): boolean {
+    if (document.visibilityState !== 'visible') {
+        return false;
+    }
+    return getAppNavigator()?.pathname() === '/chat';
+}
+
+/** Whether the server marks this conversation unread when a reply finishes in it. */
+function serverMarksReplyUnread(kind: ConversationKind, event: ChatStreamEvent): boolean {
+    if (kind === 'collaborative') {
+        return false;
+    }
+    // Mirrors is_personal_chat_conversation in route_backend_chats.py.
+    const chatType = typeof event.chat_type === 'string' ? event.chat_type.trim().toLowerCase() : '';
+    return !chatType.startsWith('group') && !chatType.startsWith('public');
+}
+
+function setConversationUnread(conversationId: string, unread: boolean): void {
+    const { conversations } = useChatStore.getState();
+    const changes = conversations.some(
+        (item) => item.id === conversationId && Boolean(item.has_unread_assistant_response) !== unread,
+    );
+    if (!changes) {
+        return;
+    }
+    useChatStore.setState({
+        conversations: conversations.map((item) =>
+            item.id === conversationId ? { ...item, has_unread_assistant_response: unread } : item,
+        ),
+    });
+}
+
+/**
+ * Clear the unread marker the server put on a conversation when it finished a reply the
+ * reader has now seen, along with the "AI responded" notice that came with it.
+ */
+function markWatchedReplyRead(conversationId: string): Promise<void> {
+    const request: Promise<void> = markConversationRead(conversationId)
+        .then(() => {
+            setConversationUnread(conversationId, false);
+            void refreshNotificationCount('action');
+        })
+        .catch(() => {
+            /* Read receipts are advisory; the reply is on screen either way. */
+        })
+        .finally(() => {
+            if (watchedReplyReads.get(conversationId) === request) {
+                watchedReplyReads.delete(conversationId);
+            }
+        });
+    watchedReplyReads.set(conversationId, request);
+    return request;
+}
+
+/**
+ * Send the receipts held back for the reader, once they are looking at the chat page again.
+ *
+ * Only for the conversation they are about to see. Coming back through a link -- a notice in
+ * the bell's panel, a desktop notification, or an address naming a conversation -- means the
+ * conversation on screen is the one the link names, even while the one it replaces is still
+ * the open one.
+ */
+function acknowledgeDeferredReplies(route: AppRoute | null): void {
+    if (!replyIsWatched()) {
+        return;
+    }
+    const pending = [...deferredReplyReads];
+    deferredReplyReads.clear();
+    stopWaitingForReader?.();
+    stopWaitingForReader = null;
+    const linkedByRoute = route?.pathname === '/chat'
+        ? readConversationParam(new URLSearchParams(route.search))
+        : null;
+    const visibleConversationId =
+        linkedByRoute ?? linkedConversationOpening ?? useChatStore.getState().activeConversationId;
+    for (const conversationId of pending) {
+        // A conversation the reader has since left stays unread: they never saw its reply.
+        if (conversationId === visibleConversationId) {
+            void markWatchedReplyRead(conversationId);
+        }
+    }
+}
+
+function acknowledgeDeferredRepliesOnReturn(): void {
+    acknowledgeDeferredReplies(null);
+}
+
+/**
+ * Leave a finished reply unread until the reader comes back to it.
+ *
+ * A hidden tab, or another page of the application, means nobody saw the reply arrive, so
+ * clearing the server's unread marker then would also clear the "AI responded" notice the
+ * reader has not had a chance to see. The rail shows the marker meanwhile, as the server has
+ * it. Returning to the tab, or to the chat page, sends the receipt if the conversation is
+ * still the open one.
+ */
+function deferReplyRead(conversationId: string): void {
+    deferredReplyReads.add(conversationId);
+    setConversationUnread(conversationId, true);
+    if (stopWaitingForReader) {
+        return;
+    }
+    document.addEventListener('visibilitychange', acknowledgeDeferredRepliesOnReturn);
+    const stopRoutes = subscribeRouteChanges(acknowledgeDeferredReplies);
+    stopWaitingForReader = () => {
+        document.removeEventListener('visibilitychange', acknowledgeDeferredRepliesOnReturn);
+        stopRoutes();
+    };
+}
+
+/**
+ * Act on a finished reply for the reader: announce it to the desktop notifier, whether or
+ * not it is on screen, and settle the unread marker the server gave it.
+ */
+function settleFinishedReply(
+    conversationId: string,
+    kind: ConversationKind,
+    event: ChatStreamEvent,
+    current: boolean,
+    getState: () => ChatState,
+): void {
+    const listed = getState().conversations.find((item) => item.id === conversationId);
+    announceCompletedReply({
+        conversationId,
+        messageId: typeof event.message_id === 'string' && event.message_id ? event.message_id : null,
+        conversationTitle: event.conversation_title || listed?.title || null,
+        blocked: event.blocked === true || event.role === 'safety',
+        source: 'chat',
+    });
+    if (!serverMarksReplyUnread(kind, event)) {
+        return;
+    }
+    if (current && replyIsWatched()) {
+        void markWatchedReplyRead(conversationId);
+        return;
+    }
+    if (current) {
+        deferReplyRead(conversationId);
+    } else {
+        // Finished in a conversation the reader has already left. It stays unread, as the
+        // server has it, until they open it again.
+        setConversationUnread(conversationId, true);
+    }
+    // The reply's notice is already in the bell's count; show it now rather than at the
+    // next poll.
+    void refreshNotificationCount('action');
+}
+
+/**
  * Build the event handlers that fold a stream into the store.
  *
  * Shared by a fresh send and by a resume of an already-running generation, so a reattached
@@ -947,6 +1127,8 @@ function buildStreamHandlers(
      * the event stream.
      */
     pendingUserMessageId?: string | null,
+    /** Which API family the conversation belongs to. A reattached stream is always personal. */
+    kind: ConversationKind = 'personal',
 ): ChatStreamHandlers {
     const analysisRevision = getState().analysisContextRevision;
     const completionMetadata = (event: ChatStreamEvent) =>
@@ -1018,6 +1200,9 @@ function buildStreamHandlers(
             }
         },
         onDone: (event, accumulated) => {
+            // Before the check below: a reply that finished out of sight is exactly the one
+            // a desktop notification is for.
+            settleFinishedReply(conversationId, kind, event, isCurrent(), getState);
             if (!isCurrent()) {
                 return;
             }
@@ -1182,6 +1367,7 @@ async function runChatStream(
             set,
             getState,
             options.pendingUserMessageId,
+            options.kind ?? 'personal',
         ),
         controller.signal,
         options.stream,
@@ -1206,8 +1392,10 @@ async function runChatStream(
     }
 
     // Refresh the rail so a newly created conversation appears with its server-side
-    // generated title.
+    // generated title. After the read receipt, if one is on its way, so the reader's own
+    // open conversation does not come back marked unread.
     if (options.isNewConversation) {
+        await watchedReplyReads.get(conversationId);
         await getState().loadConversations({ reset: true });
     }
 }
@@ -1903,6 +2091,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
                                     : item,
                             ),
                         }));
+                        // The receipt clears the conversation's notices too, so the bell drops them now.
+                        void refreshNotificationCount('action');
                     })
                     .catch(() => {
                         /* Read receipts are advisory; the thread still opened fine. */
@@ -1940,27 +2130,34 @@ export const useChatStore = create<ChatState>((set, get) => ({
      * `selectConversation` rather than being asked for twice.
      */
     openLinkedConversation: async (conversationId) => {
-        let resolved: { kind: ConversationKind; conversation?: CollaborationConversation };
+        linkedConversationOpening = conversationId;
         try {
-            resolved = await resolveConversationKind(conversationId, { requireExists: true });
-        } catch {
-            toast.error(
-                'Could not open that conversation. It may have been deleted, or you may not have access to it.',
-            );
-            return;
-        }
+            let resolved: { kind: ConversationKind; conversation?: CollaborationConversation };
+            try {
+                resolved = await resolveConversationKind(conversationId, { requireExists: true });
+            } catch {
+                toast.error(
+                    'Could not open that conversation. It may have been deleted, or you may not have access to it.',
+                );
+                return;
+            }
 
-        await get().selectConversation(conversationId, {
-            kind: resolved.kind,
-            prefetched: resolved.conversation,
-        });
+            await get().selectConversation(conversationId, {
+                kind: resolved.kind,
+                prefetched: resolved.conversation,
+            });
 
-        // Still checked: the conversation exists, but its messages may not have loaded.
-        if (get().messagesError) {
-            toast.error(
-                'Could not open that conversation. It may have been deleted, or you may not have access to it.',
-            );
-            get().startNewConversation();
+            // Still checked: the conversation exists, but its messages may not have loaded.
+            if (get().messagesError) {
+                toast.error(
+                    'Could not open that conversation. It may have been deleted, or you may not have access to it.',
+                );
+                get().startNewConversation();
+            }
+        } finally {
+            if (linkedConversationOpening === conversationId) {
+                linkedConversationOpening = null;
+            }
         }
     },
 

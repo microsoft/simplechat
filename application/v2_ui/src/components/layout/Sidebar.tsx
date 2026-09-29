@@ -42,6 +42,7 @@ import { classicChatHref } from '../../lib/conversationUrl';
 import { DEFAULT_PUBLIC_WORKSPACE_LABELS, usePublicWorkspaceLabels } from '../../lib/publicWorkspaceLabels';
 import { ConversationRail } from '../chat/ConversationRail';
 import { NavExtras } from './NavExtras';
+import { NotificationBell } from './NotificationBell';
 import { UserAvatar } from './UserAvatar';
 
 interface NavItem {
@@ -356,32 +357,41 @@ export function Sidebar({ mobile = false }: { mobile?: boolean }) {
             >
                 <BrandMark collapsed={collapsed} />
                 {!collapsed && (
-                    <button
-                        type="button"
-                        ref={collapseRef}
-                        onClick={toggleNavigation}
-                        aria-label="Collapse navigation"
-                        aria-expanded="true"
-                        aria-controls="primary-navigation"
-                        className="ml-auto rounded-lg p-1.5 text-text-3 transition-colors hover:bg-surface-2 hover:text-text-1"
-                    >
-                        <ChevronLeft size={17} />
-                    </button>
+                    <>
+                        {/* Beside the brand rather than in a top bar, which V2 does not have. */}
+                        <NotificationBell collapsed={false} className="ml-auto" />
+                        <button
+                            type="button"
+                            ref={collapseRef}
+                            onClick={toggleNavigation}
+                            aria-label="Collapse navigation"
+                            aria-expanded="true"
+                            aria-controls="primary-navigation"
+                            className="rounded-lg p-1.5 text-text-3 transition-colors hover:bg-surface-2 hover:text-text-1"
+                        >
+                            <ChevronLeft size={17} />
+                        </button>
+                    </>
                 )}
             </div>
 
             {collapsed && (
-                <button
-                    type="button"
-                    ref={expandRef}
-                    onClick={toggleNavigation}
-                    aria-label="Expand navigation"
-                    aria-expanded="false"
-                    aria-controls="primary-navigation"
-                    className="mx-auto mb-2 rounded-lg p-1.5 text-text-3 transition-colors hover:bg-surface-2 hover:text-text-1"
-                >
-                    <ChevronRight size={17} />
-                </button>
+                <>
+                    {/* The collapsed strip has no room beside the brand, so the bell takes the
+                        row under it and shows a dot instead of a number. */}
+                    <NotificationBell collapsed className="mx-auto mb-1" />
+                    <button
+                        type="button"
+                        ref={expandRef}
+                        onClick={toggleNavigation}
+                        aria-label="Expand navigation"
+                        aria-expanded="false"
+                        aria-controls="primary-navigation"
+                        className="mx-auto mb-2 rounded-lg p-1.5 text-text-3 transition-colors hover:bg-surface-2 hover:text-text-1"
+                    >
+                        <ChevronRight size={17} />
+                    </button>
+                </>
             )}
 
             {/* Only offered where it has somewhere to act. On any other page it reset chat
