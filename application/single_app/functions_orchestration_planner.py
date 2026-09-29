@@ -239,7 +239,12 @@ proposal card shown after the answer, so never say that a workflow was created o
 The workflow_propose step takes no "depends_on" and no "inputs", and no other step, input binding
 or final_response may name it or its output. When the request also wants a result now, answer it
 once with the usual steps and select that answer as final_response; otherwise a short compose answer
-can say that a workflow is proposed for the user's approval.
+can say that a workflow is proposed for the user's approval. A recurring request often implies a
+result for the current period too, such as "every Monday, tell me what to focus on this week":
+answer the current period now as a preview of one run, and propose the workflow for the runs to
+come. Steps that gather the preview's data turn relative dates into explicit dates from
+request_local_time; the answer-writing step is told the same local time, so its instruction may keep
+words such as "this week".
 
 Its arguments are {"blueprint":{...},"task_actions":[[...],...]}. The blueprint has:
 - "name", and optionally "description".

@@ -7,7 +7,8 @@ No retrieval, file-format inference, upload, publication, or implicit sibling in
 Answer-writing steps receive saved memory, the resolved conversation references, the
 knowledge basis the planner declared, a disclosure of optional inputs that could not be
 gathered, and guidance for the visuals the planner named (charts, Mermaid diagrams, image
-proposal cards).
+proposal cards). In a turn that may propose a workflow they also receive the user's local
+time, worded as the workflow's scheduled runs will receive theirs.
 
 JSON preparation states each declared output's exact shape, asks the endpoint for a JSON
 object, and makes one corrective call when a reply breaks a declared rule. Neither reply is
@@ -48,6 +49,7 @@ from functions_orchestration_visuals import (
     build_answer_visual_guidance, build_existing_charts_note, collect_run_charts,
     image_proposals_available, place_chart_blocks,
 )
+from functions_orchestration_workflow_context import workflow_answer_time_line
 
 
 COMPOSE_POLICY = (
@@ -360,6 +362,12 @@ def adapter_compose(step, context, *, settings, user_id, emit=None, cancel_reque
         if history:
             messages.append({'role': 'system', 'content': CONVERSATION_POLICY})
             messages.extend({'role': message['role'], 'content': message['content']} for message in history)
+        # A turn that may propose a workflow answers against the local time its runs will be given.
+        time_line = workflow_answer_time_line(
+            getattr(context, 'workflow_planning', None), getattr(context, 'time_zone', None),
+        )
+        if time_line:
+            messages.append({'role': 'system', 'content': time_line})
         messages.append({
             'role': 'user',
             'content': json.dumps({

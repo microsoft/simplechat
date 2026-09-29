@@ -858,6 +858,20 @@ def workflow_planner_projection(context):
     })
 
 
+def workflow_answer_time_line(workflow_planning, time_zone, now=None):
+    """The user's local time for an answer written in a turn that may propose a workflow, else ''.
+
+    The wording is the line a calendar workflow's run gives each task, so an answer that previews
+    a proposed workflow now resolves words such as "this week" the way the workflow's runs will.
+    A turn without a ready planning context gets '', so its answers are written exactly as before.
+    ``time_zone`` is the turn's validated browser zone; the planning context's zone stands in for
+    it. Never raises.
+    """
+    if not workflow_planning_ready(workflow_planning):
+        return ''
+    return request_local_time_line(resolve_turn_time_zone(time_zone, workflow_planning.get('time_zone')), now)
+
+
 def workflow_draft_handles(context):
     """The handle map the workflow draft service accepts: agents, documents and sources only."""
     handles = (context or {}).get('handles') if isinstance(context, dict) else None
