@@ -65,6 +65,11 @@ MAX_REVISIONS = 20
 MAX_CHAT_TURNS = 20
 MAX_CHAT_CONTENT_LENGTH = 4000
 
+# The id the client minted for the exchange a chat turn belongs to. Routes check its format with
+# functions_assist_submissions before anything is stored; this module stays free of application
+# imports, so the bound here only stops a caller that skipped that check from growing the document.
+MAX_SUBMISSION_ID_LENGTH = 128
+
 # Matches IMAGE_PROPOSAL_PROMPT_MAX_LENGTH in functions_image_generation.py, because a prompt
 # stored here is the same kind of thing and is sent to the same endpoint.
 MAX_PROMPT_LENGTH = 4000
@@ -83,7 +88,16 @@ class ImageRevisionError(ValueError):
 
 
 class ImageRevisionConflictError(ImageRevisionError):
-    """Raised when the stored revisions moved on since the caller last read them."""
+    """Raised when the stored revisions moved on since the caller last read them.
+
+    ``message_doc`` is the document that was checked, so a caller can answer with the versions
+    that beat the request. After a slow model call those are in the copy read again then, not in
+    the one the caller loaded before it.
+    """
+
+    def __init__(self, message='This image was changed by someone else', message_doc=None):
+        super().__init__(message)
+        self.message_doc = message_doc
 
 
 def utc_now_iso():
@@ -331,6 +345,13 @@ def serialize_image_revisions(entry):
                 'role': turn.get('role'),
                 'content': turn.get('content') or '',
                 'timestamp': turn.get('timestamp') or '',
+                # Present only on turns sent with one, so an editor can match what it showed
+                # before the server answered to what was stored.
+                **(
+                    {'submission_id': turn['submission_id']}
+                    if isinstance(turn.get('submission_id'), str) and turn['submission_id']
+                    else {}
+                ),
             }
             for turn in (entry.get('chat') or [])
             if isinstance(turn, dict) and turn.get('role') in IMAGE_CHAT_ROLES
@@ -485,13 +506,13 @@ def assert_revision_expectations(
     revisions = read_revisions(entry)
 
     if expected_revision_count is not None and len(revisions) != expected_revision_count:
-        raise ImageRevisionConflictError('This image was changed by someone else')
+        raise ImageRevisionConflictError('This image was changed by someone else', message_doc)
 
     expected_id = str(expected_current_revision_id or '').strip()
     if expected_id:
         current = resolve_current_revision(entry)
         if not current or current.get('id') != expected_id:
-            raise ImageRevisionConflictError('This image was changed by someone else')
+            raise ImageRevisionConflictError('This image was changed by someone else', message_doc)
 
 
 def apply_image_revision(
@@ -584,13 +605,17 @@ def set_current_image_revision(message_doc, revision_id):
     return _write_entry(message_doc, entry)
 
 
-def append_image_chat_turn(message_doc, role, content):
+def append_image_chat_turn(message_doc, role, content, submission_id=None):
     """Add one turn to an image's scoped sub-conversation, returning the stored entry.
 
     The transcript is kept with the image rather than in the message list, which is the whole
     point of the feature: refining an image should not fill the thread with near-duplicates, and
     none of these turns is ever sent as conversation history. Image messages are excluded from
     the model's history entirely, so this is the only record of how an image was arrived at.
+
+    ``submission_id`` is the id the client minted for the exchange. It is stored on both turns so
+    the editor can match the message it showed optimistically to the one stored here, and so a
+    retried request can be recognised. It is omitted from the turn when none was sent.
     """
     if role not in IMAGE_CHAT_ROLES:
         raise ImageRevisionError('Unsupported chat role')
@@ -600,17 +625,26 @@ def append_image_chat_turn(message_doc, role, content):
     text = content.strip()[:MAX_CHAT_CONTENT_LENGTH]
     if not text:
         raise ImageRevisionError('Chat content cannot be empty')
+    if submission_id is not None and (
+        not isinstance(submission_id, str)
+        or not 0 < len(submission_id) <= MAX_SUBMISSION_ID_LENGTH
+    ):
+        raise ImageRevisionError('Unsupported submission id')
 
     entry = read_image_revisions(message_doc)
     if not read_revisions(entry):
         raise ImageRevisionError('This image has no stored versions')
 
-    entry = _mutable_entry(entry)
-    entry['chat'] = (entry['chat'] + [{
+    turn = {
         'role': role,
         'content': text,
         'timestamp': utc_now_iso(),
-    }])[-MAX_CHAT_TURNS:]
+    }
+    if submission_id:
+        turn['submission_id'] = submission_id
+
+    entry = _mutable_entry(entry)
+    entry['chat'] = (entry['chat'] + [turn])[-MAX_CHAT_TURNS:]
 
     return _write_entry(message_doc, entry)
 

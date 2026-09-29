@@ -374,8 +374,14 @@ export function AssistantMarkdown({
     streaming?: boolean;
     messageId?: string;
 }) {
+    // Keyed on what the masks say rather than on the array that carries them. The caller reads
+    // them off the message, and any change to its metadata, such as a diagram's saved revision,
+    // makes a new message and so a new array holding the same ranges. Keyed on that identity,
+    // the text was re-parsed and the component map in `Markdown` rebuilt, which remounted every
+    // diagram and chart in the message and closed an editor open on one of them.
+    const maskKey = JSON.stringify(masks ?? NO_MASKS);
     const { text, groups, ranges, segments } = useMemo(() => {
-        const masked = applyMasks(content, masks ?? []);
+        const masked = applyMasks(content, JSON.parse(maskKey) as MaskedRange[]);
         const parsed = parseCitations(masked.text);
         const guarded = streaming ? markPendingFences(parsed.text) : parsed.text;
         const withMath = parseMath(guarded);
@@ -385,7 +391,7 @@ export function AssistantMarkdown({
             ranges: masked.ranges,
             segments: withMath.segments,
         };
-    }, [content, masks, streaming]);
+    }, [content, maskKey, streaming]);
 
     return (
         <Markdown

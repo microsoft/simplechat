@@ -1,7 +1,7 @@
 # test_v2_workflow_calendar_schedules.py
 """
 UI tests for calendar schedules in the native V2 workflow editor, in both workflow scopes.
-Version: 0.261.197
+Version: 0.261.202
 Implemented in: 0.261.193
 
 These tests use the real V2 SPA bundle with the closed workflow fixture, whose save routes validate
@@ -17,7 +17,7 @@ and whose editor options carry the server's schedule choices and IANA time zone 
 * calendar problems named before saving with the server's messages;
 * the administrator's minimum, which refuses a new or changed interval but leaves a saved interval
   and every calendar schedule alone;
-* from 0.261.197, a stored schedule the editor can't show exactly (a kind, calendar frequency or
+* from 0.261.202, a stored schedule the editor can't show exactly (a kind, calendar frequency or
   interval unit it doesn't define), which opens read-only in both scopes with the schedule kept as
   stored and nothing written.
 """

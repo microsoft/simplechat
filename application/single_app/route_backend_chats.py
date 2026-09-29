@@ -163,8 +163,8 @@ from functions_chat_content_checks import (
     strip_private_chat_checks,
 )
 from functions_chat_content_review import (
-    checked_history_messages, persist_chat_reply, record_chat_content_incident,
-    retracted_stream_payload, reply_is_retracted,
+    ChatContentReviewConflict, checked_history_messages, persist_chat_reply,
+    record_chat_content_incident, retracted_stream_payload, reply_is_retracted,
 )
 from azure.core import MatchConditions
 from functions_prompt_metadata import build_prompt_selection_metadata
@@ -352,6 +352,7 @@ from functions_message_visual_styles import (
     apply_visual_style,
 )
 from functions_message_block_revisions import (
+    MAX_CHAT_CONTENT_LENGTH as BLOCK_MAX_CHAT_CONTENT_LENGTH,
     ORIGIN_AI,
     ORIGIN_CONTROL,
     ORIGIN_MANUAL,
@@ -377,16 +378,27 @@ from functions_block_revision_assist import (
 # Aliased where the names collide with the block revision vocabulary above. The two are
 # deliberately separate: a diagram revision stores text, an image revision stores a blob.
 from functions_message_image_revisions import (
+    MAX_CHAT_CONTENT_LENGTH as IMAGE_MAX_CHAT_CONTENT_LENGTH,
     ORIGIN_AI as IMAGE_ORIGIN_AI,
     ImageRevisionConflictError,
     ImageRevisionError,
     append_image_chat_turn,
     read_image_revisions,
+    resolve_current_revision as resolve_current_image_revision,
     resolve_image_message_content,
     serialize_image_revisions,
     set_current_image_revision,
 )
 from functions_image_edit import revise_image_message
+from functions_assist_submissions import (
+    SUBMISSION_CONFLICT,
+    SUBMISSION_CONFLICT_CODE,
+    SUBMISSION_CONFLICT_MESSAGE,
+    SUBMISSION_REPLAY,
+    SubmissionIdError,
+    classify_submission,
+    normalize_submission_id,
+)
 from functions_document_actions import (
     DOCUMENT_ACTION_CONTEXT_CHAT,
     DOCUMENT_ACTION_TYPE_COMPARISON,
@@ -26895,6 +26907,57 @@ def register_route_backend_chats(bp):
             return ''
         return str((rows[0] or {}).get('content') or '').strip() if rows else ''
 
+    def _answer_raced_block_submission(
+        conversation_id,
+        message_id,
+        block_kind,
+        block_index,
+        source_hash,
+        original_source,
+        instruction,
+        submission_id,
+    ):
+        """Answer a diagram request whose write lost a race, from the message as it now stands.
+
+        A retry sent while the request it repeats is still running finds nothing stored when it
+        is checked, calls the model, and then loses its write to that first request. The stored
+        turns show it was answered, so it is answered from them just as a replay is. A write lost
+        to anything else is the ordinary conflict, with the versions that won. Returns None when
+        the message cannot be read again.
+        """
+        try:
+            latest = cosmos_messages_container.read_item(
+                item=message_id,
+                partition_key=conversation_id,
+            )
+        except Exception as exc:
+            debug_print(f'[BLOCK_REVISION] Could not read the message again after a lost write: {exc}')
+            return None
+        if str((latest or {}).get('conversation_id') or '') != conversation_id:
+            return None
+
+        entry = read_block_entry(latest, block_kind, block_index, source_hash)
+        submission = classify_submission(
+            (entry or {}).get('chat'), submission_id, instruction, BLOCK_MAX_CHAT_CONTENT_LENGTH
+        )
+        if submission == SUBMISSION_CONFLICT:
+            return jsonify({
+                'error': SUBMISSION_CONFLICT_MESSAGE,
+                'code': SUBMISSION_CONFLICT_CODE,
+            }), 409
+        if submission == SUBMISSION_REPLAY:
+            return jsonify({
+                'success': True,
+                'message_id': message_id,
+                'source': current_block_source(entry, fallback=original_source),
+                'block_revisions': read_block_revisions(latest),
+                'replayed': True,
+            }), 200
+        return jsonify({
+            'error': 'This diagram was changed by someone else',
+            'block_revisions': read_block_revisions(latest),
+        }), 409
+
     @bp.route('/api/message/<message_id>/block-revision/assist', methods=['POST'])
     @swagger_route(security=get_auth_security())
     @login_required
@@ -26940,6 +27003,10 @@ def register_route_backend_chats(bp):
                 validate_source_hash(source_hash, required=True)
             except BlockRevisionError as ex:
                 return jsonify({'error': str(ex)}), 400
+            try:
+                submission_id = normalize_submission_id(data.get('submission_id'))
+            except SubmissionIdError as ex:
+                return jsonify({'error': str(ex)}), 400
 
             # What the block is called in anything the reader sees, so an error about a chart
             # does not tell them their diagram is broken.
@@ -26950,6 +27017,25 @@ def register_route_backend_chats(bp):
             if not current_source:
                 return jsonify({'error': f'The {block_noun} source is required'}), 400
 
+            # A retry of a request that was already answered -- its reply was lost on the way
+            # back -- is answered from what was stored, rather than paying for a second edit
+            # and writing a second revision the reader never asked for.
+            submission = classify_submission(
+                (entry or {}).get('chat'), submission_id, instruction, BLOCK_MAX_CHAT_CONTENT_LENGTH
+            )
+            if submission == SUBMISSION_CONFLICT:
+                return jsonify({
+                    'error': SUBMISSION_CONFLICT_MESSAGE,
+                    'code': SUBMISSION_CONFLICT_CODE,
+                }), 409
+            if submission == SUBMISSION_REPLAY:
+                return jsonify({
+                    'success': True,
+                    'message_id': message_id,
+                    'source': current_source,
+                    'block_revisions': read_block_revisions(message_doc),
+                    'replayed': True,
+                }), 200
             try:
                 result = request_block_edit(
                     get_settings(),
@@ -26990,7 +27076,8 @@ def register_route_backend_chats(bp):
                 # The assistant turn stores the source rather than the model's prose, because a
                 # follow-up instruction needs to refer to what the diagram became.
                 append_block_chat_turn(
-                    message_doc, block_kind, block_index, 'user', instruction, source_hash
+                    message_doc, block_kind, block_index, 'user', instruction, source_hash,
+                    submission_id=submission_id,
                 )
                 append_block_chat_turn(
                     message_doc,
@@ -26999,6 +27086,7 @@ def register_route_backend_chats(bp):
                     'assistant',
                     result['source'],
                     source_hash,
+                    submission_id=submission_id,
                 )
             except BlockRevisionConflictError as ex:
                 return jsonify({
@@ -27014,6 +27102,21 @@ def register_route_backend_chats(bp):
             try:
                 message_doc = persist_chat_reply(cosmos_messages_container, message_doc)
             except Exception as e:
+                if submission_id and isinstance(e, ChatContentReviewConflict):
+                    # The message was written while the model was answering. When that write was
+                    # this same request, its stored turns say so.
+                    raced = _answer_raced_block_submission(
+                        conversation_id,
+                        message_id,
+                        block_kind,
+                        block_index,
+                        source_hash,
+                        original_source,
+                        instruction,
+                        submission_id,
+                    )
+                    if raced:
+                        return raced
                 log_event(
                     f'[BLOCK_REVISION] Failed to update message: {e}',
                     extra={'message_id': message_id, 'user_id': user_id},
@@ -27085,6 +27188,32 @@ def register_route_backend_chats(bp):
         owner = str((conversation_item or {}).get('user_id') or '').strip()
         return owner or str(fallback_user_id or '').strip()
 
+    def _answer_stored_image_submission(submission, message_id, message_doc):
+        """Answer an image request its submission id shows was already handled, or return None.
+
+        A retry of an instruction that was already answered -- its reply was lost on the way
+        back, or it raced the request it repeats -- is answered from what was stored rather than
+        storing the same change twice. The same id with a different instruction is refused.
+        """
+        if submission == SUBMISSION_CONFLICT:
+            return jsonify({
+                'error': SUBMISSION_CONFLICT_MESSAGE,
+                'code': SUBMISSION_CONFLICT_CODE,
+            }), 409
+        if submission != SUBMISSION_REPLAY:
+            return None
+        stored_entry = read_image_revisions(message_doc)
+        current_revision = resolve_current_image_revision(stored_entry) or {}
+        return jsonify({
+            'success': True,
+            'message_id': message_id,
+            'method': current_revision.get('method') or '',
+            'model_deployment_name': current_revision.get('model') or '',
+            'image_url': resolve_image_message_content(message_doc, f'/api/image/{message_id}'),
+            'image_revisions': serialize_image_revisions(stored_entry),
+            'replayed': True,
+        }), 200
+
     @bp.route('/api/message/<message_id>/image-revision', methods=['POST'])
     @swagger_route(security=get_auth_security())
     @login_required
@@ -27123,6 +27252,28 @@ def register_route_backend_chats(bp):
                 expected_revision_count = _read_expected_revision_count(data)
             except BlockRevisionError as ex:
                 return jsonify({'error': str(ex)}), 400
+            try:
+                submission_id = normalize_submission_id(data.get('submission_id'))
+            except SubmissionIdError as ex:
+                return jsonify({'error': str(ex)}), 400
+
+            # Only an instruction produces transcript turns to carry the id, so only an
+            # instruction can be recognised as a retry of a request that was already answered.
+            revision_origin = data.get('origin') or IMAGE_ORIGIN_AI
+            if revision_origin != IMAGE_ORIGIN_AI:
+                submission_id = None
+            answered = _answer_stored_image_submission(
+                classify_submission(
+                    read_image_revisions(message_doc).get('chat'),
+                    submission_id,
+                    data.get('instruction'),
+                    IMAGE_MAX_CHAT_CONTENT_LENGTH,
+                ),
+                message_id,
+                message_doc,
+            )
+            if answered:
+                return answered
 
             try:
                 result = revise_image_message(
@@ -27131,7 +27282,7 @@ def register_route_backend_chats(bp):
                     owner_user_id=_image_revision_owner_id(loaded['conversation'], user_id),
                     conversation_id=conversation_id,
                     complete_content=loaded['content'],
-                    origin=data.get('origin') or IMAGE_ORIGIN_AI,
+                    origin=revision_origin,
                     operation=data.get('operation', ''),
                     instruction=data.get('instruction') or '',
                     prompt=data.get('prompt') or '',
@@ -27150,11 +27301,15 @@ def register_route_backend_chats(bp):
                         item=message_id,
                         partition_key=conversation_id,
                     ),
+                    submission_id=submission_id,
                 )
             except ImageRevisionConflictError as ex:
+                # A conflict found after the model call was found in the document read again
+                # then, which holds the versions that beat this request.
+                latest_doc = getattr(ex, 'message_doc', None) or message_doc
                 return jsonify({
                     'error': str(ex),
-                    'image_revisions': serialize_image_revisions(read_image_revisions(message_doc)),
+                    'image_revisions': serialize_image_revisions(read_image_revisions(latest_doc)),
                 }), 409
             except ImageRevisionError as ex:
                 return jsonify({'error': str(ex)}), 400
@@ -27169,14 +27324,25 @@ def register_route_backend_chats(bp):
             # From here on the freshly re-read document is the one being written, so the
             # transcript and the upsert must both use it rather than the stale copy.
             message_doc = result['message']
+            # Checked again in that document: a retry sent while the request it repeats was still
+            # running only finds that request's turns now.
+            answered = _answer_stored_image_submission(
+                result.get('submission'), message_id, message_doc
+            )
+            if answered:
+                return answered
 
             # The transcript keeps the image's own sub-conversation, so a follow-up like "now
             # make it warmer" has something to refer to. None of it is ever sent as conversation
             # history -- image messages are excluded from that entirely.
             if result['instruction']:
                 try:
-                    append_image_chat_turn(message_doc, 'user', result['instruction'])
-                    append_image_chat_turn(message_doc, 'assistant', result['prompt'])
+                    append_image_chat_turn(
+                        message_doc, 'user', result['instruction'], submission_id=submission_id
+                    )
+                    append_image_chat_turn(
+                        message_doc, 'assistant', result['prompt'], submission_id=submission_id
+                    )
                 except ImageRevisionError:
                     pass
 

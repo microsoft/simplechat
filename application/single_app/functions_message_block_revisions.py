@@ -89,6 +89,11 @@ MAX_SOURCE_LENGTH = 20000
 MAX_CHAT_TURNS = 20
 MAX_CHAT_CONTENT_LENGTH = 4000
 
+# The id the client minted for the exchange a chat turn belongs to. Routes check its format with
+# functions_assist_submissions before anything is stored; this module stays free of application
+# imports, so the bound here only stops a caller that skipped that check from growing the document.
+MAX_SUBMISSION_ID_LENGTH = 128
+
 # Blocks with revisions across every kind in one message.
 MAX_STORED_BLOCKS = 50
 
@@ -635,12 +640,17 @@ def append_block_chat_turn(
     role,
     content,
     source_hash='',
+    submission_id=None,
 ):
     """Add one turn to a block's scoped sub-conversation, returning the stored entry.
 
     The transcript is kept with the block rather than in the message list, which is the whole
     point of the feature: refining a diagram should not fill the thread with near-duplicates,
     and none of these turns are ever sent as conversation history.
+
+    ``submission_id`` is the id the client minted for the exchange. It is stored on both turns so
+    the editor can match the message it showed optimistically to the one stored here, and so a
+    retried request can be recognised. It is omitted from the turn when none was sent.
     """
     kind = validate_block_kind(block_kind)
     index = validate_block_index(block_index)
@@ -653,17 +663,26 @@ def append_block_chat_turn(
     text = content.strip()[:MAX_CHAT_CONTENT_LENGTH]
     if not text:
         raise BlockRevisionError('Chat content cannot be empty')
+    if submission_id is not None and (
+        not isinstance(submission_id, str)
+        or not 0 < len(submission_id) <= MAX_SUBMISSION_ID_LENGTH
+    ):
+        raise BlockRevisionError('Unsupported submission id')
 
     entry = read_block_entry(message_doc, kind, index, fingerprint)
     if entry is None:
         raise BlockRevisionError('This diagram has no stored revisions')
 
-    entry = _mutable_entry(entry, '')
-    entry['chat'] = (entry['chat'] + [{
+    turn = {
         'role': role,
         'content': text,
         'timestamp': utc_now_iso(),
-    }])[-MAX_CHAT_TURNS:]
+    }
+    if submission_id:
+        turn['submission_id'] = submission_id
+
+    entry = _mutable_entry(entry, '')
+    entry['chat'] = (entry['chat'] + [turn])[-MAX_CHAT_TURNS:]
 
     _write_entry(message_doc, kind, index, entry)
     return entry

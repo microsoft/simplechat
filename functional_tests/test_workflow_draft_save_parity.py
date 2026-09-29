@@ -2,8 +2,8 @@
 #!/usr/bin/env python3
 """
 Functional test for workflow save parity across the workflow draft service refactor.
-Version: 0.261.197
-Implemented in: 0.261.197
+Version: 0.261.202
+Implemented in: 0.261.202
 
 This test ensures that ``save_personal_workflow`` and ``save_group_workflow`` behave byte for byte
 as they did before each save was split into a write-free build step and a persist step.
@@ -54,7 +54,7 @@ from test_group_workflow_round_trip_preservation import (  # noqa: E402
 
 
 GOLDEN_PATH = Path(__file__).resolve().parent / "fixtures" / "workflow_save_parity_golden.json"
-MINIMUM_VERSION = "0.261.197"
+MINIMUM_VERSION = "0.261.202"
 
 OWNER_ID = "owner-1"
 EDITOR_ID = "admin-2"

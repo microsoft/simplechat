@@ -8,6 +8,8 @@ import { Pill } from '../workspace/primitives';
 import { WorkflowDocumentPicker } from './WorkflowDocumentPicker';
 import { WorkflowConditionEditor, WorkflowDecisionFields, WorkflowFlowInputs } from './WorkflowConditionEditor';
 import { useWorkflowFieldDrafts, type WorkflowFieldDraftOwner } from './WorkflowFieldDrafts';
+import { WorkflowChangedField, WorkflowItemChangeBadge } from './WorkflowChangeTracking';
+import { workflowTaskKey } from '../../lib/workflowChangeTracking';
 import {
     defaultFlowPredicate,
     enclosingFlowLoopControls,
@@ -998,7 +1000,7 @@ export function WorkflowTaskFields({
     });
 
     return (
-        <div data-workflow-history-kind="task" data-workflow-history-owner={task.id}>
+        <div data-workflow-history-kind="task" data-workflow-history-owner={task.id} data-workflow-change-item={workflowTaskKey(task.id)}>
         <GlassPanel elevation="flat" className="space-y-4 p-4">
             <div className="flex flex-wrap items-start justify-between gap-3">
                 <div>
@@ -1006,6 +1008,7 @@ export function WorkflowTaskFields({
                     <p className="text-xs text-text-3">
                         {runnerLabel(task.runner)} · {taskInputMode(task) === 'auto' ? 'automatic input' : `${task.inputs?.length ?? 0} bound inputs`}
                     </p>
+                    <WorkflowItemChangeBadge itemKey={workflowTaskKey(task.id)} unframed={['placement']} className="mt-2" />
                 </div>
                 {!structuredNode && onMove && onRemove ? <div className="flex flex-wrap gap-2">
                     <GlassButton size="sm" disabled={index === 0} onClick={() => onMove(-1)} aria-label={`Move ${task.name || `Task ${index + 1}`} up`}>
@@ -1025,6 +1028,7 @@ export function WorkflowTaskFields({
                 </div>
             ) : null}
             <div className="grid gap-3 md:grid-cols-2">
+                <WorkflowChangedField changeKey={workflowTaskKey(task.id, 'name')}>
                 <label className="text-sm text-text-2">
                     {fieldLabel('Task name', true)}
                     <input
@@ -1035,7 +1039,9 @@ export function WorkflowTaskFields({
                         onChange={(event) => onChange({ ...task, name: event.target.value })}
                     />
                 </label>
+                </WorkflowChangedField>
             </div>
+            <WorkflowChangedField changeKey={workflowTaskKey(task.id, 'instructions')}>
             <label className="block text-sm text-text-2">
                 {fieldLabel('Instructions', true)}
                 <textarea
@@ -1050,8 +1056,9 @@ export function WorkflowTaskFields({
                     {task.instructions.length.toLocaleString()} / {WORKFLOW_TASK_INSTRUCTIONS_LIMIT.toLocaleString()} characters
                 </span>
             </label>
+            </WorkflowChangedField>
             {structuredNode && onStructuredNodeChange ? (
-                <div className="space-y-3">
+                <WorkflowChangedField changeKey={workflowTaskKey(task.id, 'run_when')} className="space-y-3">
                     <Toggle label="Run when" checked={structuredNode.run_when !== undefined}
                         description="False intentionally skips this task before approval or execution. A skipped task produces no output."
                         onChange={(checked) => {
@@ -1065,38 +1072,50 @@ export function WorkflowTaskFields({
                             value={structuredNode.run_when} label={`Run when for ${task.name}`}
                             onChange={(condition) => onStructuredNodeChange({ ...structuredNode, run_when: condition })} />
                     ) : null}
-                </div>
+                </WorkflowChangedField>
             ) : null}
             <details className="rounded-xl border border-edge p-3">
                 <summary className="cursor-pointer text-sm font-medium text-text-1">Runner, inputs, references and outputs</summary>
                 <div className="mt-4 space-y-5">
-                    {structuredNode ? <TaskPublicationFields task={task} options={options}
+                    {structuredNode ? <WorkflowChangedField changeKey={workflowTaskKey(task.id, 'publication')}>
+                        <TaskPublicationFields task={task} options={options}
                         durableExecution={durableExecution} onChange={(next) => {
                             if (next.output_contract !== task.output_contract) drafts.clear(draftOwner, ['output']);
                             onChange(next);
-                        }} /> : null}
-                    {!task.publication ? <TaskRunnerFields runner={task.runner} options={options}
+                        }} /></WorkflowChangedField> : null}
+                    {!task.publication ? <WorkflowChangedField changeKey={workflowTaskKey(task.id, 'runner')}>
+                        <TaskRunnerFields runner={task.runner} options={options}
                         localOnly={task.input_processing === 'saved_record_report' ||
                             Boolean(structuredNode && enclosingFlowLoopControls(workflow, structuredNode.id).length)}
-                        onChange={(runner) => onChange({ ...task, runner })} /> : null}
+                        onChange={(runner) => onChange({ ...task, runner })} /></WorkflowChangedField> : null}
+                    <WorkflowChangedField changeKey={workflowTaskKey(task.id, 'approval')}>
                     <TaskApprovalFields
                         task={task}
                         durableExecution={durableExecution}
                         onNeedsDurable={onNeedsDurable}
                         onChange={onChange}
                     />
-                    {!task.publication ? <DocumentActionFields scope={scope} task={task} onChange={onChange}
+                    </WorkflowChangedField>
+                    {!task.publication ? <WorkflowChangedField changeKey={workflowTaskKey(task.id, 'document_action')}>
+                        <DocumentActionFields scope={scope} task={task} onChange={onChange}
                         changedFileTargets={workflowFileSyncProvidesAnalyzeTargets(workflow)}
-                        loops={structuredNode ? enclosingFlowLoops(workflow, structuredNode.id).filter((loop) => loop.iterable.kind !== 'input') : []} /> : null}
+                        loops={structuredNode ? enclosingFlowLoops(workflow, structuredNode.id).filter((loop) => loop.iterable.kind !== 'input') : []} />
+                    </WorkflowChangedField> : null}
+                    <WorkflowChangedField changeKey={workflowTaskKey(task.id, 'inputs')}>
                     {structuredNode ? (
                         <WorkflowFlowInputs workflow={workflow} nodeId={structuredNode.id}
                             bindings={(task.inputs ?? []).filter(isFlowBinding)} label={`${task.name} inputs`}
                             recordsOnly={task.publication?.source_kind === 'saved_output'}
                             onChange={(inputs) => onChange({ ...task, inputs })} />
                     ) : <TaskInputs task={task} previousTasks={previousTasks} onChange={onChange} />}
-                    {structuredNode && Boolean(options.supported_input_processing_modes?.length) || task.input_processing !== undefined ? <TaskInputProcessingFields task={task}
-                        workflow={workflow} options={options} onChange={onChange} /> : null}
+                    </WorkflowChangedField>
+                    {structuredNode && Boolean(options.supported_input_processing_modes?.length) || task.input_processing !== undefined ? <WorkflowChangedField changeKey={workflowTaskKey(task.id, 'input_processing')}>
+                        <TaskInputProcessingFields task={task}
+                        workflow={workflow} options={options} onChange={onChange} /></WorkflowChangedField> : null}
+                    <WorkflowChangedField changeKey={workflowTaskKey(task.id, 'reference_ids')}>
                     <TaskReferences task={task} workflow={workflow} onChange={onChange} />
+                    </WorkflowChangedField>
+                    <WorkflowChangedField changeKey={workflowTaskKey(task.id, 'output_contract')} className="space-y-5">
                     <label className="text-sm text-text-2">
                         Output contract
                         <select
@@ -1147,6 +1166,7 @@ export function WorkflowTaskFields({
                             shape and does not opt into partial acceptance.
                         </p>
                     )}
+                    </WorkflowChangedField>
                 </div>
             </details>
         </GlassPanel>

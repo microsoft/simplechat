@@ -2,8 +2,8 @@
 #!/usr/bin/env python3
 """
 Functional test for the V2 editor's handling of a stored schedule it can't show exactly.
-Version: 0.261.197
-Implemented in: 0.261.197
+Version: 0.261.202
+Implemented in: 0.261.202
 
 The save routes refuse or canonicalize every schedule they store, but a newer server, a direct
 write or a record saved before a rule existed can leave one the V2 editor has no fields for. This
@@ -345,7 +345,7 @@ def outcome():
 
 
 def test_the_application_version_includes_the_unsupported_schedule_guard():
-    assert_app_version_at_least("0.261.197")
+    assert_app_version_at_least("0.261.202")
 
 
 @pytest.mark.parametrize("name", sorted(READ_ONLY))

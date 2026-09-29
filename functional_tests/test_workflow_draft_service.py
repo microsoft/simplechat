@@ -2,8 +2,8 @@
 #!/usr/bin/env python3
 """
 Functional test for the workflow draft service.
-Version: 0.261.197
-Implemented in: 0.261.197
+Version: 0.261.202
+Implemented in: 0.261.202
 
 This test ensures that a workflow blueprint proposed from chat:
 
@@ -54,7 +54,7 @@ from test_workflow_draft_save_parity import (  # noqa: E402
 )
 
 
-MINIMUM_VERSION = "0.261.197"
+MINIMUM_VERSION = "0.261.202"
 PROPOSAL_ID = "proposal-1"
 ORIGIN = {
     "source": "orchestration",

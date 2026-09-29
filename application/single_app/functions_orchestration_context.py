@@ -39,6 +39,7 @@ from datetime import datetime, timezone
 
 from functions_appinsights import log_event, workflow_log_context
 from functions_action_catalog import build_action_planner_projection
+from functions_assist_references import sanitize_reference_label
 from functions_message_block_revisions import resolve_block_sources_in_content
 from functions_message_masking import remove_masked_content
 from functions_orchestration_registry import (
@@ -488,12 +489,19 @@ def seeds_are_explicit(seeds):
 # --------------------------------------------------------------------------------------
 
 class ElicitationContextError(ValueError):
-    """User-safe, field-addressable validation failure for supplemental context."""
+    """User-safe, field-addressable validation failure for supplemental context.
 
-    def __init__(self, message, field=None):
+    ``reason`` is a stable, machine-readable cause and ``reference_index`` the position of
+    the failing entry in the caller's reference list, when one reference is at fault.
+    Neither is part of the message.
+    """
+
+    def __init__(self, message, field=None, *, reason=None, reference_index=None):
         super().__init__(message)
         self.message = message
         self.field = field
+        self.reason = reason
+        self.reference_index = reference_index
 
 
 def _bounded_answer_text(value, limit=ELICITATION_TEXT_LIMIT):
@@ -548,26 +556,39 @@ def _owned_elicitation_conversation(user_id, conversation_id):
     return conversation
 
 
-def _authorize_elicitation_scope(scope, user_id, conversation, settings):
+def conversation_workspace_lock(conversation):
+    """The workspaces a scope-locked conversation allows, or None when it is not locked."""
+    if not isinstance(conversation, dict) or not conversation.get('scope_locked'):
+        return None
+    return conversation.get('locked_contexts') or conversation.get('context') or []
+
+
+def _authorize_reference_scope(scope, user_id, settings, locked_contexts=None):
+    """Authorize a personal, group or public workspace for ``user_id`` as of now.
+
+    ``locked_contexts`` is a scope-locked conversation's allowlist, or None when no lock
+    applies. Membership and visibility are rechecked on every call: a workspace id from
+    the browser, or an active workspace, is never evidence of access.
+    """
     kind, scope_id = scope['kind'], scope['id']
-    if kind == 'chat':
-        if scope_id != conversation['id']:
-            raise ElicitationContextError('Select an attachment from this conversation.')
-        return {'kind': 'chat', 'id': conversation['id'], 'name': 'This conversation'}
-
     if not settings.get(WORKSPACE_SCOPE_SETTINGS[kind], False):
-        raise ElicitationContextError('That workspace capability is currently disabled.')
+        raise ElicitationContextError(
+            'That workspace capability is currently disabled.', reason='workspace_disabled',
+        )
     if kind == 'personal' and scope_id not in (None, '', user_id):
-        raise ElicitationContextError('That personal workspace is not available.')
+        raise ElicitationContextError(
+            'That personal workspace is not available.', reason='workspace_unavailable',
+        )
 
-    if conversation.get('scope_locked'):
-        locked = conversation.get('locked_contexts') or conversation.get('context') or []
+    if locked_contexts is not None:
         if not any(
             item.get('scope') == kind
             and (item.get('id') == (user_id if kind == 'personal' else scope_id))
-            for item in locked if isinstance(item, dict)
+            for item in locked_contexts if isinstance(item, dict)
         ):
-            raise ElicitationContextError('This conversation is locked to different workspaces.')
+            raise ElicitationContextError(
+                'This conversation is locked to different workspaces.', reason='workspace_locked',
+            )
 
     if kind == 'personal':
         return {'kind': kind, 'id': None, 'name': 'My workspace'}
@@ -584,11 +605,27 @@ def _authorize_elicitation_scope(scope, user_id, conversation, settings):
         )
 
         if scope_id not in get_user_visible_public_workspace_ids_from_settings(user_id):
-            raise ElicitationContextError('That public workspace is not available.')
+            raise ElicitationContextError(
+                'That public workspace is not available.', reason='workspace_unavailable',
+            )
         workspace = find_public_workspace_by_id(scope_id)
     if not workspace:
-        raise ElicitationContextError('That workspace is no longer available.')
+        raise ElicitationContextError(
+            'That workspace is no longer available.', reason='workspace_unavailable',
+        )
     return {'kind': kind, 'id': scope_id, 'name': _text(workspace.get('name'), 200)}
+
+
+def _authorize_elicitation_scope(scope, user_id, conversation, settings):
+    if scope['kind'] == 'chat':
+        if scope['id'] != conversation['id']:
+            raise ElicitationContextError(
+                'Select an attachment from this conversation.', reason='workspace_unavailable',
+            )
+        return {'kind': 'chat', 'id': conversation['id'], 'name': 'This conversation'}
+    return _authorize_reference_scope(
+        scope, user_id, settings, conversation_workspace_lock(conversation),
+    )
 
 
 def _elicitation_document_ready(document):
@@ -609,19 +646,33 @@ def _elicitation_document_ready(document):
     return True
 
 
-def resolve_elicitation_references(references, user_id, conversation_id, settings=None):
-    """Reauthorize exact source identities and readiness, without a silent-drop path."""
-    settings = settings or {}
-    if not isinstance(references, list) or len(references) > ELICITATION_REFERENCE_LIMIT:
-        raise ElicitationContextError(f'Select at most {ELICITATION_REFERENCE_LIMIT} context references.')
-    if not references:
-        return []
-    conversation = _owned_elicitation_conversation(user_id, conversation_id)
+def _authorize_references(
+    references, user_id, *, normalize, authorize_scope, conversation_id=None,
+    omit_unresolved=False, log_label='Clarification',
+):
+    """Authorize ``references`` in order: the core every `#` reference path shares.
+
+    Each reference is normalized and deduplicated, and its workspace is authorized once,
+    before any document is read. Documents are then resolved per workspace through the
+    document-context and manifest boundaries mixed-source reads use, checked for
+    readiness, and labeled from the server's record. Tags must still exist in their
+    workspace. Nothing is dropped silently: the first failure raises, carrying the
+    failing entry's position in ``references``.
+
+    ``omit_unresolved`` keeps a document with no readable context out of the manifest
+    call. Under strict source authority such a context fails the whole call, which would
+    report a missing document as a failed check instead of as that document.
+    """
     normalized = []
+    positions = []
     seen = set()
     scopes = {}
-    for raw in references:
-        reference = normalize_elicitation_reference(raw)
+    for index, raw in enumerate(references):
+        try:
+            reference = normalize(raw)
+        except ElicitationContextError as exc:
+            exc.reference_index = index
+            raise
         key = (reference['kind'], reference['id'], reference['scope']['kind'], reference['scope']['id'])
         if key in seen:
             continue
@@ -629,19 +680,27 @@ def resolve_elicitation_references(references, user_id, conversation_id, setting
         scope_key = (reference['scope']['kind'], reference['scope']['id'])
         if scope_key not in scopes:
             try:
-                scopes[scope_key] = _authorize_elicitation_scope(reference['scope'], user_id, conversation, settings)
-            except ElicitationContextError:
+                scopes[scope_key] = authorize_scope(reference['scope'])
+            except ElicitationContextError as exc:
+                exc.reference_index = index
                 raise
             except Exception as exc:
                 log_event(
-                    '[ORCHESTRATION_CONTEXT] Clarification workspace authorization failed.',
+                    f'[ORCHESTRATION_CONTEXT] {log_label} workspace authorization failed.',
                     extra={'exception_type': type(exc).__name__}, level=logging.WARNING,
                 )
-                raise ElicitationContextError('That workspace is not available. Select another reference.') from exc
+                raise ElicitationContextError(
+                    'That workspace is not available. Select another reference.',
+                    reason='workspace_unavailable', reference_index=index,
+                ) from exc
         reference['scope'] = scopes[scope_key]
         normalized.append(reference)
+        positions.append(index)
 
-    documents = [item for item in normalized if item['kind'] in ('document', 'chat_attachment')]
+    documents = [
+        (position, reference) for position, reference in zip(positions, normalized)
+        if reference['kind'] in ('document', 'chat_attachment')
+    ]
     if documents:
         # Reuse the same document-context and manifest boundaries as mixed-source reads.
         # Keeping metadata locally lets us check processing without exposing storage URLs.
@@ -649,7 +708,7 @@ def resolve_elicitation_references(references, user_id, conversation_id, setting
         from functions_search_service import resolve_document_contexts
 
         batches = {}
-        for reference in documents:
+        for _, reference in documents:
             scope = reference['scope']
             batches.setdefault((scope['kind'], scope['id']), []).append(reference['id'])
         contexts_by_reference = {}
@@ -669,13 +728,21 @@ def resolve_elicitation_references(references, user_id, conversation_id, setting
                     include_content=False,
                 )
                 if not isinstance(contexts, list) or len(contexts) != len(ids):
-                    raise ElicitationContextError('The selected files could not be verified. Please retry.')
+                    raise ElicitationContextError(
+                        'The selected files could not be verified. Please retry.',
+                        reason='verification_failed',
+                    )
                 by_id = dict(zip(ids, contexts))
+                manifest_ids = ids
+                if omit_unresolved:
+                    manifest_ids = [
+                        document_id for document_id in ids if isinstance(by_id[document_id], dict)
+                    ]
                 manifest = resolve_authorized_source_manifest(
-                    ids, user_id, conversation_id=conversation_id, doc_scope=lookup_scope,
+                    manifest_ids, user_id, conversation_id=conversation_id, doc_scope=lookup_scope,
                     active_group_ids=group_ids, active_public_workspace_ids=public_ids,
                     context_resolver=lambda document_id, resolved=by_id, **kwargs: resolved.get(document_id),
-                )
+                ) if manifest_ids else []
                 for document_id, document_context in by_id.items():
                     contexts_by_reference[(scope_kind, scope_id, document_id)] = document_context
                 for source in manifest:
@@ -684,11 +751,13 @@ def resolve_elicitation_references(references, user_id, conversation_id, setting
             raise
         except Exception as exc:
             log_event(
-                '[ORCHESTRATION_CONTEXT] Clarification source resolution failed.',
+                f'[ORCHESTRATION_CONTEXT] {log_label} source resolution failed.',
                 extra={'exception_type': type(exc).__name__}, level=logging.WARNING,
             )
-            raise ElicitationContextError('The selected files could not be verified. Please retry.') from exc
-        for reference in documents:
+            raise ElicitationContextError(
+                'The selected files could not be verified. Please retry.', reason='verification_failed',
+            ) from exc
+        for position, reference in documents:
             scope = reference['scope']
             key = (scope['kind'], scope['id'], reference['id'])
             source = sources_by_reference.get(key) or {}
@@ -697,7 +766,10 @@ def resolve_elicitation_references(references, user_id, conversation_id, setting
                 or source.get('scope') != scope['kind']
                 or (scope['kind'] != 'personal' and source.get('scope_id') != scope['id'])
             ):
-                raise ElicitationContextError('A selected file is unavailable or no longer authorized. Select another file.')
+                raise ElicitationContextError(
+                    'A selected file is unavailable or no longer authorized. Select another file.',
+                    reason='document_unavailable', reference_index=position,
+                )
             document = (contexts_by_reference.get(key) or {}).get('document') or {}
             if scope['kind'] == 'chat':
                 # The manifest proved ownership of this conversation and file message.
@@ -716,25 +788,40 @@ def resolve_elicitation_references(references, user_id, conversation_id, setting
                     ))
                 except Exception as exc:
                     log_event(
-                        '[ORCHESTRATION_CONTEXT] Clarification attachment readiness could not be checked.',
+                        f'[ORCHESTRATION_CONTEXT] {log_label} attachment readiness could not be checked.',
                         extra={'exception_type': type(exc).__name__}, level=logging.WARNING,
                     )
-                    raise ElicitationContextError('That attachment could not be checked. Please retry.') from exc
+                    raise ElicitationContextError(
+                        'That attachment could not be checked. Please retry.',
+                        reason='verification_failed', reference_index=position,
+                    ) from exc
                 if not rows:
-                    raise ElicitationContextError('That attachment is no longer available.')
+                    raise ElicitationContextError(
+                        'That attachment is no longer available.',
+                        reason='document_unavailable', reference_index=position,
+                    )
                 document = rows[0]
                 if document.get('workspace_document_id') or document.get('file_content_source') == 'workspace':
-                    raise ElicitationContextError('Select the workspace document for this upload and wait for its processing to finish.')
+                    raise ElicitationContextError(
+                        'Select the workspace document for this upload and wait for its processing to finish.',
+                        reason='document_not_ready', reference_index=position,
+                    )
             if not _elicitation_document_ready(document):
-                raise ElicitationContextError('A selected file is still processing or failed. Wait for it to finish, retry the upload, or remove it.')
+                raise ElicitationContextError(
+                    'A selected file is still processing or failed. Wait for it to finish, retry the upload, or remove it.',
+                    reason='document_not_ready', reference_index=position,
+                )
             reference['label'] = _text(source.get('display_name') or source.get('file_name'), 200) or reference['id']
 
-    for reference in normalized:
+    for position, reference in zip(positions, normalized):
         scope = reference['scope']
         if reference['kind'] == 'scope':
             allowed_ids = ('', 'personal', user_id) if scope['kind'] == 'personal' else (scope['id'],)
             if reference['id'] not in allowed_ids:
-                raise ElicitationContextError('The workspace identity does not match its scope.')
+                raise ElicitationContextError(
+                    'The workspace identity does not match its scope.',
+                    reason='invalid_reference', reference_index=position,
+                )
             reference['id'] = scope['id'] or 'personal'
             reference['label'] = scope['name']
         elif reference['kind'] == 'tag':
@@ -747,9 +834,160 @@ def resolve_elicitation_references(references, user_id, conversation_id, setting
             )
             tag = next((item for item in tags or [] if item.get('name') == reference['id']), None)
             if not tag:
-                raise ElicitationContextError('That tag is no longer available in the selected workspace.')
+                raise ElicitationContextError(
+                    'That tag is no longer available in the selected workspace.',
+                    reason='tag_unavailable', reference_index=position,
+                )
             reference['label'] = tag['name']
     return normalized
+
+
+def resolve_elicitation_references(references, user_id, conversation_id, settings=None):
+    """Reauthorize exact source identities and readiness, without a silent-drop path."""
+    settings = settings or {}
+    if not isinstance(references, list) or len(references) > ELICITATION_REFERENCE_LIMIT:
+        raise ElicitationContextError(
+            f'Select at most {ELICITATION_REFERENCE_LIMIT} context references.', reason='too_many',
+        )
+    if not references:
+        return []
+    conversation = _owned_elicitation_conversation(user_id, conversation_id)
+    return _authorize_references(
+        references, user_id, conversation_id=conversation_id,
+        normalize=normalize_elicitation_reference,
+        authorize_scope=lambda scope: _authorize_elicitation_scope(scope, user_id, conversation, settings),
+    )
+
+
+# --------------------------------------------------------------------------------------
+# Workspace references outside a conversation
+# --------------------------------------------------------------------------------------
+
+SCOPE_REFERENCE_KINDS = ('document', 'tag')
+SCOPE_REFERENCE_WORKSPACES = ('personal', 'group', 'public')
+
+# Every message names the reference by the label its user picked, never by a title read
+# from the server: a document the user can no longer read must not describe itself.
+_SCOPE_REFERENCE_MESSAGES = {
+    'document_unavailable': '{subject} is no longer available to you. Remove it and pick another {noun}.',
+    'document_not_ready': '{subject} is still processing or failed to process. Wait for it to finish, or remove it.',
+    'tag_unavailable': '{subject} no longer exists in its workspace. Remove it and pick another tag.',
+    'workspace_disabled': '{subject} is in a workspace type that is turned off. Remove it to continue.',
+    'workspace_unavailable': '{subject} is in a workspace you can no longer use. Remove it and pick another {noun}.',
+    'workspace_locked': '{subject} is outside the workspaces allowed here. Remove it and pick one from an allowed workspace.',
+    'unsupported_kind': '{subject} cannot be used here. Pick documents or tags from your workspaces.',
+    'invalid_reference': '{subject} is not a valid reference. Remove it and pick it again from the # list.',
+}
+
+
+class ScopeReferenceError(ElicitationContextError):
+    """A workspace reference that cannot be used, named by the label its user picked."""
+
+    def __init__(self, message, *, reason, reference_index=None, label=''):
+        super().__init__(message, reason=reason, reference_index=reference_index)
+        self.label = label
+
+
+def _scope_reference_error(reason, raw, limit, reference_index=None):
+    if reason == 'too_many':
+        return ScopeReferenceError(f'Attach at most {limit} documents or tags.', reason=reason)
+    if reason == 'verification_failed':
+        return ScopeReferenceError(
+            'The selected documents or tags could not be checked right now. Please retry.',
+            reason=reason, reference_index=reference_index,
+        )
+    if reason not in _SCOPE_REFERENCE_MESSAGES:
+        reason = 'invalid_reference'
+    kind = raw.get('kind') if isinstance(raw, dict) and isinstance(raw.get('kind'), str) else None
+    label = sanitize_reference_label(raw.get('label')) if isinstance(raw, dict) else ''
+    if label:
+        subject = f'The tag \u201c{label}\u201d' if kind == 'tag' else f'\u201c{label}\u201d'
+    else:
+        subject = {'document': 'A selected document', 'tag': 'A selected tag'}.get(kind, 'A selected reference')
+    noun = {'document': 'document', 'tag': 'tag'}.get(kind, 'document or tag')
+    return ScopeReferenceError(
+        _SCOPE_REFERENCE_MESSAGES[reason].format(subject=subject, noun=noun),
+        reason=reason, reference_index=reference_index, label=label,
+    )
+
+
+def _normalize_scope_reference(reference):
+    if not isinstance(reference, dict):
+        raise ElicitationContextError('The context reference is invalid.', reason='invalid_reference')
+    scope = reference.get('scope')
+    if reference.get('kind') in ('scope', 'chat_attachment') or (
+        isinstance(scope, dict) and scope.get('kind') == 'chat'
+    ):
+        raise ElicitationContextError('That reference cannot be used here.', reason='unsupported_kind')
+    if reference.get('kind') not in SCOPE_REFERENCE_KINDS or not isinstance(scope, dict) or (
+        scope.get('kind') not in SCOPE_REFERENCE_WORKSPACES
+    ):
+        raise ElicitationContextError('The context reference is invalid.', reason='invalid_reference')
+    try:
+        return normalize_elicitation_reference(reference)
+    except ElicitationContextError as exc:
+        raise ElicitationContextError(exc.message, reason='invalid_reference') from exc
+
+
+def resolve_scope_references(
+    references, user_id, settings=None, *, allowed_workspaces=None,
+    limit=ELICITATION_REFERENCE_LIMIT,
+):
+    """Authorize `#` document and tag references for ``user_id``, with no conversation.
+
+    The authorizer for AI-assist inputs other than the question card: the plan editor's
+    Ask AI now, and the workflow assistant later. It accepts only documents and tags in
+    personal, group and public workspaces the user can read *now*; chat attachments,
+    whole workspaces and the ``chat`` scope are refused. It keeps the question card's
+    readiness checks, count bound and data-access pattern, and reads no Flask request
+    state and no conversation.
+
+    The result has the question card's normalized shape -- ``kind``, ``id``, ``scope``
+    with the workspace's ``kind``, ``id`` and ``name``, and a ``label`` from the server's
+    record -- so ``merge_elicitation_context`` can take it. The documents it names are
+    untrusted content wherever they are later read.
+
+    ``allowed_workspaces`` is an allowlist shaped like a scope-locked conversation's
+    (items with ``scope`` and ``id``); None means no allowlist applies.
+
+    Raises ``ScopeReferenceError``, whose ``reason`` is one of ``document_unavailable``,
+    ``document_not_ready``, ``tag_unavailable``, ``workspace_disabled``,
+    ``workspace_unavailable``, ``workspace_locked``, ``unsupported_kind``,
+    ``invalid_reference``, ``too_many`` or ``verification_failed``. The message names the
+    failing reference by the label the user picked, or generically when it has none.
+    A deleted document and one the user may no longer read are deliberately the same.
+    """
+    settings = settings or {}
+    if not isinstance(references, list):
+        raise _scope_reference_error('invalid_reference', None, limit)
+    if len(references) > limit:
+        raise _scope_reference_error('too_many', None, limit)
+    if not references:
+        return []
+    try:
+        return _authorize_references(
+            references, user_id, normalize=_normalize_scope_reference,
+            authorize_scope=lambda scope: _authorize_reference_scope(
+                scope, user_id, settings, allowed_workspaces,
+            ),
+            omit_unresolved=True, log_label='Assist reference',
+        )
+    except ElicitationContextError as exc:
+        index = exc.reference_index
+        raw = references[index] if isinstance(index, int) and 0 <= index < len(references) else None
+        error = _scope_reference_error(exc.reason or 'invalid_reference', raw, limit, index)
+        # Reason and position only: labels and identities are user content.
+        log_event(
+            '[ORCHESTRATION_CONTEXT] Assist reference rejected.',
+            extra={'reason': error.reason, 'reference_index': index}, level=logging.INFO,
+        )
+        raise error from exc
+    except Exception as exc:
+        log_event(
+            '[ORCHESTRATION_CONTEXT] Assist reference check failed.',
+            extra={'exception_type': type(exc).__name__}, level=logging.WARNING,
+        )
+        raise _scope_reference_error('verification_failed', None, limit) from exc
 
 
 def resolve_elicitation_candidates(candidates, user_id, conversation_id, seeds=None, settings=None):

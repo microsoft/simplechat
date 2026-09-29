@@ -335,7 +335,10 @@ The editor opens with the image on one side and four tabs on the other:
 - **Ask AI** — describe the change. With a mask-capable deployment the image is shown with
   selection tools: a box, a freehand brush with three sizes, and a nine-region grid for keyboard
   use, plus undo and clear. The selected proportion of the image is reported, together with the
-  reminder that areas outside it can still shift. Enter submits; Shift+Enter adds a line.
+  reminder that areas outside it can still shift. Enter submits; Shift+Enter adds a line. From
+  0.261.200 the message joins the thread as soon as it is sent, with Cancel, Retry and a character
+  counter, and the thread keeps this visit's exchanges; see
+  [V2 Shared Assist Thread](V2_SHARED_ASSIST_THREAD.md).
 - **Prompt** — the prompt behind the version showing, editable. Rebuilding from it produces a
   new version and is labelled as rebuilding rather than adjusting.
 - **Controls** — shape, quality and transparent background. Each writes a version, so any of them

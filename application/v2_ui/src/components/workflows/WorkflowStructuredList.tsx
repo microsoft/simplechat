@@ -1,12 +1,14 @@
 // WorkflowStructuredList.tsx
 // List and Flow share configuration fields and canonical draft commands.
 
-import type { FocusEvent, ReactNode } from 'react';
+import { Fragment, type FocusEvent, type ReactNode } from 'react';
 import { ArrowDown, ArrowUp, GitBranch, Plus, Trash2 } from 'lucide-react';
 import { GlassButton } from '../ui/primitives';
 import {
     WorkflowRegionOutputFields, WorkflowStructuredNodeFields, WorkflowStructuredOutputFields,
 } from './WorkflowStructuredFields';
+import { WorkflowChangeNotice, WorkflowItemChangeBadge, WorkflowRemovedItemRows } from './WorkflowChangeTracking';
+import { workflowNodeKey, workflowRegionKey } from '../../lib/workflowChangeTracking';
 import {
     flowRegions, flowTaskIds, FLOW_MAX_DEPTH, isFlowRegion, supportsWorkflowRepeat,
     type WorkflowFlowRegion, type WorkflowTaskNode,
@@ -38,6 +40,8 @@ export function WorkflowStructuredList({ workflow, options, scope, onEdit, rende
             key={region.id} aria-label={`${label} region`} data-workflow-authoring-id={region.id} tabIndex={-1}
             onFocusCapture={(event) => selectOwner(event, region.id)}>
             <legend className="px-1 text-sm font-semibold text-text-1">{label}</legend>
+            <WorkflowChangeNotice changeKey={workflowRegionKey(region.id, 'order')} />
+            <WorkflowRemovedItemRows list="flow" regionId={region.id} placement={{ at: 'start' }} />
             {region.nodes.map((node, index) => {
                 const childRegions = node.kind === 'if' ? [...flowRegions(node.then), ...flowRegions(node.else)]
                     : node.kind === 'for_each' || node.kind === 'repeat_until' ? flowRegions(node.body) : [];
@@ -50,7 +54,8 @@ export function WorkflowStructuredList({ workflow, options, scope, onEdit, rende
                     : node.kind === 'for_each' ? 'For each' : node.kind === 'repeat_until' ? 'Repeat until'
                         : node.kind === 'collect' ? 'Collect' : 'Forward route';
                 const move = (beforeId?: string) => onEdit({ type: 'move', nodeId: node.id, targetRegionId: region.id, beforeId });
-                return <section key={node.id} tabIndex={-1} data-workflow-authoring-id={node.id}
+                return <Fragment key={node.id}><section tabIndex={-1} data-workflow-authoring-id={node.id}
+                    data-workflow-change-item={node.kind === 'task' ? undefined : workflowNodeKey(node.id)}
                     onFocusCapture={(event) => selectOwner(event, node.id)}
                     className={`min-w-0 space-y-3 rounded-xl border bg-surface-1 p-3 ${selectedId === node.id ? 'border-accent' : 'border-edge'}`}
                     aria-label={`${title} block`}>
@@ -70,6 +75,7 @@ export function WorkflowStructuredList({ workflow, options, scope, onEdit, rende
                             </GlassButton>
                         </div>
                     </div>
+                    {node.kind !== 'task' ? <WorkflowItemChangeBadge itemKey={workflowNodeKey(node.id)} unframed="all" /> : null}
                     {destinations.length ? <label className="block text-xs text-text-2">
                         Move block to a region
                         <select className={inputClass} value="" aria-label={`Move ${title} to region`}
@@ -89,9 +95,12 @@ export function WorkflowStructuredList({ workflow, options, scope, onEdit, rende
                         onFocusCapture={(event) => selectOwner(event, node.kind === 'if' ? node.join.id : node.id)}>
                         <WorkflowStructuredOutputFields node={node} workflow={workflow} onEdit={onEdit} />
                     </div>
-                </section>;
+                </section>
+                <WorkflowRemovedItemRows list="flow" regionId={region.id} placement={{ at: 'after', id: node.id }} /></Fragment>;
             })}
             {!region.nodes.length ? <p className="text-xs text-text-3">This region is empty and invokes no tasks.</p> : null}
+            <WorkflowRemovedItemRows list="flow" regionId={region.id}
+                placement={{ at: 'end', siblings: region.nodes.map((item) => item.id), root: depth === 0 }} />
             <div className="flex flex-wrap gap-2">
                 <GlassButton size="sm" disabled={workflow.tasks.length >= options.max_tasks}
                     onClick={() => onEdit({ type: 'add', regionId: region.id, kind: 'task' })}

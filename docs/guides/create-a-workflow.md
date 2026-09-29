@@ -96,7 +96,7 @@ If a run was missed, for example while the app was stopped, the workflow runs
 once when the scheduler catches up, then waits for its next scheduled time. It
 doesn't make up each missed run.
 
-From version **0.261.197**, each run of a calendar workflow tells the model when
+From version **0.261.202**, each run of a calendar workflow tells the model when
 it started, in the schedule's time zone, for example "Current date and time:
 Monday, 28 September 2026, 09:00 (America/New_York)". Instructions such as "list
 this week's to-dos" then mean the week of the run. Scheduled runs and **Run
@@ -112,7 +112,7 @@ The classic editor can't edit calendar schedules. Opening one there shows
 "This workflow uses a calendar schedule. Open V2 to edit it without losing its
 configuration. Run and Cancel remain available here."
 
-From version **0.261.197**, the V2 editor also opens a workflow read-only when
+From version **0.261.202**, the V2 editor also opens a workflow read-only when
 it can't show the workflow's schedule exactly, such as a kind of schedule or a
 **Repeats** frequency saved by a newer version of SimpleChat, or an interval
 unit or value it doesn't recognize. The editor says so, and the schedule stays
@@ -343,6 +343,68 @@ without replacing the original saved revision. Confirmed loss of authoring
 access clears protected history and requires reopening after access returns.
 Converting an ordered workflow starts empty v3 history; Undo does not reverse
 that explicit conversion.
+
+## Review your changes
+
+Starting in **0.261.203**, the V2 editor tracks what changed since you opened
+the workflow. You can check a long editing session before you save, and take
+back one change without undoing everything you did after it. This works for
+personal and group workflows, in every format.
+
+### See what changed
+
+Each changed field is framed and labeled **Edited**. Changes made by AI assist
+are framed in blue and labeled **AI assist** instead; nothing in the editor
+makes them yet.
+
+- **Previously** shows the value the field had when you opened the editor.
+  Long values are cut short, with **Show more**.
+- **Revert** puts back that one field and keeps every other change.
+- A task or block you added is labeled **Added · by you**, and its **Revert**
+  removes it.
+- A removed task leaves a **Removed task** row where it was, with **Restore**.
+  Restore puts back the saved version of the task in its saved place. On the
+  Flow surface, removed blocks are listed under **Removed blocks** above the
+  canvas.
+- Moving tasks around is one **Task order** change, not a change to every task.
+
+{% include media.html src="guides/create-a-workflow-review-changes.png"
+                      alt="The V2 workflow editor with a renamed workflow and an edited task instruction each framed and labeled Edited, and the Changes panel beside the editor listing the unsaved changes with Jump and Revert buttons."
+                      title="Reviewing unsaved workflow changes"
+                      capture="Open a saved workflow in the V2 editor at a wide window size, rename it, edit one task's instructions, remove another task, then choose Changes. Use sample data." %}
+
+### Use the Changes panel
+
+Choose **Changes** in the editor footer. The button shows how many changes are
+unsaved, and the panel lists them in two parts:
+
+- **Unsaved changes**: each change with its before and after values and who
+  made it. **Jump** moves to the field, switching from Flow to List when the
+  field isn't on Flow. **Revert** (or **Restore** for a removed item) takes
+  back that change.
+- **This session**: the steps you took, newest first. **Restore to here**
+  returns the workflow to how it was after that step. It is added as a new
+  step, so the later steps stay in the list and nothing is lost. The last row,
+  **Opened version**, is the workflow as you opened it.
+
+On wide screens the panel opens beside the editor. On narrower screens it
+takes the editor's place until you close it or choose **Jump**. Press Escape to
+close the panel and return to the **Changes** button.
+
+When the workflow runs as a Microsoft 365 account, the panel notes when your
+changes mean **Saving requires re-approving Run as**. See
+[Microsoft 365 Run as](#microsoft-365-run-as).
+
+### Save after reviewing
+
+Saving your own changes is still one click. When some unsaved changes came
+from AI assist, the first **Save workflow** opens **Review before saving** in
+the Changes panel instead. Check the changes, then choose **Confirm and save**.
+
+Read-only editors show none of this. In a workflow that has never been saved,
+everything is new, so only AI assist changes are pointed out. After you convert
+an ordered workflow to the structured format, changes are still listed, but
+they can only be discarded together, with **Cancel**.
 
 ## Preview the structure without changing execution
 

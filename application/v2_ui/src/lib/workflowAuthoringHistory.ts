@@ -6,10 +6,27 @@ export const WORKFLOW_HISTORY_MAX_BYTES = 32 * 1024 * 1024;
 
 export type WorkflowHistoryDirection = 'undo' | 'redo';
 
+/** Who authored a history step: the person editing, an AI assist turn, or a Revert/Restore operation. */
+export const WORKFLOW_HISTORY_ORIGINS = ['user', 'ai', 'restore'] as const;
+export type WorkflowHistoryOrigin = typeof WORKFLOW_HISTORY_ORIGINS[number];
+export const WORKFLOW_HISTORY_MAX_TURN_ID_LENGTH = 256;
+
 export interface WorkflowHistoryAction {
     label: string;
     group?: string;
     targetId?: string;
+    /** Omitted means 'user'. */
+    origin?: WorkflowHistoryOrigin;
+    turnId?: string;
+}
+
+export function historyActionOrigin(action: WorkflowHistoryAction): WorkflowHistoryOrigin {
+    return action.origin ?? 'user';
+}
+
+export function isWorkflowHistoryTurnId(value: unknown): value is string {
+    return typeof value === 'string' && value.length > 0 && value.length <= WORKFLOW_HISTORY_MAX_TURN_ID_LENGTH
+        && !/[\u0000-\u001f\u007f]/.test(value);
 }
 
 export interface WorkflowHistoryEntry<T> {
@@ -62,14 +79,25 @@ function copyAction(action: WorkflowHistoryAction): WorkflowHistoryAction {
     const label = field('label');
     const group = field('group');
     const targetId = field('targetId');
+    const origin = field('origin');
+    const turnId = field('turnId');
     if (typeof label !== 'string' || (group !== undefined && typeof group !== 'string')
         || (targetId !== undefined && typeof targetId !== 'string')) {
         throw new TypeError('Workflow history action labels, groups, and targets must be strings.');
     }
+    if (origin !== undefined && !(WORKFLOW_HISTORY_ORIGINS as readonly unknown[]).includes(origin)) {
+        throw new TypeError('Workflow history action origins must be user, ai, or restore.');
+    }
+    if (turnId !== undefined && !isWorkflowHistoryTurnId(turnId)) {
+        throw new TypeError('Workflow history turn IDs must be nonempty strings of at most 256 characters without control characters.');
+    }
+    // Optional metadata is copied only when present so existing entries keep their retained size.
     return Object.freeze({
         label,
         ...(group === undefined ? {} : { group }),
         ...(targetId === undefined ? {} : { targetId }),
+        ...(origin === undefined ? {} : { origin: origin as WorkflowHistoryOrigin }),
+        ...(turnId === undefined ? {} : { turnId }),
     });
 }
 
@@ -80,6 +108,8 @@ function entryMetadataBytes<T>(entry: WorkflowHistoryEntry<T>): number {
         + CONTAINER_BYTES + propertyBytes('label') + primitiveBytes(action.label);
     if (action.group !== undefined) bytes += propertyBytes('group') + primitiveBytes(action.group);
     if (action.targetId !== undefined) bytes += propertyBytes('targetId') + primitiveBytes(action.targetId);
+    if (action.origin !== undefined) bytes += propertyBytes('origin') + primitiveBytes(action.origin);
+    if (action.turnId !== undefined) bytes += propertyBytes('turnId') + primitiveBytes(action.turnId);
     return bytes;
 }
 
@@ -280,10 +310,34 @@ export class WorkflowAuthoringHistory<T> {
         return this.bytes;
     }
 
+    /** Retained entries, oldest first. The array is replaced, never mutated, when history changes. */
+    get retainedEntries(): readonly WorkflowHistoryEntry<T>[] {
+        return this.entries;
+    }
+
+    /** How many retained entries are applied; entries at or after this index are redo steps. */
+    get appliedCount(): number {
+        return this.cursor;
+    }
+
     peek(direction: WorkflowHistoryDirection): WorkflowHistoryEntry<T> | null {
         if (direction === 'undo') return this.entries[this.cursor - 1] ?? null;
         if (direction === 'redo') return this.entries[this.cursor] ?? null;
         throw new TypeError('Workflow history direction must be undo or redo.');
+    }
+
+    private coalesces(metadata: WorkflowHistoryAction): boolean {
+        const previous = this.peek('undo');
+        return Boolean(metadata.group) && this.cursor === this.entries.length
+            && previous !== null && previous.id === this.openEntryId && previous.action.group === metadata.group
+            && historyActionOrigin(previous.action) === historyActionOrigin(metadata)
+            && previous.action.turnId === metadata.turnId;
+    }
+
+    /** The `before` of the open group this action would extend, or null when it would start a new entry. */
+    coalescingBase(action: WorkflowHistoryAction): T | null {
+        const metadata = copyAction(action);
+        return this.coalesces(metadata) ? this.peek('undo')!.before : null;
     }
 
     record(before: T, after: T, action: WorkflowHistoryAction): WorkflowHistoryRecordResult {
@@ -292,8 +346,7 @@ export class WorkflowAuthoringHistory<T> {
         const metadata = copyAction(action);
         if (this.equals(before, after)) return { status: 'noop', evicted: 0 };
         const previous = this.peek('undo');
-        const coalescing = Boolean(metadata.group) && this.cursor === this.entries.length
-            && previous !== null && previous.id === this.openEntryId && previous.action.group === metadata.group;
+        const coalescing = this.coalesces(metadata);
         const originalBefore = coalescing ? previous!.before : before;
         const prefix = this.entries.slice(0, this.cursor - (coalescing ? 1 : 0));
         if (coalescing && this.equals(originalBefore, after)) {

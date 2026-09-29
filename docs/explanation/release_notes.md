@@ -2,7 +2,27 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
-### **(v0.261.197)**
+### **(v0.261.203)**
+
+#### New Features
+
+*   **Change Tracking In The V2 Workflow Editor**
+    *   The V2 workflow editor now shows every unsaved change where it happened. A changed field is framed and labeled **Edited**, with **Previously** for the value it had when the editor opened (long values behind **Show more**) and its own **Revert**, so color is never the only cue. Until now a long editing session left no record of what differed from the saved workflow.
+    *   A removed task leaves a **Removed task** row in place with **Restore**, which puts the saved version back in its saved position, and removed flow blocks are listed under **Removed blocks** above the canvas. Changes are keyed by stable task, block and reference IDs, never by position, so a reorder is one **Task order** change instead of an edit to every task. An added task or block carries **Added · by you** and one Revert for the whole item.
+    *   **Changes** in the editor footer opens a side panel. It lists every unsaved change with its before and after values as plain text, its author, **Jump**, which focuses the field or selects the block and switches surface when needed, and **Revert**. Below that it lists this session's steps with **Restore to here**. Reverts and restores are added as new history steps, so nothing is deleted. The panel sits beside the editor on wide screens and takes its place on narrower ones.
+    *   Saving your own edits is still one click. When the workflow runs as a Microsoft 365 account and a change touches a field the server fingerprints, the panel notes that saving requires re-approving Run as. The client's copy of the fingerprint fields has a parity test that fails when it drifts from the server's.
+    *   This is the editor side of the AI workflow assistant. History entries now record whether you, AI assist or a restore made them, with the assist turn, and typing never coalesces across either. `WorkflowAuthoringSession.applyAssist` applies an AI candidate as one attributed step through the normal confirmation path, and refuses Run as, enablement, identity and approval changes. `revertTurn` reverts one turn and reports what it skipped, and a save that includes AI changes first asks you to **Confirm and save**. Nothing calls `applyAssist` until the Ask AI tab ships.
+    *   Read-only editors show none of this, and a new workflow points out only AI assist changes. Group workflows are tracked like personal ones. No backend route, setting or package is added.
+    *   (Ref: #1548, #1543, `workflowChangeTracking.ts`, `workflowRunAsFingerprint.ts`, `workflowAuthoringHistory.ts`, `WorkflowAuthoringHistory.tsx`, `WorkflowChangeTracking.tsx`, `WorkflowEditorDialog.tsx`, [Workflow Editor Change Tracking](features/WORKFLOW_EDITOR_CHANGE_TRACKING.md), [Create a workflow](../guides/create-a-workflow.md#review-your-changes))
+
+#### Bug Fixes
+
+*   **Structured Workflow Alert And File Sync Edits**
+    *   In a structured workflow, changing the alert settings was rolled back with "Workflow edits cannot change saved identity, scope, revision, or runtime metadata." A group workflow's File Sync settings failed the same way. The editor's list of authored fields had neither, so the edit looked like a change to saved identity, and a restore could not bring those settings back.
+    *   Alert and File Sync settings are now authored fields: they apply, follow Undo and Redo, and are covered by Revert and Restore to here. Identity, scope, revision and runtime fields are still refused.
+    *   (Ref: `WorkflowAuthoringHistory.tsx`, `WORKFLOW_AUTHORED_FIELDS`, [Structured Workflow Alert And File Sync Edits Fix](fixes/STRUCTURED_WORKFLOW_ALERT_FILE_SYNC_EDITS_FIX.md))
+
+### **(v0.261.202)**
 
 #### New Features
 
@@ -40,6 +60,81 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
 *   **Schedule Trigger In The V2 Workflow Editor**
     *   The V2 workflow editor's **Trigger** option for scheduled workflows is now **Schedule** instead of **Interval**, because it offers calendar schedules as well as fixed intervals. Workflows are stored exactly as before, and the classic editor keeps **Interval Schedule**.
     *   (Ref: `WorkflowEditorDialog.tsx`, [Create a workflow](../guides/create-a-workflow.md), [Trigger a workflow](../guides/trigger-a-workflow.md))
+
+### **(v0.261.201)**
+
+#### New Features
+
+*   **`#` Documents And Tags In The Plan Editor's Ask Planner**
+    *   **Ask planner** in the V2 plan editor now offers `#` documents and tags and **Add context**, like the main composer. Type `#` and part of a name, or browse, and the pick becomes a chip. The request carries the chips you leave, and your turn in the thread shows them afterwards.
+    *   The server checks every pick for you when the request arrives. Only documents and tags you can read now are accepted: in your personal workspace, in groups you belong to and in public workspaces you can see, from workspace types that are turned on, and within a scope-locked conversation's workspaces. A document must also have finished processing. At most 20 go with one request, and a plan can gather at most 100.
+    *   Accepted picks are added to that revision's plan inputs, as question-card answers are. The planner sees them as selected, a document search that names no documents of its own searches them, and tags filter that search. If the plan searched everything you can read before, the planner's reply says its searches are now limited to what you attached. The plan's existing sources stay available.
+    *   A pick that can't be used, because it was deleted, is unready, is no longer readable by you or its workspace was turned off, fails the request before the planner runs, with a message that names it by the label you picked. The plan and its chat don't change, and **Edit and resend** brings back your text and chips.
+    *   Picks are part of the request's identity. A retry of the same request is answered from what was stored and never merges them twice, and the same submission id with different picks is refused with 409 `submission_conflict`. Uploads, `/` saved prompts, `@` mentions and whole workspaces aren't offered here, and the diagram, chart and image editors, the main composer and the question card are unchanged.
+    *   (Ref: #1556, #1543, `functions_assist_references.py`, `functions_orchestration_plan_editing.py` `resolve_plan_edit_references`, `functions_orchestration_plan_revisions.py`, `route_backend_orchestration.py`, `planReferences.ts`, `OrchestrationPlanEditor.tsx`, `AssistThread.tsx`, [V2 Shared Assist Thread](features/V2_SHARED_ASSIST_THREAD.md), [Chat interface controls](../reference/chat-controls.md), [Review and edit orchestration plans](../guides/review-and-edit-orchestration-plans.md))
+
+*   **Workspace Reference Authorizer Without A Conversation**
+    *   `resolve_scope_references` authorizes `#` document and tag references for a user with no conversation and no request state, so AI-assist inputs outside the chat, such as the plan editor now and the workflow assistant later, can share it. It refuses chat attachments, whole workspaces and the chat scope, keeps the question card's readiness checks and count bound, reads no document text, and reports a refusal by the label the user picked and a reason code, never by a title read from the server.
+    *   The question card's own check now runs on the same core. A golden test captured from the previous code holds its results and messages unchanged.
+    *   (Ref: `functions_orchestration_context.py` `resolve_scope_references`, `resolve_elicitation_references`, `functional_tests/test_orchestration_reference_authorizer_golden.py`, `functional_tests/test_orchestration_scope_reference_authorizer.py`)
+
+### **(v0.261.200)**
+
+#### New Features
+
+*   **Shared AI Assist Thread In The V2 Editors**
+    *   The **Ask AI** tab of the diagram, chart and image editors and the **Ask planner** tab of the plan editor now share one conversation thread. Your message joins it the moment you send it and the input clears, instead of both waiting for the server's answer.
+    *   While a request runs, its reply shows **Working…** with the seconds elapsed and a **Cancel** button. A failed or cancelled request stays in the thread with its error, **Retry** and **Edit and resend**, which puts your text back in the input.
+    *   Cancel in the plan editor discards the pending change on the server. In the other editors it stops waiting; if the server finishes the change anyway, the editor recognises it as yours and shows the latest version rather than reporting a conflict.
+    *   The image editor keeps a transcript of this visit's changes, held on the page only and never saved. **Create image from reference** keeps a separate one.
+    *   A thread lives outside its editor, so closing and reopening the editor keeps a running request and any unsent text.
+    *   (Ref: #1552, #1543, `AssistThread.tsx`, `assistThread.ts`, `assistThreadStore.ts`, `assistLimits.ts`, `DiagramEditor.tsx`, `ChartEditor.tsx`, `ImageEditor.tsx`, `OrchestrationPlanEditor.tsx`, [V2 Shared Assist Thread](features/V2_SHARED_ASSIST_THREAD.md))
+
+*   **Client Submission Ids For Assist Requests**
+    *   The diagram, chart and image assist routes, personal and shared, accept an optional `submission_id` and store it on both turns of the exchange. A request without one behaves exactly as before.
+    *   A retry whose id is already stored is answered from what was stored, with `"replayed": true`, without calling the model, writing a second revision or notifying a shared conversation twice. The same id sent with a different instruction is refused with 409 `submission_conflict`, and a malformed id with 400.
+    *   Stored ids let the editor match the message it showed early to the stored turn, so a shared conversation's live update arriving before your reply doesn't show the message twice. Ids are never shown to the model.
+    *   A retry sent while the request it repeats is still running is checked again after the model answers: the image routes check the copy they read after the call, and the personal diagram and chart route checks when its write loses to the first request's. The retry is then replayed or refused rather than storing a second version. An image conflict found after the model call returns the versions that won, and a personal diagram or chart write lost to another change returns 409 with the current revisions instead of a 500 when an id was sent.
+    *   The plan edit route holds its existing `submission_id` to the same format and stores it on the plan's edit chat turns. Because it holds an id to the first request it saw, the plan editor's **Retry** reuses an id only for the identical request, and sends a fresh one after Cancel or a step change instead of being refused for good.
+    *   (Ref: `functions_assist_submissions.py`, `functions_image_edit.py`, `functions_message_block_revisions.py`, `functions_message_image_revisions.py`, `functions_orchestration_plan_editing.py`, `functions_orchestration_plan_revisions.py`, `route_backend_chats.py`, `route_backend_collaboration.py`, `route_backend_orchestration.py`, `planSubmissionIds.ts`, `orchestrationController.ts`)
+
+#### Bug Fixes
+
+*   **Diagram And Chart Editors Closing On Their Own**
+    *   An open diagram or chart editor closed whenever its message changed, for example when a revision was saved. The message's masks were re-parsed on every change, which remounted each diagram and chart, and a diagram returned a different element tree while it re-rendered. Both now keep the editor mounted, so it stays open until you close it.
+    *   (Ref: `AssistantMarkdown.tsx`, `MermaidDiagram.tsx`)
+
+#### User Interface Enhancements
+
+*   **Keyboard, Limits And Announcements In Assist Inputs**
+    *   Enter sends and Shift+Enter adds a line in all four editors, with Ctrl+Enter and ⌘+Enter kept as aliases. The plan editor previously sent only with Ctrl+Enter or ⌘+Enter.
+    *   A counter shows the length against the 2,000-character limit and says how much to remove past it. Over-limit text is refused rather than silently cut off, as the old inputs' `maxLength` did.
+    *   The thread is announced politely to screen readers as a log. The assist inputs reuse the main composer's editor in a restricted mode without uploads, `/` saved prompts or `@` mentions.
+    *   (Ref: `ComposerEditor.tsx` `restricted`, `AssistThread.tsx`, [Chat interface controls](../reference/chat-controls.md))
+
+### **(v0.261.199)**
+
+#### New Features
+
+*   **V2 Workflow Alert Notices**
+    *   A workflow alert that needs attention now pops up in V2. A small notice hangs from **My Workspace** in the navigation rail, or flies out beside its icon when the rail is collapsed or on a phone. It never takes focus, so typing isn't interrupted. Until now V2 only counted these alerts in the bell, so a critical alert waited there until someone opened the panel.
+    *   Only pop-up alerts appear: alerts on every run, and alert rules whose delivery is **Pop-up alert**, or **Default for severity** at medium, high or critical. **Notification bell only** alerts never pop up. Only alerts from the last 24 hours pop up, so coming back after a few days doesn't bring a pile of them; older ones stay in the bell.
+    *   Each alert pops up in one V2 tab of the browser, however many are open, claimed through `localStorage` under a Web Lock. A notice waits while its tab is hidden, a dialog or the bell's panel is open, or the phone's navigation menu is open.
+    *   Info, low and medium notices tuck into the bell after eight seconds, pausing while pointed at or focused. High and critical notices stay until opened or closed. Closing a notice tucks it into the bell, where it stays unread, and it doesn't pop up again.
+    *   Opening the notice grows it into the full alert card: why you're seeing it and the rules that matched, the summary and detail, what went wrong for a failed run, enrichment chips, the alert's links, and **Open workflow**, which opens the workflow's list in its personal or group workspace on the run that raised the alert, even when that list is already open. **Mark read**, **Dismiss**, "1 of 3" with **Next**, and **Mark all read** handle the alerts. Closing the card leaves them unread.
+    *   A notice goes away only when a successful read shows its alert was read, dismissed or has aged out. A failed read keeps it, and so does a count of zero, which the server also answers when it can't count; the zero is checked with a read first. A count that rises as the reader comes back to the tab is always read, even right after another read.
+    *   Several alerts from one workflow share one notice with a count, such as "Failed 4 times since 9:40 AM", and the most urgent comes first. Priorities use the V2 theme's colors in light and dark, and are always named in words. Motion animates only transform and opacity, and becomes short fades under reduced motion. Screen readers announce each notice once without interrupting, and a critical alert straight away. Alert text is shown as plain text, and links open only pages on this site.
+    *   Developers can try the notice and card with sample alerts at `/v2/dev/alert-lab` on the Vite dev server, which now also answers page loads at `/v2` with the app. The lab is loaded lazily from inside the development-only branch, so production builds never reference it.
+    *   (Ref: #1553, #1543, `WorkflowAlertNotice.tsx`, `WorkflowAlertCard.tsx`, `workflowAlertStore.ts`, `useWorkflowAlertRuntime.ts`, `workflowAlertClaims.ts`, `workflowAlertNotices.ts`, `WorkflowsSection.tsx`, `AlertLabPage.tsx`, `App.tsx`, `vite.config.ts`, [V2 Workflow Alert Notices](features/V2_WORKFLOW_ALERT_NOTICES.md), [Manage notifications](../guides/manage-notifications.md))
+
+#### Bug Fixes
+
+*   **Bounded Workflow Alert Pop-up Query**
+    *   `GET /api/notifications/workflow-alerts` read every workflow alert a user had within the 60-day TTL and filtered it in Python, on every check. The unread, not-dismissed and not-notify-only filters now run in one parameterized Cosmos query, limited with `TOP` and kept within the user's partition. Classic's pop-up gets the same alerts at the same cadence.
+    *   The route accepts an optional `since_hours`, a whole number from 1 to 1440, to return only recent alerts; V2 asks for 24. Any other value is refused with `400` before anything is read. The response shape is unchanged.
+    *   With `since_hours`, a read that fails now answers `500` instead of an empty list, so V2 doesn't take a storage error for "nothing unread" and drop the notice it is showing. Classic doesn't pass `since_hours` and still gets the empty list.
+    *   New workflow alerts record whether their workflow is personal or group, and which group (`workflow_scope` and `workflow_group_id`), so V2's **Open workflow** finds the right list. The group isn't recorded as `group_id`, because classic makes that the active group when a notification is opened.
+    *   (Ref: `functions_notifications.py`, `route_backend_notifications.py`, `functions_workflow_runner.py`, [V2 Workflow Alert Notices](features/V2_WORKFLOW_ALERT_NOTICES.md#server-the-bounded-query))
 
 ### **(v0.261.195)**
 

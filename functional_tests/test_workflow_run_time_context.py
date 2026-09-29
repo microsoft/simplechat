@@ -2,8 +2,8 @@
 #!/usr/bin/env python3
 """
 Functional test for the calendar workflow run time prompt context.
-Version: 0.261.197
-Implemented in: 0.261.197
+Version: 0.261.202
+Implemented in: 0.261.202
 
 This test ensures that a workflow whose stored schedule is a calendar schedule tells the model
 the run's current date and time in the schedule's time zone, on every run: scheduled, catch-up
@@ -41,7 +41,7 @@ ROOT = Path(__file__).resolve().parents[1]
 APP_ROOT = ROOT / "application" / "single_app"
 RUNNER_FILE = APP_ROOT / "functions_workflow_runner.py"
 GOLDEN_PATH = Path(__file__).resolve().parent / "fixtures" / "workflow_run_prompt_golden.json"
-MINIMUM_VERSION = "0.261.197"
+MINIMUM_VERSION = "0.261.202"
 
 RUNNER_FUNCTIONS = {
     "_truncate_workflow_file_sync_context",
