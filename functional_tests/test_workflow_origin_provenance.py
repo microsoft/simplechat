@@ -2,8 +2,8 @@
 #!/usr/bin/env python3
 """
 Functional test for server-owned workflow provenance (``origin``).
-Version: 0.261.197
-Implemented in: 0.261.197
+Version: 0.261.202
+Implemented in: 0.261.202
 
 This test ensures that the ``origin`` a chat orchestration create records on a workflow is
 server-only. The two save routes, ``POST /api/user/workflows`` and ``POST /api/group/workflows``,
@@ -175,7 +175,7 @@ def _with_origin(payload, forged):
 
 
 def test_version_header_is_current():
-    assert_app_version_at_least("0.261.197")
+    assert_app_version_at_least("0.261.202")
 
 
 # Save and update routes -------------------------------------------------------------------------

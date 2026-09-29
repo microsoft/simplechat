@@ -2,8 +2,8 @@
 #!/usr/bin/env python3
 """
 Functional test for the admin limits on workflows created from chat.
-Version: 0.261.197
-Implemented in: 0.261.197
+Version: 0.261.202
+Implemented in: 0.261.202
 
 This test ensures that the two limits chat orchestration workflows use are safe by default and
 cannot be stored invalid:
@@ -142,7 +142,7 @@ def _settings_writer(storage):
 
 
 def test_version_is_at_least_the_draft_service_release():
-    assert_app_version_at_least("0.261.197")
+    assert_app_version_at_least("0.261.202")
 
 
 def test_the_defaults_are_the_roadmap_defaults_and_the_safe_values():

@@ -28,7 +28,7 @@ schedule may use, so authors can no longer create a workflow that runs every
 second. Saved schedules are never re-checked against it.
 
 Calendar schedules work in personal and group workflows, for both the
-**Schedule** trigger (labelled **Interval** before version 0.261.197) and the
+**Schedule** trigger (labelled **Interval** before version 0.261.202) and the
 group **Monitor File Sync changes** trigger.
 
 Dependencies:
@@ -268,7 +268,7 @@ messages, including the minimum for a new or changed interval
 `normalizeWorkflowSchedule` in `lib/workflowEditor.ts` keeps an interval
 schedule as `{unit, value}` when the editor round-trips it.
 
-From version 0.261.197, a scheduled workflow whose stored schedule the editor
+From version 0.261.202, a scheduled workflow whose stored schedule the editor
 can't show exactly opens read-only. That's a kind, calendar frequency, interval
 unit or weekly day the server doesn't define, a `seconds` or `minutes` unit
 stored other than exactly (the scheduler runs any other unit text as hours), or
@@ -363,7 +363,7 @@ Known limitations:
 - Runs start when the scheduler next checks, within a few seconds of the
   scheduled time.
 
-From version 0.261.197, every run of a calendar workflow tells the model the
+From version 0.261.202, every run of a calendar workflow tells the model the
 run's local date and time, so relative times in its instructions, such as "this
 week", resolve in the schedule's time zone. See
 [Workflow draft service](WORKFLOW_DRAFT_SERVICE.md#calendar-run-time-in-the-prompt).

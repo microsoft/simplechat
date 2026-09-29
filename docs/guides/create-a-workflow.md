@@ -96,7 +96,7 @@ If a run was missed, for example while the app was stopped, the workflow runs
 once when the scheduler catches up, then waits for its next scheduled time. It
 doesn't make up each missed run.
 
-From version **0.261.197**, each run of a calendar workflow tells the model when
+From version **0.261.202**, each run of a calendar workflow tells the model when
 it started, in the schedule's time zone, for example "Current date and time:
 Monday, 28 September 2026, 09:00 (America/New_York)". Instructions such as "list
 this week's to-dos" then mean the week of the run. Scheduled runs and **Run
@@ -112,7 +112,7 @@ The classic editor can't edit calendar schedules. Opening one there shows
 "This workflow uses a calendar schedule. Open V2 to edit it without losing its
 configuration. Run and Cancel remain available here."
 
-From version **0.261.197**, the V2 editor also opens a workflow read-only when
+From version **0.261.202**, the V2 editor also opens a workflow read-only when
 it can't show the workflow's schedule exactly, such as a kind of schedule or a
 **Repeats** frequency saved by a newer version of SimpleChat, or an interval
 unit or value it doesn't recognize. The editor says so, and the schedule stays

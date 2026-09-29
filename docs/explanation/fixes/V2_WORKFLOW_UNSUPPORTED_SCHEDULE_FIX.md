@@ -1,6 +1,6 @@
-# V2 Workflow Unsupported Schedule Fix (v0.261.197)
+# V2 Workflow Unsupported Schedule Fix (v0.261.202)
 
-**Fixed in version: 0.261.197**
+**Fixed in version: 0.261.202**
 
 The application version is tracked in `application/single_app/config.py`.
 

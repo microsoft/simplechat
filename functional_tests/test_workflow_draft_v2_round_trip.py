@@ -2,8 +2,8 @@
 #!/usr/bin/env python3
 """
 Functional test for opening and re-saving workflows created from chat in the V2 editor.
-Version: 0.261.197
-Implemented in: 0.261.197
+Version: 0.261.202
+Implemented in: 0.261.202
 
 This test ensures that each workflow the draft service creates from a blueprint (a weekly
 calendar digest on an agent with bell-only alerts, an interval check and a manual task on the
@@ -39,7 +39,7 @@ from test_workflow_draft_service import (  # noqa: E402  (the draft service harn
 )
 
 
-MINIMUM_VERSION = "0.261.197"
+MINIMUM_VERSION = "0.261.202"
 
 INTERVAL_CHECK = {
     "name": "Queue check",
