@@ -1075,6 +1075,15 @@ Vite serves on port 5174 and proxies the API paths to `http://127.0.0.1:5000`, w
 the browser on one origin so the session cookie and CSRF check behave as they do in
 production. Set `SIMPLECHAT_DEV_ORIGIN` to point at a different Flask instance.
 
+Since 0.261.199, page loads at `/v2` and `/v2/...` on the dev server are answered with the
+app, as Flask does in production, so `http://localhost:5174/v2/` works. Requests under
+`/static/v2/` are the dev server's own modules and are no longer sent to Flask.
+
+The dev server also has the workflow alert lab at `/v2/dev/alert-lab`, a test bed for
+the workflow alert notice and card with sample alerts. It is registered only under
+`import.meta.env.DEV`, so production builds never contain it; see
+[V2 Workflow Alert Notices](V2_WORKFLOW_ALERT_NOTICES.md#the-alert-lab).
+
 ## Deployment
 
 ### Default: same App Service

@@ -41,6 +41,30 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
     *   The V2 workflow editor's **Trigger** option for scheduled workflows is now **Schedule** instead of **Interval**, because it offers calendar schedules as well as fixed intervals. Workflows are stored exactly as before, and the classic editor keeps **Interval Schedule**.
     *   (Ref: `WorkflowEditorDialog.tsx`, [Create a workflow](../guides/create-a-workflow.md), [Trigger a workflow](../guides/trigger-a-workflow.md))
 
+### **(v0.261.199)**
+
+#### New Features
+
+*   **V2 Workflow Alert Notices**
+    *   A workflow alert that needs attention now pops up in V2. A small notice hangs from **My Workspace** in the navigation rail, or flies out beside its icon when the rail is collapsed or on a phone. It never takes focus, so typing isn't interrupted. Until now V2 only counted these alerts in the bell, so a critical alert waited there until someone opened the panel.
+    *   Only pop-up alerts appear: alerts on every run, and alert rules whose delivery is **Pop-up alert**, or **Default for severity** at medium, high or critical. **Notification bell only** alerts never pop up. Only alerts from the last 24 hours pop up, so coming back after a few days doesn't bring a pile of them; older ones stay in the bell.
+    *   Each alert pops up in one V2 tab of the browser, however many are open, claimed through `localStorage` under a Web Lock. A notice waits while its tab is hidden, a dialog or the bell's panel is open, or the phone's navigation menu is open.
+    *   Info, low and medium notices tuck into the bell after eight seconds, pausing while pointed at or focused. High and critical notices stay until opened or closed. Closing a notice tucks it into the bell, where it stays unread, and it doesn't pop up again.
+    *   Opening the notice grows it into the full alert card: why you're seeing it and the rules that matched, the summary and detail, what went wrong for a failed run, enrichment chips, the alert's links, and **Open workflow**, which opens the workflow's list in its personal or group workspace on the run that raised the alert, even when that list is already open. **Mark read**, **Dismiss**, "1 of 3" with **Next**, and **Mark all read** handle the alerts. Closing the card leaves them unread.
+    *   A notice goes away only when a successful read shows its alert was read, dismissed or has aged out. A failed read keeps it, and so does a count of zero, which the server also answers when it can't count; the zero is checked with a read first. A count that rises as the reader comes back to the tab is always read, even right after another read.
+    *   Several alerts from one workflow share one notice with a count, such as "Failed 4 times since 9:40 AM", and the most urgent comes first. Priorities use the V2 theme's colors in light and dark, and are always named in words. Motion animates only transform and opacity, and becomes short fades under reduced motion. Screen readers announce each notice once without interrupting, and a critical alert straight away. Alert text is shown as plain text, and links open only pages on this site.
+    *   Developers can try the notice and card with sample alerts at `/v2/dev/alert-lab` on the Vite dev server, which now also answers page loads at `/v2` with the app. The lab is loaded lazily from inside the development-only branch, so production builds never reference it.
+    *   (Ref: #1553, #1543, `WorkflowAlertNotice.tsx`, `WorkflowAlertCard.tsx`, `workflowAlertStore.ts`, `useWorkflowAlertRuntime.ts`, `workflowAlertClaims.ts`, `workflowAlertNotices.ts`, `WorkflowsSection.tsx`, `AlertLabPage.tsx`, `App.tsx`, `vite.config.ts`, [V2 Workflow Alert Notices](features/V2_WORKFLOW_ALERT_NOTICES.md), [Manage notifications](../guides/manage-notifications.md))
+
+#### Bug Fixes
+
+*   **Bounded Workflow Alert Pop-up Query**
+    *   `GET /api/notifications/workflow-alerts` read every workflow alert a user had within the 60-day TTL and filtered it in Python, on every check. The unread, not-dismissed and not-notify-only filters now run in one parameterized Cosmos query, limited with `TOP` and kept within the user's partition. Classic's pop-up gets the same alerts at the same cadence.
+    *   The route accepts an optional `since_hours`, a whole number from 1 to 1440, to return only recent alerts; V2 asks for 24. Any other value is refused with `400` before anything is read. The response shape is unchanged.
+    *   With `since_hours`, a read that fails now answers `500` instead of an empty list, so V2 doesn't take a storage error for "nothing unread" and drop the notice it is showing. Classic doesn't pass `since_hours` and still gets the empty list.
+    *   New workflow alerts record whether their workflow is personal or group, and which group (`workflow_scope` and `workflow_group_id`), so V2's **Open workflow** finds the right list. The group isn't recorded as `group_id`, because classic makes that the active group when a notification is opened.
+    *   (Ref: `functions_notifications.py`, `route_backend_notifications.py`, `functions_workflow_runner.py`, [V2 Workflow Alert Notices](features/V2_WORKFLOW_ALERT_NOTICES.md#server-the-bounded-query))
+
 ### **(v0.261.195)**
 
 #### New Features

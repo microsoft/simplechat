@@ -1,8 +1,10 @@
 # test_v2_document_provenance.py
 """
 Production-SPA coverage for where a V2 document came from.
-Version: 0.261.194
+Version: 0.261.199
 Implemented in: 0.261.194
+A workflow alert's Open workflow, followed while that workflows list is already open: 0.261.199
+One more list read, and no more, for a workflow the open list lacks: 0.261.199
 
 The real SPA runs against closed synthetic document, workflow and chat APIs, with no live data.
 A list row says only which kind of origin a document has (`origin_kind`). The details pane asks
@@ -10,11 +12,18 @@ the single-document read for the `origin_summary` the server resolved for this r
 (`functions_document_provenance.resolve_origin_summary`) and shows it: a link to the workflow run
 or the conversation when the server sends one, and plain text when it does not. The fixtures
 never send a raw `origin`.
+
+The workflows list acts on each navigation that names a run once, including one that only
+changes the address while the list is open, as a workflow alert's Open workflow does (Track N2).
+When the list lacks the workflow a navigation names, it reads the list once more for that
+navigation and no more.
 """
 
 import copy
 import re
 import sys
+import time
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
@@ -26,7 +35,19 @@ sys.path.insert(0, str(ROOT / "ui_tests"))
 sys.path.insert(0, str(ROOT / "ui_tests" / "fixtures"))
 
 from ui_tests.fixtures.group_documents import GroupDocumentsFixture, served  # noqa: E402
-from ui_tests.fixtures.workflow_editor import WORKFLOW_ID, WorkflowEditorFixture  # noqa: E402
+from ui_tests.fixtures.v2_notification_stubs import (  # noqa: E402
+    is_notification_count,
+    is_workflow_alerts,
+    notification_count_payload,
+    workflow_alert_document,
+    workflow_alerts_payload,
+)
+from ui_tests.fixtures.workflow_editor import (  # noqa: E402
+    GROUP_ID,
+    WORKFLOW_ID,
+    WorkflowEditorFixture,
+    workflow_record,
+)
 from ui_tests.fixtures.workspace_authoring import ORIGIN, OWNER_ID, connect_options  # noqa: E402,F401
 
 
@@ -156,6 +177,63 @@ class ProvenanceDocumentsFixture(WorkflowEditorFixture):
             super()._dispatch(route, entry)
 
 
+# What each workspace's Open workflow names: the workflow, its title, the run the alert is about,
+# another workflow on the same list, and the list's own address.
+ALERT_CASES = {
+    "personal": (WORKFLOW_ID, "Quarterly review workflow", LINKED_RUN_ID, "Agent review workflow",
+                 "/workspace/workflows"),
+    "group": ("group-workflow", "Group review workflow", "run-1", "Group digest workflow",
+              f"/groups/{GROUP_ID}/workflows"),
+}
+
+
+class AlertLinkedWorkflowsFixture(ProvenanceDocumentsFixture):
+    """
+    The workflows lists with workflow alerts popping up over them. The count, the alerts read and
+    the read receipt are answered as route_backend_notifications answers them, so the real bell,
+    notice and card run unchanged.
+    """
+
+    def __init__(self, page):
+        super().__init__(page)
+        self.alerts = []
+        self.read_calls = []
+        self.last_count_read = 0.0
+        self.group_workflows[GROUP_ID]["group-digest"] = workflow_record(
+            "group-digest", name="Group digest workflow", group_id=GROUP_ID, reference_inputs=[],
+        )
+
+    def unread_alerts(self):
+        return [alert for alert in self.alerts if not alert["is_read"] and not alert["is_dismissed"]]
+
+    def count_reads(self):
+        return sum(1 for entry in self.requests if is_notification_count(entry.method, entry.path))
+
+    def _dispatch(self, route, entry):
+        path, method = entry.path, entry.method
+        if is_notification_count(method, path):
+            self.last_count_read = time.monotonic()
+            self._json(route, notification_count_payload(min(len(self.unread_alerts()), 10)))
+        elif is_workflow_alerts(method, path):
+            # The V2 runtime's own read: its store's cap, and only the day a pop-up may come from.
+            # Every alert here pops up and is a minute old, so the unread ones are the answer.
+            if entry.query != {"limit": ["10"], "since_hours": ["24"]}:
+                self.unexpected_requests.append(f"GET {path} {entry.query}")
+            self._json(route, workflow_alerts_payload(copy.deepcopy(self.unread_alerts())))
+        elif method == "POST" and (match := re.fullmatch(r"/api/notifications/([^/]+)/read", path)):
+            record = next((alert for alert in self.alerts if alert["id"] == match[1]), None)
+            if record is None:
+                self.unexpected_requests.append(f"POST {path} (unknown notice)")
+                self._json(route, {"error": "Notification not found"}, 404)
+                return
+            record["is_read"] = True
+            record["read_by"] = [OWNER_ID]
+            self.read_calls.append(match[1])
+            self._json(route, {"success": True, "message": "Notification marked as read"})
+        else:
+            super()._dispatch(route, entry)
+
+
 class GroupProvenanceFixture(GroupDocumentsFixture):
     """The group explorer as an ordinary member, with origin summaries on detail reads."""
 
@@ -199,6 +277,54 @@ def group_provenance_ui(page):
     fixture = GroupProvenanceFixture(page)
     yield fixture
     fixture.assert_clean()
+
+
+@pytest.fixture
+def alert_workflows_ui(page):
+    fixture = AlertLinkedWorkflowsFixture(page)
+    yield fixture
+    fixture.assert_clean()
+
+
+def wait_until(ui, predicate, message, timeout=10.0):
+    """Poll from the test thread, so routes keep being answered meanwhile."""
+    deadline = time.monotonic() + timeout
+    while not predicate():
+        if time.monotonic() > deadline:
+            raise AssertionError(message())
+        ui.page.wait_for_timeout(100)
+
+
+def raise_workflow_alert(ui, scope, identifier, title):
+    """Write an alert about the case's run, and let the bell see it on its next read."""
+    workflow_id, name, run_id, _, _ = ALERT_CASES[scope]
+    created_at = (datetime.now(timezone.utc) - timedelta(minutes=1)).isoformat(timespec="milliseconds")
+    ui.alerts.append(workflow_alert_document(
+        identifier, created_at=created_at, user_id=OWNER_ID, workflow_id=workflow_id, workflow_name=name,
+        scope=scope, group_id=GROUP_ID if scope == "group" else None, priority="high", run_id=run_id,
+        title=title, link_targets=[],
+    ))
+    # The bell reads the count when the window regains focus, unless it read in the last two
+    # seconds. Waiting those out first means one focus is normally enough.
+    reads = ui.count_reads()
+    ui.page.wait_for_timeout(max(0, int(2300 - (time.monotonic() - ui.last_count_read) * 1000)))
+    deadline = time.monotonic() + 10
+    while ui.count_reads() == reads:
+        if time.monotonic() > deadline:
+            raise AssertionError("The bell never read the count again.")
+        ui.page.evaluate("() => window.dispatchEvent(new FocusEvent('focus'))")
+        ui.page.wait_for_timeout(500)
+    notice = ui.page.locator("[data-workflow-alert-notice]")
+    expect(notice).to_contain_text(title)
+    return notice
+
+
+def open_workflow_from(ui, notice):
+    notice.locator("[data-workflow-alert-open]").click()
+    card = ui.page.locator("[data-workflow-alert-card]")
+    expect(card).to_be_visible()
+    card.locator("[data-workflow-alert-open-workflow]").click()
+    expect(card).to_have_count(0)
 
 
 def details_button(ui, title):
@@ -277,6 +403,201 @@ def test_a_run_link_outside_the_recent_runs_says_so_and_a_workflow_link_still_ed
     ui.open(f"/workspace/workflows?workflow_id={WORKFLOW_ID}")
     expect(ui.page.get_by_role("dialog", name="Edit workflow", exact=True)).to_be_visible()
     assert not [entry for entry in ui.requests if entry.path.endswith("/items")]
+
+
+@pytest.mark.parametrize("scope", ("personal", "group"))
+def test_open_workflow_from_an_alert_while_the_list_is_open(alert_workflows_ui, scope):
+    """A workflow alert's Open workflow, followed while that workspace's workflows list is open,
+    changes only the address; the list stays mounted. It still opens the run's history with the
+    run expanded, and does so again each time it is followed, even to the same address. Nothing
+    else that changes the list afterwards, such as running another workflow, opens it again."""
+    ui = alert_workflows_ui
+    workflow_id, _, run_id, other, list_path = ALERT_CASES[scope]
+    if scope == "group":
+        ui.open("/groups")
+        ui.select_group(GROUP_ID)
+        items_path = f"/api/group/workflows/{workflow_id}/runs/{run_id}/items"
+        list_api = "/api/group/workflows"
+    else:
+        ui.open("/workspace/workflows")
+        items_path = f"/api/user/workflows/{workflow_id}/runs/{run_id}/items"
+        list_api = "/api/user/workflows"
+    run_other = ui.page.get_by_role("button", name=f"Run {other}", exact=True)
+    expect(run_other).to_be_visible()
+    history = ui.page.get_by_role("list", name="Workflow run history", exact=True)
+    linked = history.locator('li[aria-current="true"]')
+    expect(history).to_have_count(0)
+    target = f"{ORIGIN}/v2{list_path}?workflow_id={workflow_id}&run_id={run_id}"
+
+    def item_reads():
+        return [entry.path for entry in ui.requests if entry.path.endswith("/items")]
+
+    open_workflow_from(ui, raise_workflow_alert(ui, scope, "alert-1", "Review found blocking items"))
+    expect(ui.page).to_have_url(target)
+    expect(linked).to_have_count(1)
+    expect(linked.get_by_role("button", name="Hide run task results", exact=True)).to_be_visible()
+    expect(linked).to_contain_text("Collect evidence")
+    expect(ui.page.get_by_role("dialog", name="Edit workflow", exact=True)).to_have_count(0)
+    wait_until(ui, lambda: ui.read_calls == ["alert-1"], lambda: f"Opening marked {ui.read_calls} as read.")
+    assert item_reads() == [items_path]
+
+    # The reader closes the run; the same Open workflow, on a second alert, opens it again.
+    linked.get_by_role("button", name="Hide run task results", exact=True).click()
+    expect(linked.get_by_role("button", name="Show run task results", exact=True)).to_be_visible()
+    open_workflow_from(ui, raise_workflow_alert(ui, scope, "alert-2", "Review still has blocking items"))
+    expect(ui.page).to_have_url(target)
+    expect(linked.get_by_role("button", name="Hide run task results", exact=True)).to_be_visible()
+    wait_until(ui, lambda: ui.read_calls == ["alert-1", "alert-2"], lambda: f"Opening marked {ui.read_calls} as read.")
+    assert item_reads() == [items_path, items_path]
+
+    # Running another workflow refreshes the list and expands that workflow's history instead.
+    # The address still names the run, but it was already acted on, so it stays closed.
+    list_reads = sum(1 for entry in ui.requests if (entry.method, entry.path) == ("GET", list_api))
+    run_other.click()
+    expect(ui.page.get_by_role("button", name=f"Cancel {other}", exact=True)).to_be_visible()
+    wait_until(
+        ui,
+        lambda: sum(1 for entry in ui.requests if (entry.method, entry.path) == ("GET", list_api)) > list_reads,
+        lambda: "Running the workflow did not refresh the list.",
+    )
+    ui.page.wait_for_timeout(500)
+    expect(ui.page.get_by_role("button", name="Hide run history", exact=True)).to_have_count(1)
+    expect(history.locator("li[aria-current]")).to_have_count(0)
+    expect(ui.page).to_have_url(target)
+    assert item_reads().count(items_path) == 2
+    assert [entry.path for entry in ui.non_navigation_writes if entry.path != "/api/user/settings"] == [
+        "/api/notifications/alert-1/read", "/api/notifications/alert-2/read",
+        f"{list_api}/{'group-digest' if scope == 'group' else 'agent-workflow'}/run",
+    ]
+
+
+# Long enough for dozens of this fixture's list round trips, so a list read that repeated itself
+# would show.
+QUIET_MS = 1500
+
+
+def workflows_api(scope):
+    return "/api/group/workflows" if scope == "group" else "/api/user/workflows"
+
+
+def workflow_list_reads(ui, scope):
+    return sum(1 for entry in ui.requests if (entry.method, entry.path) == ("GET", workflows_api(scope)))
+
+
+def open_list_without_the_alerted_workflow(ui, scope):
+    """
+    Open the scope's workflows list while the server's list lacks the workflow the scope's alerts
+    name. Returns that workflow's collection and record, so a test can put the workflow back.
+    """
+    workflow_id, name, _, other, _ = ALERT_CASES[scope]
+    workflows = ui.group_workflows[GROUP_ID] if scope == "group" else ui.personal_workflows
+    record = workflows.pop(workflow_id)
+    if scope == "group":
+        ui.open("/groups")
+        ui.select_group(GROUP_ID)
+    else:
+        ui.open("/workspace/workflows")
+    expect(ui.page.get_by_role("button", name=f"Run {other}", exact=True)).to_be_visible()
+    expect(ui.page.get_by_role("button", name=f"Run {name}", exact=True)).to_have_count(0)
+    return workflows, record
+
+
+def follow_open_workflow_to_a_missing_workflow(ui, scope, identifier, title):
+    """
+    Follow a new alert's Open workflow to a workflow the list lacks. Returns how many more times
+    the list has been read once the page has stayed quiet for QUIET_MS after the first new read.
+    """
+    notice = raise_workflow_alert(ui, scope, identifier, title)
+    list_reads = workflow_list_reads(ui, scope)
+    open_workflow_from(ui, notice)
+    wait_until(
+        ui, lambda: workflow_list_reads(ui, scope) > list_reads,
+        lambda: "Open workflow never read the list again for a workflow the list lacked.",
+    )
+    ui.page.wait_for_timeout(QUIET_MS)
+    return workflow_list_reads(ui, scope) - list_reads
+
+
+@pytest.mark.parametrize("scope", ("personal", "group"))
+def test_open_workflow_reads_the_list_again_for_a_workflow_created_since(alert_workflows_ui, scope):
+    """The open list was read before the alert's workflow existed, as when it was created in
+    another tab. Open workflow reads the list once more, finds the workflow there and opens its
+    history on the alert's run. That one read is the only list read the navigation causes."""
+    ui = alert_workflows_ui
+    workflow_id, name, run_id, _, list_path = ALERT_CASES[scope]
+    workflows, record = open_list_without_the_alerted_workflow(ui, scope)
+    workflows[workflow_id] = record
+    history = ui.page.get_by_role("list", name="Workflow run history", exact=True)
+    linked = history.locator('li[aria-current="true"]')
+
+    notice = raise_workflow_alert(ui, scope, "alert-1", "Review found blocking items")
+    list_reads = workflow_list_reads(ui, scope)
+    open_workflow_from(ui, notice)
+    expect(ui.page).to_have_url(f"{ORIGIN}/v2{list_path}?workflow_id={workflow_id}&run_id={run_id}")
+    expect(linked).to_have_count(1)
+    expect(linked.get_by_role("button", name="Hide run task results", exact=True)).to_be_visible()
+    expect(linked).to_contain_text("Collect evidence")
+    expect(ui.page.get_by_role("button", name=f"Run {name}", exact=True)).to_be_visible()
+    expect(ui.page.get_by_role("dialog")).to_have_count(0)
+    wait_until(ui, lambda: ui.read_calls == ["alert-1"], lambda: f"Opening marked {ui.read_calls} as read.")
+    ui.page.wait_for_timeout(QUIET_MS)
+    extra_reads = workflow_list_reads(ui, scope) - list_reads
+    assert extra_reads == 1, f"Open workflow read the list {extra_reads} more times, not once."
+    assert [entry.path for entry in ui.requests if entry.path.endswith("/items")] == [
+        f"{workflows_api(scope)}/{workflow_id}/runs/{run_id}/items",
+    ]
+    assert [entry.path for entry in ui.non_navigation_writes if entry.path != "/api/user/settings"] == [
+        "/api/notifications/alert-1/read",
+    ]
+
+
+@pytest.mark.parametrize("scope", ("personal", "group"))
+def test_open_workflow_reads_the_list_only_once_more_for_a_workflow_it_lacks(alert_workflows_ui, scope):
+    """The alert's workflow is missing from the server's list as well, as when it was deleted
+    after the run. Open workflow reads the list once more and stops there: nothing opens, no error
+    shows and the list stays usable. Following the link again is a new navigation, which reads
+    the list once more."""
+    ui = alert_workflows_ui
+    workflow_id, _, run_id, other, list_path = ALERT_CASES[scope]
+    open_list_without_the_alerted_workflow(ui, scope)
+    target = f"{ORIGIN}/v2{list_path}?workflow_id={workflow_id}&run_id={run_id}"
+    section = ui.page.get_by_role("group", name="Workspace workflows", exact=True)
+    run_other = section.get_by_role("button", name=f"Run {other}", exact=True)
+    history = ui.page.get_by_role("list", name="Workflow run history", exact=True)
+
+    extra_reads = follow_open_workflow_to_a_missing_workflow(ui, scope, "alert-1", "Review found blocking items")
+    expect(ui.page).to_have_url(target)
+    assert extra_reads == 1, f"Open workflow read the list {extra_reads} more times, not once."
+    expect(ui.page.get_by_role("dialog")).to_have_count(0)
+    expect(history).to_have_count(0)
+    expect(section.get_by_role("alert")).to_have_count(0)
+    wait_until(ui, lambda: ui.read_calls == ["alert-1"], lambda: f"Opening marked {ui.read_calls} as read.")
+
+    # The list is still in use: a search filters it, and clearing the search brings the rows back.
+    search = section.get_by_role("searchbox", name="Search workflows", exact=True)
+    search.fill("no such workflow")
+    expect(section.get_by_text("No workflows match your search", exact=True)).to_be_visible()
+    expect(run_other).to_have_count(0)
+    search.fill("")
+    expect(run_other).to_be_enabled()
+
+    # Following the same link again is a new navigation, with one read of its own.
+    extra_reads = follow_open_workflow_to_a_missing_workflow(
+        ui, scope, "alert-2", "Review still has blocking items",
+    )
+    expect(ui.page).to_have_url(target)
+    assert extra_reads == 1, f"Following the link again read the list {extra_reads} more times, not once."
+    expect(ui.page.get_by_role("dialog")).to_have_count(0)
+    expect(history).to_have_count(0)
+    expect(section.get_by_role("alert")).to_have_count(0)
+    expect(run_other).to_be_enabled()
+    wait_until(
+        ui, lambda: ui.read_calls == ["alert-1", "alert-2"], lambda: f"Opening marked {ui.read_calls} as read.",
+    )
+    assert not [entry.path for entry in ui.requests if entry.path.endswith(("/runs", "/items"))]
+    assert [entry.path for entry in ui.non_navigation_writes if entry.path != "/api/user/settings"] == [
+        "/api/notifications/alert-1/read", "/api/notifications/alert-2/read",
+    ]
 
 
 def test_chat_origin_opens_its_conversation(provenance_ui):

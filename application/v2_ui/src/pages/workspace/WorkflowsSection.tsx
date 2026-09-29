@@ -4,6 +4,7 @@
 // member may run and cancel, and only the management roles create, edit and delete.
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useLocation } from 'react-router-dom';
 import { Ban, ChevronDown, ChevronRight, Edit3, GitBranch, Play, Plus, Trash2, Workflow } from 'lucide-react';
 import { WorkflowEditorDialog } from '../../components/workflows/WorkflowEditorDialog';
 import { WorkflowFlowDialog } from '../../components/workflows/WorkflowFlowDialog';
@@ -76,6 +77,7 @@ export function WorkflowsSection({
     const canRun = offered ? offered.has('run') : allowManage;
     const canCancel = offered ? offered.has('cancel') : allowManage;
     const scopeKey = workflowScopeKey(scope);
+    const location = useLocation();
     const loadWorkflows = useCallback((signal?: AbortSignal) => fetchScopedWorkflows(scope, signal), [scopeKey]);
     const { items, loading, error, loadFailed, refresh, setItems, setError } =
         useSectionResource<WorkflowDefinition>(loadWorkflows, 'Failed to load workflows.');
@@ -91,8 +93,17 @@ export function WorkflowsSection({
     const [optionsError, setOptionsError] = useState('');
     const [editorDirty, setEditorDirty] = useState(false);
     const [editorSaving, setEditorSaving] = useState(false);
-    const [linkedRun, setLinkedRun] = useState<{ scopeKey: string; workflowId: string; runId: string } | null>(null);
-    const consumedInitialTargets = useRef(new Set<string>());
+    const [linkedRun, setLinkedRun] = useState<{
+        scopeKey: string;
+        workflowId: string;
+        runId: string;
+        /** The navigation that named the run; a new one remounts the history. */
+        navigation: string;
+    } | null>(null);
+    // The last navigation whose workflow link was acted on, and the last one that re-read the list
+    // because the link named a workflow the list did not have yet.
+    const handledNavigation = useRef<string | null>(null);
+    const relistedNavigation = useRef<string | null>(null);
 
     useEffect(() => {
         onDirtyChange?.(editorDirty);
@@ -137,27 +148,42 @@ export function WorkflowsSection({
         }
     }, [scopeKey, interactionDisabled, canCreate]);
 
+    // Each navigation that names a workflow is acted on once: a document's provenance link, or a
+    // workflow alert's Open workflow while this list is already open. The router gives every
+    // navigation its own key, so following the same link again acts again, and nothing else that
+    // changes here (the list refreshing after a run, say) acts on a link already handled.
     useEffect(() => {
-        const link = readWorkflowRunLink(window.location.search);
-        if (!link || loading || editing || optionsLoading) {
+        const navigation = `${scopeKey}:${location.key}`;
+        if (handledNavigation.current === navigation) {
             return;
         }
-        const key = `${scopeKey}:${link.workflowId}:${link.runId ?? ''}`;
-        if (consumedInitialTargets.current.has(key)) {
+        const link = readWorkflowRunLink(location.search);
+        if (!link) {
+            handledNavigation.current = navigation;
+            return;
+        }
+        if (loading || editing || optionsLoading) {
             return;
         }
         const workflow = items.find((item) => item.id === link.workflowId);
-        if (workflow) {
-            consumedInitialTargets.current.add(key);
-            if (link.runId) {
-                // A run link (document provenance) opens the run history, not the editor.
-                setLinkedRun({ scopeKey, workflowId: link.workflowId, runId: link.runId });
-                setExpandedId(link.workflowId);
-            } else {
-                void openEditor(workflow);
-            }
+        if (!workflow && relistedNavigation.current !== navigation) {
+            // The list can predate the workflow (one created in another tab); read it once more.
+            relistedNavigation.current = navigation;
+            void refresh();
+            return;
         }
-    }, [editing, items, loading, openEditor, optionsLoading, scopeKey]);
+        handledNavigation.current = navigation;
+        if (!workflow) {
+            return;
+        }
+        if (link.runId) {
+            // A run link opens the run history, not the editor.
+            setLinkedRun({ scopeKey, workflowId: link.workflowId, runId: link.runId, navigation });
+            setExpandedId(link.workflowId);
+        } else {
+            void openEditor(workflow);
+        }
+    }, [editing, items, loading, location.key, location.search, openEditor, optionsLoading, refresh, scopeKey]);
 
     const runAction = async (
         workflow: WorkflowDefinition,
@@ -290,6 +316,7 @@ export function WorkflowsSection({
                     const running = Boolean(workflow.active_run_id);
                     const workflowId = workflow.id ?? '';
                     const expanded = expandedId === workflowId;
+                    const linked = linkedRun?.scopeKey === scopeKey && linkedRun.workflowId === workflowId ? linkedRun : null;
                     const description = String(workflow.description ?? '');
                     const scheduleLabel = workflowScheduleLabel(workflow.trigger_type, workflow.schedule);
                     return (
@@ -376,11 +403,13 @@ export function WorkflowsSection({
                             />
                             {expanded && workflowId ? (
                                 <WorkflowRunHistory
-                                    key={`${scopeKey}:${workflowId}`}
+                                    // Following a run link again remounts the history: a fresh read,
+                                    // with the run expanded again even if it was collapsed since.
+                                    key={`${scopeKey}:${workflowId}:${linked?.navigation ?? ''}`}
                                     scope={scope}
                                     workflowId={workflowId}
                                     refreshToken={historyRefreshToken}
-                                    initialRunId={linkedRun?.scopeKey === scopeKey && linkedRun.workflowId === workflowId ? linkedRun.runId : null}
+                                    initialRunId={linked?.runId ?? null}
                                     onWorkflowRefresh={() => void refresh()}
                                 />
                             ) : null}

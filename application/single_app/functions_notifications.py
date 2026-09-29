@@ -15,7 +15,7 @@ Implemented in: 0.234.032
 import hashlib
 import json
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from urllib.parse import urlencode
 from azure.cosmos import exceptions
 from flask import current_app
@@ -1050,25 +1050,77 @@ def get_recent_chat_response_notifications(user_id, limit=50):
         raise
 
 
-def get_unread_workflow_priority_notifications(user_id, limit=5):
-    """Return the most recent unread workflow alert notifications for a user."""
+# Notifications expire after 60 days, so a longer recency window could never match more.
+WORKFLOW_ALERT_SINCE_HOURS_MAX = TTL_60_DAYS // 3600
+
+
+def parse_workflow_alert_since_hours(value):
+    """Return a validated pop-up recency window in hours, or None when none was asked for.
+
+    Accepts a whole number of hours from 1 to WORKFLOW_ALERT_SINCE_HOURS_MAX, as an int or as
+    a plain string of ASCII digits. Anything else raises ValueError, so a caller can reject
+    the request rather than silently widen or narrow the window.
+    """
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        raise ValueError('since_hours must be a whole number of hours.')
+    if isinstance(value, int):
+        hours = value
+    elif isinstance(value, str) and 0 < len(value) <= 4 and value.isascii() and value.isdigit():
+        hours = int(value)
+    else:
+        raise ValueError('since_hours must be a whole number of hours.')
+    if hours < 1 or hours > WORKFLOW_ALERT_SINCE_HOURS_MAX:
+        raise ValueError(f'since_hours must be between 1 and {WORKFLOW_ALERT_SINCE_HOURS_MAX}.')
+    return hours
+
+
+def get_unread_workflow_priority_notifications(user_id, limit=5, since_hours=None, raise_on_error=False):
+    """Return the most recent unread pop-up workflow alerts for a user.
+
+    The unread, not-dismissed and not-notify-only filters run in Cosmos, so the read is
+    bounded by ``limit`` instead of scanning every alert still inside the 60-day TTL.
+    ``since_hours`` optionally keeps only alerts created within that many hours; None leaves
+    the window open, which is what the classic interface asks for.
+
+    A failed read returns an empty list, as the classic interface has always had it. With
+    ``raise_on_error`` the failure is raised instead, for a caller that must not mistake it
+    for "nothing unread": the V2 interface treats a short list as every unread pop-up alert
+    there is, and would retire the ones it is showing.
+    """
     try:
         normalized_limit = max(1, min(int(limit or 5), 10))
     except (TypeError, ValueError):
         normalized_limit = 5
+    normalized_since_hours = parse_workflow_alert_since_hours(since_hours)
+
+    # These filters must stay equivalent to the Python re-check below, or TOP could starve it.
+    query_parts = [
+        'SELECT TOP @limit * FROM c',
+        'WHERE c.user_id = @user_id',
+        'AND c.notification_type = @notification_type',
+        'AND (NOT IS_ARRAY(c.read_by) OR NOT ARRAY_CONTAINS(c.read_by, @user_id))',
+        'AND (NOT IS_ARRAY(c.dismissed_by) OR NOT ARRAY_CONTAINS(c.dismissed_by, @user_id))',
+        'AND (NOT IS_STRING(c.metadata.delivery) OR LOWER(TRIM(c.metadata.delivery)) != @notify_only)',
+    ]
+    parameters = [
+        {'name': '@limit', 'value': normalized_limit},
+        {'name': '@user_id', 'value': user_id},
+        {'name': '@notification_type', 'value': WORKFLOW_ALERT_NOTIFICATION_TYPE},
+        {'name': '@notify_only', 'value': WORKFLOW_ALERT_DELIVERY_NOTIFY_ONLY},
+    ]
+    if normalized_since_hours is not None:
+        # Stamped the way create_notification stamps created_at, so the strings compare in order.
+        created_after = (datetime.now(timezone.utc) - timedelta(hours=normalized_since_hours)).isoformat()
+        query_parts.append('AND c.created_at >= @created_after')
+        parameters.append({'name': '@created_after', 'value': created_after})
+    query_parts.append('ORDER BY c.created_at DESC')
 
     try:
         notifications = list(cosmos_notifications_container.query_items(
-            query=(
-                'SELECT * FROM c '
-                'WHERE c.user_id = @user_id '
-                'AND c.notification_type = @notification_type '
-                'ORDER BY c.created_at DESC'
-            ),
-            parameters=[
-                {'name': '@user_id', 'value': user_id},
-                {'name': '@notification_type', 'value': WORKFLOW_ALERT_NOTIFICATION_TYPE},
-            ],
+            query=' '.join(query_parts),
+            parameters=parameters,
             partition_key=user_id,
         ))
 
@@ -1098,6 +1150,8 @@ def get_unread_workflow_priority_notifications(user_id, limit=5):
         return unread_notifications
     except Exception as e:
         debug_print(f"Error fetching unread workflow alerts for {user_id}: {e}")
+        if raise_on_error:
+            raise
         return []
 
 
