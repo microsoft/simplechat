@@ -104,6 +104,7 @@ CAPABILITY_ACTION_INVOKE = 'action_invoke'
 CAPABILITY_COMPOSE = 'compose'
 CAPABILITY_GENERATE_IMAGE = 'generate_image'
 CAPABILITY_RENDER_FILE = 'render_file'
+CAPABILITY_WORKFLOW_PROPOSE = 'workflow_propose'
 
 # Explicitly requested images are generated as planned steps. The executor is serial, so a
 # plan may generate at most this many images; a larger ask is reported, never silently cut.

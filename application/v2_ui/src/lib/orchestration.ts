@@ -301,8 +301,11 @@ export interface OrchestrationStep {
     delivers?: string[];
 }
 
-/** What a deliverable is: the chat answer, a downloadable file, an image, a chart or a diagram. */
-export type OrchestrationDeliverableKind = 'answer' | 'file' | 'image' | 'chart' | 'diagram';
+/**
+ * What a deliverable is: the chat answer, a downloadable file, an image, a chart, a diagram, or a
+ * proposed workflow the user approves on its own card (only when an administrator allows it).
+ */
+export type OrchestrationDeliverableKind = 'answer' | 'file' | 'image' | 'chart' | 'diagram' | 'workflow';
 
 /**
  * One thing the plan will deliver, from the plan's `deliverables`.
