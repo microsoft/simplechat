@@ -10,6 +10,11 @@ An Ask AI request may carry `#` documents and tags. These tests ensure that:
 - the references are checked for the acting user before the planner runs, and a stale, deleted,
   unready or unreadable one is refused with a 4xx naming it by the label the user picked, leaving
   no plan change, no seed change and no orphaned turn;
+- once merged, everything the plan references -- what it already held and the new chips together
+  -- is checked again through the question card's path before the planner runs, and a stored
+  reference that no longer passes ends the stream with the existing error frame before any
+  planning, leaving the plan, its seeds and the claim as they were, so the same request can be
+  retried;
 - an accepted reference is merged into the revision's seeds exactly once -- a replayed
   submission is answered from storage without being checked or merged again -- and the revised
   plan's document search really is limited to it when it runs;
@@ -210,6 +215,16 @@ class PlanReferenceRouteTests(unittest.TestCase):
         self.assertIsNone(after.get('edit_claim'))
         self.assertFalse(self.editor(run_id)['busy'])
 
+    def plan_with_stored_reference(self, reference):
+        """The editor of a current plan whose committed seeds already hold ``reference``."""
+        editor = self.open_editor()
+        revised, _body = self.revise(
+            editor, revised_plan(searches=1), instruction='Use it.', references=[chip(reference)],
+        )
+        stored = self.record(revised['plan']['run_id'])['seeds']['elicitation_references']
+        self.assertEqual(stored, [reference])
+        return revised
+
     def search_calls(self, record):
         """Run the stored plan's first search step on the context the executor would build."""
         seeds = record.get('seeds') or {}
@@ -360,6 +375,37 @@ class PlanReferenceRouteTests(unittest.TestCase):
         self.assertEqual(calls[0]['doc_scope'], 'public')
         self.assertEqual(calls[0]['active_public_workspace_id'], ['public-a'])
         self.assertIsNone(calls[0]['document_ids'])
+
+    def test_the_merged_references_are_checked_again_before_the_planner_runs(self):
+        # The plan already relies on a tag from an earlier Ask; this one adds a document.
+        editor = self.plan_with_stored_reference(FINANCE)
+        planner_calls = len(self.edit_calls)
+        checks = []
+
+        def recheck(references, user_id, conversation_id, settings=None):
+            checks.append({
+                'references': deepcopy(references), 'user_id': user_id,
+                'conversation_id': conversation_id, 'planner_calls': len(self.edit_calls),
+            })
+            return deepcopy(references)
+
+        with patch.dict(self.editing_globals, {'resolve_elicitation_references': recheck}):
+            revised, _body = self.revise(
+                editor, revised_plan(searches=1), instruction='Use my budget too.',
+                references=[chip(BUDGET)],
+            )
+        merged = [FINANCE, BUDGET]
+        seeds = self.record(revised['plan']['run_id'])['seeds']
+        # The stored reference and the new chip are checked together, through the question
+        # card's path, for this user and conversation, before the planner is asked anything.
+        self.assertEqual(checks[0], {
+            'references': merged, 'user_id': 'user1', 'conversation_id': 'conv1',
+            'planner_calls': planner_calls,
+        })
+        self.assertEqual(len(self.edit_calls), planner_calls + 1)
+        # No check in this request saw the plan's references without the new chip.
+        self.assertEqual([check['references'] for check in checks], [merged] * len(checks))
+        self.assertEqual(seeds['elicitation_references'], merged)
 
     def test_references_survive_a_planner_question(self):
         editor = self.open_editor()
@@ -537,6 +583,63 @@ class PlanReferenceRouteTests(unittest.TestCase):
         revised = next(event['editor'] for event in events if event.get('editor'))
         self.assertEqual(self.record(revised['plan']['run_id'])['seeds']['document_ids'], ['doc-new'])
         self.assertEqual(len(self.authorizer_calls), 2)
+
+    def test_a_stored_reference_that_fails_the_recheck_stops_the_revision_before_planning(self):
+        # The plan relies on a tag in a public workspace the user can no longer see. The new
+        # chip is readable and passes its own check; the plan's stored reference does not.
+        editor = self.plan_with_stored_reference(FINANCE)
+        run_id = editor['plan']['run_id']
+        before = deepcopy(self.record(run_id))
+        self.edit_calls.clear()
+        authorizer_calls = len(self.authorizer_calls)
+        hidden_workspaces = {'public-a'}
+        checks = []
+
+        def recheck(references, user_id, conversation_id, settings=None):
+            checks.append(deepcopy(references))
+            if any(item['scope']['id'] in hidden_workspaces for item in references):
+                # What the question card's authorizer raises for a public workspace the user
+                # can no longer see.
+                raise self.route.ElicitationContextError(
+                    'That public workspace is not available.', reason='workspace_unavailable',
+                )
+            return deepcopy(references)
+
+        # Queued so the planner could answer if it were reached. It must not be.
+        self.edit_responses.append(revised_plan(searches=1))
+        with patch.dict(self.editing_globals, {'resolve_elicitation_references': recheck}):
+            response, events, body = self.request_revision(
+                editor, instruction='Use my budget too.', references=[chip(BUDGET)],
+            )
+        self.assertEqual(response.status_code, 200, response.get_data(as_text=True))
+        self.assertEqual(events[-1], {
+            'error': 'The answers were not valid.', 'code': 'invalid_request',
+            'details': ['That public workspace is not available.'],
+        })
+        self.assertFalse(any('editor' in event for event in events), events)
+        self.assertEqual(len(self.authorizer_calls), authorizer_calls + 1)
+        self.assertEqual(checks, [[FINANCE, BUDGET]])
+        self.assertEqual(self.edit_calls, [])
+        # No plan, seed or turn changed, and the claim was released.
+        self.assert_unchanged(before, run_id)
+        seeds = self.record(run_id)['seeds']
+        self.assertEqual(seeds['elicitation_references'], [FINANCE])
+        self.assertNotIn('doc-new', seeds.get('document_ids') or [])
+
+        # The same request, with the same submission id, is checked again rather than replayed,
+        # and goes through once the workspace is visible again.
+        hidden_workspaces.clear()
+        with patch.dict(self.editing_globals, {'resolve_elicitation_references': recheck}):
+            response, events = self.post_revision(run_id, body)
+        self.assertEqual(response.status_code, 200, response.get_data(as_text=True))
+        self.assertFalse(any(event.get('error') for event in events), events)
+        revised = next(event['editor'] for event in events if event.get('editor'))
+        record = self.record(revised['plan']['run_id'])
+        self.assertEqual(len(self.authorizer_calls), authorizer_calls + 2)
+        self.assertEqual(len(self.edit_calls), 1)
+        self.assertEqual(record['seeds']['elicitation_references'], [FINANCE, BUDGET])
+        self.assertEqual(record['seeds']['document_ids'], ['doc-new'])
+        self.assertEqual(user_turn(revised, body['submission_id'])['references'], [turn_chip(BUDGET)])
 
     def test_malformed_or_too_many_references_are_refused_before_any_check(self):
         editor = self.open_editor()
