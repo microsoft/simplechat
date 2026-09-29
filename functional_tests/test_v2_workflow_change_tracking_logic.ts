@@ -1,8 +1,8 @@
 // test_v2_workflow_change_tracking_logic.ts
 // Behavioural checks for workflow editor change tracking: diff, attribution, revert, and assist.
 //
-// Version: 0.261.201
-// Implemented in: 0.261.201
+// Version: 0.261.203
+// Implemented in: 0.261.203
 //
 // The V2 interface has no unit test runner, so this follows test_v2_chart_editor_logic.ts:
 // bundled with the esbuild Vite already brings in, run under node by
@@ -606,6 +606,73 @@ function fieldDraftChecks() {
         session.fields.capture().fields.size === 1 && unsavedOf(state).byKey.has(key), snapshotOf(state).steps);
 }
 
+// ---------------------------------------------------------------------------------------------
+// Performance: a keystroke re-diffs only the task it changed
+// ---------------------------------------------------------------------------------------------
+
+const PERFORMANCE_TASKS = 100;
+const PERFORMANCE_KEYSTROKES = 200;
+// Loose, so a busy machine never fails it. The read count below is the exact check: a diff that
+// compared every task on every keystroke fails it however fast the machine is.
+const PERFORMANCE_MS_PER_KEYSTROKE = 25;
+
+/** Type into one task, keeping every other task object, as the editor's setTaskAt does. */
+function typeInto(definition: WorkflowDefinition, id: string, text: string): WorkflowDefinition {
+    return {
+        ...definition,
+        tasks: tasksOf(definition).map((task) => task.id === id ? { ...task, instructions: `${task.instructions}${text}` } : task),
+    } as WorkflowDefinition;
+}
+
+function performanceChecks() {
+    // Every task but the one typed into counts reads of anything but its ID. A read means the
+    // diff or the attribution compared a task that did not change.
+    const reads = new Map<string, number>();
+    const watched = tasksOf(classic(PERFORMANCE_TASKS)).map((task) => task.id === 't50' ? task : new Proxy(task, {
+        get(target, property, receiver) {
+            if (property !== 'id') reads.set(target.id, (reads.get(target.id) ?? 0) + 1);
+            return Reflect.get(target, property, receiver);
+        },
+    }));
+    const baseline = { ...classic(PERFORMANCE_TASKS), tasks: watched } as WorkflowDefinition;
+    const stamp = workflowChangeStamp('user');
+    const key = workflowTaskKey('t50', 'instructions');
+    let draft = baseline;
+    let attribution: WorkflowAttribution = EMPTY_WORKFLOW_ATTRIBUTION;
+    let changes = diffWorkflowChanges(baseline, draft);
+    for (let index = 0; index < PERFORMANCE_KEYSTROKES; index += 1) {
+        const next = typeInto(draft, 't50', 'x');
+        attribution = nextWorkflowAttribution(attribution, draft, next, baseline, () => stamp);
+        changes = diffWorkflowChanges(baseline, next);
+        draft = next;
+    }
+    check(`typing into one of ${PERFORMANCE_TASKS} tasks is one change`,
+        changes.changes.map((change) => change.key).join() === key, changes.changes.map((change) => change.key));
+    check('a keystroke never compares the tasks it did not change', reads.size === 0, [...reads]);
+    void (watched[0] as Row).name;
+    check('the read counter sees a read of a watched task', reads.get('t1') === 1, [...reads]);
+    check('the diff is memoized per baseline and draft', diffWorkflowChanges(baseline, draft) === changes);
+    check('typing attributes only the edited field', attribution.size === 1 && attribution.get(key)?.author === 'user', [...attribution]);
+
+    // The same typing through the real session: history, coalescing, attribution, and the diff the panel reads.
+    const state = openSession(classic(PERFORMANCE_TASKS));
+    const started = performance.now();
+    for (let index = 0; index < PERFORMANCE_KEYSTROKES; index += 1) {
+        state.session.changeDraft((current) => typeInto(current, 't50', 'x'), { label: 'Task instructions', group: 'task.t50.instructions' });
+        diffWorkflowChanges(snapshotOf(state).baseline, snapshotOf(state).draft);
+    }
+    const perKeystroke = (performance.now() - started) / PERFORMANCE_KEYSTROKES;
+    console.log(`      (${perKeystroke.toFixed(2)} ms per keystroke through the session with ${PERFORMANCE_TASKS} tasks)`);
+    check('typing through the session is one coalesced step with one change',
+        snapshotOf(state).steps.length === 1 && unsavedOf(state).changes.map((change) => change.key).join() === key, snapshotOf(state).steps);
+    check(`a keystroke with ${PERFORMANCE_TASKS} tasks takes under ${PERFORMANCE_MS_PER_KEYSTROKE} ms`,
+        perKeystroke < PERFORMANCE_MS_PER_KEYSTROKE, perKeystroke);
+}
+
+export function runPerformanceChecks() {
+    performanceChecks();
+}
+
 export function runSessionChecks() {
     assistChecks();
     turnChecks();
@@ -619,5 +686,6 @@ export function runSessionChecks() {
 runLibraryChecks();
 runRevertChecks();
 runSessionChecks();
+runPerformanceChecks();
 console.log(`\n${failures ? `${failures} FAILED` : 'all passed'}`);
 if (failures) process.exitCode = 1;
