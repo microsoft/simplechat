@@ -24,6 +24,15 @@ from azure.cosmos import exceptions
 
 import functions_orchestration_runs as run_store
 from functions_appinsights import log_event
+from functions_assist_references import (
+    REFERENCE_IDENTIFIER_LIMIT,
+    REQUEST_REFERENCE_KINDS,
+    REQUEST_REFERENCE_LIMIT,
+    REQUEST_REFERENCE_SCOPES,
+    ReferenceRequestError,
+    canonical_request_references,
+    sanitize_reference_label,
+)
 from functions_assist_submissions import SUBMISSION_ID_PATTERN
 from functions_orchestration_events import merge_reasoning_adjustments
 from functions_orchestration_registry import (
@@ -77,7 +86,7 @@ _REQUEST_FIELDS = {
     'conversation_id', 'expected_version', 'submission_id', 'action', 'edits',
 }
 _ACTION_FIELDS = {
-    'ask': {'instruction'},
+    'ask': {'instruction', 'references'},
     'restore': {'source_run_id'},
     'answer': {
         'elicitation_id', 'elicitation_revision', 'elicitation_response',
@@ -395,24 +404,80 @@ def _valid_submission_id(value):
     return isinstance(value, str) and SUBMISSION_ID_PATTERN.fullmatch(value) is not None
 
 
+def _bounded_identifier(value):
+    return isinstance(value, str) and 0 < len(value) <= REFERENCE_IDENTIFIER_LIMIT
+
+
+def _bounded_turn_references(value):
+    """The `#` chips a user turn shows: the authorized references, as display data only."""
+    if not isinstance(value, list):
+        return []
+    references = []
+    for item in value[:REQUEST_REFERENCE_LIMIT]:
+        scope = item.get('scope') if isinstance(item, dict) else None
+        if (
+            not isinstance(scope, dict) or item.get('kind') not in REQUEST_REFERENCE_KINDS
+            or scope.get('kind') not in REQUEST_REFERENCE_SCOPES
+            or not _bounded_identifier(item.get('id'))
+            or not (scope.get('id') is None or _bounded_identifier(scope.get('id')))
+        ):
+            continue
+        references.append({
+            'kind': item['kind'], 'id': item['id'],
+            'label': sanitize_reference_label(item.get('label')) or (
+                'Selected tag' if item['kind'] == 'tag' else 'Selected document'
+            ),
+            'scope': {'kind': scope['kind'], 'id': scope.get('id')},
+        })
+    return references
+
+
+def _bounded_scope_notice(value):
+    """What a revision's `#` references now limit plan searches to, as display data only."""
+    if not isinstance(value, dict) or value.get('kind') != 'search_limited':
+        return None
+    lists = {}
+    for key in ('documents', 'tags'):
+        items = value.get(key) if isinstance(value.get(key), list) else []
+        lists[key] = [
+            label for label in (sanitize_reference_label(item) for item in items[:REQUEST_REFERENCE_LIMIT])
+            if label
+        ]
+    more = value.get('more')
+    more = more if isinstance(more, int) and not isinstance(more, bool) and 0 <= more <= 1000 else 0
+    if not lists['documents'] and not lists['tags']:
+        return None
+    return {'kind': 'search_limited', **lists, 'more': more}
+
+
 def _bounded_chat(chat):
     if not isinstance(chat, list):
         return []
-    return [
-        {
+    turns = []
+    for entry in chat:
+        if not (
+            isinstance(entry, dict) and entry.get('role') in ('user', 'assistant')
+            and isinstance(entry.get('content'), str)
+        ):
+            continue
+        turn = {
             'role': entry['role'],
             'content': entry['content'][:EDIT_CHAT_CONTENT_LIMIT],
             'timestamp': entry['timestamp'][:64] if isinstance(entry.get('timestamp'), str) else _now().isoformat(),
-            # Kept so the editor can match a message it showed before the planner answered.
-            **(
-                {'submission_id': entry['submission_id']}
-                if _valid_submission_id(entry.get('submission_id')) else {}
-            ),
         }
-        for entry in chat
-        if isinstance(entry, dict) and entry.get('role') in ('user', 'assistant')
-        and isinstance(entry.get('content'), str)
-    ][-EDIT_CHAT_LIMIT:]
+        # Kept so the editor can match a message it showed before the planner answered.
+        if _valid_submission_id(entry.get('submission_id')):
+            turn['submission_id'] = entry['submission_id']
+        # The chips and search notice are for the editor's thread; the planner is only
+        # ever shown a turn's role and content.
+        references = _bounded_turn_references(entry.get('references')) if entry['role'] == 'user' else []
+        if references:
+            turn['references'] = references
+        notice = _bounded_scope_notice(entry.get('scope_notice')) if entry['role'] == 'assistant' else None
+        if notice:
+            turn['scope_notice'] = notice
+        turns.append(turn)
+    return turns[-EDIT_CHAT_LIMIT:]
 
 
 def _manual_plan(plan, version):
@@ -597,6 +662,17 @@ def _normalize_request(data, conversation_id):
         ):
             raise _invalid('Enter a plan change of at most 2,000 characters.')
         result['instruction'] = instruction.strip()
+        # References are part of the request, so the submission fingerprint covers them.
+        # One canonical form means the same selection always has the same fingerprint, and
+        # an Ask without references keeps the fingerprint it had before references existed.
+        try:
+            references = canonical_request_references(data.get('references'))
+        except ReferenceRequestError as exc:
+            raise PlanRevisionError(exc.message, code=exc.code, status_code=400) from exc
+        if references:
+            result['references'] = references
+        else:
+            result.pop('references', None)
     if action == 'restore' and not _valid_id(data.get('source_run_id')):
         raise _invalid('Choose a saved version to restore.')
     if action == 'answer' or any(
