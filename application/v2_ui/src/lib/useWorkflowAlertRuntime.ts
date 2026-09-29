@@ -102,6 +102,8 @@ export function useWorkflowAlertRuntime(ready: boolean): void {
         let again = false;
         let lastFetchAt = 0;
         let holdUntil = 0;
+        // Bumped when a hold starts, so only a read that leaves after it can lift it.
+        let holdGeneration = 0;
         let gateTimer: ReturnType<typeof setInterval> | null = null;
         let gateQueued = false;
 
@@ -152,13 +154,23 @@ export function useWorkflowAlertRuntime(ready: boolean): void {
                 return;
             }
             const controller = new AbortController();
+            const generation = holdGeneration;
             inFlight = controller;
             lastFetchAt = Date.now();
             void fetchWorkflowAlerts(controller.signal)
                 .then(({ alerts, complete }) => {
-                    if (!disposed && !feedPaused && !controller.signal.aborted) {
-                        store.getState().receiveAlerts(alerts, { complete });
+                    if (disposed || feedPaused || controller.signal.aborted) {
+                        return;
                     }
+                    const state = store.getState();
+                    // The gate is only watched while something waits, so a dialog opened
+                    // while nothing did is noticed here, before these alerts can be shown.
+                    // It only closes here: opening it is left until the alerts waiting have
+                    // been replaced, so one read elsewhere is not shown on its way out.
+                    if (!state.suspended && workflowAlertsBlocked()) {
+                        state.setSuspended(true);
+                    }
+                    state.receiveAlerts(alerts, { complete });
                 })
                 .catch(() => {
                     // The alerts already known stay; the bell still counts every one of them.
@@ -167,7 +179,11 @@ export function useWorkflowAlertRuntime(ready: boolean): void {
                     if (inFlight === controller) {
                         inFlight = null;
                     }
-                    holdUntil = 0;
+                    // A read that left before the reader came back cannot say what changed
+                    // while they were away, so it does not lift the hold.
+                    if (generation === holdGeneration) {
+                        holdUntil = 0;
+                    }
                     queueGate();
                     if (again && !disposed) {
                         again = false;
@@ -201,9 +217,12 @@ export function useWorkflowAlertRuntime(ready: boolean): void {
 
         const onVisibilityChange = (): void => {
             if (document.visibilityState === 'visible' && store.getState().queue.length > 0) {
-                // What waited while the tab was hidden may have been read elsewhere since.
+                // What waited while the tab was hidden may have been read elsewhere since. It
+                // waits for a read that leaves now -- not one skipped because another left a
+                // moment ago, nor one already on its way.
+                holdGeneration += 1;
                 holdUntil = Date.now() + RETURN_HOLD_MS;
-                fetchNow('return');
+                fetchNow();
             }
             updateGate();
         };

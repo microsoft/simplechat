@@ -18,6 +18,7 @@
 //
 // New alerts that arrive while the notice or the card is up join it, re-sorted, so a critical
 // alert takes the notice over from a medium one. The card keeps the entry it was showing.
+// Alerts won while the notice is tucking wait for it to go, then start a notice of their own.
 
 import { create } from 'zustand';
 import type { NotificationTarget } from '../lib/notificationLinks';
@@ -93,6 +94,12 @@ let claiming = false;
 let epoch = 0;
 let actions: WorkflowAlertActions = workflowAlertServerActions;
 let announcementToken = 0;
+// A notice presented while the page had to wait -- a dialog opened while its claim was on its
+// way -- is hidden until the page is free, and is announced then rather than unseen.
+let announceWhenShown = false;
+// Alerts this tab won while the notice was tucking into the bell. They are shown once it has
+// gone, rather than joining a notice on its way out.
+let heldWinners: WorkflowAlert[] = [];
 
 // The control that last held focus outside the alert UI, for the card to hand focus back to.
 // The notice never takes focus, so this is where the reader was before they reached for it.
@@ -157,6 +164,37 @@ export const useWorkflowAlertStore = create<WorkflowAlertState>((set, get) => {
         return Math.max(0, Math.min(fallback, entries.length - 1));
     };
 
+    /** Show alerts this tab won: a new notice, or more for the one or the card already up. */
+    const present = (winners: WorkflowAlert[], queue: WorkflowAlert[]): void => {
+        const current = get();
+        const entries = groupWorkflowAlerts([...current.entries.flatMap((entry) => entry.alerts), ...winners]);
+        if (current.phase === 'idle') {
+            announceWhenShown = current.suspended;
+            set({
+                queue,
+                entries,
+                phase: 'notice',
+                cardIndex: 0,
+                batchToken: current.batchToken + 1,
+                announcement: current.suspended ? null : announcementFor(entries),
+            });
+            return;
+        }
+        const headChanged = current.entries[0]?.key !== entries[0]?.key
+            || current.entries[0]?.priority !== entries[0]?.priority;
+        const announce = current.phase === 'notice' && headChanged;
+        if (announce && current.suspended) {
+            announceWhenShown = true;
+        }
+        set({
+            queue,
+            entries,
+            cardIndex: indexFor(entries, current.entries[current.cardIndex]?.key, current.cardIndex),
+            batchToken: current.batchToken + 1,
+            announcement: announce && !current.suspended ? announcementFor(entries) : current.announcement,
+        });
+    };
+
     /** Claim what is waiting and present it, if this tab may present anything now. */
     const pump = (): void => {
         const state = get();
@@ -188,31 +226,14 @@ export const useWorkflowAlertStore = create<WorkflowAlertState>((set, get) => {
                 const queue = current.queue.filter((alert) => !settled.has(alert.id));
                 const wonIds = new Set(won);
                 const winners = candidates.filter((alert) => wonIds.has(alert.id));
-                if (!winners.length || current.phase === 'tucking') {
+                if (!winners.length) {
                     set({ queue });
-                    pump();
+                } else if (current.phase === 'tucking') {
+                    heldWinners = [...heldWinners, ...winners];
+                    set({ queue });
                     return;
-                }
-                const entries = groupWorkflowAlerts([...current.entries.flatMap((entry) => entry.alerts), ...winners]);
-                if (current.phase === 'idle') {
-                    set({
-                        queue,
-                        entries,
-                        phase: 'notice',
-                        cardIndex: 0,
-                        batchToken: current.batchToken + 1,
-                        announcement: announcementFor(entries),
-                    });
                 } else {
-                    const headChanged = current.entries[0]?.key !== entries[0]?.key
-                        || current.entries[0]?.priority !== entries[0]?.priority;
-                    set({
-                        queue,
-                        entries,
-                        cardIndex: indexFor(entries, current.entries[current.cardIndex]?.key, current.cardIndex),
-                        batchToken: current.batchToken + 1,
-                        announcement: current.phase === 'notice' && headChanged ? announcementFor(entries) : current.announcement,
-                    });
+                    present(winners, queue);
                 }
                 pump();
             });
@@ -220,7 +241,13 @@ export const useWorkflowAlertStore = create<WorkflowAlertState>((set, get) => {
 
     /** End the presentation. Whatever was not acted on stays unread, and claimed. */
     const finish = (patch: Partial<WorkflowAlertState> = {}): void => {
+        announceWhenShown = false;
         set({ entries: [], phase: 'idle', cardIndex: 0, growFrom: null, busy: false, ...patch });
+        if (heldWinners.length) {
+            const winners = heldWinners;
+            heldWinners = [];
+            present(winners, get().queue);
+        }
         pump();
     };
 
@@ -234,6 +261,7 @@ export const useWorkflowAlertStore = create<WorkflowAlertState>((set, get) => {
             settled.add(id);
         }
         const state = get();
+        heldWinners = heldWinners.filter((alert) => !gone.has(alert.id));
         const queue = state.queue.filter((alert) => !gone.has(alert.id));
         const entries = withoutIds(state.entries, gone);
         if (!entries.length && state.phase !== 'idle') {
@@ -286,9 +314,9 @@ export const useWorkflowAlertStore = create<WorkflowAlertState>((set, get) => {
             if (complete) {
                 // A short answer is every unread pop-up alert there is, so one missing from it
                 // was read or dismissed somewhere else.
-                const present = new Set(alerts.map((alert) => alert.id));
-                const missing = get().entries.flatMap(workflowAlertEntryIds).filter((id) => !present.has(id));
-                drop(missing);
+                const listed = new Set(alerts.map((alert) => alert.id));
+                const shown = [...get().entries.flatMap(workflowAlertEntryIds), ...heldWinners.map((alert) => alert.id)];
+                drop(shown.filter((id) => !listed.has(id)));
             }
             pump();
         },
@@ -297,7 +325,11 @@ export const useWorkflowAlertStore = create<WorkflowAlertState>((set, get) => {
 
         clearAll: () => {
             const state = get();
-            drop([...state.queue.map((alert) => alert.id), ...state.entries.flatMap(workflowAlertEntryIds)]);
+            drop([
+                ...state.queue.map((alert) => alert.id),
+                ...state.entries.flatMap(workflowAlertEntryIds),
+                ...heldWinners.map((alert) => alert.id),
+            ]);
             set({ queue: [] });
         },
 
@@ -307,6 +339,11 @@ export const useWorkflowAlertStore = create<WorkflowAlertState>((set, get) => {
             }
             set({ suspended });
             if (!suspended) {
+                const state = get();
+                if (announceWhenShown && state.phase === 'notice' && state.entries.length) {
+                    announceWhenShown = false;
+                    set({ announcement: announcementFor(state.entries) });
+                }
                 pump();
             }
         },
@@ -389,6 +426,8 @@ export function resetWorkflowAlertsForLab(): void {
     epoch += 1;
     settled.clear();
     claiming = false;
+    announceWhenShown = false;
+    heldWinners = [];
     resetWorkflowAlertClaims();
     useWorkflowAlertStore.setState({
         queue: [],
