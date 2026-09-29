@@ -22,9 +22,13 @@ and a version that beat an unrelated request is returned with its conflict.
 It also ensures submission ids never reach a model prompt, and that the plan editor keeps only ids
 that follow the same rule.
 
-The route handlers are the production functions, extracted from their modules and run against the
-real revision storage helpers and the real image revision flow. Only the model, blob storage,
-Cosmos, authorization and event seams are replaced, and nothing touches the network.
+A shared image's replay names the bare shared URL unless a stored version picks one, so a legacy or
+damaged entry holding transcript turns but no versions never hands a participant the owner's copy.
+
+The route handlers and the shared image URL builder are the production functions, extracted from
+their modules and run against the real revision storage helpers and the real image revision flow.
+Only the model, blob storage, Cosmos, authorization and event seams are replaced, and nothing
+touches the network.
 """
 
 import ast
@@ -774,6 +778,25 @@ class PersonalImageRevisionRouteTests(ImageRevisionContract, RouteHarness):
         return self.persist.call_count
 
 
+SHARED_IMAGE_URL = '/api/collaboration/conversations/conversation-1/images/shared-image-1'
+
+
+def load_collaboration_image_url():
+    """Return the production ``build_collaboration_image_url``, run on the real image helpers.
+
+    ``functions_collaboration`` reaches ``config``, and so its Cosmos client, at import. The
+    function and the helper it calls are extracted the way the route handlers are instead, which
+    keeps the shared route on the real contract: passing no document gives the bare shared URL,
+    and only a document holding stored versions is resolved.
+    """
+    namespace = {
+        'IMAGE_REVISIONS_METADATA_KEY': images.IMAGE_REVISIONS_METADATA_KEY,
+        'resolve_image_message_content': images.resolve_image_message_content,
+    }
+    load_route_function('functions_collaboration.py', '_has_image_revision', namespace)
+    return load_route_function('functions_collaboration.py', 'build_collaboration_image_url', namespace)
+
+
 class SharedImageRevisionRouteTests(ImageRevisionContract, RouteHarness):
     def setUp(self):
         super().setUp()
@@ -795,7 +818,7 @@ class SharedImageRevisionRouteTests(ImageRevisionContract, RouteHarness):
             'get_settings': lambda: {'enable_image_generation': True},
             '_load_collaboration_image_revision_message': self._load,
             '_save_collaboration_image_revisions': self._save,
-            'build_collaboration_image_url': self._image_url,
+            'build_collaboration_image_url': load_collaboration_image_url(),
             'revise_image_message': image_edit.revise_image_message,
             'image_generation_error_response': image_error_response,
             'cosmos_messages_container': container,
@@ -808,11 +831,6 @@ class SharedImageRevisionRouteTests(ImageRevisionContract, RouteHarness):
         self.handler = load_route_function(
             'route_backend_collaboration.py', 'add_collaboration_image_revision_api', namespace,
         )
-
-    @staticmethod
-    def _image_url(conversation_id, message_id, message_doc):
-        base = f'/api/collaboration/conversations/{conversation_id}/messages/{message_id}/image'
-        return images.resolve_image_message_content(message_doc, base)
 
     def _load(self, user_id, conversation_id, message_id):
         if self.denied:
@@ -851,6 +869,37 @@ class SharedImageRevisionRouteTests(ImageRevisionContract, RouteHarness):
         self.assertEqual([turn['submission_id'] for turn in chat], ['submission-1'] * 2)
         self.send(self.body(submission_id='submission-1'))
         self.assertEqual(len(self.events), 1)
+
+    def test_a_replay_with_no_stored_version_answers_with_the_bare_shared_url(self):
+        # The writer drops an entry once no version is left, so only a legacy or damaged entry
+        # holds transcript turns without one. The source's own content is then the owner's copy,
+        # which must never reach a participant in place of the shared URL.
+        turns = [
+            {'role': 'user', 'content': 'Make the chair blue.',
+             'timestamp': '2026-01-01T00:00:00Z', 'submission_id': 'submission-1'},
+            {'role': 'assistant', 'content': 'A cat on a blue chair',
+             'timestamp': '2026-01-01T00:00:01Z', 'submission_id': 'submission-1'},
+        ]
+        for shape, entry in (
+            ('without a revisions list', {'chat': turns}),
+            ('with an empty revisions list', {'revisions': [], 'current': 0, 'chat': turns}),
+        ):
+            with self.subTest(shape=shape):
+                self.stored = {
+                    **image_message(),
+                    'conversation_id': 'owner-conversation',
+                    'metadata': {images.IMAGE_REVISIONS_METADATA_KEY: copy.deepcopy(entry)},
+                }
+                status, payload = self.send(self.body(submission_id='submission-1'))
+                self.assertEqual(status, 200, payload)
+                self.assertIs(payload['replayed'], True)
+                self.assertEqual(payload['image_url'], SHARED_IMAGE_URL)
+                reply = json.dumps(payload)
+                self.assertNotIn(self.stored['content'], reply)
+                self.assertNotIn('owner-conversation', reply)
+                self.assertEqual(self.model_requests, [])
+                self.assertEqual(self.blob_writes, 0)
+                self.assertEqual(self.events, [])
 
 
 class SubmissionHelperTests(unittest.TestCase):
