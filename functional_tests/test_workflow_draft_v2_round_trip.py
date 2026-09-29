@@ -2,12 +2,12 @@
 #!/usr/bin/env python3
 """
 Functional test for opening and re-saving workflows created from chat in the V2 editor.
-Version: 0.261.206
+Version: 0.261.207
 Implemented in: 0.261.202
 
 This test ensures that each workflow the draft service creates from a blueprint (a weekly
 calendar digest on an agent with bell-only alerts, an interval check and a manual task on the
-default model, a personal File Sync review with a document input, and since 0.261.206 a monthly
+default model, a personal File Sync review with a document input, and since 0.261.207 a monthly
 calendar task on the default model and a personal File Sync watch of a group source, which chat
 proposals can also produce) opens in the production V2 editor without a read-only reason, and
 that saving it unchanged, through ``workflowForSave`` and the real personal save, changes no

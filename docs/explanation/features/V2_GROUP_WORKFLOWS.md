@@ -16,7 +16,7 @@ Implemented in version: **0.261.141**, tracked in
 `application/single_app/config.py`.
 
 Personal workflows are unchanged. No new setting, route or container is added.
-From 0.261.206, the personal editor authors File Sync too; see
+From 0.261.207, the personal editor authors File Sync too; see
 [V2 Personal Workflow File Sync](V2_PERSONAL_WORKFLOW_FILE_SYNC.md).
 
 ## What changed
@@ -146,7 +146,7 @@ and cancel a group workflow. Before this version, V2 offered **Run** and
   reopening. The prompt, identity, endpoint and file source editors merge
   instead (version 0.261.152).
 
-Fixed in 0.261.206, and listed here as a limitation until then:
+Fixed in 0.261.207, and listed here as a limitation until then:
 - **Personal workflows.** Personal File Sync authoring wasn't part of this
   release, so a personal workflow whose stored source was deleted couldn't be
   fixed in V2. From 0.261.144, a personal workflow that analyzes changed files

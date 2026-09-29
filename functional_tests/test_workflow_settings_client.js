@@ -1,14 +1,14 @@
 // test_workflow_settings_client.js
 /*
 Functional tests for the V2 workflow editor's settings rules and save error handling.
-Version: 0.261.206
+Version: 0.261.207
 Implemented in: 0.261.149
 
 Executes the production TypeScript in lib/workflowEditor.ts and lib/workflowSettings.ts. Only HTTP
 transport is replaced. It checks what the parity test against the real server cannot reach: how
 the editor words a deleted workflow's 409, reads error codes, parses the group and personal source
 lists and their File Sync flag, keeps revisions out of every create, and uses the group source list
-to apply the group File Sync gate and the deleted-source check. Since 0.261.206 personal workflows
+to apply the group File Sync gate and the deleted-source check. Since 0.261.207 personal workflows
 author File Sync too, so their creates send the edited `file_sync`, and a personal list marks only
 its own missing personal sources. test_group_workflow_file_sync_client_parity.py pins the rules
 themselves against the real save functions.

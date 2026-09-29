@@ -315,7 +315,7 @@ A workflow created from chat stores:
   change: the name, description, alerts, error handling, or anything that
   changes how the workflow runs, such as its tasks, schedule, trigger, runner,
   model, references or Run as user. It stays `true` even if the change is
-  reverted. Enabling, pausing and run progress aren't edits. From 0.261.206, a
+  reverted. Enabling, pausing and run progress aren't edits. From 0.261.207, a
   server create records the `edited` value its caller supplies, so a proposal
   the owner changed in the workflow editor before accepting it is stored with
   `edited: true` from the start.
@@ -503,7 +503,7 @@ from one they haven't.
 | --- | --- |
 | `functional_tests/test_workflow_draft_save_parity.py` | 23 personal and group save scenarios (manual, interval, calendar and File Sync triggers; alerts; references; agents; custom models; Microsoft 365 Run as with fingerprints and approvals; versions 1 to 3; refusals), compared field by field with results captured from the code before the refactor |
 | `functional_tests/test_workflow_draft_service.py` | Both example blueprints dry-run with zero writes and no conversation, including on an executor thread and with no Flask context; one refusal for each error code; forbidden fields, bounds, six tasks, oversize text and unknown handles; messages that never repeat input; builder determinism; bell-only digest alerts; File Sync defaults; the default model; creates that happen once per proposal, even at the cap; conflicts; payload dry runs and creates, which never authorize URL Access; workflows without an origin unaffected |
-| `functional_tests/test_workflow_origin_provenance.py` | The real personal and group save route bodies ignore a forged origin on create and update; ordinary workflows can't gain one; each material change sets `edited` and non-material saves don't; a server create records `edited` as supplied (0.261.206); the origin is outside the fingerprint and revision, so a description edit keeps a Run as approval; idempotent creates and their conflicts |
+| `functional_tests/test_workflow_origin_provenance.py` | The real personal and group save route bodies ignore a forged origin on create and update; ordinary workflows can't gain one; each material change sets `edited` and non-material saves don't; a server create records `edited` as supplied (0.261.207); the origin is outside the fingerprint and revision, so a description edit keeps a Run as approval; idempotent creates and their conflicts |
 | `functional_tests/test_workflow_orchestration_limits_settings.py` | Defaults, validation, fail-closed getters, the combined minimum, the V2 fields and their gating, classic clamping, `update_settings` validation, and the admin docs |
 | `functional_tests/test_workflow_run_time_context.py` | Calendar runs in America/New_York on both sides of a daylight saving change; Run now and resumed runs; every task of task-based and structured workflows; manual and interval prompts byte-identical to those captured before this change |
 

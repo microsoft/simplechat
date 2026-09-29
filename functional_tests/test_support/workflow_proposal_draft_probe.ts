@@ -2,8 +2,8 @@
 //
 // Runs the V2 workflow editor's real draft handling on workflow proposal drafts from a JSON file and
 // prints what the editor would send, so a Python test can hand it to the real accept route.
-// Version: 0.261.206
-// Implemented in: 0.261.206
+// Version: 0.261.207
+// Implemented in: 0.261.207
 //
 // Bundled with the esbuild the V2 app already provides and executed under node by
 // test_orchestration_workflow_proposal_editor_round_trip.py. The request carries `drafts`, each a

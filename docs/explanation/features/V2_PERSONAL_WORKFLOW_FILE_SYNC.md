@@ -1,4 +1,4 @@
-# V2 Personal Workflow File Sync (v0.261.206)
+# V2 Personal Workflow File Sync (v0.261.207)
 
 ## Overview
 
@@ -18,7 +18,7 @@ This is the first part of [Chat Orchestration Workflows Phase 4](CHAT_ORCHESTRAT
 (issue #1547): a workflow proposed from chat that reviews new File Sync files
 must open in an editor that can show and change its File Sync settings.
 
-Implemented in version: **0.261.206**, tracked in
+Implemented in version: **0.261.207**, tracked in
 `application/single_app/config.py`.
 
 Dependencies: the V2 group File Sync editor ([V2 Group Workflows](V2_GROUP_WORKFLOWS.md)),

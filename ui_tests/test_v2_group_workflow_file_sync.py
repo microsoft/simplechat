@@ -1,7 +1,7 @@
 # test_v2_group_workflow_file_sync.py
 """
 UI tests for group workflow File Sync triggers, stored alerts and approvals in native V2.
-Version: 0.261.206
+Version: 0.261.207
 Implemented in: 0.261.141
 
 These tests use the real V2 SPA bundle with the closed workflow fixture. The fixture answers the
@@ -21,7 +21,7 @@ trigger rules and, since 0.261.144, `normalize_workflow_alert_settings`. They co
 * personal workflows keep an untouched File Sync unchanged, and since 0.261.144 personal Analyze
   tasks may rely on File Sync's changed files, as the server allows. Since 0.261.149 the fixture
   validates personal saves with the real personal rules, so personal records are ones the server
-  accepts. Since 0.261.206 V2 authors personal File Sync too, from the personal source list
+  accepts. Since 0.261.207 V2 authors personal File Sync too, from the personal source list
   (`test_v2_personal_workflow_file_sync.py` covers that authoring);
 * the general personal-route trap on group workflow pages.
 """
@@ -532,7 +532,7 @@ def test_personal_workflows_keep_an_untouched_file_sync_unchanged(workflow_ui):
     """An unrelated personal edit resends the stored File Sync exactly as loaded.
 
     0.261.149: the record is a Monitor workflow the real server accepts. Its earlier File Sync was
-    off, which `save_personal_workflow` refuses for this trigger. 0.261.206: V2 authors personal
+    off, which `save_personal_workflow` refuses for this trigger. 0.261.207: V2 authors personal
     File Sync, so the editor lists the personal sources and offers the Monitor trigger;
     `test_v2_personal_workflow_file_sync.py` covers changing it.
     """

@@ -1,6 +1,6 @@
 // test_v2_orchestration_workflow_deliverable.mjs
-// Version: 0.261.206
-// Implemented in: 0.261.206
+// Version: 0.261.207
+// Implemented in: 0.261.207
 // Executes the shared V2 plan normalization for the orchestration `workflow` deliverable: a plan
 // that proposes a workflow keeps the deliverable, labels it as a proposal, and never reports a
 // prepared proposal as "Delivered", because nothing exists until the user approves its card.

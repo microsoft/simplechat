@@ -2,8 +2,8 @@
 # test_orchestration_workflow_propose_capability.py
 """
 Functional test for the workflow_propose orchestration capability.
-Version: 0.261.206
-Implemented in: 0.261.206
+Version: 0.261.207
+Implemented in: 0.261.207
 
 This test ensures that chat orchestration offers workflow_propose only when workflow proposals
 are turned on and available to the requester, and checks each proposal against the draft rules
@@ -244,7 +244,7 @@ def _describe(ow, planning, monkeypatch, blueprint, *, task_actions=None, outcom
 
 
 def test_version_includes_the_workflow_propose_capability():
-    assert_app_version_at_least("0.261.206")
+    assert_app_version_at_least("0.261.207")
 
 
 # ---------------------------------------------------------------------------

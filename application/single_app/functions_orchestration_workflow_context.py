@@ -1,7 +1,7 @@
 # functions_orchestration_workflow_context.py
 """Planning context for workflow proposals from chat orchestration.
 
-Version: 0.261.206
+Version: 0.261.207
 
 Chat orchestration can propose a personal workflow (the ``workflow_propose`` capability). The
 planner writes a workflow blueprint that names agents, documents and File Sync sources by

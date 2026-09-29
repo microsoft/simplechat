@@ -1,8 +1,8 @@
 # test_v2_orchestration_workflow_proposal_card.py
 """
 Real-component browser tests for the workflow proposal card under an orchestration answer.
-Version: 0.261.206
-Implemented in: 0.261.206
+Version: 0.261.207
+Implemented in: 0.261.207
 Refs: microsoft/simplechat#1547
 
 The production MessageList, WorkflowProposalCards, ConfirmDialog and WorkflowEditorDialog run in
@@ -425,7 +425,7 @@ def mount(page, api, *, kind="personal", theme="light", messages=None):
             H.reset();
             document.documentElement.classList.toggle('dark', spec.theme === 'dark');
             H.stores.bootstrap.useBootstrapStore.setState({ data: {
-                version: '0.261.206', settings: {}, branding: { app_title: 'SimpleChat' },
+                version: '0.261.207', settings: {}, branding: { app_title: 'SimpleChat' },
                 features: { enable_chat_orchestration: true },
                 user: { id: 'proposal-tester', display_name: 'Proposal Tester' },
                 scope: { groups: [], public_workspaces: [] },
