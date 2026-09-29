@@ -1,7 +1,7 @@
 // WorkflowEditorDialog.tsx
 // Native V2 workflow create/edit dialog.
 
-import { useCallback, useEffect, useMemo, useRef, useState, type Dispatch, type SetStateAction } from 'react';
+import { Fragment, useCallback, useEffect, useId, useMemo, useRef, useState, type Dispatch, type SetStateAction } from 'react';
 import { AlertTriangle, Plus, Redo2, Undo2 } from 'lucide-react';
 import { ConfirmDialog } from '../ui/ConfirmDialog';
 import { Modal } from '../ui/Modal';
@@ -20,7 +20,15 @@ import { WorkflowScheduleFields } from './WorkflowScheduleFields';
 import { WorkflowAlertEditor } from './WorkflowAlertEditor';
 import { WorkflowAlertSummary } from './WorkflowAlertSummary';
 import { useWorkflowAuthoring } from './useWorkflowAuthoring';
+import {
+    WorkflowChangedField, WorkflowChangeNotice, WorkflowChangesTab, WorkflowChangesToggle, WorkflowChangeTrackingScope,
+    WorkflowEditorSidePanel, WorkflowReferenceChanges, WorkflowRemovedItemRows, focusWorkflowChangeTarget,
+    workflowSessionSaveNeedsConfirmation,
+} from './WorkflowChangeTracking';
 import { ApiError } from '../../lib/apiClient';
+import {
+    WORKFLOW_TASK_ORDER_KEY, parseWorkflowChangeKey, workflowChangeItemKey, workflowTasksInOrder, type WorkflowChange,
+} from '../../lib/workflowChangeTracking';
 import {
     convertToStructuredWorkflow,
     enclosingFlowLoopControls,
@@ -69,9 +77,24 @@ function setTaskAt(
     taskId: string,
     update: (task: WorkflowTask) => WorkflowTask,
 ): WorkflowTask[] {
-    return tasks.map((task, index) =>
-        task.id === taskId ? { ...update(task), order: index + 1 } : { ...task, order: index + 1 },
-    );
+    return workflowTasksInOrder(tasks.map((task) => (task.id === taskId ? update(task) : task)));
+}
+
+/** The side panel sits beside the editor from Tailwind's xl breakpoint; below it, it replaces the editor. */
+function sidePanelBesideEditor(): boolean {
+    return typeof window.matchMedia !== 'function' || window.matchMedia('(min-width: 80rem)').matches;
+}
+
+/** Where Jump goes when a change has no element of its own on screen: the section it belongs to. */
+function changeSection(root: HTMLElement, key: string): HTMLElement | null {
+    const info = parseWorkflowChangeKey(key);
+    if (info.scope === 'workflow' && info.field === 'file_sync') {
+        const fileSync = root.querySelector('[aria-label="File Sync sources"]')?.closest<HTMLElement>('section');
+        if (fileSync) return fileSync;
+    }
+    const label = info.scope === 'reference' || info.scope === 'order' && info.list === 'references' ? 'Workflow shared references'
+        : info.scope !== 'workflow' || info.field === 'definition_version' ? 'Workflow tasks' : 'Workflow basics';
+    return root.querySelector<HTMLElement>(`section[aria-label="${label}"]`);
 }
 
 function workflowRunnerSummary(workflow: WorkflowDefinition, options: WorkflowEditorOptions): string {
@@ -118,6 +141,17 @@ export function WorkflowEditorDialog({
     const [accessLost, setAccessLost] = useState(false);
     const [surface, setSurface] = useState<'list' | 'flow'>('list');
     const authoringRef = useRef<HTMLDivElement>(null);
+    const [changesOpen, setChangesOpen] = useState(false);
+    const [confirmingSave, setConfirmingSave] = useState(false);
+    const [panelFocus, setPanelFocus] = useState<{ target: 'tab' | 'confirm' | 'list'; sequence: number } | null>(null);
+    const [jump, setJump] = useState<{ change: WorkflowChange; retry: boolean; sequence: number } | null>(null);
+    const focusSequence = useRef(0);
+    const confirmHeadingRef = useRef<HTMLHeadingElement>(null);
+    const changesHeadingRef = useRef<HTMLHeadingElement>(null);
+    const errorRef = useRef<HTMLParagraphElement>(null);
+    const sidePanelBaseId = useId();
+    const changesToggleId = `${sidePanelBaseId}-changes-toggle`;
+    const sidePanelId = `${sidePanelBaseId}-side-panel`;
     const scopeKey = workflowScopeKey(scope);
     const fieldDrafts = useMemo(() => ({
         store: history.session.fields,
@@ -187,12 +221,18 @@ export function WorkflowEditorDialog({
             return accepted;
         },
     });
+    const recoverAuthoring = (before: WorkflowDefinition, after: WorkflowDefinition, targetId: string | undefined, focus: boolean) => {
+        // Only structured drafts carry block selection and layout; a classic draft has none to recover.
+        if (isFlowRegion(before.flow) && isFlowRegion(after.flow)) authoring.recover(before, after, targetId, focus);
+        else if (isFlowRegion(before.flow) || isFlowRegion(after.flow)) authoring.reset();
+    };
     history.session.configure({
         options, readOnly, saving, commandPending: Boolean(authoring.pending), selectionId: authoring.selectedId, onError: setError,
-        onRestore: (before, after, targetId) => authoring.recover(before, after, targetId,
+        onRestore: (before, after, targetId) => recoverAuthoring(before, after, targetId,
             !document.activeElement?.closest('[data-workflow-history-controls]')),
-        onRollback: (before, after, targetId) => authoring.recover(before, after, targetId, false),
+        onRollback: (before, after, targetId) => recoverAuthoring(before, after, targetId, false),
     });
+    const panelOpen = changesOpen && !readOnly;
     const historyBlockedReason = saving ? 'Workflow history is unavailable while saving.'
         : authoring.pending || history.pending ? 'Finish or cancel the current confirmation first.' : '';
     const onAccessLost = useCallback((status: number) => {
@@ -219,6 +259,90 @@ export function WorkflowEditorDialog({
         (field ?? block)?.focus({ preventScroll: true });
         block?.scrollIntoView({ block: 'nearest' });
     }, [surface, authoring.focusRequest, accessLost]);
+
+    const openChanges = (target: 'tab' | 'confirm') => {
+        setChangesOpen(true);
+        setPanelFocus({ target, sequence: ++focusSequence.current });
+    };
+    const closeChanges = (focusToggle: boolean) => {
+        setChangesOpen(false);
+        setConfirmingSave(false);
+        if (focusToggle) requestAnimationFrame(() => document.getElementById(changesToggleId)?.focus());
+    };
+    const jumpToChange = (change: WorkflowChange) => {
+        if (!sidePanelBesideEditor()) closeChanges(false);
+        if (surface === 'flow' && draft.definition_version === 3) {
+            const info = parseWorkflowChangeKey(change.key);
+            const nodeId = change.target.nodeId ?? (info.scope === 'region' ? info.id : undefined);
+            if (nodeId) {
+                history.session.closeGroup();
+                authoring.setSelectedId(nodeId);
+            }
+        }
+        setJump({ change, retry: true, sequence: ++focusSequence.current });
+    };
+
+    useEffect(() => {
+        if (!panelFocus) return;
+        const frame = requestAnimationFrame(() => {
+            const target = panelFocus.target === 'confirm' ? confirmHeadingRef.current
+                : panelFocus.target === 'list' ? changesHeadingRef.current
+                    : document.getElementById(sidePanelId)?.querySelector<HTMLElement>('[role="tab"][aria-selected="true"]');
+            target?.focus();
+        });
+        return () => cancelAnimationFrame(frame);
+    }, [panelFocus, sidePanelId]);
+
+    useEffect(() => {
+        if (!jump) return;
+        const frame = requestAnimationFrame(() => {
+            const root = authoringRef.current;
+            if (!root) return;
+            const { change } = jump;
+            const itemKey = workflowChangeItemKey(change.key);
+            const exact = root.querySelector<HTMLElement>(`[data-workflow-change-key="${CSS.escape(change.target.focusKey)}"]`)
+                ?? (itemKey ? root.querySelector<HTMLElement>(`[data-workflow-change-item="${CSS.escape(itemKey)}"]`) : null);
+            if (!exact && jump.retry && surface === 'flow') {
+                // The Flow surface shows one block's fields at a time; the List shows every field.
+                history.session.closeGroup();
+                setSurface('list');
+                setJump({ change, retry: false, sequence: ++focusSequence.current });
+                return;
+            }
+            const target = exact ?? changeSection(root, change.key);
+            if (!target) return;
+            for (let details = target.closest('details'); details; details = details.parentElement?.closest('details') ?? null) {
+                details.open = true;
+            }
+            focusWorkflowChangeTarget(target);
+        });
+        return () => cancelAnimationFrame(frame);
+    }, [jump]);
+
+    useEffect(() => {
+        if (!panelOpen) return;
+        // Escape inside the side panel closes the panel, not the editor.
+        const onKeyDown = (event: KeyboardEvent) => {
+            if (event.key !== 'Escape' || event.defaultPrevented) return;
+            const active = document.activeElement;
+            if (!active || !(document.getElementById(sidePanelId)?.contains(active) || active.id === changesToggleId)) return;
+            event.preventDefault();
+            event.stopPropagation();
+            closeChanges(true);
+        };
+        window.addEventListener('keydown', onKeyDown, true);
+        return () => window.removeEventListener('keydown', onKeyDown, true);
+    }, [panelOpen, sidePanelId, changesToggleId]);
+
+    const shownError = useRef(error);
+    useEffect(() => {
+        const appeared = Boolean(error) && error !== shownError.current;
+        shownError.current = error;
+        if (!appeared || !panelOpen || sidePanelBesideEditor()) return;
+        // Narrow screens show the panel instead of the editor, so a new error brings the editor back.
+        closeChanges(false);
+        requestAnimationFrame(() => errorRef.current?.focus());
+    }, [error, panelOpen]);
 
     const switchSurface = (next: 'list' | 'flow') => {
         history.session.closeGroup();
@@ -271,7 +395,7 @@ export function WorkflowEditorDialog({
         }
     };
 
-    const save = async () => {
+    const save = async (confirmed = false) => {
         if (interactionDisabled) {
             setError('Refresh workspace access before saving. Your draft has been retained.');
             return;
@@ -287,6 +411,12 @@ export function WorkflowEditorDialog({
         ];
         if (currentErrors.length) {
             setError(currentErrors.join(' '));
+            return;
+        }
+        if (!confirmed && workflowSessionSaveNeedsConfirmation(history.session)) {
+            // Unsaved AI assist changes are reviewed in the Changes tab before they are saved.
+            setConfirmingSave(true);
+            openChanges('confirm');
             return;
         }
         history.session.setSaving(true);
@@ -329,13 +459,13 @@ export function WorkflowEditorDialog({
             }
             const tasks = [...current.tasks];
             [tasks[index], tasks[nextIndex]] = [tasks[nextIndex], tasks[index]];
-            return { ...current, tasks: tasks.map((task, position) => ({ ...task, order: position + 1 })) };
+            return { ...current, tasks: workflowTasksInOrder(tasks) };
         });
     };
     const removeTask = (taskId: string) => {
         setWorkflow((current) => ({
             ...current,
-            tasks: current.tasks.filter((task) => task.id !== taskId).map((task, index) => ({ ...task, order: index + 1 })),
+            tasks: workflowTasksInOrder(current.tasks.filter((task) => task.id !== taskId)),
         }));
         fieldDrafts.store.clear(['task', taskId]);
     };
@@ -350,14 +480,18 @@ export function WorkflowEditorDialog({
 
     return (
         <WorkflowFieldDraftsProvider value={fieldDrafts.store}>
+            <WorkflowChangeTrackingScope session={history.session} enabled={!readOnly}>
             <Modal
                 title={workflow ? 'Edit workflow' : 'Create workflow'}
                 description={`Scope: ${workflowScopeKey(scope)}. ${readOnly ? 'This workflow is read-only.' : 'Changes are saved only when you choose Save workflow.'}`}
                 onClose={close}
-                size="xl"
+                size={panelOpen ? '2xl' : 'xl'}
                 tall
+                bodyClassName="flex min-h-0"
                 footer={
                     <>
+                        {!readOnly ? <WorkflowChangesToggle id={changesToggleId} open={panelOpen} controls={sidePanelId}
+                            onToggle={() => (panelOpen ? closeChanges(false) : openChanges('tab'))} /> : null}
                         <GlassButton type="button" onClick={close} disabled={saving}>
                             {readOnly ? 'Close' : 'Cancel'}
                         </GlassButton>
@@ -369,6 +503,7 @@ export function WorkflowEditorDialog({
                     </>
                 }
             >
+                <div className={`min-w-0 flex-1 overflow-y-auto px-4 py-3${panelOpen ? ' hidden xl:block' : ''}`}>
                 <WorkflowHistoryBoundary session={history.session}>
                 <div className="space-y-5 p-1">
                     {unsupported ? (
@@ -386,7 +521,7 @@ export function WorkflowEditorDialog({
                             You have read-only access to workflows in this scope.
                         </p>
                     ) : null}
-                    {error ? <p role="alert" tabIndex={-1} className="rounded-xl bg-danger-soft p-3 text-sm text-danger">{error}</p> : null}
+                    {error ? <p ref={errorRef} role="alert" tabIndex={-1} className="rounded-xl bg-danger-soft p-3 text-sm text-danger">{error}</p> : null}
                     {!error && allErrors.length ? (
                         <div role="status" className="rounded-xl bg-warn-soft p-3 text-sm text-warn">
                             <p className="font-medium">Resolve these validation issues before saving:</p>
@@ -434,6 +569,7 @@ export function WorkflowEditorDialog({
                     <fieldset disabled={readOnly || saving || Boolean(history.pending) || Boolean(authoring.pending)} className="min-w-0 space-y-5">
                         <section className="space-y-4 rounded-2xl border border-edge p-4" aria-label="Workflow basics">
                             <div className="grid gap-3 md:grid-cols-2">
+                                <WorkflowChangedField changeKey="name">
                                 <label className="text-sm text-text-2">
                                     {fieldLabel('Workflow name', true)}
                                     <input
@@ -445,6 +581,8 @@ export function WorkflowEditorDialog({
                                         onChange={(event) => setWorkflow((current) => ({ ...current, name: event.target.value }))}
                                     />
                                 </label>
+                                </WorkflowChangedField>
+                                <WorkflowChangedField changeKey="runner_type">
                                 <label className="text-sm text-text-2">
                                     Runner type
                                     <select
@@ -460,7 +598,9 @@ export function WorkflowEditorDialog({
                                         <option value="agent">Agent</option>
                                     </select>
                                 </label>
+                                </WorkflowChangedField>
                             </div>
+                            <WorkflowChangedField changeKey="description">
                             <label className="block text-sm text-text-2">
                                 Description
                                 <textarea
@@ -470,14 +610,18 @@ export function WorkflowEditorDialog({
                                     onChange={(event) => setWorkflow((current) => ({ ...current, description: event.target.value }))}
                                 />
                             </label>
+                            </WorkflowChangedField>
                             {draft.runner_type === 'agent' ? (
+                                <WorkflowChangedField changeKey="selected_agent">
                                 <WorkflowAgentPicker
                                     value={draft.selected_agent}
                                     options={options}
                                     localOnly={localRunner}
                                     onChange={(selectedAgent) => setWorkflow((current) => ({ ...current, selected_agent: selectedAgent }))}
                                 />
+                                </WorkflowChangedField>
                             ) : (
+                                <WorkflowChangedField changeKey="model">
                                 <WorkflowModelPicker
                                     endpointId={draft.model_endpoint_id}
                                     modelId={draft.model_id}
@@ -489,7 +633,9 @@ export function WorkflowEditorDialog({
                                         model_id: modelId,
                                     }))}
                                 />
+                                </WorkflowChangedField>
                             )}
+                            <WorkflowChangedField changeKey="m365_run_as_user_id">
                             <WorkflowMicrosoft365RunAs
                                 scope={scope}
                                 value={draft.m365_run_as_user_id ?? ''}
@@ -497,6 +643,7 @@ export function WorkflowEditorDialog({
                                 canListAccounts={options.can_manage}
                                 onChange={(userId) => setWorkflow((current) => ({ ...current, m365_run_as_user_id: userId }))}
                             />
+                            </WorkflowChangedField>
                             <WorkflowScheduleFields
                                 triggerField={(
                                     <label className="text-sm text-text-2">
@@ -527,6 +674,7 @@ export function WorkflowEditorDialog({
                                 scheduled={scheduled}
                                 onChange={(update) => setWorkflow((current) => ({ ...current, schedule: update(current.schedule) }))}
                             />
+                            <WorkflowChangedField changeKey="error_handling">
                             <div className="grid gap-3 md:grid-cols-2">
                                 <label className="text-sm text-text-2">
                                     Error handling
@@ -565,13 +713,17 @@ export function WorkflowEditorDialog({
                                     />
                                 </label>
                             </div>
+                            </WorkflowChangedField>
                             <div className="grid gap-2 md:grid-cols-2">
+                                <WorkflowChangedField changeKey="is_enabled">
                                 <Toggle
                                     label="Workflow enabled"
                                     checked={draft.is_enabled}
                                     onChange={(checked) => setWorkflow((current) => ({ ...current, is_enabled: checked }))}
                                     description="Disabled workflows can be edited but will not run automatically."
                                 />
+                                </WorkflowChangedField>
+                                <WorkflowChangedField changeKey="durable_execution">
                                 <Toggle
                                     label="Durable execution"
                                     checked={draft.durable_execution === true}
@@ -581,12 +733,15 @@ export function WorkflowEditorDialog({
                                         ? 'Required for structured control flow. Saved decisions and exact execution checkpoints survive waits and restarts.'
                                         : 'Save checkpoints so queued and interrupted runs can resume instead of depending on this browser tab.'}
                                 />
+                                </WorkflowChangedField>
+                                <WorkflowChangedField changeKey="chat_capabilities_enabled">
                                 <Toggle
                                     label="Chat capabilities enabled"
                                     checked={draft.chat_capabilities_enabled}
                                     onChange={(checked) => setWorkflow((current) => ({ ...current, chat_capabilities_enabled: checked }))}
                                     description="Allow tasks to use configured chat capabilities when the runner supports them."
                                 />
+                                </WorkflowChangedField>
                             </div>
                             <p className="rounded-xl bg-surface-sunken p-3 text-xs text-text-3">
                                 Effective runner: {workflowRunnerSummary(draft, options)}
@@ -611,8 +766,11 @@ export function WorkflowEditorDialog({
                                 readOnly={readOnly || saving}
                                 onChange={(referenceInputs) => setWorkflow((current) => ({ ...current, reference_inputs: referenceInputs }))}
                             />
+                            <WorkflowReferenceChanges className="mt-3" />
                         </section>
-                        {draft.definition_version === 3 && !unsupported ? <WorkflowFlowLimitFields workflow={draft} onEdit={authoring.execute} /> : null}
+                        {draft.definition_version === 3 && !unsupported ? <WorkflowChangedField changeKey="limits">
+                            <WorkflowFlowLimitFields workflow={draft} onEdit={authoring.execute} />
+                        </WorkflowChangedField> : null}
                         <section className="space-y-3 rounded-2xl border border-edge p-4" aria-label="Workflow tasks">
                             <div className="flex flex-wrap items-center justify-between gap-2">
                                 <div>
@@ -663,7 +821,11 @@ export function WorkflowEditorDialog({
                                         if (id !== authoring.selectedId) history.session.closeGroup();
                                         authoring.setSelectedId(id);
                                     }} renderTask={renderStructuredTask} />
-                            ) : draft.tasks.map((task, index) => (
+                            ) : <>
+                            <WorkflowChangeNotice changeKey={WORKFLOW_TASK_ORDER_KEY} />
+                            <WorkflowRemovedItemRows list="task" placement={{ at: 'start' }} />
+                            {draft.tasks.map((task, index) => (
+                                <Fragment key={task.id}>
                                 <WorkflowTaskFields
                                     key={task.id}
                                     scope={scope}
@@ -677,20 +839,43 @@ export function WorkflowEditorDialog({
                                     durableExecution={draft.durable_execution === true}
                                     onNeedsDurable={() => setWorkflow((current) => ({ ...current, durable_execution: true }))}
                                 />
+                                <WorkflowRemovedItemRows list="task" placement={{ at: 'after', id: task.id }} />
+                                </Fragment>
                             ))}
+                            <WorkflowRemovedItemRows list="task"
+                                placement={{ at: 'end', siblings: draft.tasks.map((task) => task.id), root: true }} />
+                            </>}
                         </section>
                         {/* Rules watch tasks by ID, so alerts follow the tasks they can refer to. */}
                         {options.can_manage && !readOnly ? (
+                            <WorkflowChangedField changeKey="alerts">
                             <WorkflowAlertEditor workflow={draft} onChange={(update) => setWorkflow((current) => update(current))} />
+                            </WorkflowChangedField>
                         ) : (
                             <WorkflowAlertSummary workflow={draft} />
                         )}
                     </fieldset>
-                    {authoring.announcement ? <p role="status" className="sr-only">{authoring.announcement}</p> : null}
-                    {history.announcement ? <p role="status" className="sr-only">{history.announcement}</p> : null}
                     </div> : null}
                 </div>
                 </WorkflowHistoryBoundary>
+                </div>
+                {panelOpen ? (
+                    <WorkflowEditorSidePanel id={sidePanelId} className="w-full xl:w-96 xl:shrink-0 xl:border-l xl:border-edge"
+                        tabs={[{
+                            id: 'changes', label: 'Changes',
+                            content: <WorkflowChangesTab confirming={confirmingSave}
+                                disabled={saving || Boolean(authoring.pending) || Boolean(history.pending)}
+                                onConfirmSave={() => void save(true)}
+                                onKeepReviewing={() => {
+                                    setConfirmingSave(false);
+                                    setPanelFocus({ target: 'list', sequence: ++focusSequence.current });
+                                }}
+                                onJump={jumpToChange} confirmHeadingRef={confirmHeadingRef} listHeadingRef={changesHeadingRef} />,
+                        }]} />
+                ) : null}
+                {/* Outside the editor pane, which narrow screens hide while the side panel is open. */}
+                {!accessLost && authoring.announcement ? <p role="status" className="sr-only">{authoring.announcement}</p> : null}
+                {!accessLost && history.announcement ? <p role="status" className="sr-only">{history.announcement}</p> : null}
             </Modal>
             {!accessLost && authoring.pending ? <ConfirmDialog
                 title={authoring.pending.command.type === 'remove' ? 'Remove this flow block?' : 'Move this flow block?'}
@@ -704,9 +889,11 @@ export function WorkflowEditorDialog({
                 </ul> : <p className="text-xs text-text-2">No outside references are affected. This changes only the unsaved draft; retained edits can be undone before saving or closing.</p>}
             </ConfirmDialog> : null}
             {!accessLost && history.pending ? <ConfirmDialog
-                title={history.pending.kind === 'overflow' ? 'Apply edit and clear history?' : `${history.pending.direction === 'undo' ? 'Undo' : 'Redo'} workflow edit?`}
+                title={history.pending.kind === 'overflow' ? 'Apply edit and clear history?' : history.pending.kind === 'change' ? history.pending.title
+                    : `${history.pending.direction === 'undo' ? 'Undo' : 'Redo'} workflow edit?`}
                 description={history.pending.message}
-                confirmLabel={history.pending.kind === 'overflow' ? 'Apply and clear history' : history.pending.direction === 'undo' ? 'Undo change' : 'Redo change'}
+                confirmLabel={history.pending.kind === 'overflow' ? 'Apply and clear history' : history.pending.kind === 'change' ? history.pending.confirmLabel
+                    : history.pending.direction === 'undo' ? 'Undo change' : 'Redo change'}
                 cancelLabel="Keep draft unchanged" onClose={() => history.session.cancel()} onConfirm={() => history.session.confirm()}>
                 <p className="mb-2 text-sm text-text-2">{history.pending.label}</p>
                 {history.pending.impact.length ? <ul className="space-y-2 text-xs text-text-2" aria-label="Affected history references">
@@ -747,6 +934,7 @@ export function WorkflowEditorDialog({
                     }}
                 />
             ) : null}
+            </WorkflowChangeTrackingScope>
         </WorkflowFieldDraftsProvider>
     );
 }

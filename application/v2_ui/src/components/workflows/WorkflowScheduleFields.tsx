@@ -20,6 +20,7 @@ import {
     type WorkflowScheduleFrequency,
     type WorkflowScheduleUnit,
 } from '../../lib/workflowEditor';
+import { WorkflowChangedField } from './WorkflowChangeTracking';
 
 const inputClass = 'w-full rounded-lg border border-edge bg-surface-1 px-3 py-2 text-sm text-text-1 placeholder:text-text-3 focus:border-accent focus:outline-none';
 
@@ -134,7 +135,7 @@ export function WorkflowScheduleFields({
     ));
 
     return (
-        <div className="space-y-3">
+        <WorkflowChangedField changeKey="schedule" className="space-y-3">
             <div className="grid gap-3 md:grid-cols-3">
                 {triggerField}
                 {calendarOffered ? (
@@ -277,6 +278,6 @@ export function WorkflowScheduleFields({
                     {calendar ? '. Runs follow local time in this zone, including daylight saving changes.' : null}
                 </p>
             ) : null}
-        </div>
+        </WorkflowChangedField>
     );
 }

@@ -2,6 +2,26 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.203)**
+
+#### New Features
+
+*   **Change Tracking In The V2 Workflow Editor**
+    *   The V2 workflow editor now shows every unsaved change where it happened. A changed field is framed and labeled **Edited**, with **Previously** for the value it had when the editor opened (long values behind **Show more**) and its own **Revert**, so color is never the only cue. Until now a long editing session left no record of what differed from the saved workflow.
+    *   A removed task leaves a **Removed task** row in place with **Restore**, which puts the saved version back in its saved position, and removed flow blocks are listed under **Removed blocks** above the canvas. Changes are keyed by stable task, block and reference IDs, never by position, so a reorder is one **Task order** change instead of an edit to every task. An added task or block carries **Added · by you** and one Revert for the whole item.
+    *   **Changes** in the editor footer opens a side panel. It lists every unsaved change with its before and after values as plain text, its author, **Jump**, which focuses the field or selects the block and switches surface when needed, and **Revert**. Below that it lists this session's steps with **Restore to here**. Reverts and restores are added as new history steps, so nothing is deleted. The panel sits beside the editor on wide screens and takes its place on narrower ones.
+    *   Saving your own edits is still one click. When the workflow runs as a Microsoft 365 account and a change touches a field the server fingerprints, the panel notes that saving requires re-approving Run as. The client's copy of the fingerprint fields has a parity test that fails when it drifts from the server's.
+    *   This is the editor side of the AI workflow assistant. History entries now record whether you, AI assist or a restore made them, with the assist turn, and typing never coalesces across either. `WorkflowAuthoringSession.applyAssist` applies an AI candidate as one attributed step through the normal confirmation path, and refuses Run as, enablement, identity and approval changes. `revertTurn` reverts one turn and reports what it skipped, and a save that includes AI changes first asks you to **Confirm and save**. Nothing calls `applyAssist` until the Ask AI tab ships.
+    *   Read-only editors show none of this, and a new workflow points out only AI assist changes. Group workflows are tracked like personal ones. No backend route, setting or package is added.
+    *   (Ref: #1548, #1543, `workflowChangeTracking.ts`, `workflowRunAsFingerprint.ts`, `workflowAuthoringHistory.ts`, `WorkflowAuthoringHistory.tsx`, `WorkflowChangeTracking.tsx`, `WorkflowEditorDialog.tsx`, [Workflow Editor Change Tracking](features/WORKFLOW_EDITOR_CHANGE_TRACKING.md), [Create a workflow](../guides/create-a-workflow.md#review-your-changes))
+
+#### Bug Fixes
+
+*   **Structured Workflow Alert And File Sync Edits**
+    *   In a structured workflow, changing the alert settings was rolled back with "Workflow edits cannot change saved identity, scope, revision, or runtime metadata." A group workflow's File Sync settings failed the same way. The editor's list of authored fields had neither, so the edit looked like a change to saved identity, and a restore could not bring those settings back.
+    *   Alert and File Sync settings are now authored fields: they apply, follow Undo and Redo, and are covered by Revert and Restore to here. Identity, scope, revision and runtime fields are still refused.
+    *   (Ref: `WorkflowAuthoringHistory.tsx`, `WORKFLOW_AUTHORED_FIELDS`, [Structured Workflow Alert And File Sync Edits Fix](fixes/STRUCTURED_WORKFLOW_ALERT_FILE_SYNC_EDITS_FIX.md))
+
 ### **(v0.261.202)**
 
 #### New Features

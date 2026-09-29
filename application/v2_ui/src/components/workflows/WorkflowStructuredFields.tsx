@@ -6,6 +6,8 @@ import { GlassButton } from '../ui/primitives';
 import { WorkflowConditionEditor, WorkflowFlowInputs } from './WorkflowConditionEditor';
 import { WorkflowCollectFields, WorkflowForEachFields } from './WorkflowLoopFields';
 import { WorkflowRepeatFields, WorkflowRepeatExports } from './WorkflowRepeatFields';
+import { WorkflowChangedField } from './WorkflowChangeTracking';
+import { workflowRegionKey } from '../../lib/workflowChangeTracking';
 import {
     analyzeWorkflowFlow, DEFAULT_FLOW_LIMITS, enclosingFlowLoopControls, flowProducers, FLOW_OUTPUT_KINDS,
     repeatUntilBindings, type FlowProducer, type WorkflowFlowNode, type WorkflowFlowRegion,
@@ -167,7 +169,7 @@ export function WorkflowRegionOutputFields({ workflow, region, owner, onEdit }: 
     if (owner?.kind === 'if') return <p className="text-xs text-text-3">This branch exposes named outputs through its owning Join.</p>;
     const loop = owner?.kind === 'for_each' || owner?.kind === 'repeat_until' ? owner : null;
     const label = loop?.kind === 'for_each' ? 'Body outputs' : loop ? 'Repeat body outputs' : 'Final outputs';
-    return <>
+    return <WorkflowChangedField changeKey={workflowRegionKey(region.id, 'outputs')} className="min-w-0 space-y-3">
         <WorkflowFlowInputs workflow={workflow} nodeId={region.id} bindings={region.outputs ?? []} label={label}
             allowLoopItems={!loop} allowRepeatState={loop?.kind !== 'for_each'}
             availableIds={loop ? new Set([...(analyzeWorkflowFlow(workflow).available.get(region.id) ?? [])].filter((id) =>
@@ -178,7 +180,7 @@ export function WorkflowRegionOutputFields({ workflow, region, owner, onEdit }: 
                 : loop ? 'The stop condition reads the validated NEXT state, after every named slot is saved atomically. Body bindings always read CURRENT state.'
                     : 'Required final outputs must exist on every selected path. Leave this list empty only when the workflow does not promise a final deliverable.'}
         </p>
-    </>;
+    </WorkflowChangedField>;
 }
 
 export function WorkflowStructuredOutputFields({ node, workflow, onEdit }: {

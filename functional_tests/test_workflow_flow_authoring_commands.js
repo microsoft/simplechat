@@ -1,7 +1,7 @@
 // test_workflow_flow_authoring_commands.js
 /*
 Offline contracts for shared List/Flow draft commands.
-Version: 0.261.122
+Version: 0.261.203
 Implemented in: 0.261.122
 
 Executes the production TypeScript helper with the repository's Node loader.
@@ -23,13 +23,15 @@ const personalScope = { type: 'personal' };
 let authoring;
 let editor;
 let flow;
+let tracking;
 
 async function loadProductionModules() {
     // Register the existing resolver before importing real production ES modules.
     await import(pathToFileURL(path.join(__dirname, 'test_support', 'tsResolve.mjs')));
     const moduleUrl = (name) => pathToFileURL(path.join(root, 'application', 'v2_ui', 'src', 'lib', `${name}.ts`));
-    [authoring, editor, flow] = await Promise.all([
+    [authoring, editor, flow, tracking] = await Promise.all([
         import(moduleUrl('workflowAuthoring')), import(moduleUrl('workflowEditor')), import(moduleUrl('workflowFlow')),
+        import(moduleUrl('workflowChangeTracking')),
     ]);
 }
 
@@ -475,6 +477,43 @@ function registerTests() {
             }
         });
     }
+
+    test('shared commands read as stable-ID changes that revert exactly, never as positional edits', () => {
+        const workflow = initialDefinition();
+        const changes = (after) => tracking.diffWorkflowChanges(workflow, after).changes.map((change) => [change.key, change.kind]);
+        const moved = applied(workflow, { type: 'move', nodeId: 'report-node', targetRegionId: 'root', beforeId: 'seed-node' },
+            fixture.options, true);
+        assert.deepEqual(changes(moved), [[tracking.workflowRegionKey('root', 'order'), 'order']],
+            'A move is one order change, not an edit to every later block.');
+
+        const added = applied(workflow, { type: 'add', regionId: 'root', kind: 'task', beforeId: 'choice' });
+        const addedNode = node(added, 'root').nodes.find((entry) => !targets(workflow).has(entry.id));
+        assert.deepEqual(changes(added), [[tracking.workflowTaskKey(addedNode.task_id), 'added']],
+            'An insertion is one added task; its siblings did not move relative to each other.');
+
+        const removed = applied(workflow, { type: 'remove', nodeId: 'constructor' }, fixture.options, true);
+        const removal = tracking.diffWorkflowChanges(workflow, removed).byKey.get(tracking.workflowTaskKey('spare-task'));
+        assert.deepEqual(changes(removed), [[tracking.workflowTaskKey('spare-task'), 'removed']]);
+        assert.equal(removal.anchor.regionId, 'root');
+        assert.equal(removal.anchor.afterId, node(workflow, 'root').nodes[node(workflow, 'root').nodes.findIndex((entry) => entry.id === 'constructor') - 1].id);
+
+        const seed = task(workflow, 'seed-task');
+        const configured = applied(workflow, { type: 'task', taskId: 'seed-task', value: { ...clone(seed), instructions: 'Seed differently.' }, expected: seed });
+        assert.deepEqual(changes(configured), [[tracking.workflowTaskKey('seed-task', 'instructions'), 'field']]);
+        configured.tasks.filter((entry) => entry.id !== 'seed-task').forEach((entry) => {
+            assert.strictEqual(entry, workflow.tasks.find((item) => item.id === entry.id), 'A task edit keeps every other task identity.');
+        });
+
+        for (const [after, key] of [
+            [moved, tracking.workflowRegionKey('root', 'order')], [added, tracking.workflowTaskKey(addedNode.task_id)],
+            [removed, tracking.workflowTaskKey('spare-task')], [configured, tracking.workflowTaskKey('seed-task', 'instructions')],
+        ]) {
+            const { candidate, failed } = tracking.buildWorkflowKeyRevert(after, workflow, [key]);
+            assert.equal(failed.size, 0, `${key} reverts cleanly: ${[...failed.values()].join('; ')}`);
+            assert.deepEqual(changes(candidate), [], `Reverting ${key} returns to the opened definition.`);
+            assert.deepEqual(authoring.workflowCandidateEligibility(after, candidate, fixture.options), '');
+        }
+    });
 
     test('same-region moves respect before/end positions without reordering the catalogue', () => {
         const workflow = simpleDefinition(3);
