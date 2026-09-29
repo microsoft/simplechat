@@ -2,7 +2,7 @@
 #!/usr/bin/env python3
 """
 Functional test for the seam between the V2 workflow editor's settings rules and the save routes.
-Version: 0.261.200
+Version: 0.261.204
 Implemented in: 0.261.141
 
 This test ensures that the V2 editor's client-side File Sync, trigger, schedule and Analyze rules
@@ -21,7 +21,7 @@ read-only alert summary resolves stored alerts the same way the server does.
   refused case has a single reason. When the server refuses with a reviewed settings message, the
   editor's first settings message is the same text; when it refuses for another reason, the
   editor's settings rules find nothing.
-* Since 0.261.200 personal workflows author File Sync in V2 too, so personal creates send the
+* Since 0.261.204 personal workflows author File Sync in V2 too, so personal creates send the
   File Sync they drafted: a Monitor File Sync changes trigger, File Sync before run, and sources
   from the user's own workspace or a group they manage.
 * Two differences are deliberate, and asserted as such. More than 10 sources, in either scope: the

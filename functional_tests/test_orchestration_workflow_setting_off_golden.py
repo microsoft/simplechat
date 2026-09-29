@@ -2,8 +2,8 @@
 # test_orchestration_workflow_setting_off_golden.py
 """
 Functional test for the chat orchestration workflow proposal setting-off golden.
-Version: 0.261.200
-Implemented in: 0.261.200
+Version: 0.261.204
+Implemented in: 0.261.204
 
 This test ensures that, with ``enable_chat_orchestration_workflows`` off (the default),
 orchestration planning is byte-identical to the release before workflow proposals
@@ -308,7 +308,7 @@ def _strip_documented_workflow_keys(payload):
 
 
 def test_version_includes_the_setting_off_golden():
-    assert_app_version_at_least("0.261.200")
+    assert_app_version_at_least("0.261.204")
 
 
 @pytest.mark.parametrize("case_name", [

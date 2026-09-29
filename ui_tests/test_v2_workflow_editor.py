@@ -1,10 +1,10 @@
 # test_v2_workflow_editor.py
 """
 UI tests for the native V2 LIST workflow editor.
-Version: 0.261.200
+Version: 0.261.204
 Implemented in: 0.261.108
 Personal workflow row delete coverage: 0.261.178
-Personal File Sync is authored, so it is no longer listed as preserved-only: 0.261.200
+Personal File Sync is authored, so it is no longer listed as preserved-only: 0.261.204
 
 These tests use the real V2 SPA bundle with a closed API fixture. They cover
 create/edit, stable task input bindings, shared references, schema validation,
@@ -187,7 +187,7 @@ def test_edit_preserves_legacy_fields_and_run_inspection_surfaces_validation(wor
 
     page.get_by_role("button", name=re.compile(r"Edit Quarterly review workflow")).click()
     expect(page.get_by_text("Preserved settings", exact=True)).to_be_visible()
-    # 0.261.200: V2 authors personal File Sync, so it is no longer listed as preserved-only. An
+    # 0.261.204: V2 authors personal File Sync, so it is no longer listed as preserved-only. An
     # untouched legacy value is still sent back exactly as loaded (checked below).
     expect(page.get_by_text("file sync settings", exact=False)).to_have_count(0)
     labelled(page, "Description").first.fill("Edited without losing legacy settings.")

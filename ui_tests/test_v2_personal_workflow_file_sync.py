@@ -1,8 +1,8 @@
 # test_v2_personal_workflow_file_sync.py
 """
 UI tests for personal workflow File Sync authoring in native V2.
-Version: 0.261.200
-Implemented in: 0.261.200
+Version: 0.261.204
+Implemented in: 0.261.204
 
 These tests use the real V2 SPA bundle with the closed workflow fixture. The fixture answers the
 personal source list (`/api/user/workflows/file-sync-sources`) with the real

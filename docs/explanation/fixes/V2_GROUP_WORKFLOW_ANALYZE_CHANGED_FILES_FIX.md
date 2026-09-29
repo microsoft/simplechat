@@ -63,7 +63,7 @@ Sync analyzing changed files, could be opened in V2 but not saved.
 From 0.261.144, `workflowFileSyncProvidesAnalyzeTargets` applies the server's
 condition in both scopes. Personal File Sync **authoring** was still not part of
 V2; the fix only let V2 save the File Sync settings a personal workflow already
-had. From 0.261.200, V2 authors personal File Sync too; see
+had. From 0.261.204, V2 authors personal File Sync too; see
 [V2 Personal Workflow File Sync](../features/V2_PERSONAL_WORKFLOW_FILE_SYNC.md).
 
 `functional_tests/test_workflow_file_sync_analyze_targets.py` runs the personal

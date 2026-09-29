@@ -95,7 +95,7 @@ Fixed in version: **0.261.149**, tracked in `application/single_app/config.py`.
   - the known limitation below, a save without a revision, is pinned.
 - `ui_tests/test_v2_workflow_settings_errors.py`:
   - a group source deleted after opening keeps the draft and marks the source;
-  - a personal one keeps the draft, and from 0.261.200 also marks the source so
+  - a personal one keeps the draft, and from 0.261.204 also marks the source so
     it can be removed;
   - saving a workflow deleted after opening keeps the draft and explains what to
     do, in both scopes.
@@ -107,7 +107,7 @@ Fixed in version: **0.261.149**, tracked in `application/single_app/config.py`.
   behave as before. This is pinned, so changing it later is a deliberate
   decision.
 
-Fixed in 0.261.200, and listed here as a limitation until then:
+Fixed in 0.261.204, and listed here as a limitation until then:
 - **Personal File Sync sources couldn't be removed in V2.** V2 had no personal
   File Sync section, so a personal workflow whose stored source was deleted
   kept getting the 400. The personal editor now reloads its source list after

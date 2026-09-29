@@ -2,8 +2,8 @@
 # test_orchestration_workflow_planning_context.py
 """
 Functional test for the workflow proposal planning context.
-Version: 0.261.200
-Implemented in: 0.261.200
+Version: 0.261.204
+Implemented in: 0.261.204
 
 This test ensures that chat orchestration builds the workflow proposal planning context
 (the requester's agents, File Sync sources, documents and existing workflows, the
@@ -249,7 +249,7 @@ def _strings(value):
 
 
 def test_version_includes_the_workflow_planning_context():
-    assert_app_version_at_least("0.261.200")
+    assert_app_version_at_least("0.261.204")
 
 
 # ---------------------------------------------------------------------------
