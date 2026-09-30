@@ -216,10 +216,24 @@ is off by default.
 
 ### Multi-Modal Vision Analysis {#multimodal-vision-section}
 
-Sends page images to a vision-capable model so the text inside diagrams, screenshots and
-scanned pages becomes searchable alongside the extracted text. Only vision-capable
-deployments are offered for selection, because a text-only model silently returns nothing
-useful here.
+Multi-modal vision analysis asks a vision-capable model to describe an uploaded image, list its
+notable objects, and read any visible text. For workspace uploads, the description is added to the
+image's search chunk and embedded with it, so an image can be found by what it shows rather than
+only by the text OCR happens to read. When OCR finds no text at all, as with a photo of an empty
+room, the description becomes the image's only chunk, and metadata extraction, when enabled, runs
+on it. For images attached directly to a chat, the description is added to the file content the
+model receives.
+
+Workspace images are analyzed only when Enhanced Citations is enabled. Images attached directly to
+a chat are analyzed whenever this setting is on.
+
+The Vision Model setting stores a model name. When multi-endpoint models are enabled, SimpleChat
+sends the analysis through the enabled AI connection that hosts an enabled model with that
+deployment name, model name, or id, so a model deployed on a different connection than the primary
+GPT resource works. A deployment name match wins over a model name match, and the first matching
+connection in the list wins over later ones. When no connection matches, or multi-endpoint models
+are off, the GPT connection is used, directly or through APIM. **Test Vision Analysis** uses the
+same connection as ingestion.
 
 Which deployments count as vision-capable is resolved in three steps, most authoritative
 first: an explicit choice recorded on the model under [AI Models](ai-models.md), then the
@@ -240,8 +254,8 @@ already captures the surrounding structure.
 | Maximum File Size (MB) | Rejects an upload larger than this before extraction runs. Applies to workspace documents and chat attachments alike. | 150 | `max_file_size_mb` |
 | Enable Extract Meta Data | Runs a model pass on upload to record title, authors, subject and keywords for each document. | Off | `enable_extract_meta_data`; capability toggle |
 | Extraction Model | The deployment the metadata pass sends its requests to. | Empty | `metadata_extraction_model` |
-| Enable Multi-Modal Vision Analysis | Sends page images to a vision model so text inside diagrams and scans becomes searchable. | Off | `enable_multimodal_vision`; capability toggle |
-| Vision Model | A vision-capable deployment, such as gpt-4o or a supported GPT 5 or later model. Only vision-capable models are offered. | Empty | `multimodal_vision_model` |
+| Enable Multi-Modal Vision Analysis | Asks a vision model to describe each uploaded image, so an image can be found and cited by what it shows even when it contains no text. | Off | `enable_multimodal_vision`; capability toggle |
+| Vision Model | A vision-capable deployment, such as gpt-4o or a supported GPT 5 or later model. Only vision-capable models are offered. With multi-endpoint models enabled, it is called through the AI connection that hosts it; otherwise through the GPT connection. | Empty | `multimodal_vision_model` |
 | Require DeepResearchUser App Role | Required app role value: DeepResearchUser. Assign this role to users or groups in the Enterprise App before enabling the requirement. When enabled, only assigned users can use Deep Research. | Off | `require_member_of_deep_research_user` |
 | Max User URLs per Turn | Direct URLs beyond this cap are recorded as omitted in the ledger. | 100 | `deep_research_max_user_urls_per_turn` |
 | Max Search Queries per Turn | Includes the original current-message query. | 8 | `deep_research_max_search_queries_per_turn` |
@@ -256,7 +270,7 @@ already captures the surrounding structure.
 | Content Understanding Key | Provides the secret credential used when the selected authentication mode requires one. | Empty | `azure_content_understanding_key` |
 | API Version | Default: | Not specified in defaults | `azure_content_understanding_api_version` |
 | Document Analyzer | Default: | Not specified in defaults | `azure_content_understanding_analyzer_id` |
-| Image Analyzer | Default: | Not specified in defaults | `azure_content_understanding_image_analyzer_id` |
+| Image Analyzer | Content Understanding analyzer that describes images embedded in DOCX and PPTX files, and standalone images when the document analyzer finds no text in them. Its `Summary` field is indexed as the image description. | prebuilt-imageSearch | `azure_content_understanding_image_analyzer_id` |
 | Analyze images embedded in DOCX and PPTX files | Exposes the capability after required services, permissions, and rollout policy are ready. | On | `enable_office_embedded_image_analysis`; capability toggle |
 | Minimum Image Size (pixels) | Images narrower or shorter than this are skipped as icons or spacers. | Not specified in defaults | `office_embedded_image_min_pixels` |
 | Maximum Images Per Document | Caps per-document cost. Duplicate images are analyzed once. | Not specified in defaults | `office_embedded_image_max_per_document` |
