@@ -596,9 +596,8 @@ export interface WorkflowAssistVerification {
     readonly unverified: readonly string[];
 }
 
-/** A change worded the way the server words it: "<owner>: <field>", or "<added item>: <owner>". */
+/** A change worded the way the server words it: "<added item>: <owner>", or "<owner>: <field>". */
 export function workflowAssistChangeSummary(change: WorkflowChange): string {
-    if (change.owner.kind === 'workflow') return change.label;
     if (change.kind === 'added' || change.kind === 'removed') return `${change.label}: ${change.ownerLabel}`;
     return `${change.ownerLabel}: ${change.label}`;
 }
