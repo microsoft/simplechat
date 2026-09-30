@@ -1315,6 +1315,46 @@ def normalize_tabular_parity_durable_preflight_defaults(settings):
     return changed
 
 
+# 2025-04-01-preview is the newest dated Azure OpenAI API version, and the one Microsoft documents
+# for gpt-image-1, gpt-image-1.5, and gpt-image-2.
+AZURE_OPENAI_IMAGE_GEN_API_VERSION_DEFAULT = '2025-04-01-preview'
+# The previous shipped default. It predates gpt-image model support.
+AZURE_OPENAI_IMAGE_GEN_API_VERSION_PREVIOUS_DEFAULT = '2024-12-01-preview'
+
+
+def normalize_image_generation_api_version_settings(settings):
+    """Upgrade a stored Azure OpenAI image generation API version the admin never customized.
+
+    deep_merge_dicts() only fills in keys that are *missing* from a persisted settings document,
+    so every deployment that loaded settings before the default changed still stores the old
+    2024-12-01-preview default, which predates gpt-image model support. Raising the code-level
+    default alone would therefore never reach those deployments.
+
+    A stored azure_openai_image_gen_api_version that is exactly the previous default, or blank,
+    was never chosen by an admin, so it is upgraded to AZURE_OPENAI_IMAGE_GEN_API_VERSION_DEFAULT.
+    Any other value is a deliberate admin choice and is left untouched.
+
+    azure_apim_image_gen_api_version is intentionally not migrated. An APIM gateway defines the
+    API version it accepts, which is why that setting has no default at all; rewriting it could
+    break a working gateway.
+
+    Returns True when the settings were changed.
+    """
+    if not isinstance(settings, dict):
+        return False
+
+    stored_version = settings.get('azure_openai_image_gen_api_version')
+    if stored_version is not None and not isinstance(stored_version, str):
+        return False
+
+    normalized_version = (stored_version or '').strip()
+    if normalized_version and normalized_version != AZURE_OPENAI_IMAGE_GEN_API_VERSION_PREVIOUS_DEFAULT:
+        return False
+
+    settings['azure_openai_image_gen_api_version'] = AZURE_OPENAI_IMAGE_GEN_API_VERSION_DEFAULT
+    return True
+
+
 def get_settings(use_cosmos=False, include_source=False):
     default_settings = {
         # External health check
@@ -1542,7 +1582,7 @@ def get_settings(use_cosmos=False, include_source=False):
         'enable_image_generation': False,
         'enable_image_gen_apim': False,
         'azure_openai_image_gen_endpoint': '',
-        'azure_openai_image_gen_api_version': '2024-12-01-preview',
+        'azure_openai_image_gen_api_version': AZURE_OPENAI_IMAGE_GEN_API_VERSION_DEFAULT,
         'azure_openai_image_gen_authentication_type': 'key',
         'azure_openai_image_gen_subscription_id': '',
         'azure_openai_image_gen_resource_group': '',
@@ -2005,6 +2045,7 @@ def get_settings(use_cosmos=False, include_source=False):
         normalize_key_vault_reminder_settings(merged)
         normalize_model_endpoint_identity_header_settings(merged)
         normalize_tabular_parity_durable_preflight_defaults(merged)
+        normalize_image_generation_api_version_settings(merged)
 
         merged['enable_tabular_processing_plugin'] = is_tabular_processing_enabled(merged)
 
