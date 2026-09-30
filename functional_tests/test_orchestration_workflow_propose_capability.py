@@ -611,6 +611,22 @@ def test_a_proposal_check_that_cannot_run_plans_the_rest_without_it(modules, mon
     _assert_logs_carry_codes_only(record.logs, planning)
 
 
+def test_a_proposal_step_the_drop_left_behind_is_still_refused(monkeypatch, planner, ow, planning):
+    # The degraded plan is checked without workflow_propose, so a drop that missed the step cannot run it.
+    monkeypatch.setattr(ow, "drop_workflow_proposals", lambda plan, truth, *, reason: (deepcopy(plan), deepcopy(truth)))
+    reply = _raw_plan([ANSWER, _propose(_blueprint(planning, tasks=[_task(UNKNOWN_AGENT)]))])
+    record = _record()
+    with pytest.raises(planner.PlannerError) as caught:
+        _plan_request(monkeypatch, planning, [reply, reply], record)
+    assert caught.value.reason == "invalid_plan_or_missing_requirement"
+    assert caught.value.message == planner.WORKFLOW_FAILURE_MESSAGE
+    failed = [extra for message, extra in record.logs if "could not be planned" in message]
+    assert [(extra["stage"], extra["validation_code"]) for extra in failed] == [
+        ("plan_normalization", "capability_unavailable"),
+    ]
+    assert not any("Planning without a workflow proposal" in message for message, _extra in record.logs)
+
+
 def test_dropping_a_proposal_removes_every_reference_and_copies_its_inputs(ow):
     plan = {
         "steps": [
@@ -921,15 +937,33 @@ def _harness_proposal(planning):
     return _propose(_blueprint(planning, trigger={**WEEKLY_TRIGGER, "timezone": ZONE}))
 
 
+def server_only_values(sidecar, instructions=INSTRUCTIONS):
+    """What only the server may hold: the sidecar, its id and digest, the requester and the real ids behind handles."""
+    real_ids = [entry["id"] for mapping in sidecar["handles"].values() for entry in mapping.values()]
+    assert PERSONAL_AGENT_ID in real_ids
+    return ["workflow_proposal", sidecar["proposal_id"], instructions, "requester_user_id", "blueprint_digest", *real_ids]
+
+
+def assert_nothing_disclosed(surfaces, sidecar, instructions=INSTRUCTIONS):
+    secrets = server_only_values(sidecar, instructions)
+    for surface in surfaces:
+        text = json.dumps(surface, default=str)
+        for secret in secrets:
+            assert secret not in text, secret
+
+
 def test_the_step_keeps_its_description_on_the_server_and_retains_only_a_small_card(modules, wf, ow, monkeypatch):
     contracts = importlib.import_module("functions_orchestration_result_contracts")
+    events = importlib.import_module("functions_orchestration_events")
     runs = importlib.import_module("functions_orchestration_runs")
     services = importlib.import_module("functions_orchestration_services")
     planning = _build(wf, [])
     env, dry_runs, writes = _harness(monkeypatch, ow, planning, [compose_step("answer"), _harness_proposal(planning)],
                                      ["Your priorities."])
     execution = env.prepare()
-    frames = decoded_frames(execution.execute())
+    progress = []
+    frames = decoded_frames(execution.execute(emit=progress.append))
+    streamed = decoded_frames(progress)
 
     step = env.steps.read_item("run-1:propose", "run-1")
     sidecar = step["workflow_proposal"]
@@ -942,10 +976,10 @@ def test_the_step_keeps_its_description_on_the_server_and_retains_only_a_small_c
     assert dry_runs[0]["enabled"] is False
 
     # The description never leaves the server: not streamed, listed or stored on the message.
+    # The proposal step's own progress frames are streamed, so the stream checked here is real.
+    assert any(frame.get("type") == events.EVENT_TYPE_STEP and frame.get("step_id") == "propose" for frame in streamed)
     public = runs.list_run_steps("run-1", user_id=OWNER, conversation_id="conversation-1")
-    for surface in (frames, public, env.assistant_messages()):
-        text = json.dumps(surface, default=str)
-        assert "workflow_proposal" not in text and sidecar["proposal_id"] not in text and INSTRUCTIONS not in text
+    assert_nothing_disclosed((frames, streamed, public, env.assistant_messages()), sidecar)
 
     run = env.read()
     assert run["status"] == "completed"
@@ -1020,6 +1054,84 @@ def test_a_retried_run_reuses_the_proposal_it_already_made(modules, wf, ow, monk
     # The proposal keeps its id, creation time and expiry, so a card already shown still applies.
     assert again["workflow_proposal"] == first["workflow_proposal"]
     assert [call["origin"]["orchestration_run_id"] for call in dry_runs] == ["run-1"]
+
+
+class _ProposeService:
+    """The retained-result service the step writes through, recording each authorization and write."""
+
+    def __init__(self):
+        self.authorized = []
+        self.persisted = []
+        self.access = SimpleNamespace(authorize_producer=self._authorize)
+
+    def _authorize(self, producer, for_write=False):
+        self.authorized.append((producer.user_id, for_write))
+
+    def persist_task_result(self, **kwargs):
+        self.persisted.append(kwargs["producer"].user_id)
+
+
+def _adapter_call(ow, planning, monkeypatch, *, user_id=OWNER, contract_version=2, cancel=None):
+    """Run the production step adapter with a recorded dry run. Returns ``(call, service, dry runs)``."""
+    service, dry_runs = _ProposeService(), []
+    producer = SimpleNamespace(user_id=OWNER, run_id="run-1", step_id="propose", conversation_id="conversation-1")
+    context = SimpleNamespace(
+        result_service=service, plan_contract_version=contract_version, run_id="run-1",
+        conversation_id="conversation-1", workflow_planning=planning, time_zone=ZONE,
+        user_email="owner@example.com", user_roles=["User"], result_producer=lambda step: producer,
+        result_guard_token_for_step=lambda step_id: "guard-1",
+        result_input_fingerprint_for_step=lambda step_id: "fingerprint-1",
+    )
+
+    def dry_run(dry_run_user_id, blueprint, handles, **kwargs):
+        dry_runs.append(dry_run_user_id)
+        return {"ok": True, "workflow": {"name": blueprint["name"]}, "errors": []}
+
+    monkeypatch.setattr(ow, "require_result_service", lambda current: current.result_service)
+    monkeypatch.setattr(ow, "dry_run_workflow_blueprint", dry_run)
+
+    def call():
+        return ow.adapter_workflow_propose(
+            _harness_proposal(planning), context, settings=deepcopy(AGENT_SETTINGS), user_id=user_id,
+            cancel_requested=cancel,
+        )
+
+    return call, service, dry_runs
+
+
+@pytest.mark.parametrize("case", ["another_user", "legacy_plan", "cancelled"])
+def test_the_step_refuses_another_user_a_legacy_plan_and_a_cancelled_run_before_anything_runs(
+    modules, ow, planning, monkeypatch, case,
+):
+    mixed = importlib.import_module("functions_mixed_source_orchestration")
+    results = importlib.import_module("functions_orchestration_results")
+    call, service, dry_runs = _adapter_call(
+        ow, planning, monkeypatch, user_id="someone-else" if case == "another_user" else OWNER,
+        contract_version=1 if case == "legacy_plan" else 2,
+        cancel=(lambda: True) if case == "cancelled" else (lambda: False),
+    )
+    expected = mixed.MixedSourceCancellationError if case == "cancelled" else results.ResultUnavailableError
+    with pytest.raises(expected) as caught:
+        call()
+    if case != "cancelled":
+        assert caught.value.code == "result_owner_mismatch"
+    # Nothing was described or retained: no dry run, no authorization for a write and no write.
+    assert dry_runs == [] and service.authorized == [] and service.persisted == []
+
+
+def test_the_step_writes_only_while_the_run_is_still_wanted(modules, ow, planning, monkeypatch):
+    mixed = importlib.import_module("functions_mixed_source_orchestration")
+    call, service, dry_runs = _adapter_call(ow, planning, monkeypatch, cancel=lambda: False)
+    result = call()
+    assert result["status"] == "completed" and result["workflow_proposal"]["status"] == "ready"
+    assert dry_runs == [OWNER] and service.persisted == [OWNER]
+
+    # Cancelled while the proposal was being described: it is never retained.
+    answers = iter((False, True))
+    call, service, dry_runs = _adapter_call(ow, planning, monkeypatch, cancel=lambda: next(answers))
+    with pytest.raises(mixed.MixedSourceCancellationError):
+        call()
+    assert dry_runs == [OWNER] and service.persisted == []
 
 
 # ---------------------------------------------------------------------------

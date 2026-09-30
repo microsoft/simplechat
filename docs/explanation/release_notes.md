@@ -2,7 +2,42 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
-### **(v0.261.204)**
+### **(v0.261.207)**
+
+#### New Features
+
+*   **Workflows Proposed From Chat**
+    *   With **Propose Workflows From Chat** on, a chat orchestration plan can handle a recurring request in two parts. It answers the current period once, as a preview, and proposes a personal workflow for the runs to come. "Every Monday at 8, read my email and tell me what I should focus on this week" gets this week's answer and a proposed Monday 08:00 workflow.
+    *   The proposal is a new `workflow_propose` step with a new `workflow` deliverable. The planner describes the workflow as a closed blueprint, naming the requester's agents, File Sync sources, the documents they named in the request and their existing workflows only by request-local handles. The workflow draft service checks the blueprint without writing anything. A blueprint that still breaks the rules after one repair is dropped with everything bound to it, and the rest of the plan runs.
+    *   Nothing is created until the requester decides on the proposal card. Accepting the same proposal twice creates one workflow, a denied proposal can't be accepted, and a proposal expires after 14 days. A workflow the requester deleted comes back only through **Create again**.
+    *   Proposals are personal only and appear only in a conversation that's private to the requester. A task on an agent with Microsoft 365 actions runs as the requester, and accepting never approves Run as. URL Access can't be turned on from chat.
+    *   Four requester-only routes serve the card: status, accept, deny and draft. Accepting records the workflow creation in the activity log, as a save from Workflows does.
+    *   (Ref: #1547, #1543, `functions_orchestration_workflow_context.py`, `functions_orchestration_workflows.py`, `functions_orchestration_workflow_proposals.py`, `route_backend_orchestration.py`, [Chat orchestration workflow proposals](features/CHAT_ORCHESTRATION_WORKFLOW_PROPOSALS.md))
+
+*   **Propose Workflows From Chat Setting**
+    *   **Admin Settings > Orchestration > Chat Orchestration > Capabilities** adds **Propose Workflows From Chat** (`enable_chat_orchestration_workflows`) to the classic and V2 admin pages. It's off by default, because it lets a conversation lead to standing work that runs later, possibly as the user in Microsoft 365. It also needs Chat Orchestration, personal workflows and, when the capability list is narrowed, **Propose workflows**.
+    *   With it off, planning is unchanged. A golden test captured before this change pins the planner's messages, the deliverable brief and the strict-mode error, with the setting off and with it on while proposals aren't available.
+    *   (Ref: `functions_settings.py`, `admin_settings_fields.py`, `route_frontend_admin_settings.py`, `templates/admin/_panes/chat-orchestration.html`, [Orchestration settings](../admin/orchestration.md))
+
+*   **Chat Plans Use The Browser's Time Zone**
+    *   The V2 chat sends the browser's time zone with each plan request, so "Monday at 08:00" means 08:00 where the user is. The server accepts only a known zone name. The first plan, regenerate and replan, answers to a question card, plan editor revisions and retries all keep it rather than falling back to UTC.
+    *   When a turn may propose a workflow, its answer is written with the user's local date and time, in the words a calendar workflow's run uses, so the preview and the later runs read "this week" the same way. Every other answer is written exactly as before.
+    *   (Ref: `validated_request_time_zone`, `workflow_answer_time_line`, `functions_orchestration_context.py`, `functions_orchestration_composition.py`, `orchestrationController.ts`)
+
+*   **Personal File Sync In The V2 Workflow Editor**
+    *   The V2 editor for personal workflows can now author the **Monitor File Sync changes** trigger, **Run File Sync before each run** and **Use changed files as Analyze targets**, as the V2 group editor and the classic personal editor already could. A personal workflow whose stored source was deleted can now be fixed in V2.
+    *   The source list says when File Sync isn't enabled for the personal workspace, instead of showing an empty list.
+    *   (Ref: `functions_workflow_file_sync_sources.py`, `route_backend_workflows.py`, `WorkflowEditorDialog.tsx`, [V2 personal workflow File Sync](features/V2_PERSONAL_WORKFLOW_FILE_SYNC.md))
+
+#### User Interface Enhancements
+
+*   **Workflow Proposal Card In The V2 Chat**
+    *   A proposed workflow appears as a **Proposed workflow** card under the answer. It shows when the workflow runs, about how often, its alerts, the Microsoft 365 data it uses and whose account it runs as, each task's runner, and each task's full instructions under **Instructions**, as plain text. It also lists similar workflows the user already has.
+    *   **Create & start**, **Create paused** and **Edit** decide it. A manual workflow offers **Create** and says it runs only when started from Workflows. **Edit** opens the proposal in the V2 workflow editor, and Save creates it. **Deny** asks for confirmation, and **Open workflow** goes to the created workflow.
+    *   While the workflow is being created, the card checks back every three seconds for up to two minutes, and waits while the tab is hidden. The plan labels the deliverable **Workflow proposal** and shows a prepared one as **Proposed**. The card is the only place the proposal appears; it's never listed with the answer's files.
+    *   (Ref: `WorkflowProposalCard.tsx`, `workflowProposals.ts`, `orchestrationPlan.ts`, [Chat controls](../reference/chat-controls.md#workflow-proposals-v2-interface), [Create a workflow](../guides/create-a-workflow.md#create-a-workflow-from-chat))
+
+    ### **(v0.261.204)**
 
 #### User Interface Enhancements
 

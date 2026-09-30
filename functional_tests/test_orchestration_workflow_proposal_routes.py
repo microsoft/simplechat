@@ -657,6 +657,34 @@ def test_a_draft_service_refusal_is_returned_and_the_claim_released(h):
     assert only(h)["state"] == "pending"
 
 
+def test_a_create_that_fails_unexpectedly_releases_the_claim_so_a_retry_is_not_busy(h, monkeypatch):
+    seed_run(h)
+    login(h)
+    real_create = h.proposals.create_personal_workflow_from_blueprint
+    calls = []
+
+    def create_once(*args, **kwargs):
+        calls.append(args[0])
+        if len(calls) == 1:
+            raise RuntimeError("PRIVATE_CREATE_FAILURE")
+        return real_create(*args, **kwargs)
+
+    monkeypatch.setattr(h.proposals, "create_personal_workflow_from_blueprint", create_once)
+    failed = accept(h, mode="enabled")
+    assert failed.status_code == 503 and code(failed) == "service_unavailable"
+    assert "PRIVATE_CREATE_FAILURE" not in failed.get_data(as_text=True)
+    # The failed request's claim is released: the proposal is not left creating.
+    assert decision(h) is None and stored_workflow(h) is None and h.record.created == []
+    assert only(h)["state"] == "pending"
+
+    retried = accept(h, mode="enabled")
+    assert retried.status_code == 201, retried.get_data(as_text=True)
+    assert retried.get_json()["workflow"]["id"] == h.workflow_id and calls == [OWNER, OWNER]
+    assert decision(h)["state"] == "created" and stored_workflow(h)["is_enabled"] is True
+    assert len(h.record.created) == 1
+    assert "PRIVATE_CREATE_FAILURE" not in json.dumps(h.record.logs)
+
+
 # ---------------------------------------------------------------------------
 # Deny, expiry and Create again
 # ---------------------------------------------------------------------------
