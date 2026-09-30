@@ -239,6 +239,18 @@ export function useWorkflowAssist({
         return { ok: true, reply: response.reply };
     }, []);
 
+    // Closing the editor, or losing Ask AI, stops waiting for its answer. The server writes nothing,
+    // so nothing is left half done. Declared before the thread, so this cleanup runs while the
+    // thread is still held: cancelling then never sweeps the chat's idle threads.
+    useEffect(() => {
+        if (!key) return undefined;
+        return () => {
+            const running = selectAssistThread(useAssistThreadStore.getState(), key)?.exchanges
+                .find((exchange) => exchange.status === 'pending');
+            if (running) cancelAssistExchange(key, running.id);
+        };
+    }, [key]);
+
     const thread = useAssistThread({
         key,
         conversationId: WORKFLOW_ASSIST_CONVERSATION,
@@ -249,17 +261,6 @@ export function useWorkflowAssist({
         retain: true,
     });
     const pending = thread.pending;
-
-    // Closing the editor, or losing Ask AI, stops waiting for its answer. The server writes nothing,
-    // so nothing is left half done.
-    useEffect(() => {
-        if (!key) return undefined;
-        return () => {
-            const running = selectAssistThread(useAssistThreadStore.getState(), key)?.exchanges
-                .find((exchange) => exchange.status === 'pending');
-            if (running) cancelAssistExchange(key, running.id);
-        };
-    }, [key]);
 
     useEffect(() => () => draftController.current?.abort(), []);
 

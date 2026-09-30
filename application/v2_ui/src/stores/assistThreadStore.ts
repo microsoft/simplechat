@@ -144,15 +144,18 @@ export function capAbandonedIds(ids: string[]): string[] {
  *
  * `held` threads belong to a mounted editor that asked to keep its thread, and are never dropped.
  * Touching a held thread does not sweep other conversations either: an editor outside the chat,
- * such as the workflow editor, must not clear the chat's transcripts behind it.
+ * such as the workflow editor, must not clear the chat's transcripts behind it. `quiet` threads
+ * were held once, and touching one does not sweep either, because an answer can still land after
+ * its editor closed.
  */
 export function pruneThreads(
     threads: Record<string, AssistThreadRecord>,
     keepKey: string,
     conversationId: string | null,
     held?: ReadonlySet<string>,
+    quiet?: ReadonlySet<string>,
 ): Record<string, AssistThreadRecord> {
-    const sweep = !held?.has(keepKey);
+    const sweep = !held?.has(keepKey) && !quiet?.has(keepKey);
     const kept: Record<string, AssistThreadRecord> = {};
     let removed = false;
     for (const [key, record] of Object.entries(threads)) {
@@ -179,11 +182,15 @@ export function pruneThreads(
 /** Mounted editors holding their thread, by key, with how many hold each. */
 const heldThreads = new Map<string, number>();
 
+/** Threads an editor held, until they leave the store. Touching one never sweeps other conversations. */
+const quietThreads = new Set<string>();
+
 /**
  * Keep a thread while an editor is mounted. Returns the release, which is safe to call twice.
  */
 export function holdAssistThread(key: string): () => void {
     heldThreads.set(key, (heldThreads.get(key) ?? 0) + 1);
+    quietThreads.add(key);
     let released = false;
     return () => {
         if (released) {
@@ -193,14 +200,26 @@ export function holdAssistThread(key: string): () => void {
         const count = (heldThreads.get(key) ?? 1) - 1;
         if (count > 0) {
             heldThreads.set(key, count);
-        } else {
-            heldThreads.delete(key);
+            return;
+        }
+        heldThreads.delete(key);
+        if (!(key in useAssistThreadStore.getState().threads)) {
+            quietThreads.delete(key);
         }
     };
 }
 
 function heldThreadKeys(): ReadonlySet<string> | undefined {
     return heldThreads.size ? new Set(heldThreads.keys()) : undefined;
+}
+
+/** Forget quiet threads that left the store and that no editor holds. */
+function forgetQuietThreads(threads: Record<string, AssistThreadRecord>): void {
+    for (const key of quietThreads) {
+        if (!(key in threads) && !heldThreads.has(key)) {
+            quietThreads.delete(key);
+        }
+    }
 }
 
 interface AssistThreadState {
@@ -236,13 +255,19 @@ export const useAssistThreadStore = create<AssistThreadState>((set) => ({
                 return {};
             }
             const touched = { ...next, touchedAt: now };
-            return {
-                threads: pruneThreads({ ...state.threads, [key]: touched }, key, touched.conversationId, heldThreadKeys()),
-            };
+            const threads = pruneThreads({ ...state.threads, [key]: touched }, key, touched.conversationId,
+                heldThreadKeys(), quietThreads.size ? quietThreads : undefined);
+            if (quietThreads.size) {
+                forgetQuietThreads(threads);
+            }
+            return { threads };
         });
     },
 
-    resetThreads: () => set({ threads: {} }),
+    resetThreads: () => {
+        set({ threads: {} });
+        forgetQuietThreads({});
+    },
 }));
 
 export function selectAssistThread(

@@ -671,7 +671,8 @@ export function WorkflowEditorDialog({
                         </p>
                     </div> : null}
                     {!accessLost ? <div ref={authoringRef} className="min-w-0">
-                    <fieldset disabled={readOnly || saving || Boolean(history.pending) || Boolean(authoring.pending) || assistPending} className="min-w-0 space-y-5">
+                    <fieldset disabled={readOnly || saving || Boolean(history.pending) || Boolean(authoring.pending) || assistPending}
+                        aria-busy={assistPending || undefined} className="min-w-0 space-y-5">
                         <section className="space-y-4 rounded-2xl border border-edge p-4" aria-label="Workflow basics">
                             <div className="grid gap-3 md:grid-cols-2">
                                 <WorkflowChangedField changeKey="name">
