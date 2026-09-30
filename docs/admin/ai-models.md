@@ -397,8 +397,11 @@ MAI preview status is shown, and optional Bing web grounding is not enabled.
 
 New shared Images connections without an image-specific API version use
 `2025-04-01-preview` for generations and edits. Explicit image operation versions,
-including older imported versions, are preserved. Unmigrated legacy Images settings
-retain their `2024-12-01-preview` fallback when no image version is configured.
+including older imported versions, are preserved, except the previous default
+`2024-12-01-preview`, which predates gpt-image support: since **0.261.210** a direct
+(non-APIM) image profile or legacy image setting still holding that exact value is
+upgraded to `2025-04-01-preview` when settings load. Unmigrated legacy Images settings
+with no version configured also use `2025-04-01-preview`.
 
 These versions do not come from the chat connection's API version or legacy root
 settings after shared selection. Direct OpenAI uses `/v1` without an Azure
@@ -462,7 +465,7 @@ model-selection API is unchanged.
 | Resource Group | Direct-resource discovery context | Empty | `azure_openai_image_gen_resource_group` |
 | Azure OpenAI Image Generation Key | Direct-route credential, through scoped secret helpers | Empty | `azure_openai_image_gen_key` |
 | Image model | Active direct deployment and saved model metadata | None selected | `image_gen_model` |
-| Azure OpenAI Image Gen API Version | Legacy direct Images operation version; independent of chat and of newly selected shared image defaults | 2024-12-01-preview | `azure_openai_image_gen_api_version` |
+| Azure OpenAI Image Gen API Version | Legacy direct Images operation version; independent of chat and of newly selected shared image defaults. A saved `2024-12-01-preview`, the previous default, or a blank value is upgraded to `2025-04-01-preview` when settings load. | 2025-04-01-preview | `azure_openai_image_gen_api_version` |
 | Azure APIM Endpoint | Gateway address and path | Empty | `azure_apim_image_gen_endpoint` |
 | Azure APIM API Version | Gateway image operation version | Empty | `azure_apim_image_gen_api_version` |
 | Azure APIM Deployment | Active gateway deployment name | Empty | `azure_apim_image_gen_deployment` |

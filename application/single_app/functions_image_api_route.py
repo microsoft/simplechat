@@ -41,7 +41,9 @@ RESPONSES_IMAGE_API_VERSION = 'v1'
 # New shared connections support both Images generations and edits without inheriting
 # a chat API version. Explicit imported image profiles always take precedence.
 DEFAULT_IMAGES_API_VERSION = '2025-04-01-preview'
-LEGACY_DEFAULT_IMAGES_API_VERSION = '2024-12-01-preview'
+# Unmigrated legacy Images settings with no version use the same default. The previous
+# fallback, 2024-12-01-preview, predates gpt-image model support.
+LEGACY_DEFAULT_IMAGES_API_VERSION = DEFAULT_IMAGES_API_VERSION
 
 # What the image_generation tool call answers with when no format is stated.
 DEFAULT_RESPONSES_IMAGE_FORMAT = 'png'

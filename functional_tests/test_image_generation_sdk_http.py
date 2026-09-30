@@ -1,8 +1,8 @@
 # test_image_generation_sdk_http.py
 """
 Functional tests for image URLs, authentication, payloads, and output with the real OpenAI SDK.
-Version: 0.261.107
-Implemented in: 0.261.105
+Version: 0.261.210
+Implemented in: 0.261.105; legacy Images fallback version updated in 0.261.210
 
 Uses the application's pinned openai==1.109.1 client and httpx.MockTransport. Only
 HTTP is mocked: request construction, auth_headers, multipart encoding, response parsing,
@@ -454,7 +454,8 @@ class ImageSdkHttpTests(ImageRuntimeTestCase):
         self.assertEqual(self.requests[-1].headers["api-key"], "legacy-key")
         settings.pop("azure_openai_image_gen_api_version")
         generation.request_generated_image_source(settings, "Legacy image without a saved version")
-        self.assertEqual(dict(self.requests[-1].url.params), {"api-version": "2024-12-01-preview"})
+        # Since 0.261.210 a legacy route with no saved version uses the gpt-image default.
+        self.assertEqual(dict(self.requests[-1].url.params), {"api-version": "2025-04-01-preview"})
         settings["image_gen_model"]["selected"] = [{
             "deploymentName": "legacy-gpt", "modelName": "gpt-5.6-terra",
         }]
