@@ -167,9 +167,10 @@ While a plan is validated, the blueprint must pass:
 - every rule of the workflow draft service that reads nothing
   (`check_workflow_blueprint`), with the request's time zone and handles;
 - handles the planning context offered, and no others;
-- an agent for every task that needs actions, which has all of them
-  (`agent_capability_mismatch` when it doesn't, `no_suitable_agent` when no agent
-  covers them);
+- a runner with every action kind the task needs, when another offered agent
+  has them (`agent_capability_mismatch`). When no offered agent has them, the
+  plan still passes, and the card shows the proposal as unavailable with
+  `no_suitable_agent`;
 - `run_as: self` for a task on an agent with Microsoft 365 actions
   (`run_as_required`).
 
