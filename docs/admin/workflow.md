@@ -54,6 +54,7 @@ visible to its members. Turning one on does not turn on the other.
 | --- | --- | --- | --- |
 | Enable Personal Workflows | Lets users build workflows in their personal workspace and run them manually or on a schedule, either at a fixed interval or at a local time on a calendar schedule. | Off | `allow_user_workflows` |
 | Require WorkflowUser App Role | Restricts personal workflows to holders of the `WorkflowUser` Enterprise App role. Covers opening, creating, editing, running and inspecting them, so assign the role before turning this on or every user loses access at once. | Off | `require_member_of_workflow_user` |
+| Enable AI Workflow Assistant | Lets people who can edit personal workflows describe a change in plain language, such as "run this at 7 AM on weekdays", and review the assistant's proposed edit in the V2 workflow editor before they save it. The assistant never saves, runs or shares a workflow, and it only uses documents the person can already open. | On | `enable_workflow_ai_assistant`; personal workflows only; has no effect while Enable Personal Workflows is off |
 | Enable Group Workflows | Lets permitted members create, manage and run workflows from group workspaces. Owners and Admins may author them unless Workspaces restricts group agent, action and workflow management to Owners. | Off | `allow_group_workflows` |
 | Require Group Assignment to Use Workflow | Narrows group workflows to an explicit allow list instead of every group. Groups outside the list lose the capability. | Off | `require_group_assignment_for_group_workflows` |
 | Assigned Groups | The groups that may use group workflows while assignment is required. Ignored when it is not. | Empty list | `group_workflow_allowed_group_ids` |
@@ -89,6 +90,37 @@ changes its schedule. The scheduler doesn't read the minimum.
 The time zones offered come from the server's time zone database. See
 [Workflow calendar schedules](../explanation/features/WORKFLOW_CALENDAR_SCHEDULES.md)
 for the daylight saving rules and the stored format.
+
+### AI workflow assistant {#workflow-ai-assistant}
+
+Version **0.261.208** adds the server side of the AI workflow assistant. A person
+editing a personal workflow can ask for a change in plain language, such as "run
+this at 7 AM on weekdays and only alert me when something is urgent", and gets a
+proposed edit that the V2 editor shows as highlighted, revertible changes. The
+editor's **Ask AI** tab arrives in a later release.
+
+The assistant is on by default wherever personal workflows are on, and it
+follows the same `WorkflowUser` role rule. Things to know before relying on it:
+
+- **It proposes; it never saves.** Nothing changes until the person reviews the
+  edit and saves it through the normal save, with the usual checks and the Run
+  as re-approval when a change needs one. The assistant can't turn a workflow on
+  or off, change Run as, sharing, approvals or URL access, or set up File Sync.
+- **It uses only what the person can already use.** Documents attached with `#`,
+  agents and models are checked against the person's own access, and group
+  workflows aren't supported.
+- **It uses the existing model.** Requests go to the deployment that already
+  drafts agent and workflow instructions, so there's no model to configure.
+- **It's rate limited.** Each person may have one request running and send 20
+  requests every 10 minutes, across all app instances. The count is kept in a
+  small document per user in the settings container, which is the only thing the
+  assistant writes. If that store can't be reached, the assistant reports that
+  it's temporarily unavailable rather than running without a limit.
+- **Its logs hold no content.** Telemetry records counts, outcomes and error
+  categories, never instructions, workflows, replies or document text.
+
+See [AI workflow assistant](../explanation/features/WORKFLOW_AI_ASSISTANT.md)
+for the request contract, the changes it can propose, and its security model.
 
 ## Durable runs
 
@@ -220,6 +252,9 @@ See [Workflow publication completion](../explanation/features/WORKFLOW_PUBLICATI
 | Repeat pauses with its condition unmet | The automatic batch ended, or a separate global budget blocked progress. | Inspect the gate and remaining budgets. Only a Repeat-limit gate can receive an explicit same-sized manual continuation; global budget exhaustion cannot be reset. |
 | Authors can't save a workflow that repeats every few seconds or minutes | The new or changed interval is shorter than Workflow Minimum Schedule Interval (seconds). | Expected when the minimum is raised. Lower the minimum, or have the author choose a longer interval or a calendar schedule. |
 | A calendar-scheduled workflow stopped running | Its saved time zone is no longer in the server's time zone database, so it has no next run. The server logs `[Workflows] Calendar schedule could not compute a next run.` with the workflow ID. | Have the author open it in the V2 editor, choose a listed time zone, and save. |
+| The AI workflow assistant refuses every request from a user | Enable AI Workflow Assistant or Enable Personal Workflows is off, or Require WorkflowUser App Role is on and the user doesn't hold the role. | Check both settings, then the `WorkflowUser` role assignment. |
+| The AI workflow assistant says it has had too many requests | Each person may have one request running and send 20 requests every 10 minutes. The limit is fixed. | Wait for the current request to finish, or for the time the response gives. |
+| The AI workflow assistant is temporarily unavailable for everyone | The model deployment is throttled or unreachable, or the settings container that holds the rate-limit count can't be reached. The assistant won't run without its limit. | Check the GPT deployment's health and throttling, and Cosmos DB availability. Each request logs `[WorkflowAssist] Assist request finished` with its `status` and error `code`, and no content. |
 
 ## Related
 

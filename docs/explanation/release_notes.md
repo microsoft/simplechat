@@ -2,6 +2,20 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.208)**
+
+#### New Features
+
+*   **AI Workflow Assistant Endpoint**
+    *   The server side of the AI workflow assistant. `POST /api/user/workflows/assist` takes one plain-language instruction, such as "run this at 7 AM on weekdays and only alert me when something is urgent", with the V2 editor's current draft of a personal workflow, and returns a proposed edit for the author to review. The answer is `changed` with the edited draft, `explained` when nothing should change, or `question` when the request is ambiguous. The editor's **Ask AI** tab, which calls it, arrives in a later release, so nothing calls the endpoint yet.
+    *   It can propose a name and description, manual, interval and calendar schedules, alert settings, the runner (only agents and models the author can already use), tasks (add, remove, reorder, instructions and inputs), and documents attached with `#`, placed by intent: shared by every task, used by selected tasks, or one task's document target. When the placement is unclear it asks instead of guessing.
+    *   It never saves anything. It can't turn a workflow on or off, change Run as, approvals, sharing or URL access, or edit identity fields, and it explains rather than editing File Sync triggers or For each and If structure. Group workflows and tag references are refused. Every proposal is checked the way saving checks it, with one chance for the model to correct itself, and a proposal that still fails is discarded. The response warns when saving will need Run as re-approved, when a task the assistant added or changed sends email but isn't run by an agent with the Microsoft 365 action, or when the Microsoft 365 connection is missing.
+    *   The model never sees raw document IDs; each document gets a short handle for the request. The draft, earlier turns and document excerpts are all sent as untrusted material, excerpts are bounded, and telemetry records counts, outcomes and error codes only, never instructions, workflows, replies or document text.
+    *   Requests and the model's replies are read the way the browser reads JSON. `NaN`, `Infinity` and numbers JavaScript can't hold are refused, and a whole number such as `12.0` is checked as the integer the editor would save.
+    *   Each person may have one request running and send 20 requests every 10 minutes, across every app instance. The count is a small per-user document in the settings container, which is the endpoint's only write. If that store is unavailable, the assistant answers 503 rather than running without a limit.
+    *   New admin setting **Enable AI Workflow Assistant** (`enable_workflow_ai_assistant`) in **Workflow** settings, on by default. It has no effect while Enable Personal Workflows is off, and it follows the WorkflowUser role requirement.
+    *   (Ref: #1548, #1543, `route_backend_workflows.py`, `functions_workflow_assist.py`, `functions_workflow_assist_operations.py`, `functions_workflow_assist_editor.py`, `functions_workflow_assist_limits.py`, `functions_workflow_assist_runtime.py`, [AI Workflow Assistant](features/WORKFLOW_AI_ASSISTANT.md), [Workflow settings](../admin/workflow.md#workflow-ai-assistant))
+
 ### **(v0.261.207)**
 
 #### New Features

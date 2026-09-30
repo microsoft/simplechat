@@ -31,6 +31,17 @@
                     <p class="text-muted small mb-0">
                         Required app role value: <code>WorkflowUser</code>. Assign this role to users or groups in the Enterprise App before enabling the requirement.
                     </p>
+                    <div class="form-group form-check form-switch mt-3 mb-2">
+                        <input type="checkbox"
+                            class="form-check-input"
+                            id="enable_workflow_ai_assistant"
+                            name="enable_workflow_ai_assistant"
+                            {% if settings.enable_workflow_ai_assistant %}checked{% endif %}>
+                        <label class="form-check-label ms-2" for="enable_workflow_ai_assistant">
+                            Enable AI Workflow Assistant
+                        </label>
+                        <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Let users describe a change in plain language and review the assistant's proposed edit in the V2 workflow editor before they save it. It applies only where personal workflows are enabled."></i>
+                    </div>
 
                     <div class="form-group mt-3 mb-3">
                         <label for="workflow_max_auto_invoke_attempts" class="form-label">

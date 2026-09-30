@@ -903,6 +903,8 @@ def register_route_frontend_admin_settings(bp):
             settings['allow_user_workflows'] = False
         if 'require_member_of_workflow_user' not in settings:
             settings['require_member_of_workflow_user'] = False
+        if 'enable_workflow_ai_assistant' not in settings:
+            settings['enable_workflow_ai_assistant'] = True
         if 'allow_group_workflows' not in settings:
             settings['allow_group_workflows'] = False
         if 'require_group_assignment_for_group_workflows' not in settings:
@@ -2600,6 +2602,7 @@ def register_route_frontend_admin_settings(bp):
                 'require_member_of_chat_file_upload_user': require_member_of_chat_file_upload_user,
                 'allow_user_workflows': form_data.get('allow_user_workflows') == 'on',
                 'require_member_of_workflow_user': require_member_of_workflow_user,
+                'enable_workflow_ai_assistant': form_data.get('enable_workflow_ai_assistant') == 'on',
                 'allow_group_workflows': form_data.get('allow_group_workflows') == 'on',
                 'require_group_assignment_for_group_workflows': form_data.get('require_group_assignment_for_group_workflows') == 'on',
                 'group_workflow_allowed_group_ids': group_workflow_allowed_group_ids,

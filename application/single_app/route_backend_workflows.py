@@ -10,7 +10,7 @@ import re
 import time
 from datetime import datetime, timezone
 
-from flask import Response, jsonify, request, session, stream_with_context
+from flask import Response, current_app, jsonify, request, session, stream_with_context
 from azure.core.exceptions import AzureError
 
 from background_tasks import acquire_distributed_task_lock, release_distributed_task_lock
@@ -117,6 +117,10 @@ from functions_workflow_loop_history import (
     workflow_execution_records_page, workflow_execution_provenance_page, workflow_loop_items_page,
 )
 from functions_workflow_repeat_history import workflow_repeat_iterations_page, workflow_repeat_state_page
+from functions_settings import workflow_assistant_required
+from functions_workflow_assist import ASSIST_MAX_BODY_BYTES, WorkflowAssistError, parse_assist_body, run_workflow_assist
+from functions_workflow_assist_runtime import build_workflow_assist_services
+from werkzeug.exceptions import BadRequest, RequestEntityTooLarge
 from route_backend_agents import (
     _build_agent_instruction_api_params,
     _create_agent_instruction_client,
@@ -1192,6 +1196,57 @@ def _stream_group_workflow_activity(user_id, group_id, conversation_id='', workf
         time.sleep(0.5)
 
 
+def _workflow_assist_client(settings):
+    """The draft-instructions deployment's client and model name, for the AI workflow assistant."""
+    model_name = _resolve_agent_instruction_model(settings)
+    return _create_agent_instruction_client(settings), model_name
+
+
+def _read_workflow_assist_body():
+    """The assist request body as strict JSON. A body that declares too many bytes is refused unread."""
+    if not request.is_json:
+        raise WorkflowAssistError('invalid_request', 'The request body must be a JSON object.')
+    declared = request.content_length
+    if declared is not None and declared > ASSIST_MAX_BODY_BYTES:
+        raise WorkflowAssistError('request_too_large')
+    try:
+        raw = (
+            request.get_data(cache=False)
+            if declared is not None
+            else request.stream.read(ASSIST_MAX_BODY_BYTES + 1)
+        )
+    except RequestEntityTooLarge:
+        raise WorkflowAssistError('request_too_large') from None
+    except BadRequest:
+        raise WorkflowAssistError('invalid_request', 'The request body must be a JSON object.') from None
+    return parse_assist_body(raw)
+
+
+def _workflow_assist_response(payload, status, *, retry_after=None, user_id=None):
+    """The assist answer as strict JSON, uncached.
+
+    ``jsonify`` would write a non-finite number as ``NaN``, which the browser's ``response.json()``
+    cannot read, so such a payload is answered with the content-free ``assistant_failed`` instead.
+    """
+    try:
+        body = json.dumps(payload, allow_nan=False, sort_keys=True)
+    except (TypeError, ValueError, RecursionError) as exc:
+        log_event(
+            '[WorkflowAssist] Assist response could not be serialized',
+            extra={'user_id': user_id, 'status': status, 'error_type': type(exc).__name__},
+            level=logging.ERROR,
+        )
+        failure = WorkflowAssistError('assistant_failed')
+        body = json.dumps(failure.payload(), allow_nan=False, sort_keys=True)
+        status, retry_after = failure.status, None
+    response = current_app.response_class(f'{body}\n', status=status, mimetype='application/json')
+    # The body carries the caller's draft, so no cache keeps it.
+    response.headers['Cache-Control'] = 'no-store, private'
+    if retry_after is not None:
+        response.headers['Retry-After'] = str(retry_after)
+    return response
+
+
 def register_route_backend_workflows(bp):
     bp.after_request(_workflow_inspection_cache_response)
 
@@ -1641,6 +1696,47 @@ def register_route_backend_workflows(bp):
                 extra={'user_id': user_id, 'error_type': type(exc).__name__}, level=logging.ERROR,
             )
             return jsonify({'error': 'Workflow editor choices are temporarily unavailable.'}), 503
+
+
+    @bp.route('/api/user/workflows/assist', methods=['POST'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    @enabled_required('allow_user_workflows')
+    @workflow_user_required
+    @workflow_assistant_required
+    def assist_user_workflow():
+        """Turn one instruction into a validated candidate draft for the personal workflow editor.
+
+        Writes no workflow, run or document; the caller's rate-limit document is the only write.
+        """
+        settings = get_settings()
+        user_id = get_current_user_id()
+        try:
+            body = _read_workflow_assist_body()
+        except WorkflowAssistError as exc:
+            log_event(
+                '[WorkflowAssist] Assist request refused',
+                extra={'user_id': user_id, 'status': exc.status, 'code': exc.code, 'stage': 'body'},
+                level=logging.INFO,
+            )
+            return _workflow_assist_response(exc.payload(settings), exc.status)
+        try:
+            services = build_workflow_assist_services(
+                settings, client_factory=lambda: _workflow_assist_client(settings),
+            )
+        except Exception as exc:
+            log_event(
+                '[WorkflowAssist] Assist services could not start',
+                extra={'user_id': user_id, 'error_type': type(exc).__name__}, level=logging.ERROR,
+            )
+            failure = WorkflowAssistError('assistant_failed')
+            return _workflow_assist_response(failure.payload(settings), failure.status)
+        try:
+            result = run_workflow_assist(body, user_id=user_id, services=services)
+        except WorkflowAssistError as exc:
+            return _workflow_assist_response(exc.payload(settings), exc.status, retry_after=exc.retry_after)
+        return _workflow_assist_response(result, 200, user_id=user_id)
 
 
     @bp.route('/api/user/workflows/file-sync-sources', methods=['GET'])
