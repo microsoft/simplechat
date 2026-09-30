@@ -336,6 +336,7 @@ function CitationTarget({
                 metadata={enhanced.metadata}
                 onClose={onClose}
                 onFallback={onFallback}
+                citationId={citation.citationId}
             />
         );
     }

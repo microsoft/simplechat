@@ -10,6 +10,10 @@
 // citations keep the upload in blob storage; without them only the extracted text survives,
 // and offering a download that produces a text approximation of a spreadsheet would be worse
 // than offering nothing.
+//
+// An upload stored as a workspace document has no text on its message. What it contains is
+// what ingestion extracted, so that is what is shown: the indexed text and, for an image, the
+// vision analysis.
 
 import { useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
@@ -21,6 +25,7 @@ import {
 } from '../../lib/endpoints';
 import { parseCsvPreview } from '../../lib/csvPreview';
 import { GlassButton, GlassPanel } from '../ui/primitives';
+import { ChatUploadExtraction } from './ChatUploadExtraction';
 
 function CsvTable({ content }: { content: string }) {
     const preview = parseCsvPreview(content);
@@ -170,9 +175,7 @@ export function ChatFilePreview({
                     ) : data.is_table ? (
                         <CsvTable content={String(data.file_content ?? '')} />
                     ) : (
-                        <pre className="text-xs break-words whitespace-pre-wrap text-text-2">
-                            {String(data.file_content ?? '')}
-                        </pre>
+                        <ChatUploadExtraction data={data} />
                     )}
                 </div>
             </GlassPanel>
