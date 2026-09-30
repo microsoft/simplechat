@@ -2,8 +2,9 @@
 # test_route_unauthenticated_policy_contract.py
 """
 Functional test for route unauthenticated access policy contract.
-Version: 0.261.106
+Version: 0.261.212
 Implemented in: 0.242.069
+Workflow result context coverage: 0.261.212
 
 This test ensures every SimpleChat route has an explicit expected unauthenticated
 access behavior: public, browser-session authenticated, admin-only, or external
@@ -265,12 +266,23 @@ def test_sensitive_admin_routes_have_admin_or_specialized_route_decorator() -> N
     )
 
 
+def test_workflow_result_context_requires_a_signed_in_user_session() -> None:
+    """The chat chip's workflow result descriptor is never public or bearer-only."""
+    path = "/api/user/workflows/<workflow_id>/runs/<run_id>/result-context"
+    matches = [route for route in iter_route_functions() if route.path == path]
+
+    assert [route.function_name for route in matches] == ["get_user_workflow_run_result_context"]
+    assert expected_policy(path) == "session_user_401_or_redirect"
+    assert {"login_required", "user_required"} <= set(matches[0].decorator_names)
+
+
 if __name__ == "__main__":
     tests = [
         test_every_route_has_unauthenticated_access_policy,
         test_public_routes_do_not_use_session_or_bearer_auth_decorators,
         test_external_routes_use_bearer_auth_decorator,
         test_sensitive_admin_routes_have_admin_or_specialized_route_decorator,
+        test_workflow_result_context_requires_a_signed_in_user_session,
     ]
     results = []
     for test in tests:

@@ -37,7 +37,6 @@ from functions_workflow_result_store import (
 from functions_workflow_results import (
     ANALYSIS_RECORD_PAGE_SIZE,
     WORKFLOW_RESULT_CONTRACT_VERSION,
-    WorkflowResultNotReadyError,
     _require_completed_result,
     authorize_workflow_run_read,
     load_workflow_task_input,

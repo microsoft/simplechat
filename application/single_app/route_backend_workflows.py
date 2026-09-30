@@ -79,6 +79,7 @@ from functions_settings import (
     get_settings,
     is_user_workflows_enabled_for_user,
     is_group_workflows_enabled_for_group,
+    workflow_results_required,
     workflow_user_required,
 )
 from functions_source_review import (
@@ -99,6 +100,7 @@ from functions_workflow_definitions import (
 from functions_workflow_editor import get_workflow_editor_options
 from functions_analysis_access import AnalysisResultUnavailable
 from functions_workflow_results import authorize_workflow_run_read, authorize_workflow_task_result_read
+from functions_workflow_result_reader import WorkflowResultUnavailable, read_workflow_result, workflow_result_error_payload
 from functions_saved_analysis import sanitize_workflow_analysis_history
 from functions_workflow_runtime import (
     cancel_durable_workflow_run,
@@ -1982,6 +1984,34 @@ def register_route_backend_workflows(bp):
         return _workflow_task_result_page_response(
             workflow, run_record, task_id, get_personal_workflow_run_item,
         )
+
+
+    @bp.route('/api/user/workflows/<workflow_id>/runs/<run_id>/result-context', methods=['GET'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    @enabled_required('allow_user_workflows')
+    @workflow_user_required
+    @workflow_results_required
+    def get_user_workflow_run_result_context(workflow_id, run_id):
+        """Describe a finished personal run's stored result for the chat chip.
+
+        Authorizes the whole run as its owner and returns only the public descriptor;
+        no result content or store reference is read into the response.
+        """
+        user_id = get_current_user_id()
+        if not user_id:
+            return jsonify({'error': 'User not authenticated.'}), 401
+        try:
+            result = read_workflow_result(user_id, workflow_id, run_id)
+            payload, status = {'workflow_result': result['descriptor']}, 200
+        except WorkflowResultUnavailable as exc:
+            payload, status = workflow_result_error_payload(exc)
+        response = jsonify(payload)
+        response.status_code = status
+        # Access is re-checked on every read, so no cache may answer for it.
+        response.headers['Cache-Control'] = 'no-store, private'
+        return response
 
 
     @bp.route('/api/user/workflows/<workflow_id>/runs/<run_id>/resume-failed', methods=['POST'])
