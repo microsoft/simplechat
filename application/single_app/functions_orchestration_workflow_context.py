@@ -585,17 +585,19 @@ def _source_entries(user_id, settings, user_info, readers, taken):
 
 
 def workflow_planning_documents(source_scopes, labels=None, selected_ids=()):
-    """Order the documents this turn authorized, selected ones first, for the document catalog.
+    """The documents the user named in this turn, in their order, for the document catalog.
 
-    ``source_scopes`` is the map ``enrich_planner_candidates`` filled from its current authority
-    check; ``labels`` are the candidates' display names.
+    Only the documents the user picked or referenced with ``#`` (the turn's ``document_ids`` seed)
+    are offered: never a document the candidate probe found by searching, and never a workspace
+    listing. ``source_scopes`` is the map ``enrich_planner_candidates`` filled from its current
+    authority check, so a named document that failed it is left out; ``labels`` are the
+    candidates' display names.
     """
     source_scopes = source_scopes if isinstance(source_scopes, dict) else {}
     labels = labels if isinstance(labels, dict) else {}
-    selected = [value for value in selected_ids or () if isinstance(value, str) and value in source_scopes]
-    ordered = list(dict.fromkeys([*selected, *source_scopes]))
+    named = [value for value in selected_ids or () if isinstance(value, str) and value in source_scopes]
     documents = []
-    for document_id in ordered:
+    for document_id in dict.fromkeys(named):
         scope = source_scopes.get(document_id)
         if not isinstance(scope, dict):
             continue

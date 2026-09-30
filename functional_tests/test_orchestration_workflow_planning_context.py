@@ -215,16 +215,22 @@ def _readers(calls, **overrides):
     return {name: recorded(name, reader) for name, reader in implementations.items()}
 
 
+DOCUMENT_SCOPES = {
+    OWN_DOCUMENT_ID: {"scope": "personal", "scope_id": OWNER, "file_name": "Weekly priorities.docx"},
+    SHARED_DOCUMENT_ID: {"scope": "personal", "scope_id": "someone-else", "file_name": "Shared.docx"},
+    GROUP_DOCUMENT_ID: {"scope": "group", "scope_id": GROUP_ID, "file_name": "team-plan.pdf"},
+    CHAT_DOCUMENT_ID: {"scope": "chat", "scope_id": "conversation-1", "file_name": "upload.txt"},
+    PUBLIC_DOCUMENT_ID: {"scope": "public", "scope_id": PUBLIC_WORKSPACE_ID, "file_name": "Policy.pdf"},
+}
+# The documents the user named in the turn (composer picks and accepted # references), in order.
+NAMED_DOCUMENT_IDS = [
+    GROUP_DOCUMENT_ID, OWN_DOCUMENT_ID, SHARED_DOCUMENT_ID, CHAT_DOCUMENT_ID, PUBLIC_DOCUMENT_ID, "not-authorized",
+]
+
+
 def _documents(wf):
-    source_scopes = {
-        OWN_DOCUMENT_ID: {"scope": "personal", "scope_id": OWNER, "file_name": "Weekly priorities.docx"},
-        SHARED_DOCUMENT_ID: {"scope": "personal", "scope_id": "someone-else", "file_name": "Shared.docx"},
-        GROUP_DOCUMENT_ID: {"scope": "group", "scope_id": GROUP_ID, "file_name": "team-plan.pdf"},
-        CHAT_DOCUMENT_ID: {"scope": "chat", "scope_id": "conversation-1", "file_name": "upload.txt"},
-        PUBLIC_DOCUMENT_ID: {"scope": "public", "scope_id": PUBLIC_WORKSPACE_ID, "file_name": "Policy.pdf"},
-    }
     return wf.workflow_planning_documents(
-        source_scopes, {GROUP_DOCUMENT_ID: "Team plan"}, [GROUP_DOCUMENT_ID, "not-authorized"],
+        deepcopy(DOCUMENT_SCOPES), {GROUP_DOCUMENT_ID: "Team plan"}, list(NAMED_DOCUMENT_IDS),
     )
 
 
@@ -556,15 +562,35 @@ def test_an_agent_whose_actions_cannot_be_resolved_is_not_offered(wf):
     assert PERSONAL_AGENT_ID not in json.dumps(context["handles"])
 
 
-def test_documents_are_the_users_own_or_workspace_documents_selected_first(wf):
+def test_documents_are_the_users_own_or_workspace_documents_it_named(wf):
     documents = _documents(wf)
+    # Named order is kept; an id the authority check did not return is left out.
     assert [document["document_id"] for document in documents] == [
         GROUP_DOCUMENT_ID, OWN_DOCUMENT_ID, SHARED_DOCUMENT_ID, CHAT_DOCUMENT_ID, PUBLIC_DOCUMENT_ID,
     ]
+    assert documents[0]["name"] == "Team plan" and documents[1]["name"] == "Weekly priorities.docx"
     context = _build(wf, [])
     records = list(context["handles"]["documents"].values())
     assert SHARED_DOCUMENT_ID not in json.dumps(records) and CHAT_DOCUMENT_ID not in json.dumps(records)
     assert wf.workflow_planning_documents(None, None, None) == []
+
+
+def test_probe_candidates_the_user_did_not_name_never_reach_the_catalog(wf):
+    # enrich_planner_candidates authorizes every candidate, including the ones the pipeline's
+    # search probe found; only the documents the user named (picks and # references) are offered.
+    scopes = deepcopy(DOCUMENT_SCOPES)
+    assert wf.workflow_planning_documents(scopes, {}, []) == []
+    assert wf.workflow_planning_documents(scopes) == []
+    named = wf.workflow_planning_documents(scopes, {}, [OWN_DOCUMENT_ID, 42, None, OWN_DOCUMENT_ID])
+    assert [document["document_id"] for document in named] == [OWN_DOCUMENT_ID]
+    context = wf.build_workflow_planning_context(
+        deepcopy(AGENT_SETTINGS), user_id=OWNER, user_info=deepcopy(USER_INFO), conversation=deepcopy(PRIVATE),
+        time_zone="UTC", now=NOW, documents=named, readers=_readers([]),
+    )
+    records = list(context["handles"]["documents"].values())
+    assert records == [{"document_id": OWN_DOCUMENT_ID, "scope_type": "personal", "scope_id": OWNER}]
+    for probe_only in (GROUP_DOCUMENT_ID, PUBLIC_DOCUMENT_ID):
+        assert probe_only not in json.dumps(context["handles"])
 
 
 def test_hostile_and_long_text_becomes_one_bounded_line(wf):
@@ -642,7 +668,7 @@ def test_the_catalog_drops_workflows_then_documents_then_sources_then_agents(wf)
     }
     context = wf.build_workflow_planning_context(
         deepcopy(AGENT_SETTINGS), user_id=OWNER, user_info=deepcopy(USER_INFO), conversation=deepcopy(PRIVATE),
-        time_zone="UTC", now=NOW, documents=wf.workflow_planning_documents(source_scopes),
+        time_zone="UTC", now=NOW, documents=wf.workflow_planning_documents(source_scopes, None, list(source_scopes)),
         readers=_readers(
             [], personal_agents=lambda user_id: deepcopy(many_agents), global_agents=lambda: [],
             sources=lambda *args: deepcopy(many_sources), workflows=lambda user_id: deepcopy(many_workflows),
@@ -840,6 +866,56 @@ def test_the_source_check_names_each_authorized_documents_scope(modules, monkeyp
     assert scopes == {
         OWN_DOCUMENT_ID: {"scope": "personal", "scope_id": OWNER, "file_name": "Weekly priorities.docx"},
     }
+
+
+def test_a_document_named_with_hash_is_offered_and_one_only_the_probe_found_is_not(modules, wf, monkeypatch):
+    context_module = importlib.import_module("functions_orchestration_context")
+    access = importlib.import_module("functions_orchestration_source_access")
+    manifest = {
+        OWN_DOCUMENT_ID: {
+            "document_id": OWN_DOCUMENT_ID, "source_kind": "narrative", "authorization_status": "authorized",
+            "scope": "personal", "scope_id": OWNER, "file_name": "Weekly priorities.docx",
+        },
+        GROUP_DOCUMENT_ID: {
+            "document_id": GROUP_DOCUMENT_ID, "source_kind": "narrative", "authorization_status": "authorized",
+            "scope": "group", "scope_id": GROUP_ID, "file_name": "team-plan.pdf",
+        },
+    }
+    monkeypatch.setattr(
+        access, "resolve_orchestration_source_manifest",
+        lambda batch, user_id, **kwargs: [deepcopy(manifest[document_id]) for document_id in batch],
+    )
+    # The user picked nothing and accepted one # reference; the search probe found another document.
+    seeds = context_module.merge_elicitation_context({}, {"question-1": {"references": [{
+        "kind": "document", "id": GROUP_DOCUMENT_ID, "scope": {"kind": "group", "id": GROUP_ID}, "label": "Team plan",
+    }]}})
+    assert seeds["document_ids"] == [GROUP_DOCUMENT_ID]
+    candidates = [
+        {"document_id": OWN_DOCUMENT_ID, "file_name": "Weekly priorities.docx", "score": 0.9},
+        {"document_id": GROUP_DOCUMENT_ID, "file_name": "Team plan", "score": 0.8},
+    ]
+    scopes = {}
+    enriched = context_module.enrich_planner_candidates(
+        deepcopy(candidates), OWNER, conversation_id="conversation-1", seeds=seeds, source_scopes=scopes,
+    )
+    # Both pass the authority check, so either may ground this turn's answer.
+    assert sorted(scopes) == sorted([OWN_DOCUMENT_ID, GROUP_DOCUMENT_ID])
+
+    # The request path's own inputs: the checked scopes, the candidates' labels and the named ids.
+    documents = wf.workflow_planning_documents(
+        scopes, modules.route._document_labels(enriched), seeds.get("document_ids"),
+    )
+    context = wf.build_workflow_planning_context(
+        deepcopy(AGENT_SETTINGS), user_id=OWNER, user_info=deepcopy(USER_INFO), conversation=deepcopy(PRIVATE),
+        time_zone="UTC", now=NOW, documents=documents, readers=_readers([]),
+    )
+    # The named document is offered under its checked file name; nothing of the probe's is offered.
+    assert [entry["name"] for entry in context["catalog"]["documents"]] == ["team-plan.pdf"]
+    assert list(context["handles"]["documents"].values()) == [
+        {"document_id": GROUP_DOCUMENT_ID, "scope_type": "group", "scope_id": GROUP_ID},
+    ]
+    offered = json.dumps(context["catalog"]) + json.dumps(context["handles"])
+    assert OWN_DOCUMENT_ID not in offered and "Weekly priorities" not in offered
 
 
 def _frames(response):
