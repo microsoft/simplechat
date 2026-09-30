@@ -125,7 +125,32 @@ def _bind_active_run(services, workflow, run_id, *, runtime_version=1):
     raise WorkflowRuntimeConflict("workflow_definition_changed")
 
 
-def queue_durable_workflow_run(workflow, *, actor_user_id, trigger_source="manual", request_id=None, invocation_metadata=None):
+def _request_id(request_id):
+    if request_id is not None and not isinstance(request_id, str):
+        raise ValueError("A workflow request identifier must be a UUID string.")
+    return str(uuid.UUID(request_id)) if request_id is not None else str(uuid.uuid4())
+
+
+def _run_id(partition, workflow_id, request_id):
+    return str(uuid.uuid5(uuid.NAMESPACE_URL, f"workflow:{partition}:{workflow_id}:{request_id}"))
+
+
+def workflow_run_id_for_request(workflow, request_id):
+    """The run id ``queue_durable_workflow_run`` gives ``workflow`` for ``request_id``.
+
+    The id is deterministic, so a caller that must never start a second run for one request can
+    look its run up before queueing. ``workflow`` needs ``id`` and ``user_id``, or ``group_id``
+    for a group workflow: the partition is chosen the way ``_services`` chooses it.
+    """
+    if not isinstance(request_id, str):
+        raise ValueError("A workflow request identifier must be a UUID string.")
+    return _run_id(workflow.get("group_id") or workflow["user_id"], workflow["id"], _request_id(request_id))
+
+
+def queue_durable_workflow_run(
+    workflow, *, actor_user_id, trigger_source="manual", request_id=None, invocation_metadata=None,
+    chat_invocation=None,
+):
     services = _services(workflow)
     settings = services["settings"]()
     current = services["load_workflow"]()
@@ -142,10 +167,8 @@ def queue_durable_workflow_run(workflow, *, actor_user_id, trigger_source="manua
         from functions_workflow_loop_runners import validate_workflow_loop_runners
 
         validate_workflow_loop_runners(current, actor_user_id=actor_user_id, settings=settings)
-    if request_id is not None and not isinstance(request_id, str):
-        raise ValueError("A workflow request identifier must be a UUID string.")
-    request_id = str(uuid.UUID(request_id)) if request_id is not None else str(uuid.uuid4())
-    run_id = str(uuid.uuid5(uuid.NAMESPACE_URL, f"workflow:{services['partition']}:{current['id']}:{request_id}"))
+    request_id = _request_id(request_id)
+    run_id = _run_id(services["partition"], current["id"], request_id)
     if current.get("active_run_id") not in (None, "", run_id):
         raise WorkflowRuntimeConflict("workflow_already_running")
     snapshot = _snapshot(current)
@@ -201,6 +224,9 @@ def queue_durable_workflow_run(workflow, *, actor_user_id, trigger_source="manua
     }
     if invocation_metadata is not None:
         run["mcp_invocation"] = deepcopy(invocation_metadata)
+    if chat_invocation is not None:
+        # Which chat orchestration step started this run, for the requester's own run history.
+        run["chat_invocation"] = deepcopy(chat_invocation)
     try:
         saved = services["runs"].read_item(item=run_id, partition_key=services["partition"])
     except CosmosResourceNotFoundError:

@@ -791,6 +791,8 @@ class HarnessExecution:
                 "user_id": user_id, "active_group_ids": seeds.get("active_group_ids") or [],
             },
             agent_execution_identity=principal, plan_contract_version=2,
+            attempt_root_run_id=self.record.get("attempt_root_run_id") or self.record["id"],
+            signed_in_session=getattr(principal, "bridge", None) is not None,
             **workflow_run_options(
                 workflow_planning, self.record.get("time_zone") if workflow_configured else None,
             ),
@@ -1011,6 +1013,8 @@ class HarnessExecution:
             },
             user_roles=identity.get("user_roles") or [], user_email=principal.email,
             user_enable_agents=False, agent_execution_identity=principal,
+            attempt_root_run_id=self.record.get("attempt_root_run_id") or self.record["id"],
+            signed_in_session=getattr(principal, "bridge", None) is not None,
             plan_contract_version=2, result_service=self.services.results,
             task_results={name: TaskResult.from_dict(value) for name, value in tasks.items()},
             execution_deadline_at=self.record["execution_deadline_at"],

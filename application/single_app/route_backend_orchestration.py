@@ -1283,10 +1283,13 @@ def _validate_retry_context(record, user_id, settings, *, preparing=False):
         settings, user_id=user_id, seeds=answer_selection(record['plan'], seeds), identity_context=identity,
     )
     try:
+        principal = capture_execution_identity(user_id, conversation_id)
         context = RunContext(
             run_id=record['id'], plan_id=record['plan'].get('plan_id'),
             conversation_id=conversation_id, user_id=user_id,
             attempt_index=record.get('attempt_index') or 1,
+            attempt_root_run_id=record.get('attempt_root_run_id') or record['id'],
+            signed_in_session=getattr(principal, 'bridge', None) is not None,
             plan_contract_version=contract_version,
             user_message=record.get('user_message'), user_message_id=record.get('user_message_id'),
             answered_questions=record.get('answered_questions') or [],
@@ -1309,7 +1312,7 @@ def _validate_retry_context(record, user_id, settings, *, preparing=False):
                 'model_id': model.model_id, 'endpoint_id': model.endpoint_id,
                 'provider': model.provider, 'model_deployment': model.deployment,
             },
-            agent_execution_identity=capture_execution_identity(user_id, conversation_id),
+            agent_execution_identity=principal,
             **workflow_run_options(
                 workflow_planning,
                 record.get('time_zone') if workflow_proposals_configured(settings) else None,

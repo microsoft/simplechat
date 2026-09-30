@@ -1375,8 +1375,12 @@ FAILURE_MESSAGES = {
     'result_unavailable': 'A required retained result is unavailable or changed. No preview was substituted.',
     'external_session_required': (
         'This step continued in the background, where your sign-in is not available to confirm '
-        'access to web search, web pages, deep research, agents or actions. Send the request '
-        'again to use them.'
+        'access to web search, web pages, deep research, agents or actions, or to start a saved '
+        'workflow. Send the request again to use them.'
+    ),
+    'workflow_runtime_unavailable': (
+        'Saved workflows were temporarily unavailable, so this workflow may not have started. '
+        "Retrying is safe: a workflow this plan already started won't start again."
     ),
     'result_invalid': 'The operation did not produce the complete named results declared by the plan.',
     'result_input_too_large': 'The complete named inputs exceed the selected model budget. No input was truncated. Use a larger model or revise the plan.',
