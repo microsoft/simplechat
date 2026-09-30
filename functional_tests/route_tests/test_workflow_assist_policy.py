@@ -2,13 +2,16 @@
 # test_workflow_assist_policy.py
 """
 Functional policy tests for the AI workflow assistant route.
-Version: 0.261.205
-Implemented in: 0.261.205
+Version: 0.261.206
+Implemented in: 0.261.206
 
 This test ensures that ``POST /api/user/workflows/assist`` keeps its Blueprint, Swagger and gate
 order, that each gate refuses before any service starts, that the body is read as bounded strict
 JSON, and that every refusal keeps its status, closed code and ``Retry-After`` header without
-echoing request content, model output or settings.
+echoing request content, model output or settings. It also ensures the answer is strict JSON the
+browser can read, so a result carrying a number JSON can't hold becomes a content-free
+``assistant_failed``, and that ``is_workflow_assistant_enabled_for_user``, which gates the route and
+sets the V2 bootstrap's ``enable_workflow_ai_assistant`` flag, follows the personal-workflow gate.
 
 The real route body, its helpers and the real gate decorators from ``functions_settings.py`` run on
 a closed Flask app over the real assist core. The services are the shared fakes with a scripted
@@ -17,6 +20,7 @@ model. No live application, permissions, credentials, model or Azure service is 
 
 import ast
 import copy
+import itertools
 import json
 import logging
 import sys
@@ -24,7 +28,7 @@ from functools import wraps
 from pathlib import Path
 
 import pytest
-from flask import Flask, jsonify, request
+from flask import Flask, current_app, jsonify, request
 from werkzeug.exceptions import BadRequest, RequestEntityTooLarge
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -40,11 +44,14 @@ from test_support.versioning import assert_app_version_at_least  # noqa: E402
 
 ROUTES = APP / "route_backend_workflows.py"
 SETTINGS_MODULE = APP / "functions_settings.py"
+BACKEND_V2 = APP / "route_backend_v2.py"
 ROUTE_PATH = "/api/user/workflows/assist"
-GATE_FUNCTIONS = (
+ROLE_FUNCTIONS = (
     "normalize_app_role_claims", "has_workflow_user_app_role", "is_user_workflows_enabled_for_user",
-    "is_workflow_assistant_enabled_for_user", "_is_api_request", "workflow_user_required",
-    "workflow_assistant_required", "enabled_required",
+    "is_workflow_assistant_enabled_for_user",
+)
+GATE_FUNCTIONS = (
+    *ROLE_FUNCTIONS, "_is_api_request", "workflow_user_required", "workflow_assistant_required", "enabled_required",
 )
 ROUTE_HELPERS = ("_workflow_assist_client", "_read_workflow_assist_body", "_workflow_assist_response")
 SECRET = "SECRET-SETTING-VALUE-7f3a"
@@ -132,6 +139,7 @@ class Harness:
         self.runs = []
         self.factory_calls = []
         self.build_error = None
+        self.result_hook = None
         self.stored = wa.stored_workflow()
         self.model = wa.ScriptedModel(RENAMED)
         self.limiter = wa.FakeLimiter()
@@ -154,6 +162,8 @@ class Harness:
             "workflow_assistant_required": gates["workflow_assistant_required"],
             "request": request,
             "jsonify": jsonify,
+            "json": json,
+            "current_app": current_app,
             "logging": logging,
             "get_settings": lambda: self.settings,
             "get_current_user_id": lambda: wa.USER_ID,
@@ -186,7 +196,8 @@ class Harness:
 
     def run_workflow_assist(self, body, *, user_id, services):
         self.runs.append(user_id)
-        return core.run_workflow_assist(body, user_id=user_id, services=services)
+        result = core.run_workflow_assist(body, user_id=user_id, services=services)
+        return self.result_hook(result) if self.result_hook is not None else result
 
     def resolve_model(self, settings):
         self.factory_calls.append(("model", settings))
@@ -218,6 +229,15 @@ def response_text(response):
     return response.get_data(as_text=True)
 
 
+def _no_constant(name):
+    raise ValueError(f"{name} is not JSON")
+
+
+def strict_json(text):
+    """``JSON.parse``: NaN and Infinity are not JSON."""
+    return json.loads(text, parse_constant=_no_constant)
+
+
 def assert_closed_error(response, status, code):
     assert response.status_code == status
     assert response.headers["Cache-Control"] == "no-store, private"
@@ -227,7 +247,7 @@ def assert_closed_error(response, status, code):
 
 
 def test_the_route_keeps_its_blueprint_swagger_and_gate_order():
-    assert_app_version_at_least("0.261.205")
+    assert_app_version_at_least("0.261.206")
     function = route_function()
     decorators = [ast.unparse(value) for value in function.decorator_list]
 
@@ -247,11 +267,14 @@ def test_an_available_assistant_answers_with_an_uncached_candidate(harness):
     response = harness.post()
 
     assert response.status_code == 200
+    assert response.mimetype == "application/json"
     assert response.headers["Cache-Control"] == "no-store, private"
     assert "Retry-After" not in response.headers
     assert (response.json["outcome"], response.json["candidate"]["name"]) == ("changed", "Nightly review")
     assert response.json["submission_id"] == "submission-0001"
     assert SECRET not in response_text(response)
+    # The answer is strict JSON, which the browser's response.json() reads.
+    assert strict_json(response_text(response)) == response.json
     # The core ran once, as the signed-in user, over the services built from the raw settings.
     assert harness.runs == [wa.USER_ID]
     [(settings, _factory)] = harness.built
@@ -331,13 +354,153 @@ def test_the_role_does_not_bypass_the_assistant_setting(harness):
     assert harness.reached_nothing()
 
 
+MISSING = object()
+ASSISTANT_ON = {
+    "allow_user_workflows": True, "require_member_of_workflow_user": False, "enable_workflow_ai_assistant": True,
+}
+
+
+def lifted_role_gates():
+    """The real personal-workflow and assistant gates from ``functions_settings.py``, outside a request."""
+    return run_source(top_level_functions(SETTINGS_MODULE, ROLE_FUNCTIONS), SETTINGS_MODULE, {
+        "WORKFLOW_USER_APP_ROLE": top_level_constant(SETTINGS_MODULE, "WORKFLOW_USER_APP_ROLE"),
+    })
+
+
+def settings_with(**changes):
+    settings = dict(ASSISTANT_ON)
+    for key, value in changes.items():
+        if value is MISSING:
+            settings.pop(key, None)
+        else:
+            settings[key] = value
+    return settings
+
+
+@pytest.mark.parametrize(("changes", "roles", "expected"), [
+    ({}, None, True),
+    ({}, ["Reader"], True),
+    ({"allow_user_workflows": False}, None, False),
+    ({"allow_user_workflows": MISSING}, None, False),
+    ({"allow_user_workflows": False}, ["WorkflowUser"], False),
+    ({"require_member_of_workflow_user": True}, None, False),
+    ({"require_member_of_workflow_user": True}, [], False),
+    ({"require_member_of_workflow_user": True}, ["Reader"], False),
+    ({"require_member_of_workflow_user": True}, ["WorkflowUser"], True),
+    ({"require_member_of_workflow_user": True}, ["workflowuser"], True),
+    ({"require_member_of_workflow_user": True}, ["WORKFLOWUSER"], True),
+    ({"require_member_of_workflow_user": True}, [" WorkflowUser "], True),
+    ({"require_member_of_workflow_user": True}, "WorkflowUser", True),
+    ({"require_member_of_workflow_user": True, "enable_workflow_ai_assistant": False}, ["WorkflowUser"], False),
+    ({"enable_workflow_ai_assistant": False}, None, False),
+    ({"enable_workflow_ai_assistant": MISSING}, None, False),
+    ({"enable_workflow_ai_assistant": None}, None, False),
+    ({"enable_workflow_ai_assistant": "true"}, None, False),
+    ({"enable_workflow_ai_assistant": 1}, None, False),
+], ids=[
+    "everything on", "another role without the requirement", "personal workflows off",
+    "personal workflows missing", "personal workflows off with the role", "role required, no roles",
+    "role required, empty roles", "role required, another role", "role required and held",
+    "role lower case", "role upper case", "role padded", "role as a bare string",
+    "role held, assistant off", "assistant off", "assistant missing", "assistant null",
+    "assistant string true", "assistant integer one",
+])
+def test_the_assistant_gate_follows_the_personal_workflow_gate(changes, roles, expected):
+    gate = lifted_role_gates()["is_workflow_assistant_enabled_for_user"]
+
+    enabled = gate(settings_with(**changes), user_roles=roles)
+
+    assert enabled is expected
+
+
+def test_no_settings_means_no_assistant():
+    gate = lifted_role_gates()["is_workflow_assistant_enabled_for_user"]
+
+    assert gate(None) is False
+    assert gate({}) is False
+    assert gate(None, user_roles=["WorkflowUser"]) is False
+
+
+def test_the_assistant_gate_is_the_personal_workflow_gate_plus_its_own_setting():
+    gates = lifted_role_gates()
+    personal_gate = gates["is_user_workflows_enabled_for_user"]
+    assistant_gate = gates["is_workflow_assistant_enabled_for_user"]
+    checked = 0
+
+    for allow, require, roles, assistant in itertools.product(
+        [True, False, MISSING], [True, False, MISSING], [None, ["Reader"], ["WorkflowUser"]],
+        [True, False, "true", 1, None, MISSING],
+    ):
+        settings = settings_with(
+            allow_user_workflows=allow, require_member_of_workflow_user=require, enable_workflow_ai_assistant=assistant,
+        )
+        personal = personal_gate(settings, user_roles=roles)
+        enabled = assistant_gate(settings, user_roles=roles)
+
+        assert enabled is (personal and assistant is True), (allow, require, roles, assistant)
+        checked += 1
+
+    assert checked == 3 * 3 * 3 * 6
+
+
+def bootstrap_function():
+    [bootstrap] = [
+        node for node in ast.walk(parsed_module(BACKEND_V2))
+        if isinstance(node, ast.FunctionDef) and node.name == "v2_bootstrap"
+    ]
+    return bootstrap
+
+
+def bootstrap_override(bootstrap, key):
+    """The expression the V2 bootstrap computes for one per-user feature flag."""
+    [overrides] = [
+        node.value for node in ast.walk(bootstrap)
+        if isinstance(node, ast.Assign)
+        and any(isinstance(target, ast.Name) and target.id == "per_user_overrides" for target in node.targets)
+    ]
+    assert isinstance(overrides, ast.Dict)
+    values = {
+        entry.value: value for entry, value in zip(overrides.keys, overrides.values)
+        if isinstance(entry, ast.Constant)
+    }
+    return values[key]
+
+
+def test_the_v2_bootstrap_reports_the_assistant_flag_from_the_gate():
+    bootstrap = bootstrap_function()
+    override = bootstrap_override(bootstrap, "enable_workflow_ai_assistant")
+    calls = [ast.unparse(node) for node in ast.walk(bootstrap) if isinstance(node, ast.Call)]
+
+    # 3c gates the Ask AI tab on this flag, so it is the route's own gate, applied over the forwarded setting.
+    assert ast.unparse(override) == "is_workflow_assistant_enabled_for_user(settings, user_roles=current_user_roles)"
+    assert "_build_feature_flags(public_settings, per_user_overrides)" in calls
+    build_feature_flags = run_source(
+        top_level_functions(BACKEND_V2, ("_build_feature_flags",)), BACKEND_V2, {},
+    )["_build_feature_flags"]
+    gate = lifted_role_gates()["is_workflow_assistant_enabled_for_user"]
+
+    def assistant_flag(settings, current_user_roles):
+        per_user_overrides = {
+            "enable_workflow_ai_assistant": gate(settings, user_roles=current_user_roles),
+        }
+        return build_feature_flags(dict(settings), per_user_overrides)["enable_workflow_ai_assistant"]
+
+    assert assistant_flag(ASSISTANT_ON, []) is True
+    assert assistant_flag(settings_with(allow_user_workflows=False), []) is False
+    assert assistant_flag(settings_with(allow_user_workflows=False), ["WorkflowUser"]) is False
+    assert assistant_flag(settings_with(require_member_of_workflow_user=True), []) is False
+    assert assistant_flag(settings_with(require_member_of_workflow_user=True), ["WorkflowUser"]) is True
+    assert assistant_flag(settings_with(enable_workflow_ai_assistant=False), []) is False
+
+
 @pytest.mark.parametrize(("data", "content_type"), [
     (b'{"instruction": "' + SENTINEL.encode() + b'"}', "text/plain"),
     (b'{"instruction": "' + SENTINEL.encode() + b'"', "application/json"),
     (b'{"instruction": NaN}', "application/json"),
+    (b'{"instruction": 1e999}', "application/json"),
     (b'{"instruction": "\xff\xfe"}', "application/json"),
     (b"", "application/json"),
-], ids=["not json", "malformed", "nan", "invalid utf-8", "empty"])
+], ids=["not json", "malformed", "nan", "overflowing number", "invalid utf-8", "empty"])
 def test_a_body_that_is_not_strict_json_is_refused_before_any_service(harness, data, content_type):
     response = harness.post(data=data, content_type=content_type)
 
@@ -458,6 +621,40 @@ def test_services_that_cannot_start_fail_without_detail(harness):
     assert harness.runs == [] and harness.limiter.events == []
     assert harness.logs == [("[WorkflowAssist] Assist services could not start", {
         "user_id": wa.USER_ID, "error_type": "RuntimeError",
+    }, logging.ERROR)]
+
+
+def _nested_past_the_recursion_limit():
+    value = []
+    for _ in range(100_000):
+        value = [value]
+    return value
+
+
+@pytest.mark.parametrize(("value", "error_type"), [
+    (float("nan"), "ValueError"),
+    (float("inf"), "ValueError"),
+    (float("-inf"), "ValueError"),
+    ({SENTINEL}, "TypeError"),
+    (_nested_past_the_recursion_limit(), "RecursionError"),
+], ids=["nan", "infinity", "negative infinity", "not json", "too deep"])
+def test_a_result_json_cannot_hold_fails_without_echoing_it(harness, value, error_type):
+    def poisoned(result):
+        result["candidate"]["schedule"] = {"unit": "minutes", "value": value}
+        return result
+
+    harness.result_hook = poisoned
+
+    response = harness.post()
+
+    assert_closed_error(response, 500, "assistant_failed")
+    assert set(response.json) == {"error", "code"}
+    assert "Retry-After" not in response.headers
+    text = response_text(response)
+    assert "NaN" not in text and "Infinity" not in text and "Nightly review" not in text
+    assert strict_json(text) == response.json
+    assert harness.logs == [("[WorkflowAssist] Assist response could not be serialized", {
+        "user_id": wa.USER_ID, "status": 200, "error_type": error_type,
     }, logging.ERROR)]
 
 

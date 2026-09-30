@@ -2,8 +2,8 @@
 # test_workflow_assist_field_parity.py
 """
 Functional test for the parity of the AI workflow assistant's field lists with the V2 editor.
-Version: 0.261.205
-Implemented in: 0.261.205
+Version: 0.261.206
+Implemented in: 0.261.206
 
 The assistant (functions_workflow_assist_editor.py) keeps its own copy of the lists that decide
 what an assist candidate may change, because the server is the source of truth for what it
@@ -98,7 +98,7 @@ def _alert_fields():
 
 
 def test_version_is_at_least_the_implementing_release():
-    assert_app_version_at_least("0.261.205")
+    assert_app_version_at_least("0.261.206")
 
 
 # ---------------------------------------------------------------------------------------------

@@ -2,8 +2,8 @@
 """
 Python mirror of the V2 workflow editor logic the AI workflow assistant depends on.
 
-Version: 0.261.205
-Implemented in: 0.261.205
+Version: 0.261.206
+Implemented in: 0.261.206
 
 The assistant returns a candidate that the V2 editor applies with ``applyAssist``. To check that
 candidate the way the editor and a save will, this module ports these pieces of ``application/v2_ui``:
@@ -17,9 +17,11 @@ candidate the way the editor and a save will, this module ports these pieces of 
 * The change keys and labels of ``diffWorkflowChanges`` (``lib/workflowChangeTracking.ts``), so each change
   the server reports names the key the editor's Jump to focuses.
 
-Two deliberate differences, both stricter than the editor: the flow of a structured workflow may not
-change at all (the editor allows flow edits that keep every ID's meaning), and ``flowUnsupportedReason``
-is not ported, so a flow the editor could not save still fails the save's own validation.
+Two deliberate differences. The flow of a structured workflow may not change at all, which is
+stricter than the editor (it allows flow edits that keep every ID's meaning). And
+``flowUnsupportedReason`` is not ported. The save's own validation refuses most of what it flags, but
+not every publication format: ``pdf``, ``docx`` or ``xml``, for example, passes the save and not the
+editor. No operation sets a publication, so only a draft that already has one is affected.
 
 The editor keeps a non-string ``trigger_type``, reference ``scope_type`` or task runner ``type`` whose
 ``String()`` is an allowed value (``['interval']`` reads as ``'interval'``); this port treats any
@@ -173,6 +175,16 @@ def _js_strict_equals(value, number):
     return _is_number(value) and value == number
 
 
+def _js_double(number):
+    """An integer as the double JavaScript holds: rounded past 2**53, and Infinity past the largest double."""
+    if -_JS_MAX_SAFE_INTEGER <= number <= _JS_MAX_SAFE_INTEGER:
+        return number
+    try:
+        return float(number)
+    except OverflowError:
+        return math.inf if number > 0 else -math.inf
+
+
 def _js_number(value):
     """JavaScript's ``Number(value)`` for the JSON values a definition can hold."""
     if value is UNDEFINED:
@@ -182,7 +194,7 @@ def _js_number(value):
     if isinstance(value, bool):
         return 1 if value else 0
     if _is_number(value):
-        return value
+        return _js_double(value) if isinstance(value, int) else value
     if isinstance(value, str):
         text = _js_trim(value)
         if not text:
@@ -197,7 +209,7 @@ def _js_number(value):
         if radix:
             base = {'x': 16, 'o': 8, 'b': 2}[radix.group(1).lower()]
             try:
-                return int(radix.group(2), base)
+                return _js_double(int(radix.group(2), base))
             except ValueError:
                 return math.nan
         return math.nan

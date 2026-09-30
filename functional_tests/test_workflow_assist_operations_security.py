@@ -2,8 +2,8 @@
 # test_workflow_assist_operations_security.py
 """
 Functional test for the AI workflow assistant's operation allowlist and prompt security.
-Version: 0.261.205
-Implemented in: 0.261.205
+Version: 0.261.206
+Implemented in: 0.261.206
 
 This test ensures that a model reply can only change what the V2 personal editor authors, through
 the operation allowlist: an operation outside the allowlist, a field an operation does not take, a
@@ -60,7 +60,7 @@ ALERT_RULE = {
 
 
 def test_version_is_at_least_the_implementing_release():
-    assert_app_version_at_least("0.261.205")
+    assert_app_version_at_least("0.261.206")
 
 
 def _refused_twice(reply_text, body=None, *, validated=False, **service_fields):
@@ -182,6 +182,56 @@ def test_the_allowlist_has_no_operation_that_names_a_forbidden_field():
     assert core.parse_model_output('```json\n{"outcome": "explained", "reply": "Done."}\n```') == {
         "outcome": "explained", "reply": "Done.",
     }
+
+
+# ---------------------------------------------------------------------------------------------
+# Replies that are not JSON as the browser reads it
+# ---------------------------------------------------------------------------------------------
+
+NOT_JSON = "The reply was not valid JSON. Reply with exactly one JSON object and nothing else."
+NOT_UNICODE_OR_TOO_DEEP = "The reply contains text that is not valid Unicode or is nested too deeply."
+
+
+def _interval_reply(value_text):
+    """A schedule change whose value is ``value_text``, exactly as the model wrote it."""
+    return (
+        '{"outcome": "changed", "reply": "Done.", "operations": '
+        '[{"op": "set_schedule_interval", "unit": "minutes", "value": ' + value_text + "}]}"
+    )
+
+
+@pytest.mark.parametrize("value_text", ["NaN", "Infinity", "-Infinity", "1e999", "-1.5E400", "1" * 400], ids=[
+    "nan", "infinity", "negative-infinity", "overflowing-exponent", "negative-overflowing-exponent",
+    "400-digit-integer",
+])
+def test_a_reply_with_a_non_finite_number_is_corrected_then_refused(value_text):
+    # JSON.parse refuses NaN and Infinity, and reads the others as Infinity, which JSON can't carry.
+    _error, model, bundle = _refused_twice(_interval_reply(value_text))
+    # Refused as it is read, before the operation schemas see it.
+    assert model.envelope(1)["previous_attempt_errors"] == [NOT_JSON]
+    assert wa.finished_log(bundle)["invalid_stage"] == "parse"
+
+
+def test_a_non_finite_number_can_be_corrected():
+    model = wa.ScriptedModel(_interval_reply("NaN"), _interval_reply("30"))
+    bundle = wa.services(model)
+    result = wa.run(wa.request_body(), bundle)
+    assert result["outcome"] == "changed"
+    assert result["candidate"]["schedule"] == {"unit": "minutes", "value": 30}
+    assert model.envelope(1)["previous_attempt_errors"] == [NOT_JSON]
+    assert wa.finished_log(bundle)["correction_count"] == 1
+
+
+@pytest.mark.parametrize("reply_text", [
+    '{"outcome": "changed", "reply": "Done.", "operations": [{"op": "set_name", "name": "Nightly \\ud800"}]}',
+    '{"outcome": "explained", "reply": "Done.", "\\udc00": "note"}',
+    '{"outcome": "explained", "reply": "Done.", "note": ' + "[" * (core.ASSIST_MAX_JSON_DEPTH + 50)
+    + "]" * (core.ASSIST_MAX_JSON_DEPTH + 50) + "}",
+], ids=["lone-surrogate-value", "lone-surrogate-key", "nested-past-the-depth-limit"])
+def test_a_reply_with_invalid_unicode_or_deep_nesting_is_corrected_then_refused(reply_text):
+    _error, model, bundle = _refused_twice(reply_text)
+    assert model.envelope(1)["previous_attempt_errors"] == [NOT_UNICODE_OR_TOO_DEEP]
+    assert wa.finished_log(bundle)["invalid_stage"] == "parse"
 
 
 # ---------------------------------------------------------------------------------------------

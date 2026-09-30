@@ -9,7 +9,7 @@ Selected-group context policy coverage: 0.261.126
 Group model endpoint policy coverage: 0.261.140
 Group directory policy coverage: 0.261.146
 Group membership policy coverage: 0.261.151
-Workflow assistant policy coverage: 0.261.205
+Workflow assistant policy coverage: 0.261.206
 
 This test ensures every SimpleChat route is assigned to a Blueprint-based
 security policy or an explicit reviewed route exemption.

@@ -1,8 +1,8 @@
 # workflow_assist.py
 """
 Shared fixtures for the AI workflow assistant tests (Phase 3b).
-Version: 0.261.205
-Implemented in: 0.261.205
+Version: 0.261.206
+Implemented in: 0.261.206
 
 A personal V2 workflow as the editor holds it, the editor options, a recording limiter, a scripted
 model and the service bundle ``run_workflow_assist`` takes, so each test states only what it
@@ -321,7 +321,9 @@ def refusal(body, bundle, user_id=USER_ID):
 def finished_log(bundle):
     """The single content-free record a request logs when it finishes."""
     records = [extra for message, extra, _level in bundle.logs if message == "[WorkflowAssist] Assist request finished"]
-    assert len(records) == 1, f"expected one finished record, saw {len(records)}"
+    # An explicit check, not ``assert``: this helper is not assert-rewritten, so ``-O`` would drop one.
+    if len(records) != 1:
+        raise AssertionError(f"expected one finished record, saw {len(records)}")
     return records[0]
 
 

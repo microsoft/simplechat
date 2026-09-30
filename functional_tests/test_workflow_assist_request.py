@@ -2,11 +2,12 @@
 # test_workflow_assist_request.py
 """
 Functional test for the AI workflow assistant's request contract.
-Version: 0.261.205
-Implemented in: 0.261.205
+Version: 0.261.206
+Implemented in: 0.261.206
 
 This test ensures that POST /api/user/workflows/assist checks its request strictly and never
-truncates it: the body is bounded, strict JSON; the fields are closed; the instruction is 1 to
+truncates it: the body is bounded, strict JSON whose every number is finite as JavaScript reads it
+(no NaN or Infinity, and no 1e999 or 400-digit integer); the fields are closed; the instruction is 1 to
 2,000 characters; the conversation holds at most 20 bounded turns; the base, time zone, focus and
 draft have the editor's shapes; `#` references are documents from the picker; and a group draft is
 refused. It also ensures the base is the caller's own saved workflow (404 otherwise) at the
@@ -18,6 +19,7 @@ The model is always scripted; nothing here reaches Azure or a model.
 
 import copy
 import json
+import math
 import sys
 from pathlib import Path
 
@@ -53,7 +55,7 @@ def _flow_stored():
 
 
 def test_version_is_at_least_the_implementing_release():
-    assert_app_version_at_least("0.261.205")
+    assert_app_version_at_least("0.261.206")
 
 
 # ---------------------------------------------------------------------------------------------
@@ -63,10 +65,35 @@ def test_version_is_at_least_the_implementing_release():
 @pytest.mark.parametrize("raw", [
     "not bytes", b"\xff\xfe{}", b'{"a": NaN}', b'{"a": Infinity}', b'{"a": -Infinity}', b"{", b"",
     b"[" * 50000 + b"]" * 50000,
-], ids=["text", "bad-utf8", "nan", "infinity", "negative-infinity", "truncated", "empty", "deep-nesting"])
+    b'{"a": 1e999}', b'{"a": -1e999}', b'{"a": [1.5E400]}', b'{"a": ' + b"1" * 400 + b"}",
+    b'{"a": ' + b"9" * 5000 + b"}",
+], ids=[
+    "text", "bad-utf8", "nan", "infinity", "negative-infinity", "truncated", "empty", "deep-nesting",
+    "overflowing-exponent", "negative-overflowing-exponent", "nested-overflowing-exponent", "400-digit-integer",
+    "integer-past-pythons-digit-limit",
+])
 def test_the_body_must_be_strict_json(raw):
     with pytest.raises(core.WorkflowAssistError) as caught:
         core.parse_assist_body(raw)
+    assert (caught.value.status, caught.value.code) == (400, "invalid_request")
+
+
+def test_every_finite_json_number_is_accepted_as_javascript_reads_it():
+    largest = int(sys.float_info.max)
+    # Written out in full, the largest double and an integer that rounds down to it are finite in
+    # JavaScript too, as is a fraction that underflows to zero.
+    raw = (
+        b'{"largest": ' + str(largest).encode() + b', "rounds_down": ' + str(largest + 2 ** 970 - 1).encode()
+        + b', "exponent": 1e308, "negative_zero": -0.0, "unsafe": 9007199254740993, "underflow": 1e-400}'
+    )
+    parsed = core.parse_assist_body(raw)
+    assert parsed["largest"] == largest and type(parsed["largest"]) is int
+    assert parsed["rounds_down"] == largest + 2 ** 970 - 1
+    assert (parsed["exponent"], parsed["unsafe"], parsed["underflow"]) == (1e308, 9007199254740993, 0.0)
+    assert math.copysign(1.0, parsed["negative_zero"]) == -1.0
+    # The integer halfway to 2**1024 rounds up to it, which JavaScript reads as Infinity.
+    with pytest.raises(core.WorkflowAssistError) as caught:
+        core.parse_assist_body(b'{"a": ' + str(largest + 2 ** 970).encode() + b"}")
     assert (caught.value.status, caught.value.code) == (400, "invalid_request")
 
 

@@ -93,7 +93,7 @@ for the daylight saving rules and the stored format.
 
 ### AI workflow assistant {#workflow-ai-assistant}
 
-Version **0.261.205** adds the server side of the AI workflow assistant. A person
+Version **0.261.206** adds the server side of the AI workflow assistant. A person
 editing a personal workflow can ask for a change in plain language, such as "run
 this at 7 AM on weekdays and only alert me when something is urgent", and gets a
 proposed edit that the V2 editor shows as highlighted, revertible changes. The

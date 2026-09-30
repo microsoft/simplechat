@@ -2,8 +2,8 @@
 # test_workflow_assist_dry_run_parity.py
 """
 Functional test for the AI workflow assistant's save check, over the real workflow store.
-Version: 0.261.205
-Implemented in: 0.261.205
+Version: 0.261.206
+Implemented in: 0.261.206
 
 This test ensures that the assistant checks a candidate exactly as saving it would. It runs the
 real personal workflow store and Phase 2's draft service over the recorded doubles of
@@ -16,6 +16,8 @@ real personal workflow store and Phase 2's draft service over the recorded doubl
   The weekday schedule and urgent-only alert rule from the roadmap's "Done when" save as checked;
 * a `#` document placed as a shared reference passes the save's reference check as the owner;
 * a new draft is checked as a new workflow;
+* a whole ``expected_count`` given as ``"12"`` or ``12.0`` is checked and saved as the integer 12,
+  as the editor's save sends it;
 * a change the real build refuses goes back to the model once, and a second refusal is a 502
   with nothing written;
 * a save that lands during the model call makes the request a 409 and leaves that save alone.
@@ -23,6 +25,7 @@ real personal workflow store and Phase 2's draft service over the recorded doubl
 The model is scripted; nothing here reaches Azure or a model.
 """
 
+import json
 import sys
 from pathlib import Path
 
@@ -85,7 +88,7 @@ def harness():
 
 
 def test_version_is_at_least_the_implementing_release():
-    assert_app_version_at_least("0.261.205")
+    assert_app_version_at_least("0.261.206")
 
 
 def _seed(harness, **fields):
@@ -271,6 +274,34 @@ def test_a_new_draft_is_checked_as_a_new_workflow(harness):
     dry = harness.call("dry_run_personal_workflow", OWNER_ID, checked, settings=harness.settings)
     assert dry["ok"] is True, dry["errors"]
     assert dry["workflow"]["name"] == "Nightly review"
+
+
+@pytest.mark.parametrize("expected_count", ["12", 12.0], ids=["numeric string", "whole float"])
+def test_a_whole_expected_count_is_checked_and_saved_as_an_integer(harness, expected_count):
+    # The editor's save sends Number('12') and 12.0 as the JSON integer 12, and the build refuses
+    # any count that is not an int, so the check has to see the same integer.
+    stored = _seed(harness)
+    writes = harness.writes()
+    draft = wa.editor_draft(stored)
+    wa.task_by_id(draft, "review")["output_contract"] = {"kind": "records", "expected_count": expected_count}
+    model = wa.ScriptedModel(wa.reply("changed", "Renamed it.", [{"op": "set_name", "name": "Nightly review"}]))
+    bundle = _services(harness, model)
+
+    with harness.guarded():
+        result = wa.run(wa.request_body(draft, stored=stored), bundle, user_id=OWNER_ID)
+
+    assert harness.writes() == writes
+    assert result["outcome"] == "changed"
+    assert "draft_has_errors" not in [warning["code"] for warning in result["warnings"]]
+    [checked] = _checked(bundle)
+    checked_count = wa.task_by_id(checked, "review")["output_contract"]["expected_count"]
+    assert type(checked_count) is int and checked_count == 12
+    projection, saved = _save_as_checked(harness, stored, result["candidate"])
+    # Type-strict: 12 == 12.0 in Python, but not in the JSON the build reads.
+    assert json.dumps(checked, sort_keys=True) == json.dumps(projection, sort_keys=True)
+    saved_count = wa.task_by_id(saved, "review")["output_contract"]["expected_count"]
+    assert type(saved_count) is int and saved_count == 12
+    assert saved["name"] == "Nightly review"
 
 
 def test_a_change_the_real_build_refuses_goes_back_once_and_a_second_refusal_is_a_502(harness):

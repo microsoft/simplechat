@@ -2,8 +2,8 @@
 """
 The AI workflow assistant: one instruction in, one validated candidate draft out.
 
-Version: 0.261.205
-Implemented in: 0.261.205
+Version: 0.261.206
+Implemented in: 0.261.206
 
 ``POST /api/user/workflows/assist`` hands this module the request body. It checks the request,
 shows the model the editor's draft through request-local handles, applies the model's allowlisted
@@ -31,6 +31,7 @@ Every service that reaches Azure is injected through ``WorkflowAssistServices``;
 import copy
 import json
 import logging
+import math
 import os
 import re
 import time
@@ -224,14 +225,41 @@ def _reject_constant(_name):
     raise ValueError('non-finite number')
 
 
+def _finite_float(text):
+    """A JSON number with a fraction or exponent; one that overflows, such as ``1e999``, is refused."""
+    value = float(text)
+    if not math.isfinite(value):
+        raise ValueError('non-finite number')
+    return value
+
+
+def _finite_int(text):
+    """A JSON integer; one too large for a double, which JavaScript reads as Infinity, is refused."""
+    value = int(text)
+    try:
+        float(value)
+    except OverflowError:
+        raise ValueError('non-finite number') from None
+    return value
+
+
+def _strict_json(text):
+    """JSON as the browser's ``JSON.parse`` reads it, with every number finite.
+
+    Python's parser also accepts ``NaN`` and ``Infinity``, and reads ``1e999`` or a 400-digit
+    integer as a number JavaScript cannot hold; each is refused with ``ValueError``.
+    """
+    return json.loads(text, parse_constant=_reject_constant, parse_float=_finite_float, parse_int=_finite_int)
+
+
 def parse_assist_body(raw):
-    """Decode the raw request body as strict JSON: UTF-8, no NaN or Infinity, bounded."""
+    """Decode the raw request body as strict JSON: UTF-8, finite numbers only, bounded."""
     if not isinstance(raw, (bytes, bytearray)):
         _refuse('invalid_request')
     if len(raw) > ASSIST_MAX_BODY_BYTES:
         _refuse('request_too_large')
     try:
-        return json.loads(bytes(raw).decode('utf-8'), parse_constant=_reject_constant)
+        return _strict_json(bytes(raw).decode('utf-8'))
     except (UnicodeDecodeError, ValueError, RecursionError):
         _refuse('invalid_request', 'The request body must be a JSON object.')
 
@@ -582,7 +610,7 @@ def parse_model_output(content):
     if fenced:
         text = fenced.group('body').strip()
     try:
-        output = json.loads(text, parse_constant=_reject_constant)
+        output = _strict_json(text)
     except (ValueError, RecursionError):
         raise _Correctable(
             ['The reply was not valid JSON. Reply with exactly one JSON object and nothing else.'], 'parse',

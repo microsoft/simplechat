@@ -10,7 +10,7 @@ import re
 import time
 from datetime import datetime, timezone
 
-from flask import Response, jsonify, request, session, stream_with_context
+from flask import Response, current_app, jsonify, request, session, stream_with_context
 from azure.core.exceptions import AzureError
 
 from background_tasks import acquire_distributed_task_lock, release_distributed_task_lock
@@ -1248,9 +1248,24 @@ def _read_workflow_assist_body():
     return parse_assist_body(raw)
 
 
-def _workflow_assist_response(payload, status, *, retry_after=None):
-    response = jsonify(payload)
-    response.status_code = status
+def _workflow_assist_response(payload, status, *, retry_after=None, user_id=None):
+    """The assist answer as strict JSON, uncached.
+
+    ``jsonify`` would write a non-finite number as ``NaN``, which the browser's ``response.json()``
+    cannot read, so such a payload is answered with the content-free ``assistant_failed`` instead.
+    """
+    try:
+        body = json.dumps(payload, allow_nan=False, sort_keys=True)
+    except (TypeError, ValueError, RecursionError) as exc:
+        log_event(
+            '[WorkflowAssist] Assist response could not be serialized',
+            extra={'user_id': user_id, 'status': status, 'error_type': type(exc).__name__},
+            level=logging.ERROR,
+        )
+        failure = WorkflowAssistError('assistant_failed')
+        body = json.dumps(failure.payload(), allow_nan=False, sort_keys=True)
+        status, retry_after = failure.status, None
+    response = current_app.response_class(f'{body}\n', status=status, mimetype='application/json')
     # The body carries the caller's draft, so no cache keeps it.
     response.headers['Cache-Control'] = 'no-store, private'
     if retry_after is not None:
@@ -1747,7 +1762,7 @@ def register_route_backend_workflows(bp):
             result = run_workflow_assist(body, user_id=user_id, services=services)
         except WorkflowAssistError as exc:
             return _workflow_assist_response(exc.payload(settings), exc.status, retry_after=exc.retry_after)
-        return _workflow_assist_response(result, 200)
+        return _workflow_assist_response(result, 200, user_id=user_id)
 
 
     @bp.route('/api/user/workflows/file-sync-sources', methods=['GET'])

@@ -1,4 +1,4 @@
-# Workflow AI Assistant (v0.261.205)
+# Workflow AI Assistant (v0.261.206)
 
 ## Overview
 
@@ -13,7 +13,7 @@ the editor's current draft, asks the model for a small set of allowlisted operat
 to a copy of the draft, checks the result the way a save would, and returns a candidate draft for
 the editor's `applyAssist` seam. The **Ask AI** tab that calls it comes in the next release.
 
-Implemented in version: **0.261.205**, tracked in `application/single_app/config.py`.
+Implemented in version: **0.261.206**, tracked in `application/single_app/config.py`.
 Phase 3b of the [chat orchestration workflows roadmap](CHAT_ORCHESTRATION_WORKFLOWS_ROADMAP.md)
 (#1548, part of #1543).
 
@@ -97,6 +97,11 @@ available.
 The body is a JSON object of at most 6 MiB, nested at most 200 levels deep. That's enough for a
 100-task draft. Unknown fields are refused. Nothing is truncated: input over a bound gets a 400.
 
+The body is read the way the browser's `JSON.parse` reads it, with every number finite. Python's
+parser also accepts `NaN`, `Infinity` and `-Infinity`, and reads `1e999` or a 400-digit integer as
+a number JavaScript can only hold as `Infinity`. All of them are refused with `invalid_request`, as
+is text with a lone surrogate.
+
 | Field | Required | Rules |
 | --- | --- | --- |
 | `submission_id` | Yes | The client's ID for this turn, used for idempotent logging and for 3c's turn reconciliation. Same format as the other assist routes. |
@@ -158,6 +163,11 @@ A `changed` reply whose operations leave the draft as it was becomes `explained`
 
 Every response carries `Cache-Control: no-store, private`, because the body holds the caller's
 draft.
+
+Responses are written as strict JSON (`allow_nan=False`), because `response.json()` in the browser
+can't read `NaN`. Strict parsing of the body and the model's reply means a candidate can't carry a
+non-finite number. If a result still can't be written, the endpoint returns 500 `assistant_failed`
+without echoing the value.
 
 ### Warnings
 
@@ -287,7 +297,8 @@ not editable.
 
 Each model reply goes through these steps:
 
-1. Parse the reply as one JSON object. One Markdown code fence is tolerated.
+1. Parse the reply as one JSON object, as strictly as the request body: finite numbers only, valid
+   Unicode, and at most 200 levels deep. One Markdown code fence is tolerated.
 2. Check the envelope and every operation against the schemas.
 3. Apply the operations to a deep copy of the submitted draft. It's a plain structural apply with
    no normalization and no default fill.
@@ -310,13 +321,29 @@ sent back.
 
 The editor draft isn't the save payload, so the endpoint doesn't hand the draft to the dry run
 directly. It mirrors `workflowForSave` in Python for the personal scope, where `file_sync` isn't
-sent. Two tests keep the port honest:
+sent. Two test files keep the port honest:
 
 - `test_workflow_assist_dry_run_parity.py` checks that the projection is what the dry run accepts.
 - `test_workflow_assist_candidate_parity.py` produces 24 candidates in Python and replays each one
   through the real V2 editor code under Node: `normalizeWorkflowDefinition`,
   `workflowAssistViolation`, `diffWorkflowChanges`, `workflowRunAsConsequence`, `workflowForSave`
   and `applyAssist`. The TypeScript and Python results must match exactly.
+- The same file also runs a corpus through the editor's own `Number()`,
+  `normalizeWorkflowDefinition` and `workflowForSave`. It covers numbers and numeric strings in
+  the forms the editor coerces:
+  - fullwidth digits
+  - radix prefixes
+  - `1e21` and `-0`
+  - integers past `Number.MAX_SAFE_INTEGER`
+  - single-element arrays
+
+  It also covers whitespace where JavaScript's `trim()` and Python's `strip()` disagree, such as
+  `\ufeff`, `\x1c` and `\x85`. The port must open, save and read every entry exactly as the
+  editor does. The comparison uses `json.dumps(sort_keys=True)` of both sides, so `12` and `12.0`
+  are different answers.
+
+A whole number the editor would save reaches the dry run as an `int`, as it would through JSON.
+For example, `output_contract.expected_count` given as `"12"` or `12.0` is checked as `12`.
 
 ### The model prompt
 
@@ -452,14 +479,17 @@ All tests use a scripted model. None calls a live model.
 
 | Test | Covers |
 | --- | --- |
-| `test_workflow_assist_request.py` | Request validation (sizes, shapes, the 2,000-character bound, turn counts, time zones, references and drafts) and authorization (group drafts, another user's draft or base, a stale or deleted base) |
-| `test_workflow_assist_operations_security.py` | Every forbidden field and escalation attempt, handle mapping, no raw IDs in the model messages, fenced and bounded excerpts |
+| `test_workflow_assist_request.py` | Request validation (sizes, shapes, the 2,000-character bound, turn counts, time zones, references and drafts), strict JSON (`NaN`, `Infinity`, `1e999` and overflowing integers are refused; every finite number is read as JavaScript reads it), and authorization (group drafts, another user's draft or base, a stale or deleted base) |
+| `test_workflow_assist_operations_security.py` | Every forbidden field and escalation attempt, handle mapping, no raw IDs in the model messages, fenced and bounded excerpts, and model replies with a non-finite number, a lone surrogate or nesting past the limit (corrected once, then 502) |
 | `test_workflow_assist_scenarios.py` | The roadmap's "Done when" cases, placement, the un-normalized candidate, the correction round and 502, warnings, deadlines and content-free telemetry |
-| `test_workflow_assist_dry_run_parity.py` | The Python `workflowForSave` projection against Phase 2's dry run |
+| `test_workflow_assist_dry_run_parity.py` | The Python `workflowForSave` projection against Phase 2's dry run, including a whole `expected_count` given as `"12"` or `12.0`, which is checked and saved as an `int` |
 | `test_workflow_assist_limits_runtime.py` | The limiter (in flight, window, `Retry-After`, refunds, fail closed), the model parameters and provider errors, the runtime adapters, and a whole request against stores that fail on any write other than the caller's rate-limit document |
 | `test_workflow_assist_field_parity.py` | The Python field lists, violation messages and editor vocabularies against the V2 TypeScript, read as text |
-| `test_workflow_assist_candidate_parity.py` | 24 Python candidates replayed through the real V2 editor code under Node |
-| `route_tests/test_workflow_assist_policy.py` | The decorator order, the gates and their status codes |
+| `test_workflow_assist_candidate_parity.py` | 24 Python candidates replayed through the real V2 editor code under Node, and the type-strict corpus of numbers, whitespace and JSON literals. A table of known JavaScript answers also runs without Node. |
+| `route_tests/test_workflow_assist_policy.py` | The decorator order, the gates and their status codes, `is_workflow_assistant_enabled_for_user` and the V2 bootstrap flag built from it, and strict response serialization |
+
+The Node tests build the editor code with the V2 app's esbuild, and skip when
+`application/v2_ui/node_modules` isn't installed.
 
 Run each file on its own with the pinned venv, for example:
 
@@ -480,6 +510,15 @@ python -u -m pytest functional_tests/test_workflow_assist_scenarios.py -q
   a generic "fails a save check" line. Structured errors from Phase 2 would let the correction
   round repair them.
 - **Very large drafts.** A draft over the prompt budget is refused rather than summarized.
+- **Unsupported publication or flow settings.** The editor's `workflowForSave` also refuses a
+  draft that `flowUnsupportedReason` flags, such as a publication task with an unsupported field or
+  completion policy. The Python port refuses only `editor_readonly_reason`. The save's own checks
+  catch most of these, but not every publication format. A `pdf`, `docx` or `xml` publication, for
+  example, passes them, while the editor accepts only `md`, `csv` and `json`. No operation sets
+  these fields, so the model
+  can't introduce one. But for a draft that already has one, a change can come back without
+  `draft_has_errors`, and the editor still won't save it. Porting `flowUnsupportedReason` is a
+  follow-up.
 - **A global cap.** The limits are per user. A global in-flight cap, like Score's cap of 8, is a
   possible follow-up; provider throttling already returns 503.
 - **The rate-limit message.** `assistant_rate_limited` carries the app's shared rate-limit message,
