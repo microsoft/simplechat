@@ -22,6 +22,7 @@ import {
     enhancedCitationImageUrl,
     enhancedCitationMediaUrl,
     enhancedCitationVisioUrl,
+    fetchCitation,
     fetchEnhancedCitationPdf,
     fetchTabularPreview,
     tabularWorkspaceDownloadUrl,
@@ -43,6 +44,8 @@ interface ViewerProps {
     metadata: EnhancedCitationMetadata;
     /** Called when this viewer cannot render, so the caller can show the text passage. */
     onFail: (reason: string) => void;
+    /** The citation being viewed, when known, so a viewer can show the cited passage too. */
+    citationId?: string;
 }
 
 function ViewerError({ message }: { message: string }) {
@@ -155,25 +158,102 @@ function PdfViewer({ docId, location, onFail }: ViewerProps) {
 /* Image                                                                       */
 /* -------------------------------------------------------------------------- */
 
-function ImageViewer({ docId, metadata, onFail }: ViewerProps) {
+/**
+ * What ingestion extracted from a cited image.
+ *
+ * An image has no page to scroll to, so the picture alone cannot show why it was cited. The
+ * cited passage is the text the assistant actually read -- any recognised text plus the
+ * image's description -- and is shown beneath the picture rather than instead of it.
+ * Nothing is drawn when the passage cannot be loaded; the image is still the source.
+ */
+function CitedImagePassage({
+    citationId,
+    docId,
+    location,
+}: {
+    citationId: string;
+    docId: string;
+    location: string;
+}) {
+    const [passage, setPassage] = useState<string | null>(null);
+    const [failed, setFailed] = useState(false);
+
+    useEffect(() => {
+        let cancelled = false;
+        setPassage(null);
+        setFailed(false);
+
+        fetchCitation({
+            citation_id: citationId,
+            document_id: docId || undefined,
+            page_number: location || undefined,
+        })
+            .then((result) => {
+                if (!cancelled) {
+                    setPassage(String(result?.cited_text ?? '').trim());
+                }
+            })
+            .catch(() => {
+                if (!cancelled) {
+                    setFailed(true);
+                }
+            });
+
+        return () => {
+            cancelled = true;
+        };
+    }, [citationId, docId, location]);
+
+    if (failed || passage === '') {
+        return null;
+    }
+
+    return (
+        <details
+            open
+            className="max-h-[40%] shrink-0 overflow-y-auto border-t border-edge px-5 py-3"
+        >
+            <summary className="cursor-pointer text-xs font-medium text-text-3 hover:text-text-1">
+                What was extracted from this image
+            </summary>
+            {passage === null ? (
+                <p className="mt-2 flex items-center gap-2 text-sm text-text-3">
+                    <Loader2 size={14} className="animate-spin" />
+                    Loading the cited passage…
+                </p>
+            ) : (
+                <p className="mt-2 text-sm leading-relaxed whitespace-pre-wrap text-text-1">
+                    {passage}
+                </p>
+            )}
+        </details>
+    );
+}
+
+function ImageViewer({ docId, location, metadata, onFail, citationId }: ViewerProps) {
     const [loading, setLoading] = useState(true);
 
     return (
-        <div className="flex min-h-0 flex-1 items-center justify-center overflow-auto p-4">
-            {loading && <ViewerLoading label="Loading the image…" />}
-            <img
-                src={enhancedCitationImageUrl(docId)}
-                alt={metadata.file_name || 'Cited image'}
-                onLoad={() => setLoading(false)}
-                onError={() => {
-                    setLoading(false);
-                    onFail('The image could not be loaded.');
-                }}
-                className={clsx(
-                    'max-h-full max-w-full rounded-xl object-contain',
-                    loading && 'hidden',
-                )}
-            />
+        <div className="flex min-h-0 flex-1 flex-col">
+            <div className="flex min-h-0 flex-1 items-center justify-center overflow-auto p-4">
+                {loading && <ViewerLoading label="Loading the image…" />}
+                <img
+                    src={enhancedCitationImageUrl(docId)}
+                    alt={metadata.file_name || 'Cited image'}
+                    onLoad={() => setLoading(false)}
+                    onError={() => {
+                        setLoading(false);
+                        onFail('The image could not be loaded.');
+                    }}
+                    className={clsx(
+                        'max-h-full max-w-full rounded-xl object-contain',
+                        loading && 'hidden',
+                    )}
+                />
+            </div>
+            {citationId ? (
+                <CitedImagePassage citationId={citationId} docId={docId} location={location} />
+            ) : null}
         </div>
     );
 }
@@ -426,6 +506,7 @@ export function EnhancedCitationViewer({
     metadata,
     onClose,
     onFallback,
+    citationId,
 }: {
     type: EnhancedCitationType;
     docId: string;
@@ -434,6 +515,8 @@ export function EnhancedCitationViewer({
     metadata: EnhancedCitationMetadata;
     onClose: () => void;
     onFallback: (reason: string) => void;
+    /** The citation being viewed; lets the image viewer show the cited passage. */
+    citationId?: string;
 }) {
     useEffect(() => {
         const onKeyDown = (event: KeyboardEvent) => {
@@ -453,6 +536,7 @@ export function EnhancedCitationViewer({
         location,
         metadata,
         onFail: handleFail,
+        citationId,
     };
 
     // Tabular has its own download endpoint; everything else uses the generic one.
