@@ -360,6 +360,11 @@ See [Orchestration settings](../../admin/orchestration.md).
    Workflows.
 4. **Open workflow** goes to the new workflow in Workflows.
 
+Once the workflow has run, and while **Use Workflow Results In Chat** is on, the
+user can ask chat about a finished run's stored result without running the
+workflow again. See [Workflow results in chat](CHAT_WORKFLOW_RESULTS_FOLLOW_UP.md)
+(#1546).
+
 The user guide is [Create a workflow](../../guides/create-a-workflow.md#create-a-workflow-from-chat),
 and the card's controls are listed in
 [Chat controls](../../reference/chat-controls.md#workflow-proposals-v2-interface).

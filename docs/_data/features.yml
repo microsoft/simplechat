@@ -453,9 +453,14 @@ workflow-results-in-chat:
   admin_tab: workflow
   setting_keys:
     - enable_chat_workflow_results
+  guides:
+    - title: "Ask about workflow results"
+      url: /guides/ask-about-workflow-results/
   reference:
     - title: "Workflow settings"
       url: /admin/workflow/
+    - title: "Chat interface controls"
+      url: /reference/chat-controls/
 core-actions:
   name: "Core actions"
   area: "Agents and actions"

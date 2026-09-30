@@ -257,3 +257,4 @@ See [Workflow publication completion](../explanation/features/WORKFLOW_PUBLICATI
 - [Create a workflow]({{ '/guides/create-a-workflow/' | relative_url }})
 - [Create a file sync]({{ '/guides/create-a-file-sync/' | relative_url }})
 - [Manage notifications]({{ '/guides/manage-notifications/' | relative_url }})
+- [Ask about workflow results]({{ '/guides/ask-about-workflow-results/' | relative_url }})
