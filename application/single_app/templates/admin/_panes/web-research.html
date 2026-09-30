@@ -29,14 +29,6 @@
                         value="{{ 'true' if settings.web_search_consent_accepted else 'false' }}"
                     >
 
-                    <!-- admin_orchestration_directory_access.js shows this when orchestrated web search cannot verify users. -->
-                    <div class="alert alert-warning small d-none" id="web-search-directory-access-alert" role="status" aria-live="polite">
-                        <i class="bi bi-shield-exclamation me-1"></i>
-                        <span data-directory-access-summary>Chat Orchestration can't verify that users may use web search, because SimpleChat can't read Microsoft Entra ID.</span>
-                        Web search steps in orchestrated chats fail until this is fixed.
-                        <a href="#chat-orchestration-directory-access-alert" data-admin-link="chat-orchestration-directory-access-alert">See how to fix it</a>.
-                    </div>
-
                     <div id="web_search_foundry_settings" class="{% if not settings.enable_web_search %}d-none{% endif %}">
                         <!-- User Notice Settings -->
                         <div class="card p-3 mb-3 bg-light">

@@ -1,7 +1,8 @@
 # functions_orchestration_external_configuration.py
 """Opaque invocation-configuration proof and capture-independent current reads.
 
-Version: 0.261.127
+Version: 0.261.205
+Research planner profile restriction removed in: 0.261.205
 
 The owning engines supply actual acquisition evidence. The application root
 supplies current metadata reads; this module discovers no settings or clients,
@@ -531,23 +532,6 @@ def _fetch_policy(settings, *, direct):
     return policy
 
 
-def is_research_acquisition_profile_supported(settings):
-    """Return whether normalized research settings avoid unattested planner calls."""
-    if type(settings) is not dict:
-        raise ResultContractError("external_configuration_invalid")
-    web_enabled = settings.get("enable_web_search", False)
-    if type(web_enabled) is not bool:
-        _invalid_metadata()
-    effective = get_source_review_config(settings)
-    return not (
-        web_enabled
-        and effective["deep_research_max_search_queries_per_turn"] > 1
-        and effective["deep_research_enable_query_planning"]
-        or effective["enable_deep_source_review"]
-        and effective["source_review_enable_llm_planning"]
-    )
-
-
 def _components(source_type, *, settings, source, selector, private_digest, require_run=False):
     source = _envelope(source)
     if source_type == "web":
@@ -901,11 +885,6 @@ class OrchestrationExternalConfigurationAttestor:
         if type(settings) is not dict or type(current_settings) is not dict:
             raise ResultContractError("external_configuration_invalid")
         _selector(source_type, selector)
-        if source_type == "deep_research" and (
-            not is_research_acquisition_profile_supported(current_settings)
-            or not is_research_acquisition_profile_supported(settings)
-        ):
-            raise ResultUnavailableError("external_configuration_research_profile_unsupported")
         current_selector, current_parts = self._current_components(
             source_type, producer=producer, settings=current_settings, source=current_source,
         )

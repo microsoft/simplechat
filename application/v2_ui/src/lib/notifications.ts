@@ -224,9 +224,6 @@ function describeType(type: string, category: string | undefined): Omit<Notifica
     if (type === 'key_vault_secret_expiring') {
         return { kind: 'security', label: 'Secret expiring' };
     }
-    if (type === 'orchestration_directory_access_unavailable') {
-        return { kind: 'security', label: 'Directory access' };
-    }
     if (type === 'system_announcement') {
         return { kind: 'announcement', label: 'Announcement' };
     }

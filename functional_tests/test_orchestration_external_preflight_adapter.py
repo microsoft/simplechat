@@ -1,10 +1,10 @@
 # test_orchestration_external_preflight_adapter.py
 """Strict invocation authorization and acquisition support for all five v2 adapters.
 
-Version: 0.261.204
+Version: 0.261.205
 Implemented in: 0.261.127
 Early acquisition-support regressions implemented in: 0.261.129
-Directory access refusal reasons implemented in: 0.261.204
+Missing signed-in session refusal reason implemented in: 0.261.205
 
 The auth-only runtime hook invokes the real provider before capture or engine
 setup. Capture separately invokes the real combined acquisition guard. The
@@ -296,15 +296,13 @@ def test_real_current_authority_overrides_stale_context_before_effects(authorize
     assert_no_effects(state)
 
 
-@pytest.mark.parametrize("reason", [
-    "external_identity_directory_permission_missing", "external_identity_directory_sign_in_failed",
-])
-def test_directory_refusal_keeps_only_its_reason_before_effects(authorized_runtime, reason):
-    # The application could not read Microsoft Entra ID; nothing was decided about the user.
+def test_missing_signed_in_session_keeps_only_its_reason_before_effects(authorized_runtime):
+    # A background continuation has no signed-in session to supply the user's roles.
     state = authorized_runtime
     results = importlib.import_module("functions_orchestration_results")
+    reason = "external_identity_session_unavailable"
     failure = results.ResultUnavailableError(reason)
-    failure.private_detail = "PRIVATE_DIRECTORY_ERROR"
+    failure.private_detail = "PRIVATE_SESSION_DETAIL"
     state.provider.read_identity = Mock(side_effect=failure)
     with pytest.raises(PermissionError) as caught:
         execute(state)

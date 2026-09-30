@@ -533,20 +533,20 @@ def get_deep_research_config(settings: Optional[Dict[str, Any]]) -> Dict[str, An
 
 
 def capture_research_planner_configuration(*, settings, planner_client, planner_model, invocation_capture):
-    """Attest the actual research constructor only for non-model planning profiles."""
+    """Attest the actual research planner constructor before planning or acquisition.
+
+    Query and link planning keep their Source Review settings; the captured policy
+    records those flags, so a later settings change is detected at admission.
+    """
     capture = require_invocation_capture(invocation_capture)
     if capture is None:
         return
 
     # These owners depend on Source Review; load them only after application initialization.
-    from functions_orchestration_external_configuration import (
-        EXTERNAL_ACQUISITION_VERSION, is_research_acquisition_profile_supported,
-    )
+    from functions_orchestration_external_configuration import EXTERNAL_ACQUISITION_VERSION
     from functions_orchestration_models import OrchestrationModelError, get_planner_acquisition_configuration
 
     try:
-        if not is_research_acquisition_profile_supported(settings):
-            capture.refuse()
         configuration = get_planner_acquisition_configuration(planner_client)
         if type(planner_model) is not str or planner_model != configuration["deployment"]:
             raise OrchestrationModelError()

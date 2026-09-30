@@ -1,18 +1,20 @@
 # functions_orchestration_bootstrap.py
 """Application-owned factories shared by web requests and scheduler continuations.
 
-Version: 0.261.204
+Version: 0.261.205
 
 Unlike the result/rendering services, this is an application composition root.
 Import it only after config has initialized the existing clients. Registering the
 artifact factory performs no I/O; each use rebuilds current actor/source access.
+External-source identity trusts the signed-in session's app roles, like classic
+chat, and makes no Microsoft Graph calls (0.261.205).
 """
 
 import hashlib
 import hmac
 from copy import deepcopy
 
-import requests
+from flask import has_request_context
 
 import config
 from agent_execution_context import capture_execution_identity
@@ -22,11 +24,6 @@ from functions_orchestration_artifacts import (
     OrchestrationArtifactTransport,
     OrchestrationOutputCleanupService,
     configure_orchestration_artifact_service,
-)
-from functions_orchestration_directory_access import directory_access_reason
-from functions_orchestration_directory_readiness import (
-    graph_directory_token_provider,
-    report_directory_access_failure,
 )
 from functions_orchestration_external_configuration import (
     OrchestrationExternalConfigurationAttestor, _read_metadata,
@@ -97,7 +94,23 @@ def private_external_configuration_digest(value):
 
 
 def build_external_identity_reader(actor_user_id, actor_conversation_id, *, execution_check=None):
-    """Create a lazy current-directory reader, never a saved-session role fallback."""
+    """Create a lazy current-access reader over the signed-in session's app roles.
+
+    Like classic chat, roles come from the signed-in session. They are captured
+    now, while the request context exists, because execution continues on a
+    worker thread. Without a matching session, as in a scheduler continuation,
+    every external-source read fails closed instead of restoring saved roles.
+    Conversation ownership and Control Center restrictions are still point-read
+    on each access. Nothing calls Microsoft Graph or persists roles.
+    """
+    session_roles, session_email = None, None
+    if has_request_context():
+        try:
+            identity = capture_execution_identity(actor_user_id, actor_conversation_id)
+        except PermissionError:
+            identity = None
+        if identity is not None:
+            session_roles, session_email = identity.roles, identity.email
     reader = None
     timeout = 10.0
 
@@ -110,7 +123,8 @@ def build_external_identity_reader(actor_user_id, actor_conversation_id, *, exec
             raise ResultUnavailableError("external_identity_access_denied") from None
 
     def read_user_settings(user_id):
-        authorize_conversation(user_id=user_id, conversation_id=actor_conversation_id)
+        if user_id != actor_user_id:
+            raise ResultUnavailableError("external_identity_access_denied")
         return _document_response(config.cosmos_user_settings_container.read_item(
             item=user_id, partition_key=user_id,
             connection_timeout=timeout, read_timeout=timeout, retry_total=0,
@@ -121,27 +135,16 @@ def build_external_identity_reader(actor_user_id, actor_conversation_id, *, exec
         if user_id != actor_user_id or conversation_id != actor_conversation_id:
             raise ResultUnavailableError("external_identity_access_denied")
         if reader is None:
-            # Optional directory authorization is initialized only when external data is accessed.
-            from functions_orchestration_external_identity import GraphExternalIdentityReader
+            # The reader is initialized only when external data is accessed.
+            from functions_orchestration_external_identity import SessionExternalIdentityReader
 
-            graph_base, graph_scope, app_client_id, get_access_token = graph_directory_token_provider(
-                timeout=timeout,
-            )
-            reader = GraphExternalIdentityReader(
+            reader = SessionExternalIdentityReader(
                 user_id=actor_user_id, conversation_id=actor_conversation_id,
-                app_client_id=app_client_id, graph_base_url=graph_base, graph_scope=graph_scope,
-                get_access_token=get_access_token, http_get=requests.get,
+                roles=session_roles, email=session_email,
                 authorize_conversation=authorize_conversation, read_user_settings=read_user_settings,
-                execution_check=execution_check, request_timeout=timeout,
+                execution_check=execution_check,
             )
-        try:
-            return reader(user_id=user_id, conversation_id=conversation_id)
-        except ResultUnavailableError as error:
-            reason = directory_access_reason(error)
-            if reason:
-                # The application, not this user, was refused; administrators have to act.
-                report_directory_access_failure(reason)
-            raise
+        return reader(user_id=user_id, conversation_id=conversation_id)
 
     return read_identity
 

@@ -1,13 +1,13 @@
 # test_orchestration_source_authority_runtime.py
 """V2 runtime/recovery must not turn uncertain source authority into a denial.
 
-Version: 0.261.204
+Version: 0.261.205
 Implemented in: 0.261.127
 Configuration, recovery and invocation-control coverage added in: 0.261.130
-Saved-wait directory refusal messages added in: 0.261.204
+Saved-wait missing signed-in session message added in: 0.261.205
 
 Real dispatch, composition, leases, checkpoints and retained-result recovery
-preserve typed screening, directory and configuration errors. Caller-owned
+preserve typed screening, identity and configuration errors. Caller-owned
 strict scopes fence caught failures; known holds and access denials keep their
 existing outcome.
 """
@@ -324,12 +324,11 @@ def test_saved_wait_uncertainty_never_clears_pending_results(
 
 
 @pytest.mark.parametrize("reason, code", [
-    ("external_identity_directory_permission_missing", "directory_access_unavailable"),
-    ("external_identity_directory_sign_in_failed", "directory_access_unavailable"),
+    ("external_identity_session_unavailable", "external_session_required"),
     ("external_identity_access_denied", "result_unavailable"),
 ])
-def test_saved_wait_directory_refusal_is_explained_to_the_user(waiting, monkeypatch, reason, code):
-    # Unlike uncertain authority, a refusal is a final answer for this wait.
+def test_saved_wait_without_a_signed_in_session_is_explained_to_the_user(waiting, monkeypatch, reason, code):
+    # A scheduler continuation has no signed-in session, so the wait ends with a clear next step.
     results = importlib.import_module("functions_orchestration_results")
     acquired = claim(waiting)
     context = waiting.fresh_context(acquired["record"])
@@ -337,12 +336,19 @@ def test_saved_wait_directory_refusal_is_explained_to_the_user(waiting, monkeypa
         waiting.runtime.executor, "resume_waiting_dependency_step",
         unavailable(results.ResultUnavailableError(reason)),
     )
+    logs = []
+    monkeypatch.setattr(
+        waiting.runtime.executor, "log_event",
+        lambda message, **kwargs: logs.append((message, kwargs.get("extra") or {})),
+    )
     result = waiting.run(acquired["record"], context)
     [resumed] = [step for step in result["steps"] if step["step_id"] == "failed"]
     assert result["status"] == "failed"
     assert resumed["status"] == "failed" and resumed["failure"]["code"] == code
     assert waiting.runtime.schema.FAILURE_MESSAGES[code] in result["message"]
     assert len(waiting.case.model.calls) == 1
+    [logged] = [extra for message, extra in logs if message.endswith("A saved wait could not be resumed.")]
+    assert logged["failure_code"] == code and logged["authority_reason"] == reason
 
 
 def test_saved_wait_metadata_failure_preserves_original_work(waiting, monkeypatch, metadata_failure):

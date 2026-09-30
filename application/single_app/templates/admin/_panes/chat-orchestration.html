@@ -26,47 +26,6 @@
                         <i class="bi bi-info-circle me-1"></i>
                         Available in the V2 interface only.
                     </div>
-
-                    <!-- admin_orchestration_directory_access.js shows the block that matches the check result. -->
-                    <div class="alert alert-warning small mt-3 mb-0 d-none" id="chat-orchestration-directory-access-alert" role="status" aria-live="polite">
-                        <div class="d-none" data-directory-access-state="permission_missing">
-                            <p class="fw-semibold mb-1">
-                                <i class="bi bi-shield-exclamation me-1"></i>SimpleChat can't read Microsoft Entra ID
-                            </p>
-                            <p class="mb-2">
-                                Before a plan uses <span data-directory-access-capabilities>web search or another external source</span>, Chat Orchestration rereads the user's current app roles from Microsoft Graph with this application's own identity. This app registration is missing the Microsoft Graph <strong>Directory.Read.All</strong> application permission, or it has not been given administrator consent, so those steps fail for every user and they are told to contact an administrator.
-                            </p>
-                            <p class="mb-1">
-                                To fix it, open <strong>Microsoft Entra ID &gt; App registrations</strong>, select this app, choose <strong>API permissions &gt; Add a permission &gt; Microsoft Graph &gt; Application permissions</strong>, add <strong>Directory.Read.All</strong>, then select <strong>Grant admin consent</strong>. Granting consent needs a Global Administrator or Privileged Role Administrator. Or run:
-                            </p>
-                            <pre class="small border rounded p-2 mb-2"><code data-directory-access-commands></code></pre>
-                        </div>
-                        <div class="d-none" data-directory-access-state="sign_in_failed">
-                            <p class="fw-semibold mb-1">
-                                <i class="bi bi-shield-exclamation me-1"></i>SimpleChat can't sign in to Microsoft Entra ID
-                            </p>
-                            <p class="mb-2">
-                                Before a plan uses <span data-directory-access-capabilities>web search or another external source</span>, Chat Orchestration rereads the user's current app roles from Microsoft Graph with this application's own identity. Microsoft Entra ID refused that sign-in, so those steps fail for every user and they are told to contact an administrator.
-                            </p>
-                            <p class="mb-2">
-                                Check that the client secret in the <code>MICROSOFT_PROVIDER_AUTHENTICATION_SECRET</code> app setting is current for this app registration, and that its enterprise application is enabled for sign-in.
-                            </p>
-                        </div>
-                        <div class="d-none" data-directory-access-state="unverified">
-                            <p class="fw-semibold mb-1">
-                                <i class="bi bi-question-circle me-1"></i>Microsoft Entra ID access could not be confirmed
-                            </p>
-                            <p class="mb-2">
-                                Chat Orchestration needs to read Microsoft Entra ID before it uses <span data-directory-access-capabilities>web search or another external source</span>, and this check could not finish. Users may see the same failure. Check again in a few minutes; if it persists, review the <code>[ORCHESTRATION_DIRECTORY]</code> and <code>[ORCHESTRATION_EXECUTOR]</code> entries in Application Insights.
-                            </p>
-                        </div>
-                        <div class="d-flex flex-wrap align-items-center gap-2">
-                            <button type="button" class="btn btn-sm btn-outline-secondary" data-directory-access-recheck>
-                                <i class="bi bi-arrow-clockwise me-1"></i>Check again
-                            </button>
-                            <span class="text-muted" data-directory-access-detail></span>
-                        </div>
-                    </div>
                 </div>
 
                 <div class="card mb-3 p-3" id="chat-orchestration-approval-section">

@@ -154,9 +154,7 @@ The application uses Azure Active Directory (Entra ID) for user authentication a
 
         *   **(Conditional)** `Group.Read.All`: **Required if** you enable the **My Groups** feature or need to read group memberships and group details for group workspaces. This permission allows the app to list groups and read group properties and memberships in your organization. Add this permission if group-based collaboration or group document access is needed.
 
-    *   **(Conditional)** If you enable **Chat Orchestration** with web search, linked pages, deep research, agents, or actions, also add the **Application permission** `Directory.Read.All`: click **+ Add a permission** > **Microsoft Graph** > **Application permissions**, then select `Directory.Read.All`. Before a plan uses one of those sources, SimpleChat rereads the user's current app roles with the application's own identity, so a signed-in user's delegated permissions can't substitute for it. Without it, those steps fail for every user and Admin Settings shows a warning.
-
-    *   After adding permissions, click **Grant admin consent for [Your Tenant Name]**. This is crucial, especially for `*.All` permissions. Consent for the `Directory.Read.All` application permission requires a Global Administrator or Privileged Role Administrator.
+    *   After adding permissions, click **Grant admin consent for [Your Tenant Name]**. This is crucial, especially for `*.All` permissions.
 
 
 

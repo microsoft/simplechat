@@ -7,9 +7,8 @@ This module handles all operations related to notifications stored in the
 notifications container. Supports personal, group, and public workspace scoped
 notifications with per-user read/dismiss tracking.
 
-Version: 0.261.204
+Version: 0.234.032
 Implemented in: 0.234.032
-Orchestration directory access notification type added in: 0.261.204
 """
 
 # Imports (grouped after docstring)
@@ -35,7 +34,6 @@ WORKFLOW_ALERT_NOTIFICATION_TYPE = 'workflow_priority_alert'
 KEY_VAULT_SECRET_REMINDER_NOTIFICATION_TYPE = 'key_vault_secret_expiring'
 M365_APPROVAL_PENDING_NOTIFICATION_TYPE = 'm365_approval_pending'
 M365_APPROVAL_UPDATED_NOTIFICATION_TYPE = 'm365_approval_updated'
-ORCHESTRATION_DIRECTORY_ACCESS_NOTIFICATION_TYPE = 'orchestration_directory_access_unavailable'
 MAX_NOTIFICATION_IDEMPOTENCY_KEY_LENGTH = 512
 WORKFLOW_ALERT_PRIORITY_CONFIG = {
     'info': {
@@ -213,10 +211,6 @@ NOTIFICATION_TYPES = {
     },
     KEY_VAULT_SECRET_REMINDER_NOTIFICATION_TYPE: {
         'icon': 'bi-safe',
-        'color': 'warning'
-    },
-    ORCHESTRATION_DIRECTORY_ACCESS_NOTIFICATION_TYPE: {
-        'icon': 'bi-shield-exclamation',
         'color': 'warning'
     }
 }

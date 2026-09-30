@@ -2,8 +2,9 @@
 #!/usr/bin/env python3
 """
 Functional test for orchestration image references.
-Version: 0.261.192
+Version: 0.261.205
 Implemented in: 0.261.192
+Missing signed-in session failure for image inputs implemented in: 0.261.205
 
 This test ensures orchestration plans can seed, validate, bind, and execute image
 references without trusting planner or browser-supplied labels.
@@ -610,6 +611,31 @@ def test_adapter_fails_closed_without_an_authorized_reference_source(monkeypatch
 
     assert failed["status"] == "failed"
     assert failed["failure"]["code"] == "result_unavailable"
+    assert captured["generated"] == 0 and "resolved" not in captured and "persisted" not in captured
+
+
+@pytest.mark.parametrize("reason, code", [
+    ("external_identity_session_unavailable", "external_session_required"),
+    ("external_identity_access_denied", "result_unavailable"),
+])
+def test_adapter_explains_a_refused_retained_input(monkeypatch, reason, code):
+    """A background continuation has no signed-in session, so the image step asks for a resend."""
+    from functions_orchestration_results import ResultUnavailableError
+
+    images, context, step, captured = _adapter_harness(monkeypatch, execution_manifest=[_execution_source()])
+
+    class RefusedInput:
+        reference = "retained-web-result"
+
+        def recheck(self):
+            raise ResultUnavailableError(reason)
+
+    monkeypatch.setattr(images, "resolve_step_inputs", lambda step, context: {"facts": RefusedInput()})
+    failed = images.adapter_generate_image(step, context, settings={}, user_id="user-1")
+
+    assert failed["status"] == "failed"
+    assert failed["failure"]["code"] == code
+    assert reason not in failed["failure"]["message"]
     assert captured["generated"] == 0 and "resolved" not in captured and "persisted" not in captured
 
 

@@ -1,12 +1,15 @@
 # test_orchestration_research_capture.py
 """Bounded research acquisition through actual construction, engines and readers.
 
-Version: 0.261.139
+Version: 0.261.205
 Implemented in: 0.261.127
 Single orchestration contract updated in: 0.261.139
+Research planner request profiles admitted in: 0.261.205
 
 Only external storage, metadata/provider transport and page I/O are doubled.
 The real planner constructor, attestor, current reader and result facade run.
+Query and link planning call the run's own attested planner model.
+Refs microsoft/simplechat#1509.
 """
 
 from copy import deepcopy
@@ -124,6 +127,61 @@ def research(capture_runtime, metadata_world, monkeypatch):
         binding.close()
 
 
+PLANNED_QUERY = "Current source facts official announcements"
+CHILD_LINKS = (
+    "https://example.com/source/current-facts-news",
+    "https://example.com/source/current-facts-report",
+)
+
+
+def answer_planner(state):
+    """Let the attested research planner answer with JSON, recording what it was asked.
+
+    Each call records how many planner configurations were already attested, so a
+    test can prove the model was never reached before its constructor was captured.
+    """
+    calls = []
+
+    def reply(**kwargs):
+        system, request = kwargs["messages"][0]["content"], json.loads(kwargs["messages"][1]["content"])
+        attested = sum(1 for _, source in state.events if source and source["kind"] == "planner")
+        if "Deep Research web searches" in system:
+            kind = "query"
+            content = {"queries": [{"query": PLANNED_QUERY, "reason": "Official sources"}], "reason": "Planned"}
+        else:
+            kind = "link"
+            chosen = [candidate["url"] for candidate in request["candidates"]][-1:]
+            content = {
+                "selected_urls": [{"url": url, "reason": "Most relevant"} for url in chosen],
+                "needs_more_sources": False, "reason": "Planned",
+            }
+        calls.append({"kind": kind, "model": kwargs["model"], "attested": attested, "request": request})
+        return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content=json.dumps(content)))])
+
+    state.planner_calls.side_effect = reply
+    return calls
+
+
+def serve_linked_pages(state, monkeypatch):
+    """Give the seed page two same-site child links so link planning has a real choice."""
+    fetched = []
+    page_io = state.runtime.modules.review._fetch_source_page
+
+    async def linked_page(**kwargs):
+        result = await page_io(**kwargs)
+        fetched.append(kwargs["url"])
+        result["depth"] = kwargs.get("depth", 0)
+        if result["depth"] == 0:
+            result["links"] = [
+                {"url": url, "anchor_text": f"Current source facts {url.rsplit('-', 1)[-1]}", "same_domain": True}
+                for url in CHILD_LINKS
+            ]
+        return result
+
+    monkeypatch.setattr(state.runtime.modules.review, "_fetch_source_page", linked_page)
+    return fetched
+
+
 def test_research_consumes_the_canonical_descriptor_without_the_old_wrapper(research, monkeypatch):
     state = research
     models = state.metadata.modules.models
@@ -213,29 +271,46 @@ def test_real_research_constructor_and_search_events_survive_current_only_restar
     state.planner_calls.assert_not_called()
 
 
-@pytest.mark.parametrize("settings", [
-    {"deep_research_enable_query_planning": True, "deep_research_max_search_queries_per_turn": 2},
-    {"enable_deep_source_review": True, "source_review_enable_llm_planning": True},
-])
-def test_unattested_research_planner_request_profiles_stop_before_effects(research, settings):
+@pytest.mark.parametrize("profile", ["query-planning", "link-planning"])
+def test_research_planner_request_profiles_are_attested_before_the_model_runs(research, monkeypatch, profile):
+    """Version 0.261.205: model planning runs, but only after its constructor is captured."""
     state = research
-    state.runtime.settings.update(settings)
-    errors = importlib.import_module("functions_orchestration_invocation_capture")
-    capture = state.runtime.modules.adapters._external_invocation_capture(
-        state.step, state.context, state.runtime.settings, user_id="owner", capability_id="deep_research",
-    )
-    with pytest.raises(errors.OrchestrationInvocationCaptureError):
-        state.runtime.modules.review.capture_research_planner_configuration(
-            settings=state.runtime.settings, planner_client=state.context.planner_client,
-            planner_model=state.context.planner_deployment, invocation_capture=capture,
+    fetched = None
+    if profile == "query-planning":
+        state.runtime.settings.update(
+            deep_research_enable_query_planning=True, deep_research_max_search_queries_per_turn=2,
         )
-    assert state.events == []
-    with pytest.raises(PermissionError) as refused:
-        run_gather(state.runtime, "deep_research")
-    assert refused.value.code == "result_unavailable" and refused.value.retryable is False
-    assert state.runtime.state.web == state.runtime.state.pages == []
-    assert state.admissions == []
-    state.planner_calls.assert_not_called()
+    else:
+        state.runtime.settings.update(enable_deep_source_review=True, source_review_enable_llm_planning=True)
+        fetched = serve_linked_pages(state, monkeypatch)
+    before = deepcopy(state.runtime.settings)
+    calls = answer_planner(state)
+    _, result = run_gather(state.runtime, "deep_research")
+    assert result["status"] == "completed", result
+    assert [call["kind"] for call in calls] == ["query" if profile == "query-planning" else "link"]
+    assert all(call["attested"] > 0 and call["model"] == state.binding.deployment for call in calls)
+    planner_sources = [source for _, source in state.events if source and source["kind"] == "planner"]
+    assert all(source["model"]["deployment"] == state.binding.deployment for source in planner_sources)
+    if profile == "query-planning":
+        assert len(state.runtime.state.web) == 2
+        searched = [repr(invocation["messages"]) for invocation in state.runtime.state.invocations]
+        assert any(PLANNED_QUERY in text for text in searched)
+    else:
+        assert len(state.runtime.state.web) == 1
+        assert fetched[-1] == CHILD_LINKS[-1] and CHILD_LINKS[0] not in fetched
+    assert state.runtime.settings == before
+    task = state.retention.retain_gather_result(state.step, state.context, result, source_manifest=[])
+    assert len(state.admissions) == 1
+    fresh = state.make_attestor()
+    service = state.world.service(state.world.provider(read_configuration=fresh.current, configuration_admitter=None))
+    recovered = service.recover_task_result(
+        producer=state.context.result_producer(state.step), input_fingerprint=state.fingerprint,
+    )
+    assert recovered == task
+    reader = service.open_result(recovered.output("prepared"), require_current_sources=True)
+    assert reader.read_value() == state.admissions[0][0]
+    assert fresh._captures == {}
+    assert state.planner_calls.call_count == len(calls) == 1
 
 
 @pytest.mark.parametrize("mutation", ["foreign-client", "deployment", "closed", "completions", "model-binding"])

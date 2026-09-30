@@ -33,7 +33,8 @@ Two contracts live here:
     render through the very same card. Our own paging lives in a sibling ``ui_hints``
     field rather than inside the schema, which keeps the schema itself MCP-clean.
 
-Version: 0.261.141
+Version: 0.261.205
+Missing signed-in session reported as its own step failure in: 0.261.205
 """
 
 import hashlib
@@ -64,11 +65,10 @@ from functions_orchestration_registry import (
     resolve_available_capability_ids,
 )
 from functions_orchestration_result_contracts import (
-    IMAGE_ASSET_KIND, InputBinding, InputSpec, OutputSpec, RecordColumn, ResultContractError,
-    StepBindings, TaskResult, canonical_bytes, output_name, validate_input_bindings,
+    EXTERNAL_SESSION_UNAVAILABLE_REASON, IMAGE_ASSET_KIND, InputBinding, InputSpec, OutputSpec, RecordColumn,
+    ResultContractError, StepBindings, TaskResult, canonical_bytes, output_name, validate_input_bindings,
 )
 from functions_orchestration_deliverables import DeliverableError, compile_deliverables
-from functions_orchestration_directory_access import DIRECTORY_ACCESS_FAILURE_CODE
 
 ORCHESTRATION_ELICITATION_CONTRACT_VERSION = 2
 
@@ -1231,9 +1231,10 @@ FAILURE_MESSAGES = {
     'analysis_result_not_saved': 'The analysis completed, but its final data could not be saved for reuse.',
     'analysis_input_too_large': 'The complete saved analysis exceeds the selected model input budget. No data was truncated or re-analyzed. Select a larger model or use a supported complete-record reader.',
     'result_unavailable': 'A required retained result is unavailable or changed. No preview was substituted.',
-    DIRECTORY_ACCESS_FAILURE_CODE: (
-        "Unable to verify your permission to use web search and other external sources because "
-        "this application doesn't have access to Microsoft Entra ID. Please contact your administrator."
+    'external_session_required': (
+        'This step continued in the background, where your sign-in is not available to confirm '
+        'access to web search, web pages, deep research, agents or actions. Send the request '
+        'again to use them.'
     ),
     'result_invalid': 'The operation did not produce the complete named results declared by the plan.',
     'result_input_too_large': 'The complete named inputs exceed the selected model budget. No input was truncated. Use a larger model or revise the plan.',
@@ -1260,15 +1261,6 @@ FAILURE_MESSAGES = {
     LEGACY_PLAN_CODE: LEGACY_PLAN_MESSAGE,
 }
 
-# What a user was trying to do when the application could not read Microsoft Entra ID for them.
-DIRECTORY_ACCESS_ACTIVITIES = {
-    'web_search': 'use web search',
-    'url_fetch': 'read linked web pages',
-    'deep_research': 'use deep research',
-    'agent_invoke': 'use agents',
-    'action_invoke': 'use actions',
-}
-
 
 def build_failure(code='step_failed', *, step_id=None, capability_id=None, provider_status=None):
     """Only application-owned text may cross a failure boundary."""
@@ -1278,13 +1270,6 @@ def build_failure(code='step_failed', *, step_id=None, capability_id=None, provi
         result['step_id'] = _text(step_id, 200)
     if capability_id:
         result['capability_id'] = _text(capability_id, 100)
-        activity = DIRECTORY_ACCESS_ACTIVITIES.get(result['capability_id'])
-        if code == DIRECTORY_ACCESS_FAILURE_CODE and activity:
-            result['message'] = (
-                f"Unable to verify your permission to {activity} "
-                "because this application doesn't have access to Microsoft Entra ID. "
-                "Please contact your administrator."
-            )
     if isinstance(provider_status, int) and not isinstance(provider_status, bool) and 400 <= provider_status <= 599:
         result['provider_status'] = provider_status
         if code == 'provider_http_error':
@@ -1320,6 +1305,20 @@ def failure_from_exception(exc, *, answering=False, _depth=0):
     if cause is not None and cause is not exc and _depth < 3:
         return failure_from_exception(cause, answering=answering, _depth=_depth + 1)
     return build_failure('model_failed' if answering else 'step_failed')
+
+
+def access_failure(exc, *, _depth=0):
+    """Explain a refused retained source, naming a missing signed-in session when that was why.
+
+    Only the refusal's stable reason code is read, never exception text.
+    """
+    for reason in (getattr(exc, 'authority_reason', None), getattr(exc, 'code', None)):
+        if type(reason) is str and reason == EXTERNAL_SESSION_UNAVAILABLE_REASON:
+            return build_failure('external_session_required')
+    cause = getattr(exc, '__cause__', None)
+    if cause is not None and cause is not exc and _depth < 3:
+        return access_failure(cause, _depth=_depth + 1)
+    return build_failure('result_unavailable')
 
 
 # Failures one bounded retry of a read-only step could plausibly outlast. Configuration,

@@ -73,14 +73,6 @@ Terraform defaults to Azure AI Search Standard S1 with standard Semantic Ranker 
 
 Terraform also assigns the application managed identity the `SimpleChat Cosmos Throughput Operator` custom role on the deployed Cosmos account. It is limited to Cosmos account/database/container throughput discovery and mutation, throughput-operation reads, autoscale migration operations, and metrics reads; it does not replace Cosmos DB data-plane permissions. The optional Data Management source backup boost is capped at 10,000 RU/s and restores the captured capacity after completion, cancellation, failure, or durable recovery. Review the additional Cosmos cost before enabling it. Serverless, unsupported shared/dedicated throughput layouts, and capacity already above 10,000 RU/s remain portal-managed.
 
-## Microsoft Graph application permission
-
-Implemented in application version **0.261.204** and deployer version **1.0.33** (`deployers/version.txt`).
-
-Besides the delegated sign-in scopes, the app registration requests the Microsoft Graph **Directory.Read.All** application permission, and `azuread_app_role_assignment.msgraph_directory_read_all` grants administrator consent for it. Before a Chat Orchestration plan uses web search, linked pages, deep research, agents, or actions, SimpleChat rereads the user's current app roles from Microsoft Graph with the application's own identity. Without this permission those steps fail for every user, and Admin Settings shows a warning.
-
-Granting consent for a Microsoft Graph application permission requires the identity running Terraform to be a Global Administrator or Privileged Role Administrator, or, for a service principal, to hold `AppRoleAssignment.ReadWrite.All` and `Application.Read.All`. If your pipeline identity can't grant it, have an administrator select **Grant admin consent** on the app registration's **API permissions** page and then import the assignment into Terraform state.
-
 ## Key Vault secret-management permissions
 
 Implemented in application version **0.261.125** (`application/single_app/config.py`) and deployer version **1.0.32** (`deployers/version.txt`). Use Terraform **1.12.0 or later**, as required by `main.tf`.

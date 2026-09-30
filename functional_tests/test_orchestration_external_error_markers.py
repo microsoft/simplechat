@@ -1,8 +1,9 @@
 # test_orchestration_external_error_markers.py
 """
 Functional tests for safe external authority errors across invocation capture.
-Version: 0.261.127
+Version: 0.261.205
 Implemented in: 0.261.127
+Signed-in session identity messages updated in: 0.261.205
 
 Real identity/configuration exceptions preserve public codes, retryability and
 cancellation through initial and sticky capture failures without retaining the
@@ -50,7 +51,7 @@ SERVICE_CONTRACTS = (
             "external_identity_limit_exceeded": False,
             "external_identity_callback_invalid": False,
         },
-        "Current directory authorization could not be verified.",
+        "Current user authorization could not be verified.",
     ),
     (
         ExternalConfigurationServiceError,
@@ -72,7 +73,7 @@ SERVICE_CASES = [
 CANCEL_CASES = (
     (
         ExternalIdentityCancelledError, "external_identity_cancelled",
-        "Current directory authorization was cancelled.",
+        "Current user authorization was cancelled.",
     ),
     (
         ExternalConfigurationCancelledError, "external_configuration_cancelled",

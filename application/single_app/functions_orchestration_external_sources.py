@@ -1,7 +1,7 @@
 # functions_orchestration_external_sources.py
 """Server admission and current access for retained external content.
 
-Version: 0.261.139
+Version: 0.261.205
 
 No fetch, recall, plugin invocation, settings discovery, or credential persistence
 occurs here. Content digests attest the exact retained payload, not a remote page
@@ -66,11 +66,13 @@ MAX_CATALOG_ITEMS = 4096
 
 @dataclass(frozen=True)
 class CurrentExternalSourceIdentity:
-    """Returned by an owner callback that refreshes roles on EVERY access.
+    """Current actor identity returned by the owner's read_identity callback.
 
-    A saved RunContext, session/login-time role snapshot, or persisted token is
-    not a refresher. If current roles/account access cannot be established, the
-    callback must fail rather than construct this value from cached claims.
+    Roles come from the signed-in session, the same authority classic chat
+    trusts; conversation ownership and user access restrictions are re-read on
+    every access. A saved RunContext or persisted token is never a source of
+    roles. Without a signed-in session, the callback must fail rather than
+    construct this value.
     """
 
     user_id: str
@@ -141,7 +143,8 @@ class OrchestrationExternalSourceProvider:
     Catalog callbacks have the existing resolve_*_catalog protocol. Exact
     resolvers default to real agent/action authorization, not catalog membership
     alone. All callbacks run again on reads, including with a fresh provider and
-    an empty admission catalog. The owner must supply restart-capable callbacks.
+    an empty admission catalog. The owner must supply restart-capable callbacks;
+    read_identity refuses when no signed-in session is available.
     """
 
     def __init__(

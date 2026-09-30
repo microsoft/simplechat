@@ -1,12 +1,12 @@
 # test_orchestration_dependency_runtime.py
 """Real Gather / Reason / Render compiler, executor, composition, retained readers and checkpoints.
 
-Version: 0.261.204
+Version: 0.261.205
 Implemented in: 0.261.127
 Pending-Gather regression implemented in: 0.261.129
 Single orchestration contract updated in: 0.261.139
 Partial-input refusal diagnostics implemented in: 0.261.191
-Directory access failure messages implemented in: 0.261.204
+Missing signed-in session failure messages implemented in: 0.261.205
 External model/search/storage I/O is isolated; no paid or provider calls.
 """
 
@@ -323,19 +323,18 @@ def test_no_implicit_files_and_no_permission_from_plan_arguments(runtime, capabi
     assert after is True
 
 
-DIRECTORY_MESSAGE = (
-    "Unable to verify your permission to use web search because this application doesn't have "
-    "access to Microsoft Entra ID. Please contact your administrator."
-)
+SESSION_REASON = 'external_identity_session_unavailable'
+SESSION_MESSAGE = 'where your sign-in is not available to confirm access'
 
 
 @pytest.mark.parametrize('reason, code', [
-    ('external_identity_directory_permission_missing', 'directory_access_unavailable'),
-    ('external_identity_directory_sign_in_failed', 'directory_access_unavailable'),
+    (SESSION_REASON, 'external_session_required'),
+    ('external_identity_role_required', 'result_unavailable'),
     ('external_identity_access_denied', 'result_unavailable'),
     (None, 'result_unavailable'),
 ])
-def test_directory_refusal_tells_the_user_which_source_and_whom_to_contact(runtime, reason, code):
+def test_background_source_refusal_asks_the_user_to_send_the_request_again(runtime, monkeypatch, reason, code):
+    """Version 0.261.205: only a missing signed-in session gets its own explanation."""
     from functions_orchestration_invocation_capture import OrchestrationInvocationDeniedError
     case = runtime.make(
         [{'step_id': 'search', 'capability_id': 'web_search', 'arguments': {'query': 'Find current facts.'}}],
@@ -346,6 +345,10 @@ def test_directory_refusal_tells_the_user_which_source_and_whom_to_contact(runti
     case.context.external_source_preflight = lambda **kwargs: None
     case.context.capture_external_source_configuration = lambda *args, **kwargs: None
     case.context.result_service.access.external_source_authorizer = lambda *args, **kwargs: None
+    logs = []
+    monkeypatch.setattr(
+        runtime.executor, 'log_event', lambda message, **kwargs: logs.append((message, kwargs.get('extra') or {})),
+    )
 
     def refused(step, context, **kwargs):
         raise OrchestrationInvocationDeniedError(reason)
@@ -353,18 +356,25 @@ def test_directory_refusal_tells_the_user_which_source_and_whom_to_contact(runti
     result = execute(runtime, case, get_adapter=lambda capability: refused)
     assert result['status'] == 'failed'
     assert result['steps'][0]['failure']['code'] == result['failure']['code'] == code
-    assert runtime.schema.build_failure(code, capability_id='web_search')['message'] in result['message']
-    assert (DIRECTORY_MESSAGE in result['message']) is (code == 'directory_access_unavailable')
+    assert runtime.schema.FAILURE_MESSAGES[code] in result['message']
+    assert (SESSION_MESSAGE in result['message']) is (code == 'external_session_required')
     assert case.model.calls == []
+    # Diagnostics carry the stable refusal code as sc_authority_reason, never the message.
+    [event] = [extra for message, extra in logs if message.endswith('A dependency-bound step could not complete.')]
+    assert event['failure_code'] == code and event['authority_reason'] == reason
 
 
 @pytest.mark.parametrize('reason, code', [
-    ('external_identity_directory_permission_missing', 'directory_access_unavailable'),
+    (SESSION_REASON, 'external_session_required'),
     ('external_identity_access_denied', 'result_unavailable'),
 ])
-def test_finalization_explains_a_directory_refusal(runtime, monkeypatch, reason, code):
+def test_finalization_explains_a_missing_signed_in_session(runtime, monkeypatch, reason, code):
     from functions_orchestration_results import ResultUnavailableError
     case = runtime.make([compose()], ['Retained answer.'], final_response=binding('draft'))
+    logs = []
+    monkeypatch.setattr(
+        runtime.executor, 'log_event', lambda message, **kwargs: logs.append((message, kwargs.get('extra') or {})),
+    )
 
     def refuse(*args, **kwargs):
         raise ResultUnavailableError(reason)
@@ -381,23 +391,56 @@ def test_finalization_explains_a_directory_refusal(runtime, monkeypatch, reason,
     assert runtime.schema.FAILURE_MESSAGES[code] in result['message']
     assert 'Retained answer.' not in result['message']
     assert len(case.model.calls) == 1
+    [logged] = [extra for message, extra in logs if message.endswith('could not be reauthorized for finalization.')]
+    assert logged['failure_code'] == code and logged['authority_reason'] == reason
 
 
 @pytest.mark.parametrize('reason, code', [
-    ('external_identity_directory_permission_missing', 'directory_access_unavailable'),
-    ('external_identity_directory_sign_in_failed', 'directory_access_unavailable'),
+    (SESSION_REASON, 'external_session_required'),
     ('external_identity_access_denied', 'result_unavailable'),
 ])
-def test_composition_explains_a_directory_refusal(runtime, reason, code):
+def test_composition_explains_a_missing_signed_in_session(runtime, monkeypatch, reason, code):
     from functions_orchestration_results import ResultUnavailableError
+    logs = []
+    monkeypatch.setattr(
+        runtime.composition, 'log_event', lambda message, **kwargs: logs.append((message, kwargs.get('extra') or {})),
+    )
     # Stands in for a retained external input whose recheck is refused while content is prepared.
     case = runtime.make([compose()], [ResultUnavailableError(reason)], final_response=binding('draft'))
     result = execute(runtime, case)
     assert result['status'] == 'failed'
     assert result['steps'][0]['failure']['code'] == code
-    # Compose is not itself an external source, so the user hears which sources are affected.
     assert runtime.schema.FAILURE_MESSAGES[code] in result['message']
     assert len(case.model.calls) == 1
+    [logged] = [extra for message, extra in logs if message.endswith('Content preparation could not complete.')]
+    assert logged['failure_code'] == code and logged['authority_reason'] == reason
+
+
+def test_access_failure_reads_only_stable_reason_codes(runtime):
+    from functions_orchestration_invocation_capture import OrchestrationInvocationDeniedError
+    from functions_orchestration_results import ResultUnavailableError
+    schema = runtime.schema
+    expected = schema.build_failure('external_session_required')
+    assert schema.access_failure(ResultUnavailableError(SESSION_REASON)) == expected
+    assert schema.access_failure(OrchestrationInvocationDeniedError(SESSION_REASON)) == expected
+    try:
+        try:
+            raise ResultUnavailableError(SESSION_REASON)
+        except ResultUnavailableError as inner:
+            raise RuntimeError('Wrapped retained read failure.') from inner
+    except RuntimeError as wrapped:
+        assert schema.access_failure(wrapped) == expected
+    unavailable = schema.build_failure('result_unavailable')
+    lookalike = PermissionError(SESSION_REASON)
+    lookalike.authority_reason = f'{SESSION_REASON} '
+    assert schema.access_failure(lookalike) == unavailable
+    assert schema.access_failure(ResultUnavailableError('external_identity_access_denied')) == unavailable
+    assert schema.access_failure(OrchestrationInvocationDeniedError()) == unavailable
+    looping = PermissionError('Cycle')
+    looping.__cause__ = looping
+    assert schema.access_failure(looping) == unavailable
+    assert expected['message'] == schema.FAILURE_MESSAGES['external_session_required']
+    assert SESSION_REASON not in expected['message']
 
 
 def test_pending_work_is_waiting_not_a_successful_preview_or_synthesis(runtime):

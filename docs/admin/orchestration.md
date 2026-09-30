@@ -120,56 +120,26 @@ recover one file without repeating completed work.
 
 ### Retained external-source authorization
 
-Restart-safe reuse of web, URL, deep-research, agent, action, and explicit Fact
-Memory results requires current account and app-role authorization, not the roles
-saved when a plan was approved. The initialized root supplies current identity,
-source-configuration, pre-effect authorization and capture readers for supported
-external capabilities.
+Web search, linked-page reading, deep research, agents, actions and explicit Fact
+Memory results use the same authority as classic chat: the app roles in the user's
+signed-in session. Since **0.261.205**, orchestration no longer looks up each user in
+Microsoft Graph and needs no `Directory.Read.All` permission. Earlier versions
+required that application permission, and without it every such step failed with
+"A required retained result is unavailable or changed." If you granted
+`Directory.Read.All` to the app registration only for orchestration, you can revoke it.
 
-The read-only Microsoft Graph identity reader uses the existing
-application registration's confidential credentials and requires administrator
-consent for the **application** permission `Directory.Read.All`. This is separate
-from the delegated sign-in scopes, and a user's own sign-in can't substitute for it.
-The running application never requests consent, grants permissions, changes role
-assignments, or widens the ordinary login scopes. From deployer version **1.0.33**,
-the Bicep/azd (`Initialize-EntraApplication.ps1`), Azure CLI, and Terraform
-deployers request the permission and try to grant consent when they create the
-app registration. Granting it needs a Global Administrator or Privileged Role
-Administrator. Missing permission must leave affected external results
-unavailable, rather than fall back to old session claims.
+Each access still rechecks conversation ownership, Control Center access
+restrictions, capability settings, and agent or action governance. A role change in
+Entra ID takes effect when the user's session is refreshed, for example at their next
+sign-in, as it does for classic chat.
 
-This dependency is specific to retained external-source authorization; it is not
-a new Graph permission requirement for document-backed or source-free results,
-the shared file serializers, ordinary chat, or plans created by an earlier orchestration version. Group,
-workspace, agent/action governance, and content-screening checks still apply
-independently. See [Retained external source access]({{ '/explanation/features/ORCHESTRATION_EXTERNAL_SOURCE_ACCESS/' | relative_url }})
-for the server callback boundary and the current integration status.
-
-#### When the permission is missing
-
-Implemented in version **0.261.204**. Without the permission, every web search,
-linked-page, deep research, agent, and action step fails for every user, however
-their app roles are assigned. SimpleChat reports this in three places:
-
-- **Admin Settings.** When Chat Orchestration is on and one of those sources is
-  enabled, opening Admin Settings runs the same directory read for your own
-  account. If Microsoft Entra ID refuses it, a warning appears under **Enable
-  Chat Orchestration** with the portal steps and the exact Azure CLI commands for
-  this app registration, and **Check again** reruns the check after you grant
-  consent. When web search is one of the affected sources, the **Web Search**
-  card shows a shorter warning that links to it. A successful check is reused for
-  five minutes.
-- **Admin notification.** The first refused read on each server, each day, sends
-  a notification to users with the Admin role, linked to these settings. A
-  repeated failure on another server or instance doesn't add a duplicate.
-- **Users.** The failed step says, for example, "Unable to verify your
-  permission to use web search because this application doesn't have access to
-  Microsoft Entra ID. Please contact your administrator." It is recorded as
-  `directory_access_unavailable` rather than as an unavailable result.
-
-A refused application sign-in, such as an expired client secret, is reported the
-same way with its own guidance. Graph outages and throttling are not: they stay
-ordinary, retryable failures and never raise this warning.
+Work that continues in the background, such as a run recovered after a restart, has
+no signed-in session. Its steps can't use web search, linked pages, deep research,
+agents or actions, and they ask the user to send the request again. Document-backed
+and source-free results are unaffected. Group, workspace, agent and action
+governance, and content-screening checks still apply independently. See
+[Retained external source access]({{ '/explanation/features/ORCHESTRATION_EXTERNAL_SOURCE_ACCESS/' | relative_url }})
+for the server callback boundary.
 
 ### Plan Approval {#chat-orchestration-approval-section}
 
@@ -286,10 +256,12 @@ parts of a request. The step's rationale explains why that depth of gathering is
 choosing ordinary search does not start an automatic research-upgrade loop afterward.
 
 Discovery honours the existing Deep Research query limit and source-review limits in
-[Knowledge settings]({{ '/admin/knowledge/' | relative_url }}). It does not enable web
-search if that capability is disabled globally; permitted supplied sources can still be
-reviewed. A query-planning model that is unavailable or fails leaves the existing backup
-query generation available. Recovery is recorded in logs, without a user-facing fallback
+[Knowledge settings]({{ '/admin/knowledge/' | relative_url }}), including its query
+planning and linked-page planning options, as manual Deep Research does. It does not
+enable web search if that capability is disabled globally; permitted supplied sources
+can still be reviewed. Before **0.261.205**, those planners, which are on by default,
+stopped every orchestrated research step before it started. A query-planning model
+that is unavailable or fails leaves the existing backup query generation available. Recovery is recorded in logs, without a user-facing fallback
 notice when useful evidence is obtained. If no usable evidence is found, the answer must
 not claim that research verified the requested details.
 
@@ -540,6 +512,8 @@ then report a rejected proposal.
 | A follow-up loses its subject | The relevant message is outside the history window, masked, inactive, or truncated. | Check Conversation History Limit in Chat settings and whether the earlier turn is still eligible. Repeat the missing detail if it is outside the retained context. |
 | A question is asked that was already answered | The earlier answer may be outside retained message history and the activity ledger. | Check the history window and ledger limits; the ledger alone does not contain the full earlier answer. |
 | A pending plan reports changed conversation context | A referenced message or its visibility changed after planning. | Create a new plan using the current conversation. |
+| A web or research step says it continued in the background, where the user's sign-in is not available | The run continued without the user's browser session, for example after a restart, so their app roles couldn't be confirmed. | Ask the user to send the request again from the chat. The new run uses their signed-in session. |
+| Every web search, linked-page or deep research step says a required retained result is unavailable or changed | Before 0.261.205, orchestration checked each user's roles through Microsoft Graph, which needs `Directory.Read.All`, and refused research whenever query or linked-page planning was on. | Upgrade to 0.261.205 or later; no Graph permission or settings change is needed. If a step still fails, check `sc_authority_reason` on its failure event in [orchestration failure diagnostics](../reference/logging-tags.md#orchestration-failure-diagnostics). |
 | Plans never propose deep research or reading a link | The user does not hold the required app role, or the capability is disabled in its own settings group. | Confirm the user holds `DeepResearchUser` or `UrlAccessUser` where your deployment requires them, and that the capability is enabled outside this page. |
 | Plans never propose an agent | Semantic Kernel is off, the user has turned agents off in their own settings, or the user has no agent they can reach. | Confirm Semantic Kernel is enabled, then check the user's own agent setting and that at least one agent is shared with them. |
 | The planner model shows "not in the current model list" | Its connection or model was removed or disabled, or connections were switched on or off since it was chosen. | Choose a listed model, or **Use the answer model (default)**. Until then planning keeps trying the saved model and fails rather than switching. |
@@ -549,7 +523,6 @@ then report a rejected proposal.
 | Earlier runs are missing after switching devices | The conversation list has loaded but its run history has not been fetched yet, or the fetch failed. | The orchestration panel shows its own loading and retry states. If retrying keeps failing, check that the user can reach `/api/v2/orchestration/runs` and is the owner of the conversation. |
 | A restored plan will not run | It was already approved on the other device. | This is expected. The conversation reloads to show the answer that run produced. |
 | A step reports a timeout or failure | Execution hit a recorded time limit or an operation failed. | Read the conversation/Run explanation. Address the reported dependency or limit, then use Retry from failed step when recovery is available. |
-| Web search, linked-page, deep research, agent, or action steps fail for everyone with "this application doesn't have access to Microsoft Entra ID" | The app registration lacks administrator consent for the Microsoft Graph `Directory.Read.All` application permission, or Microsoft Entra ID refused its client-credential sign-in. Earlier versions reported this as "A required retained result is unavailable or changed." | Follow the warning under **Enable Chat Orchestration** in Admin Settings: add the permission, grant admin consent, then select **Check again**. Filter `[ORCHESTRATION_EXECUTOR]` or `[ORCHESTRATION_DIRECTORY]` events by `sc_authority_reason`. Retry the failed step once the check passes. |
 | A connection was interrupted | The browser cannot yet confirm the server's execution state. | Check the existing run. Do not resend the request while that attempt may still be active. |
 | Execution returns 503, run detail repeatedly returns 404, and every step remains pending | In affected versions, Cosmos SDK response objects were rejected as invalid dictionaries at execution and status-read boundaries. | Upgrade to 0.261.140 or later, then inspect the existing attempt. Do not reset its deadline or assume that resubmitting is safe. |
 | The plan could not account for everything requested | The proposal and its correction failed deliverables validation. Earlier guidance could lead the model to put file-only fields on an answer. | Upgrade to 0.261.140 for explicit kind-specific guidance. For a remaining rejection, inspect `sc_validation_rule` and `sc_attempt`; preserve selected sources and requested outputs rather than disabling validation. |

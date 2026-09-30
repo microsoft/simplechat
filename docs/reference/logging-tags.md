@@ -177,7 +177,6 @@ Last inventoried: 2026-08-10
 - `[ORCHESTRATION]`
 - `[ORCHESTRATION_ADAPTERS]`
 - `[ORCHESTRATION_CONTEXT]`
-- `[ORCHESTRATION_DIRECTORY]`
 - `[ORCHESTRATION_EXECUTOR]`
 - `[ORCHESTRATION_PLANNER]`
 - `[ORCHESTRATION_REGISTRY]`
@@ -316,7 +315,7 @@ Insights `customDimensions` or Log Analytics `AppTraces.Properties`.
 | `sc_attempt` | Planner proposal number: 1 for the initial proposal and 2 for its single correction. Present on deliverables correction/failure events. |
 | `sc_execution_code`, `sc_output_code` | Safe execution or output-store failure category, where available. |
 | `sc_failure_code` | On step and adapter events, a step failure category, such as `step_timeout`, `run_timeout`, or `context_unavailable`. On `[CONTENT_SCREENING]` events, the source-authority code, such as `source_authority_unverified`, `source_authority_unavailable`, or `screening_revision_conflict`. |
-| `sc_authority_reason` | Which check failed for a source. With `source_authority_unverified`, the check that could not verify the source's current authority: `document_record_invalid`, `screening_marker_invalid`, `screening_state_unknown`, `screening_marker_incomplete`, `document_scope_invalid`, `workspace_record_invalid`, `scan_record_invalid`, `provenance_mismatch`, `document_id_invalid`, `manifest_context_invalid`, `manifest_scope_missing`, `manifest_revision_invalid`, or `manifest_batch_invalid`. With `screening_revision_conflict`, what saved evidence no longer matches in the current document: `source_revision_changed` (the document was re-versioned), `screening_generation_changed` (it was re-screened or remediated), `source_scope_changed` (its id or workspace differs), `provenance_shape_invalid` (the saved provenance has a different set of fields), `screened_record_changed` (a saved copy of the screened record differs), `source_version_changed` (a legacy reference without provenance), or `cached_evidence_unproven` (cached evidence from before screening enrollment). With `directory_access_unavailable`, why the application could not read Microsoft Entra ID: `external_identity_directory_permission_missing` or `external_identity_directory_sign_in_failed` (see [Directory access events](#directory-access-events)). |
+| `sc_authority_reason` | Which check failed for a source. With `source_authority_unverified`, the check that could not verify the source's current authority: `document_record_invalid`, `screening_marker_invalid`, `screening_state_unknown`, `screening_marker_incomplete`, `document_scope_invalid`, `workspace_record_invalid`, `scan_record_invalid`, `provenance_mismatch`, `document_id_invalid`, `manifest_context_invalid`, `manifest_scope_missing`, `manifest_revision_invalid`, or `manifest_batch_invalid`. With `screening_revision_conflict`, what saved evidence no longer matches in the current document: `source_revision_changed` (the document was re-versioned), `screening_generation_changed` (it was re-screened or remediated), `source_scope_changed` (its id or workspace differs), `provenance_shape_invalid` (the saved provenance has a different set of fields), `screened_record_changed` (a saved copy of the screened record differs), `source_version_changed` (a legacy reference without provenance), or `cached_evidence_unproven` (cached evidence from before screening enrollment). On `[ORCHESTRATION_EXECUTOR]` step, saved-wait, finalization and content-preparation failure events (since 0.261.205), the stable code of a refused external source, such as `external_identity_session_unavailable` (the step ran in a background continuation with no signed-in session), `external_identity_role_required`, `external_identity_access_restricted`, `external_identity_conversation_unavailable`, `external_identity_settings_unavailable`, or `external_configuration_changed`. |
 | `sc_capability_id` | The capability the step ran, such as `compose`, `render_file`, `generate_image`, or `document_compare`. |
 | `sc_output_format` | The file format of a render attempt, such as `csv`, `xlsx`, or `docx`. |
 | `sc_error_type`, `sc_response_type` | Exception class and, on runner admission/preparation failures, the record's Python type. |
@@ -380,7 +379,7 @@ file names, file content, prompts, or model responses.
 | `[ORCHESTRATION_EXECUTOR] A file render attempt finished.` | Information when the file completed; otherwise Warning | `sc_status`, `sc_output_code`, `sc_output_format`, `sc_size_bytes`, and the timing and check counts described below. |
 | `[ORCHESTRATION_EXECUTOR] A step finished after its time budget; its finished result was kept.` | Warning | `sc_failure_code` (`step_timeout` or `run_timeout`), `sc_elapsed_ms`, `sc_step_timeout_seconds`. |
 | `[ORCHESTRATION_EXECUTOR] Prepared content did not match its declared outputs; asking once more.` | Information | `sc_reason` (`compose_output_retry`), `sc_error_type`, and `sc_execution_code` when the mismatch has one. |
-| `[ORCHESTRATION_EXECUTOR] Content preparation could not complete.` | Warning | `sc_failure_code`, `sc_execution_code`, `sc_error_type`. |
+| `[ORCHESTRATION_EXECUTOR] Content preparation could not complete.` | Warning | `sc_failure_code`, `sc_execution_code`, `sc_error_type`, and `sc_authority_reason` when a retained source was refused. |
 | `[ORCHESTRATION] Retrying the answer model without a JSON response format.` | Information | `sc_reason` (`json_format_retry`), `sc_stage`, `sc_error_type`. Content preparation asks the endpoint for a JSON object; an endpoint that refuses that option is asked again without it. |
 | `[ORCHESTRATION_ADAPTERS] Native result bridge did not complete.` | Warning | `sc_stage`, `sc_failure_code`, `sc_execution_code`, such as `native_compute_source_identity_mismatch` when a saved spreadsheet location now points at a different revision. |
 | `[CONTENT_SCREENING] Current source authority could not be verified.` | Warning | `sc_failure_code`, `sc_authority_reason`, `sc_error_type`. |
@@ -436,52 +435,6 @@ events with request outcomes instead of interpreting HTTP 200 as a valid plan or
 HTTP 503 as proof that no execution claim exists. Historical events before this
 version may contain only string-length metadata and cannot be used to reconstruct
 the exact rejected proposal.
-
-### Directory access events
-
-Since **0.261.204**, a step that fails because SimpleChat itself could not read
-Microsoft Entra ID is recorded separately from a user who lacks access. Before a
-plan uses web search, linked pages, deep research, agents, or actions, it rereads
-the user's current app roles from Microsoft Graph with the application's own
-identity, which needs the `Directory.Read.All` application permission.
-
-The step's `sc_failure_code` is `directory_access_unavailable`, and
-`sc_authority_reason` says why:
-
-- `external_identity_directory_permission_missing`: Microsoft Graph refused the
-  application's read, usually because the permission or its administrator
-  consent is missing.
-- `external_identity_directory_sign_in_failed`: Microsoft Entra ID refused the
-  application's client-credential sign-in, for example because its client secret
-  expired.
-
-These codes appear on the `[ORCHESTRATION_EXECUTOR]` events `A dependency-bound
-step could not complete.`, `A saved wait could not be resumed.`, `Retained content
-could not be reauthorized for finalization.`, and `Content preparation could not
-complete.`
-
-| Event message | Severity | Properties |
-| --- | --- | --- |
-| `[ORCHESTRATION_DIRECTORY] Microsoft Entra ID refused the application's directory read.` | Warning | `sc_authority_reason`. Written when administrators are notified: once per reason, server process, and UTC day, or again after a notification that could not be saved. |
-| `[ORCHESTRATION_DIRECTORY] Administrators could not be notified about directory access.` | Warning | `sc_error_type`. A later failure tries again. |
-| `[ORCHESTRATION_DIRECTORY] The directory access check could not prepare its token source.` | Warning | `sc_error_type`. The Admin Settings check reports the access as unverified. |
-| `[ORCHESTRATION_DIRECTORY] The directory access check failed unexpectedly.` | Warning | `sc_error_type`. The Admin Settings check reports the access as unverified. |
-| `[ORCHESTRATION_DIRECTORY] The admin directory access check failed.` | Warning | `sc_error_type`. The Admin Settings check route returned an error. |
-
-To find directory refusals across all runs:
-
-```kusto
-AppTraces
-| where TimeGenerated > ago(1d)
-| where tostring(Properties.sc_failure_code) == "directory_access_unavailable"
-    or tostring(Properties.sc_message) startswith "[ORCHESTRATION_DIRECTORY]"
-| project TimeGenerated,
-    message = tostring(Properties.sc_message),
-    capability = tostring(Properties.sc_capability_id),
-    reason = tostring(Properties.sc_authority_reason),
-    errorType = tostring(Properties.sc_error_type)
-| order by TimeGenerated desc
-```
 
 ### Analyze validation and partial-input events
 

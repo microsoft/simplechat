@@ -159,16 +159,15 @@ Malformed server catalog metadata remains an operational configuration error:
 HTTP callers return a safe 503 rather than reporting changed sources or
 claiming the plan. Valid but unadmitted pairs remain explicit plan refusals.
 
-For retained external sources, the root also provides a lazy current-directory
-identity reader using the configured application and Graph cloud. It reads
-current account/app-role authority and uncached, read-only user restrictions;
-it never substitutes saved session roles. Credential, directory, and metadata
-I/O have explicit bounds, and temporary service failures remain distinct from
-denied access. Document/source-free service construction does not acquire a
-Graph token. This optional path requires operator-consented application
-permissions as described in
-[external source access](ORCHESTRATION_EXTERNAL_SOURCE_ACCESS.md); it does not
-grant permissions or alter interactive sign-in scopes.
+For retained external sources, the root also provides a lazy identity reader
+over the signed-in session's app roles, the same authority classic chat uses.
+Since 0.261.205 it makes no Microsoft Graph calls and needs no application
+permission. Roles are captured while the request context exists and are never
+restored from a saved run, so a background continuation fails closed and asks
+the user to send the request again. Conversation ownership and uncached,
+read-only user restrictions are read on every access, with explicit I/O
+bounds, and temporary service failures remain distinct from denied access.
+See [external source access](ORCHESTRATION_EXTERNAL_SOURCE_ACCESS.md).
 
 Initialized services compose the independent current-metadata reader,
 configuration attestor and external-source provider. Before capture, the provider

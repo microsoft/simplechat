@@ -80,7 +80,6 @@ from functions_orchestration_registry import (
     capabilities_for_contract,
     effective_capability_ids,
 )
-from functions_orchestration_directory_readiness import check_orchestration_directory_access
 from functions_ai_notice import (
     normalize_ai_notice_frequency,
     normalize_ai_notice_message,
@@ -559,30 +558,6 @@ def register_route_frontend_admin_settings(bp):
         result = check_inbound_mcp_easy_auth_exclusions(get_inbound_mcp_easy_auth_check_base_url())
         status_code = 200 if result.get('success') else 409
         return jsonify(result), status_code
-
-    @bp.route('/api/admin/settings/orchestration/directory-access-check', methods=['POST'])
-    @swagger_route(security=get_auth_security())
-    @login_required
-    @admin_required
-    def orchestration_directory_access_check():
-        """Report whether Chat Orchestration can read Microsoft Entra ID to verify user access."""
-        payload = request.get_json(silent=True)
-        refresh = isinstance(payload, dict) and payload.get('refresh') is True
-        try:
-            report = check_orchestration_directory_access(
-                get_current_user_id(), get_settings(), refresh=refresh,
-            )
-        except Exception as exc:
-            log_event(
-                '[ORCHESTRATION_DIRECTORY] The admin directory access check failed.',
-                level=logging.WARNING,
-                extra={'error_type': type(exc).__name__},
-            )
-            return jsonify({
-                'success': False,
-                'error': 'The directory access check could not be completed.',
-            }), 500
-        return jsonify({'success': True, **report}), 200
 
     @bp.route('/api/admin/settings/file-processing-logs/cleanup', methods=['POST'])
     @swagger_route(security=get_auth_security())

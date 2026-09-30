@@ -1,9 +1,9 @@
 # functions_orchestration_invocation_capture.py
 """Private invocation-capture state, independent of application initialization.
 
-Version: 0.261.204
+Version: 0.261.205
 Implemented in: 0.261.127
-Directory access refusal reason carried on denials in: 0.261.204
+Denial reason code carried on refused sources in: 0.261.205
 
 The server supplies an already producer-bound callback. SDKs and tool loops may
 catch exceptions, so a refused capture remains sticky until the owning
@@ -51,8 +51,8 @@ class OrchestrationInvocationControlError(RuntimeError):
 class OrchestrationInvocationDeniedError(PermissionError):
     """An acquired source is denied, without retaining private authority details.
 
-    ``authority_reason`` keeps only the refusal's stable snake_case code, such as a
-    directory-access reason, so the owner can explain and diagnose the denial.
+    ``authority_reason`` keeps only the refusal's stable snake_case code, such as
+    a missing signed-in session, so the owner can explain and diagnose the denial.
     """
 
     code = "result_unavailable"

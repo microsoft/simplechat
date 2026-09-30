@@ -155,7 +155,6 @@ In addition, the script will note additional steps that must be taken for the ap
     - Find app: *\<registered application name\>*
     - Go to API permissions
     - Click 'Grant admin consent for [Tenant]'
-    - Confirm the **Directory.Read.All** (Application) permission shows as granted. The script adds it and tries to grant consent, which needs Global Administrator or Privileged Role Administrator; the script's summary shows whether that worked. Chat Orchestration uses this permission to confirm a user's app roles before a plan uses web search, linked pages, deep research, agents, or actions. Without it, those steps fail for every user and Admin Settings shows a warning.
 
 1.  Assign Users/Groups to Enterprise Application:
     - Navigate to Azure Portal > Entra ID > Enterprise applications
