@@ -1,0 +1,19 @@
+<!-- harness.html -->
+<!doctype html>
+<html lang="en">
+    <head>
+        <meta charset="utf-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1" />
+        <title>Workflow results in chat component tests</title>
+    </head>
+    <body>
+        <!--
+          Static harness for ui_tests/test_chat_workflow_results.py. It hosts a mount point and
+          the bundled real chat page, run history and alert card (harness.bundle.js, built from
+          harness_entry.tsx). The test seeds the stores and mounts a route through
+          window.WorkflowResultsHarness.
+        -->
+        <div id="root" class="flex h-screen min-w-0 flex-col"></div>
+        <script src="/harness.bundle.js"></script>
+    </body>
+</html>

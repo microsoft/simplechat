@@ -1935,7 +1935,7 @@ export function Composer({ initialAgentSelection }: { initialAgentSelection?: st
                                 <button
                                     type="button"
                                     onClick={() => submit()}
-                                    disabled={(!text.trim() && !attachedPrompt) || !canPost || uploadsBlocked || (orchestrating && orchestrationBlocked)}
+                                    disabled={(!text.trim() && !attachedPrompt) || !canPost || uploadsBlocked || workflowResultOpening || (orchestrating && orchestrationBlocked)}
                                     aria-label={
                                         shared && !streaming
                                             ? 'Send to this conversation'
