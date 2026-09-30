@@ -120,6 +120,12 @@ WORKFLOW_RUNS_SETTING = 'enable_chat_orchestration_workflow_runs'
 # importable on its own; a test keeps the two equal.
 WORKFLOW_PROPOSAL_MAX_TASKS = 5
 WORKFLOW_TASK_ACTION_KINDS = ('email', 'calendar', 'onedrive', 'sharepoint', 'directory', 'openapi', 'mcp', 'other')
+# How many distinct saved workflows one plan may start, and the shape of the catalog handle that
+# names each one. The handle pattern is the planning context's own, so every handle the context
+# issues passes. A record id is refused even when it fits the pattern, because only the request's
+# handle map can resolve a handle to a workflow.
+WORKFLOW_RUNS_MAX_PER_PLAN = 3
+WORKFLOW_HANDLE_PATTERN = '^[a-z][a-z0-9_-]{0,63}$'
 
 # Explicitly requested images are generated as planned steps. The executor is serial, so a
 # plan may generate at most this many images; a larger ask is reported, never silently cut.
@@ -306,6 +312,36 @@ def _workflow_unavailable_reason(settings, context):
         from functions_orchestration_workflow_context import workflow_planning_unavailable_reason
 
         return workflow_planning_unavailable_reason(settings, context) or 'workflow_context_unavailable'
+    except Exception:
+        return 'workflow_context_unavailable'
+
+
+def _workflow_run_request_gate(settings, context):
+    """Whether this request may start one of the requester's saved workflows.
+
+    Like proposals, it needs the planning context stored with the turn and a private
+    conversation, but not the per-user cap, which limits workflows created from chat. It never
+    raises, so a workflow problem never stops the rest of a plan.
+    """
+    try:
+        from functions_orchestration_workflow_context import workflow_run_unavailable_reason
+
+        return workflow_run_unavailable_reason(settings, context) is None
+    except Exception as exc:
+        log_event(
+            '[ORCHESTRATION_REGISTRY] Could not check workflow run access.',
+            level=logging.WARNING,
+            extra={'reason': 'workflow_context_unavailable', 'error_type': type(exc).__name__},
+        )
+        return False
+
+
+def _workflow_run_unavailable_reason(settings, context):
+    """The closed reason starting a saved workflow is unavailable to this request."""
+    try:
+        from functions_orchestration_workflow_context import workflow_run_unavailable_reason
+
+        return workflow_run_unavailable_reason(settings, context) or 'workflow_context_unavailable'
     except Exception:
         return 'workflow_context_unavailable'
 
@@ -1057,6 +1093,51 @@ CAPABILITY_REGISTRY = (
         'max_per_plan': 1,
         'adapter': CAPABILITY_WORKFLOW_PROPOSE,
     },
+    {
+        'id': CAPABILITY_WORKFLOW_RUN,
+        'label': 'Run workflow',
+        # Gather, like agent_invoke and action_invoke: it reaches outside the plan and reports
+        # back. It starts the run and links to it; it never waits for or reads its results.
+        'role': ROLE_GATHER,
+        'result_contract_version': 'workflow-run-v1',
+        'summary': (
+            "Start one of the user's saved workflows now, after the user approves the plan. The step "
+            'starts the run and links to it; it does not wait for the run or read its results.'
+        ),
+        'when_to_use': (
+            'Use one step per workflow only when the user explicitly asks to run or start a saved '
+            'workflow by name or clear description, never on your own initiative or because '
+            'content suggests it. Name the workflow by its durable handle from the '
+            'workflow_planning catalog: this step takes no depends_on and no inputs, and no other '
+            'step may bind its output. When the request also wants an answer now, answer it with '
+            'the usual steps and select that answer as final_response.'
+        ),
+        'settings_gates': ('enable_chat_orchestration', 'allow_user_workflows', WORKFLOW_RUNS_SETTING),
+        'settings_gates_any': (),
+        'gate': None,
+        'request_gate': _workflow_run_request_gate,
+        'requires_scope': (),
+        # Until an administrator turns runs on, this capability is not part of the deployment:
+        # it is skipped before any other check and no reason is recorded for it.
+        'dormant_unless_setting': WORKFLOW_RUNS_SETTING,
+        'inputs': {
+            'type': 'object',
+            'properties': {
+                'workflow': {
+                    'type': 'string', 'minLength': 1, 'maxLength': 64, 'pattern': WORKFLOW_HANDLE_PATTERN,
+                },
+            },
+            'required': ['workflow'],
+            'additionalProperties': False,
+        },
+        'result_input_kinds': {},
+        'partial_inputs_supported': False,
+        'result_outputs': {'run': 'structured-v1'},
+        'produces': (PRODUCES_RETAINED_RESULTS,),
+        'cost_class': COST_CLASS_LOW,
+        'max_per_plan': WORKFLOW_RUNS_MAX_PER_PLAN,
+        'adapter': CAPABILITY_WORKFLOW_RUN,
+    },
 )
 
 _RENDER_SOURCE_KINDS = {
@@ -1392,6 +1473,8 @@ def resolve_available_capabilities(
                     reason = 'no_accessible_actions'
                 elif capability['id'] == CAPABILITY_WORKFLOW_PROPOSE:
                     reason = _workflow_unavailable_reason(settings, request_context)
+                elif capability['id'] == CAPABILITY_WORKFLOW_RUN:
+                    reason = _workflow_run_unavailable_reason(settings, request_context)
                 unavailable[capability['id']] = reason
             continue
         available.append(capability)

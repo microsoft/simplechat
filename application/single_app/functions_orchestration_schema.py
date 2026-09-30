@@ -56,6 +56,7 @@ from functions_orchestration_registry import (
     CAPABILITY_GENERATE_IMAGE,
     CAPABILITY_TABULAR_ANALYZE,
     CAPABILITY_WORKFLOW_PROPOSE,
+    CAPABILITY_WORKFLOW_RUN,
     DEPENDENCY_PLAN_CONTRACT_VERSION,
     GENERAL_KNOWLEDGE_BASES,
     admitted_export_pairs,
@@ -185,6 +186,10 @@ PLAN_MAX_ASSUMPTIONS = 8
 # another step or to the answer. The planner repairs either once, then drops the proposal.
 WORKFLOW_BLUEPRINT_INVALID_CODE = 'workflow_blueprint_invalid'
 WORKFLOW_PROPOSAL_NOT_CONSUMABLE_CODE = 'workflow_proposal_not_consumable'
+# A workflow_run step that names no offered durable workflow, is not static, repeats a workflow,
+# exceeds the per-plan limit, or is read by another step or the answer. The planner repairs it
+# once, then drops the steps that still fail.
+WORKFLOW_RUN_INVALID_CODE = 'workflow_run_invalid'
 
 
 class PlanValidationError(ValueError):
@@ -581,6 +586,27 @@ def _reject_workflow_proposal_consumers(steps, final_response):
         )
 
 
+def _reject_workflow_run_consumers(steps, final_response):
+    """Starting a workflow only links to its run, so no step and no answer may read the step."""
+    producers = {step['step_id'] for step in steps if step['capability_id'] == CAPABILITY_WORKFLOW_RUN}
+    if not producers:
+        return
+    named = set()
+    for step in steps:
+        if step['step_id'] in producers:
+            continue
+        named.update(step.get('depends_on') or ())
+        named.update(spec.binding.step_id for spec in step_input_specs(step) if spec.binding.step_id is not None)
+    if isinstance(final_response, dict):
+        named.add(final_response.get('step_id'))
+    if named & producers:
+        raise PlanValidationError(
+            'A workflow_run step only starts its workflow; the reply links to the run. Remove every '
+            'dependency on it, every input bound to its output, and any final_response that selects it.',
+            code=WORKFLOW_RUN_INVALID_CODE, rule='workflow_run_consumed',
+        )
+
+
 _REFERENCE_IMAGE_FIELDS = ('reference_document_ids', 'reference_message_ids')
 
 
@@ -636,8 +662,9 @@ def validate_dependency_plan(
 
     ``deliverable_availability`` is the server truth a new plan is checked against; see
     ``functions_orchestration_deliverables.compile_deliverables``. ``workflow_planning`` is the
-    request's server-only workflow proposal context; with it, a proposal's blueprint is also
-    checked against the handles, limits and agents offered with the request.
+    request's server-only workflow planning context; with it, a proposal's blueprint is also
+    checked against the handles, limits and agents offered with the request, and a workflow_run
+    step must name a durable workflow the request offered.
     """
     settings = settings or {}
     canonical_bytes(composition_profiles or {})
@@ -657,6 +684,8 @@ def validate_dependency_plan(
     available = set(available_capability_ids)
     accepted = []
     counts = {}
+    # Workflows earlier run steps of this plan start; each may be started once.
+    workflow_run_seen = set()
     fields = {
         'step_id', 'capability_id', 'title', 'rationale', 'arguments', 'depends_on',
         'optional', 'enabled', 'estimated_cost', 'role', 'status', 'inputs', 'outputs',
@@ -684,6 +713,14 @@ def validate_dependency_plan(
                 raise PlanValidationError('A model task must be a named task category.')
             if 'model_binding' in raw and type(raw['model_binding']) is not dict:
                 raise PlanValidationError('A model binding is server-owned structured data.')
+            if capability_id == CAPABILITY_WORKFLOW_RUN:
+                # Loaded only when a plan starts a workflow. It runs before the generic limit and
+                # contract checks, so each problem with the step is reported with its own rule.
+                from functions_orchestration_workflow_runs import prepare_workflow_run_arguments
+
+                prepare_workflow_run_arguments(
+                    raw, raw.get('arguments', {}), workflow_planning=workflow_planning, seen=workflow_run_seen,
+                )
             counts[capability_id] = counts.get(capability_id, 0) + 1
             if capability['max_per_plan'] is not None and counts[capability_id] > capability['max_per_plan']:
                 raise PlanValidationError('The plan exceeds a capability work limit.', code='result_step_limit')
@@ -777,6 +814,7 @@ def validate_dependency_plan(
             raise PlanValidationError('The plan contains no enabled work.')
         _apply_image_input_policy(accepted, existing_results)
         _reject_workflow_proposal_consumers(accepted, plan.get('final_response'))
+        _reject_workflow_run_consumers(accepted, plan.get('final_response'))
         bindings = [step_result_bindings(step) for step in accepted]
         dependencies = validate_input_bindings(bindings, existing_results=existing_results, max_steps=max_steps)
         _validate_render_requests(accepted, existing_results, export_catalog=export_catalog)

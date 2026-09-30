@@ -3810,6 +3810,7 @@ ADMIN_SETTINGS_FIELDS = {
                 "the content of a file, and Create a file to deliver a downloadable file. "
                 "Generate images also requires Image Generation. Use an action also "
                 "requires Enable Action Access. Propose workflows also requires Propose "
+                "Workflows From Chat and personal workflows. Run workflows also requires Run "
                 "Workflows From Chat and personal workflows."
             ),
             "default": [],
@@ -3827,6 +3828,7 @@ ADMIN_SETTINGS_FIELDS = {
                 {"value": "render_file", "label": "Create a file"},
                 {"value": "generate_image", "label": "Generate images"},
                 {"value": "workflow_propose", "label": "Propose workflows"},
+                {"value": "workflow_run", "label": "Run workflows"},
             ],
             "depends_on": {"key": "enable_chat_orchestration", "equals": True},
         },

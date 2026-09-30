@@ -91,6 +91,7 @@ from functions_orchestration_registry import (
     CAPABILITY_URL_FETCH,
     CAPABILITY_WEB_SEARCH,
     CAPABILITY_WORKFLOW_PROPOSE,
+    CAPABILITY_WORKFLOW_RUN,
     DEPENDENCY_PLAN_CONTRACT_VERSION,
     DOCUMENT_ACTION_TYPE_COMPARISON,
     VISUAL_CHART,
@@ -1855,6 +1856,19 @@ def run_workflow_propose(step, context, *, settings, user_id, emit=None, cancel_
     )
 
 
+def run_workflow_run(step, context, *, settings, user_id, emit=None, cancel_requested=None):
+    """Start one of the user's saved workflows and link to its run.
+
+    The workflow runtime loads only when a plan starts a workflow, so resolving this adapter
+    imports nothing beyond this module.
+    """
+    from functions_orchestration_workflow_runs import adapter_workflow_run
+
+    return adapter_workflow_run(
+        step, context, settings=settings, user_id=user_id, emit=emit, cancel_requested=cancel_requested,
+    )
+
+
 # Keyed by capability id, which is also each descriptor's declared ``adapter`` name, so the
 # executor can look an adapter up straight from the step's capability without a second map.
 ADAPTER_REGISTRY = {
@@ -1868,6 +1882,7 @@ ADAPTER_REGISTRY = {
     CAPABILITY_AGENT_INVOKE: run_agent_invoke,
     CAPABILITY_ACTION_INVOKE: run_action_invoke,
     CAPABILITY_WORKFLOW_PROPOSE: run_workflow_propose,
+    CAPABILITY_WORKFLOW_RUN: run_workflow_run,
 }
 
 

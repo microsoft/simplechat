@@ -19,6 +19,7 @@ save it faithfully:
   neighbouring checkboxes: present as ``on`` means on, absent means off, and neither workflow
   switch changes the other.
 * ``update_settings`` stores only a real ``True`` as on and leaves an absent value alone.
+* The capability allowlist offers Run workflows on both surfaces, with the settings it also needs.
 * The admin documentation names the switch by its V2 label.
 """
 
@@ -227,6 +228,26 @@ def test_the_settings_writer_stores_only_a_real_true():
         saved = writer({PROPOSALS_KEY: False})
         assert saved
         assert storage.document[KEY] is True
+
+
+def test_the_capability_allowlist_offers_run_workflows_with_its_requirement():
+    field = FIELDS.get_field_definition(CAPABILITIES_KEY)
+    values = [option["value"] for option in field["options"]]
+    run_options = [option for option in field["options"] if option["value"] == REGISTRY.CAPABILITY_WORKFLOW_RUN]
+    requirement = "Run workflows also requires Run Workflows From Chat and personal workflows."
+    assert run_options == [{"value": "workflow_run", "label": "Run workflows"}]
+    assert values.index("workflow_run") == values.index("workflow_propose") + 1
+    assert sorted(values) == sorted(REGISTRY.all_capability_ids())
+    assert requirement in field["help"]
+
+    markup = _render_classic_pane({})
+    tag = _input_tag(markup, "chat_orchestration_capability_workflow_run")
+    label = re.search(r'<label[^>]*\bfor="chat_orchestration_capability_workflow_run"[^>]*>(.*?)</label>', markup, re.S)
+    assert f'name="{CAPABILITIES_KEY}"' in tag and 'value="workflow_run"' in tag
+    # An empty stored allowlist means every capability, so the Classic box starts ticked.
+    assert re.search(r"\schecked\b", tag)
+    assert label and " ".join(label.group(1).split()).startswith("Run workflow ")
+    assert requirement in " ".join(markup.split())
 
 
 def test_the_admin_docs_name_the_switch_by_its_v2_label():

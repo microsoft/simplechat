@@ -8,7 +8,8 @@ The V2 page shows Run Workflows From Chat off by default, only while Chat Orches
 personal workflows are both on, and saves it as a partial update through the production field
 normalizer, without touching Propose Workflows From Chat. A stored value hidden by a prerequisite
 survives other saves. The Classic pane renders the switch with its help and submits it as a normal
-form checkbox. API interception uses synthetic settings; no live admin settings are changed.
+form checkbox. Both surfaces offer Run workflows in the capability allowlist, which does not turn the
+switch on. API interception uses synthetic settings; no live admin settings are changed.
 """
 
 import copy
@@ -144,6 +145,21 @@ def test_v2_switch_reappears_with_its_stored_value_when_orchestration_is_turned_
     assert fixture.settings[KEY] is True
 
 
+def test_v2_capability_allowlist_offers_run_workflows_on_its_own(orchestration_admin):
+    fixture = orchestration_admin
+    _open_orchestration(fixture)
+    page = fixture.page
+    capability = page.get_by_role("checkbox", name="Run workflows", exact=True)
+    expect(capability).not_to_be_checked()
+    expect(page.get_by_text(f"Run workflows also requires {LABEL}", exact=False)).to_be_visible()
+
+    capability.check()
+    _save(page)
+    # Admitting the capability does not turn on the switch it also needs.
+    assert fixture.patches == [{"chat_orchestration_enabled_capabilities": ["workflow_run"]}]
+    assert fixture.settings[KEY] is False
+
+
 def _render_classic_pane(page, settings):
     registry = import_app_module("functions_orchestration_registry")
     environment = Environment(
@@ -191,3 +207,13 @@ def test_classic_pane_switch_submits_a_normal_form_value(page, width, enabled):
     assert submitted_checked == "on"
     assert submitted_proposals is None
     assert submitted_unchecked is None
+
+    # The capability box is a separate allowlist entry with the settings it also needs.
+    capability = page.locator("#chat_orchestration_capability_workflow_run")
+    expect(capability).to_be_checked()
+    expect(page.get_by_text(f"Run workflows also requires {LABEL}", exact=False)).to_be_visible()
+    submitted_capabilities = page.evaluate(
+        "() => new FormData(document.getElementById('orchestration-settings'))"
+        ".getAll('chat_orchestration_enabled_capabilities')"
+    )
+    assert "workflow_run" in submitted_capabilities
