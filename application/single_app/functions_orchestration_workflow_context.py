@@ -1,7 +1,7 @@
 # functions_orchestration_workflow_context.py
 """Planning context for workflow proposals and workflow runs from chat orchestration.
 
-Version: 0.261.211
+Version: 0.261.212
 
 Chat orchestration can propose a personal workflow (the ``workflow_propose`` capability) and start
 one the user already has (the ``workflow_run`` capability). The planner writes a workflow

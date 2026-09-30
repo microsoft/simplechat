@@ -2,8 +2,8 @@
 # test_orchestration_workflow_run_approval_floor.py
 """
 Functional test for the manual approval floor on plans that start a saved workflow.
-Version: 0.261.211
-Implemented in: 0.261.211
+Version: 0.261.212
+Implemented in: 0.261.212
 
 This test ensures that a plan with an enabled workflow_run step always waits for the user to run
 it. normalize_plan saves such a plan as manual with an approval floor, whatever approval mode was
@@ -101,7 +101,7 @@ def _record_ids(planning):
 
 
 def test_version_includes_the_approval_floor():
-    assert_app_version_at_least("0.261.211")
+    assert_app_version_at_least("0.261.212")
 
 
 # ---------------------------------------------------------------------------

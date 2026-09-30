@@ -2,8 +2,8 @@
 # test_orchestration_workflow_run_capability.py
 """
 Functional test for the workflow_run orchestration capability and its plan checks.
-Version: 0.261.211
-Implemented in: 0.261.211
+Version: 0.261.212
+Implemented in: 0.261.212
 
 This test ensures that chat orchestration offers workflow_run only while starting saved workflows
 from chat is turned on and available to the requester, and that a plan names each workflow to
@@ -215,7 +215,7 @@ def _dropped_logs(record):
 
 
 def test_version_includes_the_workflow_run_capability():
-    assert_app_version_at_least("0.261.211")
+    assert_app_version_at_least("0.261.212")
 
 
 # ---------------------------------------------------------------------------

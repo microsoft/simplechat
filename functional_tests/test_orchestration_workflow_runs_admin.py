@@ -2,8 +2,8 @@
 # test_orchestration_workflow_runs_admin.py
 """
 Functional test for the admin switch that lets chat orchestration start saved workflows.
-Version: 0.261.211
-Implemented in: 0.261.211
+Version: 0.261.212
+Implemented in: 0.261.212
 
 This test ensures that ``enable_chat_orchestration_workflow_runs`` is off unless an administrator
 turns it on, that it is independent of the workflow proposals switch, and that both admin surfaces
@@ -84,7 +84,7 @@ def _input_tag(markup, element_id):
 
 
 def test_version_is_at_least_the_workflow_runs_release():
-    assert_app_version_at_least("0.261.211")
+    assert_app_version_at_least("0.261.212")
 
 
 def test_the_setting_is_seeded_off_under_the_key_the_registry_names():
@@ -257,7 +257,7 @@ def test_the_admin_docs_name_the_switch_by_its_v2_label():
     assert row.startswith(f"| {LABEL} |")
     assert "| Off |" in row
     assert "`allow_user_workflows`" in row
-    assert "0.261.211" in row
+    assert "0.261.212" in row
 
 
 if __name__ == "__main__":

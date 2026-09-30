@@ -2,8 +2,8 @@
 # test_orchestration_workflow_run_adapter.py
 """
 Functional test for the chat orchestration workflow_run step adapter.
-Version: 0.261.211
-Implemented in: 0.261.211
+Version: 0.261.212
+Implemented in: 0.261.212
 
 This test ensures that a plan's workflow_run step starts the requester's saved durable workflow
 through the durable queue at most once. The request id comes from the plan's first attempt and
@@ -85,7 +85,7 @@ NOT_STARTED_SUMMARY = "The saved workflow was not started."
 
 
 def test_the_version_includes_workflow_runs_from_chat():
-    assert_app_version_at_least("0.261.211")
+    assert_app_version_at_least("0.261.212")
 
 
 # ---------------------------------------------------------------------------

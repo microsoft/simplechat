@@ -2,8 +2,8 @@
 # test_orchestration_workflow_run_planning_context.py
 """
 Functional test for the workflow planning context when chat orchestration may start saved workflows.
-Version: 0.261.211
-Implemented in: 0.261.211
+Version: 0.261.212
+Implemented in: 0.261.212
 
 This test ensures that the ``workflow_run`` gates read ``enable_chat_orchestration_workflow_runs``
 as a real boolean only, independently of the workflow proposals setting, and that they check the
@@ -143,7 +143,7 @@ def wf(modules):
 
 
 def test_version_is_at_least_the_workflow_runs_release():
-    assert_app_version_at_least("0.261.211")
+    assert_app_version_at_least("0.261.212")
 
 
 @pytest.mark.parametrize("value", [None, False, "true", "True", 1, "on", [True]])

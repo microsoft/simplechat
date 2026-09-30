@@ -1,8 +1,8 @@
 # test_v2_orchestration_workflow_run_floor.py
 """
 Real-component browser tests for plans that start a saved workflow.
-Version: 0.261.211
-Implemented in: 0.261.211
+Version: 0.261.212
+Implemented in: 0.261.212
 Refs: microsoft/simplechat#1551
 
 The production OrchestrationPlanCard, OrchestrationRunView and orchestration controller run in
@@ -46,7 +46,7 @@ from test_support.versioning import assert_app_version_at_least  # noqa: E402
 
 
 pytestmark = pytest.mark.ui
-IMPLEMENTED_IN = "0.261.211"
+IMPLEMENTED_IN = "0.261.212"
 CONVERSATION = "conversation-1"
 TURN = "floor-turn"
 RUN = "/api/v2/orchestration/run"
@@ -238,7 +238,7 @@ def open_harness(page, api, *, theme="light"):
             H.reset();
             document.documentElement.classList.toggle('dark', spec.theme === 'dark');
             H.stores.bootstrap.useBootstrapStore.setState({ data: {
-                version: '0.261.211', settings: {}, branding: { app_title: 'SimpleChat' },
+                version: '0.261.212', settings: {}, branding: { app_title: 'SimpleChat' },
                 features: { enable_chat_orchestration: true },
                 user: { id: 'owner', display_name: 'Workflow Owner' },
                 scope: { groups: [], public_workspaces: [] },
