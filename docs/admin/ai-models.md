@@ -148,7 +148,7 @@ The Image Generation section belongs to the Image Generation tab. Use it with th
 | Subscription ID | Defines behavior for the related admin workflow; verify the affected feature after saving. | Empty | `azure_openai_image_gen_subscription_id` |
 | Resource Group | Defines behavior for the related admin workflow; verify the affected feature after saving. | Empty | `azure_openai_image_gen_resource_group` |
 | Azure OpenAI Image Generation Key | Provides the secret credential used when the selected authentication mode requires one. | Empty | `azure_openai_image_gen_key` |
-| Azure OpenAI Image Gen API Version | Pins the service API version SimpleChat sends with requests for this feature. | 2024-12-01-preview | `azure_openai_image_gen_api_version` |
+| Azure OpenAI Image Gen API Version | Pins the service API version SimpleChat sends with requests for this feature. | 2025-04-01-preview | `azure_openai_image_gen_api_version` |
 | Azure APIM Endpoint | Provides the endpoint or route SimpleChat uses for this service. | Empty | `azure_apim_image_gen_endpoint` |
 | Azure APIM API Version | Pins the service API version SimpleChat sends with requests for this feature. | Empty | `azure_apim_image_gen_api_version` |
 | Azure APIM Deployment | Selects the deployment SimpleChat sends requests to for this capability. | Empty | `azure_apim_image_gen_deployment` |

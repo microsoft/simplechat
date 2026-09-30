@@ -2,6 +2,23 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.047)**
+
+#### Bug Fixes
+
+*   **Images Without OCR Text Are Now Indexed From Their Vision Description**
+    *   Fixed text-free images, such as a photo of an empty room, ending with no search chunk, no title, and nothing chat could use, even though the AI vision model had described them. When OCR finds no text, the vision description is now indexed as the image's chunk, so the image is searchable and final metadata extraction runs as usual.
+    *   Document Intelligence Layout output that is only page-number or page-break annotations, such as a stray `<!-- PageNumber="J" -->` read from floor tape, no longer counts as image text. Header and footer text still does. Failed or empty vision analyses are never indexed.
+    *   Image chunks are now embedded from the same text that is stored, including the vision description, instead of from the OCR text alone. Images with real OCR text keep their existing chunk.
+    *   With Enhanced extraction, a standalone image that the Content Understanding document analyzer returns nothing for is now described by the Content Understanding image analyzer before falling back to Document Intelligence Layout. This applies to workspace uploads and to images uploaded straight into a chat. The image analyzer's `Summary` field is now read, which also replaces the `![image](pages/1)` placeholder that images embedded in DOCX and PPTX files were indexed with.
+    *   The multi-modal vision model is now called through the AI connection that hosts it when multi-endpoint models are enabled, instead of always using the legacy GPT connection, which returned 404 for models deployed on another connection. The Test Vision Analysis button now uses the same connection as ingestion.
+    *   (Ref: #1583, `functions_documents.py`, `functions_content.py`, `functions_content_understanding.py`, `functions_model_endpoint_types.py`, `route_backend_settings.py`, `route_frontend_chats.py`, [Image Description Indexing Without OCR Text Fix](fixes/IMAGE_DESCRIPTION_INDEXING_WITHOUT_OCR_TEXT_FIX.md))
+
+*   **Image Generation Uses The gpt-image API Version By Default**
+    *   The default Azure OpenAI image generation API version is now `2025-04-01-preview`, the newest dated Azure OpenAI API version and the one documented for gpt-image-1, gpt-image-1.5, and gpt-image-2. The previous `2024-12-01-preview` default predates gpt-image support.
+    *   Existing deployments still storing the previous default, or a blank value, are upgraded automatically when settings load. Any other saved version is kept, and the APIM image generation API version is never changed because the gateway defines it.
+    *   (Ref: `functions_settings.py`, `azure_openai_image_gen_api_version`, [Image Generation API Version Default Fix](fixes/IMAGE_GENERATION_API_VERSION_DEFAULT_FIX.md))
+
 ### **(v0.261.046)**
 
 #### Bug Fixes

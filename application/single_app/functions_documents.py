@@ -58,6 +58,7 @@ from functions_xsd_schema import (
     validate_xml_bytes,
 )
 from functions_model_endpoint_types import (
+    find_enabled_model_endpoint_for_model_name,
     get_model_endpoint_api_type,
     resolve_model_endpoint_request_model,
 )
@@ -200,6 +201,93 @@ def _build_model_endpoint_client(
     return client
 
 
+def _build_model_endpoint_client_for_model(
+    settings,
+    endpoint_cfg,
+    model_id,
+    *,
+    fallback_endpoint_id='',
+    fallback_provider='',
+    purpose_label='model',
+    identity_context=None,
+):
+    """Build a sync chat client for one model on a configured AI connection.
+
+    Resolves the connection's Key Vault secrets first, then finds the model by id and validates
+    the provider and connection details. ``purpose_label`` names the feature in error messages,
+    which never include secrets.
+
+    Returns ``(client, request_model)``.
+    """
+    endpoint_cfg = keyvault_model_endpoint_get_helper(
+        endpoint_cfg,
+        endpoint_cfg.get("id") or fallback_endpoint_id,
+        scope="global",
+        return_type=SecretReturnType.VALUE,
+    )
+
+    models = endpoint_cfg.get("models", []) or []
+    model_cfg = next((m for m in models if m.get("id") == model_id), None)
+    if not model_cfg:
+        raise LookupError(f"Selected {purpose_label} model could not be found on the endpoint.")
+    if not model_cfg.get("enabled", True):
+        raise ValueError(f"Selected {purpose_label} model is disabled.")
+
+    provider = str(endpoint_cfg.get("provider") or fallback_provider or "aoai").lower()
+    connection = endpoint_cfg.get("connection", {}) or {}
+    auth_settings = endpoint_cfg.get("auth", {}) or {}
+    deployment = resolve_model_endpoint_request_model(endpoint_cfg, model_cfg)
+    endpoint = str(connection.get("endpoint") or "").strip()
+    api_version = str(connection.get("openai_api_version") or connection.get("api_version") or "").strip()
+    api_type = get_model_endpoint_api_type(endpoint_cfg)
+    anthropic_version = str(connection.get("anthropic_version") or "").strip()
+    runtime_protocol = infer_model_endpoint_protocol(
+        provider,
+        endpoint,
+        deployment,
+        api_type,
+    )
+
+    if provider not in MODEL_ENDPOINT_PROVIDER_ALLOWLIST:
+        raise ValueError(f"Selected {purpose_label} provider '{provider}' is not supported.")
+    if not endpoint or not deployment or (
+        runtime_protocol == MODEL_ENDPOINT_PROTOCOL_AZURE_OPENAI and not api_version
+    ):
+        raise ValueError(f"Selected {purpose_label} endpoint is incomplete.")
+
+    return _build_model_endpoint_client(
+        auth_settings,
+        provider,
+        endpoint,
+        api_version,
+        deployment,
+        api_type=api_type,
+        anthropic_version=anthropic_version,
+        allow_private_custom_endpoints=bool(
+            settings.get("allow_private_custom_model_endpoints", False)
+        ),
+        settings=settings,
+        endpoint_config=endpoint_cfg,
+        identity_context=identity_context,
+    ), deployment
+
+
+def resolve_vision_model_endpoint(settings, vision_model):
+    """Return the enabled AI connection and model that serve the configured vision model.
+
+    The vision model setting stores only a model name, so it is matched against enabled
+    endpoints and models when multi-endpoint models are enabled. Returns ``(endpoint, model)``
+    from the normalized endpoint list, or ``(None, None)`` when the legacy GPT connection
+    should be used instead.
+    """
+    settings = settings or {}
+    if not settings.get("enable_multi_model_endpoints", False):
+        return None, None
+
+    endpoints, _ = normalize_model_endpoints(settings.get("model_endpoints", []) or [])
+    return find_enabled_model_endpoint_for_model_name(endpoints, vision_model)
+
+
 def _resolve_metadata_extraction_client(settings, identity_context=None):
     selection = _normalize_model_endpoint_selection(settings.get("metadata_extraction_model_selection"))
 
@@ -215,57 +303,15 @@ def _resolve_metadata_extraction_client(settings, identity_context=None):
         if not endpoint_cfg.get("enabled", True):
             raise ValueError("Selected metadata extraction endpoint is disabled.")
 
-        endpoint_cfg = keyvault_model_endpoint_get_helper(
+        return _build_model_endpoint_client_for_model(
+            settings,
             endpoint_cfg,
-            endpoint_cfg.get("id") or selection["endpoint_id"],
-            scope="global",
-            return_type=SecretReturnType.VALUE,
-        )
-
-        models = endpoint_cfg.get("models", []) or []
-        model_cfg = next((m for m in models if m.get("id") == selection["model_id"]), None)
-        if not model_cfg:
-            raise LookupError("Selected metadata extraction model could not be found on the endpoint.")
-        if not model_cfg.get("enabled", True):
-            raise ValueError("Selected metadata extraction model is disabled.")
-
-        provider = str(endpoint_cfg.get("provider") or selection["provider"] or "aoai").lower()
-        connection = endpoint_cfg.get("connection", {}) or {}
-        auth_settings = endpoint_cfg.get("auth", {}) or {}
-        deployment = resolve_model_endpoint_request_model(endpoint_cfg, model_cfg)
-        endpoint = str(connection.get("endpoint") or "").strip()
-        api_version = str(connection.get("openai_api_version") or connection.get("api_version") or "").strip()
-        api_type = get_model_endpoint_api_type(endpoint_cfg)
-        anthropic_version = str(connection.get("anthropic_version") or "").strip()
-        runtime_protocol = infer_model_endpoint_protocol(
-            provider,
-            endpoint,
-            deployment,
-            api_type,
-        )
-
-        if provider not in MODEL_ENDPOINT_PROVIDER_ALLOWLIST:
-            raise ValueError(f"Selected metadata extraction provider '{provider}' is not supported.")
-        if not endpoint or not deployment or (
-            runtime_protocol == MODEL_ENDPOINT_PROTOCOL_AZURE_OPENAI and not api_version
-        ):
-            raise ValueError("Selected metadata extraction endpoint is incomplete.")
-
-        return _build_model_endpoint_client(
-            auth_settings,
-            provider,
-            endpoint,
-            api_version,
-            deployment,
-            api_type=api_type,
-            anthropic_version=anthropic_version,
-            allow_private_custom_endpoints=bool(
-                settings.get("allow_private_custom_model_endpoints", False)
-            ),
-            settings=settings,
-            endpoint_config=endpoint_cfg,
+            selection["model_id"],
+            fallback_endpoint_id=selection["endpoint_id"],
+            fallback_provider=selection["provider"],
+            purpose_label="metadata extraction",
             identity_context=identity_context,
-        ), deployment
+        )
 
     gpt_model = settings.get('metadata_extraction_model')
     if not gpt_model:
@@ -320,6 +366,18 @@ DI_MARKDOWN_TABLE_ROW_PATTERN = re.compile(r'(?m)^\s*\|.+\|\s*$')
 # treats them as a signal that Enhanced extraction is worth the extra cost, because Content
 # Understanding is the only engine that describes figures.
 DI_MARKDOWN_FIGURE_PATTERN = re.compile(r'(<figure\b|</figure>|!\[[^\]]*\]\()', re.IGNORECASE)
+# Document Intelligence Layout emits page numbers and page breaks as markdown comments, for example
+# <!-- PageNumber="J" -->. They annotate the page rather than carry its text, so an image whose OCR
+# output is only these annotations has no text worth indexing on its own. Header and footer comments
+# are deliberately not matched, because their quoted values are the recognized text itself.
+DI_MARKDOWN_PAGE_ANNOTATION_PATTERN = re.compile(
+    r'<!--\s*(?:PageNumber\s*=\s*"[^"]*"|PageBreak)\s*-->',
+    re.IGNORECASE,
+)
+VISION_ANALYSIS_CONTENT_FIELDS = ('description', 'objects', 'text', 'analysis')
+# Marks the single chunk saved for an image that has no OCR text but does have an AI vision
+# description, so the save loop keeps it and save_chunks indexes the description on its own.
+VISION_DESCRIPTION_ONLY_CHUNK_FLAG = 'vision_description_only'
 # Budget for image content merged into an existing chunk. The limit is the embedding character
 # budget, so a merged chunk can never grow past what the embedding endpoint accepts.
 OFFICE_IMAGE_MERGE_MIN_CHAR_LIMIT = 4000
@@ -699,6 +757,7 @@ def _extract_pages_with_extraction_engine(
     extraction_engine,
     settings=None,
     pages=None,
+    is_image=False,
 ):
     """Extract page content with the resolved engine, falling back to Document Intelligence Layout."""
     return extract_content_with_extraction_engine(
@@ -707,6 +766,7 @@ def _extract_pages_with_extraction_engine(
         extraction_engine=extraction_engine,
         settings=settings,
         pages=pages,
+        is_image=is_image,
     )
 
 
@@ -3487,12 +3547,77 @@ def update_document(**kwargs):
         #    print(f"Failed to update status to error state for {document_id}: {inner_e}")
         raise # Re-raise the original exception
 
+def _is_usable_vision_analysis(vision_analysis):
+    """Return True when a vision analysis succeeded and describes something worth indexing."""
+    if not isinstance(vision_analysis, dict) or 'error' in vision_analysis:
+        return False
+
+    for field_name in VISION_ANALYSIS_CONTENT_FIELDS:
+        field_value = vision_analysis.get(field_name)
+        if isinstance(field_value, str):
+            if field_value.strip():
+                return True
+        elif field_value:
+            return True
+    return False
+
+
+def _format_vision_analysis_block(vision_analysis):
+    """Format a vision analysis as the searchable block appended to an image's chunk text.
+
+    Returns an empty string for a missing, failed, or empty analysis, so an error message from
+    the vision model is never indexed as if it described the image.
+    """
+    if not _is_usable_vision_analysis(vision_analysis):
+        return ''
+
+    vision_text_parts = ["\n\n=== AI Vision Analysis ==="]
+    vision_text_parts.append(f"Model: {vision_analysis.get('model', 'unknown')}")
+
+    if vision_analysis.get('description'):
+        vision_text_parts.append(f"\nDescription: {vision_analysis['description']}")
+
+    if vision_analysis.get('objects'):
+        objects_list = vision_analysis['objects']
+        if isinstance(objects_list, list):
+            vision_text_parts.append(f"\nObjects Detected: {', '.join(str(item) for item in objects_list)}")
+        else:
+            vision_text_parts.append(f"\nObjects Detected: {objects_list}")
+
+    if vision_analysis.get('text'):
+        vision_text_parts.append(f"\nVisible Text: {vision_analysis['text']}")
+
+    if vision_analysis.get('analysis'):
+        vision_text_parts.append(f"\nContextual Analysis: {vision_analysis['analysis']}")
+
+    return "\n".join(vision_text_parts)
+
+
+def _append_vision_block_to_chunk_text(chunk_text, vision_text):
+    """Append a vision block to chunk text, dropping its leading blank lines when there is no text."""
+    chunk_text = chunk_text or ''
+    if not vision_text:
+        return chunk_text
+    if not chunk_text.strip():
+        return vision_text.lstrip()
+    return chunk_text + vision_text
+
+
+def _has_indexable_ocr_text(page_content):
+    """Return True when OCR output has text beyond Document Intelligence page-number annotations."""
+    text_without_annotations = DI_MARKDOWN_PAGE_ANNOTATION_PATTERN.sub('', str(page_content or ''))
+    return bool(text_without_annotations.strip())
+
+
 def save_chunks(page_text_content, page_number, file_name, user_id, document_id, group_id=None, public_workspace_id=None):
     """
     Save a single chunk (one page) at a time:
-      - Generate embedding
+      - Build the chunk text, appending the document's AI vision analysis when it has one
+      - Generate the embedding from that same text
       - Build chunk metadata
       - Upload to Search index
+
+    A chunk with no text to index, and no vision analysis to stand in for it, is not written.
     """
     current_time = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
     is_group = group_id is not None
@@ -3551,11 +3676,37 @@ def save_chunks(page_text_content, page_number, file_name, user_id, document_id,
         print(f"Error updating document status or retrieving metadata for document {document_id}: {repr(e)}\nTraceback:\n{traceback.format_exc()}")
         raise
 
+    # Build the stored chunk text before embedding it, so an image's vector reflects its AI vision
+    # description rather than only whatever OCR text it happened to contain.
+    enhanced_chunk_text = page_text_content or ''
+    vision_text = _format_vision_analysis_block(metadata.get('vision_analysis'))
+    if vision_text:
+        enhanced_chunk_text = _append_vision_block_to_chunk_text(enhanced_chunk_text, vision_text)
+        debug_print(
+            f"[SAVE_CHUNKS] Appended vision analysis for document {document_id}: "
+            f"chunk_text length {len(enhanced_chunk_text)} (original: {len(page_text_content or '')}, "
+            f"vision: {len(vision_text)})"
+        )
+    else:
+        debug_print(f"[SAVE_CHUNKS] No usable vision analysis found for document {document_id}")
+
+    if not enhanced_chunk_text.strip():
+        log_event(
+            "[SAVE_CHUNKS] Skipped a chunk with no text or vision description to index.",
+            extra={
+                "document_id": document_id,
+                "page_number": page_number,
+                "file_name": file_name,
+            },
+            level=logging.WARNING
+        )
+        return None
+
     # Generate embedding
     try:
         #status = f"Generating embedding for page {page_number}"
         #update_document(document_id=document_id, user_id=user_id, status=status)
-        embedding_input = page_text_content
+        embedding_input = enhanced_chunk_text
         max_embedding_characters = get_embedding_safe_chunk_characters()
 
         # Last-resort guard. Every processor bounds its own chunks, so reaching this means content
@@ -3590,40 +3741,6 @@ def save_chunks(page_text_content, page_number, file_name, user_id, document_id,
         author = ensure_list(metadata.get('authors')) if metadata else []
         title = metadata.get('title', '') if metadata else ''
         document_classification = metadata.get('document_classification', 'None') if metadata else 'None'
-
-        # Check if this document has vision analysis and append it to chunk_text
-        vision_analysis = metadata.get('vision_analysis')
-        enhanced_chunk_text = page_text_content
-
-        if vision_analysis:
-            debug_print(f"[SAVE_CHUNKS] Document {document_id} has vision analysis, appending to chunk_text")
-            # Format vision analysis as structured text for better searchability
-            vision_text_parts = []
-            vision_text_parts.append("\n\n=== AI Vision Analysis ===")
-            vision_text_parts.append(f"Model: {vision_analysis.get('model', 'unknown')}")
-
-            if vision_analysis.get('description'):
-                vision_text_parts.append(f"\nDescription: {vision_analysis['description']}")
-
-            if vision_analysis.get('objects'):
-                objects_list = vision_analysis['objects']
-                if isinstance(objects_list, list):
-                    vision_text_parts.append(f"\nObjects Detected: {', '.join(objects_list)}")
-                else:
-                    vision_text_parts.append(f"\nObjects Detected: {objects_list}")
-
-            if vision_analysis.get('text'):
-                vision_text_parts.append(f"\nVisible Text: {vision_analysis['text']}")
-
-            if vision_analysis.get('analysis'):
-                vision_text_parts.append(f"\nContextual Analysis: {vision_analysis['analysis']}")
-
-            vision_text = "\n".join(vision_text_parts)
-            enhanced_chunk_text = page_text_content + vision_text
-
-            debug_print(f"[SAVE_CHUNKS] Enhanced chunk_text length: {len(enhanced_chunk_text)} (original: {len(page_text_content)}, vision: {len(vision_text)})")
-        else:
-            debug_print(f"[SAVE_CHUNKS] No vision analysis found for document {document_id}")
 
         if is_public_workspace:
             chunk_document = {
@@ -3770,44 +3887,43 @@ def save_chunks_batch(chunks_data, user_id, document_id, group_id=None, public_w
         log_event(f"[SAVE_CHUNKS_BATCH] Error retrieving metadata for document {document_id}: {repr(e)}", level=logging.ERROR)
         raise
 
+    # Build every chunk's stored text first and embed that same text, matching save_chunks().
+    vision_text = _format_vision_analysis_block(metadata.get('vision_analysis'))
+    chunks_to_save = []
+    for chunk_info in chunks_data:
+        enhanced_chunk_text = _append_vision_block_to_chunk_text(chunk_info['page_text_content'], vision_text)
+        if not enhanced_chunk_text.strip():
+            log_event(
+                "[SAVE_CHUNKS_BATCH] Skipped a chunk with no text or vision description to index.",
+                extra={
+                    "document_id": document_id,
+                    "page_number": chunk_info.get('page_number'),
+                    "file_name": chunk_info.get('file_name'),
+                },
+                level=logging.WARNING
+            )
+            continue
+        chunks_to_save.append((chunk_info, enhanced_chunk_text))
+
+    total_token_usage = {'total_tokens': 0, 'prompt_tokens': 0, 'model_deployment_name': None}
+    if not chunks_to_save:
+        return total_token_usage
+
     # Generate all embeddings in batches
-    texts = [c['page_text_content'] for c in chunks_data]
+    texts = [enhanced_chunk_text for _, enhanced_chunk_text in chunks_to_save]
     try:
         embedding_results = generate_embeddings_batch(texts)
     except Exception as e:
         log_event(f"[SAVE_CHUNKS_BATCH] Error generating batch embeddings for document {document_id}: {e}", level=logging.ERROR)
         raise
 
-    # Check for vision analysis once
-    vision_analysis = metadata.get('vision_analysis')
-    vision_text = ""
-    if vision_analysis:
-        vision_text_parts = []
-        vision_text_parts.append("\n\n=== AI Vision Analysis ===")
-        vision_text_parts.append(f"Model: {vision_analysis.get('model', 'unknown')}")
-        if vision_analysis.get('description'):
-            vision_text_parts.append(f"\nDescription: {vision_analysis['description']}")
-        if vision_analysis.get('objects'):
-            objects_list = vision_analysis['objects']
-            if isinstance(objects_list, list):
-                vision_text_parts.append(f"\nObjects Detected: {', '.join(objects_list)}")
-            else:
-                vision_text_parts.append(f"\nObjects Detected: {objects_list}")
-        if vision_analysis.get('text'):
-            vision_text_parts.append(f"\nVisible Text: {vision_analysis['text']}")
-        if vision_analysis.get('analysis'):
-            vision_text_parts.append(f"\nContextual Analysis: {vision_analysis['analysis']}")
-        vision_text = "\n".join(vision_text_parts)
-
     # Build all chunk documents
     chunk_documents = []
-    total_token_usage = {'total_tokens': 0, 'prompt_tokens': 0, 'model_deployment_name': None}
 
-    for idx, chunk_info in enumerate(chunks_data):
+    for idx, (chunk_info, enhanced_chunk_text) in enumerate(chunks_to_save):
         embedding, token_usage = embedding_results[idx]
         page_number = chunk_info['page_number']
         file_name = chunk_info['file_name']
-        page_text_content = chunk_info['page_text_content']
 
         if token_usage:
             total_token_usage['total_tokens'] += token_usage.get('total_tokens', 0)
@@ -3816,7 +3932,6 @@ def save_chunks_batch(chunks_data, user_id, document_id, group_id=None, public_w
                 total_token_usage['model_deployment_name'] = token_usage.get('model_deployment_name')
 
         chunk_id = f"{document_id}_{page_number}"
-        enhanced_chunk_text = page_text_content + vision_text if vision_text else page_text_content
 
         if is_public_workspace:
             chunk_document = {
@@ -5815,49 +5930,85 @@ def analyze_image_with_vision_model(image_path, user_id, document_id, settings):
             print(f"Warning: Multi-modal vision enabled but no model selected")
             return None
 
-        # Initialize client (reuse Chat Model)
-        enable_gpt_apim = settings.get('enable_gpt_apim', False)
-        debug_print(f"[VISION_ANALYSIS] Using APIM: {enable_gpt_apim}")
-
-        if enable_gpt_apim:
-            api_version = settings.get('azure_apim_gpt_api_version')
-            endpoint = settings.get('azure_apim_gpt_endpoint')
-            debug_print(f"[VISION_ANALYSIS] APIM Configuration:")
-            debug_print(f"  Endpoint: {endpoint}")
-            debug_print(f"  API Version: {api_version}")
-
-            gpt_client = AzureOpenAI(
-                api_version=api_version,
-                azure_endpoint=endpoint,
-                api_key=settings.get('azure_apim_gpt_subscription_key')
+        # The setting stores only a model name. With multi-endpoint models enabled, route the call
+        # through the AI connection that hosts that model; otherwise use the legacy GPT connection.
+        request_model = vision_model
+        vision_endpoint_cfg, vision_model_cfg = resolve_vision_model_endpoint(settings, vision_model)
+        if vision_endpoint_cfg and vision_model_cfg:
+            gpt_client, request_model = _build_model_endpoint_client_for_model(
+                settings,
+                vision_endpoint_cfg,
+                vision_model_cfg.get('id'),
+                fallback_endpoint_id=str(vision_endpoint_cfg.get('id') or ''),
+                purpose_label='vision',
+                identity_context={'user_id': user_id},
+            )
+            log_event(
+                "[VISION_ANALYSIS] Using the AI connection that hosts the vision model.",
+                extra={
+                    "document_id": document_id,
+                    "vision_model": vision_model,
+                    "request_model": request_model,
+                    "endpoint_id": vision_endpoint_cfg.get('id'),
+                    "endpoint_name": vision_endpoint_cfg.get('name'),
+                    "model_id": vision_model_cfg.get('id'),
+                    "provider": vision_endpoint_cfg.get('provider'),
+                },
             )
         else:
-            # Use managed identity or key
-            auth_type = settings.get('azure_openai_gpt_authentication_type', 'key')
-            api_version = settings.get('azure_openai_gpt_api_version')
-            endpoint = settings.get('azure_openai_gpt_endpoint')
+            # Initialize client (reuse Chat Model)
+            enable_gpt_apim = settings.get('enable_gpt_apim', False)
+            debug_print(f"[VISION_ANALYSIS] Using APIM: {enable_gpt_apim}")
 
-            debug_print(f"[VISION_ANALYSIS] Direct Azure OpenAI Configuration:")
-            debug_print(f"  Endpoint: {endpoint}")
-            debug_print(f"  API Version: {api_version}")
-            debug_print(f"  Auth Type: {auth_type}")
+            if enable_gpt_apim:
+                api_version = settings.get('azure_apim_gpt_api_version')
+                endpoint = settings.get('azure_apim_gpt_endpoint')
+                debug_print(f"[VISION_ANALYSIS] APIM Configuration:")
+                debug_print(f"  Endpoint: {endpoint}")
+                debug_print(f"  API Version: {api_version}")
 
-            if auth_type == 'managed_identity':
-                token_provider = get_bearer_token_provider(
-                    DefaultAzureCredential(),
-                    cognitive_services_scope
-                )
                 gpt_client = AzureOpenAI(
                     api_version=api_version,
                     azure_endpoint=endpoint,
-                    azure_ad_token_provider=token_provider
+                    api_key=settings.get('azure_apim_gpt_subscription_key')
                 )
             else:
-                gpt_client = AzureOpenAI(
-                    api_version=api_version,
-                    azure_endpoint=endpoint,
-                    api_key=settings.get('azure_openai_gpt_key')
-                )
+                # Use managed identity or key
+                auth_type = settings.get('azure_openai_gpt_authentication_type', 'key')
+                api_version = settings.get('azure_openai_gpt_api_version')
+                endpoint = settings.get('azure_openai_gpt_endpoint')
+
+                debug_print(f"[VISION_ANALYSIS] Direct Azure OpenAI Configuration:")
+                debug_print(f"  Endpoint: {endpoint}")
+                debug_print(f"  API Version: {api_version}")
+                debug_print(f"  Auth Type: {auth_type}")
+
+                if auth_type == 'managed_identity':
+                    token_provider = get_bearer_token_provider(
+                        DefaultAzureCredential(),
+                        cognitive_services_scope
+                    )
+                    gpt_client = AzureOpenAI(
+                        api_version=api_version,
+                        azure_endpoint=endpoint,
+                        azure_ad_token_provider=token_provider
+                    )
+                else:
+                    gpt_client = AzureOpenAI(
+                        api_version=api_version,
+                        azure_endpoint=endpoint,
+                        api_key=settings.get('azure_openai_gpt_key')
+                    )
+
+            log_event(
+                "[VISION_ANALYSIS] Using the legacy GPT connection for the vision model.",
+                extra={
+                    "document_id": document_id,
+                    "vision_model": vision_model,
+                    "connection": "apim" if enable_gpt_apim else "azure_openai",
+                    "multi_endpoint_enabled": bool(settings.get('enable_multi_model_endpoints', False)),
+                },
+            )
 
         # Create vision prompt
         print(f"Analyzing image with vision model: {vision_model}")
@@ -5901,7 +6052,7 @@ Format your response as JSON with these keys:
 }"""
 
         api_params = {
-            "model": vision_model,
+            "model": request_model,
             "messages": [
                 {
                     "role": "user",
@@ -6045,6 +6196,15 @@ Format your response as JSON with these keys:
     except Exception as e:
         print(f"Error in vision analysis for {document_id}: {str(e)}")
         traceback.print_exc()
+        log_event(
+            "[VISION_ANALYSIS] Vision analysis failed, so no vision description was produced.",
+            extra={
+                "document_id": document_id,
+                "vision_model": settings.get('multimodal_vision_model') if isinstance(settings, dict) else None,
+                "error_type": type(e).__name__,
+            },
+            level=logging.WARNING,
+        )
         return None
 
 def upload_to_blob(temp_file_path, user_id, document_id, blob_filename, update_callback, group_id=None, public_workspace_id=None, mark_enhanced_citations=True):
@@ -9048,6 +9208,9 @@ def process_di_document(document_id, user_id, temp_file_path, original_filename,
     update_callback(num_file_chunks=num_file_chunks, status=f"Processing {original_filename} in {num_file_chunks} file chunk(s)")
 
     total_final_chunks_processed = 0
+    # Only this run's vision analysis may stand in for missing OCR text. A reprocessed document can
+    # still carry an older analysis on its record, which must not be indexed on its own.
+    vision_analysis_usable = False
     for idx, chunk_path in enumerate(file_paths_to_process, start=1):
         chunk_base_name, chunk_ext_loop = os.path.splitext(original_filename)
         chunk_effective_filename = original_filename
@@ -9112,6 +9275,7 @@ def process_di_document(document_id, user_id, temp_file_path, original_filename,
                     extraction_mode=document_intelligence_extraction_mode,
                     extraction_engine=extraction_engine,
                     settings=settings,
+                    is_image=is_image,
                 )
                 if engine_fallback_reason:
                     extraction_engine = engine_used
@@ -9165,6 +9329,7 @@ def process_di_document(document_id, user_id, temp_file_path, original_filename,
                             'status': "AI vision analysis completed"
                         }
                         update_callback(**update_fields)
+                        vision_analysis_usable = _is_usable_vision_analysis(vision_analysis)
                         print(f"Vision analysis saved to document metadata and will be appended to chunk_text for AI Search indexing")
                     else:
                         print(f"Vision analysis returned no results for: {chunk_effective_filename}")
@@ -9220,10 +9385,38 @@ def process_di_document(document_id, user_id, temp_file_path, original_filename,
                     status=f"Grouped {len(final_chunks_to_save)} chunk(s) for {chunk_effective_filename} using {target_size} page(s)/slide(s) per chunk."
                 )
         elif is_image:
-            if di_extracted_pages:
-                 if 'page_number' not in di_extracted_pages[0]: di_extracted_pages[0]['page_number'] = 1
-                 final_chunks_to_save = di_extracted_pages
-            else: final_chunks_to_save = [] # No text extracted
+            # Keep only pages with real OCR text. Layout can annotate a photo with nothing but a
+            # stray page-number comment, which would otherwise become the image's only chunk.
+            image_text_pages = [
+                page for page in di_extracted_pages
+                if isinstance(page, dict) and _has_indexable_ocr_text(page.get('content'))
+            ]
+            if image_text_pages:
+                if 'page_number' not in image_text_pages[0]:
+                    image_text_pages[0]['page_number'] = 1
+                final_chunks_to_save = image_text_pages
+            elif vision_analysis_usable:
+                # No OCR text, but the vision model described the image, so index that description
+                # on its own. save_chunks() appends and embeds the stored vision analysis.
+                final_chunks_to_save = [{
+                    'page_number': 1,
+                    'content': '',
+                    VISION_DESCRIPTION_ONLY_CHUNK_FLAG: True,
+                }]
+                log_event(
+                    "[VISION_ANALYSIS] Image had no OCR text, so its AI vision description was indexed on its own.",
+                    extra={
+                        "document_id": document_id,
+                        "file_name": chunk_effective_filename,
+                        "ocr_page_count": len(di_extracted_pages),
+                    },
+                )
+                update_callback(
+                    number_of_pages=1,
+                    status=f"No text found in image {chunk_effective_filename}; indexing its AI vision description."
+                )
+            else:
+                final_chunks_to_save = [] # No text extracted and no vision description to index
 
         # --- Embedded Office image analysis (DOCX/DOC/PPTX/PPT) ---
         # Neither extraction engine describes figures inside Office files, so embedded images are
@@ -9297,7 +9490,9 @@ def process_di_document(document_id, user_id, temp_file_path, original_filename,
                     chunk_index = chunk_data.get("page_number", i + 1) # Ensure page number exists
                     chunk_content = chunk_data.get("content", "")
 
-                    if not chunk_content.strip():
+                    # A description-only image chunk has no OCR text by design; save_chunks()
+                    # supplies its text from the stored vision analysis.
+                    if not chunk_content.strip() and not chunk_data.get(VISION_DESCRIPTION_ONLY_CHUNK_FLAG):
                         print(f"Skipping empty chunk index {chunk_index} for {chunk_effective_filename}.")
                         continue
 
