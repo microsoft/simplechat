@@ -96,6 +96,7 @@ from functions_saved_analysis import (
     is_saved_analysis_unavailable,
     sanitize_saved_analysis_messages,
 )
+from functions_workflow_result_reader import message_uses_workflow_result
 from utils_cache import invalidate_personal_search_cache
 
 
@@ -2712,6 +2713,7 @@ def register_route_backend_conversations(bp):
                 any((message.get('metadata') or {}).get(field) for field in (
                     'saved_analysis', 'saved_analyses', 'analysis_result_contexts',
                 ))
+                or message_uses_workflow_result(message)
                 for message in accessible_matches
             ):
                 # Source-bound snippets must recheck access rather than outlive it in a cache.

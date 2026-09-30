@@ -560,6 +560,46 @@ def run_offline_scenarios():
                 f"Unexpected new-chat history: {readable[fresh_id]}",
             )
 
+            def require_withheld(chat_id, why):
+                loaded = reloaded(chat_id)
+                body = loaded.get_data(as_text=True)
+                items, earlier = loaded.get_json()["messages"], readable[chat_id]
+                require(
+                    [(item["id"], item["role"]) for item in items] == [(item["id"], item["role"]) for item in earlier],
+                    f"{why}: the history changed shape.",
+                )
+                for item, before_item in zip(items, earlier):
+                    if item["role"] == "assistant":
+                        require(
+                            item["content"] == reader.WORKFLOW_RESULT_UNAVAILABLE_MESSAGE
+                            and item["metadata"]["workflow_result"] == {
+                                "version": reader.WORKFLOW_RESULT_VERSION, "available": False,
+                            }
+                            and "workflow_result_contexts" not in item["metadata"],
+                            f"{why}: an answer wasn't withheld: {item}",
+                        )
+                    else:
+                        require(
+                            item["content"] == before_item["content"]
+                            and "workflow_result_context" not in item["metadata"],
+                            f"{why}: a question lost its text or kept its context: {item}",
+                        )
+                for text in ("markets rose", "headlines.", "Weekly digest", WORKFLOW_ID, RUN_ID, context["result_sha256"]):
+                    require(text not in body, f"{why}: the history still carried {text!r}.")
+
+            def search_hits(term):
+                found = owner.post("/api/search_conversations", json={"search_term": term})
+                require(found.status_code == 200, f"Search failed: {found.status_code} {found.get_data(as_text=True)[:300]}")
+                return {
+                    item["conversation"]["id"]: len(item["messages"]) for item in found.get_json()["results"]
+                    if item["messages"]
+                }
+
+            require(
+                search_hits("markets rose") == {conversation_id: 2, fresh_id: 2},
+                f"Search didn't find the readable answers: {search_hits('markets rose')}",
+            )
+
             # The stream routes refuse a disabled, conflicting, retried or malformed request up front.
             before = counts()
             conflict = {"conversation_id": "conv-analysis", "message_id": "msg-analysis", "result_sha256": "d" * 64}
@@ -645,6 +685,30 @@ def run_offline_scenarios():
                 f"JSON: {changed_json.status_code} {changed_json.get_json()}",
             )
             require(counts() == before, "A changed result saved a message or reached the model.")
+
+            # Every earlier answer is withheld on reload and in search while the result differs.
+            stored = {chat_id: messages_of(chat_id) for chat_id in (conversation_id, fresh_id)}
+            for chat_id in (conversation_id, fresh_id):
+                require_withheld(chat_id, "After the result changed")
+            require(search_hits("markets rose") == {}, "Search still showed an answer from a changed result.")
+            require(
+                {chat_id: messages_of(chat_id) for chat_id in stored} == stored,
+                "Withholding an answer changed what was stored.",
+            )
+
+            # Restoring the original result shows the same answers again.
+            fixture.add_task("task-summary-72", {"reply": "The digest: markets rose."}, order=2, label="Write the digest")
+            for chat_id in (conversation_id, fresh_id):
+                require(reloaded(chat_id).get_json()["messages"] == readable[chat_id], "The answers didn't return.")
+            require(search_hits("markets rose") == {conversation_id: 2, fresh_id: 2}, "Search didn't recover.")
+
+            # Deleting the run withholds them again, and a stranger never sees the owner's history.
+            fixture.containers["runs"].documents.clear()
+            for chat_id in (conversation_id, fresh_id):
+                require_withheld(chat_id, "After the run was deleted")
+            require(search_hits("markets rose") == {}, "Search still showed an answer from a deleted run.")
+            foreign_history = stranger.get("/api/get_messages", query_string={"conversation_id": conversation_id})
+            require(foreign_history.status_code == 403, f"A stranger read the history: {foreign_history.status_code}")
 
             require(not normal_chat_clients, "The normal chat model was used.")
             require(not network_attempts, f"The routes attempted network access: {network_attempts}")

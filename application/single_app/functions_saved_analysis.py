@@ -437,11 +437,132 @@ def rebase_saved_analysis_message(message):
 def is_saved_analysis_unavailable(message):
     metadata = message.get("metadata") or {}
     descriptor = metadata.get("saved_analysis")
-    return isinstance(descriptor, Mapping) and descriptor.get("available") is False
+    workflow_result = metadata.get("workflow_result")
+    return (
+        (isinstance(descriptor, Mapping) and descriptor.get("available") is False)
+        or (isinstance(workflow_result, Mapping) and workflow_result.get("available") is False)
+    )
+
+
+_WORKFLOW_RESULT_KEYS = ("workflow_result", "workflow_result_context", "workflow_result_contexts")
+_WORKFLOW_RESULT_WITHHELD_LOG = "[WorkflowResults] A chat answer's workflow result was withheld on read."
+
+
+def _read_personal_conversation(conversation_id):
+    from config import cosmos_conversations_container
+
+    return cosmos_conversations_container.read_item(item=conversation_id, partition_key=conversation_id)
+
+
+class _WorkflowResultLineage:
+    """Checks, once per read call, the workflow results that stored messages relied on.
+
+    A message stays readable only in the reader's own private chat and only while every
+    workflow result it relied on is still readable by that reader exactly as selected.
+    Each distinct result is authorized once and each distinct chat is read once per
+    call; any failure withholds the message and is never raised.
+    """
+
+    def __init__(self, user_id, *, result_reader=None, conversation_reader=None):
+        from functions_workflow_result_reader import authorize_workflow_result_context
+
+        self._user_id = user_id
+        self._authorize = result_reader or authorize_workflow_result_context
+        self._read_conversation = conversation_reader or _read_personal_conversation
+        self._private_chats = {}
+        self._readable_results = {}
+
+    @staticmethod
+    def _log(check, *, code=None, error=None):
+        extra = {"check": check}
+        if code:
+            extra["code"] = code
+        if error is not None:
+            extra["error_type"] = type(error).__name__
+        log_event(_WORKFLOW_RESULT_WITHHELD_LOG, extra=extra)
+
+    def _private(self, conversation_id):
+        # Answers from private results never follow a chat into a shared or converted one.
+        from functions_orchestration_workflow_context import conversation_is_private
+
+        if not isinstance(conversation_id, str) or not conversation_id:
+            return False
+        if conversation_id not in self._private_chats:
+            try:
+                private = conversation_is_private(self._read_conversation(conversation_id), self._user_id) is True
+            except Exception as exc:
+                self._log("conversation", error=exc)
+                private = False
+            else:
+                if not private:
+                    self._log("conversation", code="workflow_result_private_only")
+            self._private_chats[conversation_id] = private
+        return self._private_chats[conversation_id]
+
+    def _readable(self, context):
+        from functions_workflow_result_reader import WorkflowResultUnavailable, workflow_result_context_key
+
+        key = workflow_result_context_key(context)
+        if key not in self._readable_results:
+            try:
+                self._authorize(self._user_id, context)
+            except Exception as exc:
+                self._log(
+                    "result", error=exc, code=exc.code if isinstance(exc, WorkflowResultUnavailable) else None,
+                )
+                self._readable_results[key] = False
+            else:
+                self._readable_results[key] = True
+        return self._readable_results[key]
+
+    def allows(self, message):
+        from functions_workflow_result_reader import workflow_result_message_contexts
+
+        contexts, malformed = workflow_result_message_contexts(message)
+        if malformed:
+            return False
+        if not contexts:
+            return True
+        if not self._private(message.get("conversation_id")):
+            return False
+        return all(self._readable(context) for context in contexts)
+
+    def sanitize(self, message):
+        from functions_workflow_result_reader import WORKFLOW_RESULT_UNAVAILABLE_MESSAGE, WORKFLOW_RESULT_VERSION
+
+        if self.allows(message):
+            return message
+        metadata = message.get("metadata") if isinstance(message.get("metadata"), Mapping) else {}
+        if message.get("role") == "user":
+            # The question is the reader's own text; only its link to the result goes.
+            kept = deepcopy(message)
+            kept["metadata"] = {key: value for key, value in kept["metadata"].items() if key not in _WORKFLOW_RESULT_KEYS}
+            return kept
+        safe = {
+            key: deepcopy(message[key]) for key in (
+                "id", "conversation_id", "role", "timestamp", "model_deployment_name",
+                "agent_display_name", "agent_name",
+            ) if key in message
+        }
+        safe["content"] = WORKFLOW_RESULT_UNAVAILABLE_MESSAGE
+        safe["metadata"] = {
+            key: deepcopy(metadata[key]) for key in ("thread_info", "user_info", "masked", "masked_ranges")
+            if key in metadata
+        }
+        safe["metadata"]["workflow_result"] = {"version": WORKFLOW_RESULT_VERSION, "available": False}
+        for field in ("agent_citations", "hybrid_citations", "web_search_citations", "thoughts"):
+            safe[field] = []
+        return safe
+
+
+def _uses_workflow_result(message):
+    metadata = message.get("metadata") if isinstance(message, Mapping) else None
+    return isinstance(metadata, Mapping) and any(key in metadata for key in _WORKFLOW_RESULT_KEYS)
 
 
 def authorize_saved_analysis_message_read(
     user_id, conversation_id, message_id, *, allow_pending=False, message_loader=None, result_reader=None,
+    workflow_result_reader=None, conversation_reader=None,
 ):
     """Keep persisted thoughts and other message-derived views under result access."""
     try:
@@ -451,6 +572,12 @@ def authorize_saved_analysis_message_read(
             raise
         _authorize_conversation(user_id, conversation_id)
         return False
+    if _uses_workflow_result(message):
+        lineage = _WorkflowResultLineage(
+            user_id, result_reader=workflow_result_reader, conversation_reader=conversation_reader,
+        )
+        if not lineage.allows(message):
+            raise PermissionError("The workflow result behind this message is unavailable.")
     read = result_reader or load_saved_analysis
     for context in analysis_result_contexts(message):
         read(user_id, context)
@@ -1684,11 +1811,21 @@ def read_saved_analysis_page(
     return response
 
 
-def sanitize_saved_analysis_messages(messages, user_id, *, result_reader=None):
+def sanitize_saved_analysis_messages(
+    messages, user_id, *, result_reader=None, workflow_result_reader=None, conversation_reader=None,
+):
     """Withhold result-derived content on new reads after source access is lost."""
     read = result_reader or load_saved_analysis
+    lineage = None
     sanitized = []
     for message in messages:
+        if _uses_workflow_result(message):
+            # Checked first: a withheld answer keeps no analysis lineage to check afterwards.
+            if lineage is None:
+                lineage = _WorkflowResultLineage(
+                    user_id, result_reader=workflow_result_reader, conversation_reader=conversation_reader,
+                )
+            message = lineage.sanitize(message)
         metadata = message.get("metadata") or {}
         descriptor = metadata.get("saved_analysis")
         if not any(metadata.get(field) for field in ("saved_analysis", "saved_analyses", "analysis_result_contexts")):
