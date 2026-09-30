@@ -28,7 +28,9 @@ This test ensures that:
 
 The model-name lookup and the chat upload call-site check run in-process. Checks that need the
 real application modules run in fresh normal and optimized processes with external I/O blocked,
-stubbing only the Azure-facing calls.
+stubbing only the Azure-facing calls. A separate fresh process imports functions_content_understanding
+before functions_content, the reverse of the main probe, because the two modules reach each other
+through a pre-existing import cycle, and checks that the image analyzer fallback still resolves.
 """
 
 import ast
@@ -603,6 +605,7 @@ def check_save_chunks_batch_matches_save_chunks(documents, content):
     stored = [document["chunk_text"] for document in uploaded_documents]
     _require(stored == ["Page one"] and batched_inputs == [["Page one"]],
              "Without a vision analysis, empty batch chunks are skipped and others are unchanged.")
+    _require(usage["total_tokens"] == 5, "Skipped chunks must not add embedding token usage.")
 
     usage = run({"version": 1}, [{"page_text_content": " ", "page_number": 1, "file_name": "x.md"}])
     _require(not batched_inputs and not uploaded_documents and usage["total_tokens"] == 0,
@@ -1164,6 +1167,7 @@ def _run_offline_probe():
     from test_support.offline_bootstrap import offline_app_imports  # noqa: PLC0415
 
     with offline_app_imports() as offline, tempfile.TemporaryDirectory() as work_dir:
+        _require("functions_content" not in sys.modules, "functions_content was imported before the probe.")
         import functions_content as content  # noqa: PLC0415
         import functions_content_understanding as content_understanding  # noqa: PLC0415
         import functions_documents as documents  # noqa: PLC0415
@@ -1186,25 +1190,63 @@ def _run_offline_probe():
     print("All offline image description indexing checks passed.")
 
 
-@pytest.mark.parametrize("optimized", (False, True))
-def test_image_description_indexing_real_modules(optimized):
-    """Run the real-module checks in a fresh process with external I/O blocked."""
+def _run_reverse_import_order_probe():
+    """Import Content Understanding before functions_content, the reverse of the main probe.
+
+    extract_content_with_extraction_engine() imports functions_content_understanding when it
+    runs, and functions_content_understanding reaches functions_content back through
+    functions_settings, functions_document_actions, and functions_search. The image analyzer
+    fallback must resolve both deferred names whichever module is imported first.
+    """
+    from test_support.offline_bootstrap import offline_app_imports  # noqa: PLC0415
+
+    with offline_app_imports() as offline, tempfile.TemporaryDirectory() as work_dir:
+        for module_name in ("functions_content", "functions_content_understanding"):
+            _require(module_name not in sys.modules, f"{module_name} was imported before the probe.")
+        import functions_content_understanding as content_understanding  # noqa: PLC0415
+        _require("functions_content" in sys.modules,
+                 "Importing functions_content_understanding no longer reaches functions_content; update this probe.")
+        import functions_content as content  # noqa: PLC0415
+        _require(not offline.network_attempts, "Application imports attempted network access.")
+
+        check_extraction_engine_image_fallback(content, content_understanding, work_dir)
+        _require(not offline.network_attempts, "The checks attempted network access.")
+
+    print("Reverse import order checks passed.")
+
+
+def _run_probe_process(probe_flag, optimized=False):
+    """Run a probe in a fresh interpreter so imports start from a clean module table."""
     env = dict(os.environ)
     env["PYTHONPATH"] = os.pathsep.join((str(ROOT), str(APP_ROOT), str(TEST_ROOT)))
     env["PYTHONIOENCODING"] = "utf-8"
     command = [sys.executable]
     if optimized:
         command.append("-O")
-    command.extend((str(Path(__file__).resolve()), "--offline-probe"))
-    result = subprocess.run(
+    command.extend((str(Path(__file__).resolve()), probe_flag))
+    return subprocess.run(
         command, cwd=ROOT, env=env, capture_output=True,
         text=True, encoding="utf-8", errors="replace", timeout=300,
     )
+
+
+@pytest.mark.parametrize("optimized", (False, True))
+def test_image_description_indexing_real_modules(optimized):
+    """Run the real-module checks in a fresh process with external I/O blocked."""
+    result = _run_probe_process("--offline-probe", optimized=optimized)
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_image_analyzer_fallback_with_reverse_import_order():
+    """The image analyzer fallback must work when Content Understanding is imported first."""
+    result = _run_probe_process("--reverse-import-order-probe")
     assert result.returncode == 0, result.stdout + result.stderr
 
 
 if __name__ == "__main__":
     if "--offline-probe" in sys.argv:
         _run_offline_probe()
+    elif "--reverse-import-order-probe" in sys.argv:
+        _run_reverse_import_order_probe()
     else:
         raise SystemExit(pytest.main([__file__, "-q"]))

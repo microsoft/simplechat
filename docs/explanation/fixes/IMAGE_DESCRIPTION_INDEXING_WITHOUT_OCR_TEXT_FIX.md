@@ -158,6 +158,10 @@ blocked. It covers:
   de-duplication,
 - the extraction fallback for images, analyzer failure and empty results, PDFs, document analyzer
   content and failure, and Standard extraction, plus the chat upload call site,
+- the image analyzer fallback when `functions_content_understanding` is imported before
+  `functions_content`, in a separate fresh process. The two modules already reach each other
+  through `functions_settings`, `functions_document_actions`, and `functions_search`, so both
+  import orders are checked,
 - the vision connection lookup: match precedence, disabled endpoints and models, blank and
   malformed input, legacy fallback with multi-endpoint off or no match, and APIM,
 - unchanged metadata extraction client construction and every error message,
@@ -187,6 +191,14 @@ suites.
   metadata extraction, so the image still has no generated title.
 - A vision model name that exists on more than one enabled connection resolves by the precedence
   above, because the setting stores only the name.
+- `extract_content_with_extraction_engine()` still imports `functions_content_understanding` when
+  it runs, and that import is part of a pre-existing cycle:
+  `functions_content` → `functions_content_understanding` → `functions_settings` →
+  `functions_document_actions` → `functions_search` → `functions_content`. This fix adds
+  `analyze_image_with_content_understanding` to that existing import statement but no new module
+  dependency, so CodeQL reports the same `py/cyclic-import` finding at the statement's new
+  location. Breaking the cycle means changing the settings bootstrap chain and is left for separate
+  work.
 
 ## Validation
 
