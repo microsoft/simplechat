@@ -522,6 +522,118 @@ function Ensure-AzureCliAuthenticated {
     }
 }
 
+function Ensure-KeyVaultSecretPermissions {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$VaultName,
+        [Parameter(Mandatory = $true)]
+        [string]$ResourceGroupName,
+        [Parameter(Mandatory = $true)]
+        [string[]]$PrincipalIds
+    )
+
+    $ErrorActionPreference = 'Stop'
+    foreach ($principalId in $PrincipalIds) {
+        $parsedPrincipalId = [guid]::Empty
+        if (-not [guid]::TryParse($principalId, [ref]$parsedPrincipalId) -or $parsedPrincipalId -eq [guid]::Empty) {
+            throw 'A valid application managed identity principal ID is required for Key Vault permissions.'
+        }
+    }
+    $principalIds = @($PrincipalIds | ForEach-Object { ([guid]$_).ToString() } | Select-Object -Unique)
+
+    $vaultJson = az keyvault show --name $VaultName --resource-group $ResourceGroupName `
+        --query "{id:id,rbacEnabled:properties.enableRbacAuthorization,accessPolicies:properties.accessPolicies}" `
+        --output json --only-show-errors
+    if ($LASTEXITCODE -ne 0 -or -not $vaultJson) {
+        throw "Failed to read Key Vault '$VaultName' permission configuration."
+    }
+    $vault = $vaultJson | ConvertFrom-Json -ErrorAction Stop
+    if ($vault.id -notmatch '^/subscriptions/[^/]+/resourceGroups/[^/]+/providers/Microsoft\.KeyVault/vaults/[^/]+$') {
+        throw 'Key Vault permissions require a vault resource scope.'
+    }
+    if ($null -ne $vault.rbacEnabled -and $vault.rbacEnabled -isnot [bool]) {
+        throw "Key Vault '$VaultName' returned an unknown authorization mode."
+    }
+
+    $officerRoleId = 'b86a8fe4-44ce-4948-aee5-eccb2c155cd7'
+    if ($vault.rbacEnabled) {
+        $readAssignments = {
+            $assignmentsJson = az role assignment list --scope $vault.id --role $officerRoleId `
+                --fill-principal-name false --fill-role-definition-name false --output json --only-show-errors
+            if ($LASTEXITCODE -ne 0 -or -not $assignmentsJson) {
+                throw "Failed to read Key Vault Secrets Officer assignments for '$VaultName'."
+            }
+            @($assignmentsJson | ConvertFrom-Json -ErrorAction Stop) | Where-Object {
+                $_.scope -ieq $vault.id -and ($_.roleDefinitionId -split '/')[-1] -ieq $officerRoleId
+            }
+        }
+        $assignments = @(& $readAssignments)
+    }
+
+    foreach ($principalId in $principalIds) {
+        if ($vault.rbacEnabled) {
+            $existing = @($assignments | Where-Object { $_.principalId -ieq $principalId })
+            $unrestricted = @($existing | Where-Object {
+                -not $_.PSObject.Properties['condition'] -or [string]::IsNullOrWhiteSpace($_.condition)
+            })
+            if (-not $unrestricted.Count) {
+                if ($existing.Count) {
+                    throw "The existing Key Vault Secrets Officer assignment for '$principalId' is conditional. Have an administrator review it; it has not been changed."
+                }
+
+                # Include the role in the stable name; never reuse a Secrets User assignment GUID.
+                $seed = "$($vault.id)|$principalId|$officerRoleId".ToLowerInvariant()
+                $hasher = [System.Security.Cryptography.SHA256]::Create()
+                try {
+                    $hash = $hasher.ComputeHash([System.Text.Encoding]::UTF8.GetBytes($seed))
+                    $assignmentName = [guid]::new([byte[]]$hash[0..15]).ToString()
+                } finally {
+                    $hasher.Dispose()
+                }
+                az role assignment create --name $assignmentName --role $officerRoleId `
+                    --assignee-object-id $principalId --assignee-principal-type ServicePrincipal `
+                    --scope $vault.id --output none --only-show-errors
+                if ($LASTEXITCODE -ne 0) {
+                    # A concurrent/manual assignment may have won the race. Verify it, never delete it.
+                    $assignments = @(& $readAssignments)
+                    $confirmed = @($assignments | Where-Object {
+                        $_.principalId -ieq $principalId -and (
+                            -not $_.PSObject.Properties['condition'] -or [string]::IsNullOrWhiteSpace($_.condition)
+                        )
+                    })
+                    if (-not $confirmed.Count) {
+                        throw "Failed to assign Key Vault Secrets Officer to application identity '$principalId' at vault '$VaultName'."
+                    }
+                }
+            }
+        } else {
+            $policies = @($vault.accessPolicies | Where-Object {
+                $_.objectId -ieq $principalId -and (
+                    -not $_.PSObject.Properties['applicationId'] -or -not $_.applicationId
+                )
+            })
+            $existingPermissions = @($policies | ForEach-Object {
+                if ($_.permissions.PSObject.Properties['secrets']) {
+                    $_.permissions.secrets
+                }
+            })
+            $requiredPermissions = @('get', 'list', 'set', 'delete')
+            $missingPermissions = @($requiredPermissions | Where-Object { $existingPermissions -notcontains $_ })
+            if ($missingPermissions.Count) {
+                # set-policy replaces the secret permission list; retain any administrator-added rights.
+                $secretPermissions = @($existingPermissions + $requiredPermissions | Sort-Object -Unique)
+                az keyvault set-policy --name $VaultName --resource-group $ResourceGroupName `
+                    --object-id $principalId --secret-permissions $secretPermissions --output none --only-show-errors
+                if ($LASTEXITCODE -ne 0) {
+                    throw "Failed to set Key Vault secret permissions for application identity '$principalId' at vault '$VaultName'."
+                }
+            }
+        }
+    }
+    Write-Host "Key Vault secret permissions confirmed for the application identities at vault '$VaultName'."
+}
+
 function Resolve-ContainerImageInfo {
     param(
         [string]$ImageName
@@ -1522,28 +1634,23 @@ Write-Host "`n=====> Creating User-Assigned Managed Identity: $($managedIdentity
 # Check if the managed identity exists
 $identity = az identity show --name $managedIdentityName --resource-group $resourceGroupName --query "name" --output tsv 2>$null
 if (-not $identity) {
-    az identity create --name $managedIdentityName --resource-group $resourceGroupName --location $paramLocation
-    if ($LASTEXITCODE -ne 0) { Write-Warning "Failed to create User-Assigned Managed Identity '$($managedIdentityName)'." }
-    else {
-        $managedIdentityPrincipalId = $(az identity show --name $managedIdentityName --resource-group $resourceGroupName --query "principalId" -o tsv)
-        $managedIdentityId = $(az identity show --name $managedIdentityName --resource-group $resourceGroupName --query "id" -o tsv)
-        Write-Host "User-Assigned Managed Identity '$($managedIdentityName)' created with Principal ID: $managedIdentityPrincipalId and Resource ID: $managedIdentityId"
-        # Example: Grant Managed Identity access to Key Vault (secrets get/list)
-        if ($keyVaultName -and $managedIdentityPrincipalId) {
-            Write-Host "=====> Granting Managed Identity '$($managedIdentityName)' access to Key Vault '$($keyVaultName)' (get/list secrets)..."
-            # Check if KV is RBAC or policy based
-            $kvRbacEnabled = $(az keyvault show --name $keyVaultName --resource-group $resourceGroupName --query "properties.enableRbacAuthorization" -o tsv)
-            if ($kvRbacEnabled -eq "true") {
-                az role assignment create --role "Key Vault Secrets User" --assignee-object-id $managedIdentityPrincipalId --scope $(az keyvault show --name $keyVaultName --resource-group $resourceGroupName --query id -o tsv) --assignee-principal-type ServicePrincipal
-                if ($LASTEXITCODE -ne 0) { Write-Error "Failed to assign 'Key Vault Secrets User' role to Managed Identity '$($managedIdentityName)' for Key Vault '$($keyVaultName)'."}
-            } else {
-                az keyvault set-policy --name $keyVaultName --resource-group $resourceGroupName --object-id $managedIdentityPrincipalId --secret-permissions get list
-                if ($LASTEXITCODE -ne 0) { Write-Error "Failed to set Key Vault policy for Managed Identity '$($managedIdentityName)' on Key Vault '$($keyVaultName)'."}
-            }
-        }
+    az identity create --name $managedIdentityName --resource-group $resourceGroupName --location $paramLocation --output none --only-show-errors
+    if ($LASTEXITCODE -ne 0) {
+        throw "Failed to create User-Assigned Managed Identity '$managedIdentityName'."
     }
 } else {
     Write-Host "Managed Identity '$managedIdentityName' already exists."
+}
+
+$managedIdentityJson = az identity show --name $managedIdentityName --resource-group $resourceGroupName --output json --only-show-errors
+if ($LASTEXITCODE -ne 0 -or -not $managedIdentityJson) {
+    throw "Failed to read User-Assigned Managed Identity '$managedIdentityName'."
+}
+$managedIdentity = $managedIdentityJson | ConvertFrom-Json -ErrorAction Stop
+$managedIdentityId = $managedIdentity.id
+$managedIdentityPrincipalId = $managedIdentity.principalId
+if ([string]::IsNullOrWhiteSpace($managedIdentityId) -or [string]::IsNullOrWhiteSpace($managedIdentityPrincipalId)) {
+    throw "Managed Identity '$managedIdentityName' is missing its resource or principal ID."
 }
 
 
@@ -1574,12 +1681,6 @@ if (-not $webApp) {
         if ($LASTEXITCODE -ne 0) { Write-Warning "Failed to create App Service '$($appServiceName)'." }
         else {
             Write-Host "App Service '$($appServiceName)' created successfully. URL: http://$($appServiceName).azurewebsites.us"
-            # Example: Assign the managed identity to the App Service
-            if ($managedIdentityId) {
-                Write-Host "Assigning Managed Identity '$($managedIdentityName)' to App Service '$($appServiceName)'..."
-                az webapp identity assign --name $appServiceName --resource-group $resourceGroupName --identities $managedIdentityId
-                if ($LASTEXITCODE -ne 0) { Write-Warning "Failed to assign Managed Identity to App Service '$($appServiceName)'."}
-            }
         }
 
         Write-Host "`n=====> Setting App Service Container Image ..."
@@ -1615,9 +1716,6 @@ if (-not $webApp) {
         # --client-secret "<your-client-secret>" `
         # --issuer "https://login.microsoftonline.us/6bc5b33e-bc05-493c-b076-8f8ce1331515/v2.0"
 
-        # Enable System Managed Identity
-        az webapp identity assign --name $appServiceName --resource-group $resourceGroupName
-
     } else {
         Write-Error "Cannot create App Service because App Service Plan '$($appServicePlanName)' was not found or failed to create."
     }
@@ -1625,6 +1723,13 @@ if (-not $webApp) {
     Write-Host "Web App '$appServiceName' already exists."
 }
 
+# --- Reconcile App Service managed identities ---
+# Run for existing apps too: a blank Key Vault client ID selects the system identity.
+az webapp identity assign --name $appServiceName --resource-group $resourceGroupName `
+    --identities '[system]' $managedIdentityId --output none --only-show-errors
+if ($LASTEXITCODE -ne 0) {
+    throw "Failed to configure the application managed identities for App Service '$appServiceName'."
+}
 
 # --- Entra App Registration ---
 Write-Host "`n=====> Creating Entra App Registration: $($appServiceName)..."
@@ -2014,7 +2119,7 @@ Write-Host "`n`n=====> Performing RBAC Assignments ..." -ForegroundColor Yellow
 
 Write-Host "`nGetting Managed Identity Principal Id"
 $managedIdentity_PrincipalId = az identity show --name $managedIdentityName --resource-group $resourceGroupName --query "principalId" --output tsv 2>$null
-if ($LASTEXITCODE -ne 0) { Write-Error "Failed to get Managed Identity [$managedIdentityName]." }
+if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($managedIdentity_PrincipalId)) { throw "Failed to get Managed Identity [$managedIdentityName]." }
 else { Write-Host "Found Managed Identity [$managedIdentityName] with Principal Id: [$managedIdentity_PrincipalId]." }
 
 Write-Host "`nGetting Entra App Registration App Id for [$appRegistrationName]"
@@ -2026,7 +2131,7 @@ else { Write-Host "Found App Registration Service Principal [$appRegistrationNam
 
 Write-Host "`nGetting App Service System Managed Identity Object Id for [$appServiceName]"
 $appService_SystemManagedIdentity_ObjectId = az webapp identity show --name $appServiceName --resource-group $resourceGroupName --query "principalId" --output tsv
-if ($LASTEXITCODE -ne 0) { Write-Error "Failed to get App Service SMI [$appServiceName]." }
+if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($appService_SystemManagedIdentity_ObjectId)) { throw "Failed to get App Service SMI [$appServiceName]." }
 else { Write-Host "Found App Service SMI [$appServiceName] with Principal/Object Id: [$appService_SystemManagedIdentity_ObjectId]." }
 
 
@@ -2258,11 +2363,10 @@ if (-not $assignment) {
 }
 
 #-------------------------------------------------------------
-#Write-Host "Getting Key Vault: Resource ID"
+Write-Host "Reconciling Key Vault runtime secret permissions"
 #-------------------------------------------------------------
-# This is stubbed out for now. Nothing to do.
-# Maybe assign RBAC > Key Vault Administrator to > deployer ServicePrincipal in order for secrets to be created.
-# Key Vault Secrets User
+Ensure-KeyVaultSecretPermissions -VaultName $keyVaultName -ResourceGroupName $resourceGroupName `
+    -PrincipalIds @($appService_SystemManagedIdentity_ObjectId, $managedIdentity_PrincipalId)
 
 #-------------------------------------------------------------
 Write-Host "Getting Storage Account: Resource ID"

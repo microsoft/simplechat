@@ -77,13 +77,14 @@ resource contentSafety 'Microsoft.CognitiveServices/accounts@2025-06-01' existin
   name: contentSafetyName
 }
 
-resource kvSecretsUserRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
-  name: guid(kv.id, webApp.id, 'kv-secrets-user')
+// Use a new assignment name rather than changing the immutable Secrets User assignment.
+resource kvSecretsOfficerRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  name: guid(kv.id, webApp.id, 'kv-secrets-officer')
   scope: kv
   properties: {
     roleDefinitionId: subscriptionResourceId(
       'Microsoft.Authorization/roleDefinitions',
-      '4633458b-17de-408a-b874-0445c86b69e6'
+      'b86a8fe4-44ce-4948-aee5-eccb2c155cd7'
     )
     principalId: webApp.identity.principalId
     principalType: 'ServicePrincipal'
