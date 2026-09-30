@@ -60,6 +60,7 @@ export function DocumentPickerPopover({
     const holder = useRef<HTMLDivElement>(null);
     const searchRef = useRef<HTMLInputElement>(null);
     const includeWorkspaces = scope.workspacesEnabled !== false;
+    const documentsOnly = imagesOnly || scope.documentsOnly === true;
 
     useEffect(() => {
         searchRef.current?.focus();
@@ -100,7 +101,7 @@ export function DocumentPickerPopover({
                 signal: controller.signal,
                 includeUnavailable: true,
                 documentFilter: imagesOnly ? isReferenceImageDocument : undefined,
-                documentsOnly: imagesOnly,
+                documentsOnly,
             })
                 .then((found) => {
                     if (!controller.signal.aborted) {
@@ -122,7 +123,7 @@ export function DocumentPickerPopover({
         };
         // The scope arrays are rebuilt on every bootstrap read, so this keys on the flags and
         // the query rather than on array identity.
-    }, [query, scope.groupsEnabled, scope.publicEnabled, includeWorkspaces, imagesOnly]);
+    }, [query, scope.groupsEnabled, scope.publicEnabled, includeWorkspaces, imagesOnly, documentsOnly]);
 
     // Grouped by workspace, which is how the chip row groups them too: a reader scanning for
     // "the contract in Marketing" is looking for the workspace first.
@@ -164,7 +165,7 @@ export function DocumentPickerPopover({
                             event.stopPropagation();
                         }
                     }}
-                    placeholder={imagesOnly ? 'Search images…'
+                    placeholder={imagesOnly ? 'Search images…' : documentsOnly ? 'Search documents…'
                         : includeWorkspaces ? 'Search documents, tags and workspaces…' : 'Search documents and tags…'}
                     aria-label={imagesOnly ? 'Search images' : 'Search documents'}
                     className={clsx(

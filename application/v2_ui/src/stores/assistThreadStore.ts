@@ -141,16 +141,23 @@ export function capAbandonedIds(ids: string[]): string[] {
  * Idle threads of other conversations go first: they hold nothing but an image editor's local
  * transcript. Past the cap, the least recently touched threads with nothing in flight go too.
  * A thread with a pending request is never dropped, because its answer still has to land.
+ *
+ * `held` threads belong to a mounted editor that asked to keep its thread, and are never dropped.
+ * Touching a held thread does not sweep other conversations either: an editor outside the chat,
+ * such as the workflow editor, must not clear the chat's transcripts behind it.
  */
 export function pruneThreads(
     threads: Record<string, AssistThreadRecord>,
     keepKey: string,
     conversationId: string | null,
+    held?: ReadonlySet<string>,
 ): Record<string, AssistThreadRecord> {
+    const sweep = !held?.has(keepKey);
     const kept: Record<string, AssistThreadRecord> = {};
     let removed = false;
     for (const [key, record] of Object.entries(threads)) {
-        if (key !== keepKey && record.conversationId !== conversationId && isThreadIdle(record)) {
+        if (sweep && key !== keepKey && !held?.has(key) && record.conversationId !== conversationId
+            && isThreadIdle(record)) {
             removed = true;
         } else {
             kept[key] = record;
@@ -159,7 +166,7 @@ export function pruneThreads(
     const keys = Object.keys(kept);
     if (keys.length > MAX_THREADS) {
         const evictable = keys
-            .filter((key) => key !== keepKey && !hasPendingExchange(kept[key]))
+            .filter((key) => key !== keepKey && !held?.has(key) && !hasPendingExchange(kept[key]))
             .sort((left, right) => kept[left].touchedAt - kept[right].touchedAt);
         for (const key of evictable.slice(0, keys.length - MAX_THREADS)) {
             delete kept[key];
@@ -167,6 +174,33 @@ export function pruneThreads(
         }
     }
     return removed ? kept : threads;
+}
+
+/** Mounted editors holding their thread, by key, with how many hold each. */
+const heldThreads = new Map<string, number>();
+
+/**
+ * Keep a thread while an editor is mounted. Returns the release, which is safe to call twice.
+ */
+export function holdAssistThread(key: string): () => void {
+    heldThreads.set(key, (heldThreads.get(key) ?? 0) + 1);
+    let released = false;
+    return () => {
+        if (released) {
+            return;
+        }
+        released = true;
+        const count = (heldThreads.get(key) ?? 1) - 1;
+        if (count > 0) {
+            heldThreads.set(key, count);
+        } else {
+            heldThreads.delete(key);
+        }
+    };
+}
+
+function heldThreadKeys(): ReadonlySet<string> | undefined {
+    return heldThreads.size ? new Set(heldThreads.keys()) : undefined;
 }
 
 interface AssistThreadState {
@@ -202,7 +236,9 @@ export const useAssistThreadStore = create<AssistThreadState>((set) => ({
                 return {};
             }
             const touched = { ...next, touchedAt: now };
-            return { threads: pruneThreads({ ...state.threads, [key]: touched }, key, touched.conversationId) };
+            return {
+                threads: pruneThreads({ ...state.threads, [key]: touched }, key, touched.conversationId, heldThreadKeys()),
+            };
         });
     },
 

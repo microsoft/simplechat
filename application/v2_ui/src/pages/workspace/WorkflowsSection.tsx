@@ -87,6 +87,8 @@ export function WorkflowsSection({
     const [expandedId, setExpandedId] = useState<string | null>(null);
     const [historyRefreshToken, setHistoryRefreshToken] = useState(0);
     const [editing, setEditing] = useState<WorkflowDefinition | null | 'new'>(null);
+    // Reloading the workflow opens a fresh editor on the saved version.
+    const [editorInstance, setEditorInstance] = useState(0);
     const [viewingFlow, setViewingFlow] = useState<{ workflowId: string; scopeKey: string } | null>(null);
     const [options, setOptions] = useState<WorkflowEditorOptions | null>(null);
     const [optionsLoading, setOptionsLoading] = useState(false);
@@ -147,6 +149,31 @@ export function WorkflowsSection({
             setOptionsLoading(false);
         }
     }, [scopeKey, interactionDisabled, canCreate]);
+
+    // Ask AI offers this after the saved workflow changed while the editor was open. It discards
+    // the draft and opens the saved version; a failure leaves the editor as it was.
+    const reloadEditing = async () => {
+        if (!editing || editing === 'new' || !editing.id) return;
+        const workflowId = editing.id;
+        const [workflows, freshOptions] = await Promise.all([
+            fetchScopedWorkflows(scope),
+            fetchWorkflowEditorOptions(scope),
+        ]);
+        setItems(workflows);
+        setOptions(freshOptions);
+        const fresh = workflows.find((item) => item.id === workflowId);
+        if (!fresh || fresh.active_run_id) {
+            setEditing(null);
+            setEditorDirty(false);
+            setOptionsError(fresh
+                ? 'This workflow has an active run. Cancel it or wait for it to finish before editing.'
+                : 'This workflow was deleted, so it could not be reloaded.');
+            return;
+        }
+        setEditorDirty(false);
+        setEditing(fresh);
+        setEditorInstance((count) => count + 1);
+    };
 
     // Each navigation that names a workflow is acted on once: a document's provenance link, or a
     // workflow alert's Open workflow while this list is already open. The router gives every
@@ -420,13 +447,14 @@ export function WorkflowsSection({
                 onClose={() => setViewingFlow(null)} /> : null}
             {editing && options ? (
                 <WorkflowEditorDialog
-                    key={`${scopeKey}:${editing === 'new' ? 'new' : editing.id}`}
+                    key={`${scopeKey}:${editing === 'new' ? 'new' : editing.id}:${editorInstance}`}
                     scope={scope}
                     workflow={editing === 'new' ? null : editing}
                     options={{ ...options, can_manage: options.can_manage && (editing === 'new' ? canCreate : canEdit) }}
                     interactionDisabled={interactionDisabled}
                     onBusyChange={setEditorSaving}
                     onDirtyChange={setEditorDirty}
+                    onReload={editing === 'new' ? undefined : reloadEditing}
                     onClose={() => {
                         setEditing(null);
                         setEditorDirty(false);

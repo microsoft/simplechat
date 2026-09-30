@@ -20,12 +20,15 @@ import { WorkflowScheduleFields } from './WorkflowScheduleFields';
 import { WorkflowAlertEditor } from './WorkflowAlertEditor';
 import { WorkflowAlertSummary } from './WorkflowAlertSummary';
 import { useWorkflowAuthoring } from './useWorkflowAuthoring';
+import { useWorkflowAssist } from './useWorkflowAssist';
+import { WorkflowAskAiTab, WorkflowAskAiToggle, WorkflowAssistLockBanner } from './WorkflowAskAiTab';
 import {
     WorkflowChangedField, WorkflowChangeNotice, WorkflowChangesTab, WorkflowChangesToggle, WorkflowChangeTrackingScope,
     WorkflowEditorSidePanel, WorkflowReferenceChanges, WorkflowRemovedItemRows, focusWorkflowChangeTarget,
     workflowSessionSaveNeedsConfirmation,
 } from './WorkflowChangeTracking';
 import { ApiError } from '../../lib/apiClient';
+import { useBootstrapStore } from '../../stores/bootstrapStore';
 import {
     WORKFLOW_TASK_ORDER_KEY, parseWorkflowChangeKey, workflowChangeItemKey, workflowTasksInOrder, type WorkflowChange,
 } from '../../lib/workflowChangeTracking';
@@ -97,6 +100,9 @@ function changeSection(root: HTMLElement, key: string): HTMLElement | null {
     return root.querySelector<HTMLElement>(`section[aria-label="${label}"]`);
 }
 
+/** Where Jump goes: a change from the Changes tab, or one Ask AI made. */
+type WorkflowJumpChange = Pick<WorkflowChange, 'key' | 'target'>;
+
 function workflowRunnerSummary(workflow: WorkflowDefinition, options: WorkflowEditorOptions): string {
     if (workflow.runner_type === 'agent') {
         const agent = options.agents.find((item) => workflowAgentKey(item) === workflowAgentKey(workflow.selected_agent));
@@ -118,6 +124,7 @@ export function WorkflowEditorDialog({
     interactionDisabled = false,
     initialDraft = null,
     onSaveOverride,
+    onReload,
 }: {
     scope: WorkflowScope;
     workflow: WorkflowDefinition | null;
@@ -134,6 +141,11 @@ export function WorkflowEditorDialog({
         draft: WorkflowDefinition,
         original: WorkflowDefinition | null,
     ) => Promise<{ success?: boolean; workflow?: WorkflowDefinition }>;
+    /**
+     * Reopen the saved workflow, discarding the draft. Ask AI offers it when the saved workflow
+     * changed after the editor opened; without it, the reader closes and reopens the editor.
+     */
+    onReload?: () => Promise<void>;
 }) {
     const [original] = useState<WorkflowDefinition | null>(() =>
         workflow ? structuredClone(workflow) : null,
@@ -151,15 +163,18 @@ export function WorkflowEditorDialog({
     const [surface, setSurface] = useState<'list' | 'flow'>('list');
     const authoringRef = useRef<HTMLDivElement>(null);
     const [changesOpen, setChangesOpen] = useState(false);
+    const [sideTab, setSideTab] = useState<'changes' | 'askai'>('changes');
     const [confirmingSave, setConfirmingSave] = useState(false);
-    const [panelFocus, setPanelFocus] = useState<{ target: 'tab' | 'confirm' | 'list'; sequence: number } | null>(null);
-    const [jump, setJump] = useState<{ change: WorkflowChange; retry: boolean; sequence: number } | null>(null);
+    const [panelFocus, setPanelFocus] = useState<{ target: 'tab' | 'confirm' | 'list' | 'ask'; sequence: number } | null>(null);
+    const [jump, setJump] = useState<{ change: WorkflowJumpChange; retry: boolean; sequence: number } | null>(null);
     const focusSequence = useRef(0);
     const confirmHeadingRef = useRef<HTMLHeadingElement>(null);
     const changesHeadingRef = useRef<HTMLHeadingElement>(null);
     const errorRef = useRef<HTMLParagraphElement>(null);
     const sidePanelBaseId = useId();
     const changesToggleId = `${sidePanelBaseId}-changes-toggle`;
+    const askAiToggleId = `${sidePanelBaseId}-ask-ai-toggle`;
+    const askAiInputId = `${sidePanelBaseId}-ask-ai-input`;
     const sidePanelId = `${sidePanelBaseId}-side-panel`;
     const scopeKey = workflowScopeKey(scope);
     const fieldDrafts = useMemo(() => ({
@@ -242,8 +257,10 @@ export function WorkflowEditorDialog({
         onRollback: (before, after, targetId) => recoverAuthoring(before, after, targetId, false),
     });
     const panelOpen = changesOpen && !readOnly;
-    const historyBlockedReason = saving ? 'Workflow history is unavailable while saving.'
-        : authoring.pending || history.pending ? 'Finish or cancel the current confirmation first.' : '';
+    // The bootstrap sends this per user: on only where the setting, personal workflows and the role allow it.
+    const askAiEnabled = useBootstrapStore((state) => state.data?.features?.enable_workflow_ai_assistant === true);
+    const askAiAvailable = askAiEnabled && scope.type === 'personal' && !readOnly;
+    const panelTab = askAiAvailable ? sideTab : 'changes';
     const onAccessLost = useCallback((status: number) => {
         setAccessLost(true);
         history.session.invalidate();
@@ -270,15 +287,28 @@ export function WorkflowEditorDialog({
     }, [surface, authoring.focusRequest, accessLost]);
 
     const openChanges = (target: 'tab' | 'confirm') => {
+        setSideTab('changes');
         setChangesOpen(true);
         setPanelFocus({ target, sequence: ++focusSequence.current });
+    };
+    const openAskAi = () => {
+        setSideTab('askai');
+        setConfirmingSave(false);
+        setChangesOpen(true);
+        setPanelFocus({ target: 'ask', sequence: ++focusSequence.current });
+    };
+    const selectSideTab = (tab: string) => {
+        // Leaving Changes ends a save review; Save starts it again.
+        if (tab === 'askai') setConfirmingSave(false);
+        setSideTab(tab === 'askai' ? 'askai' : 'changes');
     };
     const closeChanges = (focusToggle: boolean) => {
         setChangesOpen(false);
         setConfirmingSave(false);
-        if (focusToggle) requestAnimationFrame(() => document.getElementById(changesToggleId)?.focus());
+        const toggleId = panelTab === 'askai' ? askAiToggleId : changesToggleId;
+        if (focusToggle) requestAnimationFrame(() => document.getElementById(toggleId)?.focus());
     };
-    const jumpToChange = (change: WorkflowChange) => {
+    const jumpToChange = (change: WorkflowJumpChange) => {
         if (!sidePanelBesideEditor()) closeChanges(false);
         if (surface === 'flow' && draft.definition_version === 3) {
             const info = parseWorkflowChangeKey(change.key);
@@ -290,17 +320,35 @@ export function WorkflowEditorDialog({
         }
         setJump({ change, retry: true, sequence: ++focusSequence.current });
     };
+    const assist = useWorkflowAssist({
+        available: askAiAvailable,
+        history,
+        options,
+        workflowId: original?.id || null,
+        blocked: saving || Boolean(history.pending) || Boolean(authoring.pending) || interactionDisabled,
+        onJump: jumpToChange,
+    });
+    // While Ask AI works, the editor is locked so its answer applies to the draft it was sent with.
+    const assistPending = Boolean(assist.pending);
+    const historyBlockedReason = saving ? 'Workflow history is unavailable while saving.'
+        : authoring.pending || history.pending ? 'Finish or cancel the current confirmation first.'
+            : assistPending ? 'Wait for Ask AI to finish, or cancel it.' : '';
 
     useEffect(() => {
         if (!panelFocus) return;
         const frame = requestAnimationFrame(() => {
+            const selectedTab = () => document.getElementById(sidePanelId)?.querySelector<HTMLElement>('[role="tab"][aria-selected="true"]');
+            const askInput = () => {
+                const input = document.getElementById(askAiInputId);
+                return input instanceof HTMLTextAreaElement && !input.disabled ? input : null;
+            };
             const target = panelFocus.target === 'confirm' ? confirmHeadingRef.current
                 : panelFocus.target === 'list' ? changesHeadingRef.current
-                    : document.getElementById(sidePanelId)?.querySelector<HTMLElement>('[role="tab"][aria-selected="true"]');
+                    : panelFocus.target === 'ask' ? askInput() ?? selectedTab() : selectedTab();
             target?.focus();
         });
         return () => cancelAnimationFrame(frame);
-    }, [panelFocus, sidePanelId]);
+    }, [panelFocus, sidePanelId, askAiInputId]);
 
     useEffect(() => {
         if (!jump) return;
@@ -334,14 +382,44 @@ export function WorkflowEditorDialog({
         const onKeyDown = (event: KeyboardEvent) => {
             if (event.key !== 'Escape' || event.defaultPrevented) return;
             const active = document.activeElement;
-            if (!active || !(document.getElementById(sidePanelId)?.contains(active) || active.id === changesToggleId)) return;
+            const panel = document.getElementById(sidePanelId);
+            if (!active || !(panel?.contains(active) || active.id === changesToggleId || active.id === askAiToggleId)) return;
+            // An open # menu or document picker closes itself on this Escape, and the panel stays open.
+            const picker = panel?.querySelector('[data-context-picker]');
+            if (picker || active.closest('[data-composer-menu-open]')) {
+                if (picker?.contains(active)) {
+                    // The picker's search box goes with it, so carry on in the Ask AI input.
+                    window.setTimeout(() => {
+                        if (!document.getElementById(sidePanelId)?.contains(document.activeElement)) {
+                            document.getElementById(askAiInputId)?.focus();
+                        }
+                    }, 0);
+                }
+                return;
+            }
             event.preventDefault();
             event.stopPropagation();
             closeChanges(true);
         };
         window.addEventListener('keydown', onKeyDown, true);
         return () => window.removeEventListener('keydown', onKeyDown, true);
-    }, [panelOpen, sidePanelId, changesToggleId]);
+    }, [panelOpen, panelTab, sidePanelId, changesToggleId, askAiToggleId, askAiInputId]);
+
+    // When the lock ends and took focus with it (its Cancel button is gone), carry on in Ask AI.
+    const wasAssistPending = useRef(false);
+    useEffect(() => {
+        const was = wasAssistPending.current;
+        wasAssistPending.current = assistPending;
+        if (!was || assistPending) return undefined;
+        const frame = requestAnimationFrame(() => {
+            const active = document.activeElement;
+            if (active && active !== document.body) return;
+            const input = document.getElementById(askAiInputId);
+            const target = input instanceof HTMLTextAreaElement && !input.disabled ? input : document.getElementById(askAiToggleId);
+            target?.focus();
+        });
+        return () => cancelAnimationFrame(frame);
+    }, [assistPending, askAiInputId, askAiToggleId]);
 
     const shownError = useRef(error);
     useEffect(() => {
@@ -410,7 +488,7 @@ export function WorkflowEditorDialog({
             return;
         }
         history.session.closeGroup();
-        if (saving || history.session.saving || readOnly || authoring.pending || history.session.getSnapshot().pending) {
+        if (saving || history.session.saving || readOnly || authoring.pending || history.session.getSnapshot().pending || assistPending) {
             return;
         }
         const savingDraft = history.session.draft;
@@ -486,8 +564,14 @@ export function WorkflowEditorDialog({
             onChange={(value) => authoring.execute({ type: 'task', taskId: task.id, value, expected: task })}
             durableExecution={draft.durable_execution === true}
             onNeedsDurable={() => setWorkflow((current) => ({ ...current, durable_execution: true }))}
-            structuredNode={node} onStructuredNodeChange={onNodeChange} />
+            structuredNode={node} onStructuredNodeChange={onNodeChange}
+            onAskAi={askAiAvailable ? () => askAiAboutTask(task.id) : undefined}
+            draftWithAi={askAiAvailable ? assist.draftWithAi(task.id) : undefined} />
     );
+    const askAiAboutTask = (taskId: string) => {
+        assist.setFocusTask(taskId);
+        openAskAi();
+    };
 
     return (
         <WorkflowFieldDraftsProvider value={fieldDrafts.store}>
@@ -501,20 +585,30 @@ export function WorkflowEditorDialog({
                 bodyClassName="flex min-h-0"
                 footer={
                     <>
-                        {!readOnly ? <WorkflowChangesToggle id={changesToggleId} open={panelOpen} controls={sidePanelId}
-                            onToggle={() => (panelOpen ? closeChanges(false) : openChanges('tab'))} /> : null}
+                        {askAiAvailable ? <WorkflowAskAiToggle id={askAiToggleId} open={panelOpen && panelTab === 'askai'}
+                            controls={sidePanelId}
+                            onToggle={() => (panelOpen && panelTab === 'askai' ? closeChanges(false) : openAskAi())} /> : null}
+                        {!readOnly ? <WorkflowChangesToggle id={changesToggleId} open={panelOpen && panelTab === 'changes'}
+                            controls={sidePanelId}
+                            onToggle={() => (panelOpen && panelTab === 'changes' ? closeChanges(false) : openChanges('tab'))} /> : null}
                         <GlassButton type="button" onClick={close} disabled={saving}>
                             {readOnly ? 'Close' : 'Cancel'}
                         </GlassButton>
                         {!readOnly ? (
-                            <GlassButton type="button" variant="primary" disabled={interactionDisabled || saving || Boolean(authoring.pending) || Boolean(history.pending)} onClick={() => void save()}>
+                            <GlassButton type="button" variant="primary" disabled={interactionDisabled || saving || Boolean(authoring.pending) || Boolean(history.pending) || assistPending} onClick={() => void save()}>
                                 {saving ? 'Saving…' : 'Save workflow'}
                             </GlassButton>
                         ) : null}
                     </>
                 }
             >
-                <div className={`min-w-0 flex-1 overflow-y-auto px-4 py-3${panelOpen ? ' hidden xl:block' : ''}`}>
+                <div className={`min-w-0 flex-1 overflow-y-auto px-4 py-3${panelOpen ? ' hidden xl:block' : ''}`}
+                    onKeyDownCapture={(event) => {
+                        // Workflow undo and redo wait for Ask AI too.
+                        const key = event.key.toLowerCase();
+                        if (assistPending && (event.ctrlKey || event.metaKey) && (key === 'z' || key === 'y')) event.preventDefault();
+                    }}>
+                {assist.pending ? <WorkflowAssistLockBanner pending={assist.pending} onCancel={assist.cancel} /> : null}
                 <WorkflowHistoryBoundary session={history.session}>
                 <div className="space-y-5 p-1">
                     {unsupported ? (
@@ -577,7 +671,7 @@ export function WorkflowEditorDialog({
                         </p>
                     </div> : null}
                     {!accessLost ? <div ref={authoringRef} className="min-w-0">
-                    <fieldset disabled={readOnly || saving || Boolean(history.pending) || Boolean(authoring.pending)} className="min-w-0 space-y-5">
+                    <fieldset disabled={readOnly || saving || Boolean(history.pending) || Boolean(authoring.pending) || assistPending} className="min-w-0 space-y-5">
                         <section className="space-y-4 rounded-2xl border border-edge p-4" aria-label="Workflow basics">
                             <div className="grid gap-3 md:grid-cols-2">
                                 <WorkflowChangedField changeKey="name">
@@ -821,7 +915,7 @@ export function WorkflowEditorDialog({
                                         }} onEdit={authoring.execute} renderTask={renderStructuredTask}
                                         positions={authoring.positions} setPositions={authoring.setPositions}
                                         collapsed={authoring.collapsed} setCollapsed={authoring.setCollapsed}
-                                        focusRequest={authoring.focusRequest} disabled={readOnly || saving || Boolean(history.pending) || Boolean(authoring.pending)} onAccessLost={onAccessLost} />
+                                        focusRequest={authoring.focusRequest} disabled={readOnly || saving || Boolean(history.pending) || Boolean(authoring.pending) || assistPending} onAccessLost={onAccessLost} />
                                 </> : <WorkflowStructuredList workflow={draft} options={options} scope={scope}
                                     onEdit={authoring.execute} selectedId={authoring.selectedId}
                                     onSelect={(id) => {
@@ -845,6 +939,8 @@ export function WorkflowEditorDialog({
                                     onRemove={() => removeTask(task.id)}
                                     durableExecution={draft.durable_execution === true}
                                     onNeedsDurable={() => setWorkflow((current) => ({ ...current, durable_execution: true }))}
+                                    onAskAi={askAiAvailable ? () => askAiAboutTask(task.id) : undefined}
+                                    draftWithAi={askAiAvailable ? assist.draftWithAi(task.id) : undefined}
                                 />
                                 <WorkflowRemovedItemRows list="task" placement={{ at: 'after', id: task.id }} />
                                 </Fragment>
@@ -868,17 +964,21 @@ export function WorkflowEditorDialog({
                 </div>
                 {panelOpen ? (
                     <WorkflowEditorSidePanel id={sidePanelId} className="w-full xl:w-96 xl:shrink-0 xl:border-l xl:border-edge"
+                        selected={panelTab} onSelect={selectSideTab}
                         tabs={[{
                             id: 'changes', label: 'Changes',
                             content: <WorkflowChangesTab confirming={confirmingSave}
-                                disabled={saving || Boolean(authoring.pending) || Boolean(history.pending)}
+                                disabled={saving || Boolean(authoring.pending) || Boolean(history.pending) || assistPending}
                                 onConfirmSave={() => void save(true)}
                                 onKeepReviewing={() => {
                                     setConfirmingSave(false);
                                     setPanelFocus({ target: 'list', sequence: ++focusSequence.current });
                                 }}
                                 onJump={jumpToChange} confirmHeadingRef={confirmHeadingRef} listHeadingRef={changesHeadingRef} />,
-                        }]} />
+                        }, ...(askAiAvailable ? [{
+                            id: 'askai', label: 'Ask AI', panelClassName: 'flex flex-col overflow-hidden',
+                            content: <WorkflowAskAiTab assist={assist} inputId={askAiInputId} onReload={original ? onReload : undefined} />,
+                        }] : [])]} />
                 ) : null}
                 {/* Outside the editor pane, which narrow screens hide while the side panel is open. */}
                 {!accessLost && authoring.announcement ? <p role="status" className="sr-only">{authoring.announcement}</p> : null}

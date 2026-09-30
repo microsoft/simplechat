@@ -115,6 +115,8 @@ export interface ComposerEditorProps {
     restricted?: boolean;
     /** Restricted mode only: also offer `#` documents and tags and the Add context control. */
     allowContext?: boolean;
+    /** With `allowContext`, offer documents only: no tags. Off by default. */
+    contextDocumentsOnly?: boolean;
     describedBy?: string;
     invalid?: boolean;
     labelClassName?: string;
@@ -186,6 +188,7 @@ export function ComposerEditor({
     onUploadComplete,
     restricted = false,
     allowContext = false,
+    contextDocumentsOnly = false,
     describedBy,
     invalid = false,
     labelClassName = 'sr-only',
@@ -226,7 +229,9 @@ export function ComposerEditor({
         // A restricted composer's requests can use only documents and tags, so whole
         // workspaces are not offered there.
         workspacesEnabled: !restricted,
-    }), [bootstrap?.scope, features.enable_group_workspaces, features.enable_public_workspaces, restricted]);
+        documentsOnly: restricted && contextDocumentsOnly,
+    }), [bootstrap?.scope, features.enable_group_workspaces, features.enable_public_workspaces, restricted,
+        contextDocumentsOnly]);
     const { candidates, loading } = useContextSuggestions(
         disabled || !contextEnabled ? null : contextQuery?.query ?? null, scope,
     );
@@ -829,7 +834,8 @@ export function ComposerEditor({
     });
 
     return (
-        <div ref={holderRef} className="relative min-w-0" data-composer-editor={id}>
+        <div ref={holderRef} className="relative min-w-0" data-composer-editor={id}
+            data-composer-menu-open={menuOpen || undefined}>
             {mention && !disabled && (
                 <MentionMenu suggestions={mentionSuggestions} activeIndex={mentionIndex} onSelect={applyMention}
                     placement={menuPlacement} />
