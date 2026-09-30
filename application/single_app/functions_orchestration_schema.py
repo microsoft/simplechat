@@ -68,6 +68,7 @@ from functions_orchestration_result_contracts import (
     StepBindings, TaskResult, canonical_bytes, output_name, validate_input_bindings,
 )
 from functions_orchestration_deliverables import DeliverableError, compile_deliverables
+from functions_orchestration_directory_access import DIRECTORY_ACCESS_FAILURE_CODE
 
 ORCHESTRATION_ELICITATION_CONTRACT_VERSION = 2
 
@@ -1230,6 +1231,10 @@ FAILURE_MESSAGES = {
     'analysis_result_not_saved': 'The analysis completed, but its final data could not be saved for reuse.',
     'analysis_input_too_large': 'The complete saved analysis exceeds the selected model input budget. No data was truncated or re-analyzed. Select a larger model or use a supported complete-record reader.',
     'result_unavailable': 'A required retained result is unavailable or changed. No preview was substituted.',
+    DIRECTORY_ACCESS_FAILURE_CODE: (
+        "Unable to verify your permission to use web search and other external sources because "
+        "this application doesn't have access to Microsoft Entra ID. Please contact your administrator."
+    ),
     'result_invalid': 'The operation did not produce the complete named results declared by the plan.',
     'result_input_too_large': 'The complete named inputs exceed the selected model budget. No input was truncated. Use a larger model or revise the plan.',
     'result_not_ready': 'Required computation is still pending. Its result is not ready to consume.',
@@ -1255,6 +1260,15 @@ FAILURE_MESSAGES = {
     LEGACY_PLAN_CODE: LEGACY_PLAN_MESSAGE,
 }
 
+# What a user was trying to do when the application could not read Microsoft Entra ID for them.
+DIRECTORY_ACCESS_ACTIVITIES = {
+    'web_search': 'use web search',
+    'url_fetch': 'read linked web pages',
+    'deep_research': 'use deep research',
+    'agent_invoke': 'use agents',
+    'action_invoke': 'use actions',
+}
+
 
 def build_failure(code='step_failed', *, step_id=None, capability_id=None, provider_status=None):
     """Only application-owned text may cross a failure boundary."""
@@ -1264,6 +1278,13 @@ def build_failure(code='step_failed', *, step_id=None, capability_id=None, provi
         result['step_id'] = _text(step_id, 200)
     if capability_id:
         result['capability_id'] = _text(capability_id, 100)
+        activity = DIRECTORY_ACCESS_ACTIVITIES.get(result['capability_id'])
+        if code == DIRECTORY_ACCESS_FAILURE_CODE and activity:
+            result['message'] = (
+                f"Unable to verify your permission to {activity} "
+                "because this application doesn't have access to Microsoft Entra ID. "
+                "Please contact your administrator."
+            )
     if isinstance(provider_status, int) and not isinstance(provider_status, bool) and 400 <= provider_status <= 599:
         result['provider_status'] = provider_status
         if code == 'provider_http_error':

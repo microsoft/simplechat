@@ -1,7 +1,7 @@
 # functions_orchestration_bootstrap.py
 """Application-owned factories shared by web requests and scheduler continuations.
 
-Version: 0.261.140
+Version: 0.261.204
 
 Unlike the result/rendering services, this is an application composition root.
 Import it only after config has initialized the existing clients. Registering the
@@ -11,12 +11,10 @@ artifact factory performs no I/O; each use rebuilds current actor/source access.
 import hashlib
 import hmac
 from copy import deepcopy
-from urllib.parse import urlsplit
 
 import requests
 
 import config
-import functions_authentication as authentication
 from agent_execution_context import capture_execution_identity
 from functions_generated_export_contracts import GeneratedFileExportRequest
 from functions_generated_export_registry import resolve_generated_file_export_format
@@ -24,6 +22,11 @@ from functions_orchestration_artifacts import (
     OrchestrationArtifactTransport,
     OrchestrationOutputCleanupService,
     configure_orchestration_artifact_service,
+)
+from functions_orchestration_directory_access import directory_access_reason
+from functions_orchestration_directory_readiness import (
+    graph_directory_token_provider,
+    report_directory_access_failure,
 )
 from functions_orchestration_external_configuration import (
     OrchestrationExternalConfigurationAttestor, _read_metadata,
@@ -119,43 +122,11 @@ def build_external_identity_reader(actor_user_id, actor_conversation_id, *, exec
             raise ResultUnavailableError("external_identity_access_denied")
         if reader is None:
             # Optional directory authorization is initialized only when external data is accessed.
-            from functions_orchestration_external_identity import (
-                ExternalIdentityServiceError,
-                GraphExternalIdentityReader,
+            from functions_orchestration_external_identity import GraphExternalIdentityReader
+
+            graph_base, graph_scope, app_client_id, get_access_token = graph_directory_token_provider(
+                timeout=timeout,
             )
-
-            graph_base = authentication.get_graph_base_url()
-            graph_origin = urlsplit(graph_base)
-            graph_scope = f"{graph_origin.scheme}://{graph_origin.netloc}/.default"
-            app_client_id = authentication.CLIENT_ID
-            application = None
-
-            def get_access_token(scope):
-                nonlocal application
-                if scope != graph_scope or authentication.CLIENT_ID != app_client_id:
-                    raise ResultUnavailableError("external_identity_access_denied")
-                if application is None:
-                    application = authentication._build_msal_app(
-                        authority_override=authentication.get_graph_authority(), timeout=timeout,
-                    )
-                result = application.acquire_token_for_client(scopes=[scope])
-                if type(result) is not dict:
-                    raise ExternalIdentityServiceError("external_identity_response_invalid")
-                token = result.get("access_token")
-                if type(token) is str and token:
-                    return token
-                error = result.get("error")
-                if error in ("server_error", "temporarily_unavailable"):
-                    raise ExternalIdentityServiceError()
-                if error == "too_many_requests":
-                    raise ExternalIdentityServiceError("external_identity_throttled")
-                if error in (
-                    "invalid_client", "invalid_grant", "unauthorized_client", "invalid_scope",
-                    "access_denied", "consent_required", "interaction_required",
-                ):
-                    raise ResultUnavailableError("external_identity_access_denied")
-                raise ExternalIdentityServiceError("external_identity_response_invalid")
-
             reader = GraphExternalIdentityReader(
                 user_id=actor_user_id, conversation_id=actor_conversation_id,
                 app_client_id=app_client_id, graph_base_url=graph_base, graph_scope=graph_scope,
@@ -163,7 +134,14 @@ def build_external_identity_reader(actor_user_id, actor_conversation_id, *, exec
                 authorize_conversation=authorize_conversation, read_user_settings=read_user_settings,
                 execution_check=execution_check, request_timeout=timeout,
             )
-        return reader(user_id=user_id, conversation_id=conversation_id)
+        try:
+            return reader(user_id=user_id, conversation_id=conversation_id)
+        except ResultUnavailableError as error:
+            reason = directory_access_reason(error)
+            if reason:
+                # The application, not this user, was refused; administrators have to act.
+                report_directory_access_failure(reason)
+            raise
 
     return read_identity
 

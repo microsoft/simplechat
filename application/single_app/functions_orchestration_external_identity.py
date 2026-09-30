@@ -1,7 +1,9 @@
 # functions_orchestration_external_identity.py
 """Read current external-result identity through injected Microsoft Graph I/O.
 
-Version: 0.261.127
+Version: 0.261.204
+Implemented in: 0.261.127
+Application directory refusals reported separately from user decisions in: 0.261.204
 
 Only the owner supplies credentials, the trusted cloud endpoint, conversation
 authorization and uncached, read-only user settings. No directory authority,
@@ -22,6 +24,9 @@ from azure.core.exceptions import AzureError, ClientAuthenticationError, HttpRes
 from requests import Response
 from requests.exceptions import RequestException, Timeout
 
+from functions_orchestration_directory_access import (
+    DIRECTORY_ACCESS_REASONS, DIRECTORY_PERMISSION_MISSING, DIRECTORY_SIGN_IN_FAILED,
+)
 from functions_orchestration_external_sources import CurrentExternalSourceIdentity
 from functions_orchestration_invocation_capture import (
     OrchestrationInvocationCancelledError, OrchestrationInvocationServiceError,
@@ -72,9 +77,14 @@ class ExternalIdentityCancelledError(OrchestrationInvocationCancelledError):
         super().__init__("Current directory authorization was cancelled.")
 
 
-def _http_error(status):
+def _http_error(status, *, directory=False):
     if type(status) is not int:
         return ExternalIdentityServiceError("external_identity_response_invalid")
+    if directory and status == 403:
+        # Microsoft Graph refused the application itself; nothing was decided about the user.
+        return ResultUnavailableError(DIRECTORY_PERMISSION_MISSING)
+    if directory and status == 401:
+        return ResultUnavailableError(DIRECTORY_SIGN_IN_FAILED)
     if status in (401, 403, 404, 410):
         return ResultUnavailableError("external_identity_access_denied")
     if status == 429:
@@ -96,7 +106,14 @@ def _call_io(callback, *args, **kwargs):
         raise
     except ExternalIdentityServiceError as error:
         failure = ExternalIdentityServiceError(error.code)
-    except (ResultUnavailableError, ClientAuthenticationError, ResourceNotFoundError, PermissionError):
+    except ResultUnavailableError as error:
+        # A directory refusal from the owner's token source keeps its reason; other denials stay generic.
+        code = getattr(error, "code", None)
+        failure = ResultUnavailableError(
+            code if type(code) is str and code in DIRECTORY_ACCESS_REASONS
+            else "external_identity_access_denied"
+        )
+    except (ClientAuthenticationError, ResourceNotFoundError, PermissionError):
         failure = ResultUnavailableError("external_identity_access_denied")
     except HttpResponseError as error:
         failure = _http_error(error.status_code)
@@ -292,7 +309,7 @@ class GraphExternalIdentityReader:
             ):
                 raise ExternalIdentityServiceError("external_identity_response_invalid")
             if response.status_code != 200:
-                raise _http_error(response.status_code)
+                raise _http_error(response.status_code, directory=True)
             content_type = response.headers.get("Content-Type")
             if type(content_type) is not str or content_type.split(";", 1)[0].strip().lower() != "application/json":
                 raise ExternalIdentityServiceError("external_identity_response_invalid")

@@ -61,6 +61,7 @@ from functions_orchestration_context import (
     resolve_elicitation_references,
 )
 from functions_orchestration_deliverables import explicit_image_shortfalls
+from functions_orchestration_directory_access import DIRECTORY_ACCESS_FAILURE_CODE, directory_access_reason
 from functions_orchestration_registry import (
     CAPABILITY_TABULAR_ANALYZE, DEPENDENCY_PLAN_CONTRACT_VERSION,
     admitted_export_pairs, get_capability,
@@ -152,6 +153,25 @@ def _step_log_context(context, step):
 def _error_code(error):
     code = getattr(error, 'code', None)
     return code if isinstance(code, str) else None
+
+
+def _authority_reason(error):
+    """The stable reason an access refusal carries, for diagnostics only."""
+    reason = getattr(error, 'authority_reason', None)
+    if isinstance(reason, str):
+        return reason
+    return _error_code(error) if isinstance(error, ResultUnavailableError) else None
+
+
+def _access_failure(error):
+    """A refused source, or a directory the application itself could not read.
+
+    Recording a step's failure names that step's source, so the explanation says what the
+    user was trying to use.
+    """
+    if directory_access_reason(error):
+        return build_failure(DIRECTORY_ACCESS_FAILURE_CODE)
+    return build_failure('result_unavailable')
 
 
 def _partial_input_log_fields(error):
@@ -850,7 +870,7 @@ def _run_dependency_step(
         if isinstance(exc, OrchestrationFilePolicyError):
             failure = build_failure('file_publication_not_allowed')
         elif isinstance(exc, (ResultUnavailableError, ElicitationContextError, PermissionError, ScreeningError)):
-            failure = build_failure('result_unavailable')
+            failure = _access_failure(exc)
         elif isinstance(exc, PartialInputNotAcceptedError):
             failure = build_failure('input_partial_not_accepted')
         elif isinstance(exc, ResultContractError):
@@ -863,6 +883,7 @@ def _run_dependency_step(
             extra={
                 **_step_log_context(context, step), 'error_type': type(exc).__name__,
                 'failure_code': failure['code'], 'execution_code': _error_code(exc),
+                'authority_reason': _authority_reason(exc),
                 **_partial_input_log_fields(exc),
             },
         )
@@ -1223,15 +1244,17 @@ def _execute_dependency_plan(
                     _raise_dependency_service_failure(step, exc)
                     if step['role'] == 'render':
                         raise
+                    failure = _access_failure(exc)
                     log_event(
                         f'{_LOG_PREFIX} A saved wait could not be resumed.',
                         level=logging.WARNING,
                         extra={
                             **_step_log_context(context, step), 'error_type': type(exc).__name__,
-                            'failure_code': 'result_unavailable', 'execution_code': _error_code(exc),
+                            'failure_code': failure['code'], 'execution_code': _error_code(exc),
+                            'authority_reason': _authority_reason(exc),
                         },
                     )
-                    result = build_step_result(status=STEP_STATUS_FAILED, failure=build_failure('result_unavailable'))
+                    result = build_step_result(status=STEP_STATUS_FAILED, failure=failure)
                 task = result.get('task_result')
                 if result['status'] in (STEP_STATUS_COMPLETED, STEP_STATUS_PARTIAL, STEP_STATUS_WAITING):
                     if step['role'] == 'render':
@@ -1463,11 +1486,15 @@ def _execute_dependency_plan(
             WorkflowResultIntegrityError, WorkflowResultStorageUnavailableError,
         ) as exc:
             raise_source_service_failure(exc)
+            failure = _access_failure(exc)
             log_event(
                 f'{_LOG_PREFIX} Retained content could not be reauthorized for finalization.',
-                level=logging.WARNING, extra={'run_id': context.run_id, 'error_type': type(exc).__name__},
+                level=logging.WARNING, extra={
+                    'run_id': context.run_id, 'error_type': type(exc).__name__,
+                    'failure_code': failure['code'], 'authority_reason': _authority_reason(exc),
+                },
             )
-            context.failures.append(build_failure('result_unavailable'))
+            context.failures.append(failure)
             message, complete, response_reference, citations = '', False, None, []
             context.artifacts = []
     file_outputs, committed_artifacts = _dependency_file_outcomes(

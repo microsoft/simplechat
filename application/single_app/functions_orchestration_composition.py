@@ -1,7 +1,8 @@
 # functions_orchestration_composition.py
 """Explicit one-call content preparation from named authorized result readers.
 
-Version: 0.261.141
+Version: 0.261.204
+Directory access refusals reported as their own failure in: 0.261.204
 No retrieval, file-format inference, upload, publication, or implicit sibling inputs.
 
 Answer-writing steps receive saved memory, the resolved conversation references, the
@@ -26,6 +27,7 @@ from functions_orchestration_context import conversation_reference_messages
 from functions_orchestration_deliverables import (
     compose_deliverable_guidance, place_deck_images, place_image_tokens,
 )
+from functions_orchestration_directory_access import DIRECTORY_ACCESS_FAILURE_CODE, directory_access_reason
 from functions_orchestration_memory import OrchestrationMemoryError
 from functions_orchestration_registry import (
     CAPABILITY_GENERATE_IMAGE, KNOWLEDGE_BASIS_GENERAL, KNOWLEDGE_BASIS_MIXED, KNOWLEDGE_BASIS_SOURCES,
@@ -508,10 +510,14 @@ def adapter_compose(step, context, *, settings, user_id, emit=None, cancel_reque
     except Exception as exc:
         raise_source_service_failure(exc)
         code = getattr(exc, 'code', '')
+        authority_reason = directory_access_reason(exc)
         if code == 'result_requires_streaming' or isinstance(exc, WorkflowContextBudgetError):
             failure = build_failure('result_input_too_large')
         elif isinstance(exc, OrchestrationMemoryError):
             failure = build_failure('context_unavailable')
+        elif authority_reason:
+            # A retained external input was rechecked, but the application could not read the directory.
+            failure = build_failure(DIRECTORY_ACCESS_FAILURE_CODE)
         elif isinstance(exc, (ResultUnavailableError, PermissionError, ScreeningError)):
             failure = build_failure('result_unavailable')
         elif isinstance(exc, (ResultContractError, ValueError)):
@@ -529,6 +535,7 @@ def adapter_compose(step, context, *, settings, user_id, emit=None, cancel_reque
                 'capability_id': step['capability_id'], 'error_type': type(exc).__name__,
                 'failure_code': failure['code'],
                 **({'execution_code': code} if type(code) is str and code else {}),
+                **({'authority_reason': authority_reason} if authority_reason else {}),
             },
         )
         return build_step_result(

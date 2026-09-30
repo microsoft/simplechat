@@ -129,9 +129,13 @@ external capabilities.
 The read-only Microsoft Graph identity reader uses the existing
 application registration's confidential credentials and requires administrator
 consent for the **application** permission `Directory.Read.All`. This is separate
-from the delegated sign-in scopes. Orchestration does not request consent, grant
-permissions, change role assignments, or widen the ordinary login scopes
-automatically. Missing permission must leave affected external results
+from the delegated sign-in scopes, and a user's own sign-in can't substitute for it.
+The running application never requests consent, grants permissions, changes role
+assignments, or widens the ordinary login scopes. From deployer version **1.0.33**,
+the Bicep/azd (`Initialize-EntraApplication.ps1`), Azure CLI, and Terraform
+deployers request the permission and try to grant consent when they create the
+app registration. Granting it needs a Global Administrator or Privileged Role
+Administrator. Missing permission must leave affected external results
 unavailable, rather than fall back to old session claims.
 
 This dependency is specific to retained external-source authorization; it is not
@@ -140,6 +144,32 @@ the shared file serializers, ordinary chat, or plans created by an earlier orche
 workspace, agent/action governance, and content-screening checks still apply
 independently. See [Retained external source access]({{ '/explanation/features/ORCHESTRATION_EXTERNAL_SOURCE_ACCESS/' | relative_url }})
 for the server callback boundary and the current integration status.
+
+#### When the permission is missing
+
+Implemented in version **0.261.204**. Without the permission, every web search,
+linked-page, deep research, agent, and action step fails for every user, however
+their app roles are assigned. SimpleChat reports this in three places:
+
+- **Admin Settings.** When Chat Orchestration is on and one of those sources is
+  enabled, opening Admin Settings runs the same directory read for your own
+  account. If Microsoft Entra ID refuses it, a warning appears under **Enable
+  Chat Orchestration** with the portal steps and the exact Azure CLI commands for
+  this app registration, and **Check again** reruns the check after you grant
+  consent. When web search is one of the affected sources, the **Web Search**
+  card shows a shorter warning that links to it. A successful check is reused for
+  five minutes.
+- **Admin notification.** The first refused read on each server, each day, sends
+  a notification to users with the Admin role, linked to these settings. A
+  repeated failure on another server or instance doesn't add a duplicate.
+- **Users.** The failed step says, for example, "Unable to verify your
+  permission to use web search because this application doesn't have access to
+  Microsoft Entra ID. Please contact your administrator." It is recorded as
+  `directory_access_unavailable` rather than as an unavailable result.
+
+A refused application sign-in, such as an expired client secret, is reported the
+same way with its own guidance. Graph outages and throttling are not: they stay
+ordinary, retryable failures and never raise this warning.
 
 ### Plan Approval {#chat-orchestration-approval-section}
 
@@ -519,6 +549,7 @@ then report a rejected proposal.
 | Earlier runs are missing after switching devices | The conversation list has loaded but its run history has not been fetched yet, or the fetch failed. | The orchestration panel shows its own loading and retry states. If retrying keeps failing, check that the user can reach `/api/v2/orchestration/runs` and is the owner of the conversation. |
 | A restored plan will not run | It was already approved on the other device. | This is expected. The conversation reloads to show the answer that run produced. |
 | A step reports a timeout or failure | Execution hit a recorded time limit or an operation failed. | Read the conversation/Run explanation. Address the reported dependency or limit, then use Retry from failed step when recovery is available. |
+| Web search, linked-page, deep research, agent, or action steps fail for everyone with "this application doesn't have access to Microsoft Entra ID" | The app registration lacks administrator consent for the Microsoft Graph `Directory.Read.All` application permission, or Microsoft Entra ID refused its client-credential sign-in. Earlier versions reported this as "A required retained result is unavailable or changed." | Follow the warning under **Enable Chat Orchestration** in Admin Settings: add the permission, grant admin consent, then select **Check again**. Filter `[ORCHESTRATION_EXECUTOR]` or `[ORCHESTRATION_DIRECTORY]` events by `sc_authority_reason`. Retry the failed step once the check passes. |
 | A connection was interrupted | The browser cannot yet confirm the server's execution state. | Check the existing run. Do not resend the request while that attempt may still be active. |
 | Execution returns 503, run detail repeatedly returns 404, and every step remains pending | In affected versions, Cosmos SDK response objects were rejected as invalid dictionaries at execution and status-read boundaries. | Upgrade to 0.261.140 or later, then inspect the existing attempt. Do not reset its deadline or assume that resubmitting is safe. |
 | The plan could not account for everything requested | The proposal and its correction failed deliverables validation. Earlier guidance could lead the model to put file-only fields on an answer. | Upgrade to 0.261.140 for explicit kind-specific guidance. For a remaining rejection, inspect `sc_validation_rule` and `sc_attempt`; preserve selected sources and requested outputs rather than disabling validation. |

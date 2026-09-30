@@ -413,6 +413,16 @@ user records, assign roles, or enable orchestration. The parent owns initialized
 factory wiring and operator-facing administration documentation; Chat
 Orchestration remains default-off.
 
+Since version **0.261.204**, the deployers request the permission and try to
+grant consent when they create the app registration, and a missing grant is
+reported distinctly: Graph 403 and 401 responses to the application's directory
+read, and a refused client-credential sign-in, carry
+`external_identity_directory_permission_missing` or
+`external_identity_directory_sign_in_failed` instead of the generic
+`external_identity_access_denied`. Steps fail with `directory_access_unavailable`,
+administrators are notified, and Admin Settings shows a warning. See
+[Orchestration directory access fix](../fixes/ORCHESTRATION_DIRECTORY_ACCESS_FIX.md).
+
 Fresh HTTP reads do not eliminate Microsoft's directory replication delay:
 the complete group-grant API uses eventual consistency. There is no local role
 cache or fallback to old claims during that delay. Current source-specific

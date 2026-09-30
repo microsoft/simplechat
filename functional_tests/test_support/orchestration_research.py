@@ -2,9 +2,10 @@
 """
 Offline source loading and synthetic inputs for research-planner evaluation.
 
-Version: 0.261.140
+Version: 0.261.204
 Implemented in: 0.261.099
 Single orchestration contract updated in: 0.261.139
+Directory access failure code seeded in: 0.261.204
 
 Only production definitions are executed, never their application imports. In particular,
 config.py, the source-review browser stack, and Azure clients must not be imported here.
@@ -35,6 +36,7 @@ CASE_FILE = Path(__file__).with_name("orchestration_research_cases.json")
 PLANNER_FILE = "functions_orchestration_planner.py"
 REGISTRY_FILE = "functions_orchestration_registry.py"
 RESULT_CONTRACTS_FILE = "functions_orchestration_result_contracts.py"
+DIRECTORY_ACCESS_FILE = "functions_orchestration_directory_access.py"
 OFFLINE_CAPABILITY_IDS = {
     "document_search", "document_analyze", "document_compare", "web_search",
     "url_fetch", "deep_research", "action_invoke", "agent_invoke", "compose",
@@ -144,8 +146,11 @@ def _definitions(filename, seed=None, names=None):
         }
     elif filename == "functions_orchestration_schema.py":
         contracts = _definitions(RESULT_CONTRACTS_FILE)
+        # The failure contract names the directory-access code from its import-free module.
+        directory_access = _definitions(DIRECTORY_ACCESS_FILE)
         seed = {
             **contracts,
+            **directory_access,
             "Draft202012Validator": _OfflineDraftValidator,
             "SchemaError": ValueError,
             "ServiceRequestError": RuntimeError,

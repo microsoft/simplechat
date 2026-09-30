@@ -2,6 +2,24 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.204)**
+
+#### Bug Fixes
+
+*   **Orchestrated Web Search Explains A Missing Microsoft Entra ID Permission**
+    *   An orchestrated V2 chat that planned a web search failed with "A required retained result is unavailable or changed. No preview was substituted." It failed for every user, whatever their app roles, and so did every linked-page, deep research, agent and action step. The message pointed to stale content, not configuration.
+    *   Before those sources are used, Chat Orchestration rereads the user's current app roles from Microsoft Graph with the application's own identity. That read needs the Microsoft Graph `Directory.Read.All` application permission with administrator consent, and without it Graph answered 403. The refusal was reported as if the user lacked access, then as an unavailable result.
+    *   The step now says, for example, "Unable to verify your permission to use web search because this application doesn't have access to Microsoft Entra ID. Please contact your administrator." It's recorded as `directory_access_unavailable`, with `sc_authority_reason` naming a missing permission or a refused client-credential sign-in. A real denial for the user, a Graph outage, and throttling keep their existing handling.
+    *   The Bicep/azd (`Initialize-EntraApplication.ps1`), Azure CLI and Terraform deployers now request the permission and grant administrator consent when they create the app registration. The two PowerShell deployers warn and continue if the deploying account can't grant consent. Terraform grants it with `azuread_app_role_assignment.msgraph_directory_read_all`, so its identity needs that right. Existing deployments need the permission added and consented once: follow the Admin Settings warning, or run the commands in the fix document.
+    *   (Ref: `functions_orchestration_directory_access.py`, `functions_orchestration_external_identity.py`, `functions_orchestration_executor.py`, `functions_orchestration_schema.py`, `deployers/Initialize-EntraApplication.ps1`, `deployers/azurecli/deploy-simplechat.ps1`, `deployers/terraform/main.tf`, [Orchestration Directory Access Fix](fixes/ORCHESTRATION_DIRECTORY_ACCESS_FIX.md))
+
+#### New Features
+
+*   **Directory Access Warning And Notification For Administrators**
+    *   When Chat Orchestration is on and web search, linked pages, deep research, agents or actions are enabled, opening Admin Settings checks whether the application can read Microsoft Entra ID. If it can't, a warning under **Enable Chat Orchestration** names the affected sources and gives the portal steps and Azure CLI commands for this app registration, and **Check again** reruns the check after consent is granted. The **Web Search** card shows a shorter warning that links to it.
+    *   The first refused read on each server each day also sends a **Directory access** notification to users with the Admin role, linked to these settings. Other instances don't add duplicates.
+    *   (Ref: `functions_orchestration_directory_readiness.py`, `route_frontend_admin_settings.py`, `static/js/admin/admin_orchestration_directory_access.js`, `templates/admin/_panes/chat-orchestration.html`, `templates/admin/_panes/web-research.html`, `functions_notifications.py`, [Orchestration settings](../admin/orchestration.md#retained-external-source-authorization))
+
 ### **(v0.261.203)**
 
 #### New Features

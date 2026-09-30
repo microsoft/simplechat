@@ -1,9 +1,10 @@
 # test_orchestration_source_authority_runtime.py
 """V2 runtime/recovery must not turn uncertain source authority into a denial.
 
-Version: 0.261.130
+Version: 0.261.204
 Implemented in: 0.261.127
 Configuration, recovery and invocation-control coverage added in: 0.261.130
+Saved-wait directory refusal messages added in: 0.261.204
 
 Real dispatch, composition, leases, checkpoints and retained-result recovery
 preserve typed screening, directory and configuration errors. Caller-owned
@@ -320,6 +321,28 @@ def test_saved_wait_uncertainty_never_clears_pending_results(
     assert context.pending_results["failed"] == before["pending_results"]["failed"]
     assert context.task_results["failed"].status == "pending"
     assert context.failures == [] and len(waiting.case.model.calls) == 1
+
+
+@pytest.mark.parametrize("reason, code", [
+    ("external_identity_directory_permission_missing", "directory_access_unavailable"),
+    ("external_identity_directory_sign_in_failed", "directory_access_unavailable"),
+    ("external_identity_access_denied", "result_unavailable"),
+])
+def test_saved_wait_directory_refusal_is_explained_to_the_user(waiting, monkeypatch, reason, code):
+    # Unlike uncertain authority, a refusal is a final answer for this wait.
+    results = importlib.import_module("functions_orchestration_results")
+    acquired = claim(waiting)
+    context = waiting.fresh_context(acquired["record"])
+    monkeypatch.setattr(
+        waiting.runtime.executor, "resume_waiting_dependency_step",
+        unavailable(results.ResultUnavailableError(reason)),
+    )
+    result = waiting.run(acquired["record"], context)
+    [resumed] = [step for step in result["steps"] if step["step_id"] == "failed"]
+    assert result["status"] == "failed"
+    assert resumed["status"] == "failed" and resumed["failure"]["code"] == code
+    assert waiting.runtime.schema.FAILURE_MESSAGES[code] in result["message"]
+    assert len(waiting.case.model.calls) == 1
 
 
 def test_saved_wait_metadata_failure_preserves_original_work(waiting, monkeypatch, metadata_failure):

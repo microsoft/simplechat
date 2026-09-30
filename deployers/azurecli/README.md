@@ -291,7 +291,7 @@ $param_PrivateDnsZoneConfigs = @{
 After deployment, you should still complete the manual steps described in [deploy-simplechat.ps1](deploy-simplechat.ps1), including:
 
 - App Service authentication provider setup
-- Entra admin consent for Graph permissions
+- Entra admin consent for Graph permissions, including the `Directory.Read.All` application permission Chat Orchestration needs for web search and other external sources (the script tries to grant it; granting needs Global Administrator or Privileged Role Administrator)
 - Azure OpenAI model deployment review or existing-endpoint configuration
 - Azure AI Search index deployment
 - App settings review in the web UI

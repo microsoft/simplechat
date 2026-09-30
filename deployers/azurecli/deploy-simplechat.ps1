@@ -138,6 +138,12 @@ STEP 2) Entra App Registration:
         - People.Read.All, Delegated
         - User.ReadBasic.All, Delegate
 
+        # The script adds this and tries to grant consent. Granting it needs Global Administrator or
+        # Privileged Role Administrator. Chat Orchestration uses it to confirm a user's app roles
+        # before a plan uses web search or other external sources.
+        Confirm this Microsoft Graph permission shows "Granted for <tenant name>":
+        - Directory.Read.All, Application
+
 STEP 3) App Service
     - restart the app service.
     - Navigate to Web UI url in a browser 
@@ -1770,6 +1776,28 @@ if (-not $appRegistration -or $appRegistration.Count -eq 0) {
     az ad app permission add --id $($appRegistration.id) --api 00000003-0000-0000-c000-000000000000 --api-permissions 14dad69e-099b-42c9-810b-d002981feec1=Scope
     #email
     az ad app permission add --id $($appRegistration.id) --api 00000003-0000-0000-c000-000000000000 --api-permissions 64a6cdd6-aab1-4aaf-94b8-3cc8405e90d0=Scope 
+    #Directory.Read.All (application). Chat Orchestration rereads a user's app roles with the app's own
+    #identity before a plan uses web search or another external source.
+    az ad app permission add --id $($appRegistration.id) --api 00000003-0000-0000-c000-000000000000 --api-permissions 7ab1d382-f21e-4acd-a863-ba3e13f7da61=Role
+
+    # Administrator consent for an application permission is an app role assignment on the app's
+    # service principal. It needs Global Administrator or Privileged Role Administrator.
+    Write-Host "App Registration: Granting admin consent for Directory.Read.All (application)..."
+    $graphServicePrincipalId = az ad sp show --id 00000003-0000-0000-c000-000000000000 --query id -o tsv
+    $appServicePrincipalId = az ad sp show --id $($appRegistration.appId) --query id -o tsv
+    $directoryConsentBodyPath = [System.IO.Path]::GetTempFileName()
+    try {
+        $directoryConsentBody = @{ principalId = $appServicePrincipalId; resourceId = $graphServicePrincipalId; appRoleId = "7ab1d382-f21e-4acd-a863-ba3e13f7da61" } | ConvertTo-Json -Compress
+        [System.IO.File]::WriteAllText($directoryConsentBodyPath, $directoryConsentBody)
+        az rest --method POST --uri "$paramGraphUrl/v1.0/servicePrincipals/$appServicePrincipalId/appRoleAssignments" --headers 'Content-Type=application/json' --body "@$directoryConsentBodyPath" --output none
+        if ($LASTEXITCODE -ne 0) {
+            Write-Warning "Could not grant admin consent for Directory.Read.All. Grant it on the app registration's API permissions blade (see STEP 2); until then Chat Orchestration can't use web search or other external sources."
+        }
+        else { Write-Host "Directory.Read.All admin consent granted." }
+    }
+    finally {
+        Remove-Item -Path $directoryConsentBodyPath -Force -ErrorAction SilentlyContinue
+    }
 
     #az ad app permission admin-consent --id $($appRegistration.id)
     #az ad app permission grant --id e432e60d-42c9-490f-a97b-94dab5010406 --api 00000003-0000-0000-c000-000000000000

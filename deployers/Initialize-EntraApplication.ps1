@@ -7,6 +7,11 @@
     with the required Microsoft Graph API permissions, app roles, and generates a client secret.
     It performs dependency checks before execution and provides detailed error handling.
 
+    It also requests the Microsoft Graph Directory.Read.All application permission and tries to
+    grant administrator consent for it. Chat Orchestration uses that permission to reread a user's
+    app roles with the application's own identity before a plan uses web search, linked pages,
+    deep research, agents or actions.
+
 .PARAMETER AppName
     Base name for the application (Required)
 
@@ -47,6 +52,9 @@
     - Auto-detects cloud environment (AzureCloud/AzureUSGovernment)
     - Auto-detects tenant ID from current Azure CLI session
     - Admin consent must be granted manually in Azure Portal after script completes
+    - Granting consent for the Directory.Read.All application permission requires Global Administrator
+      or Privileged Role Administrator. If the signed-in account can't grant it, the script continues and
+      lists it as a manual step.
 #>
 
 [CmdletBinding()]
@@ -361,6 +369,63 @@ function Try-GrantAppPermissions {
         Succeeded  = ($grantExitCode -eq 0)
         OutputText = $grantOutputText
     }
+}
+
+function Grant-GraphApplicationPermission {
+    param(
+        [string]$GraphUrl,
+        [string]$ServicePrincipalId,
+        [string]$ResourceAppId,
+        [string]$AppRoleId
+    )
+
+    # Administrator consent for an application permission is an app role assignment on the
+    # application's service principal. 'az ad app permission grant' only covers delegated scopes.
+    $resourceServicePrincipals = Invoke-AzureCliJson -Description "Find the service principal for API '$ResourceAppId'" -Command {
+        az ad sp list --filter "appId eq '$ResourceAppId'" --output json --only-show-errors
+    }
+    if (-not $resourceServicePrincipals -or $resourceServicePrincipals.Count -eq 0) {
+        throw "No service principal for API '$ResourceAppId' exists in this tenant."
+    }
+
+    $resourceServicePrincipalId = $resourceServicePrincipals[0].id
+    $assignmentsUri = "$($GraphUrl.TrimEnd('/'))/v1.0/servicePrincipals/$ServicePrincipalId/appRoleAssignments"
+
+    $assignments = Invoke-AzureCliJson -Description "List application permission grants" -Command {
+        az rest --method GET --uri $assignmentsUri --output json --only-show-errors
+    }
+    $existingAssignment = @($assignments.value) | Where-Object {
+        $_.resourceId -eq $resourceServicePrincipalId -and $_.appRoleId -eq $AppRoleId
+    }
+    if ($existingAssignment) {
+        return "AlreadyGranted"
+    }
+
+    $bodyPath = [System.IO.Path]::GetTempFileName()
+    try {
+        $body = @{
+            principalId = $ServicePrincipalId
+            resourceId  = $resourceServicePrincipalId
+            appRoleId   = $AppRoleId
+        } | ConvertTo-Json -Compress
+        [System.IO.File]::WriteAllText($bodyPath, $body)
+
+        $grantOutput = az rest --method POST `
+            --uri $assignmentsUri `
+            --headers "Content-Type=application/json" `
+            --body "@$bodyPath" `
+            --output none `
+            --only-show-errors 2>&1
+
+        if ($LASTEXITCODE -ne 0) {
+            throw "Azure CLI returned: $(Get-CommandOutputText -CommandOutput $grantOutput)"
+        }
+    }
+    finally {
+        Remove-Item -Path $bodyPath -Force -ErrorAction SilentlyContinue
+    }
+
+    return "Granted"
 }
 
 function Test-AzureCloudExists {
@@ -894,16 +959,22 @@ try {
     
     $microsoftGraphId = "00000003-0000-0000-c000-000000000000"
     
-    # Define required permissions (all delegated)
+    # Chat Orchestration rereads a user's app roles with the application's own identity before a
+    # plan uses web search, linked pages, deep research, agents or actions. That read needs this
+    # application (Role) permission with administrator consent.
+    $directoryReadPermission = @{ Name = "Directory.Read.All"; Id = "7ab1d382-f21e-4acd-a863-ba3e13f7da61"; Type = "Role" }
+
+    # Delegated (Scope) permissions for signed-in users, plus the application permission above
     $permissions = @(
-        @{ Name = "User.Read"; Id = "e1fe6dd8-ba31-4d61-89e7-88639da4683d" },
-        @{ Name = "profile"; Id = "14dad69e-099b-42c9-810b-d002981feec1" },
-        @{ Name = "email"; Id = "64a6cdd6-aab1-4aaf-94b8-3cc8405e90d0" },
-        @{ Name = "Group.Read.All"; Id = "5f8c59db-677d-491f-a6b8-5f174b11ec1d" },
-        @{ Name = "offline_access"; Id = "7427e0e9-2fba-42fe-b0c0-848c9e6a8182" },
-        @{ Name = "openid"; Id = "37f7f235-527c-4136-accd-4a02d197296e" },
-        @{ Name = "People.Read.All"; Id = "b89f9189-71a5-4e70-b041-9887f0bc7e4a" },
-        @{ Name = "User.ReadBasic.All"; Id = "b340eb25-3456-403f-be2f-af7a0d370277" }
+        @{ Name = "User.Read"; Id = "e1fe6dd8-ba31-4d61-89e7-88639da4683d"; Type = "Scope" },
+        @{ Name = "profile"; Id = "14dad69e-099b-42c9-810b-d002981feec1"; Type = "Scope" },
+        @{ Name = "email"; Id = "64a6cdd6-aab1-4aaf-94b8-3cc8405e90d0"; Type = "Scope" },
+        @{ Name = "Group.Read.All"; Id = "5f8c59db-677d-491f-a6b8-5f174b11ec1d"; Type = "Scope" },
+        @{ Name = "offline_access"; Id = "7427e0e9-2fba-42fe-b0c0-848c9e6a8182"; Type = "Scope" },
+        @{ Name = "openid"; Id = "37f7f235-527c-4136-accd-4a02d197296e"; Type = "Scope" },
+        @{ Name = "People.Read.All"; Id = "b89f9189-71a5-4e70-b041-9887f0bc7e4a"; Type = "Scope" },
+        @{ Name = "User.ReadBasic.All"; Id = "b340eb25-3456-403f-be2f-af7a0d370277"; Type = "Scope" },
+        $directoryReadPermission
     )
     
     $permissionErrors = @()
@@ -915,18 +986,24 @@ try {
     foreach ($permission in $permissions) {
         try {
             Write-InfoMessage "Adding permission: $($permission.Name)"
+            # Application permissions are consented below; 'az ad app permission grant' covers only delegated scopes.
+            $isDelegatedPermission = ($permission.Type -eq "Scope")
 
             $permissionResult = az ad app permission add `
                 --id $appRegistration.appId `
                 --api $microsoftGraphId `
                 --only-show-errors `
-                --api-permissions "$($permission.Id)=Scope" 2>&1
+                --api-permissions "$($permission.Id)=$($permission.Type)" 2>&1
 
             $permissionResultText = Get-CommandOutputText -CommandOutput $permissionResult
 
             if ($LASTEXITCODE -ne 0) {
                 if (Test-PermissionGrantRequiredMessage -Message $permissionResultText) {
                     Write-SuccessMessage "Added: $($permission.Name)"
+
+                    if (-not $isDelegatedPermission) {
+                        continue
+                    }
 
                     if (-not $permissionGrantAttempted) {
                         Write-InfoMessage "Azure CLI indicates that a permission grant is needed. Attempting 'az ad app permission grant'..."
@@ -958,7 +1035,7 @@ try {
 
             Write-SuccessMessage "Added: $($permission.Name)"
 
-            if (-not [string]::IsNullOrWhiteSpace($permissionResultText) -and (Test-PermissionGrantRequiredMessage -Message $permissionResultText)) {
+            if ($isDelegatedPermission -and -not [string]::IsNullOrWhiteSpace($permissionResultText) -and (Test-PermissionGrantRequiredMessage -Message $permissionResultText)) {
                 if (-not $permissionGrantAttempted) {
                     Write-InfoMessage "Azure CLI indicates that a permission grant is needed. Attempting 'az ad app permission grant'..."
                     $grantResult = Try-GrantAppPermissions -AppId $appRegistration.appId -ApiId $microsoftGraphId
@@ -1006,6 +1083,34 @@ try {
     
     #endregion
     
+    #region Grant Directory.Read.All Administrator Consent
+
+    Write-InfoMessage "Granting administrator consent for the Microsoft Graph $($directoryReadPermission.Name) application permission..."
+
+    $directoryConsentGranted = $false
+    try {
+        $directoryConsentResult = Grant-GraphApplicationPermission `
+            -GraphUrl $graphUrl `
+            -ServicePrincipalId $servicePrincipal.id `
+            -ResourceAppId $microsoftGraphId `
+            -AppRoleId $directoryReadPermission.Id
+        $directoryConsentGranted = $true
+
+        if ($directoryConsentResult -eq "AlreadyGranted") {
+            Write-SuccessMessage "$($directoryReadPermission.Name) already has administrator consent"
+        }
+        else {
+            Write-SuccessMessage "Administrator consent granted for $($directoryReadPermission.Name)"
+        }
+    }
+    catch {
+        Write-WarningMessage "Could not grant administrator consent for $($directoryReadPermission.Name): $_"
+        Write-InfoMessage "Granting consent for an application permission requires Global Administrator or Privileged Role Administrator."
+        Write-InfoMessage "Until it is granted, Chat Orchestration can't confirm that users may use web search or other external sources, and those steps fail."
+    }
+
+    #endregion
+
     #region Generate Client Secret
     
     Write-InfoMessage "Generating client secret (expires in $SecretExpirationDays days)..."
@@ -1062,6 +1167,12 @@ try {
     Write-Host "Service Principal ID:   $($servicePrincipal.id)" -ForegroundColor White
     Write-Host "Client Secret:          $clientSecret" -ForegroundColor Yellow
     Write-Host "Secret Expiration:      $expirationDate" -ForegroundColor White
+    if ($directoryConsentGranted) {
+        Write-Host "Directory.Read.All:     Administrator consent granted" -ForegroundColor White
+    }
+    else {
+        Write-Host "Directory.Read.All:     Administrator consent NOT granted (see step 1)" -ForegroundColor Yellow
+    }
     
     Write-Host "`n========================================" -ForegroundColor Yellow
     Write-Host "MANUAL STEPS REQUIRED" -ForegroundColor Yellow
@@ -1072,6 +1183,7 @@ try {
     Write-Host "   - Find app: $appRegistrationName" -ForegroundColor Gray
     Write-Host "   - Go to API permissions" -ForegroundColor Gray
     Write-Host "   - Click 'Grant admin consent for [Tenant]'" -ForegroundColor Gray
+    Write-Host "   - Confirm 'Directory.Read.All' (Application) shows as granted. Chat Orchestration needs it to use web search and other external sources" -ForegroundColor Gray
     
     Write-Host "`n2. Assign Users/Groups to Enterprise Application:" -ForegroundColor White
     Write-Host "   - Navigate to Azure Portal > Entra ID > Enterprise applications" -ForegroundColor Gray

@@ -764,7 +764,10 @@ data "azuread_service_principal" "msgraph" {
 }
 
 ##################################################################
-# Add "Expose an API" Permissions (User.Read, Profile, email)
+# Add Microsoft Graph API permissions: delegated sign-in scopes, plus
+# the Directory.Read.All application permission Chat Orchestration uses
+# to reread a user's app roles before it uses web search or another
+# external source.
 ##################################################################
 resource "azuread_application_api_access" "api_permissions" {
   api_client_id  = data.azuread_application_published_app_ids.well_known.result["MicrosoftGraph"]
@@ -776,6 +779,9 @@ resource "azuread_application_api_access" "api_permissions" {
     data.azuread_service_principal.msgraph.oauth2_permission_scope_ids["Group.Read.All"],
     data.azuread_service_principal.msgraph.oauth2_permission_scope_ids["offline_access"],
     data.azuread_service_principal.msgraph.oauth2_permission_scope_ids["openid"]
+  ]
+  role_ids = [
+    data.azuread_service_principal.msgraph.app_role_ids["Directory.Read.All"]
   ]
 }
 
@@ -789,6 +795,17 @@ resource "azuread_service_principal_delegated_permission_grant" "delegatedpermis
   service_principal_object_id          = azuread_service_principal.app_registration_sp.object_id
   resource_service_principal_object_id = data.azuread_service_principal.msgraph.object_id
   claim_values                         = ["User.Read", "profile", "email", "Group.Read.All", "offline_access", "openid"]
+}
+
+##################################################################
+# Grant administrator consent for the Directory.Read.All application
+# permission. The deploying identity needs Global Administrator or
+# Privileged Role Administrator (or AppRoleAssignment.ReadWrite.All).
+##################################################################
+resource "azuread_app_role_assignment" "msgraph_directory_read_all" {
+  app_role_id         = data.azuread_service_principal.msgraph.app_role_ids["Directory.Read.All"]
+  principal_object_id = azuread_service_principal.app_registration_sp.object_id
+  resource_object_id  = data.azuread_service_principal.msgraph.object_id
 }
 
 ##################################################################
