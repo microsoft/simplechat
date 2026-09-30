@@ -1,13 +1,14 @@
 // WorkflowFlowCanvas.tsx
 // A local presentation-only renderer. Semantic edits belong to the owning editor.
 
-import { memo, useCallback, useEffect, useId, useMemo, useRef, useState, type Dispatch, type KeyboardEvent, type SetStateAction, type TouchEvent } from 'react';
+import { memo, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type Dispatch, type KeyboardEvent, type SetStateAction, type TouchEvent } from 'react';
 import {
-    Handle, MarkerType, Position, ReactFlow,
+    Handle, MarkerType, Position, ReactFlow, useUpdateNodeInternals,
     type Edge, type Node, type NodeChange, type NodeProps, type ReactFlowInstance,
 } from '@xyflow/react';
 import { GlassButton } from '../ui/primitives';
 import { layoutWorkflowFlow, visibleWorkflowEdges, visibleWorkflowNode, type WorkflowFlowStructure } from '../../lib/workflowFlowLayout';
+import { reuseUnchangedFlowNodes } from '../../lib/workflowFlowNodeReuse';
 import { workflowInspectionBindings, type WorkflowInspectionDetails, type WorkflowInspectionNode } from '../../lib/workflowInspection';
 import type { WorkflowExecutionRecord } from '../../lib/workflowExecutionHistory';
 import '@xyflow/react/dist/style.css';
@@ -34,8 +35,16 @@ interface FlowNodeData extends Record<string, unknown> {
 
 type FlowNode = Node<FlowNodeData, 'workflow'>;
 
-const DefinitionNode = memo(function DefinitionNode({ data }: NodeProps<FlowNode>) {
+const DefinitionNode = memo(function DefinitionNode({ id, data }: NodeProps<FlowNode>) {
     const node = data.record;
+    const updateNodeInternals = useUpdateNodeInternals();
+    const chosen = useRef(data.chosen);
+    useEffect(() => {
+        if (chosen.current === data.chosen) return;
+        chosen.current = data.chosen;
+        // The selected border is wider, so it moves every handle without resizing the node.
+        updateNodeInternals(id);
+    }, [data.chosen, id, updateNodeInternals]);
     return <div className={`workflow-flow-node ${data.container ? 'workflow-flow-container' : ''} ${data.chosen ? 'workflow-flow-selected' : ''}`}>
         <Handle type="target" position={Position.Top} id="in" isConnectable={false} />
         <Handle type="target" position={Position.Right} id="return" className="workflow-flow-return-handle" isConnectable={false} />
@@ -79,6 +88,7 @@ const DefinitionNode = memo(function DefinitionNode({ data }: NodeProps<FlowNode
 });
 
 const nodeTypes = { workflow: DefinitionNode };
+const fitViewOptions = { padding: 0.15, maxZoom: 1 };
 
 function preserveBrowserPinch(event: TouchEvent<HTMLDivElement>) {
     if (event.touches.length > 1) event.stopPropagation();
@@ -177,6 +187,19 @@ export function WorkflowFlowCanvas({
         }
     }, [boxes, records, collapsed, onCollapse, onFocus]);
 
+    // Nodes call the latest handlers through stable wrappers, so a new callback identity alone
+    // never rebuilds a node (#1573).
+    const latest = useRef({ onSelect, onCollapse, onFocus, onNavigate });
+    useLayoutEffect(() => {
+        latest.current = { onSelect, onCollapse, onFocus, onNavigate };
+    });
+    const handlers = useMemo(() => ({
+        onSelect: (id: string) => latest.current.onSelect(id),
+        onCollapse: (id: string) => latest.current.onCollapse(id),
+        onFocus: (id: string, part?: 'collapse', reveal?: boolean) => latest.current.onFocus(id, part, reveal),
+        onNavigate: (id: string, event: KeyboardEvent<HTMLButtonElement>) => latest.current.onNavigate(id, event),
+    }), []);
+
     useEffect(() => {
         if (focusRequest) {
             buttons.current.get(focusRequest.id)?.focus({ preventScroll: true });
@@ -184,9 +207,15 @@ export function WorkflowFlowCanvas({
         }
     }, [focusRequest]);
 
-    const nodes: FlowNode[] = useMemo(() => boxes.map((box) => {
+    // React Flow drops the handle positions of a node object it has not seen unless the object
+    // carries its measured size. Unchanged nodes keep their previous object; changed nodes carry
+    // the last size React Flow reported, so their edges stay drawn while it re-measures (#1573).
+    const measuredSizes = useRef(new Map<string, { width: number; height: number }>());
+    const previousNodes = useRef<FlowNode[]>([]);
+    const nodes: FlowNode[] = useMemo(() => reuseUnchangedFlowNodes(previousNodes.current, boxes.map((box): FlowNode => {
         const record = records.get(box.id);
         if (!record) throw new Error('The Flow layout lost a canonical node.');
+        const measured = measuredSizes.current.get(box.id);
         return {
             id: box.id, type: 'workflow', parentId: box.parentId, position: positions.get(box.id) ?? box.position,
             width: box.width, height: box.height, style: { width: box.width, height: box.height },
@@ -197,11 +226,20 @@ export function WorkflowFlowCanvas({
                 record, container: box.container, collapsed: collapsed.has(box.id), chosen: selectedId === box.id,
                 tabStop: (focusedId && boxMap.has(focusedId) ? focusedId : boxes[0]?.id) === box.id,
                 status: statuses.get(box.id) ?? (sourceKind === 'run' ? 'Not loaded' : 'Definition'),
-                onSelect, onFocus, onNavigate, onCollapse, registerButton,
+                ...handlers, registerButton,
             },
+            ...(measured ? { measured } : {}),
         };
-    }), [boxes, records, positions, collapsed, selectedId, focusedId, boxMap, statuses, dragPan,
-        sourceKind, onSelect, onFocus, onNavigate, onCollapse, registerButton]);
+    }), ['measured']), [boxes, records, positions, collapsed, selectedId, focusedId, boxMap, statuses, dragPan,
+        sourceKind, handlers, registerButton]);
+    useLayoutEffect(() => {
+        previousNodes.current = nodes;
+    }, [nodes]);
+    useEffect(() => {
+        for (const id of [...measuredSizes.current.keys()]) {
+            if (!boxMap.has(id)) measuredSizes.current.delete(id);
+        }
+    }, [boxMap]);
 
     const edges: Edge[] = useMemo(() => {
         const connections = new Map<string, { edge: Edge; labels: Set<string> }>();
@@ -259,7 +297,10 @@ export function WorkflowFlowCanvas({
         return [...control, ...[...dataConnections.values()].map(({ edge }) => edge)];
     }, [projection, collapsed, records, observations, details, selectedId, bindingRelationships]);
 
-    const changePositions = useCallback((changes: NodeChange<FlowNode>[]) => {
+    const changeNodes = useCallback((changes: NodeChange<FlowNode>[]) => {
+        for (const change of changes) {
+            if (change.type === 'dimensions' && change.dimensions) measuredSizes.current.set(change.id, change.dimensions);
+        }
         const moved = changes.filter((change) => change.type === 'position' && change.position !== undefined);
         if (!moved.length) return;
         setPositions((current) => {
@@ -270,6 +311,10 @@ export function WorkflowFlowCanvas({
             return next;
         });
     }, [boxMap, setPositions]);
+    const initFlow = useCallback((flow: ReactFlowInstance<FlowNode, Edge>) => {
+        instance.current = flow;
+    }, []);
+    const reportGeometryError = useCallback(() => setError('Flow geometry is unavailable. Use List or reload the view.'), []);
 
     const moveSelected = (dx: number, dy: number) => {
         const box = selectedId ? boxMap.get(selectedId) : undefined;
@@ -292,7 +337,7 @@ export function WorkflowFlowCanvas({
 
     return <div className="workflow-flow space-y-3">
         <div className="flex flex-wrap gap-2" role="group" aria-label="Flow view controls">
-            <GlassButton size="sm" onClick={() => void instance.current?.fitView({ padding: 0.15, maxZoom: 1, duration: 0 })}>Fit Flow</GlassButton>
+            <GlassButton size="sm" onClick={() => void instance.current?.fitView({ ...fitViewOptions, duration: 0 })}>Fit Flow</GlassButton>
             <GlassButton size="sm" onClick={() => void instance.current?.zoomIn({ duration: 0 })}>Zoom in</GlassButton>
             <GlassButton size="sm" onClick={() => void instance.current?.zoomOut({ duration: 0 })}>Zoom out</GlassButton>
             <GlassButton size="sm" onClick={() => pan(120, 0)}>Pan view left</GlassButton>
@@ -315,15 +360,15 @@ export function WorkflowFlowCanvas({
             <ReactFlow<FlowNode, Edge>
                 id={`workflow-flow-${helpId.replaceAll(':', '')}`}
                 nodes={nodes} edges={edges} nodeTypes={nodeTypes}
-                onInit={(flow) => { instance.current = flow; }}
-                onNodesChange={changePositions}
-                onError={() => setError('Flow geometry is unavailable. Use List or reload the view.')}
+                onInit={initFlow}
+                onNodesChange={changeNodes}
+                onError={reportGeometryError}
                 nodesConnectable={false} edgesReconnectable={false} nodesFocusable={false} edgesFocusable={false}
                 elementsSelectable={false} selectNodesOnDrag={false} deleteKeyCode={null}
                 selectionKeyCode={null} multiSelectionKeyCode={null}
                 zoomActivationKeyCode={null} panActivationKeyCode={null}
                 panOnDrag={dragPan} zoomOnScroll={false} zoomOnPinch={false} zoomOnDoubleClick={false} preventScrolling={false}
-                minZoom={0.005} maxZoom={2} fitView fitViewOptions={{ padding: 0.15, maxZoom: 1 }}
+                minZoom={0.005} maxZoom={2} fitView fitViewOptions={fitViewOptions}
                 defaultMarkerColor={null}
             />
         </div>
