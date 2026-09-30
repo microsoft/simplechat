@@ -2,8 +2,8 @@
 # test_chat_workflow_results_admin.py
 """
 Functional test for the admin switch that lets chat answer from stored workflow results.
-Version: 0.261.212
-Implemented in: 0.261.212
+Version: 0.261.213
+Implemented in: 0.261.213
 
 This test ensures that ``enable_chat_workflow_results`` (Use Workflow Results In Chat) is off
 unless an administrator turns it on, that both admin surfaces save it faithfully, and that the
@@ -119,7 +119,7 @@ def _render_classic_pane(settings):
 
 
 def test_version_is_at_least_the_workflow_results_release():
-    assert_app_version_at_least("0.261.212")
+    assert_app_version_at_least("0.261.213")
 
 
 def test_the_setting_is_seeded_off():

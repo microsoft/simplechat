@@ -2,8 +2,8 @@
 # test_workflow_result_context_policy.py
 """
 Functional policy tests for the workflow result descriptor route.
-Version: 0.261.212
-Implemented in: 0.261.212
+Version: 0.261.213
+Implemented in: 0.261.213
 
 This test ensures that ``GET /api/user/workflows/<workflow_id>/runs/<run_id>/result-context``
 keeps its Blueprint, Swagger and gate order, that each gate refuses before anything is read,
@@ -188,7 +188,7 @@ def assert_closed(response, status, code):
 
 
 def test_version_is_at_least_the_workflow_results_release():
-    assert_app_version_at_least("0.261.212")
+    assert_app_version_at_least("0.261.213")
 
 
 def test_the_route_keeps_its_blueprint_swagger_and_gate_order():

@@ -1,8 +1,8 @@
 # test_workflow_result_reader.py
 """
 Functional test for the workflow result reader behind chat Follow up.
-Version: 0.261.212
-Implemented in: 0.261.212
+Version: 0.261.213
+Implemented in: 0.261.213
 
 This test ensures that the reader point-reads a personal workflow and run as the
 requester, answers someone else's run exactly like a missing one, reads only
@@ -53,7 +53,7 @@ from test_support.workflow_result_chat import (  # noqa: E402
 
 
 def test_version_is_at_least_the_workflow_results_release():
-    assert_app_version_at_least("0.261.212")
+    assert_app_version_at_least("0.261.213")
 
 
 def test_a_finished_run_reads_as_its_owner_with_a_public_descriptor():

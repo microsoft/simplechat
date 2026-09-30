@@ -1,8 +1,8 @@
 # test_workflow_result_chat_routes.py
 """
 Functional test for the chat routes' workflow-result Follow up wiring.
-Version: 0.261.212
-Implemented in: 0.261.212
+Version: 0.261.213
+Implemented in: 0.261.213
 
 This test ensures that every chat entry point sends a request carrying a
 workflow_result_context to the Follow up executor before saved analysis and
@@ -115,7 +115,7 @@ def precheck_call(scope):
 
 
 def test_version_is_at_least_the_workflow_results_release():
-    assert_app_version_at_least("0.261.212")
+    assert_app_version_at_least("0.261.213")
 
 
 def test_the_chat_stream_refuses_a_workflow_result_request_before_any_other_work():

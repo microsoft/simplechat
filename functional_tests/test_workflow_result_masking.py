@@ -2,8 +2,8 @@
 # test_workflow_result_masking.py
 """
 Functional test for withholding chat answers built from workflow results.
-Version: 0.261.212
-Implemented in: 0.261.212
+Version: 0.261.213
+Implemented in: 0.261.213
 
 This test ensures that an answer relying on a workflow result is withheld on every
 new read once that result is unavailable to its owner (a deleted run, a changed
@@ -488,7 +488,7 @@ def test_withholding_logs_fixed_messages_with_codes_only(monkeypatch):
 
 
 def test_version_is_at_least_the_implementation_version():
-    assert_app_version_at_least("0.261.212")
+    assert_app_version_at_least("0.261.213")
 
 
 if __name__ == "__main__":

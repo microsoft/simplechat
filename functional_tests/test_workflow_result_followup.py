@@ -1,8 +1,8 @@
 # test_workflow_result_followup.py
 """
 Functional test for chat Follow up on a stored workflow result.
-Version: 0.261.212
-Implemented in: 0.261.212
+Version: 0.261.213
+Implemented in: 0.261.213
 
 This test ensures that Follow up answers only from the selected run's stored
 result, reads and binds it again on every turn, refuses shared, collaborative
@@ -392,7 +392,7 @@ def assert_refused(harness, payload, status, code, *, kept=0):
 
 
 def test_version_is_at_least_the_workflow_results_release():
-    assert_app_version_at_least("0.261.212")
+    assert_app_version_at_least("0.261.213")
 
 
 def test_a_question_is_answered_from_the_selected_run_only_with_the_disclosure():
