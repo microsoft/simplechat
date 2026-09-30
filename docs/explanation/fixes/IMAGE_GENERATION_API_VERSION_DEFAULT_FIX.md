@@ -14,8 +14,11 @@ places in **0.261.210**:
   profiles, other versions and blank versions are left alone. A blank version already falls back
   to `2025-04-01-preview` at request time.
 - `LEGACY_DEFAULT_IMAGES_API_VERSION` in `functions_image_api_route.py`, the fallback for
-  unmigrated legacy Images settings with no version, now equals `DEFAULT_IMAGES_API_VERSION`
-  (`2025-04-01-preview`).
+  unmigrated legacy direct Images settings with no version, now equals
+  `DEFAULT_IMAGES_API_VERSION` (`2025-04-01-preview`). An unmigrated legacy APIM route with no
+  version keeps its `2024-12-01-preview` fallback, now named
+  `LEGACY_APIM_DEFAULT_IMAGES_API_VERSION`, because the gateway decides which versions it
+  accepts.
 - The V2 admin field for `azure_openai_image_gen_api_version` in `admin_settings_fields.py`
   shows the new default, and `docs/admin/ai-models.md` and
   `docs/explanation/features/IMAGE_GENERATION_RESPONSES_MODELS.md` describe the upgrade.

@@ -13,6 +13,9 @@ Cosmos DB, AI Search, or Azure credentials.
 WORKSPACE_UPLOAD_FILE_CONTENT_SOURCE = "workspace"
 NO_EXTRACTED_CONTENT_MESSAGE = "No extracted content is available for this file yet."
 STILL_PROCESSING_MESSAGE = "This file is still being processed. Try again when it finishes."
+PROCESSING_FAILED_MESSAGE = (
+    "Processing this file failed, so nothing was extracted. Reprocess or re-upload it to try again."
+)
 
 
 def _clean_text(value):
@@ -88,8 +91,15 @@ def _percentage_complete(document):
         return None
 
 
+def is_workspace_upload_failed(document):
+    """Return whether ingestion stopped with an error, which is final rather than in progress."""
+    return _clean_text(document.get("status")).lower().startswith("error")
+
+
 def is_workspace_upload_processing(document):
     """Return whether the linked document has not finished ingestion yet."""
+    if is_workspace_upload_failed(document):
+        return False
     percentage = _percentage_complete(document)
     if percentage is not None:
         return percentage < 100
@@ -137,11 +147,13 @@ def build_workspace_upload_file_content(filename, document, chunks):
     body = indexed_text or render_vision_analysis_text(details["vision_analysis"])
 
     if not body:
-        message = (
-            STILL_PROCESSING_MESSAGE
-            if is_workspace_upload_processing(document if isinstance(document, dict) else {})
-            else NO_EXTRACTED_CONTENT_MESSAGE
-        )
+        source = document if isinstance(document, dict) else {}
+        if is_workspace_upload_failed(source):
+            message = PROCESSING_FAILED_MESSAGE
+        elif is_workspace_upload_processing(source):
+            message = STILL_PROCESSING_MESSAGE
+        else:
+            message = NO_EXTRACTED_CONTENT_MESSAGE
         return {"error": message, "workspace_document": details}, 404
 
     return {

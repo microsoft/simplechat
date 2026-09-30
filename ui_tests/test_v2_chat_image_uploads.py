@@ -515,3 +515,23 @@ def test_image_citation_viewer_shows_what_was_extracted(image_ui):
     expect(viewer.locator("img[alt='lab.png']")).to_be_visible()
     expect(viewer.get_by_text("What was extracted from this image")).to_be_visible()
     expect(viewer).to_contain_text(VISION_DESCRIPTION)
+
+
+def test_uploaded_image_sources_explain_a_failed_ingestion(image_ui):
+    page, api = image_ui
+    failed = json.loads(json.dumps(WORKSPACE_EXTRACTION))
+    failed["indexed_text_available"] = False
+    failed["workspace_document"].update({
+        "status": "Error: Processing failed: The chunk is too large for the selected embedding model.",
+        "percentage_complete": 0,
+        "indexed_chunk_count": 0,
+    })
+    api.file_content["sized-image"] = (200, failed)
+    mount_messages(page, api, [file_message("sized-image", "lab.png", "doc-lab")])
+
+    page.get_by_role("button", name="View the full-size image: lab.png").hover()
+    page.get_by_role("button", name="Show sources", exact=True).click()
+
+    expect(page.get_by_role("region", name="AI vision analysis")).to_contain_text(VISION_DESCRIPTION)
+    expect(page.get_by_text("Processing this file failed, so nothing from it was indexed for search.", exact=False)).to_be_visible()
+    expect(page.get_by_text("Still processing", exact=False)).to_have_count(0)

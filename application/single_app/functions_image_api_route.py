@@ -41,9 +41,12 @@ RESPONSES_IMAGE_API_VERSION = 'v1'
 # New shared connections support both Images generations and edits without inheriting
 # a chat API version. Explicit imported image profiles always take precedence.
 DEFAULT_IMAGES_API_VERSION = '2025-04-01-preview'
-# Unmigrated legacy Images settings with no version use the same default. The previous
+# Unmigrated legacy direct Images settings with no version use the same default. The previous
 # fallback, 2024-12-01-preview, predates gpt-image model support.
 LEGACY_DEFAULT_IMAGES_API_VERSION = DEFAULT_IMAGES_API_VERSION
+# An unmigrated legacy APIM image route with no version keeps the fallback it has always sent,
+# because the gateway, not SimpleChat, decides which API versions it accepts.
+LEGACY_APIM_DEFAULT_IMAGES_API_VERSION = '2024-12-01-preview'
 
 # What the image_generation tool call answers with when no format is stated.
 DEFAULT_RESPONSES_IMAGE_FORMAT = 'png'
@@ -229,12 +232,13 @@ def resolve_image_generation_api_version(settings):
         return 'preview'
     if image_settings_use_connections(settings):
         return resolve_image_binding_api_version(resolve_shared_image_binding(settings))
-    key = (
-        'azure_apim_image_gen_api_version'
-        if settings.get('enable_image_gen_apim')
-        else 'azure_openai_image_gen_api_version'
-    )
-    return str(settings.get(key) or LEGACY_DEFAULT_IMAGES_API_VERSION).strip()
+    if settings.get('enable_image_gen_apim'):
+        return str(
+            settings.get('azure_apim_image_gen_api_version') or LEGACY_APIM_DEFAULT_IMAGES_API_VERSION
+        ).strip()
+    return str(
+        settings.get('azure_openai_image_gen_api_version') or LEGACY_DEFAULT_IMAGES_API_VERSION
+    ).strip()
 
 
 def resolve_selected_image_capability(settings):

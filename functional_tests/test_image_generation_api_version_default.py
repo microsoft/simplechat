@@ -317,10 +317,12 @@ def test_v2_legacy_images_fallback_and_admin_field_use_the_new_default():
     assert f"DEFAULT_IMAGES_API_VERSION = '{NEW_DEFAULT}'" in route_source
     assert "LEGACY_DEFAULT_IMAGES_API_VERSION = DEFAULT_IMAGES_API_VERSION" in route_source
     old_default_assignments = [
-        node for node in ast.parse(route_source).body
+        node.targets[0].id for node in ast.parse(route_source).body
         if isinstance(node, ast.Assign) and isinstance(node.value, ast.Constant) and node.value.value == PREVIOUS_DEFAULT
     ]
-    assert not old_default_assignments, "No module constant may keep the old default"
+    assert old_default_assignments == ["LEGACY_APIM_DEFAULT_IMAGES_API_VERSION"], (
+        f"Only the APIM fallback may keep the old default: {old_default_assignments}"
+    )
 
     fields_tree = ast.parse((APP_ROOT / "admin_settings_fields.py").read_text(encoding="utf-8"))
     field_defaults = [
@@ -339,6 +341,29 @@ def test_v2_legacy_images_fallback_and_admin_field_use_the_new_default():
         if isinstance(key, ast.Constant) and isinstance(value, ast.Constant)
     }
     assert defaults.get("default") == NEW_DEFAULT, defaults
+
+
+def test_legacy_images_fallback_changes_only_for_the_direct_route():
+    """V2: a blank legacy direct version uses the new default; a blank APIM version does not change."""
+    if str(APP_ROOT) not in sys.path:
+        sys.path.insert(0, str(APP_ROOT))
+    from functions_image_api_route import resolve_image_generation_api_version  # noqa: PLC0415 - pure module
+
+    direct = {
+        "enable_image_generation": True,
+        "enable_image_gen_apim": False,
+        "azure_openai_image_gen_api_version": "",
+        "azure_apim_image_gen_api_version": "",
+        "image_gen_model": {"selected": [{"deploymentName": "legacy-image", "modelName": "gpt-image-1"}]},
+    }
+    assert resolve_image_generation_api_version(direct) == NEW_DEFAULT
+
+    apim = {**direct, "enable_image_gen_apim": True, "azure_apim_image_gen_deployment": "gateway-image"}
+    assert resolve_image_generation_api_version(apim) == PREVIOUS_DEFAULT, (
+        "A blank APIM version must keep the fallback the gateway has always received"
+    )
+    assert resolve_image_generation_api_version({**apim, "azure_apim_image_gen_api_version": "2024-02-01"}) == "2024-02-01"
+    assert resolve_image_generation_api_version({**direct, "azure_openai_image_gen_api_version": "2025-03-01-preview"}) == "2025-03-01-preview"
 
 
 def _run_offline_probe():

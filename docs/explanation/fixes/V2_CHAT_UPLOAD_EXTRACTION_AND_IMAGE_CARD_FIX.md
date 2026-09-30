@@ -79,7 +79,9 @@ For a workspace-backed upload, `/api/get_file_content` returns:
 `file_content` is always readable text, so the classic file popup, which renders only
 `file_content`, also works for these uploads now. When there is nothing to show, the route
 returns 404 with "This file is still being processed. Try again when it finishes." while
-ingestion is running, or "No extracted content is available for this file yet." afterwards.
+ingestion is running, "Processing this file failed, so nothing was extracted. Reprocess or
+re-upload it to try again." when the document's status is an error, or "No extracted content
+is available for this file yet." otherwise.
 
 Tabular uploads and screened documents keep their existing paths.
 

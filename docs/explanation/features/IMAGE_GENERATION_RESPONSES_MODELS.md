@@ -80,7 +80,8 @@ Images and Responses have separate version contracts:
 | --- | --- |
 | Shared Images model with no image-specific version, including a missing operation profile | `2025-04-01-preview` for Images generations and edits |
 | Shared Images model with an explicit `connection.operation_settings.image_generation.api_version` | The stored version, including an older imported version. Since 0.261.210 a direct profile still holding the previous default `2024-12-01-preview` is upgraded to `2025-04-01-preview` when settings load. |
-| Unmigrated legacy Images route without a configured image API version | `2025-04-01-preview` (`2024-12-01-preview` before 0.261.210) |
+| Unmigrated legacy direct Images route without a configured image API version | `2025-04-01-preview` (`2024-12-01-preview` before 0.261.210) |
+| Unmigrated legacy APIM Images route without a configured image API version | `2024-12-01-preview`; the gateway decides which versions it accepts |
 | Direct OpenAI Images or Responses | OpenAI `/v1`, without an Azure version query |
 | MAI Image | `/mai/v1`, without an Azure OpenAI version query |
 | Foundry FLUX | `api-version=preview`; native per-model paths or the documented v1 Images-compatible Kontext paths |

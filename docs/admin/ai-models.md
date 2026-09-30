@@ -400,8 +400,10 @@ New shared Images connections without an image-specific API version use
 including older imported versions, are preserved, except the previous default
 `2024-12-01-preview`, which predates gpt-image support: since **0.261.210** a direct
 (non-APIM) image profile or legacy image setting still holding that exact value is
-upgraded to `2025-04-01-preview` when settings load. Unmigrated legacy Images settings
-with no version configured also use `2025-04-01-preview`.
+upgraded to `2025-04-01-preview` when settings load. Unmigrated legacy direct Images
+settings with no version configured also use `2025-04-01-preview`. An unmigrated legacy
+APIM route with no version keeps sending `2024-12-01-preview`, because the gateway decides
+which versions it accepts.
 
 These versions do not come from the chat connection's API version or legacy root
 settings after shared selection. Direct OpenAI uses `/v1` without an Azure

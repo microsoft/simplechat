@@ -4031,17 +4031,28 @@ def save_chunks(page_text_content, page_number, file_name, user_id, document_id,
         embedding_input = enhanced_chunk_text
         max_embedding_characters = get_embedding_safe_chunk_characters()
 
-        # The vision block is added to the page text. When that alone pushes a page that fits
-        # over the budget, embed the page text by itself, as before the block was embedded,
-        # rather than refusing a chunk the selected embedding model could always take.
+        # Processors bound the page text, not the vision block appended to it. When the block
+        # alone pushes a page that fits over the budget -- including an image whose only text
+        # is its description -- embed the leading part of the stored text instead of refusing
+        # a chunk the page itself never made too large. The full text is still stored below.
         page_text = page_text_content or ''
         if (
             vision_text
             and len(embedding_input) > max_embedding_characters
-            and page_text.strip()
             and len(page_text) <= max_embedding_characters
         ):
-            embedding_input = page_text
+            log_event(
+                "[SAVE_CHUNKS] The vision description was clamped for embedding only.",
+                extra={
+                    "document_id": document_id,
+                    "page_number": page_number,
+                    "original_characters": len(embedding_input),
+                    "clamped_characters": max_embedding_characters,
+                },
+                level=logging.INFO,
+                debug_only=True,
+            )
+            embedding_input = embedding_input[:max_embedding_characters]
 
         # Last-resort guard. Every processor bounds its own chunks, so reaching this means content
         # tokenized far worse than estimated. Splitting is not an option here because chunk ids are

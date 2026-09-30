@@ -147,6 +147,19 @@ def test_nothing_to_show_explains_processing_or_absence():
     assert status == 404
     assert payload["error"] == extraction.STILL_PROCESSING_MESSAGE
 
+    # A failed document is final: ingestion saves percentage 0 with an Error status.
+    failed = {"id": "doc-failed", "status": "Error: Processing failed: The chunk is too large", "percentage_complete": 0}
+    assert extraction.is_workspace_upload_processing(failed) is False
+    payload, status = extraction.build_workspace_upload_file_content("lab.png", failed, [])
+    assert status == 404
+    assert payload["error"] == extraction.PROCESSING_FAILED_MESSAGE
+    assert payload["workspace_document"]["status"].startswith("Error:")
+
+    # A failed document that still stored its vision analysis shows it rather than an error.
+    failed_with_vision = {**failed, "vision_analysis": VISION_ANALYSIS}
+    payload, status = extraction.build_workspace_upload_file_content("lab.png", failed_with_vision, [])
+    assert status == 200 and payload["indexed_text_available"] is False
+
 
 def _load_route_helper():
     """Compile the route's helper on its own, with its collaborators supplied by the test."""

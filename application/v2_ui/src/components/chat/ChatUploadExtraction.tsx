@@ -173,10 +173,12 @@ export function ChatUploadExtraction({ data }: { data: ChatFileContent }) {
             ) : (
                 <p className="flex items-start gap-1.5 text-xs text-warn">
                     <TriangleAlert size={13} className="mt-0.5 shrink-0" />
-                    {typeof details.percentage_complete === 'number' &&
-                    details.percentage_complete < 100
-                        ? 'Still processing. The indexed text appears here once ingestion finishes.'
-                        : 'Nothing from this file was indexed for search, so chat cannot cite it. Reprocess or re-upload the file to index it.'}
+                    {String(details.status ?? '').trim().toLowerCase().startsWith('error')
+                        ? 'Processing this file failed, so nothing from it was indexed for search. Reprocess or re-upload the file to index it.'
+                        : typeof details.percentage_complete === 'number' &&
+                            details.percentage_complete < 100
+                          ? 'Still processing. The indexed text appears here once ingestion finishes.'
+                          : 'Nothing from this file was indexed for search, so chat cannot cite it. Reprocess or re-upload the file to index it.'}
                 </p>
             )}
         </div>

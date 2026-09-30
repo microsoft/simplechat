@@ -541,12 +541,20 @@ def check_save_chunks_embeds_the_stored_text(documents):
     _require(uploaded[0]["chunk_text"] == long_text + block, "The stored chunk text must never be clamped.")
 
     # React V2: a non-legacy embedding profile refuses an oversized chunk. Appending the vision
-    # block must not turn a page that fits into a refused one, so that page embeds its OCR text.
+    # block must not turn a page that fits into a refused one, so the embedding input is cut to
+    # the budget while the stored chunk keeps the full text.
     _, embedded, uploaded = _run_save_chunks(
         documents, "EXIT 12", VISION_ANALYSIS, max_characters=60, legacy_embedding=False,
     )
-    _require(embedded == ["EXIT 12"], "A page that fits must embed its OCR text when the vision block does not.")
-    _require(uploaded[0]["chunk_text"] == "EXIT 12" + block, "The stored text must still carry the vision block.")
+    _require(embedded == [("EXIT 12" + block)[:60]], "A page that fits must embed its clamped stored text.")
+    _require(uploaded[0]["chunk_text"] == "EXIT 12" + block, "The stored text must still carry the whole block.")
+
+    # An image whose only text is its description must never fail ingestion for a long description.
+    _, embedded, uploaded = _run_save_chunks(
+        documents, "", VISION_ANALYSIS, max_characters=60, legacy_embedding=False,
+    )
+    _require(embedded == [block.lstrip()[:60]], "A description-only chunk must embed its clamped description.")
+    _require(uploaded[0]["chunk_text"] == block.lstrip(), "The description-only chunk must store the whole block.")
 
     refused = False
     try:
