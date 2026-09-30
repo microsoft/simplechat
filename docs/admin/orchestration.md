@@ -122,7 +122,7 @@ recover one file without repeating completed work.
 
 Web search, linked-page reading, deep research, agents, actions and explicit Fact
 Memory results use the same authority as classic chat: the app roles in the user's
-signed-in session. Since **0.261.205**, orchestration no longer looks up each user in
+signed-in session. Since **0.261.209**, orchestration no longer looks up each user in
 Microsoft Graph and needs no `Directory.Read.All` permission. Earlier versions
 required that application permission, and without it every such step failed with
 "A required retained result is unavailable or changed." If you granted
@@ -259,7 +259,7 @@ Discovery honours the existing Deep Research query limit and source-review limit
 [Knowledge settings]({{ '/admin/knowledge/' | relative_url }}), including its query
 planning and linked-page planning options, as manual Deep Research does. It does not
 enable web search if that capability is disabled globally; permitted supplied sources
-can still be reviewed. Before **0.261.205**, those planners, which are on by default,
+can still be reviewed. Before **0.261.209**, those planners, which are on by default,
 stopped every orchestrated research step before it started. A query-planning model
 that is unavailable or fails leaves the existing backup query generation available. Recovery is recorded in logs, without a user-facing fallback
 notice when useful evidence is obtained. If no usable evidence is found, the answer must
@@ -514,7 +514,7 @@ then report a rejected proposal.
 | A question is asked that was already answered | The earlier answer may be outside retained message history and the activity ledger. | Check the history window and ledger limits; the ledger alone does not contain the full earlier answer. |
 | A pending plan reports changed conversation context | A referenced message or its visibility changed after planning. | Create a new plan using the current conversation. |
 | A web or research step says it continued in the background, where the user's sign-in is not available | The run continued without the user's browser session, for example after a restart, so their app roles couldn't be confirmed. | Ask the user to send the request again from the chat. The new run uses their signed-in session. |
-| Every web search, linked-page or deep research step says a required retained result is unavailable or changed | Before 0.261.205, orchestration checked each user's roles through Microsoft Graph, which needs `Directory.Read.All`, and refused research whenever query or linked-page planning was on. | Upgrade to 0.261.205 or later; no Graph permission or settings change is needed. If a step still fails, check `sc_authority_reason` on its failure event in [orchestration failure diagnostics](../reference/logging-tags.md#orchestration-failure-diagnostics). |
+| Every web search, linked-page or deep research step says a required retained result is unavailable or changed | Before 0.261.209, orchestration checked each user's roles through Microsoft Graph, which needs `Directory.Read.All`, and refused research whenever query or linked-page planning was on. | Upgrade to 0.261.209 or later; no Graph permission or settings change is needed. If a step still fails, check `sc_authority_reason` on its failure event in [orchestration failure diagnostics](../reference/logging-tags.md#orchestration-failure-diagnostics). |
 | Plans never propose deep research or reading a link | The user does not hold the required app role, or the capability is disabled in its own settings group. | Confirm the user holds `DeepResearchUser` or `UrlAccessUser` where your deployment requires them, and that the capability is enabled outside this page. |
 | Plans never propose an agent | Semantic Kernel is off, the user has turned agents off in their own settings, or the user has no agent they can reach. | Confirm Semantic Kernel is enabled, then check the user's own agent setting and that at least one agent is shared with them. |
 | The planner model shows "not in the current model list" | Its connection or model was removed or disabled, or connections were switched on or off since it was chosen. | Choose a listed model, or **Use the answer model (default)**. Until then planning keeps trying the saved model and fails rather than switching. |

@@ -1,10 +1,10 @@
 # test_orchestration_external_preflight_adapter.py
 """Strict invocation authorization and acquisition support for all five v2 adapters.
 
-Version: 0.261.205
+Version: 0.261.209
 Implemented in: 0.261.127
 Early acquisition-support regressions implemented in: 0.261.129
-Missing signed-in session refusal reason implemented in: 0.261.205
+Missing signed-in session refusal reason implemented in: 0.261.209
 
 The auth-only runtime hook invokes the real provider before capture or engine
 setup. Capture separately invokes the real combined acquisition guard. The

@@ -161,7 +161,7 @@ claiming the plan. Valid but unadmitted pairs remain explicit plan refusals.
 
 For retained external sources, the root also provides a lazy identity reader
 over the signed-in session's app roles, the same authority classic chat uses.
-Since 0.261.205 it makes no Microsoft Graph calls and needs no application
+Since 0.261.209 it makes no Microsoft Graph calls and needs no application
 permission. Roles are captured while the request context exists and are never
 restored from a saved run, so a background continuation fails closed and asks
 the user to send the request again. Conversation ownership and uncached,

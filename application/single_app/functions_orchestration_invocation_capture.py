@@ -1,9 +1,9 @@
 # functions_orchestration_invocation_capture.py
 """Private invocation-capture state, independent of application initialization.
 
-Version: 0.261.205
+Version: 0.261.209
 Implemented in: 0.261.127
-Denial reason code carried on refused sources in: 0.261.205
+Denial reason code carried on refused sources in: 0.261.209
 
 The server supplies an already producer-bound callback. SDKs and tool loops may
 catch exceptions, so a refused capture remains sticky until the owning

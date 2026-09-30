@@ -2,9 +2,9 @@
 #!/usr/bin/env python3
 """
 Functional test for orchestration image references.
-Version: 0.261.205
+Version: 0.261.209
 Implemented in: 0.261.192
-Missing signed-in session failure for image inputs implemented in: 0.261.205
+Missing signed-in session failure for image inputs implemented in: 0.261.209
 
 This test ensures orchestration plans can seed, validate, bind, and execute image
 references without trusting planner or browser-supplied labels.

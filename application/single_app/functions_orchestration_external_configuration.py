@@ -1,8 +1,8 @@
 # functions_orchestration_external_configuration.py
 """Opaque invocation-configuration proof and capture-independent current reads.
 
-Version: 0.261.205
-Research planner profile restriction removed in: 0.261.205
+Version: 0.261.209
+Research planner profile restriction removed in: 0.261.209
 
 The owning engines supply actual acquisition evidence. The application root
 supplies current metadata reads; this module discovers no settings or clients,

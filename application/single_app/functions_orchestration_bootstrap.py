@@ -1,13 +1,13 @@
 # functions_orchestration_bootstrap.py
 """Application-owned factories shared by web requests and scheduler continuations.
 
-Version: 0.261.205
+Version: 0.261.209
 
 Unlike the result/rendering services, this is an application composition root.
 Import it only after config has initialized the existing clients. Registering the
 artifact factory performs no I/O; each use rebuilds current actor/source access.
 External-source identity trusts the signed-in session's app roles, like classic
-chat, and makes no Microsoft Graph calls (0.261.205).
+chat, and makes no Microsoft Graph calls (0.261.209).
 """
 
 import hashlib

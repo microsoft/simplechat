@@ -1,6 +1,6 @@
 # Orchestration Web Search and Deep Research Access Fix
 
-Fixed in version: **0.261.205**
+Fixed in version: **0.261.209**
 
 Application version reference: `application/single_app/config.py`.
 Refs [#1509](https://github.com/microsoft/simplechat/issues/1509).
@@ -102,7 +102,7 @@ setting or app registration change is needed for this fix.
 | `functions_orchestration_executor.py`, `functions_orchestration_composition.py` | Use `access_failure()` and log `authority_reason` on failure events, falling back to a `ResultUnavailableError` code. |
 | `functions_orchestration_images.py` | Uses `access_failure()` for refused inputs. |
 | `functions_orchestration_external_sources.py` | Documents the session-based identity contract. |
-| `config.py` | Version `0.261.205`. |
+| `config.py` | Version `0.261.209`. |
 
 ## Validation
 

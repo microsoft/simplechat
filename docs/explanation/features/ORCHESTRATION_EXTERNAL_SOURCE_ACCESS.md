@@ -4,7 +4,7 @@
 `application/single_app/config.py`.
 Refs [#1509](https://github.com/microsoft/simplechat/issues/1509).
 
-**Updated in version: 0.261.205.** External-source identity now uses the app
+**Updated in version: 0.261.209.** External-source identity now uses the app
 roles of the signed-in session, as classic chat does, instead of reading
 Microsoft Graph on every call. Deep research can use its query and link planners
 again. See the [session identity fix](../fixes/ORCHESTRATION_SESSION_IDENTITY_FIX.md).
@@ -171,7 +171,7 @@ scope/audience path; this method does not enable or implicitly read it.
 
 ### Research planner requests
 
-Before 0.261.205, captured research accepted only deterministic query and link
+Before 0.261.209, captured research accepted only deterministic query and link
 selection. With the default Knowledge settings, where query planning and LLM
 link planning are both on, every orchestrated deep-research acquisition was
 refused with `external_configuration_research_profile_unsupported` before it
@@ -214,7 +214,7 @@ the attested deployment, and that the result is retained and recovered.
 ### Signed-in session roles
 
 Classic chat authorizes web search and deep research with the app roles in the
-user's signed-in session. Since 0.261.205, orchestration does the same. When the
+user's signed-in session. Since 0.261.209, orchestration does the same. When the
 application root builds services for a request, `build_external_identity_reader`
 captures the session's `roles` and `preferred_username` while the Flask request
 context exists, because execution then continues on a worker thread. The roles
@@ -376,7 +376,7 @@ boundaries with actual current metadata and no planner requests.
 ### Deployment boundary and limitations
 
 The session reader needs no Microsoft Graph permission, admin consent, or
-deployer change. Before 0.261.205, a Graph reader made several directory
+deployer change. Before 0.261.209, a Graph reader made several directory
 requests on every external-source call and required the **application**
 permission `Directory.Read.All`. Without it, every orchestrated web search, URL
 read and deep-research step failed as "A required retained result is

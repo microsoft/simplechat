@@ -1,9 +1,9 @@
 # test_orchestration_external_identity.py
 """
 Functional test for signed-in session identity on retained external orchestration results.
-Version: 0.261.205
+Version: 0.261.209
 Implemented in: 0.261.127
-Signed-in session roles replaced per-call Microsoft Graph reads in: 0.261.205
+Signed-in session roles replaced per-call Microsoft Graph reads in: 0.261.209
 
 Orchestration trusts the app roles in the signed-in session, as classic chat does,
 and makes no directory calls. The real reader runs against doubled owner callbacks
@@ -102,7 +102,7 @@ def read_identity(reader):
 
 class SessionExternalIdentityTests(unittest.TestCase):
     def test_version_includes_session_identity(self):
-        assert_app_version_at_least("0.261.205")
+        assert_app_version_at_least("0.261.209")
 
     def test_session_roles_supply_current_identity_without_directory_calls(self):
         with SessionWorld() as world:

@@ -1,9 +1,9 @@
 # test_orchestration_external_error_markers.py
 """
 Functional tests for safe external authority errors across invocation capture.
-Version: 0.261.205
+Version: 0.261.209
 Implemented in: 0.261.127
-Signed-in session identity messages updated in: 0.261.205
+Signed-in session identity messages updated in: 0.261.209
 
 Real identity/configuration exceptions preserve public codes, retryability and
 cancellation through initial and sticky capture failures without retaining the

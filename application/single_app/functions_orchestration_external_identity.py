@@ -1,9 +1,9 @@
 # functions_orchestration_external_identity.py
 """Read current external-result identity from the signed-in session.
 
-Version: 0.261.205
+Version: 0.261.209
 Implemented in: 0.261.127
-Signed-in session roles replaced per-call Microsoft Graph reads in: 0.261.205
+Signed-in session roles replaced per-call Microsoft Graph reads in: 0.261.209
 
 Orchestration trusts the app roles in the signed-in session, the same authority
 classic chat uses. The owner captures those roles while a request context is

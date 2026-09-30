@@ -1,12 +1,12 @@
 # test_orchestration_dependency_runtime.py
 """Real Gather / Reason / Render compiler, executor, composition, retained readers and checkpoints.
 
-Version: 0.261.205
+Version: 0.261.209
 Implemented in: 0.261.127
 Pending-Gather regression implemented in: 0.261.129
 Single orchestration contract updated in: 0.261.139
 Partial-input refusal diagnostics implemented in: 0.261.191
-Missing signed-in session failure messages implemented in: 0.261.205
+Missing signed-in session failure messages implemented in: 0.261.209
 External model/search/storage I/O is isolated; no paid or provider calls.
 """
 
@@ -334,7 +334,7 @@ SESSION_MESSAGE = 'where your sign-in is not available to confirm access'
     (None, 'result_unavailable'),
 ])
 def test_background_source_refusal_asks_the_user_to_send_the_request_again(runtime, monkeypatch, reason, code):
-    """Version 0.261.205: only a missing signed-in session gets its own explanation."""
+    """Version 0.261.209: only a missing signed-in session gets its own explanation."""
     from functions_orchestration_invocation_capture import OrchestrationInvocationDeniedError
     case = runtime.make(
         [{'step_id': 'search', 'capability_id': 'web_search', 'arguments': {'query': 'Find current facts.'}}],

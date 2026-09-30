@@ -207,7 +207,7 @@ Optional engine hooks were implemented in **0.261.127**, recorded in
 | Direct action | The actual authorized scoped manifest, the prepared loader input, and the constructed model transport/deployment/API version, factory protocol, model selectors and execution parameters. Each tool call repeats current authorization and capture before execution; changed configuration or refused capture stops the remaining calls. |
 | Local agent | The optional loader hook captures the actual effective configuration, prepared inline OpenAPI manifests and constructed Azure model binding for a fresh, explicit-tools-only kernel. The ordinary orchestration local-agent path remains withheld because its implicit core tools do not have complete configuration/source proofs. |
 | Classic Foundry agent/web search | The existing `get_agent` definition followed by the actual `ThreadRun` returned by the invocation's existing create/poll operations. Scoped remote agents first capture the actual `resolve_agent_config` result. Model, instructions, sampling and response format are explicit overrides; the SDK takes tools from an isolated definition. |
-| Bounded research | The owning planner's actual constructor envelope, followed by each real Foundry search definition/run under the same `deep_research` producer. Since 0.261.205, query and link planning may call the planner model; the constructor is recaptured before planning and around every search and page fetch. |
+| Bounded research | The owning planner's actual constructor envelope, followed by each real Foundry search definition/run under the same `deep_research` producer. Since 0.261.209, query and link planning may call the planner model; the constructor is recaptured before planning and around every search and page fetch. |
 | Direct URL access | The effective bounded fetch and URL-access policy supplied to the real page reader. |
 
 These engine events use `orchestration-external-acquisition-v1`. A preparation
@@ -318,12 +318,12 @@ definition/run events. Missing, closed, replaced
 or mutated construction bindings refuse execution; preparation alone cannot
 replace that proof or a missing search run.
 
-Before 0.261.205, the supported version-2 research subset used only
+Before 0.261.209, the supported version-2 research subset used only
 deterministic query/link planning and refused profiles with web search, more
 than one search query and `deep_research_enable_query_planning`, or both
 `enable_deep_source_review` and `source_review_enable_llm_planning`. The
 default Knowledge settings matched those profiles, so orchestrated deep
-research always failed. Since 0.261.205, both planners run as they do in manual
+research always failed. Since 0.261.209, both planners run as they do in manual
 Deep Research. Each planner request follows a fresh capture of the pinned
 planner construction, its token and temperature controls are fixed in code
 rather than read from settings, and the captured research policy records the

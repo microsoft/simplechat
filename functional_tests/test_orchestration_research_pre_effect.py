@@ -1,10 +1,10 @@
 # test_orchestration_research_pre_effect.py
 """
 Functional tests for deterministic research admission before acquisition.
-Version: 0.261.205
+Version: 0.261.209
 Implemented in: 0.261.127
 Single orchestration contract updated in: 0.261.139
-Research planner profile restriction removed in: 0.261.205
+Research planner profile restriction removed in: 0.261.209
 
 Deep research with the default Source Review settings plans its searches and
 links with the run's own attested planner model, as classic chat does. Current
@@ -50,8 +50,8 @@ def assert_no_paid_effects(world):
 
 
 def test_research_planner_profile_gate_is_removed(metadata_world):
-    """Version 0.261.205: no settings profile refuses deep research on its own."""
-    assert_app_version_at_least("0.261.205")
+    """Version 0.261.209: no settings profile refuses deep research on its own."""
+    assert_app_version_at_least("0.261.209")
     configuration = metadata_world.modules.configuration
     assert not hasattr(configuration, "is_research_acquisition_profile_supported")
 
@@ -90,7 +90,7 @@ def test_pre_effect_refuses_a_planner_profile_changed_on_one_side(pre_effect_wor
 @pytest.mark.parametrize("changed_side", ["current", "actual"])
 @pytest.mark.parametrize("switch", ["deep_research_enable_query_planning", "source_review_enable_llm_planning"])
 def test_pre_effect_refuses_a_planner_switch_changed_alone(pre_effect_world, changed_side, switch):
-    """Version 0.261.205: each planner switch is compared on its own, now that planners run."""
+    """Version 0.261.209: each planner switch is compared on its own, now that planners run."""
     world = pre_effect_world
     owner = world.configure("deep_research")
     apply_profile(world.settings, "existing-defaults")
@@ -121,7 +121,7 @@ def test_pre_effect_rejects_invalid_web_flags_without_boolean_coercion(pre_effec
 
 
 def test_default_research_settings_plan_searches_and_links_with_the_attested_planner(research, monkeypatch):
-    """The settings that were refused before 0.261.205 now complete, retain and recover."""
+    """The settings that were refused before 0.261.209 now complete, retain and recover."""
     state = research
     for name in PLANNER_FLAGS:
         state.runtime.settings.pop(name, None)

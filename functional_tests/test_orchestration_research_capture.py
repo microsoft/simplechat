@@ -1,10 +1,10 @@
 # test_orchestration_research_capture.py
 """Bounded research acquisition through actual construction, engines and readers.
 
-Version: 0.261.205
+Version: 0.261.209
 Implemented in: 0.261.127
 Single orchestration contract updated in: 0.261.139
-Research planner request profiles admitted in: 0.261.205
+Research planner request profiles admitted in: 0.261.209
 
 Only external storage, metadata/provider transport and page I/O are doubled.
 The real planner constructor, attestor, current reader and result facade run.
@@ -273,7 +273,7 @@ def test_real_research_constructor_and_search_events_survive_current_only_restar
 
 @pytest.mark.parametrize("profile", ["query-planning", "link-planning"])
 def test_research_planner_request_profiles_are_attested_before_the_model_runs(research, monkeypatch, profile):
-    """Version 0.261.205: model planning runs, but only after its constructor is captured."""
+    """Version 0.261.209: model planning runs, but only after its constructor is captured."""
     state = research
     fetched = None
     if profile == "query-planning":

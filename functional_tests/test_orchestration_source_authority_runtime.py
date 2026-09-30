@@ -1,10 +1,10 @@
 # test_orchestration_source_authority_runtime.py
 """V2 runtime/recovery must not turn uncertain source authority into a denial.
 
-Version: 0.261.205
+Version: 0.261.209
 Implemented in: 0.261.127
 Configuration, recovery and invocation-control coverage added in: 0.261.130
-Saved-wait missing signed-in session message added in: 0.261.205
+Saved-wait missing signed-in session message added in: 0.261.209
 
 Real dispatch, composition, leases, checkpoints and retained-result recovery
 preserve typed screening, identity and configuration errors. Caller-owned

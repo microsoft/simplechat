@@ -31,8 +31,8 @@ itself.
 
 A plan from the removed legacy contract is refused before anything runs.
 
-Version: 0.261.205
-Refusals for a missing signed-in session reported as their own failure in: 0.261.205
+Version: 0.261.209
+Refusals for a missing signed-in session reported as their own failure in: 0.261.209
 """
 
 import logging
