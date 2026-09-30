@@ -51,6 +51,7 @@ from openai import APIConnectionError, APITimeoutError
 from agent_execution_context import AgentDelegationTimeout
 from functions_model_catalog import ModelCatalogError
 from functions_orchestration_registry import (
+    APPROVAL_FLOOR_MANUAL,
     CAPABILITY_ACTION_INVOKE,
     CAPABILITY_COMPOSE,
     CAPABILITY_GENERATE_IMAGE,
@@ -60,6 +61,7 @@ from functions_orchestration_registry import (
     DEPENDENCY_PLAN_CONTRACT_VERSION,
     GENERAL_KNOWLEDGE_BASES,
     admitted_export_pairs,
+    approval_floor_capability_ids,
     get_capability,
     get_capability_document_limit,
     get_capability_result_outputs,
@@ -990,7 +992,49 @@ def validate_plan_requirements(plan, seeds=None, *, allow_changes=False):
     return plan
 
 
-def build_plan_inputs(plan, seeds=None, document_labels=None, actions=None):
+def _plan_workflow_inputs(plan, workflow_planning):
+    """The saved workflows the plan's enabled run steps start, named for the approval card.
+
+    Handles, names and triggers only: workflow ids stay in the server-side handle map.
+    """
+    run_steps = [
+        step for step in (plan or {}).get('steps') or ()
+        if step.get('enabled', True) and step.get('capability_id') == CAPABILITY_WORKFLOW_RUN
+    ]
+    if not run_steps:
+        return []
+    # Imported here: the workflow runs module imports this one.
+    from functions_orchestration_workflow_runs import workflow_run_catalog_entry
+
+    workflows = []
+    for step in run_steps:
+        handle = (step.get('arguments') or {}).get('workflow')
+        entry = workflow_run_catalog_entry(workflow_planning, handle)
+        if entry is None or any(workflow['handle'] == handle for workflow in workflows):
+            continue
+        workflows.append({
+            'handle': handle,
+            'name': _text(entry.get('name'), 200) or 'Workflow',
+            'trigger_summary': _text(entry.get('trigger_summary'), 200),
+            'paused': entry.get('enabled') is not True,
+        })
+    return workflows
+
+
+def plan_approval_floor(plan):
+    """``{'mode': 'manual', 'reason': <capability id>}`` when an enabled step sets a floor, else None.
+
+    A capability whose descriptor sets ``approval_floor`` makes its plan wait for the user to run
+    it, whatever approval mode was asked for. Disabled steps never run, so they set no floor.
+    """
+    floors = approval_floor_capability_ids()
+    for step in (plan or {}).get('steps') or ():
+        if isinstance(step, dict) and step.get('enabled', True) and step.get('capability_id') in floors:
+            return {'mode': APPROVAL_FLOOR_MANUAL, 'reason': step['capability_id']}
+    return None
+
+
+def build_plan_inputs(plan, seeds=None, document_labels=None, actions=None, workflow_planning=None):
     """Describe what the plan will actually act on, for the approval card.
 
     Derived from the validated steps rather than from what the planner claimed, because
@@ -1000,6 +1044,9 @@ def build_plan_inputs(plan, seeds=None, document_labels=None, actions=None):
     ``document_labels`` maps ids to display names. It is optional because a plan is still
     describable without it -- an id is a poor label but an honest one, and failing to
     resolve a name is not a reason to refuse to show the plan.
+
+    ``workflow_planning`` names the saved workflows the plan starts; ``workflows`` is present
+    only when the plan starts one, so every other plan's inputs are unchanged.
     """
     seeds = seeds if isinstance(seeds, dict) else {}
     labels = document_labels if isinstance(document_labels, dict) else {}
@@ -1027,7 +1074,7 @@ def build_plan_inputs(plan, seeds=None, document_labels=None, actions=None):
     if isinstance(seed_prompt, dict):
         prompt = {'id': seed_prompt.get('id'), 'name': seed_prompt.get('name')}
 
-    return {
+    inputs = {
         'documents': [
             {
                 'document_id': document_id,
@@ -1053,6 +1100,10 @@ def build_plan_inputs(plan, seeds=None, document_labels=None, actions=None):
         'model': seeds.get('model'),
         'prompt': prompt,
     }
+    workflows = _plan_workflow_inputs(plan, workflow_planning)
+    if workflows:
+        inputs['workflows'] = workflows
+    return inputs
 
 
 def build_plan_outputs(plan):
@@ -1168,8 +1219,17 @@ def normalize_plan(
 
     plan['inputs'] = build_plan_inputs(
         plan, seeds=seeds, document_labels=document_labels, actions=actions,
+        workflow_planning=workflow_planning,
     )
     plan['outputs'] = build_plan_outputs(plan)
+
+    # Some work always waits for the user, whatever mode was asked for: a plan that starts a
+    # saved workflow is never approved on arrival or by a countdown. The floor is recorded so the
+    # card can say why, and claim_plan_run refuses a saved plan that lost it.
+    floor = plan_approval_floor(plan)
+    if floor is not None:
+        mode = APPROVAL_MODE_MANUAL
+        plan['approval'].update(mode=mode, floor=floor)
 
     # A plan nobody has to look at is approved on arrival; everything else waits. Timed
     # mode waits too, because the countdown belongs to the browser -- a server that

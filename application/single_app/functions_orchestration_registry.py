@@ -126,6 +126,9 @@ WORKFLOW_TASK_ACTION_KINDS = ('email', 'calendar', 'onedrive', 'sharepoint', 'di
 # handle map can resolve a handle to a workflow.
 WORKFLOW_RUNS_MAX_PER_PLAN = 3
 WORKFLOW_HANDLE_PATTERN = '^[a-z][a-z0-9_-]{0,63}$'
+# A descriptor's ``approval_floor``: a plan with an enabled step of that capability always waits
+# for the user to run it, whatever approval mode was asked for.
+APPROVAL_FLOOR_MANUAL = 'manual'
 
 # Explicitly requested images are generated as planned steps. The executor is serial, so a
 # plan may generate at most this many images; a larger ask is reported, never silently cut.
@@ -1137,6 +1140,10 @@ CAPABILITY_REGISTRY = (
         'cost_class': COST_CLASS_LOW,
         'max_per_plan': WORKFLOW_RUNS_MAX_PER_PLAN,
         'adapter': CAPABILITY_WORKFLOW_RUN,
+        # Starting a saved workflow is standing work outside this chat, so its plan never runs on
+        # arrival or when a countdown ends: normalize_plan forces manual approval and
+        # claim_plan_run refuses any other saved mode.
+        'approval_floor': APPROVAL_FLOOR_MANUAL,
     },
 )
 
@@ -1272,6 +1279,17 @@ def get_capability(capability_id, *, contract_version=DEPENDENCY_PLAN_CONTRACT_V
     if not isinstance(capability_id, str):
         return None
     return next(iter(_build_capabilities({capability_id.strip()})), None)
+
+
+def approval_floor_capability_ids():
+    """The capabilities whose enabled steps make a plan wait for manual approval.
+
+    Read from the raw descriptors, so the check loads no other service.
+    """
+    return frozenset(
+        descriptor['id'] for descriptor in CAPABILITY_REGISTRY
+        if descriptor.get('approval_floor') == APPROVAL_FLOOR_MANUAL
+    )
 
 
 def _gates_pass(capability, settings):

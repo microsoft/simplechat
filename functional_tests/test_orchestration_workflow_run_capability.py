@@ -169,8 +169,13 @@ def _assert_logs_carry_codes_only(logs, planning):
         assert secret not in text, secret
 
 
-def _plan_request(monkeypatch, planning, replies, record, *, settings=RUN_ONLY, edit_context=None):
-    """Plan one request through the real planner with scripted planner replies."""
+def _plan_request(monkeypatch, planning, replies, record, *, settings=RUN_ONLY, edit_context=None,
+                  answered_questions=None, **options):
+    """Plan one request through the real planner with scripted planner replies.
+
+    ``answered_questions`` reach the planner context as a question card's answers would, and
+    ``options`` such as ``approval_mode`` or ``replan_hint`` go to ``plan_request`` unchanged.
+    """
     context_module = importlib.import_module("functions_orchestration_context")
     planner = importlib.import_module("functions_orchestration_planner")
     services = importlib.import_module("functions_orchestration_services")
@@ -186,7 +191,7 @@ def _plan_request(monkeypatch, planning, replies, record, *, settings=RUN_ONLY, 
         signals=context_module.build_conversation_signals([], MESSAGE), agents=deepcopy(AGENTS),
         original_message=MESSAGE,
         request_resolution={"relationship": "new_topic", "resolved_message": MESSAGE},
-        actions=deepcopy(ACTIONS), answered_questions=[], memory_context=None,
+        actions=deepcopy(ACTIONS), answered_questions=deepcopy(answered_questions or []), memory_context=None,
     )
     planner_context["export_catalog"] = []
     client = SimpleNamespace(chat=SimpleNamespace(completions=_Completions(deepcopy(replies), record.calls)))
@@ -201,6 +206,7 @@ def _plan_request(monkeypatch, planning, replies, record, *, settings=RUN_ONLY, 
         seeds={}, document_labels={"document-record-1": "Weekly priorities.docx"},
         request_context=request_context, planner_model=None, existing_results={},
         composition_profiles=services.composition_profiles(), export_catalog=[], edit_context=edit_context,
+        **options,
     )
 
 
