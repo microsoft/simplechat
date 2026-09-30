@@ -55,7 +55,6 @@ from functions_workflow_assist_editor import (
 from functions_workflow_assist_operations import (
     ASSIST_MAX_REFERENCES,
     ASSIST_MAX_TASKS,
-    ASSIST_REPLY_MAX_LENGTH,
     AssistApplyContext,
     AssistApplyError,
     AssistHandles,
@@ -429,7 +428,7 @@ def _checked_focus(value, draft):
     flow = index_workflow_flow(draft) if is_structured_draft(draft) else None
     if flow and value in (flow.get('nodes') or {}):
         return value
-    _refuse('focus_invalid')
+    raise WorkflowAssistError('focus_invalid')
 
 
 def parse_assist_request(body, user_id):
@@ -1018,6 +1017,7 @@ class _AssistRun:
                 'error_type': type(exc).__name__,
             }, logging.WARNING)
         except Exception:
+            # Telemetry is best effort; raising from execute's finally would replace the request's own result.
             pass
 
     def _execute(self, request):
@@ -1122,6 +1122,7 @@ class _AssistRun:
         try:
             self.services.log('[WorkflowAssist] Assist request finished', dict(self.metrics), level)
         except Exception:
+            # Telemetry is best effort; a failed log must not replace the answer or refusal already decided.
             pass
 
 

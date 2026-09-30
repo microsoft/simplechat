@@ -30,7 +30,6 @@ from jsonschema import Draft202012Validator
 
 from functions_workflow_assist_editor import (
     WORKFLOW_ALIAS_PATTERN,
-    WORKFLOW_OUTPUT_KINDS,
     WORKFLOW_REFERENCE_SCOPES,
     WORKFLOW_SCHEDULE_DAYS,
     WORKFLOW_SCHEDULE_FREQUENCIES,

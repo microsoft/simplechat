@@ -314,6 +314,7 @@ def test_a_change_the_real_build_refuses_goes_back_once_and_a_second_refusal_is_
     model = wa.ScriptedModel(wa.reply("changed", "Done.", [retired]), wa.reply("changed", "Done.", [researcher]))
     with harness.guarded():
         result = wa.run(body, _services(harness, model), user_id=OWNER_ID)
+    assert harness.writes() == writes
     # The dry run returns what the save route would: its public message, never the build's own text.
     assert model.envelope(1)["previous_attempt_errors"] == [
         "Saving the changed workflow would fail. Invalid workflow settings. Review the task, runner, trigger, and "
