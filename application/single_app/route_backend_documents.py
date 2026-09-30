@@ -42,6 +42,7 @@ from functions_document_provenance import DocumentOriginFilterError, origin_list
 from utils_cache import invalidate_personal_search_cache
 from functions_debug import *
 from functions_activity_logging import log_document_upload, log_document_metadata_update_transaction
+from functions_chat_upload_extraction import build_workspace_upload_file_content
 # Imported explicitly rather than relying on the star imports above: several functions in
 # this module re-import these names locally, which is a sign the star-imported bindings
 # cannot be counted on to be the classes rather than the module.
@@ -64,6 +65,40 @@ def _extract_citation_document_id(chunk, citation_id):
         return citation_id.rsplit('_', 1)[0]
 
     return citation_id
+
+
+def _workspace_upload_file_content_response(message_item, linked_document, user_id, file_id):
+    """Return what ingestion extracted for the workspace document behind a chat upload."""
+    try:
+        linked_chunks = get_ordered_document_chunks(
+            linked_document['id'],
+            user_id=user_id,
+            group_id=linked_document.get('group_id'),
+            public_workspace_id=linked_document.get('public_workspace_id'),
+        )
+    except ScreeningError as screening_error:
+        return jsonify({
+            'error': screening_error.public_message,
+            'error_code': screening_error.code,
+        }), screening_error.status_code
+    except (LookupError, PermissionError):
+        return jsonify({'error': 'File not found in conversation'}), 404
+    except Exception as chunk_error:
+        log_event(
+            "[GET_FILE_CONTENT] Failed to read the indexed content of a workspace-backed upload.",
+            extra={
+                'file_id': file_id,
+                'document_id': linked_document.get('id'),
+                'error_type': type(chunk_error).__name__,
+            },
+            level=logging.WARNING,
+            exceptionTraceback=True,
+        )
+        return jsonify({'error': 'Unable to load the extracted content for this file.'}), 500
+
+    filename = linked_document.get('file_name') or message_item.get('filename') or 'Untitled'
+    payload, status_code = build_workspace_upload_file_content(filename, linked_document, linked_chunks)
+    return jsonify(payload), status_code
 
 
 def _normalize_citation_lookup_value(value):
@@ -554,6 +589,18 @@ def register_route_backend_documents(bp):
                         "blob_container": linked_container,
                         "blob_path": linked_path,
                     }]
+
+            # A workspace-backed upload keeps no text on the chat message; its content is
+            # whatever ingestion indexed for the linked document. Tables keep their own path.
+            if (
+                linked_document is not None
+                and SCREENING_FIELD not in linked_document
+                and not items[0].get('is_table')
+                and not items[0].get('file_content')
+            ):
+                return _workspace_upload_file_content_response(
+                    items[0], linked_document, user_id, file_id,
+                )
 
             debug_print(f"[GET_FILE_CONTENT] Found {len(items)} items for file_id={file_id}")
             debug_print(f"[GET_FILE_CONTENT] First item structure: {json.dumps(items[0], default=str, indent=2)}")

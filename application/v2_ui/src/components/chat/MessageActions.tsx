@@ -63,7 +63,8 @@ import {
     type PromptDraft,
 } from '../prompts/PromptEditorDialog';
 
-function IconButton({
+/** A compact icon control, shared so message rows of every kind look and behave alike. */
+export function IconButton({
     label,
     onClick,
     children,

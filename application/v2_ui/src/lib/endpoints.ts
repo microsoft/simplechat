@@ -1175,6 +1175,36 @@ export function chatUploadTabularDownloadUrl(conversationId: string, fileId: str
 /* Chat file uploads                                                           */
 /* -------------------------------------------------------------------------- */
 
+/** The displayable parts of the vision analysis stored on an uploaded image's document. */
+export interface WorkspaceUploadVisionAnalysis {
+    model?: string;
+    description?: string;
+    objects?: string[];
+    text?: string;
+    analysis?: string;
+}
+
+/**
+ * What ingestion recorded for the workspace document behind a chat upload.
+ *
+ * A chat upload is stored as a workspace document, so these are the extraction results the
+ * assistant actually works from rather than anything kept on the chat message itself.
+ */
+export interface WorkspaceUploadDetails {
+    document_id?: string;
+    title?: string;
+    abstract?: string;
+    keywords?: string[];
+    status?: string;
+    percentage_complete?: number | null;
+    number_of_pages?: number | null;
+    /** `content_understanding` or `document_intelligence`. */
+    extraction_engine?: string;
+    extraction_engine_reason?: string;
+    indexed_chunk_count?: number;
+    vision_analysis?: WorkspaceUploadVisionAnalysis | null;
+}
+
 /** What `/api/get_file_content` returns for a file uploaded straight into a conversation. */
 export interface ChatFileContent {
     file_content?: string;
@@ -1183,9 +1213,13 @@ export interface ChatFileContent {
     is_table?: boolean;
     /**
      * Where the content came from. `blob` means the original file is still in storage and
-     * can be downloaded; anything else means only the extracted text survives.
+     * can be downloaded; `workspace` means it is what ingestion indexed for the linked
+     * workspace document; anything else means only the extracted text survives.
      */
     file_content_source?: string;
+    /** For a workspace-backed upload: whether `file_content` is indexed text. */
+    indexed_text_available?: boolean;
+    workspace_document?: WorkspaceUploadDetails;
     error?: string;
 }
 

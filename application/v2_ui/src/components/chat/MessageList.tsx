@@ -5,12 +5,14 @@ import { ReasoningAdjustmentNotice } from './ReasoningAdjustmentNotice';
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { clsx } from 'clsx';
 import {
+    BookOpen,
     Brain,
     ChevronDown,
     EyeOff,
     FileText,
     Image as ImageIcon,
     ImageOff,
+    Info,
     PenLine,
     RefreshCw,
     Reply,
@@ -29,7 +31,7 @@ import { AssistantMarkdown } from './AssistantMarkdown';
 import { ChatFilePreview } from './ChatFilePreview';
 import { GeneratedArtifactCard } from './GeneratedArtifactCard';
 import { AnalysisResult } from './AnalysisResult';
-import { MessageActions } from './MessageActions';
+import { IconButton, MessageActions } from './MessageActions';
 import { OrchestrationMessageRecovery } from './OrchestrationRecoveryNotice';
 import { OrchestrationOutputs } from './OrchestrationOutputs';
 import { WorkflowProposalCards } from './WorkflowProposalCard';
@@ -365,7 +367,13 @@ export interface UploadedImageFileCardProps {
     localPreviewKeys?: readonly unknown[];
     onOpenFile?: () => void;
     onUseAsReference?: () => void;
+    /**
+     * Controls shown in the row below the image, revealed on hover or keyboard focus the same
+     * way a generated image's actions are. Only drawn while the image itself is shown.
+     */
     actions?: ReactNode;
+    /** Keeps the action row visible, for instance while a panel it opened is showing. */
+    actionsPinned?: boolean;
 }
 
 export function UploadedImageFileCard({
@@ -378,6 +386,7 @@ export function UploadedImageFileCard({
     onOpenFile,
     onUseAsReference,
     actions,
+    actionsPinned = false,
 }: UploadedImageFileCardProps) {
     const [lightboxOpen, setLightboxOpen] = useState(false);
     const [decodeFailed, setDecodeFailed] = useState(false);
@@ -410,51 +419,59 @@ export function UploadedImageFileCard({
         );
     }
 
+    // Sized to the image rather than to the message column, so an upload and a generated
+    // image sit in the thread the same way instead of the upload being letterboxed.
     return (
-        <div className={clsx('w-full', bubbleWidthClass(chatWidth), own && 'ml-auto')}>
-            <div className="glass-flat overflow-hidden rounded-2xl p-2">
-                <button
-                    type="button"
-                    onClick={() => visibleUrl && setLightboxOpen(true)}
-                    disabled={!visibleUrl}
-                    aria-label={`View the full-size image: ${fileName}`}
-                    aria-haspopup="dialog"
+        <>
+            <div className={clsx('flex max-w-full', own ? 'justify-end' : 'justify-start')}>
+                <div className="glass-flat inline-flex max-w-full flex-col overflow-hidden rounded-2xl p-1.5">
+                    <button
+                        type="button"
+                        onClick={() => visibleUrl && setLightboxOpen(true)}
+                        disabled={!visibleUrl}
+                        title={visibleUrl ? 'View the full-size image' : undefined}
+                        aria-label={`View the full-size image: ${fileName}`}
+                        aria-haspopup="dialog"
+                        className={clsx(
+                            'block overflow-hidden rounded-xl',
+                            visibleUrl ? 'cursor-zoom-in' : 'cursor-default',
+                        )}
+                    >
+                        {visibleUrl ? (
+                            <img
+                                src={visibleUrl}
+                                alt={fileName}
+                                onError={() => setDecodeFailed(true)}
+                                className="max-h-[28rem] max-w-md rounded-xl object-contain"
+                            />
+                        ) : (
+                            <div className="flex h-40 w-72 max-w-full flex-col items-center justify-center gap-2 bg-surface-sunken px-6 text-center">
+                                <Skeleton className="h-24 w-full motion-reduce:animate-none" />
+                                <p className="text-xs text-text-3">
+                                    {preview.status === 'processing' ? 'Processing image…' : 'Loading image…'}
+                                </p>
+                            </div>
+                        )}
+                    </button>
+                    {/* Zero intrinsic width, so a long name is truncated to the image rather
+                        than stretching the card past it. */}
+                    <p className="mt-1 w-0 min-w-full truncate px-1 text-xs text-text-2" title={fileName}>
+                        {fileName}
+                    </p>
+                </div>
+            </div>
+            {actions ? (
+                <div
                     className={clsx(
-                        'flex w-full items-center justify-center overflow-hidden rounded-xl bg-surface-sunken',
-                        visibleUrl ? 'cursor-zoom-in' : 'cursor-default',
+                        'mt-1 flex flex-wrap items-center gap-1 transition-opacity',
+                        'group-hover/message:opacity-100 focus-within:opacity-100',
+                        actionsPinned ? 'opacity-100' : 'opacity-0',
+                        own ? 'justify-end' : 'justify-start',
                     )}
                 >
-                    {visibleUrl ? (
-                        <img
-                            src={visibleUrl}
-                            alt={fileName}
-                            onError={() => setDecodeFailed(true)}
-                            className="max-h-80 max-w-full rounded-xl object-contain"
-                        />
-                    ) : (
-                        <div className="flex h-40 w-full max-w-md flex-col items-center justify-center gap-2 px-6 text-center">
-                            <Skeleton className="h-24 w-full max-w-sm motion-reduce:animate-none" />
-                            <p className="text-xs text-text-3">
-                                {preview.status === 'processing' ? 'Processing image…' : 'Loading image…'}
-                            </p>
-                        </div>
-                    )}
-                </button>
-                <div className="mt-2 flex items-center gap-2 px-1">
-                    <p className="min-w-0 flex-1 truncate text-xs text-text-2">{fileName}</p>
-                    {onOpenFile ? (
-                        <button
-                            type="button"
-                            onClick={onOpenFile}
-                            aria-label={`Open file preview for ${fileName}`}
-                            className="shrink-0 rounded-md p-1 text-text-3 transition-colors hover:bg-surface-2 hover:text-text-1"
-                        >
-                            <FileText size={13} />
-                        </button>
-                    ) : null}
+                    {actions}
                 </div>
-                {actions ? <div className="mt-2 flex flex-wrap items-center gap-1 px-1">{actions}</div> : null}
-            </div>
+            ) : null}
             {preview.status === 'processing' && !visibleUrl ? (
                 <p role="status" className="mt-1 px-1 text-xs text-text-3">Processing image…</p>
             ) : null}
@@ -467,7 +484,7 @@ export function UploadedImageFileCard({
                     onUseAsReference={onUseAsReference}
                 />
             ) : null}
-        </div>
+        </>
     );
 }
 
@@ -563,33 +580,70 @@ function FileMessage({ message }: { message: ChatMessage }) {
         && isReferenceImageFileName(fileName) && !isHeifFileName(fileName);
     const imageReference: ImageReferenceRequest = { type: 'message', message_id: fileId };
     const uploadRevisions = useImageRevisions(fileId, '', buildChatImagePreviewUrl(fileId, 'display'));
-    const uploadActions = referenceCapable ? (
+    const [inspector, setInspector] = useState<InspectorSection | null>(null);
+    /** Toggle a section, closing the panel when the open one is clicked again. */
+    const inspect = (section: InspectorSection) =>
+        setInspector((current) => (current === section ? null : section));
+    // The same row a generated image has: how the upload was read first, then what can be
+    // done with it. Sources opens what ingestion extracted, which is what any later citation
+    // of this file is drawn from.
+    const uploadActions = (
         <>
-            <button
-                type="button"
-                onClick={() => addComposerImageReference(imageReference)}
-                className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-[11px] font-medium text-text-3 hover:bg-surface-2 hover:text-text-1"
-            >
-                <ImageIcon size={12} />
-                Use as reference
-            </button>
-            {capability.editing && (
+            {openable && (
+                <div className="flex items-center gap-0.5">
+                    <IconButton
+                        label="Show sources"
+                        active={inspector === 'sources'}
+                        onClick={() => inspect('sources')}
+                    >
+                        <BookOpen size={15} />
+                    </IconButton>
+                    <IconButton
+                        label="Message details"
+                        active={inspector === 'details'}
+                        onClick={() => inspect('details')}
+                    >
+                        <Info size={15} />
+                    </IconButton>
+                    <IconButton
+                        label={`Open file preview for ${fileName}`}
+                        onClick={() => setPreviewOpen(true)}
+                    >
+                        <FileText size={15} />
+                    </IconButton>
+                </div>
+            )}
+            {referenceCapable && (
+                <button
+                    type="button"
+                    onClick={() => addComposerImageReference(imageReference)}
+                    title="Use this image as a reference"
+                    className="inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-xs font-medium text-text-3 transition-colors hover:bg-surface-2 hover:text-text-1"
+                >
+                    <ImageIcon size={13} />
+                    Use as reference
+                </button>
+            )}
+            {referenceCapable && capability.editing && (
                 <button
                     type="button"
                     onClick={() => setDeriveEditorOpen(true)}
-                    className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-[11px] font-medium text-text-3 hover:bg-surface-2 hover:text-text-1"
+                    title="Edit this upload into a new image"
+                    aria-haspopup="dialog"
+                    className="inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-xs font-medium text-text-3 transition-colors hover:bg-surface-2 hover:text-text-1"
                 >
-                    <PenLine size={12} />
+                    <PenLine size={13} />
                     Edit
                 </button>
             )}
         </>
-    ) : null;
+    );
+    const hasUploadActions = openable || referenceCapable;
 
     return (
         <div
             id={`message-${message.id}`}
-            className={clsx('flex flex-col', own && 'items-end')}
+            className={clsx('group/message flex flex-col', own && 'items-end')}
         >
             {author && <p className="mb-1 px-1 text-[11px] text-text-3">{author}</p>}
             {imagePreviewable ? (
@@ -602,13 +656,23 @@ function FileMessage({ message }: { message: ChatMessage }) {
                     localPreviewKeys={[fileId, workspaceDocumentId]}
                     onOpenFile={openable ? () => setPreviewOpen(true) : undefined}
                     onUseAsReference={referenceCapable ? () => addComposerImageReference(imageReference) : undefined}
-                    actions={uploadActions}
+                    actions={hasUploadActions ? uploadActions : null}
+                    actionsPinned={inspector !== null}
                 />
             ) : (
                 <FileAttachmentChip
                     fileName={fileName}
                     chatWidth={chatWidth}
                     onOpen={openable ? () => setPreviewOpen(true) : undefined}
+                />
+            )}
+
+            {inspector && imagePreviewable && openable && (
+                <MessageInspector
+                    message={message}
+                    section={inspector}
+                    onSection={setInspector}
+                    onClose={() => setInspector(null)}
                 />
             )}
 
