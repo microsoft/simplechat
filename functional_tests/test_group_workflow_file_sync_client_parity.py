@@ -2,7 +2,7 @@
 #!/usr/bin/env python3
 """
 Functional test for the seam between the V2 workflow editor's settings rules and the save routes.
-Version: 0.261.149
+Version: 0.261.207
 Implemented in: 0.261.141
 
 This test ensures that the V2 editor's client-side File Sync, trigger, schedule and Analyze rules
@@ -21,9 +21,13 @@ read-only alert summary resolves stored alerts the same way the server does.
   refused case has a single reason. When the server refuses with a reviewed settings message, the
   editor's first settings message is the same text; when it refuses for another reason, the
   editor's settings rules find nothing.
-* Two differences are deliberate, and asserted as such. More than 10 sources: the server silently
-  keeps the first 10, so the editor refuses instead of dropping a selection. A deleted personal
-  source: V2 does not list personal sources, so only the server's reviewed 400 can report it.
+* Since 0.261.207 personal workflows author File Sync in V2 too, so personal creates send the
+  File Sync they drafted: a Monitor File Sync changes trigger, File Sync before run, and sources
+  from the user's own workspace or a group they manage.
+* Two differences are deliberate, and asserted as such. More than 10 sources, in either scope: the
+  server silently keeps the first 10, so the editor refuses instead of dropping a selection. A
+  deleted personal source: a personal list covers only the active group and public workspace, so
+  the editor never applies it as a save check, and only the server's reviewed 400 can report it.
 * Raw request values reach the settings rules unchanged in a second set of cases, so the
   client's Python semantics (``str(value or '')``, ``strip``, ``_normalize_bool`` and ``int``)
   are compared with the real functions on the values a request can carry.
@@ -243,6 +247,23 @@ CASES = {
     "personal_interval_24_hours": _case("personal", _personal("interval", {"unit": "hours", "value": 24}), "accept"),
     "personal_interval_90_minutes": _case("personal", _personal("interval", {"unit": "minutes", "value": 90}),
                                           "Schedule value for minutes must be between 1 and 59."),
+    # Personal creates that author File Sync, as the V2 editor now can.
+    "personal_monitor_create": _case("personal", MONITOR, "accept"),
+    "personal_monitor_create_group_source": _case(
+        "personal", _personal("file_sync", file_sync=_personal_file_sync(sources=[dict(HOME), dict(FINANCE)])), "accept",
+    ),
+    "personal_monitor_create_continue_always": _case(
+        "personal", _personal("file_sync", file_sync=_personal_file_sync(continue_mode="always")), T5,
+    ),
+    "personal_monitor_create_without_sources": _case(
+        "personal", _personal("file_sync", file_sync=_personal_file_sync(sources=[])), F6,
+    ),
+    "personal_before_run_create_queued_always": _case(
+        "personal", _personal(file_sync=_personal_file_sync(wait_mode="queued", continue_mode="always")), "accept",
+    ),
+    "personal_before_run_create_queued_changed": _case(
+        "personal", _personal(file_sync=_personal_file_sync(wait_mode="queued", continue_mode="changed")), F3,
+    ),
     # Personal records changed after they were stored; V2 sends their File Sync back as loaded.
     "personal_stored_monitor": _case("personal", MONITOR, "accept", stored={}),
     "personal_stored_monitor_continue_always": _case(
@@ -281,6 +302,9 @@ CASES = {
 DIVERGENT_CASES = {
     "eleven_sources": _case("group", _draft(file_sync=_file_sync(sources=[
         {"scope_type": "group", "scope_id": GROUP_ID, "source_id": f"share-{index}"} for index in range(11)
+    ])), "divergent"),
+    "personal_eleven_sources": _case("personal", _personal(file_sync=_personal_file_sync(continue_mode="always", sources=[
+        {"scope_type": "personal", "scope_id": OWNER_ID, "source_id": f"note-{index}"} for index in range(11)
     ])), "divergent"),
     "personal_stored_deleted_source": _case("personal", _personal(), "divergent", stored={"file_sync": _personal_file_sync(
         continue_mode="always", sources=[{"scope_type": "personal", "scope_id": OWNER_ID, "source_id": "gone-share"}],
@@ -496,7 +520,7 @@ def test_every_reviewed_family_is_exercised():
 
 def test_more_than_ten_sources_is_a_deliberate_difference(parity):
     """The server keeps only the first 10 sources without saying so; the editor refuses instead."""
-    _, client, _ = parity
+    routes, client, _ = parity
     assert "Choose at most 10 File Sync sources." in client["cases"]["eleven_sources"]["errors"]
     store = GroupWorkflowStore()
     for index in range(11):
@@ -507,9 +531,27 @@ def test_more_than_ten_sources_is_a_deliberate_difference(parity):
     saved = store.save(DIVERGENT_CASES["eleven_sources"]["draft"])
     assert [source["source_id"] for source in saved["file_sync"]["sources"]] == [f"share-{index}" for index in range(10)]
 
+    # Personal workflows author File Sync too, and the personal save truncates the same way.
+    outcome = client["cases"]["personal_eleven_sources"]
+    assert outcome["settings"] == ["Choose at most 10 File Sync sources."], outcome["settings"]
+    assert len(outcome["payload"]["file_sync"]["sources"]) == 11
+    for index in range(11):
+        routes.personal_sources[(OWNER_ID, f"note-{index}")] = {
+            "id": f"note-{index}", "scope_type": "personal", "user_id": OWNER_ID,
+            "name": f"Note {index}", "source_type": "smb",
+        }
+    try:
+        response = routes.post("personal", copy.deepcopy(outcome["payload"]))
+    finally:
+        for index in range(11):
+            routes.personal_sources.pop((OWNER_ID, f"note-{index}"), None)
+    assert response.status_code == 201, response.get_data(as_text=True)
+    stored = response.json["workflow"]["file_sync"]["sources"]
+    assert [source["source_id"] for source in stored] == [f"note-{index}" for index in range(10)]
+
 
 def test_a_deleted_personal_source_is_left_to_the_servers_reviewed_400(parity):
-    """V2 lists no personal sources, so the editor allows the save and the server reports the source."""
+    """A personal list is not a save check, so the editor allows the save and the server reports the source."""
     routes, client, _ = parity
     case, outcome = DIVERGENT_CASES["personal_stored_deleted_source"], client["cases"]["personal_stored_deleted_source"]
     assert outcome["errors"] == [] and outcome["settings"] == []

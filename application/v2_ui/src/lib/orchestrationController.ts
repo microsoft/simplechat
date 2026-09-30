@@ -115,6 +115,21 @@ function makeTurnId(): string {
 }
 
 /**
+ * The browser's IANA time zone, sent with each plan request.
+ *
+ * A proposed workflow's calendar schedule defaults to it. The server accepts only an exact zone
+ * name it knows and otherwise uses UTC, so an unusual value here is harmless.
+ */
+function requestTimeZone(): string | undefined {
+    try {
+        const zone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+        return typeof zone === 'string' && zone.length > 0 && zone.length <= 64 ? zone : undefined;
+    } catch {
+        return undefined;
+    }
+}
+
+/**
  * What a turn needs remembered between its plan and its re-plans.
  *
  * The plan request carries the original message, the seeds that constrained it and the approval
@@ -359,6 +374,10 @@ async function dispatchPlan(
         revision: context.revision,
         approval_mode: context.approvalMode,
     };
+    const timeZone = requestTimeZone();
+    if (timeZone) {
+        body.time_zone = timeZone;
+    }
     if (continuation) {
         body.elicitation = continuation.elicitation;
         body.elicitation_response = continuation.response;

@@ -311,7 +311,7 @@ def create_orchestration_run(
         'answered_questions', 'conversation_context', 'request_resolution',
         'resolved_message', 'planning_token_usage', 'original_seeds', 'prompt_selection',
         'memory_audience', 'memory_scope',
-        'result_aliases',
+        'result_aliases', 'time_zone', 'workflow_planning',
     ):
         if isinstance(turn_context, dict) and key in turn_context:
             record[key] = deepcopy(turn_context[key])
@@ -574,6 +574,62 @@ def update_orchestration_run(run_id, user_id, updates, conversation_id=None):
         except exceptions.CosmosAccessConditionFailedError:
             continue
     raise exceptions.CosmosAccessConditionFailedError(status_code=412, message='Run changed.')
+
+
+class ProposalDecisionBusy(Exception):
+    """The run kept changing while a workflow proposal decision was being saved."""
+
+
+WORKFLOW_PROPOSAL_DECISIONS_FIELD = 'workflow_proposal_decisions'
+_DECISION_WRITE_ATTEMPTS = 8
+
+
+def update_workflow_proposal_decision(run_id, user_id, conversation_id, proposal_id, mutate):
+    """Change one workflow proposal's decision on the run that produced it.
+
+    ``mutate(previous)`` receives a copy of the stored decision, or None, and returns the new
+    decision, or None to remove it; it may raise to stop without writing. It is called again
+    for every attempt, so it must decide from ``previous`` alone. Only the run's
+    ``workflow_proposal_decisions`` map changes: every other field, ``updated_at`` included,
+    is written back exactly as read. Returns ``(previous, decision)`` as applied.
+
+    Uses the same eight-attempt ``IfNotModified`` loop as ``update_orchestration_run`` and
+    raises ``ProposalDecisionBusy`` when every attempt loses. A missing, unowned or deleted
+    run raises ``LookupError``.
+    """
+    if not run_id or not user_id or not conversation_id or not proposal_id or not callable(mutate):
+        raise ValueError('Run, user, conversation and proposal ids and a change are required.')
+    for _ in range(_DECISION_WRITE_ATTEMPTS):
+        try:
+            current = cosmos_orchestration_runs_container.read_item(item=run_id, partition_key=conversation_id)
+        except exceptions.CosmosResourceNotFoundError:
+            raise LookupError('The run is not available.') from None
+        if (
+            not _is_run_record(current) or current.get('user_id') != user_id
+            or current.get('conversation_id') != conversation_id or current.get('checkpoints_deleted')
+        ):
+            raise LookupError('The run is not available.')
+        stored = current.get(WORKFLOW_PROPOSAL_DECISIONS_FIELD)
+        decisions = deepcopy(stored) if isinstance(stored, dict) else {}
+        previous = decisions.get(proposal_id) if isinstance(decisions.get(proposal_id), dict) else None
+        decision = mutate(deepcopy(previous))
+        if decision == previous:
+            return deepcopy(previous), deepcopy(decision)
+        if decision is None:
+            decisions.pop(proposal_id, None)
+        else:
+            decisions[proposal_id] = deepcopy(decision)
+        body = _strip_cosmos_metadata(deepcopy(current))
+        body[WORKFLOW_PROPOSAL_DECISIONS_FIELD] = decisions
+        try:
+            cosmos_orchestration_runs_container.replace_item(
+                item=run_id, body=body, etag=current['_etag'],
+                match_condition=MatchConditions.IfNotModified,
+            )
+        except exceptions.CosmosAccessConditionFailedError:
+            continue
+        return deepcopy(previous), deepcopy(decision)
+    raise ProposalDecisionBusy('The run changed while the decision was saved.')
 
 
 def list_conversation_runs(conversation_id, user_id, limit=10, *, strict=False):
@@ -971,6 +1027,31 @@ def save_orchestration_step(run_id, step_record):
         raise
 
     return _strip_cosmos_metadata(result)
+
+
+def get_orchestration_step_record(run_id, step_id, user_id, conversation_id):
+    """Point-read one step record of an owned run, server fields included.
+
+    The caller has already read the run through ``get_orchestration_run``; this only confirms
+    the record belongs to that run, and to the user and conversation wherever it names them.
+    Returns None when the record is missing or does not match. Storage failures raise.
+    """
+    if not run_id or not step_id or not user_id:
+        return None
+    try:
+        item = cosmos_orchestration_run_steps_container.read_item(
+            item=f'{run_id}:{step_id}', partition_key=run_id,
+        )
+    except exceptions.CosmosResourceNotFoundError:
+        return None
+    if (
+        not isinstance(item, dict) or item.get('record_type') not in (None, 'step')
+        or item.get('run_id') != run_id or item.get('step_id') != step_id
+        or ('user_id' in item and item.get('user_id') != user_id)
+        or (conversation_id and 'conversation_id' in item and item.get('conversation_id') != conversation_id)
+    ):
+        return None
+    return _strip_cosmos_metadata(item)
 
 
 def list_run_steps(run_id, user_id=None, conversation_id=None, *, strict=False):

@@ -1198,6 +1198,8 @@ def prepare_retry(run_id, user_id, data, *, authorize, validate, message_contain
         'retry_submission', 'latest_attempt_run_id', 'recovery_blocked_code', 'message_saved',
         'edit_claim', 'edit_pending', 'edit_narrowing', 'terminal_publication', 'finalization_status',
         'inherited_checkpoints', 'chat_content_checked_output', 'chat_content_output_pending',
+        # A reused workflow proposal keeps its decisions on the run that produced it.
+        'workflow_proposal_decisions',
     ):
         child.pop(key, None)
     # The child starts with none of the parent's results or file admissions. Files belong to

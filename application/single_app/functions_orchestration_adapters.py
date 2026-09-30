@@ -90,6 +90,7 @@ from functions_orchestration_registry import (
     CAPABILITY_TABULAR_ANALYZE,
     CAPABILITY_URL_FETCH,
     CAPABILITY_WEB_SEARCH,
+    CAPABILITY_WORKFLOW_PROPOSE,
     DEPENDENCY_PLAN_CONTRACT_VERSION,
     DOCUMENT_ACTION_TYPE_COMPARISON,
     VISUAL_CHART,
@@ -1841,6 +1842,19 @@ def run_agent_invoke(step, context, *, settings, user_id, emit, cancel_requested
 # Registry
 # --------------------------------------------------------------------------------------
 
+def run_workflow_propose(step, context, *, settings, user_id, emit=None, cancel_requested=None):
+    """Prepare a workflow proposal for the user's approval; nothing is created.
+
+    The workflow draft service loads only when a plan proposes a workflow, so resolving this
+    adapter imports nothing beyond this module.
+    """
+    from functions_orchestration_workflows import adapter_workflow_propose
+
+    return adapter_workflow_propose(
+        step, context, settings=settings, user_id=user_id, emit=emit, cancel_requested=cancel_requested,
+    )
+
+
 # Keyed by capability id, which is also each descriptor's declared ``adapter`` name, so the
 # executor can look an adapter up straight from the step's capability without a second map.
 ADAPTER_REGISTRY = {
@@ -1853,6 +1867,7 @@ ADAPTER_REGISTRY = {
     CAPABILITY_DEEP_RESEARCH: run_deep_research,
     CAPABILITY_AGENT_INVOKE: run_agent_invoke,
     CAPABILITY_ACTION_INVOKE: run_action_invoke,
+    CAPABILITY_WORKFLOW_PROPOSE: run_workflow_propose,
 }
 
 

@@ -3761,6 +3761,25 @@ ADMIN_SETTINGS_FIELDS = {
             ],
         },
         {
+            "key": "enable_chat_orchestration_workflows",
+            "type": "switch",
+            "label": "Propose Workflows From Chat",
+            "help": (
+                "When a user asks for recurring or automated work, such as a weekly "
+                "summary, a plan can propose a personal workflow as a card in the user's "
+                "own private conversation. Nothing is created until the user approves the "
+                "card, and the workflow limits under Limits apply. Off by default, because "
+                "an approved proposal becomes a standing personal workflow that keeps "
+                "running on the user's behalf. Requires Chat Orchestration and Enable "
+                "Personal Workflows."
+            ),
+            "default": False,
+            "depends_on": [
+                {"key": "enable_chat_orchestration", "equals": True},
+                {"key": "allow_user_workflows", "equals": True},
+            ],
+        },
+        {
             "key": "chat_orchestration_enabled_capabilities",
             "type": "checkbox_set",
             "label": "Capabilities",
@@ -3770,7 +3789,8 @@ ADMIN_SETTINGS_FIELDS = {
                 "those capabilities. Plans need Prepare content to write a chat answer or "
                 "the content of a file, and Create a file to deliver a downloadable file. "
                 "Generate images also requires Image Generation. Use an action also "
-                "requires Enable Action Access."
+                "requires Enable Action Access. Propose workflows also requires Propose "
+                "Workflows From Chat and personal workflows."
             ),
             "default": [],
             "options": [
@@ -3786,6 +3806,7 @@ ADMIN_SETTINGS_FIELDS = {
                 {"value": "compose", "label": "Prepare content"},
                 {"value": "render_file", "label": "Create a file"},
                 {"value": "generate_image", "label": "Generate images"},
+                {"value": "workflow_propose", "label": "Propose workflows"},
             ],
             "depends_on": {"key": "enable_chat_orchestration", "equals": True},
         },
