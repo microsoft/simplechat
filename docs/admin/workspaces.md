@@ -63,7 +63,7 @@ The Public Workspaces section belongs to the Workspace Types tab. Use it with th
 | Enable Extract Meta Data | Exposes the capability after required services, permissions, and rollout policy are ready. | Off | `enable_extract_meta_data`; capability toggle |
 | Extraction Model | Selects the deployment SimpleChat sends requests to for this capability. | Empty | `metadata_extraction_model` |
 | Enable Multi-Modal Vision Analysis | Exposes the capability after required services, permissions, and rollout policy are ready. | Off | `enable_multimodal_vision`; capability toggle |
-| Vision Model * | Select a GPT model with vision capabilities (for example, gpt-4o or supported GPT 5 and later models). Only vision-capable models are shown. | Empty | `multimodal_vision_model` |
+| Vision Model * | Vision-capable model that describes uploaded images (for example, gpt-4o or supported GPT 5 and later models); only vision-capable models are shown. With multi-endpoint models enabled, it is called through the AI connection that hosts the selected model; otherwise through the GPT connection. | Empty | `multimodal_vision_model` |
 
 ## Files & Sharing {#files-sharing}
 

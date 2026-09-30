@@ -1457,7 +1457,8 @@ def register_route_frontend_chats(bp):
                 extracted_content_raw, _extraction_engine_used, _extraction_engine_fallback = extract_content_with_extraction_engine(
                     temp_file_path,
                     extraction_mode=extraction_mode,
-                    settings=settings
+                    settings=settings,
+                    is_image=is_image_file,
                 )
                 
                 # Convert pages_data list to string

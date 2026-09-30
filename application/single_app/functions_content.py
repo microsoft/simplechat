@@ -621,18 +621,52 @@ def resolve_extraction_engine_for_mode(extraction_mode, settings):
     return functions_settings.resolve_enhanced_extraction_engine(settings)
 
 
+# Persisted as the extraction engine reason and shown in workspace tooltips, so keep it short.
+CONTENT_UNDERSTANDING_IMAGE_ANALYZER_REASON = (
+    'Content Understanding found no text, so its image analyzer description was indexed'
+)
+
+
+def _describe_image_with_content_understanding(file_path, settings, analyze_image):
+    """Return the Content Understanding image analyzer description, or '' when it has none."""
+    try:
+        description_text = str(analyze_image(file_path, settings=settings) or '').strip()
+    except Exception as image_analyzer_error:
+        log_event(
+            f"[EXTRACTION_ENGINE] Content Understanding image analyzer failed for "
+            f"{os.path.basename(file_path)}: {image_analyzer_error}. "
+            "Falling back to Document Intelligence Layout.",
+            level=logging.WARNING,
+        )
+        return ''
+
+    if not description_text:
+        log_event(
+            f"[EXTRACTION_ENGINE] Content Understanding image analyzer returned no description for "
+            f"{os.path.basename(file_path)}; falling back to Document Intelligence Layout.",
+            level=logging.WARNING,
+        )
+    return description_text
+
+
 def extract_content_with_extraction_engine(
     file_path,
     extraction_mode,
     extraction_engine=None,
     settings=None,
     pages=None,
+    is_image=False,
 ):
     """Extract page content with the engine that backs the requested extraction mode.
 
     Standard extraction always uses Document Intelligence ``prebuilt-read``. Enhanced extraction
     prefers Azure AI Content Understanding, but always falls back to Document Intelligence
     ``prebuilt-layout`` so a Content Understanding outage never blocks ingestion.
+
+    When ``is_image`` is set and the document analyzer finds no content, which is normal for a
+    photo with no text, the Content Understanding image analyzer's description is returned as
+    the image's single page instead. Only if that also yields nothing does extraction fall back
+    to Document Intelligence Layout.
 
     Returns ``(pages_data, engine_used, fallback_reason)``.
     """
@@ -650,7 +684,10 @@ def extract_content_with_extraction_engine(
             '',
         )
 
-    from functions_content_understanding import extract_content_with_content_understanding
+    from functions_content_understanding import (
+        analyze_image_with_content_understanding,
+        extract_content_with_content_understanding,
+    )
 
     try:
         content_understanding_pages = extract_content_with_content_understanding(
@@ -664,6 +701,18 @@ def extract_content_with_extraction_engine(
                 functions_settings.EXTRACTION_ENGINE_CONTENT_UNDERSTANDING,
                 '',
             )
+        if is_image:
+            image_description = _describe_image_with_content_understanding(
+                file_path,
+                resolved_settings,
+                analyze_image_with_content_understanding,
+            )
+            if image_description:
+                return (
+                    [{'page_number': 1, 'content': image_description}],
+                    functions_settings.EXTRACTION_ENGINE_CONTENT_UNDERSTANDING,
+                    CONTENT_UNDERSTANDING_IMAGE_ANALYZER_REASON,
+                )
         fallback_reason = (
             'Content Understanding returned no content, so Document Intelligence Layout was used'
         )
