@@ -2320,8 +2320,8 @@ ADMIN_SETTINGS_FIELDS = {
             "type": "switch",
             "label": "Enable Multi-Modal Vision Analysis",
             "help": (
-                "Sends page images to a vision-capable model so figures, charts and "
-                "scanned pages are described and indexed rather than skipped."
+                "Asks a vision-capable model to describe each uploaded image, so the image "
+                "is indexed and can be cited by what it shows even when it contains no text."
             ),
             "default": False,
             "role": "capability",
