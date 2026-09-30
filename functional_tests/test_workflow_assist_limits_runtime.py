@@ -2,8 +2,8 @@
 # test_workflow_assist_limits_runtime.py
 """
 Functional test for the AI workflow assistant's limits and its Azure-backed services.
-Version: 0.261.206
-Implemented in: 0.261.206
+Version: 0.261.208
+Implemented in: 0.261.208
 
 This test ensures that:
 
@@ -70,7 +70,7 @@ EXPLAINED = json.dumps({"outcome": "explained", "reply": "It already runs on dem
 
 
 def test_version_is_at_least_the_implementing_release():
-    assert_app_version_at_least("0.261.206")
+    assert_app_version_at_least("0.261.208")
 
 
 def refused(call):

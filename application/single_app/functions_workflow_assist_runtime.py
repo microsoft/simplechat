@@ -2,8 +2,8 @@
 """
 The AI workflow assistant's services: the Azure-backed side of ``functions_workflow_assist``.
 
-Version: 0.261.206
-Implemented in: 0.261.206
+Version: 0.261.208
+Implemented in: 0.261.208
 
 ``build_workflow_assist_services`` wires the core to:
 

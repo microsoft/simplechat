@@ -1,4 +1,4 @@
-# Workflow AI Assistant (v0.261.206)
+# Workflow AI Assistant (v0.261.208)
 
 ## Overview
 
@@ -13,7 +13,7 @@ the editor's current draft, asks the model for a small set of allowlisted operat
 to a copy of the draft, checks the result the way a save would, and returns a candidate draft for
 the editor's `applyAssist` seam. The **Ask AI** tab that calls it comes in the next release.
 
-Implemented in version: **0.261.206**, tracked in `application/single_app/config.py`.
+Implemented in version: **0.261.208**, tracked in `application/single_app/config.py`.
 Phase 3b of the [chat orchestration workflows roadmap](CHAT_ORCHESTRATION_WORKFLOWS_ROADMAP.md)
 (#1548, part of #1543).
 

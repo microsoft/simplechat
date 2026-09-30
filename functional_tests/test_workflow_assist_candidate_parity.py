@@ -2,8 +2,8 @@
 # test_workflow_assist_candidate_parity.py
 """
 Functional test for the agreement between the AI workflow assistant and the V2 workflow editor.
-Version: 0.261.206
-Implemented in: 0.261.206
+Version: 0.261.208
+Implemented in: 0.261.208
 
 The assistant returns an applied candidate that the V2 editor applies with ``applyAssist``
 (Phase 3a), and it checks that candidate on the server with a Python port of the editor's logic
@@ -557,7 +557,7 @@ def editor_run(parity_cases):
 
 
 def test_version_is_at_least_the_implementing_release():
-    assert_app_version_at_least("0.261.206")
+    assert_app_version_at_least("0.261.208")
 
 
 def test_every_scenario_is_a_checked_change(parity_cases):

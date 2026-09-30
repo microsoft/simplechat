@@ -2,8 +2,8 @@
 """
 Per-user limits for the AI workflow assistant: one request in flight and a fixed request window.
 
-Version: 0.261.206
-Implemented in: 0.261.206
+Version: 0.261.208
+Implemented in: 0.261.208
 
 The limits must hold across Gunicorn workers and App Service instances, so the counter lives in
 Cosmos. It follows ``check_inbound_mcp_tool_rate_limit``: one document per user in the settings

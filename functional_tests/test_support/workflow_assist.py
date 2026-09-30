@@ -1,8 +1,8 @@
 # workflow_assist.py
 """
 Shared fixtures for the AI workflow assistant tests (Phase 3b).
-Version: 0.261.206
-Implemented in: 0.261.206
+Version: 0.261.208
+Implemented in: 0.261.208
 
 A personal V2 workflow as the editor holds it, the editor options, a recording limiter, a scripted
 model and the service bundle ``run_workflow_assist`` takes, so each test states only what it

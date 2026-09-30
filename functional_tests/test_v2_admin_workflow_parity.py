@@ -2,7 +2,7 @@
 # test_v2_admin_workflow_parity.py
 """
 Functional test pinning V1/V2 parity for the Admin Settings Workflow group.
-Version: 0.261.206
+Version: 0.261.208
 Implemented in: 0.261.059
 
 The Workflow group rendered completely empty in the V2 React admin surface. The

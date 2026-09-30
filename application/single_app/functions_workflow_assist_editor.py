@@ -2,8 +2,8 @@
 """
 Python mirror of the V2 workflow editor logic the AI workflow assistant depends on.
 
-Version: 0.261.206
-Implemented in: 0.261.206
+Version: 0.261.208
+Implemented in: 0.261.208
 
 The assistant returns a candidate that the V2 editor applies with ``applyAssist``. To check that
 candidate the way the editor and a save will, this module ports these pieces of ``application/v2_ui``:

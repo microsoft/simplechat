@@ -2,8 +2,8 @@
 """
 Handles, the model's view of a draft, and the operations the AI workflow assistant may apply.
 
-Version: 0.261.206
-Implemented in: 0.261.206
+Version: 0.261.208
+Implemented in: 0.261.208
 
 The model never sees a raw document, reference, agent, endpoint, task, node or rule ID (roadmap
 gotcha 28). Everything it may name has a request-local handle: ``task_N``, ``node_N``, ``agent_N``,

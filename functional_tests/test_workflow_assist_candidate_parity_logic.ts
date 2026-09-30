@@ -1,8 +1,8 @@
 // test_workflow_assist_candidate_parity_logic.ts
 // Replays the AI workflow assistant's candidates through the V2 workflow editor.
 //
-// Version: 0.261.206
-// Implemented in: 0.261.206
+// Version: 0.261.208
+// Implemented in: 0.261.208
 //
 // test_workflow_assist_candidate_parity.py runs real assistant requests with a scripted model and
 // writes each result to the JSON file WORKFLOW_ASSIST_PARITY_FIXTURE names. Bundled with esbuild and

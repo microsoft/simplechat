@@ -2,8 +2,8 @@
 # test_workflow_assist_scenarios.py
 """
 Functional test for the AI workflow assistant's end-to-end scenarios.
-Version: 0.261.206
-Implemented in: 0.261.206
+Version: 0.261.208
+Implemented in: 0.261.208
 
 This test ensures that the assistant turns an instruction into the candidate the roadmap's "Done
 when" describes, with a scripted model:
@@ -89,7 +89,7 @@ METRIC_KEYS = {
 
 
 def test_version_is_at_least_the_implementing_release():
-    assert_app_version_at_least("0.261.206")
+    assert_app_version_at_least("0.261.208")
 
 
 def _answer(stored, operations, *, instruction, reply_text="Done.", references=(), email_tasks=None, **service_fields):

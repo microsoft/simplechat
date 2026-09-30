@@ -2,8 +2,8 @@
 # test_workflow_assist_policy.py
 """
 Functional policy tests for the AI workflow assistant route.
-Version: 0.261.206
-Implemented in: 0.261.206
+Version: 0.261.208
+Implemented in: 0.261.208
 
 This test ensures that ``POST /api/user/workflows/assist`` keeps its Blueprint, Swagger and gate
 order, that each gate refuses before any service starts, that the body is read as bounded strict
@@ -247,7 +247,7 @@ def assert_closed_error(response, status, code):
 
 
 def test_the_route_keeps_its_blueprint_swagger_and_gate_order():
-    assert_app_version_at_least("0.261.206")
+    assert_app_version_at_least("0.261.208")
     function = route_function()
     decorators = [ast.unparse(value) for value in function.decorator_list]
 

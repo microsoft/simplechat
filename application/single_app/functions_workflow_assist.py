@@ -2,8 +2,8 @@
 """
 The AI workflow assistant: one instruction in, one validated candidate draft out.
 
-Version: 0.261.206
-Implemented in: 0.261.206
+Version: 0.261.208
+Implemented in: 0.261.208
 
 ``POST /api/user/workflows/assist`` hands this module the request body. It checks the request,
 shows the model the editor's draft through request-local handles, applies the model's allowlisted
