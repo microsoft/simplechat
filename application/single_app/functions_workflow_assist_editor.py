@@ -13,7 +13,9 @@ candidate the way the editor and a save will, this module ports these pieces of 
   its own copy of the lists; test_workflow_assist_field_parity.py fails when the two drift.
 * ``sameEditorValue`` (``lib/workspaceAuthoring.ts``), with ``Object.is`` semantics.
 * ``normalizeWorkflowDefinition`` and ``workflowForSave`` for the personal scope (``lib/workflowEditor.ts``),
-  which turn an editor draft into the payload a save posts, after a JSON round trip.
+  which turn an editor draft into the payload a save posts, after a JSON round trip. That includes
+  ``workflowFileSyncConfig`` and ``workflowFileSyncForSave``: since Phase 4 (#1547) a personal save sends
+  an edited File Sync configuration, as a group save does.
 * The change keys and labels of ``diffWorkflowChanges`` (``lib/workflowChangeTracking.ts``), so each change
   the server reports names the key the editor's Jump to focuses.
 
@@ -103,6 +105,8 @@ WORKFLOW_SCHEDULE_FREQUENCIES = ('daily', 'weekdays', 'weekly', 'monthly')
 WORKFLOW_SCHEDULE_DAYS = ('monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday')
 WORKFLOW_ALERT_MODES = ('off', 'every_run', 'rules')
 WORKFLOW_ALERT_PRIORITIES = ('none', 'low', 'medium', 'high')
+WORKFLOW_FILE_SYNC_WAIT_MODES = ('complete', 'queued')
+WORKFLOW_FILE_SYNC_CONTINUE_MODES = ('always', 'changed')
 WORKFLOW_UNSUPPORTED_SCHEDULE_REASON = (
     'This workflow uses a schedule this editor does not support. Its original schedule has been retained '
     'and editing is disabled.'
@@ -717,6 +721,61 @@ def workflow_alerts_for_save(draft, original):
     return copy.deepcopy(drafted)
 
 
+def workflow_file_sync_config(value):
+    """``workflowFileSyncConfig``: a stored or drafted ``file_sync`` value with the server's defaults."""
+    record = value if isinstance(value, dict) else {}
+    wait = _js_trim(_text(record.get('wait_mode'))).lower()
+    proceed = _js_trim(_text(record.get('continue_mode'))).lower()
+    sources = []
+    for source in record['sources'] if isinstance(record.get('sources'), list) else []:
+        if not isinstance(source, dict):
+            continue
+        entry = {
+            'scope_type': _js_trim(_text(source.get('scope_type'))) or 'group',
+            'scope_id': _js_trim(_text(source.get('scope_id'))),
+            'source_id': _js_trim(_text(source.get('source_id'))) or _js_trim(_text(source.get('id'))),
+        }
+        if _text(source.get('name')):
+            entry['name'] = source['name']
+        if _text(source.get('source_type')):
+            entry['source_type'] = source['source_type']
+        if entry['source_id']:
+            sources.append(entry)
+    return {
+        'enabled': record.get('enabled') is True,
+        'wait_mode': wait if wait in WORKFLOW_FILE_SYNC_WAIT_MODES else 'complete',
+        'continue_mode': proceed if proceed in WORKFLOW_FILE_SYNC_CONTINUE_MODES else 'always',
+        'use_changed_documents': record.get('use_changed_documents') is not False,
+        'sources': sources,
+    }
+
+
+def workflow_file_sync_for_save(draft, original):
+    """``workflowFileSyncForSave``: nothing when File Sync is untouched, else the edited configuration.
+
+    An untouched ``file_sync`` reaches the save as the loaded workflow carries it.
+    """
+    if 'file_sync' not in draft or (
+        original is not None and same_editor_value(draft['file_sync'], original.get('file_sync', UNDEFINED))
+    ):
+        return {}
+    config = workflow_file_sync_config(draft['file_sync'])
+    # The editor sends no sources while File Sync is off; the server re-authorizes every one sent.
+    keep_sources = config['enabled'] or draft.get('trigger_type') == 'file_sync'
+    return {
+        'file_sync': {
+            'enabled': config['enabled'],
+            'wait_mode': config['wait_mode'],
+            'continue_mode': config['continue_mode'],
+            'use_changed_documents': config['use_changed_documents'],
+            'sources': [
+                {'scope_type': source['scope_type'], 'scope_id': source['scope_id'], 'source_id': source['source_id']}
+                for source in config['sources']
+            ] if keep_sources else [],
+        },
+    }
+
+
 def workflow_for_save(draft, original):
     """``workflowForSave`` for the personal scope, as the JSON the save route receives.
 
@@ -773,6 +832,7 @@ def workflow_for_save(draft, original):
         next_record['limits'] = copy.deepcopy(draft.get('limits', UNDEFINED))
     if include_durable:
         next_record['durable_execution'] = draft.get('durable_execution') is True
+    next_record.update(workflow_file_sync_for_save(draft, original))
     next_record.update(workflow_alerts_for_save(draft, original))
     if not include_durable:
         next_record.pop('durable_execution', None)

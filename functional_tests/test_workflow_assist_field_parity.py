@@ -161,6 +161,8 @@ CONST_LISTS = [
     (SETTINGS_TS, "WORKFLOW_SCHEDULE_UNITS", "WORKFLOW_SCHEDULE_UNITS"),
     (SETTINGS_TS, "WORKFLOW_SCHEDULE_FREQUENCIES", "WORKFLOW_SCHEDULE_FREQUENCIES"),
     (SETTINGS_TS, "WORKFLOW_SCHEDULE_DAYS", "WORKFLOW_SCHEDULE_DAYS"),
+    (SETTINGS_TS, "WORKFLOW_FILE_SYNC_WAIT_MODES", "WORKFLOW_FILE_SYNC_WAIT_MODES"),
+    (SETTINGS_TS, "WORKFLOW_FILE_SYNC_CONTINUE_MODES", "WORKFLOW_FILE_SYNC_CONTINUE_MODES"),
 ]
 
 
@@ -237,7 +239,8 @@ def test_alert_operation_vocabulary_is_the_editors():
     assert list(operations.ASSIST_ALERT_TEXT_MODES) == _const_list(source, "WORKFLOW_ALERT_TEXT_MATCH_MODES")
     assert set(operations.ASSIST_ALERT_RUN_STATUSES) == set(_const_list(source, "WORKFLOW_ALERT_RUN_STATUSES"))
     assert set(operations.ASSIST_ALERT_TASK_STATUSES) == set(_const_list(source, "WORKFLOW_ALERT_TASK_STATUSES"))
-    # Every condition but File Sync's, which waits for Phase 4's personal File Sync authoring.
+    # Every condition but File Sync's. Phase 4 (#1547) made personal File Sync editable, but the
+    # assistant has no File Sync operations yet.
     conditions = _const_list(source, "WORKFLOW_ALERT_CONDITION_TYPES")
     assert set(conditions) - set(operations.ASSIST_ALERT_CONDITIONS) == {"file_sync"}
     assert set(operations.ASSIST_ALERT_CONDITIONS) <= set(conditions)

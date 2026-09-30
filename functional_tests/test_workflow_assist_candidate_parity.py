@@ -25,7 +25,9 @@ whitespace and JSON literals: ``Number()`` of each value, the draft it opens, th
 and what ``JSON.parse`` reads or refuses. This test reads each line with Python's JSON parser and
 compares it with the port's answer type-strictly, by ``json.dumps`` text. The port is also held,
 without node, to JavaScript's answers for the numbers in ``KNOWN_NUMBERS``; the node run confirms
-those answers against the real ``Number()``.
+those answers against the real ``Number()``. In the same way, ``FILE_SYNC_SAVES`` holds the port to
+known answers for File Sync, which a personal save sends as edited since Phase 4 (#1547), and the node
+run confirms them against the real ``workflowForSave``.
 
 The TypeScript side is test_workflow_assist_candidate_parity_logic.ts, bundled with esbuild and run
 under node as test_v2_workflow_change_tracking.py does. That check is skipped when
@@ -431,8 +433,105 @@ def _corpus_saves():
     return saves
 
 
+# ---------------------------------------------------------------------------
+# File Sync saves
+# ---------------------------------------------------------------------------
+
+# workflowFileSyncForSave: a save keeps an untouched file_sync as loaded and sends an edited one as the
+# editor reads it. Since Phase 4 (#1547) that holds for personal saves too. ABSENT: no file_sync is sent.
+ABSENT = "<absent>"
+SYNC_PERSONAL = {"scope_type": "personal", "scope_id": wa.USER_ID, "source_id": "source-0001"}
+SYNC_GROUP = {"scope_type": "group", "scope_id": "group-0004-stuvwx", "source_id": "source-0002"}
+SYNC_PUBLIC = {"scope_type": "public", "scope_id": "public-0005-yzabcd", "source_id": "source-0003"}
+SYNC_DEFAULTS = {
+    "enabled": False, "wait_mode": "complete", "continue_mode": "always", "use_changed_documents": True, "sources": [],
+}
+# Stored as the server records it, with each source's name and type.
+STORED_SYNC = {
+    "enabled": True, "wait_mode": "queued", "continue_mode": "changed", "use_changed_documents": False,
+    "sources": [{**SYNC_PERSONAL, "name": "My OneDrive", "source_type": "onedrive"}],
+}
+STORED_SYNC_OFF = {**STORED_SYNC, "enabled": False}
+
+
+def _sync_case(label, *, expected, stored_sync=ABSENT, draft_sync=ABSENT, trigger_type=None, new=False):
+    """A personal save of a workflow stored with ``stored_sync`` and drafted with ``draft_sync``."""
+    stored = None
+    if not new:
+        stored = wa.stored_workflow(**({} if stored_sync is ABSENT else {"file_sync": copy.deepcopy(stored_sync)}))
+    draft = wa.new_draft() if new else wa.editor_draft(stored)
+    draft.pop("file_sync", None)
+    if draft_sync is not ABSENT:
+        draft["file_sync"] = copy.deepcopy(draft_sync)
+    if trigger_type is not None:
+        draft["trigger_type"] = trigger_type
+    return {"label": label, "stored": stored, "draft": draft, "expected": expected}
+
+
+FILE_SYNC_SAVES = [
+    _sync_case("unchanged, kept as stored", stored_sync=STORED_SYNC, draft_sync=STORED_SYNC, expected=STORED_SYNC),
+    _sync_case(
+        "edited, with personal, group and public sources", stored_sync=STORED_SYNC,
+        draft_sync={**STORED_SYNC, "continue_mode": "always", "sources": [
+            {**SYNC_PERSONAL, "name": "My OneDrive", "source_type": "onedrive", "last_synced": "2026-09-01"},
+            SYNC_GROUP, SYNC_PUBLIC,
+        ]},
+        expected={**STORED_SYNC, "continue_mode": "always", "sources": [SYNC_PERSONAL, SYNC_GROUP, SYNC_PUBLIC]},
+    ),
+    _sync_case(
+        "a new draft", new=True, draft_sync={"enabled": True, "sources": [SYNC_GROUP]},
+        expected={**SYNC_DEFAULTS, "enabled": True, "sources": [SYNC_GROUP]},
+    ),
+    _sync_case(
+        "turned off, which drops its sources", stored_sync=STORED_SYNC, draft_sync=STORED_SYNC_OFF,
+        expected={**STORED_SYNC_OFF, "sources": []},
+    ),
+    _sync_case(
+        "off under the File Sync trigger, which keeps its sources", stored_sync=STORED_SYNC, trigger_type="file_sync",
+        draft_sync={**STORED_SYNC_OFF, "sources": [{**SYNC_PUBLIC, "source_type": "sharepoint"}]},
+        expected={**STORED_SYNC_OFF, "sources": [SYNC_PUBLIC]},
+    ),
+    _sync_case(
+        "sources read as the editor reads them", stored_sync=STORED_SYNC,
+        draft_sync={"enabled": True, "sources": [
+            {"scope_type": "  ", "scope_id": " group-0004-stuvwx ", "id": " source-0009 ", "name": "Team", "extra": 1},
+            {"scope_type": "personal", "scope_id": wa.USER_ID},
+            "source-0010", None, [SYNC_PERSONAL],
+            {**SYNC_PUBLIC, "source_id": "\ufeffsource-0003\u3000"},
+            {**SYNC_PERSONAL, "source_id": "source-0011\x85"},
+        ]},
+        expected={**SYNC_DEFAULTS, "enabled": True, "sources": [
+            {"scope_type": "group", "scope_id": "group-0004-stuvwx", "source_id": "source-0009"},
+            SYNC_PUBLIC,
+            {**SYNC_PERSONAL, "source_id": "source-0011\x85"},
+        ]},
+    ),
+    _sync_case(
+        "modes and flags read as the editor reads them", stored_sync=STORED_SYNC, trigger_type="file_sync",
+        draft_sync={
+            "enabled": 1, "wait_mode": "\ufeff QUEUED\u3000", "continue_mode": "changed\x85",
+            "use_changed_documents": 0, "sources": [SYNC_PERSONAL],
+        },
+        expected={**SYNC_DEFAULTS, "wait_mode": "queued", "sources": [SYNC_PERSONAL]},
+    ),
+    _sync_case(
+        "unknown values fall back to the defaults", stored_sync=STORED_SYNC,
+        draft_sync={
+            "enabled": True, "wait_mode": "later", "continue_mode": ["changed"], "use_changed_documents": None,
+            "sources": {"scope_type": "personal"},
+        },
+        expected={**SYNC_DEFAULTS, "enabled": True},
+    ),
+    _sync_case("null, read as off", stored_sync=STORED_SYNC, draft_sync=None, expected=SYNC_DEFAULTS),
+    _sync_case("missing from the draft, kept as stored", stored_sync=STORED_SYNC, expected=STORED_SYNC),
+    _sync_case("in neither", expected=ABSENT),
+]
+
+
 CORPUS = {
-    "numbers": CORPUS_NUMBERS, "opens": _corpus_opens(), "saves": _corpus_saves(), "literals": CORPUS_LITERALS,
+    "numbers": CORPUS_NUMBERS, "opens": _corpus_opens(),
+    "saves": _corpus_saves() + [{"stored": case["stored"], "draft": case["draft"]} for case in FILE_SYNC_SAVES],
+    "literals": CORPUS_LITERALS,
 }
 
 
@@ -661,6 +760,32 @@ def test_the_port_saves_every_corpus_draft_as_the_editor_does(editor_run):
     server_answers = [_port_save(item["stored"], item["draft"]) for item in CORPUS["saves"]]
     wrong = _differences([item["draft"] for item in CORPUS["saves"]], editor_answers, server_answers)
     assert not wrong, "\n".join(wrong)
+
+
+def _saved_file_sync(payload):
+    return payload.get("file_sync", ABSENT) if "editor_refused_to_save" not in payload else payload
+
+
+def test_the_port_saves_file_sync_as_the_editor_does():
+    labels = [case["label"] for case in FILE_SYNC_SAVES]
+    assert len(set(labels)) == len(labels)
+    wrong = [
+        f"{case['label']}: the port sends {ascii(found)}, the editor {ascii(case['expected'])}"
+        for case in FILE_SYNC_SAVES
+        for found in [_saved_file_sync(_port_save(case["stored"], case["draft"]))]
+        if _canonical(found) != _canonical(case["expected"])
+    ]
+    assert not wrong, "\n".join(wrong)
+
+
+def test_the_editor_confirms_the_known_file_sync_answers(editor_run):
+    answers = _emitted(editor_run, "SAVES")[-len(FILE_SYNC_SAVES):]
+    wrong = [
+        f"{case['label']}: the editor sends {ascii(_saved_file_sync(answer))}, not {ascii(case['expected'])}"
+        for case, answer in zip(FILE_SYNC_SAVES, answers)
+        if _canonical(_saved_file_sync(answer)) != _canonical(case["expected"])
+    ]
+    assert len(answers) == len(FILE_SYNC_SAVES) and not wrong, "\n".join(wrong)
 
 
 def test_the_server_refuses_exactly_the_json_the_browser_cannot_read_as_finite(editor_run):
