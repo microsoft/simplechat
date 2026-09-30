@@ -18,6 +18,10 @@ describes it for the planner from the live capability resolution and export cata
 - an unavailable deliverable must carry the exact reason the server reports, and the planner
   cannot call something unavailable that the server can produce.
 
+A proposed workflow is a deliverable too: a card after the answer that the user approves before
+anything is created. It is a kind for the planner only while ``enable_chat_orchestration_workflows``
+is on, so planning with the setting off is unchanged; saved plans keep it after the setting changes.
+
 Nothing here reads the request text, the plan's prose, or its assumptions. Every rule is a
 structural comparison between declared deliverables, declared steps, and server state.
 
@@ -37,11 +41,13 @@ from functions_orchestration_registry import (
     CAPABILITY_DOCUMENT_COMPARE,
     CAPABILITY_GENERATE_IMAGE,
     CAPABILITY_RENDER_FILE,
+    CAPABILITY_WORKFLOW_PROPOSE,
     MAX_GENERATED_IMAGES_PER_PLAN,
     VISUAL_CHART,
     VISUAL_DIAGRAM,
     VISUAL_IMAGE_PROPOSAL,
     VISUAL_KINDS,
+    WORKFLOW_PROPOSALS_SETTING,
     resolve_admitted_export_catalog,
 )
 from functions_orchestration_result_contracts import (
@@ -54,7 +60,11 @@ KIND_FILE = 'file'
 KIND_IMAGE = 'image'
 KIND_CHART = 'chart'
 KIND_DIAGRAM = 'diagram'
+KIND_WORKFLOW = 'workflow'
 DELIVERABLE_KINDS = (KIND_ANSWER, KIND_FILE, KIND_IMAGE, KIND_CHART, KIND_DIAGRAM)
+# The workflow kind is accepted only where the server describes it; see _parse_deliverables.
+WORKFLOW_DELIVERABLE_KINDS = (*DELIVERABLE_KINDS, KIND_WORKFLOW)
+MAX_WORKFLOWS_PER_PLAN = 1
 REQUESTED_EXPLICIT = 'explicit'
 REQUESTED_SUGGESTED = 'suggested'
 STATUS_PLANNED = 'planned'
@@ -81,9 +91,27 @@ UNAVAILABLE_REASONS = {
         f'One plan can generate at most {MAX_GENERATED_IMAGES_PER_PLAN} images.'
     ),
 }
+# Why a workflow cannot be proposed. The planner is told these only while workflow proposals
+# are turned on; the allowlist uses capability_not_enabled_for_orchestration like every kind.
+WORKFLOW_UNAVAILABLE_REASONS = {
+    'workflow_proposals_disabled': 'Creating workflows from chat is turned off for this deployment.',
+    'workflow_role_required': 'Your account does not have access to personal workflows.',
+    'workflow_shared_conversation': (
+        'Workflows can be proposed only in your own conversations, not in shared ones.'
+    ),
+    'workflow_quota_reached': (
+        'You have reached the limit of workflows created from chat. Delete one in Workflows to make room.'
+    ),
+    'workflow_context_unavailable': 'Workflow details could not be loaded for this request. Try again later.',
+    'workflow_draft_invalid': (
+        'SimpleChat could not prepare this workflow from chat. Create it in Workflows, where you can '
+        'edit every setting.'
+    ),
+    'workflow_one_per_request': 'One request can propose one workflow. Ask for the next one in a new message.',
+}
 _KIND_LABELS = {
     KIND_ANSWER: 'answer', KIND_FILE: 'file', KIND_IMAGE: 'image',
-    KIND_CHART: 'chart', KIND_DIAGRAM: 'diagram',
+    KIND_CHART: 'chart', KIND_DIAGRAM: 'diagram', KIND_WORKFLOW: 'workflow',
 }
 _FIELDS = frozenset({
     'id', 'kind', 'format', 'requested', 'quantity', 'description', 'status', 'unavailable_reason',
@@ -143,6 +171,19 @@ def _image_reason(settings, unavailable):
 def _compose_reason(unavailable):
     # compose has no feature gate; only the administrator's allowlist can withhold it.
     return 'capability_not_enabled_for_orchestration'
+
+
+def _workflow_availability(available, unavailable):
+    """Whether this caller's plan can propose a workflow, or the closed reason it cannot."""
+    if CAPABILITY_WORKFLOW_PROPOSE in available:
+        return _available(produced_by=[CAPABILITY_WORKFLOW_PROPOSE], max_per_plan=MAX_WORKFLOWS_PER_PLAN)
+    reason = unavailable.get(CAPABILITY_WORKFLOW_PROPOSE)
+    if reason == 'not_enabled_for_orchestration':
+        return _unavailable('capability_not_enabled_for_orchestration')
+    if isinstance(reason, str) and reason in WORKFLOW_UNAVAILABLE_REASONS:
+        return _unavailable(reason)
+    # A settings gate, or a condition this module has no text for, reads as turned off.
+    return _unavailable('workflow_proposals_disabled')
 
 
 def _image_options(capabilities):
@@ -260,7 +301,7 @@ def build_deliverable_availability(settings, *, capabilities, unavailable=None, 
             'action_invoke with visuals ["chart"] charts the exact rows it retrieves; the compose '
             'step that binds it places the chart.'
         )})
-    return {
+    truth = {
         KIND_ANSWER: _available(produced_by=[CAPABILITY_COMPOSE]) if compose else _unavailable(
             _compose_reason(unavailable),
         ),
@@ -275,10 +316,25 @@ def build_deliverable_availability(settings, *, capabilities, unavailable=None, 
         KIND_DIAGRAM: _available(produced_by=[CAPABILITY_COMPOSE]) if compose else _unavailable(
             _compose_reason(unavailable),
         ),
-        'unavailable_reasons': dict(UNAVAILABLE_REASONS),
-        'facts': facts,
-        'recipes': recipes,
     }
+    unavailable_reasons = dict(UNAVAILABLE_REASONS)
+    # The workflow kind, its reasons, and how to plan one exist only while an administrator has
+    # turned workflow proposals on; otherwise the planner is told exactly what it was before.
+    if settings.get(WORKFLOW_PROPOSALS_SETTING) is True:
+        truth[KIND_WORKFLOW] = _workflow_availability(available, unavailable)
+        unavailable_reasons.update(WORKFLOW_UNAVAILABLE_REASONS)
+        if truth[KIND_WORKFLOW]['status'] == 'available':
+            facts.append(
+                'A workflow deliverable is a proposal card shown after the answer. Nothing is created or '
+                'scheduled until the user approves it on that card, so never say a workflow was created.'
+            )
+            recipes.append({'for': 'Recurring or automated work the user asks for', 'steps': (
+                'one workflow_propose step whose blueprint is written from the request alone (no '
+                'depends_on and no input bindings) and that delivers the workflow deliverable. When '
+                'the request also wants a result now, answer it once with the usual steps as well.'
+            )})
+    truth.update({'unavailable_reasons': unavailable_reasons, 'facts': facts, 'recipes': recipes})
+    return truth
 
 
 def canonical_file_format(value, catalog=None):
@@ -295,7 +351,7 @@ def canonical_file_format(value, catalog=None):
     return text
 
 
-def _verdict(availability, deliverable, *, planned_images=0):
+def _verdict(availability, deliverable, *, planned_images=0, planned_workflows=0):
     """The server's reason a deliverable cannot be produced, or None when it can."""
     kind = deliverable['kind']
     if kind == KIND_FILE:
@@ -314,6 +370,16 @@ def _verdict(availability, deliverable, *, planned_images=0):
             and planned_images >= MAX_GENERATED_IMAGES_PER_PLAN
         ):
             return 'image_budget_exceeded'
+        return None
+    if kind == KIND_WORKFLOW:
+        entry = availability.get(KIND_WORKFLOW)
+        if entry is None:
+            return 'workflow_proposals_disabled'
+        if entry['status'] != 'available':
+            return entry.get('reason')
+        # Like the image budget: only once the plan already proposes as many workflows as allowed.
+        if deliverable['status'] == STATUS_UNAVAILABLE and planned_workflows >= MAX_WORKFLOWS_PER_PLAN:
+            return 'workflow_one_per_request'
         return None
     entry = availability[kind]
     return entry.get('reason') if entry['status'] != 'available' else None
@@ -335,7 +401,7 @@ def _sentence_label(deliverable):
     return label[:1].upper() + label[1:]
 
 
-def _parse_deliverables(raw):
+def _parse_deliverables(raw, workflow_allowed=False):
     if raw is None:
         return []
     if type(raw) is not list:
@@ -371,15 +437,24 @@ def _parse_deliverables(raw):
             )
         seen.add(identifier)
         kind = entry.get('kind')
-        if kind not in DELIVERABLE_KINDS:
+        if kind not in (WORKFLOW_DELIVERABLE_KINDS if workflow_allowed else DELIVERABLE_KINDS):
+            listed = (
+                'answer, file, image, chart, diagram, or workflow' if workflow_allowed
+                else 'answer, file, image, chart, or diagram'
+            )
             raise DeliverableError(
-                f'Deliverable "{identifier}" needs kind answer, file, image, chart, or diagram.',
+                f'Deliverable "{identifier}" needs kind {listed}.',
                 rule='invalid_deliverable_kind',
             )
         requested = entry.get('requested')
         if requested not in (REQUESTED_EXPLICIT, REQUESTED_SUGGESTED):
             raise DeliverableError(
                 f'Deliverable "{identifier}" needs requested explicit or suggested.', rule='invalid_requested_value',
+            )
+        if kind == KIND_WORKFLOW and requested != REQUESTED_EXPLICIT:
+            raise DeliverableError(
+                f'Workflow deliverable "{identifier}" must be requested explicit: propose a workflow only '
+                'when the user asks for recurring or automated work.', rule='suggested_workflow',
             )
         status = entry.get('status')
         if status not in (STATUS_PLANNED, STATUS_UNAVAILABLE):
@@ -419,13 +494,17 @@ def _parse_deliverables(raw):
             deliverable['quantity'] = quantity
         reason = entry.get('unavailable_reason')
         if status == STATUS_UNAVAILABLE:
-            if reason not in UNAVAILABLE_REASONS:
+            if reason in UNAVAILABLE_REASONS:
+                message = UNAVAILABLE_REASONS[reason]
+            elif workflow_allowed and reason in WORKFLOW_UNAVAILABLE_REASONS:
+                message = WORKFLOW_UNAVAILABLE_REASONS[reason]
+            else:
                 raise DeliverableError(
                     f'Unavailable deliverable "{identifier}" needs an unavailable_reason from '
                     'capability_availability.deliverables.unavailable_reasons.', rule='invalid_unavailable_reason',
                 )
             deliverable['unavailable_reason'] = reason
-            deliverable['unavailable_message'] = UNAVAILABLE_REASONS[reason]
+            deliverable['unavailable_message'] = message
         elif reason not in (None, ''):
             raise DeliverableError(
                 f'Planned deliverable "{identifier}" cannot have an unavailable_reason.',
@@ -526,14 +605,21 @@ def _check_producer(step, deliverable, final_step):
                 f'Step "{step_id}" cannot deliver {_label(deliverable)}: the answer comes from the '
                 'step final_response selects.', rule='answer_producer_mismatch',
             )
+    elif kind == KIND_WORKFLOW:
+        if capability != CAPABILITY_WORKFLOW_PROPOSE:
+            raise DeliverableError(
+                f'Step "{step_id}" cannot deliver {_label(deliverable)}: only a workflow_propose step '
+                'proposes a workflow.', rule='workflow_producer_mismatch',
+            )
 
 
 def _link_unambiguous(deliverables, steps, final_step):
     """Fill ``delivers`` only where exactly one deliverable can be meant; never guess between two.
 
     The answer comes from the final_response producer by definition. A render step with no
-    ``delivers`` belongs to the only planned file deliverable of its exact format, and an
-    image step to the plan's only explicit image deliverable.
+    ``delivers`` belongs to the only planned file deliverable of its exact format, an image
+    step to the plan's only explicit image deliverable, and a workflow_propose step to the
+    plan's only planned workflow deliverable.
     """
     planned = [deliverable for deliverable in deliverables if deliverable['status'] == STATUS_PLANNED]
     claimed = {identifier for step in steps for identifier in step['delivers']}
@@ -546,6 +632,7 @@ def _link_unambiguous(deliverables, steps, final_step):
         deliverable for deliverable in planned
         if deliverable['kind'] == KIND_IMAGE and deliverable['requested'] == REQUESTED_EXPLICIT
     ]
+    workflows = [deliverable for deliverable in planned if deliverable['kind'] == KIND_WORKFLOW]
     for step in steps:
         if step['delivers']:
             continue
@@ -559,6 +646,8 @@ def _link_unambiguous(deliverables, steps, final_step):
                 step['delivers'].append(matches[0]['id'])
         elif step['capability_id'] == CAPABILITY_GENERATE_IMAGE and len(explicit_images) == 1:
             step['delivers'].append(explicit_images[0]['id'])
+        elif step['capability_id'] == CAPABILITY_WORKFLOW_PROPOSE and len(workflows) == 1:
+            step['delivers'].append(workflows[0]['id'])
 
 
 def _derive_visuals(step, deliverables):
@@ -633,6 +722,15 @@ def _deliverable_briefs(deliverables, steps, final_step):
                 for deliverable in deliverables
                 if deliverable['status'] == STATUS_UNAVAILABLE and deliverable['requested'] == REQUESTED_EXPLICIT
             )
+            # The answer never consumes a proposal; it is only told that a card follows it.
+            brief.extend(
+                _brief_entry(deliverable, 'workflow_proposal', enabled=any(
+                    producer.get('enabled', True) for producer in steps
+                    if deliverable['id'] in (producer.get('delivers') or ())
+                ))
+                for deliverable in deliverables
+                if deliverable['kind'] == KIND_WORKFLOW and deliverable['status'] == STATUS_PLANNED
+            )
         if brief:
             step['deliverable_context'] = brief
 
@@ -652,8 +750,12 @@ def compile_deliverables(
     Image control) requires an explicit image deliverable. Saved plans are revalidated without
     it, so a later change in availability or a step the user turned off never invalidates
     an approved plan; the delivery notes report such gaps instead.
+
+    While planning, a ``workflow`` deliverable is accepted only when ``availability``
+    describes the kind, which it does only while workflow proposals are turned on.
     """
-    deliverables = _parse_deliverables(raw_deliverables)
+    workflow_allowed = availability is None or KIND_WORKFLOW in availability
+    deliverables = _parse_deliverables(raw_deliverables, workflow_allowed)
     final_step, final_is_existing = _final_step_id(final_response)
     strict = availability is not None
     for step in steps:
@@ -681,6 +783,12 @@ def compile_deliverables(
                     f'Step "{step["step_id"]}" delivers an undeclared deliverable. Declare it in "deliverables".',
                     rule='undeclared_step_deliverable',
                 )
+            if step['capability_id'] == CAPABILITY_WORKFLOW_PROPOSE:
+                raise DeliverableError(
+                    f'workflow_propose step "{step["step_id"]}" proposes a workflow that no deliverable '
+                    'declares. Declare it as an explicit workflow deliverable and list it in delivers.',
+                    rule='undeclared_workflow_output',
+                )
             step.pop('delivers')
         return [implicit_answer_deliverable()]
     lookup = {deliverable['id']: deliverable for deliverable in deliverables}
@@ -704,6 +812,11 @@ def compile_deliverables(
             _check_producer(step, deliverable, final_step)
             delivering[identifier].append(step)
     for step in steps:
+        if step['capability_id'] == CAPABILITY_WORKFLOW_PROPOSE and len(step['delivers']) > 1:
+            raise DeliverableError(
+                f'workflow_propose step "{step["step_id"]}" proposes exactly one workflow. List one '
+                'workflow deliverable in its delivers.', rule='workflow_delivers_one',
+            )
         if not step['delivers']:
             if step['capability_id'] == CAPABILITY_RENDER_FILE:
                 raise DeliverableError(
@@ -717,12 +830,23 @@ def compile_deliverables(
                     'Declare it as an explicit image deliverable and list it in delivers.',
                     rule='undeclared_image_output',
                 )
+            if step['capability_id'] == CAPABILITY_WORKFLOW_PROPOSE:
+                raise DeliverableError(
+                    f'workflow_propose step "{step["step_id"]}" proposes a workflow that no deliverable '
+                    'declares. Declare it as an explicit workflow deliverable and list it in delivers.',
+                    rule='undeclared_workflow_output',
+                )
     planned_images = sum(
         1 for step in steps if step['capability_id'] == CAPABILITY_GENERATE_IMAGE and step.get('enabled', True)
     )
+    planned_workflows = sum(
+        1 for step in steps if step['capability_id'] == CAPABILITY_WORKFLOW_PROPOSE and step.get('enabled', True)
+    )
     for deliverable in deliverables:
         producers = delivering[deliverable['id']]
-        verdict = _verdict(availability, deliverable, planned_images=planned_images) if strict else None
+        verdict = _verdict(
+            availability, deliverable, planned_images=planned_images, planned_workflows=planned_workflows,
+        ) if strict else None
         if deliverable['status'] == STATUS_PLANNED:
             if verdict is not None:
                 raise DeliverableError(
@@ -877,6 +1001,15 @@ def compose_deliverable_guidance(step, images):
             f"The user asked for {entry['description']}, which is not available here: {entry['message']} "
             'Do not claim, promise, or apologize for it; a delivery note is added after the answer. '
             'Deliver the rest of the request as well as you can.'
+        )
+    proposals = [
+        entry for entry in brief if entry['relation'] == 'workflow_proposal' and entry.get('enabled', True)
+    ]
+    for entry in proposals:
+        lines.append(
+            f"A card after this answer proposes a workflow: {entry['description'].rstrip('.')}. Nothing is "
+            'created or scheduled until the user approves it on that card. Do not say the workflow was '
+            'created, scheduled, or turned on, and leave its details to the card.'
         )
     return ['\n'.join(lines)] if lines else []
 
@@ -1063,9 +1196,10 @@ def delivery_notes(plan, statuses, *, file_steps_with_outputs=()):
             continue
         description = _safe_markdown_text(deliverable.get('description'))
         if deliverable.get('status') == STATUS_UNAVAILABLE:
+            reason = deliverable.get('unavailable_reason')
             lines.append(
                 f"- Not available: {description}. "
-                f"{UNAVAILABLE_REASONS.get(deliverable.get('unavailable_reason'), '')}".rstrip()
+                f"{UNAVAILABLE_REASONS.get(reason) or WORKFLOW_UNAVAILABLE_REASONS.get(reason, '')}".rstrip()
             )
             continue
         producers = [step for step in steps.values() if deliverable['id'] in (step.get('delivers') or ())]
@@ -1078,6 +1212,13 @@ def delivery_notes(plan, statuses, *, file_steps_with_outputs=()):
                 f"- Not delivered: {description}. {item['delivered']} of {item['expected']} images "
                 'were generated.'
             )
+            continue
+        if deliverable.get('kind') == KIND_WORKFLOW:
+            # A prepared proposal, ready or not, is explained by its own card.
+            if any(
+                step.get('enabled', True) and statuses.get(step['step_id']) != 'completed' for step in producers
+            ):
+                lines.append(f'- Not delivered: {description}. The workflow proposal could not be prepared.')
             continue
         if deliverable.get('kind') == KIND_FILE:
             missing = [

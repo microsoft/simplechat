@@ -55,6 +55,7 @@ from functions_orchestration_schema import (
     validate_plan_document_source_kinds,
     validate_plan_requirements,
 )
+from functions_orchestration_workflow_context import workflow_planning_option, workflow_proposals_configured
 
 TURN_CONTEXT_FIELDS = (
     'conversation_id', 'turn_id', 'user_message', 'user_message_id',
@@ -62,7 +63,7 @@ TURN_CONTEXT_FIELDS = (
     'conversation_context', 'request_resolution', 'resolved_message',
     'planning_token_usage', 'prompt_selection', 'edit_user_urls',
     'reasoning_adjustments', 'memory_audience', 'memory_scope',
-    'planner_contract_version', 'result_aliases',
+    'planner_contract_version', 'result_aliases', 'time_zone', 'workflow_planning',
 )
 
 
@@ -328,6 +329,9 @@ def _revision_catalogs(
     caller = build_capability_request_context(
         user_id, identity, context.get('resolved_message') or context['user_message'],
         agents, actions, allowed_user_urls=revision_allowed_urls(context),
+        **workflow_planning_option(
+            context.get('workflow_planning') if workflow_proposals_configured(settings) else None,
+        ),
         **runtime_options,
     )
     caller['image_reference_documents'] = list(seeds.get('image_reference_documents') or [])
@@ -396,6 +400,7 @@ def validate_edited_plan(
             agent_names=[item['name'] for item in agents], actions=actions,
             contract_version=contract_version, existing_results=existing_results,
             composition_profiles=composition_profiles, export_catalog=admitted_catalog,
+            **workflow_planning_option(caller.get('workflow_planning')),
         )
         validate_plan_document_source_kinds(checked, {
             item['document_id']: item['source_kind']

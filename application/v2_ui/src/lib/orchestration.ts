@@ -303,8 +303,11 @@ export interface OrchestrationStep {
     delivers?: string[];
 }
 
-/** What a deliverable is: the chat answer, a downloadable file, an image, a chart or a diagram. */
-export type OrchestrationDeliverableKind = 'answer' | 'file' | 'image' | 'chart' | 'diagram';
+/**
+ * What a deliverable is: the chat answer, a downloadable file, an image, a chart, a diagram, or a
+ * proposed workflow the user approves on its own card (only when an administrator allows it).
+ */
+export type OrchestrationDeliverableKind = 'answer' | 'file' | 'image' | 'chart' | 'diagram' | 'workflow';
 
 /**
  * One thing the plan will deliver, from the plan's `deliverables`.
@@ -663,6 +666,11 @@ export interface OrchestrationPlanRequest extends OrchestrationSeeds {
     elicitation?: Elicitation;
     revision?: number;
     approval_mode?: ApprovalMode;
+    /**
+     * The browser's IANA time zone. The server validates it and uses it only for workflow
+     * proposals, whose calendar schedules default to it; an unknown zone falls back to UTC.
+     */
+    time_zone?: string;
     [key: string]: unknown;
 }
 

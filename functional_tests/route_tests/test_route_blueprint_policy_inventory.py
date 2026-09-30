@@ -2,13 +2,14 @@
 #!/usr/bin/env python3
 """
 Functional test for route blueprint policy inventory.
-Version: 0.261.185
+Version: 0.261.208
 Implemented in: 0.242.069
 Plan editor policy coverage: 0.261.102
 Selected-group context policy coverage: 0.261.126
 Group model endpoint policy coverage: 0.261.140
 Group directory policy coverage: 0.261.146
 Group membership policy coverage: 0.261.151
+Workflow proposal policy coverage: 0.261.207
 Workflow assistant policy coverage: 0.261.208
 
 This test ensures every SimpleChat route is assigned to a Blueprint-based
@@ -498,6 +499,26 @@ def test_plan_editor_routes_keep_the_orchestration_security_policy() -> None:
         assert {"swagger_route", "login_required", "user_required"} <= set(route.decorator_names)
 
 
+def test_workflow_proposal_routes_keep_the_orchestration_security_policy() -> None:
+    """Every workflow proposal decision stays on the authenticated orchestration Blueprint."""
+    prefix = "/api/v2/orchestration/runs/<run_id>/workflow-proposals"
+    expected = {
+        prefix: "orchestration_workflow_proposals",
+        f"{prefix}/<proposal_id>/accept": "orchestration_accept_workflow_proposal",
+        f"{prefix}/<proposal_id>/deny": "orchestration_deny_workflow_proposal",
+        f"{prefix}/<proposal_id>/draft": "orchestration_workflow_proposal_draft",
+    }
+    routes = {
+        route.path: route for route in iter_route_functions()
+        if route.file_name == "route_backend_orchestration.py" and route.path in expected
+    }
+    assert set(routes) == set(expected)
+    for path, route in routes.items():
+        assert route.function_name == expected[path]
+        assert route.route_target == "bp"
+        assert {"swagger_route", "login_required", "user_required"} <= set(route.decorator_names)
+
+
 def test_content_screening_routes_keep_authenticated_blueprint_guards() -> None:
     """Evidence and decisions never become public, even while enrollment is off."""
     routes = [
@@ -530,6 +551,7 @@ if __name__ == "__main__":
         test_explicit_app_route_exemptions_have_expected_security,
         test_public_routes_are_explicitly_listed,
         test_plan_editor_routes_keep_the_orchestration_security_policy,
+        test_workflow_proposal_routes_keep_the_orchestration_security_policy,
         test_content_screening_routes_keep_authenticated_blueprint_guards,
     ]
     results = []

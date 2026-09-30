@@ -4,7 +4,7 @@ title: "Chat interface controls"
 description: "Reference for every documented control in the SimpleChat chat interface."
 section: "Reference"
 audience: user
-version: "0.261.201"
+version: "0.261.207"
 ---
 
 ## How to use this reference
@@ -537,3 +537,29 @@ do not make a completed file unavailable.
 Restored access can return the original committed download on the next saved-status
 check without rendering again. A network or server failure during a status check
 keeps the last known progress and shows a refresh error, not a source-denial state.
+
+## Workflow proposals (V2 interface)
+
+Implemented in **0.261.207** (Refs: microsoft/simplechat#1547). When chat
+orchestration proposes a personal workflow, a **Proposed workflow** card follows
+the answer. The card is the only place a proposal appears: it isn't listed with
+the answer's files, and nothing is created until you choose. See
+[Create a workflow from chat]({{ '/guides/create-a-workflow/' | relative_url }}#create-a-workflow-from-chat).
+
+| Control | What it does | Why you would use it | Enabled by |
+| --- | --- | --- | --- |
+| Instructions | Expands a task to show, as plain text, the full instructions it's given on every run. | Check exactly what the workflow will do before you let it run on its own. | `enable_chat_orchestration`, `allow_user_workflows` and `enable_chat_orchestration_workflows`, in a conversation that's private to you |
+| Create & start | Creates the workflow and turns it on. | Start the recurring work when the card matches what you want. | Same as Instructions, while the proposal waits for a decision |
+| Create paused | Creates the workflow turned off. | Review or adjust it in Workflows before it runs. | Same as Create & start |
+| Create | Creates a manual workflow. It runs only when you start it from Workflows. | Keep a repeatable task ready without a schedule. | Same as Create & start, for a manual workflow |
+| Edit | Opens the proposal in the workflow editor. Save creates the workflow as edited. | Change the name, schedule, tasks or runner before anything is created. | Same as Create & start |
+| Deny | Declines the proposal after you confirm. Nothing is created. | Say you don't want this workflow. | Same as Instructions, until the proposal is decided or expires |
+| Create again | Creates the workflow again, paused, after you deleted it. | Bring back a workflow you removed, from the same proposal. | Same as Instructions, until the proposal expires |
+| Open workflow | Opens the created workflow in Workflows. | Run, edit or turn on the workflow the proposal created. | The workflow exists |
+| Check again | Reads the proposal's status again after automatic checking stops. | Confirm the result when creating the workflow takes longer than expected. | The proposal is still being created |
+| Try again | Reloads the proposals after a failed read. | Recover the card after a network or server error. | The proposals couldn't be loaded |
+
+While a proposal is being created, the card checks its status every few seconds
+for up to two minutes, and waits while the browser tab is hidden. When
+Microsoft 365 isn't connected for workflows, the card links to the connection in
+your profile, and while a run waits for Run as approval, it links to Approvals.

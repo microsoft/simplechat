@@ -1381,8 +1381,14 @@ class CatalogResolutionError(RuntimeError):
         self.code = code
 
 
-def enrich_planner_candidates(candidates, user_id, *, conversation_id, seeds=None):
-    """Use authorized source metadata, never display labels, to describe source kinds."""
+def enrich_planner_candidates(candidates, user_id, *, conversation_id, seeds=None, source_scopes=None):
+    """Use authorized source metadata, never display labels, to describe source kinds.
+
+    When ``source_scopes`` is a dict, it also receives each authorized document's owning scope
+    and file name (``{document_id: {'scope', 'scope_id', 'file_name'}}``) from the same current
+    authority check, for callers that need to name the document's workspace. The returned
+    candidates are unchanged either way.
+    """
     seeds = seeds or {}
     selected = set(seeds.get('document_ids') or [])
     if not candidates and not selected:
@@ -1483,6 +1489,13 @@ def enrich_planner_candidates(candidates, user_id, *, conversation_id, seeds=Non
             'A selected document could not be opened. Review your document selection.',
             code='selected_source_unavailable',
         )
+    if isinstance(source_scopes, dict):
+        for document_id, source in available.items():
+            source_scopes[document_id] = {
+                'scope': source.get('scope'),
+                'scope_id': source.get('scope_id'),
+                'file_name': source.get('file_name'),
+            }
     return [
         {
             **candidate,
@@ -1963,9 +1976,14 @@ def build_capability_request_context(
     user_id, identity, user_message, agent_catalog, action_catalog=None, *, allowed_user_urls=None,
     native_bridge_for_step=None, rendering_service=None,
     external_source_admission=None, external_source_authorizer=None, external_source_preflight=None,
-    capture_external_source_configuration=None,
+    capture_external_source_configuration=None, workflow_planning=None,
 ):
-    """Apply the same caller-specific capability gates to planning, revisions, and execution."""
+    """Apply the same caller-specific capability gates to planning, revisions, and execution.
+
+    ``workflow_planning`` is the server-built workflow proposal context stored with the turn.
+    It is added only when the caller has one, so a request without workflow proposals keeps
+    exactly the context it had before they existed.
+    """
     if native_bridge_for_step is not None and not callable(native_bridge_for_step):
         raise ValueError('A server native bridge factory is required.')
     if rendering_service is not None:
@@ -2007,6 +2025,8 @@ def build_capability_request_context(
         context['rendering_service'] = rendering_service
     if has_external_bindings:
         context.update(external_bindings)
+    if workflow_planning is not None:
+        context['workflow_planning'] = deepcopy(workflow_planning)
     return context
 
 

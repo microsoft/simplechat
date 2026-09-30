@@ -1040,6 +1040,33 @@ def _checked_blueprint(user_id, blueprint, handles, *, workflow_id, settings, us
     return payload, []
 
 
+def check_workflow_blueprint(blueprint, *, settings, handle_names=None):
+    """Check a blueprint against every draft rule that reads nothing, and return ``(blueprint, errors)``.
+
+    The rules are the closed schema, the task limit and the schedule, including the floor on how
+    often a workflow created from chat may run, and, when ``handle_names`` maps each handle kind
+    (``agents``, ``documents``, ``sources``) to the handles offered with the request, that every
+    handle the blueprint names is one of them. It returns a JSON round-tripped copy of a blueprint
+    that passes and ``[]``, or ``None`` and up to ten draft errors. It reads no storage, so a
+    planner can call it while it validates a plan; the quota, and whether each agent, document and
+    File Sync source is still available to the user, are checked by ``dry_run_workflow_blueprint``.
+    """
+    settings = _required_settings(settings)
+    prepared, errors = _prepare_blueprint(blueprint)
+    if errors:
+        return None, _finalize_errors(errors)
+    task_limit = min(BLUEPRINT_MAX_TASKS, get_workflow_max_tasks(settings))
+    if len(prepared['tasks']) > task_limit:
+        return None, [draft_error('too_many_tasks', ('tasks',), f'This workflow can have up to {task_limit} tasks.')]
+    errors = list(_schedule_errors(prepared['trigger'], settings))
+    if handle_names is not None:
+        names = {kind: set(handle_names.get(kind) or ()) for kind in BLUEPRINT_HANDLE_KINDS}
+        errors = [*_unknown_handle_errors(prepared, names), *errors]
+    if errors:
+        return None, _finalize_errors(errors)
+    return prepared, []
+
+
 def _blueprint_build_errors(exc):
     """Map a build failure after the draft checks passed, which is rare, to a draft error."""
     if isinstance(exc, WorkflowCadenceError):

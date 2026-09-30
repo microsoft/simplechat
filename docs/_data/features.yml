@@ -699,6 +699,7 @@ chat-orchestration:
   setting_keys:
     - enable_chat_orchestration
     - enable_chat_orchestration_actions
+    - enable_chat_orchestration_workflows
   reference:
     - title: "Orchestration settings"
       url: /admin/orchestration/

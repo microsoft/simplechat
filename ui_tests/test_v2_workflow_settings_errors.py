@@ -1,7 +1,7 @@
 # test_v2_workflow_settings_errors.py
 """
 UI tests for reviewed workflow settings errors, deleted File Sync sources and deleted workflows.
-Version: 0.261.149
+Version: 0.261.207
 Implemented in: 0.261.149
 
 These tests use the real V2 SPA bundle with the closed workflow fixture. The fixture validates both
@@ -11,8 +11,8 @@ server's 409. They cover:
 
 * a group File Sync source deleted after the editor opened: the reviewed 400 keeps the draft,
   the editor reloads the source list and marks the source, and removing it lets the save succeed;
-* the same deletion in a personal workflow: the draft is kept and the server's message is shown.
-  V2 does not author personal File Sync, so this is where the known limitation surfaces;
+* the same deletion in a personal workflow. Since 0.261.207 V2 authors personal File Sync, so
+  the personal list is reloaded and marks the source the same way;
 * a workflow deleted after the editor opened it: the 409 keeps the draft, says what to do, and
   neither recreates the workflow nor treats the editor as having lost access;
 * personal schedules checked before saving with the server's message;
@@ -109,13 +109,16 @@ def test_a_group_source_deleted_after_opening_keeps_the_draft_and_marks_the_sour
     assert body["description"] == "Edited while the share was removed."
 
 
-def test_a_personal_source_deleted_after_opening_keeps_the_draft(workflow_ui):
-    """Known limitation: V2 cannot remove a personal source, so the reviewed 400 is where it surfaces."""
+def test_a_personal_source_deleted_after_opening_keeps_the_draft_and_marks_the_source(workflow_ui):
+    """0.261.207: V2 authors personal File Sync, so the reloaded personal list marks the deleted source."""
     ui, page = workflow_ui, workflow_ui.page
     ui.personal_workflows[WORKFLOW_ID]["file_sync"] = copy.deepcopy(PERSONAL_MONITOR_FILE_SYNC)
     ui.open("/workspace/workflows")
     page.get_by_role("button", name="Edit Quarterly review workflow", exact=True).click()
+    home = source_checkbox(page, "Home share (Personal)")
+    expect(home).to_be_checked()
     labelled(page, "Description").first.fill("Edited after the personal share was removed.")
+    lists_before = len(source_requests(ui))
     ui.personal_file_sync_sources.clear()
 
     save(page)
@@ -124,8 +127,27 @@ def test_a_personal_source_deleted_after_opening_keeps_the_draft(workflow_ui):
     expect(edit_dialog(page)).to_be_visible()
     expect(labelled(page, "Description").first).to_have_value("Edited after the personal share was removed.")
     expect(page.get_by_text(ACCESS_LOST, exact=False)).to_have_count(0)
+    assert ui.settings_refusals == [("file_sync_source_unavailable", SOURCE_UNAVAILABLE)]
     assert not ui.workflow_writes
-    assert not source_requests(ui)
+    # The refusal's code alone reloads the personal list, which now marks the stored share.
+    expect(page.get_by_text("No longer available", exact=True)).to_be_visible()
+    assert len(source_requests(ui)) == lists_before + 1
+    expect(home).to_be_checked()
+
+    home.click()
+    expect(source_checkbox(page, "Home share (Personal)")).to_have_count(0)
+    expect(page.get_by_role("status").filter(
+        has_text="Select at least one File Sync source for this workflow.",
+    )).to_be_visible()
+    before_run_toggle(page).uncheck(force=True)
+    save(page)
+    expect(edit_dialog(page)).to_have_count(0)
+    body = workflow_post(ui).body
+    assert body["file_sync"] == {
+        "enabled": False, "wait_mode": "complete", "continue_mode": "changed", "use_changed_documents": True,
+        "sources": [],
+    }
+    assert body["description"] == "Edited after the personal share was removed."
 
 
 @pytest.mark.parametrize("scope", ["personal", "group"])

@@ -28,13 +28,11 @@ from functions_file_sync import (
     FILE_SYNC_SCOPE_PERSONAL,
     FILE_SYNC_SCOPE_PUBLIC,
     is_file_sync_enabled_for_group,
-    is_file_sync_enabled_for_public_workspace,
-    is_file_sync_enabled_for_user,
     list_file_sync_sources,
     sanitize_file_sync_source,
 )
 from functions_group import find_group_by_id, require_active_group
-from functions_public_workspaces import require_active_public_workspace
+from functions_workflow_file_sync_sources import collect_personal_workflow_file_sync_sources
 from functions_document_actions import DOCUMENT_ACTION_TYPE_ANALYZE, DOCUMENT_ACTION_TYPE_NONE, build_analyze_config
 from functions_thoughts import get_thoughts_for_message
 from functions_workflow_activity import build_workflow_activity_snapshot
@@ -751,37 +749,13 @@ def _serialize_workflow_file_sync_source(scope_type, scope_id, source):
 
 
 def _collect_workflow_file_sync_sources(user_id):
-    settings = get_settings()
-    user_info = _get_current_user_info_with_roles()
-    sources = []
-
-    if is_file_sync_enabled_for_user(settings, user_id, user_info.get('email'), user_info=user_info):
-        sources.extend(
-            _serialize_workflow_file_sync_source(FILE_SYNC_SCOPE_PERSONAL, user_id, source)
-            for source in list_file_sync_sources(FILE_SYNC_SCOPE_PERSONAL, user_id)
-        )
-
-    try:
-        group_id = require_active_group(user_id, allowed_roles=FILE_SYNC_MANAGER_ROLES)
-        if is_file_sync_enabled_for_group(settings, group_id, user_info=user_info):
-            sources.extend(
-                _serialize_workflow_file_sync_source(FILE_SYNC_SCOPE_GROUP, group_id, source)
-                for source in list_file_sync_sources(FILE_SYNC_SCOPE_GROUP, group_id)
-            )
-    except (LookupError, PermissionError, ValueError):
-        pass
-
-    try:
-        public_workspace_id, _, _ = require_active_public_workspace(user_id, allowed_roles=FILE_SYNC_MANAGER_ROLES)
-        if is_file_sync_enabled_for_public_workspace(settings, public_workspace_id, user_info=user_info):
-            sources.extend(
-                _serialize_workflow_file_sync_source(FILE_SYNC_SCOPE_PUBLIC, public_workspace_id, source)
-                for source in list_file_sync_sources(FILE_SYNC_SCOPE_PUBLIC, public_workspace_id)
-            )
-    except (LookupError, PermissionError, ValueError):
-        pass
-
-    return [source for source in sources if source.get('source_id')]
+    """Return ``(personal_file_sync_enabled, sources)``: the File Sync sources a personal workflow can use."""
+    return collect_personal_workflow_file_sync_sources(
+        user_id,
+        get_settings(),
+        _get_current_user_info_with_roles(),
+        serialize=_serialize_workflow_file_sync_source,
+    )
 
 
 def _group_workflow_file_sync_enabled(group_id, settings=None):
@@ -1774,7 +1748,8 @@ def register_route_backend_workflows(bp):
     def get_user_workflow_file_sync_sources():
         user_id = get_current_user_id()
         try:
-            return jsonify({'sources': _collect_workflow_file_sync_sources(user_id)})
+            file_sync_enabled, sources = _collect_workflow_file_sync_sources(user_id)
+            return jsonify({'sources': sources, 'file_sync_enabled': file_sync_enabled})
         except Exception as exc:
             log_event(
                 f'[WORKFLOW_ROUTES] Failed to load workflow File Sync sources: {exc}',
