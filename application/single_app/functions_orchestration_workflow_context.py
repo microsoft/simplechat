@@ -1,18 +1,19 @@
 # functions_orchestration_workflow_context.py
-"""Planning context for workflow proposals from chat orchestration.
+"""Planning context for workflow proposals and workflow runs from chat orchestration.
 
-Version: 0.261.207
+Version: 0.261.211
 
-Chat orchestration can propose a personal workflow (the ``workflow_propose`` capability). The
-planner writes a workflow blueprint that names agents, documents and File Sync sources by
-request-local handles such as ``agent-mail-helper-3f2a1c``. This module builds those handles from
-what the requesting user may use and keeps the map from each handle to its stored record on the
-server. The planner sees names, kinds and limits as bounded data, never record ids, task
-instructions or credentials.
+Chat orchestration can propose a personal workflow (the ``workflow_propose`` capability) and start
+one the user already has (the ``workflow_run`` capability). The planner writes a workflow
+blueprint, or names the workflow to start, by request-local handles such as
+``agent-mail-helper-3f2a1c``. This module builds those handles from what the requesting user may
+use and keeps the map from each handle to its stored record on the server. The planner sees names,
+kinds and limits as bounded data, never record ids, task instructions or credentials.
 
-Everything here reads and never writes. Nothing is read unless workflow proposals are configured,
-the user may create personal workflows, and the conversation is private to the requester, so a
-request without workflow proposals plans exactly as it did before they existed.
+Everything here reads and never writes. Nothing is read unless at least one of the two
+capabilities is configured, the user may use personal workflows, and the conversation is private
+to the requester. The two are independent: with only proposals on, a request plans exactly as it
+did before workflow runs existed, and with both off it plans as it did before either existed.
 """
 
 import hashlib
@@ -73,6 +74,8 @@ CATALOG_MIN_WORKFLOWS = 5
 CATALOG_MAX_AGENT_ACTIONS = 8
 CATALOG_MAX_CHARACTERS = 12000
 WORKFLOW_SCAN_LIMIT = 500
+# The shortest workflow name that counts as named by a request, so "Go" does not match every "go".
+WORKFLOW_NAME_MATCH_MIN_LENGTH = 3
 
 NAME_MAX_LENGTH = 80
 AGENT_DESCRIPTION_MAX_LENGTH = 200
@@ -706,7 +709,27 @@ def _workflow_source_keys(workflow):
     return keys
 
 
-def _workflow_entries(user_id, readers, taken):
+def _match_text(value):
+    """Casefolded text with whitespace runs collapsed, for finding a workflow's name in a request."""
+    if not isinstance(value, str):
+        return ''
+    return ' '.join(_TEXT_NOISE.sub(' ', unicodedata.normalize('NFKC', value)).split()).casefold()
+
+
+def _named_by(request_text):
+    """Return whether a workflow's whole name appears in ``request_text``, as a predicate."""
+    text = _match_text(request_text)
+
+    def named(workflow):
+        name = _match_text(workflow.get('name'))
+        if len(name) < WORKFLOW_NAME_MATCH_MIN_LENGTH or not text:
+            return False
+        return re.search(rf'(?<!\w){re.escape(name)}(?!\w)', text) is not None
+
+    return named
+
+
+def _workflow_entries(user_id, readers, taken, *, rank_for_runs=False, request_text=None):
     workflows = [
         workflow for workflow in readers['workflows'](user_id) or ()
         if isinstance(workflow, dict) and _record_id(workflow.get('id')) and workflow.get('deleting') is not True
@@ -714,6 +737,11 @@ def _workflow_entries(user_id, readers, taken):
     workflows.sort(
         key=lambda workflow: str(workflow.get('updated_at') or workflow.get('created_at') or ''), reverse=True,
     )
+    if rank_for_runs:
+        # Only the first CATALOG_MAX_WORKFLOWS can be started, so a workflow the request names comes
+        # first, then durable ones; the sort is stable, so each group stays newest first.
+        named = _named_by(request_text)
+        workflows.sort(key=lambda workflow: (not named(workflow), workflow.get('durable_execution') is not True))
     entries = []
     for workflow in workflows[:CATALOG_MAX_WORKFLOWS]:
         workflow_id = _record_id(workflow.get('id'))
@@ -765,14 +793,16 @@ def _log_context(message, level, **fields):
 
 
 def build_workflow_planning_context(settings, *, user_id, user_info, conversation, time_zone=None, now=None,
-                                    documents=(), readers=None):
-    """Build the server-only context the planner needs to propose a workflow for this turn.
+                                    documents=(), readers=None, request_text=None):
+    """Build the server-only context the planner needs to propose or start a workflow this turn.
 
-    Returns ``{'conversation_private', 'quota_reached'}`` and nothing else when proposals are off
-    for this user or the conversation is not private; nothing is read in that case. A user at the
-    per-user cap gets ``quota_reached: True`` and no catalogs. A failed read returns
-    ``context_unavailable: True``, which leaves proposals unavailable for the turn (it fails
-    closed). Otherwise the context also holds:
+    Returns ``{'conversation_private', 'quota_reached'}`` and nothing else when neither workflow
+    capability is open to this user or the conversation is not private; nothing is read in that
+    case.
+
+    For proposals, a user at the per-user cap gets ``quota_reached: True`` and no proposal
+    catalogs, and a failed read sets ``context_unavailable: True``; either leaves proposals
+    unavailable for the turn (they fail closed). Otherwise the context also holds:
 
     * ``time_zone`` and ``request_local_time``: the validated browser time zone (UTC when it is
       missing or unknown) and the current time there;
@@ -782,16 +812,77 @@ def build_workflow_planning_context(settings, *, user_id, user_info, conversatio
     * ``handles``, ``agent_capabilities`` and ``workflow_snapshots``: the server-side maps from
       each handle to its record, what each agent can do, and existing workflows' schedules.
 
+    When starting saved workflows is open to the user, the context also carries
+    ``workflow_runs: {'ready': True}`` and at least ``catalog.workflows`` and
+    ``handles.workflows``. The per-user cap limits proposals only, so a user at the cap, or one
+    without proposals, still gets the workflows. They are ranked for starting: a workflow whose
+    whole name appears in ``request_text`` comes first, then durable ones, each group newest
+    first. A failed workflows read leaves the marker off, so starting a workflow fails closed.
+
     ``readers`` replaces the storage reads, for tests.
     """
     settings = settings if isinstance(settings, dict) else {}
     user_info = user_info if isinstance(user_info, dict) else {}
     private = conversation_is_private(conversation, user_id)
     context = {'conversation_private': private, 'quota_reached': None}
-    if not user_id or workflow_planning_gate(settings, user_info.get('roles')) is not None or not private:
+    if not user_id or not private:
+        return context
+    proposals = workflow_planning_gate(settings, user_info.get('roles')) is None
+    runs = workflow_run_gate(settings, user_info.get('roles')) is None
+    if not proposals and not runs:
         return context
 
     readers = _readers(readers)
+    if proposals:
+        context = _proposal_planning_context(
+            settings, context, user_id=user_id, user_info=user_info, time_zone=time_zone, now=now,
+            documents=documents, readers=readers, rank_for_runs=runs, request_text=request_text,
+        )
+        if not runs:
+            return context
+        if workflow_planning_ready(context):
+            return {**context, 'workflow_runs': {'ready': True}}
+    return _with_run_catalog(context, user_id=user_id, readers=readers, request_text=request_text)
+
+
+def _with_run_catalog(context, *, user_id, readers, request_text):
+    """Add the workflows a plan may start to a context that has no ready proposal catalog.
+
+    Proposals may be off, unavailable to this user, at the per-user cap or unreadable; starting an
+    existing workflow needs only the workflows themselves. The proposal fields keep their meaning,
+    so proposals stay unavailable for the same reason. A failed read returns ``context`` unchanged,
+    without the marker, so starting a workflow fails closed.
+    """
+    started = time.monotonic()
+    try:
+        entries = _workflow_entries(user_id, readers, set(), rank_for_runs=True, request_text=request_text)
+    except Exception as exc:
+        _log_context(
+            'The workflows could not be read; starting a workflow is unavailable for this turn.',
+            logging.WARNING, reason=WORKFLOW_REASON_CONTEXT_UNAVAILABLE, error_type=type(exc).__name__,
+        )
+        return context
+    # _bounded_catalog trims ``entries`` in place, so the handle map matches the catalog.
+    workflows = _bounded_catalog({'workflows': entries, 'documents': [], 'sources': [], 'agents': []})['workflows']
+    _log_context(
+        'Workflow run planning context built.', logging.INFO,
+        workflow_count=len(workflows), duration_ms=int((time.monotonic() - started) * 1000),
+    )
+    return {
+        **context,
+        'catalog': {'workflows': workflows},
+        'handles': {'workflows': {item['entry']['handle']: item['record'] for item in entries}},
+        'workflow_runs': {'ready': True},
+    }
+
+
+def _proposal_planning_context(settings, context, *, user_id, user_info, time_zone, now, documents, readers,
+                               rank_for_runs, request_text):
+    """The proposal planning context: exactly what it was before workflow runs existed.
+
+    ``rank_for_runs`` orders the workflows catalog for starting a workflow, and is only set when
+    that is open to the user as well.
+    """
     started = time.monotonic()
     try:
         quota_limit = get_chat_orchestration_max_workflows_per_user(settings)
@@ -819,7 +910,9 @@ def build_workflow_planning_context(settings, *, user_id, user_info, conversatio
             'agents': _agent_entries(user_id, settings, readers, taken),
             'sources': _source_entries(user_id, settings, user_info, readers, taken),
             'documents': _document_entries(user_id, documents, taken),
-            'workflows': _workflow_entries(user_id, readers, taken),
+            'workflows': _workflow_entries(
+                user_id, readers, taken, rank_for_runs=rank_for_runs, request_text=request_text,
+            ),
         }
     except Exception as exc:
         _log_context(
@@ -905,6 +998,54 @@ def workflow_planner_projection(context):
         'limits': context.get('limits') or {},
         'catalog': context.get('catalog') or {},
     })
+
+
+def workflow_run_ready(context):
+    """Whether a stored planning context can support starting a saved workflow in this turn."""
+    if not isinstance(context, dict) or context.get('conversation_private') is not True:
+        return False
+    marker = context.get('workflow_runs')
+    catalog = context.get('catalog')
+    handles = context.get('handles')
+    return (
+        isinstance(marker, dict) and marker.get('ready') is True
+        and isinstance(catalog, dict) and isinstance(catalog.get('workflows'), list)
+        and isinstance(handles, dict) and isinstance(handles.get('workflows'), dict)
+    )
+
+
+def workflow_run_unavailable_reason(settings, request_context):
+    """Return None when this request may start a saved workflow, else a closed reason. Never raises.
+
+    Like ``workflow_planning_unavailable_reason``, but the per-user cap does not apply: it limits
+    workflows created from chat, not runs of workflows the user already has.
+    """
+    try:
+        request_context = request_context if isinstance(request_context, dict) else {}
+        reason = workflow_run_gate(settings, request_context.get('user_roles'))
+        if reason is not None:
+            return reason
+        planning = request_context.get('workflow_planning')
+        if not isinstance(planning, dict):
+            return WORKFLOW_REASON_CONTEXT_UNAVAILABLE
+        if planning.get('conversation_private') is not True:
+            return WORKFLOW_REASON_SHARED_CONVERSATION
+        if not workflow_run_ready(planning):
+            return WORKFLOW_REASON_CONTEXT_UNAVAILABLE
+        return None
+    except Exception as exc:
+        _log_context(
+            'Workflow run access could not be checked; starting a workflow is unavailable for this request.',
+            logging.WARNING, reason=WORKFLOW_REASON_CONTEXT_UNAVAILABLE, error_type=type(exc).__name__,
+        )
+        return WORKFLOW_REASON_CONTEXT_UNAVAILABLE
+
+
+def workflow_run_projection(context):
+    """What the planner may see to start a saved workflow: the handle-only workflows catalog."""
+    if not workflow_run_ready(context):
+        return None
+    return deepcopy({'catalog': {'workflows': context['catalog']['workflows']}})
 
 
 def workflow_answer_time_line(workflow_planning, time_zone, now=None):

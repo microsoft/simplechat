@@ -134,6 +134,7 @@ from functions_orchestration_workflow_context import (
     build_workflow_planning_context,
     refresh_workflow_planning_privacy,
     validated_request_time_zone,
+    workflow_planning_configured,
     workflow_planning_documents,
     workflow_planning_option,
     workflow_proposals_configured,
@@ -1226,14 +1227,14 @@ def _checkpoint_artifact_versions(artifacts, conversation_id, user_id):
 
 
 def _current_workflow_planning(record, user_id, settings, conversation_id=None):
-    """The turn's stored workflow proposal context, with its privacy read again now.
+    """The turn's stored workflow planning context, with its privacy read again now.
 
-    None when workflow proposals are off or the turn has no such context, so the run's capability
-    context is exactly what it was before workflow proposals existed. A conversation that became
-    shared since planning makes the proposal capability unavailable.
+    None when both workflow capabilities are off or the turn has no such context, so the run's
+    capability context is exactly what it was before workflow proposals existed. A conversation
+    that became shared since planning makes both workflow capabilities unavailable.
     """
     stored = record.get('workflow_planning')
-    if not workflow_proposals_configured(settings) or not isinstance(stored, dict):
+    if not workflow_planning_configured(settings) or not isinstance(stored, dict):
         return None
     conversation = _authorize_context_conversation(conversation_id or record['conversation_id'], user_id)
     return refresh_workflow_planning_privacy(stored, conversation, user_id)
@@ -2052,7 +2053,7 @@ def register_route_backend_orchestration(bp):
                     user_groups=seeds.get('active_group_ids') or None,
                 ) if planning_identity.get('user_enable_agents', True) else []
                 workflow_planning = None
-                if workflow_configured:
+                if workflow_planning_configured(settings):
                     workflow_planning = build_workflow_planning_context(
                         settings, user_id=user_id,
                         user_info={
@@ -2065,6 +2066,8 @@ def register_route_backend_orchestration(bp):
                         documents=workflow_planning_documents(
                             source_scopes, labels, seeds.get('document_ids'),
                         ),
+                        # Ranks a workflow the request names first when a plan may start one.
+                        request_text=f'{message}\n{effective_request}',
                     )
                     turn_context['workflow_planning'] = workflow_planning
 

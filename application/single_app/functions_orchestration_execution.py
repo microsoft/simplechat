@@ -169,6 +169,7 @@ from functions_orchestration_schema import (
     summarize_plan,
 )
 from functions_orchestration_workflow_context import (
+    workflow_planning_configured,
     workflow_planning_option,
     workflow_proposals_configured,
     workflow_run_options,
@@ -699,7 +700,9 @@ class HarnessExecution:
             raise
         self._preparation_stage = "capabilities"
         workflow_configured = workflow_proposals_configured(self.settings)
-        workflow_planning = self.record.get("workflow_planning") if workflow_configured else None
+        workflow_planning = (
+            self.record.get("workflow_planning") if workflow_planning_configured(self.settings) else None
+        )
         request_context = build_capability_request_context(
             user_id, identity, user_message, agents, actions, allowed_user_urls=allowed_urls,
             **workflow_planning_option(workflow_planning),
