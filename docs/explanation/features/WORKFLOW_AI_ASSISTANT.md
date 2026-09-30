@@ -275,8 +275,8 @@ Whatever the model emits, these are refused:
 - A task's `approval` (`ASSIST_FORBIDDEN_TASK_FIELDS`).
 - Anything outside `WORKFLOW_AUTHORED_FIELDS`, which covers sharing and ownership.
 - An ID that changes meaning: a task, reference or flow block ID reused for something else.
-- File Sync. There are no File Sync operations until Phase 4's personal File Sync authoring
-  lands, and a workflow triggered by File Sync keeps its trigger.
+- File Sync. There are no File Sync operations yet, and a workflow triggered by File Sync keeps
+  its trigger.
 - For each and If blocks. The model explains instead.
 
 The Python lists in `functions_workflow_assist_editor.py` are the server's own source of truth.
@@ -320,8 +320,9 @@ change that adds no new failure is returned with the `draft_has_errors` warning 
 sent back.
 
 The editor draft isn't the save payload, so the endpoint doesn't hand the draft to the dry run
-directly. It mirrors `workflowForSave` in Python for the personal scope, where `file_sync` isn't
-sent. Two test files keep the port honest:
+directly. It mirrors `workflowForSave` in Python for the personal scope. Since Phase 4 (#1547)
+that includes `workflowFileSyncForSave`: File Sync settings the author edited are sent as the
+editor sends them, and untouched ones aren't sent. Two test files keep the port honest:
 
 - `test_workflow_assist_dry_run_parity.py` checks that the projection is what the dry run accepts.
 - `test_workflow_assist_candidate_parity.py` produces 24 candidates in Python and replays each one
@@ -341,6 +342,10 @@ sent. Two test files keep the port honest:
   `\ufeff`, `\x1c` and `\x85`. The port must open, save and read every entry exactly as the
   editor does. The comparison uses `json.dumps(sort_keys=True)` of both sides, so `12` and `12.0`
   are different answers.
+- It also saves 11 File Sync drafts, among them untouched, new and edited ones with personal, group
+  and public sources, File Sync turned off with and without a File Sync trigger, and odd, unknown
+  or missing values. The port and the editor must save each one the same way. Both are also
+  checked against pinned answers, so the port is still tested when Node isn't installed.
 
 A whole number the editor would save reaches the dry run as an `int`, as it would through JSON.
 For example, `output_contract.expected_count` given as `"12"` or `12.0` is checked as `12`.
@@ -485,7 +490,7 @@ All tests use a scripted model. None calls a live model.
 | `test_workflow_assist_dry_run_parity.py` | The Python `workflowForSave` projection against Phase 2's dry run, including a whole `expected_count` given as `"12"` or `12.0`, which is checked and saved as an `int` |
 | `test_workflow_assist_limits_runtime.py` | The limiter (in flight, window, `Retry-After`, refunds, fail closed), the model parameters and provider errors, the runtime adapters, and a whole request against stores that fail on any write other than the caller's rate-limit document |
 | `test_workflow_assist_field_parity.py` | The Python field lists, violation messages and editor vocabularies against the V2 TypeScript, read as text |
-| `test_workflow_assist_candidate_parity.py` | 24 Python candidates replayed through the real V2 editor code under Node, and the type-strict corpus of numbers, whitespace and JSON literals. A table of known JavaScript answers also runs without Node. |
+| `test_workflow_assist_candidate_parity.py` | 24 Python candidates replayed through the real V2 editor code under Node, and the type-strict corpus of numbers, whitespace, JSON literals and File Sync saves. Tables of known JavaScript answers also run without Node. |
 | `route_tests/test_workflow_assist_policy.py` | The decorator order, the gates and their status codes, `is_workflow_assistant_enabled_for_user` and the V2 bootstrap flag built from it, and strict response serialization |
 
 The Node tests build the editor code with the V2 app's esbuild, and skip when
@@ -502,8 +507,10 @@ python -u -m pytest functional_tests/test_workflow_assist_scenarios.py -q
 
 - **Tags.** Workflow references hold documents, so a `#` tag is refused with `tags_unsupported`.
   3c's picker should offer documents only.
-- **File Sync.** There are no File Sync operations until Phase 4's personal File Sync authoring
-  lands. The Python `workflowForSave` port will need the personal File Sync fields then.
+- **File Sync operations.** Phase 4 (#1547) made personal File Sync editable, and the Python
+  `workflowForSave` port now saves an edited File Sync configuration as the editor does. The
+  assistant still has no File Sync operations and won't change a File Sync trigger. Adding them is
+  a follow-up.
 - **Structural flow edits.** For each and If blocks, and adding or moving tasks in a flow, aren't
   supported. The model explains instead.
 - **Build errors.** Some dry-run failures have no structured message, and reach the model only as
