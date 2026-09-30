@@ -121,6 +121,28 @@ The Azure CLI deployer defaults to Azure AI Search Standard S1 with standard Sem
 
 For a short-lived MVP or evaluation environment, you can edit the variables near the top of [deploy-simplechat.ps1](deploy-simplechat.ps1) to use `Serverless` Cosmos DB or `free` Azure AI Search/Semantic Ranker. Those settings are intentionally opt-in because Free Search and serverless Cosmos DB have limits that can surface as search, indexing, or quota problems under real usage.
 
+## Key Vault access and runtime identity
+
+Implemented in deployer version **1.0.32** (`deployers/version.txt`). This is the deployer portion of the application 0.261.125 fix (#1511), backported to Development.
+
+The permission step runs for both new and existing identities and vaults. For an RBAC vault, it grants **Key Vault Secrets Officer** (`b86a8fe4-44ce-4948-aee5-eccb2c155cd7`) at the **vault scope** to the App Service's **system-assigned** identity and the deployment's attached user-assigned identity. It does not grant this role to every identity attached to the app, the sign-in application, or unrelated principals.
+
+The script attaches both supported identities on new deployments and reruns. With the application's Key Vault client ID blank and no credential override, runtime uses the system-assigned identity. To select the attached user-assigned identity, enter that identity's **client ID** in the application's Key Vault configuration. IAM assignments use its **principal/object ID**, not its client ID. The Entra app registration used for sign-in and the administrator running the deployer are separate identities; their permissions do not authorize runtime secret writes.
+
+**Key Vault Secrets User** is insufficient: it permits reading secrets, but credential saves write them and removing a stored credential deletes it. Officer includes get/list/set/delete and other secret-management operations, but does not manage vault role assignments. In the legacy access-policy mode, the script adds **get/list/set/delete**, retaining existing secret permissions such as backup or recover and leaving key/certificate permissions and other principals' policies alone. It does not switch a vault's permission model.
+
+### Reruns and manual upgrades
+
+The RBAC reconciler first checks the exact vault, principal, and Officer role. An existing unconditional Officer assignment is reused regardless of its GUID, including a manual administrator fix. Missing assignments get stable, role-specific names; the old Secrets User assignment is not renamed, replaced, or deleted. A concurrently created matching assignment is accepted only after a successful metadata lookup confirms it. A conditional Officer assignment is not assumed to authorize all required secret operations; the script stops for administrator review instead of modifying it.
+
+Failures to read the vault, attach/resolve the managed identities, list/create grants, or update legacy policies terminate this permission flow rather than report success. Correct the missing deployment/IAM permissions, then rerun through your normal deployment process. No grant needs to be removed to make a rerun succeed. RBAC propagation and private-network/DNS access can still delay runtime access after the control-plane assignment succeeds.
+
+`upgrade-simplechat.ps1` only rolls out code and does **not** reconcile IAM. For a code-only upgrade from an older deployer, have an authorized administrator select the runtime identity under **App Service > Identity**, then add **Key Vault Secrets Officer** under the vault's **Access control (IAM)** at that vault scope. For an access-policy vault, add get/list/set/delete to that principal instead. Leave existing grants intact.
+
+**Test Key Vault connection** in **Admin Settings > Secrets** only lists secret properties in this release. A read-only list check is not evidence that settings can be saved.
+
+The offline [Key Vault deployer regression test](../../functional_tests/test_deployer_key_vault_secret_permissions.py) covers new/existing identity paths, both authorization modes, duplicate/manual grants, preservation of existing permissions, and command failures with mocked Azure CLI calls.
+
 ## Code-only upgrade flow
 
 For an existing Azure CLI deployment where infrastructure is unchanged, use `upgrade-simplechat.ps1` instead of rerunning the full deployer.

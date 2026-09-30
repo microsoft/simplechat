@@ -19,6 +19,12 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
     *   Existing deployments still storing the previous default, or a blank value, are upgraded automatically when settings load. Any other saved version is kept, and the APIM image generation API version is never changed because the gateway defines it.
     *   (Ref: `functions_settings.py`, `azure_openai_image_gen_api_version`, [Image Generation API Version Default Fix](fixes/IMAGE_GENERATION_API_VERSION_DEFAULT_FIX.md))
 
+*   **Deployers Grant The App Identity Key Vault Secrets Officer**
+    *   Fixed credential saves failing with `ForbiddenByRbac` when Key Vault secret storage is enabled on deployments created by the Bicep, Terraform, or Azure CLI deployers. The deployers gave the application identities **Key Vault Secrets User**, which can read secrets but cannot create, update, or delete the ones SimpleChat writes. **Test Key Vault connection** only lists secrets, so it passed and hid the problem.
+    *   The Bicep (container and native Python), Terraform, and Azure CLI deployers now grant **Key Vault Secrets Officer** at vault scope. On vaults that use access policies, the Azure CLI deployer adds get, list, set, and delete secret permissions instead. Existing Secrets User assignments are left in place, and Terraform stops tracking its old assignment without deleting it.
+    *   Existing environments pick up the new role on their next `azd provision`, Terraform apply, or Azure CLI deployer run; `azd deploy` does not change role assignments. Included in deployer version **1.0.32** as a backport of the deployer portion of [PR #1511](https://github.com/microsoft/simplechat/pull/1511).
+    *   (Ref: [PR #1587](https://github.com/microsoft/simplechat/pull/1587), `setPermissions.bicep`, `setNativeWebAppPermissions.bicep`, `deployers/terraform/main.tf`, `deploy-simplechat.ps1`, `test_deployer_key_vault_secret_permissions.py`)
+
 ### **(v0.261.046)**
 
 #### Bug Fixes
