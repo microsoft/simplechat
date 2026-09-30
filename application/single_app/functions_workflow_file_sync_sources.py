@@ -64,7 +64,7 @@ def collect_personal_workflow_file_sync_sources(user_id, settings, user_info, *,
     without an id are dropped.
     """
     user_info = user_info if isinstance(user_info, dict) else {}
-    read_user_settings = user_settings_reader or (lambda owner_id: functions_settings.get_user_settings(owner_id))
+    read_user_settings = user_settings_reader or functions_settings.get_user_settings
     user_settings = {}
 
     def active_workspace_id(key):
@@ -91,6 +91,8 @@ def collect_personal_workflow_file_sync_sources(user_id, settings, user_info, *,
                 for source in list_file_sync_sources(FILE_SYNC_SCOPE_GROUP, group_id)
             )
     except (LookupError, PermissionError, ValueError):
+        # No active group, a group that no longer exists, or one the user can't manage: its
+        # sources aren't offered, and the personal and public sources still are.
         pass
 
     try:
@@ -104,6 +106,7 @@ def collect_personal_workflow_file_sync_sources(user_id, settings, user_info, *,
                 for source in list_file_sync_sources(FILE_SYNC_SCOPE_PUBLIC, public_workspace_id)
             )
     except (LookupError, PermissionError, ValueError):
+        # The same rule for the active public workspace: skip it and keep the other sources.
         pass
 
     return personal_enabled, [source for source in sources if source.get('source_id')]

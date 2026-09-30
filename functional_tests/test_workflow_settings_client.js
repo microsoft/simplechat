@@ -51,7 +51,7 @@ beforeEach(() => {
             body: init.body === undefined ? undefined : JSON.parse(init.body),
         };
         requests.push(request);
-        return respond(request);
+        return respond();
     };
 });
 

@@ -29,8 +29,9 @@ from urllib.parse import parse_qs, unquote, urlsplit
 import pytest
 from playwright.sync_api import expect
 
-import test_v2_orchestration_plan_editor as editor_tests
 from test_v2_orchestration_plan_editor import (  # noqa: F401
+    HARNESS,
+    ORIGIN,
     connect_options,
     editor_assets,
     editor_browser,
@@ -43,8 +44,6 @@ import functions_workflow_schedules  # noqa: E402  (the server's own schedule ch
 
 
 pytestmark = pytest.mark.ui
-ORIGIN = editor_tests.ORIGIN
-HARNESS = editor_tests.HARNESS
 CONVERSATION = "proposal-chat"
 TURN = "proposal-turn"
 RUN_ID = "proposal-run-1"

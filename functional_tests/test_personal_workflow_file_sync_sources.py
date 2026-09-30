@@ -119,7 +119,7 @@ class CollectorHarness:
             "FILE_SYNC_MANAGER_ROLES": FILE_SYNC_MANAGER_ROLES,
             "FILE_SYNC_PERSONAL_APP_ROLE": PERSONAL_APP_ROLE,
             # Only the four settings the personal gate reads; the real configuration also needs Redis.
-            "get_file_sync_config": lambda settings: dict(settings),
+            "get_file_sync_config": dict,
             "find_public_workspace_by_id": lambda workspace_id: self.public_workspaces.get(workspace_id),
             "get_user_role_in_public_workspace": public_namespace["get_user_role_in_public_workspace"],
         }
