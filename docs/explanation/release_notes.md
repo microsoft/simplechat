@@ -18,7 +18,7 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
 *   **Directory Access Warning And Notification For Administrators**
     *   When Chat Orchestration is on and web search, linked pages, deep research, agents or actions are enabled, opening Admin Settings checks whether the application can read Microsoft Entra ID. If it can't, a warning under **Enable Chat Orchestration** names the affected sources and gives the portal steps and Azure CLI commands for this app registration, and **Check again** reruns the check after consent is granted. The **Web Search** card shows a shorter warning that links to it.
     *   The first refused read on each server each day also sends a **Directory access** notification to users with the Admin role, linked to these settings. Other instances don't add duplicates.
-    *   (Ref: `functions_orchestration_directory_readiness.py`, `route_frontend_admin_settings.py`, `static/js/admin/admin_orchestration_directory_access.js`, `templates/admin/_panes/chat-orchestration.html`, `templates/admin/_panes/web-research.html`, `functions_notifications.py`, [Orchestration settings](../admin/orchestration.md#retained-external-source-authorization))
+    *   (Ref: `functions_orchestration_directory_readiness.py`, `route_frontend_admin_settings.py`, `static/js/admin/admin_orchestration_directory_access.js`, `templates/admin/_panes/chat-orchestration.html`, `templates/admin/_panes/web-research.html`, `functions_notifications.py`, `test_admin_orchestration_directory_access_alert.py`, [Orchestration settings](../admin/orchestration.md#retained-external-source-authorization))
 
 ### **(v0.261.203)**
 

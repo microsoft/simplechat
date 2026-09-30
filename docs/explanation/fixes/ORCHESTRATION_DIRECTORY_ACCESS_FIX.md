@@ -164,9 +164,23 @@ Real-runtime seam tests in the existing harnesses cover the rest:
 - `test_orchestration_source_authority_runtime.py`: a refused saved wait is
   explained to the user.
 
+`ui_tests/test_admin_orchestration_directory_access_alert.py` renders the real
+Chat Orchestration and Web Search panes and runs the browser module in Chromium
+against a simulated check endpoint. It covers:
+
+- each warning, and that the Web Search card warns only when web search is
+  affected and the cause is known;
+- **Check again**, including its in-progress state and a failed retry;
+- a failed first check, which leaves the page unchanged;
+- values from the server, which are shown as text and never as markup;
+- the **See how to fix it** link, which opens the Chat Orchestration tab at the
+  warning;
+- both warnings fitting a 390-pixel-wide screen.
+
 Every Graph, MSAL, and storage call in these tests is simulated. To check that
 the tests catch regressions, 27 deliberate breakages were applied one at a time
-across the Python modules, the browser module, and the Entra initializer. Every
+across the Python modules, the browser module, and the Entra initializer, and
+21 more across the browser module and the two templates for the UI test. Every
 one was caught.
 
 ### Before and after
