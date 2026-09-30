@@ -2,8 +2,8 @@
 # test_v2_workflow_ask_ai_parity.py
 """
 Functional test for the round trip between the V2 editor's Ask AI tab and the AI workflow assistant.
-Version: 0.261.210
-Implemented in: 0.261.210
+Version: 0.261.211
+Implemented in: 0.261.211
 
 This test ensures that the requests the Ask AI tab builds are the requests the assistant accepts,
 and that the answers the assistant gives are the answers the tab applies. It runs the tab's real
@@ -280,7 +280,7 @@ def round_trip():
 
 
 def test_version_is_at_least_the_implementing_release():
-    assert_app_version_at_least("0.261.210")
+    assert_app_version_at_least("0.261.211")
 
 
 def test_the_proposal_draft_is_served_without_an_id():
