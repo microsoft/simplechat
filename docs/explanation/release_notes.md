@@ -37,7 +37,17 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
     *   While the workflow is being created, the card checks back every three seconds for up to two minutes, and waits while the tab is hidden. The plan labels the deliverable **Workflow proposal** and shows a prepared one as **Proposed**. The card is the only place the proposal appears; it's never listed with the answer's files.
     *   (Ref: `WorkflowProposalCard.tsx`, `workflowProposals.ts`, `orchestrationPlan.ts`, [Chat controls](../reference/chat-controls.md#workflow-proposals-v2-interface), [Create a workflow](../guides/create-a-workflow.md#create-a-workflow-from-chat))
 
-    ### **(v0.261.204)**
+### **(v0.261.205)**
+
+#### Bug Fixes
+
+*   **Workflow Flow Arrows Stay Drawn While The Page Updates**
+    *   The execution arrows in the V2 workflow editor's **Flow** surface disappeared whenever the editor re-rendered without changing the diagram: while saving, after a failed save, or while typing in a field outside the diagram. The read-only Flow view did the same on every runtime poll of a running workflow. The arrows usually came back once React Flow measured the blocks again, but a measurement that arrived between two re-renders could leave them missing, which also made the Flow save-failure UI test flaky.
+    *   The Flow canvas now calls the editor's latest handlers through stable wrappers and keeps each unchanged block's React Flow node between renders, so a re-render that doesn't change the diagram changes nothing on the canvas. A block that does change carries the size React Flow last measured, so its arrows stay drawn while it is measured again, and a block whose selection changes is measured again because its wider border moves its handles.
+    *   Selection, collapse, keyboard navigation, focus requests, dragged positions and change tracking behave as before.
+    *   (Ref: #1573, #1543, `WorkflowFlowCanvas.tsx`, `workflowFlowNodeReuse.ts`, [V2 Workflow Flow Canvas Stable Re-renders Fix](fixes/V2_WORKFLOW_FLOW_CANVAS_STABLE_RERENDERS_FIX.md))
+
+### **(v0.261.204)**
 
 #### User Interface Enhancements
 
