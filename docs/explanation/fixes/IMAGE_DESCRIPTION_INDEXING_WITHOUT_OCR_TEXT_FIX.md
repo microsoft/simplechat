@@ -1,8 +1,26 @@
 # Image Description Indexing Without OCR Text Fix (v0.261.047)
 
-Fixed in version: **0.261.047**
+Fixed in version: **0.261.047** (Development) and **0.261.210** (React V2)
 
 Issue: [#1583](https://github.com/microsoft/simplechat/issues/1583)
+
+## React V2
+
+The same fix ships on the React V2 branch in **0.261.210**, with these differences, because
+React V2 enforces model capabilities and embedding limits that Development does not:
+
+- The shared AI connection client helper finds the model and re-checks its chat capability
+  before resolving any Key Vault secret, as React V2 metadata extraction always did. A missing
+  model raises the same `LookupError`, and a disabled model is refused by the shared capability
+  check with "The selected model is not available for chat. Choose a compatible model."
+- Vision analysis re-checks image support against the resolved connection's model record. The
+  legacy GPT path keeps its existing capability checks.
+- React V2 refuses a chunk that is too large for a non-legacy embedding profile instead of
+  clamping it. When the appended vision block would push a page that fits over that limit, the
+  page's OCR text is embedded on its own, as before, and the stored chunk text still includes
+  the block.
+- V2 chat shows what was extracted from an uploaded image. See
+  [V2 Chat Upload Extraction and Image Card Fix](V2_CHAT_UPLOAD_EXTRACTION_AND_IMAGE_CARD_FIX.md).
 
 ## Issue Description
 

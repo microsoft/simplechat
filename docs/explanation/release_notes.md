@@ -2,6 +2,35 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.210)**
+
+#### Bug Fixes
+
+*   **Images Without OCR Text Are Now Indexed From Their Vision Description**
+    *   Fixed text-free images, such as a photo of an empty room, ending with no search chunk, no title and nothing chat could use, even though the AI vision model had described them. When OCR finds no text, the vision description is now indexed as the image's chunk, so the image is searchable and final metadata extraction runs as usual.
+    *   Document Intelligence Layout output that is only page-number or page-break annotations, such as a stray `<!-- PageNumber="J" -->` read from floor tape, no longer counts as image text. Header and footer text still does. Failed or empty vision analyses are never indexed.
+    *   Image chunks are now embedded from the same text that is stored, including the vision description, instead of from the OCR text alone. When the description would push a page past the limit of a non-legacy embedding model, the page's OCR text is embedded on its own, as before.
+    *   With Enhanced extraction, a standalone image that the Content Understanding document analyzer returns nothing for is now described by the Content Understanding image analyzer before falling back to Document Intelligence Layout, for workspace uploads and images uploaded straight into a chat. The image analyzer's `Summary` field is now read, which also replaces the `![image](pages/1)` placeholder that images embedded in DOCX and PPTX files were indexed with.
+    *   The multi-modal vision model is now called through the AI connection that hosts it, instead of always using the primary GPT connection, which returned 404 for a model deployed on another connection. The model's chat and image support are checked on that connection first, and Test Vision Analysis uses the same connection as ingestion.
+    *   (Ref: #1583, `functions_documents.py`, `functions_content.py`, `functions_content_understanding.py`, `functions_model_endpoint_types.py`, `route_backend_settings.py`, `route_frontend_chats.py`, [Image Description Indexing Without OCR Text Fix](fixes/IMAGE_DESCRIPTION_INDEXING_WITHOUT_OCR_TEXT_FIX.md))
+
+*   **Uploaded Files Show What Was Extracted Instead Of "File content not found"**
+    *   Opening a file uploaded into a conversation, including an image, showed "File content not found" whenever the upload was stored as a workspace document. The preview now shows what ingestion extracted: the engine that read the file and why, the AI vision analysis, the title and summary, and the indexed text that search and chat read. It explains when a file is still processing or when nothing from it was indexed. The classic file popup shows the same text.
+    *   A cited image in V2 chat now shows **What was extracted from this image**, the passage the assistant was given, beneath the picture.
+    *   (Ref: #1583, `route_backend_documents.py`, `functions_chat_upload_extraction.py`, `ChatUploadExtraction.tsx`, `ChatFilePreview.tsx`, `EnhancedCitationViewer.tsx`, [V2 Chat Upload Extraction and Image Card Fix](fixes/V2_CHAT_UPLOAD_EXTRACTION_AND_IMAGE_CARD_FIX.md))
+
+*   **Image Generation Uses The gpt-image API Version By Default**
+    *   The default Azure OpenAI image generation API version is now `2025-04-01-preview`, the newest dated Azure OpenAI API version and the one documented for gpt-image-1, gpt-image-1.5 and gpt-image-2. The previous `2024-12-01-preview` default predates gpt-image support.
+    *   A saved legacy image version or AI connection image profile still holding the previous default is upgraded automatically when settings load, and a blank legacy value is filled in. Any other saved version is kept, and APIM image versions are never changed because the gateway defines them. Unmigrated legacy Images settings with no version also use the new default.
+    *   (Ref: `functions_settings.py`, `functions_image_api_route.py`, `admin_settings_fields.py`, `azure_openai_image_gen_api_version`, [Image Generation API Version Default Fix](fixes/IMAGE_GENERATION_API_VERSION_DEFAULT_FIX.md))
+
+#### User Interface Enhancements
+
+*   **Uploaded Images Match Generated Images In V2 Chat**
+    *   An image uploaded into a V2 conversation is now drawn at its own size in a compact card, the same way a generated image is, instead of filling the message column with the picture letterboxed.
+    *   Its actions appear when you point at or tab to the image. **Show sources** opens a panel with what was extracted from it, alongside **Message details**, **Open file preview**, **Use as reference** and **Edit**.
+    *   (Ref: #1583, `MessageList.tsx`, `MessageInspector.tsx`, `MessageActions.tsx`, [Chat controls](../reference/chat-controls.md))
+
 ### **(v0.261.209)**
 
 #### Bug Fixes
