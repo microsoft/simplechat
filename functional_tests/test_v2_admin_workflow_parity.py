@@ -56,6 +56,7 @@ ATTR_RE = re.compile(r'(\w[\w-]*)="([^"]*)"')
 EXPECTED_DEPENDENCIES = {
     "require_member_of_workflow_user": "allow_user_workflows",
     "enable_workflow_ai_assistant": "allow_user_workflows",
+    "enable_chat_workflow_results": "allow_user_workflows",
     "require_group_assignment_for_group_workflows": "allow_group_workflows",
     "group_workflow_allowed_group_ids": "require_group_assignment_for_group_workflows",
 }

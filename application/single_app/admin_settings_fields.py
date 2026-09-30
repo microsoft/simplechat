@@ -4038,6 +4038,20 @@ ADMIN_SETTINGS_FIELDS = {
             "depends_on": {"key": "allow_user_workflows", "equals": True},
         },
         {
+            "key": "enable_chat_workflow_results",
+            "type": "switch",
+            "label": "Use Workflow Results In Chat",
+            "help": (
+                "Users can ask chat about the stored result of one of their own "
+                "finished workflow runs, from the run history or a workflow alert. "
+                "The workflow is not re-run, and the answer is only available in "
+                "the user's private chats. Answers stop showing once the run is "
+                "deleted or the user loses access to its sources."
+            ),
+            "default": False,
+            "depends_on": {"key": "allow_user_workflows", "equals": True},
+        },
+        {
             "key": "allow_group_workflows",
             "type": "switch",
             "label": "Enable Group Workflows",

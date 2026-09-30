@@ -1168,6 +1168,14 @@ def is_workflow_assistant_enabled_for_user(settings, user_roles=None):
     return source_settings.get('enable_workflow_ai_assistant', False) is True
 
 
+def is_chat_workflow_results_enabled_for_user(settings, user_roles=None):
+    """Return True when a user may ask about their personal workflow results in chat."""
+    source_settings = settings or {}
+    if source_settings.get('enable_chat_workflow_results', False) is not True:
+        return False
+    return is_user_workflows_enabled_for_user(source_settings, user_roles=user_roles)
+
+
 def _authorize_user_settings_access(user_id, operation, allow_cross_user=False):
     """Authorize user-settings access for the current request context."""
     normalized_user_id = str(user_id or '').strip()
@@ -1449,6 +1457,8 @@ def get_settings(use_cosmos=False, include_source=False):
         'require_member_of_workflow_user': False,
         # The AI workflow assistant in the V2 editor. It only applies where personal workflows do.
         'enable_workflow_ai_assistant': True,
+        # Lets users ask chat about the stored results of their personal workflow runs.
+        'enable_chat_workflow_results': False,
         'workflow_max_tasks': 50,
         'workflow_max_loop_items': WORKFLOW_LOOP_ITEMS_DEFAULT,
         'workflow_max_repeat_iterations': WORKFLOW_REPEAT_ITERATIONS_DEFAULT,
@@ -2188,6 +2198,12 @@ def update_settings(new_settings, *, expected_etag=None):
             'workflow_max_repeat_iterations': validate_workflow_max_repeat_iterations(
                 new_settings['workflow_max_repeat_iterations']
             ),
+        }
+    if isinstance(new_settings, dict) and 'enable_chat_workflow_results' in new_settings:
+        # Only a real boolean true lets chat read workflow results; a string or number saves as off.
+        new_settings = {
+            **new_settings,
+            'enable_chat_workflow_results': new_settings['enable_chat_workflow_results'] is True,
         }
     if isinstance(new_settings, dict) and 'workflow_min_schedule_interval_seconds' in new_settings:
         new_settings = {
@@ -3886,6 +3902,21 @@ def workflow_assistant_required(f):
         return jsonify({
             'error': 'The AI workflow assistant is not available.',
             'code': 'workflow_assistant_disabled',
+        }), 403
+    return wrapper
+
+
+def workflow_results_required(f):
+    """Allow the route only when workflow results in chat are available to the signed-in user."""
+    @wraps(f)
+    def wrapper(*args, **kwargs):
+        settings = get_settings()
+        user_roles = (session.get('user') or {}).get('roles', [])
+        if is_chat_workflow_results_enabled_for_user(settings, user_roles=user_roles):
+            return f(*args, **kwargs)
+        return jsonify({
+            'error': 'Workflow results in chat are not available.',
+            'code': 'workflow_results_disabled',
         }), 403
     return wrapper
 
