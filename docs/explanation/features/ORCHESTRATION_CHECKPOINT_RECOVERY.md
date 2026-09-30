@@ -560,6 +560,13 @@ exception remains server-side in `__cause__`.
 | `ownership_lost` | The current execution no longer owns its guarded writes. |
 | `result_unavailable` | Retained source access was denied, integrity or ownership validation failed, or a definite screening hold applies; no preview may replace it. |
 
+Since **0.261.209**, external-source identity comes from the signed-in session,
+which a scheduler continuation doesn't have. A step, saved wait or final-answer
+check refused only for that reason (`external_identity_session_unavailable`)
+reports the step failure `external_session_required`, which asks the user to
+send the request again, instead of `result_unavailable`. The refusal code is
+logged as `sc_authority_reason`; it is never shown to the user.
+
 Render authorization must translate `checkpoint_storage_unavailable` to its
 storage/service-unavailable path rather than returning `False` or raising an
 access-denied error. Unexpected exceptions from current-identity callbacks must

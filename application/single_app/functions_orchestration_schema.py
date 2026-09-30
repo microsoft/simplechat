@@ -33,7 +33,8 @@ Two contracts live here:
     render through the very same card. Our own paging lives in a sibling ``ui_hints``
     field rather than inside the schema, which keeps the schema itself MCP-clean.
 
-Version: 0.261.141
+Version: 0.261.209
+Missing signed-in session reported as its own step failure in: 0.261.209
 """
 
 import hashlib
@@ -65,8 +66,8 @@ from functions_orchestration_registry import (
     resolve_available_capability_ids,
 )
 from functions_orchestration_result_contracts import (
-    IMAGE_ASSET_KIND, InputBinding, InputSpec, OutputSpec, RecordColumn, ResultContractError,
-    StepBindings, TaskResult, canonical_bytes, output_name, validate_input_bindings,
+    EXTERNAL_SESSION_UNAVAILABLE_REASON, IMAGE_ASSET_KIND, InputBinding, InputSpec, OutputSpec, RecordColumn,
+    ResultContractError, StepBindings, TaskResult, canonical_bytes, output_name, validate_input_bindings,
 )
 from functions_orchestration_deliverables import DeliverableError, compile_deliverables
 
@@ -1274,6 +1275,11 @@ FAILURE_MESSAGES = {
     'analysis_result_not_saved': 'The analysis completed, but its final data could not be saved for reuse.',
     'analysis_input_too_large': 'The complete saved analysis exceeds the selected model input budget. No data was truncated or re-analyzed. Select a larger model or use a supported complete-record reader.',
     'result_unavailable': 'A required retained result is unavailable or changed. No preview was substituted.',
+    'external_session_required': (
+        'This step continued in the background, where your sign-in is not available to confirm '
+        'access to web search, web pages, deep research, agents or actions. Send the request '
+        'again to use them.'
+    ),
     'result_invalid': 'The operation did not produce the complete named results declared by the plan.',
     'result_input_too_large': 'The complete named inputs exceed the selected model budget. No input was truncated. Use a larger model or revise the plan.',
     'result_not_ready': 'Required computation is still pending. Its result is not ready to consume.',
@@ -1343,6 +1349,20 @@ def failure_from_exception(exc, *, answering=False, _depth=0):
     if cause is not None and cause is not exc and _depth < 3:
         return failure_from_exception(cause, answering=answering, _depth=_depth + 1)
     return build_failure('model_failed' if answering else 'step_failed')
+
+
+def access_failure(exc, *, _depth=0):
+    """Explain a refused retained source, naming a missing signed-in session when that was why.
+
+    Only the refusal's stable reason code is read, never exception text.
+    """
+    for reason in (getattr(exc, 'authority_reason', None), getattr(exc, 'code', None)):
+        if type(reason) is str and reason == EXTERNAL_SESSION_UNAVAILABLE_REASON:
+            return build_failure('external_session_required')
+    cause = getattr(exc, '__cause__', None)
+    if cause is not None and cause is not exc and _depth < 3:
+        return access_failure(cause, _depth=_depth + 1)
+    return build_failure('result_unavailable')
 
 
 # Failures one bounded retry of a read-only step could plausibly outlast. Configuration,

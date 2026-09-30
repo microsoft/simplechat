@@ -1,9 +1,10 @@
 # test_orchestration_external_preflight_adapter.py
 """Strict invocation authorization and acquisition support for all five v2 adapters.
 
-Version: 0.261.129
+Version: 0.261.209
 Implemented in: 0.261.127
 Early acquisition-support regressions implemented in: 0.261.129
+Missing signed-in session refusal reason implemented in: 0.261.209
 
 The auth-only runtime hook invokes the real provider before capture or engine
 setup. Capture separately invokes the real combined acquisition guard. The
@@ -288,6 +289,27 @@ def test_real_current_authority_overrides_stale_context_before_effects(authorize
     with pytest.raises(PermissionError) as caught:
         execute(state)
     assert caught.value.code == "result_unavailable" and caught.value.retryable is False
+    state.preflight.assert_called_once()
+    state.acquisition.assert_not_called()
+    state.validator.assert_not_called()
+    state.capture.assert_not_called()
+    assert_no_effects(state)
+
+
+def test_missing_signed_in_session_keeps_only_its_reason_before_effects(authorized_runtime):
+    # A background continuation has no signed-in session to supply the user's roles.
+    state = authorized_runtime
+    results = importlib.import_module("functions_orchestration_results")
+    reason = "external_identity_session_unavailable"
+    failure = results.ResultUnavailableError(reason)
+    failure.private_detail = "PRIVATE_SESSION_DETAIL"
+    state.provider.read_identity = Mock(side_effect=failure)
+    with pytest.raises(PermissionError) as caught:
+        execute(state)
+    assert caught.value.code == "result_unavailable" and caught.value.retryable is False
+    assert caught.value.authority_reason == reason
+    assert caught.value is not failure and not hasattr(caught.value, "private_detail")
+    assert caught.value.__context__ is None and caught.value.__cause__ is None
     state.preflight.assert_called_once()
     state.acquisition.assert_not_called()
     state.validator.assert_not_called()

@@ -19,6 +19,9 @@ EXTERNAL_SOURCE_VERSION = "orchestration-external-source-v1"
 EXTERNAL_LINEAGE_VERSION = "orchestration-lineage-v2"
 EXTERNAL_SOURCE_TYPES = frozenset({"web", "url", "deep_research", "agent", "action", "fact_memory"})
 MAX_EXTERNAL_SOURCES = 64
+# Why current access to external sources was refused when no signed-in session can supply
+# the actor's roles, for example in a background continuation.
+EXTERNAL_SESSION_UNAVAILABLE_REASON = "external_identity_session_unavailable"
 # A generated image kept for the answer and for files. The retained value describes the
 # image; its bytes stay in the conversation's image message and are read only by the
 # server-owned image resolver after checking this digest.

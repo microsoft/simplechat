@@ -2,6 +2,17 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.209)**
+
+#### Bug Fixes
+
+*   **Orchestrated Web Search And Deep Research Access**
+    *   In V2 chat, orchestrated web search, linked-page and deep research steps failed with "A required retained result is unavailable or changed." Orchestration looked up each user's app roles in Microsoft Graph on every call, which needs the `Directory.Read.All` application permission that deployments don't grant by default. Classic chat never makes that call.
+    *   Orchestration now trusts the app roles in the signed-in session, as classic chat does. Each access still rechecks conversation ownership and Control Center access restrictions. No Graph permission, deployer change or setting is needed, and a `Directory.Read.All` grant made only for orchestration can be revoked.
+    *   Orchestrated deep research also refused to start whenever query planning or linked-page planning was on, which is the default. Both planners now run within the existing Knowledge limits, each planner request still follows a fresh attestation of the planner model, and a planning-setting change during a run stops the step.
+    *   A step that continues in the background, where there is no signed-in session, now says so and asks the user to send the request again instead of showing the generic message. Step, saved-wait, finalization and content-preparation failure events log the refusal code as `sc_authority_reason`.
+    *   (Ref: #1509, `functions_orchestration_external_identity.py`, `functions_orchestration_bootstrap.py`, `functions_orchestration_external_configuration.py`, `functions_source_review.py`, `access_failure`, [Orchestration Web Search and Deep Research Access Fix](fixes/ORCHESTRATION_SESSION_IDENTITY_FIX.md))
+
 ### **(v0.261.208)**
 
 #### New Features

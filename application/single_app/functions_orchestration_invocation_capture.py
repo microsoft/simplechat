@@ -1,7 +1,9 @@
 # functions_orchestration_invocation_capture.py
 """Private invocation-capture state, independent of application initialization.
 
-Version: 0.261.127
+Version: 0.261.209
+Implemented in: 0.261.127
+Denial reason code carried on refused sources in: 0.261.209
 
 The server supplies an already producer-bound callback. SDKs and tool loops may
 catch exceptions, so a refused capture remains sticky until the owning
@@ -11,11 +13,20 @@ retained here.
 
 from copy import deepcopy
 import inspect
+import re
 from threading import RLock
 from typing import NoReturn
 
 from content_screening.contracts import DocumentHeldError
 from functions_orchestration_result_contracts import ResultContractError
+
+
+# A refusal's stable application code, never exception text or an identifier.
+_AUTHORITY_REASON = re.compile(r"[a-z][a-z0-9_]{0,79}\Z")
+
+
+def _authority_reason(value):
+    return value if type(value) is str and _AUTHORITY_REASON.fullmatch(value) is not None else None
 
 
 class OrchestrationInvocationCaptureError(ResultContractError):
@@ -38,12 +49,17 @@ class OrchestrationInvocationControlError(RuntimeError):
 
 
 class OrchestrationInvocationDeniedError(PermissionError):
-    """An acquired source is denied, without retaining private authority details."""
+    """An acquired source is denied, without retaining private authority details.
+
+    ``authority_reason`` keeps only the refusal's stable snake_case code, such as
+    a missing signed-in session, so the owner can explain and diagnose the denial.
+    """
 
     code = "result_unavailable"
     retryable = False
 
-    def __init__(self):
+    def __init__(self, authority_reason=None):
+        self.authority_reason = _authority_reason(authority_reason)
         super().__init__("The acquired source is unavailable under the current access policy.")
 
 
@@ -122,6 +138,11 @@ class OrchestrationInvocationCapture:
                 self._failure_type = OrchestrationInvocationHeldError
             elif isinstance(error, PermissionError):
                 self._failure_type = OrchestrationInvocationDeniedError
+                self._failure_code = _authority_reason(
+                    getattr(error, "authority_reason", None)
+                    if isinstance(error, OrchestrationInvocationDeniedError)
+                    else getattr(error, "code", None)
+                )
 
     def fail(self, error) -> NoReturn:
         """Record an owned engine failure without retaining its private exception."""

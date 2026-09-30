@@ -1,22 +1,22 @@
 # functions_orchestration_bootstrap.py
 """Application-owned factories shared by web requests and scheduler continuations.
 
-Version: 0.261.140
+Version: 0.261.209
 
 Unlike the result/rendering services, this is an application composition root.
 Import it only after config has initialized the existing clients. Registering the
 artifact factory performs no I/O; each use rebuilds current actor/source access.
+External-source identity trusts the signed-in session's app roles, like classic
+chat, and makes no Microsoft Graph calls (0.261.209).
 """
 
 import hashlib
 import hmac
 from copy import deepcopy
-from urllib.parse import urlsplit
 
-import requests
+from flask import has_request_context
 
 import config
-import functions_authentication as authentication
 from agent_execution_context import capture_execution_identity
 from functions_generated_export_contracts import GeneratedFileExportRequest
 from functions_generated_export_registry import resolve_generated_file_export_format
@@ -94,7 +94,23 @@ def private_external_configuration_digest(value):
 
 
 def build_external_identity_reader(actor_user_id, actor_conversation_id, *, execution_check=None):
-    """Create a lazy current-directory reader, never a saved-session role fallback."""
+    """Create a lazy current-access reader over the signed-in session's app roles.
+
+    Like classic chat, roles come from the signed-in session. They are captured
+    now, while the request context exists, because execution continues on a
+    worker thread. Without a matching session, as in a scheduler continuation,
+    every external-source read fails closed instead of restoring saved roles.
+    Conversation ownership and Control Center restrictions are still point-read
+    on each access. Nothing calls Microsoft Graph or persists roles.
+    """
+    session_roles, session_email = None, None
+    if has_request_context():
+        try:
+            identity = capture_execution_identity(actor_user_id, actor_conversation_id)
+        except PermissionError:
+            identity = None
+        if identity is not None:
+            session_roles, session_email = identity.roles, identity.email
     reader = None
     timeout = 10.0
 
@@ -107,7 +123,8 @@ def build_external_identity_reader(actor_user_id, actor_conversation_id, *, exec
             raise ResultUnavailableError("external_identity_access_denied") from None
 
     def read_user_settings(user_id):
-        authorize_conversation(user_id=user_id, conversation_id=actor_conversation_id)
+        if user_id != actor_user_id:
+            raise ResultUnavailableError("external_identity_access_denied")
         return _document_response(config.cosmos_user_settings_container.read_item(
             item=user_id, partition_key=user_id,
             connection_timeout=timeout, read_timeout=timeout, retry_total=0,
@@ -118,50 +135,14 @@ def build_external_identity_reader(actor_user_id, actor_conversation_id, *, exec
         if user_id != actor_user_id or conversation_id != actor_conversation_id:
             raise ResultUnavailableError("external_identity_access_denied")
         if reader is None:
-            # Optional directory authorization is initialized only when external data is accessed.
-            from functions_orchestration_external_identity import (
-                ExternalIdentityServiceError,
-                GraphExternalIdentityReader,
-            )
+            # The reader is initialized only when external data is accessed.
+            from functions_orchestration_external_identity import SessionExternalIdentityReader
 
-            graph_base = authentication.get_graph_base_url()
-            graph_origin = urlsplit(graph_base)
-            graph_scope = f"{graph_origin.scheme}://{graph_origin.netloc}/.default"
-            app_client_id = authentication.CLIENT_ID
-            application = None
-
-            def get_access_token(scope):
-                nonlocal application
-                if scope != graph_scope or authentication.CLIENT_ID != app_client_id:
-                    raise ResultUnavailableError("external_identity_access_denied")
-                if application is None:
-                    application = authentication._build_msal_app(
-                        authority_override=authentication.get_graph_authority(), timeout=timeout,
-                    )
-                result = application.acquire_token_for_client(scopes=[scope])
-                if type(result) is not dict:
-                    raise ExternalIdentityServiceError("external_identity_response_invalid")
-                token = result.get("access_token")
-                if type(token) is str and token:
-                    return token
-                error = result.get("error")
-                if error in ("server_error", "temporarily_unavailable"):
-                    raise ExternalIdentityServiceError()
-                if error == "too_many_requests":
-                    raise ExternalIdentityServiceError("external_identity_throttled")
-                if error in (
-                    "invalid_client", "invalid_grant", "unauthorized_client", "invalid_scope",
-                    "access_denied", "consent_required", "interaction_required",
-                ):
-                    raise ResultUnavailableError("external_identity_access_denied")
-                raise ExternalIdentityServiceError("external_identity_response_invalid")
-
-            reader = GraphExternalIdentityReader(
+            reader = SessionExternalIdentityReader(
                 user_id=actor_user_id, conversation_id=actor_conversation_id,
-                app_client_id=app_client_id, graph_base_url=graph_base, graph_scope=graph_scope,
-                get_access_token=get_access_token, http_get=requests.get,
+                roles=session_roles, email=session_email,
                 authorize_conversation=authorize_conversation, read_user_settings=read_user_settings,
-                execution_check=execution_check, request_timeout=timeout,
+                execution_check=execution_check,
             )
         return reader(user_id=user_id, conversation_id=conversation_id)
 

@@ -1,7 +1,8 @@
 # functions_orchestration_composition.py
 """Explicit one-call content preparation from named authorized result readers.
 
-Version: 0.261.141
+Version: 0.261.209
+Refusals for a missing signed-in session reported as their own failure in: 0.261.209
 No retrieval, file-format inference, upload, publication, or implicit sibling inputs.
 
 Answer-writing steps receive saved memory, the resolved conversation references, the
@@ -42,8 +43,8 @@ from functions_orchestration_result_runtime import (
 )
 from functions_orchestration_results import MAX_VALUE_BYTES, NamedOutput, ResultUnavailableError
 from functions_orchestration_schema import (
-    STEP_STATUS_COMPLETED, STEP_STATUS_FAILED, STEP_STATUS_PARTIAL, build_failure, build_step_result,
-    failure_from_exception, safe_failure, step_input_specs, validate_inline_output_schema,
+    STEP_STATUS_COMPLETED, STEP_STATUS_FAILED, STEP_STATUS_PARTIAL, access_failure, build_failure,
+    build_step_result, failure_from_exception, safe_failure, step_input_specs, validate_inline_output_schema,
 )
 from functions_orchestration_visuals import (
     build_answer_visual_guidance, build_existing_charts_note, collect_run_charts,
@@ -516,12 +517,15 @@ def adapter_compose(step, context, *, settings, user_id, emit=None, cancel_reque
     except Exception as exc:
         raise_source_service_failure(exc)
         code = getattr(exc, 'code', '')
+        authority_reason = getattr(exc, 'authority_reason', None)
+        if type(authority_reason) is not str and isinstance(exc, ResultUnavailableError):
+            authority_reason = code
         if code == 'result_requires_streaming' or isinstance(exc, WorkflowContextBudgetError):
             failure = build_failure('result_input_too_large')
         elif isinstance(exc, OrchestrationMemoryError):
             failure = build_failure('context_unavailable')
         elif isinstance(exc, (ResultUnavailableError, PermissionError, ScreeningError)):
-            failure = build_failure('result_unavailable')
+            failure = access_failure(exc)
         elif isinstance(exc, (ResultContractError, ValueError)):
             failure = build_failure('result_invalid')
         else:
@@ -537,6 +541,7 @@ def adapter_compose(step, context, *, settings, user_id, emit=None, cancel_reque
                 'capability_id': step['capability_id'], 'error_type': type(exc).__name__,
                 'failure_code': failure['code'],
                 **({'execution_code': code} if type(code) is str and code else {}),
+                **({'authority_reason': authority_reason} if type(authority_reason) is str and authority_reason else {}),
             },
         )
         return build_step_result(

@@ -4,6 +4,11 @@
 `application/single_app/config.py`.
 Refs [#1509](https://github.com/microsoft/simplechat/issues/1509).
 
+**Updated in version: 0.261.209.** External-source identity now uses the app
+roles of the signed-in session, as classic chat does, instead of reading
+Microsoft Graph on every call. Deep research can use its query and link planners
+again. See the [session identity fix](../fixes/ORCHESTRATION_SESSION_IDENTITY_FIX.md).
+
 ## Purpose and scope
 
 An external Gather result is the content an authorized adapter actually returned,
@@ -31,7 +36,7 @@ The provider requires these owner-supplied callbacks:
 
 | Callback | Required result and boundary |
 | --- | --- |
-| `read_identity(*, user_id, conversation_id)` | A new `CurrentExternalSourceIdentity` from a **current** account/app-role check on every call. Missing identity or loss of the User/Admin role denies access. |
+| `read_identity(*, user_id, conversation_id)` | A new `CurrentExternalSourceIdentity` on every call. The application root supplies `SessionExternalIdentityReader`, which uses the signed-in session's app roles and point-reads conversation ownership and Control Center access on each call. No signed-in session, or no User/Admin role, denies access. |
 | `read_settings()` | Current normalized application settings, supplied by their owner. The provider never calls `get_settings()` or imports configuration to rediscover them. |
 | `read_conversation(id)` and `read_run(id)` | Current server records used by the existing result-access producer checks. The producer must belong to this actor/conversation and a recorded current-version plan. |
 | `read_configuration(source_type, *, producer, settings, source)` | An `ExternalSourceConfiguration` reconstructed from current configuration. `source` is the currently authorized agent/action record, or `None` for web/URL/deep research. Reads after restart must not require a live invocation-capture map. |
@@ -89,7 +94,7 @@ conversation ownership/audience and current capability policy. Agent/action
 calls require the original exact server `catalog_key`/`action_ref`, a fresh
 catalog, matching authoritative saved-step selection, and the real exact scoped
 resolver. Catalog membership or a same-name replacement is not sufficient.
-Known recorded audience changes are refused. Directory service failures and
+Known recorded audience changes are refused. Identity service failures and
 cancellation propagate distinctly rather than becoming denied or empty results.
 
 The parent composes the acquisition operation into the existing hook, with
@@ -164,86 +169,82 @@ Agent/action acquisition remains unavailable until its actual internal
 configuration proof is also supplied. Fact Memory retains its separate explicit
 scope/audience path; this method does not enable or implicitly read it.
 
-### Deterministic research acquisition profile
+### Research planner requests
 
-Captured research initially supports deterministic query and link selection.
-This avoids paying for search or page acquisition when later LLM planner request
-controls cannot be attested. Constructor `response_length`/`reasoning_effort`
-defaults do not prove the source-review planner's temperature/token variants,
-fallbacks, or negotiated reasoning controls.
+Before 0.261.209, captured research accepted only deterministic query and link
+selection. With the default Knowledge settings, where query planning and LLM
+link planning are both on, every orchestrated deep-research acquisition was
+refused with `external_configuration_research_profile_unsupported` before it
+started. The step then reported "A required retained result is unavailable or
+changed."
 
-`is_research_acquisition_profile_supported(settings)` in
-`functions_orchestration_external_configuration.py` is the shared pure support
-predicate. It uses the existing `get_source_review_config` normalization and
-clamping; it grants no authority and creates no invocation evidence. The exact
-captured Source Review boundary is:
+That restriction is removed. Orchestrated deep research runs the same query
+planner and link planner as manual Deep Research, within the existing Knowledge
+limits. The research engine calls `capture_research_planner_configuration`
+before query planning starts and again before and after every search and page
+fetch, so each planner request follows a fresh capture. Through the application
+root's `capture` wrapper, every call runs a fresh `preflight_gather_acquisition`
+and records `planner` / `resolved` evidence for the model client actually
+constructed for the run. A planner request therefore still happens only after
+current authorization and the actual planner deployment are attested. The
+planner's request controls, a response-token cap and temperature fallbacks,
+are fixed in code by `SOURCE_REVIEW_HARD_LIMITS` rather than read from settings.
 
-- Query planning is unsupported when `enable_web_search` is true, the normalized
-  `deep_research_max_search_queries_per_turn` exceeds one, and
-  `deep_research_enable_query_planning` is true. With one query, or no web
-  discovery, an enabled query-planning flag cannot initiate a planner request.
-- Link planning is unsupported when both `enable_deep_source_review` and
-  `source_review_enable_llm_planning` are true. A zero depth, one-page budget, or
-  an input that happens to contain no links does not relax this profile boundary.
+The research policy projected by `_fetch_policy` includes
+`enable_deep_source_review`, `source_review_enable_llm_planning`,
+`deep_research_enable_query_planning`, `deep_research_max_search_queries_per_turn`,
+and the depth and URL limits. `validate_acquisition` compares that policy from
+fresh current settings with the invocation's actual settings at every capture
+boundary. If an administrator changes a planner setting while a step runs, the
+next boundary raises `external_configuration_changed` before any further
+search, page fetch or planner request. Settings, tools and overrides are never
+rewritten to fit a profile.
 
-For example, multiple deterministic search queries require the existing query
-planning flag to be false; deterministic deep link selection requires the
-existing LLM link-planning flag to be false. No new settings or runtime flags are
-introduced. Omitted values retain the source-review normalizer's existing
-defaults, including enabled query/link planning and an eight-query limit.
-Existing boolean-string normalization is reused, so `"false"` is not treated as
-truthy. `enable_web_search` remains an exact boolean in the private configuration
-contract.
+With web discovery, a research result still needs the actual Foundry definition
+and run events under the same `deep_research` producer. The existing model,
+token, time, step and transport guards are unchanged. Workflow Source Review
+remains outside this orchestration capture path.
 
-`preflight_gather_acquisition` validates **both** fresh current settings and the
-actual invocation settings at every capture boundary, before current model or
-Foundry metadata work. Unsupported profiles raise `ResultUnavailableError` with
-code `external_configuration_research_profile_unsupported`. Settings, tools and
-overrides are never rewritten to fit the supported subset.
+`functional_tests/test_orchestration_research_pre_effect.py` covers the removed
+gate, planner profiles, current/actual mismatch, a change after preparation, and
+zero effects on refusal. `functional_tests/test_orchestration_research_capture.py`
+asserts that each planner request happens only after its attestation and with
+the attested deployment, and that the result is retained and recovered.
 
-A supported profile still needs genuine `planner` / `resolved` construction
-evidence and, with web discovery, the actual Foundry definition/run events under
-the same `deep_research` producer. Deterministic planning does not remove those
-proofs or the existing model, token, time, step and transport guards. It prevents
-LLM query/link planning, not the explicitly attested Foundry search itself.
+### Signed-in session roles
 
-This is a new-acquisition restriction, not a settings migration or a new
-retained-read policy. Authorization-only preflight, `attestor.current`, saved
-configuration comparison, and capture-free recovery remain unchanged.
-Workflow Source Review remains outside this orchestration capture path and
-retains its existing defaults and planner behavior. The regression matrix in
-`functional_tests/test_orchestration_research_pre_effect.py` covers normalized
-profiles, current/actual mismatch, changing current policy between events, zero
-effects, and deterministic acquisition/restart.
+Classic chat authorizes web search and deep research with the app roles in the
+user's signed-in session. Since 0.261.209, orchestration does the same. When the
+application root builds services for a request, `build_external_identity_reader`
+captures the session's `roles` and `preferred_username` while the Flask request
+context exists, because execution then continues on a worker thread. The roles
+are not saved on the run, and saved `RunContext.user_roles` are never restored.
 
-### Current role refresh is an integration requirement
+A role change in Entra ID therefore takes effect when the user's session picks
+up new claims, for example at the next sign-in, as it does for classic chat.
+There is no per-call directory lookup, and no Microsoft Graph application
+permission is needed.
 
-The existing orchestration route's `_request_identity()` captures session claims
-for a request/worker. It is **not** a background role refresher. Reconstructing
-`CurrentExternalSourceIdentity` from saved `RunContext.user_roles`, old login claims,
-or persisted tokens would violate this provider's callback contract.
+A scheduler continuation, such as recovery after a restart, has no signed-in
+session. Its reader has no roles, so every external-source read fails closed
+with the refusal code `external_identity_session_unavailable`. The step reports
+the `external_session_required` failure, which asks the user to send the request
+again. Document-backed and source-free results don't use this reader and are
+unaffected.
 
-The web and scheduler owners must supply a role/account reader that refreshes the
-authorization state at each access, including after restart. If that cannot be
-done, the callback must fail and the affected retained source remains unavailable.
-There is no permissive default or fallback to cached role claims.
-
-## Read-only Microsoft Graph identity reader
+## Signed-in session identity reader
 
 `application/single_app/functions_orchestration_external_identity.py` provides
-`GraphExternalIdentityReader`. It implements the provider's `read_identity`
-callback without trusting saved login roles or treating conversation ownership
-as an application role. Construction validates its inputs but performs no I/O.
+`SessionExternalIdentityReader`, the provider's `read_identity` callback.
+Construction validates its inputs but performs no I/O, and the module makes no
+directory calls.
 
 ```python
-reader = GraphExternalIdentityReader(
+reader = SessionExternalIdentityReader(
     user_id=user_id,
     conversation_id=conversation_id,
-    app_client_id=simplechat_app_client_id,
-    graph_base_url=graph_api_base,
-    graph_scope=graph_application_scope,
-    get_access_token=get_initialized_credential_token,
-    http_get=initialized_http_session.get,
+    roles=session_roles,
+    email=session_email,
     authorize_conversation=authorize_current_conversation,
     read_user_settings=read_current_user_settings,
     execution_check=check_current_execution,
@@ -253,108 +254,78 @@ identity = reader(user_id=user_id, conversation_id=conversation_id)
 ```
 
 Inject `reader` directly as `OrchestrationExternalSourceProvider(read_identity=...)`.
-The actor and configured application client ID must be canonical lowercase GUID
-strings. The conversation remains an exact, bounded application identifier.
-Calling a reader with a different actor or conversation fails before token or
-directory access.
+Calling a reader with a different actor or conversation fails with
+`external_identity_actor_mismatch` before any callback runs.
 
 ### Owner-supplied boundaries
 
 | Argument | Contract |
 | --- | --- |
-| `app_client_id` | The SimpleChat application's client ID whose service principal and role definitions establish authority. This is not a role display name or an arbitrary application selected by a caller. |
-| `graph_base_url` | Trusted HTTPS Graph API base including the configured version/path prefix, such as a national-cloud `/v1.0` base or an explicitly trusted Graph gateway. No endpoint is discovered from source content. |
-| `graph_scope` | The configured HTTPS application resource scope ending in `/.default`. There is no global-cloud default or change to interactive OAuth scopes. |
-| `get_access_token(scope)` | Returns the raw bearer **string**, for example the `access_token` from an owner-controlled MSAL application callback or `initialized_credential.get_token(scope).token`. Do not return a token-result dictionary or add a `Bearer ` prefix. The owner may cache tokens, never account or role results. |
-| `http_get(url, *, headers, timeout, allow_redirects, stream)` | An initialized, non-caching `requests.Session.get`-compatible transport returning a `requests.Response`. The reader supplies bounded timeouts, `allow_redirects=False`, and `stream=True`; the transport must honor these and retain normal TLS verification. |
-| `authorize_conversation(*, user_id, conversation_id)` | Revalidates the trusted requesting actor's current access and returns the owned server record with matching `id` and `user_id`. This must not merely echo caller-supplied IDs. It runs before directory requests and again before authority is returned. |
+| `roles` | The session's app-role values, captured while a request context exists, or `None` when no signed-in session matches the actor. The bootstrap uses `capture_execution_identity`, which returns roles only when the session's `oid` equals the actor. Values are deduplicated, and entries that aren't bounded identifiers are dropped. |
+| `email` | The session's `preferred_username`, or `None`. A value that isn't a bounded identifier, or that contains whitespace, becomes `None`. |
+| `authorize_conversation(*, user_id, conversation_id)` | Revalidates the actor's current access and returns the owned server record with matching `id` and `user_id`, not deleted. It must not merely echo caller-supplied IDs. |
 | `read_user_settings(user_id)` | A fresh, scoped, read-only document with matching `id` and a dictionary `settings` field. Missing records, failures, malformed data, and wrong actors deny access. |
-| `execution_check()` | Optional owning cancellation/lease/budget check. `None` or `True` means continue; `False` raises `ExternalIdentityCancelledError`. Owner control-flow exceptions propagate. |
+| `execution_check()` | Optional owning cancellation, lease or budget check. `None` or `True` means continue; `False` raises `ExternalIdentityCancelledError`. Owner control-flow exceptions propagate. |
 
-The application root can reuse the existing authentication configuration:
-`functions_authentication._build_msal_app(cache=None,
-authority_override=get_graph_authority())` supplies a configured confidential
-client. Its creation and `acquire_token_for_client(scopes=[scope])` must remain
-inside the injected token callback, reached only for an external identity read.
-The lower reader never imports or constructs this authentication owner.
-The root may retain the MSAL application/token cache without caching directory
-authority.
-
-Pass the existing `get_graph_base_url()` result as the API base; it already
-includes `/v1.0`, so do not append the version again. The token callback receives
-the separately configured trusted Graph origin's `/.default` scope. Existing
-`get_graph_authority()` and `get_graph_base_url()` preserve Public/Gov/custom
-cloud selection. Do not reuse the interactive `SCOPE` list or create a new global
-OAuth scope. Document/source-free operations must not invoke this token callback.
-The root must translate MSAL error dictionaries into the safe denied/service
-exception categories below, preserving transient `server_error` or
-`temporarily_unavailable` failures without exposing `error_description`.
-
-Do not use the existing `get_user_settings()` as this reader's settings callback:
-it can return a request-cached document and create or repair records. Do not call
+The application root reads user settings with a Cosmos point read of
+`cosmos_user_settings_container`, with 10-second connection and read timeouts
+and no retries. Don't use `get_user_settings()` as this callback: it can return a
+request-cached document and create or repair records. Don't call
 `check_user_access_status()` either: its broad error handler can default to
-allow, and expired restrictions can trigger a write. The owner must instead
-provide an authorized current point read using its initialized resources.
+allow, and expired restrictions can trigger a write.
 
-The credential and settings/conversation callbacks must also bound their own
-I/O. The reader cannot forcibly interrupt an arbitrary synchronous callback.
-Its elapsed budget is checked around owner operations and while consuming
-response bodies, so an over-budget operation cannot return authority afterward.
+### Access checks on every call
 
-### Directory authority and Control Center restrictions
+Each call applies these checks in order and returns a new identity only if all
+of them pass:
 
-Every invocation reads the current user account, the service principal selected
-by the exact configured `appId`, and the user's assignments for that resource.
-The account and service principal must both be enabled. Exactly one service
-principal must match. Only enabled role definitions that allow `User` members
-can contribute role values; application-only, disabled, foreign-resource and
-default-access assignments do not imply `User` or `Admin`.
+1. The actor and conversation match the reader, otherwise
+   `external_identity_actor_mismatch`.
+2. A signed-in session was captured, otherwise
+   `external_identity_session_unavailable`.
+3. The session holds no more than 64 roles, otherwise the non-retryable service
+   error `external_identity_limit_exceeded`.
+4. The session holds `User` or `Admin`, otherwise
+   `external_identity_role_required`.
+5. The conversation is still owned and not deleted, otherwise
+   `external_identity_conversation_unavailable`.
+6. The user settings document is valid, otherwise
+   `external_identity_settings_unavailable`.
+7. Control Center access allows the user, otherwise
+   `external_identity_access_restricted`.
 
-The [user app-role assignment API](https://learn.microsoft.com/en-us/graph/api/user-list-approleassignments?view=graph-rest-1.0)
-includes grants through groups of which the user is a **direct** member.
-The reader uses the documented `ConsistencyLevel: eventual` header and
-`$count=true`, exhausts every page, and verifies the returned count before
-returning roles. It does not infer nested-group grants. Canonical object IDs,
-assignment principals, role shapes, duplicate definitions/assignments, missing
-pages and ambiguous service principals are checked rather than coerced.
+Non-admins are denied by `settings.access.status="deny"` unless a valid,
+timezone-aware `datetime_to_allow` has elapsed. Expiration permits access without
+changing the stored restriction. Unknown statuses and malformed restrictions fail
+closed. Only `Admin` bypasses this restriction, matching `user_required`; it
+doesn't bypass the need for a current settings record. The `enable_agents`
+preference remains effective even for admins. Its enabled default applies only
+to a valid current document where that optional preference is absent, never to
+a failed read.
 
-A fresh `User` or `Admin` role is mandatory. Non-admins are denied by current
-Control Center `settings.access.status="deny"` unless a valid, timezone-aware
-`datetime_to_allow` has elapsed. Expiration permits access without changing the
-stored restriction. Unknown statuses and malformed restrictions fail closed.
-Only a freshly resolved `Admin` bypasses this access restriction, matching
-`user_required`; it does not bypass account disablement or the need for a
-current settings record. The `enable_agents` preference remains effective even
-for admins. Its existing enabled default applies only to a valid current
-document where that optional preference is absent, never to a failed read.
-
-### Bounded reads and safe failures
-
-Defaults are 20 total Graph requests/pages, 4,096 total directory records
-(including role definitions), 1 MiB per response, a 10-second request timeout,
-and a 30-second elapsed authorization budget. The corresponding constructor
-options are `max_pages`, `max_records`, `max_response_bytes`, `request_timeout`,
-and `max_elapsed`; each also has a finite upper bound.
-
-Every continuation URL must remain HTTPS, on the exact configured origin and
-API path prefix, and on the same collection path. Credentials, fragments,
-traversal, cycles, malformed links and cross-user/cross-collection continuations
-are rejected before requesting another token. Redirects are not followed.
-Response bodies are bounded, streamed, closed and decoded without accepting
-duplicate JSON keys or non-finite JSON numbers. No error response body is used
-as a public message.
+### Safe failures
 
 | Failure | Parent-facing exception |
 | --- | --- |
-| Missing current authority, disabled/deleted account or service principal, access restriction, HTTP 401/403/404/410 | Existing `ResultUnavailableError` (`PermissionError`) with a safe code. |
-| Throttling, HTTP 5xx, network failures, timeouts or HTTP 202 incomplete work | `ExternalIdentityServiceError` with `retryable=True` and a safe `code`. These are service failures, not an empty role set or proof of revoked access. |
-| Invalid/incomplete response shape, pagination, limits or callback contract | `ExternalIdentityServiceError` with `retryable=False`. No authority is returned. |
+| No session, no User/Admin role, lost conversation, missing settings, access restriction, or an owner callback's `PermissionError` or HTTP 401/403/404/410 | `ResultUnavailableError` (`PermissionError`) with a safe code. |
+| Throttling, HTTP 5xx, network failures, timeouts or HTTP 202 incomplete work in an owner callback | `ExternalIdentityServiceError` with `retryable=True` and a safe `code`. These are service failures, not proof of revoked access. |
+| An invalid callback result or more than 64 session roles | `ExternalIdentityServiceError` with `retryable=False`. No authority is returned. |
 | Explicit owning cancellation | `ExternalIdentityCancelledError` (`InterruptedError`), distinct from access denial. |
 
-Expected Azure/requests I/O exceptions are translated without preserving raw
-provider text or credential-bearing exception chains. Parent code should map
-these categories explicitly rather than silently hiding results on a transient
-directory failure.
+Expected Azure and requests I/O exceptions are translated without preserving raw
+provider text or credential-bearing exception chains.
+
+### How a refusal reaches the user
+
+Acquisition capture normalizes an access refusal to
+`OrchestrationInvocationDeniedError` with the code `result_unavailable`, keeping
+only the refusal's stable code in `authority_reason`. `access_failure` in
+`functions_orchestration_schema.py` reads that code, or the refusal's own `code`,
+and follows at most three `__cause__` links. Only
+`external_identity_session_unavailable` becomes the `external_session_required`
+failure; every other refusal stays `result_unavailable`. Exception text is never
+read, and the reason code is never shown to the user. Step, saved-wait,
+finalization and composition failure events log it as `sc_authority_reason`.
 
 ### Invocation failure classification
 
@@ -404,21 +375,20 @@ boundaries with actual current metadata and no planner requests.
 
 ### Deployment boundary and limitations
 
-Using this reader requires an operator's explicit application-permission grant
-of **Directory.Read.All** to an already-configured application identity, as
-documented by Microsoft for the assignment API. Existing interactive read scopes
-are insufficient. This implementation performs only GET requests: it does not
-grant permissions, construct credentials, change login/scopes/settings, write
-user records, assign roles, or enable orchestration. The parent owns initialized
-factory wiring and operator-facing administration documentation; Chat
-Orchestration remains default-off.
+The session reader needs no Microsoft Graph permission, admin consent, or
+deployer change. Before 0.261.209, a Graph reader made several directory
+requests on every external-source call and required the **application**
+permission `Directory.Read.All`. Without it, every orchestrated web search, URL
+read and deep-research step failed as "A required retained result is
+unavailable or changed." Deployments that granted `Directory.Read.All` only for
+orchestration can revoke it.
 
-Fresh HTTP reads do not eliminate Microsoft's directory replication delay:
-the complete group-grant API uses eventual consistency. There is no local role
-cache or fallback to old claims during that delay. Current source-specific
-execution-configuration capture is a separate requirement; this reader does not
-make post-execution current configuration equivalent to the configuration an
-adapter actually used.
+Trusting session roles has the same limits as classic chat. A role removed in
+Entra ID still applies until the user's session is refreshed, and a background
+continuation can't use external sources because it has no session. Current
+source-specific execution-configuration capture is a separate requirement; this
+reader doesn't make post-execution current configuration equivalent to the
+configuration an adapter actually used.
 
 ## Invocation configuration and current metadata
 
@@ -1036,14 +1006,15 @@ cover all external source types, crash-after-commit recovery, and current-role
 revocation in fresh normal and optimized Python processes.
 
 `functional_tests/test_orchestration_external_identity.py` exercises the real
-reader through prepared HTTP requests and streamed `requests.Response` objects,
-with only the HTTP adapter and owner I/O doubled. It covers direct/group grants,
-the exact target application, current account/role/access revocation, read-only
-restriction expiration, paging/counts/bounds/origin checks, malformed data,
-transient versus denied failures and national/custom cloud configuration.
-Fresh normal and optimized Python processes prohibit network access and
-credential/client construction during real application-module imports. No test
-contacts a tenant or grants a permission.
+session reader with only the owner callbacks doubled and networking blocked. It
+covers session role validation and bounds, the missing-session refusal, the
+User/Admin requirement, actor and conversation binding, per-call conversation and
+Control Center rereads, read-only restriction expiration, the Admin bypass,
+settings that never default to allow, safe I/O error categories and cancellation.
+Fresh normal and optimized Python processes import the real module without
+settings, authentication, route or credential modules. No test contacts a tenant.
+`functional_tests/test_orchestration_external_bootstrap.py` checks that the root
+captures session roles only inside a request context and makes no Graph calls.
 
 `functional_tests/test_orchestration_external_configuration.py` covers actual URL
 policy normalization, source-specific projections, keyed opaque revisions,
