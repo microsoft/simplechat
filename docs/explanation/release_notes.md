@@ -2,6 +2,15 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.048)**
+
+#### Bug Fixes
+
+*   **Agent Model Picker Respects Governance Policies**
+    *   Fixed the persona workspace agent setup modal so its model dropdown now follows the same endpoint governance policies as the chat window model selector.
+    *   Users no longer see restricted global, personal, or group model endpoints when creating or editing agents, and governed multi-endpoint responses no longer fall back to legacy global model lists.
+    *   (Ref: agent model picker, endpoint governance, `route_backend_agents.py`, `agents_common.js`, [Agent Model Governance Filtering Fix](fixes/AGENT_MODEL_GOVERNANCE_FILTERING_FIX.md))
+
 ### **(v0.261.046)**
 
 #### Bug Fixes
