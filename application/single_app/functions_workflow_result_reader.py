@@ -100,6 +100,31 @@ _REASONS = {
     "workflow_result_storage_unavailable": (
         503, "The workflow result couldn't be read right now. Try again in a moment.",
     ),
+    # Follow up's own refusals, around the read.
+    "workflow_result_conversation_unavailable": (
+        404, "This chat is no longer available. Start a new chat to ask about the workflow result.",
+    ),
+    "workflow_result_retry_unsupported": (
+        400, "Retrying or editing a question about a workflow result isn't supported yet. Ask the question again.",
+    ),
+    "workflow_result_too_large": (
+        400,
+        "The workflow result and this chat's history don't fit the selected model. "
+        "Select a model with a larger context window or start a new chat, then ask again.",
+    ),
+    "workflow_result_model_unsupported": (
+        400,
+        "The selected model or agent couldn't answer from this workflow result with its tools turned off. "
+        "Select a model or a local chat agent, then ask again.",
+    ),
+    "workflow_result_answer_failed": (
+        503, "The answer couldn't be completed. The workflow result is unchanged. Try again in a moment.",
+    ),
+    "workflow_result_answer_rejected": (
+        400,
+        "The answer wasn't kept because it didn't match the stored workflow result. "
+        "The result is unchanged. Ask again, or ask a narrower question.",
+    ),
 }
 
 
