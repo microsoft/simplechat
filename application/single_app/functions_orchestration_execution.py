@@ -168,6 +168,11 @@ from functions_orchestration_schema import (
     safe_failure,
     summarize_plan,
 )
+from functions_orchestration_workflow_context import (
+    workflow_planning_option,
+    workflow_proposals_configured,
+    workflow_run_options,
+)
 from functions_workflow_context import (
     WorkflowContextBudgetError,
     calculate_workflow_context_budget,
@@ -693,8 +698,11 @@ class HarnessExecution:
             self._raise_delivery_infrastructure_failure(exc, storage_required=True)
             raise
         self._preparation_stage = "capabilities"
+        workflow_configured = workflow_proposals_configured(self.settings)
+        workflow_planning = self.record.get("workflow_planning") if workflow_configured else None
         request_context = build_capability_request_context(
             user_id, identity, user_message, agents, actions, allowed_user_urls=allowed_urls,
+            **workflow_planning_option(workflow_planning),
             **self.services.capability_request_bindings(),
         )
         export_catalog = resolve_admitted_export_catalog(self.services.export_catalog())
@@ -780,6 +788,9 @@ class HarnessExecution:
                 "user_id": user_id, "active_group_ids": seeds.get("active_group_ids") or [],
             },
             agent_execution_identity=principal, plan_contract_version=2,
+            **workflow_run_options(
+                workflow_planning, self.record.get("time_zone") if workflow_configured else None,
+            ),
         )
         self.context.prompt_token_usage = self.prompt_token_usage
         if auto_routing:

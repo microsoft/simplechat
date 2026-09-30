@@ -140,6 +140,7 @@ from functions_settings import (
     is_admin_settings_redacted_secret,
     is_chat_file_upload_enabled_for_user,
     is_user_workflows_enabled_for_user,
+    is_workflow_assistant_enabled_for_user,
     merge_model_endpoint_payload,
     normalize_default_model_selection,
     normalize_model_endpoints,
@@ -704,6 +705,9 @@ def register_route_backend_v2(bp):
                     settings, current_user_roles
                 ),
                 "allow_user_workflows": is_user_workflows_enabled_for_user(
+                    settings, user_roles=current_user_roles
+                ),
+                "enable_workflow_ai_assistant": is_workflow_assistant_enabled_for_user(
                     settings, user_roles=current_user_roles
                 ),
                 "enable_source_review": is_source_review_enabled_for_user(

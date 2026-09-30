@@ -4,6 +4,7 @@ on:
   pull_request:
     branches:
       - Development
+      - paullizer-react-v2-ui  # Temporary: remove when paullizer-react-v2-ui merges into Development (#1571)
     paths:
       - 'application/**/*.py'
       - 'scripts/check_broken_access_control.py'

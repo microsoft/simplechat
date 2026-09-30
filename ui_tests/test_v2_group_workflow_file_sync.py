@@ -1,7 +1,7 @@
 # test_v2_group_workflow_file_sync.py
 """
 UI tests for group workflow File Sync triggers, stored alerts and approvals in native V2.
-Version: 0.261.149
+Version: 0.261.207
 Implemented in: 0.261.141
 
 These tests use the real V2 SPA bundle with the closed workflow fixture. The fixture answers the
@@ -18,9 +18,11 @@ trigger rules and, since 0.261.144, `normalize_workflow_alert_settings`. They co
 * the read-only alert summary for members; managers edit alerts natively (0.261.144), so the M6
   classic alerts link is gone (`test_v2_workflow_alerts.py` covers the editor);
 * approval decisions for a group durable run;
-* personal workflows keep their File Sync unchanged, and since 0.261.144 personal Analyze tasks may
-  rely on File Sync's changed files, as the server allows. Since 0.261.149 the fixture validates
-  personal saves with the real personal rules, so personal records are ones the server accepts;
+* personal workflows keep an untouched File Sync unchanged, and since 0.261.144 personal Analyze
+  tasks may rely on File Sync's changed files, as the server allows. Since 0.261.149 the fixture
+  validates personal saves with the real personal rules, so personal records are ones the server
+  accepts. Since 0.261.207 V2 authors personal File Sync too, from the personal source list
+  (`test_v2_personal_workflow_file_sync.py` covers that authoring);
 * the general personal-route trap on group workflow pages.
 """
 
@@ -41,6 +43,7 @@ from ui_tests.fixtures.workflow_editor import (  # noqa: E402
     FILE_SYNC_SOURCES_PATH,
     GROUP_ID,
     OWNER_ID,
+    PERSONAL_FILE_SYNC_SOURCES_PATH,
     WORKFLOW_ID,
     connect_options,  # noqa: F401
     workflow_record,
@@ -525,34 +528,33 @@ def test_file_sync_and_alert_sections_fit_desktop_and_mobile(workflow_ui, theme,
     assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
 
 
-def test_personal_workflows_keep_their_file_sync_unchanged(workflow_ui):
-    """Personal editors keep their triggers, File Sync and payloads, and never list sources.
+def test_personal_workflows_keep_an_untouched_file_sync_unchanged(workflow_ui):
+    """An unrelated personal edit resends the stored File Sync exactly as loaded.
 
     0.261.149: the record is a Monitor workflow the real server accepts. Its earlier File Sync was
-    off, which `save_personal_workflow` refuses for this trigger.
+    off, which `save_personal_workflow` refuses for this trigger. 0.261.207: V2 authors personal
+    File Sync, so the editor lists the personal sources and offers the Monitor trigger;
+    `test_v2_personal_workflow_file_sync.py` covers changing it.
     """
     ui, page = workflow_ui, workflow_ui.page
     ui.personal_workflows[WORKFLOW_ID]["trigger_type"] = "file_sync"
     ui.personal_workflows[WORKFLOW_ID]["file_sync"] = copy.deepcopy(PERSONAL_MONITOR_FILE_SYNC)
     ui.open("/workspace/workflows")
-    page.get_by_role("button", name="Create workflow", exact=True).click()
-    assert trigger_options(page) == ["Manual", "Schedule"]
-    expect(page.get_by_role("region", name="File Sync")).to_have_count(0)
-    # Alerts are authored natively in both scopes since 0.261.144.
-    expect(page.get_by_role("region", name="Alerts", exact=True).get_by_label("When to alert", exact=True)).to_have_value("off")
-    page.get_by_role("dialog", name="Create workflow", exact=True).get_by_role("button", name="Cancel", exact=True).click()
     expect(page.get_by_text(
-        "Native V2 authoring is available for manual and interval workflows, and for their alerts. File sync and "
-        "publication settings from existing workflows are preserved unchanged.",
+        "Native V2 authoring is available for manual, interval and Monitor File Sync changes workflows, and for "
+        "their alerts. Publication settings from existing workflows are preserved unchanged.",
         exact=True,
     )).to_be_visible()
 
     page.get_by_role("button", name="Edit Quarterly review workflow", exact=True).click()
     expect(labelled(page, "Trigger")).to_have_value("file_sync")
-    assert trigger_options(page) == ["Manual", "Schedule", "Existing file sync"]
-    expect(labelled(page, "Interval value")).to_be_disabled()
-    expect(page.get_by_text("file sync settings", exact=False)).to_be_visible()
-    labelled(page, "Description").first.fill("Personal edit keeps legacy File Sync.")
+    expect(source_checkbox(page, "Home share (Personal)")).to_be_checked()
+    assert trigger_options(page) == ["Manual", "Schedule", "Monitor File Sync changes"]
+    expect(labelled(page, "Interval value")).to_be_enabled()
+    preserved = page.get_by_text("V2 does not edit these legacy settings", exact=False)
+    expect(preserved).to_be_visible()
+    expect(preserved).not_to_contain_text("file sync settings")
+    labelled(page, "Description").first.fill("Personal edit keeps its File Sync.")
     page.get_by_role("button", name="Save workflow", exact=True).click()
     expect(page.get_by_role("dialog", name="Edit workflow", exact=True)).to_have_count(0)
     body = workflow_post(ui).body
@@ -560,15 +562,18 @@ def test_personal_workflows_keep_their_file_sync_unchanged(workflow_ui):
     assert body["file_sync"] == PERSONAL_MONITOR_FILE_SYNC
     # The fixture's real personal rules authorized the stored source.
     assert ("personal", OWNER_ID, "home-share") in ui.file_sync_source_reads
-    assert not source_requests(ui)
+    # The personal editor lists its sources from the personal route, never with a group id.
+    assert source_requests(ui) and all(
+        request.path == PERSONAL_FILE_SYNC_SOURCES_PATH and not request.query for request in source_requests(ui)
+    )
 
 
 def test_personal_analyze_tasks_may_rely_on_file_sync_changed_files(workflow_ui):
     """0.261.144: a personal workflow with File Sync on changed files saves an Analyze task without evidence.
 
     Both saves allow it (`allow_empty_file_sync_targets`); `test_workflow_file_sync_analyze_targets.py`
-    pins the real `save_personal_workflow` accepting exactly these payloads. Personal File Sync is
-    not authored in V2, so the loaded configuration is carried unchanged.
+    pins the real `save_personal_workflow` accepting exactly these payloads. The File Sync
+    configuration is untouched, so it is carried unchanged.
     """
     ui, page = workflow_ui, workflow_ui.page
     personal_action = {**SUMMARIZE_ACTION, "doc_scope": "personal", "active_group_ids": []}
@@ -588,7 +593,8 @@ def test_personal_analyze_tasks_may_rely_on_file_sync_changed_files(workflow_ui)
     ui.open("/workspace/workflows")
     page.get_by_role("button", name="Edit Personal changed files", exact=True).click()
     dialog = page.get_by_role("dialog", name="Edit workflow", exact=True)
-    expect(page.get_by_role("region", name="File Sync")).to_have_count(0)
+    expect(before_run_toggle(page)).to_be_checked()
+    expect(source_checkbox(page, "Home share (Personal)")).to_be_checked()
     page.get_by_text("Runner, inputs, references and outputs", exact=True).first.click()
     expect(labelled(page, "Document action").first).to_have_value("analyze")
     expect(page.get_by_text(
@@ -603,7 +609,6 @@ def test_personal_analyze_tasks_may_rely_on_file_sync_changed_files(workflow_ui)
     body = workflow_post(ui).body
     assert body["file_sync"] == personal_file_sync
     assert body["tasks"][0]["document_action"] == personal_action
-    assert not source_requests(ui)
 
     # Without changed files as targets the same draft needs evidence, as the server requires.
     ui.personal_workflows["personal-sync"]["file_sync"]["use_changed_documents"] = False

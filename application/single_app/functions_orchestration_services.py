@@ -20,6 +20,7 @@ from functions_generated_export_registry import (
     get_prepared_slide_deck_schema,
 )
 from functions_orchestration_output_store import OrchestrationOutputStore, OutputError
+from functions_orchestration_registry import CAPABILITY_WORKFLOW_PROPOSE
 from functions_orchestration_rendering import OrchestrationRenderingService
 from functions_orchestration_result_contracts import (
     InputBinding, ResultContractError, ResultRef, TaskResult, canonical_digest,
@@ -83,6 +84,9 @@ def discover_result_aliases(runs, results):
             task = TaskResult.from_dict(value)
             if task.producer.step_id != step_id:
                 raise ResultContractError("result_producer_mismatch")
+            if task.producer.capability_id == CAPABILITY_WORKFLOW_PROPOSE:
+                # A workflow proposal is reviewed on its own card; a later plan never reads it.
+                continue
             for reference in task.outputs:
                 if reference.completeness.status != "complete":
                     continue

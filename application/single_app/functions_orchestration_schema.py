@@ -55,6 +55,7 @@ from functions_orchestration_registry import (
     CAPABILITY_COMPOSE,
     CAPABILITY_GENERATE_IMAGE,
     CAPABILITY_TABULAR_ANALYZE,
+    CAPABILITY_WORKFLOW_PROPOSE,
     DEPENDENCY_PLAN_CONTRACT_VERSION,
     GENERAL_KNOWLEDGE_BASES,
     admitted_export_pairs,
@@ -179,6 +180,11 @@ PLAN_MAX_TITLE_LENGTH = 200
 PLAN_MAX_RATIONALE_LENGTH = 600
 PLAN_MAX_SUMMARY_LENGTH = 600
 PLAN_MAX_ASSUMPTIONS = 8
+
+# A workflow proposal whose blueprint breaks a draft rule, and a plan that feeds a proposal to
+# another step or to the answer. The planner repairs either once, then drops the proposal.
+WORKFLOW_BLUEPRINT_INVALID_CODE = 'workflow_blueprint_invalid'
+WORKFLOW_PROPOSAL_NOT_CONSUMABLE_CODE = 'workflow_proposal_not_consumable'
 
 
 class PlanValidationError(ValueError):
@@ -552,6 +558,29 @@ def _apply_image_input_policy(steps, existing_results):
             )
 
 
+def _reject_workflow_proposal_consumers(steps, final_response):
+    """A workflow proposal is reviewed on its own card, so no step and no answer may read it."""
+    producers = {step['step_id'] for step in steps if step['capability_id'] == CAPABILITY_WORKFLOW_PROPOSE}
+    if not producers:
+        return
+    for step in steps:
+        if step['step_id'] in producers:
+            continue
+        named = set(step.get('depends_on') or ())
+        named.update(spec.binding.step_id for spec in step_input_specs(step) if spec.binding.step_id is not None)
+        if named & producers:
+            raise PlanValidationError(
+                'A workflow proposal is reviewed on its own card. Remove every dependency on the '
+                'workflow_propose step and every input bound to its output.',
+                code=WORKFLOW_PROPOSAL_NOT_CONSUMABLE_CODE, rule='workflow_proposal_consumed',
+            )
+    if isinstance(final_response, dict) and final_response.get('step_id') in producers:
+        raise PlanValidationError(
+            'A workflow proposal is reviewed on its own card. Bind the final response to an answer step instead.',
+            code=WORKFLOW_PROPOSAL_NOT_CONSUMABLE_CODE, rule='workflow_proposal_consumed',
+        )
+
+
 _REFERENCE_IMAGE_FIELDS = ('reference_document_ids', 'reference_message_ids')
 
 
@@ -601,11 +630,14 @@ def validate_dependency_plan(
     plan, *, settings=None, authorized_document_ids=None, available_capability_ids=None,
     agent_names=None, action_refs=None, existing_results=None, composition_profiles=None,
     export_catalog=None, deliverable_availability=None, image_selected=False, seeds=None,
+    workflow_planning=None,
 ):
     """Compile a plan without dropping required work, arguments, outputs, or dependencies.
 
     ``deliverable_availability`` is the server truth a new plan is checked against; see
-    ``functions_orchestration_deliverables.compile_deliverables``.
+    ``functions_orchestration_deliverables.compile_deliverables``. ``workflow_planning`` is the
+    request's server-only workflow proposal context; with it, a proposal's blueprint is also
+    checked against the handles, limits and agents offered with the request.
     """
     settings = settings or {}
     canonical_bytes(composition_profiles or {})
@@ -670,6 +702,13 @@ def validate_dependency_plan(
                     arguments = validate_native_orchestration_arguments(arguments)
                 except ValueError as exc:
                     raise PlanValidationError('The native computation arguments are unsupported.') from exc
+            if capability_id == CAPABILITY_WORKFLOW_PROPOSE:
+                # Loaded only when a plan proposes a workflow; the draft service is not needed otherwise.
+                from functions_orchestration_workflows import prepare_workflow_proposal_arguments
+
+                arguments = prepare_workflow_proposal_arguments(
+                    raw, arguments, settings=settings, workflow_planning=workflow_planning,
+                )
             if any(isinstance(value, str) and not value.strip() for value in arguments.values()):
                 raise PlanValidationError('String arguments must not be empty or whitespace.')
             for name, rule in capability['inputs']['properties'].items():
@@ -737,6 +776,7 @@ def validate_dependency_plan(
         if not any(step['enabled'] for step in accepted):
             raise PlanValidationError('The plan contains no enabled work.')
         _apply_image_input_policy(accepted, existing_results)
+        _reject_workflow_proposal_consumers(accepted, plan.get('final_response'))
         bindings = [step_result_bindings(step) for step in accepted]
         dependencies = validate_input_bindings(bindings, existing_results=existing_results, max_steps=max_steps)
         _validate_render_requests(accepted, existing_results, export_catalog=export_catalog)
@@ -801,6 +841,7 @@ def validate_plan(
     deliverable_availability=None,
     image_selected=False,
     seeds=None,
+    workflow_planning=None,
 ):
     """Make a planner-authored plan safe to run, or refuse it.
 
@@ -828,7 +869,7 @@ def validate_plan(
         composition_profiles=composition_profiles,
         export_catalog=export_catalog,
         deliverable_availability=deliverable_availability, image_selected=image_selected,
-        seeds=seeds,
+        seeds=seeds, workflow_planning=workflow_planning,
     )
 
 
@@ -1004,11 +1045,13 @@ def normalize_plan(
     export_catalog=None,
     deliverable_availability=None,
     image_selected=False,
+    workflow_planning=None,
 ):
     """Turn raw planner output into a complete, validated plan document.
 
     ``deliverable_availability`` and ``image_selected`` check a new plan's deliverables
-    against what the server can produce right now.
+    against what the server can produce right now; ``workflow_planning`` checks a workflow
+    proposal against the handles and limits offered with the request.
     """
     settings = settings if isinstance(settings, dict) else {}
     plan = dict(plan) if isinstance(plan, dict) else {}
@@ -1082,6 +1125,7 @@ def normalize_plan(
         deliverable_availability=deliverable_availability,
         image_selected=image_selected,
         seeds=seeds,
+        workflow_planning=workflow_planning,
     )
 
     plan['inputs'] = build_plan_inputs(

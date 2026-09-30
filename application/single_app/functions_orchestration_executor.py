@@ -63,7 +63,7 @@ from functions_orchestration_context import (
 )
 from functions_orchestration_deliverables import explicit_image_shortfalls
 from functions_orchestration_registry import (
-    CAPABILITY_TABULAR_ANALYZE, DEPENDENCY_PLAN_CONTRACT_VERSION,
+    CAPABILITY_TABULAR_ANALYZE, CAPABILITY_WORKFLOW_PROPOSE, DEPENDENCY_PLAN_CONTRACT_VERSION,
     admitted_export_pairs, get_capability,
     resolve_available_capability_ids,
 )
@@ -358,6 +358,8 @@ class RunContext:
         capture_external_source_configuration=None,
         rendering_service=None,
         export_catalog=None,
+        workflow_planning=None,
+        time_zone=None,
     ):
         self.run_id = run_id
         self.plan_id = plan_id
@@ -398,6 +400,11 @@ class RunContext:
         self.capture_external_source_configuration = capture_external_source_configuration
         self.rendering_service = rendering_service
         self.export_catalog = deepcopy(export_catalog)
+        # The server-only workflow proposal context stored with the turn, including the map
+        # from each planner handle to the record it names, and the user's validated browser
+        # time zone. Both are None when workflow proposals do not apply to this request.
+        self.workflow_planning = deepcopy(workflow_planning) if isinstance(workflow_planning, dict) else None
+        self.time_zone = time_zone if isinstance(time_zone, str) and time_zone else None
 
         self.invoke_prompt = invoke_prompt
         self.planner_client = planner_client
@@ -583,7 +590,38 @@ def _step_record(context, step, index, status, result, started_at, completed_at,
         for field in ('outputs', 'output_error'):
             if field in result:
                 record[field] = deepcopy(result[field])
+    if step.get('capability_id') == CAPABILITY_WORKFLOW_PROPOSE and isinstance(result.get('workflow_proposal'), dict):
+        # Server-only: the proposal card and its accept route read it; public_step_record drops it.
+        record['workflow_proposal'] = deepcopy(result['workflow_proposal'])
     return record
+
+
+def _restore_workflow_proposal(step, context, status, result, *, settings, user_id):
+    """Describe again a completed workflow proposal whose step result came back without it.
+
+    A retained or recovered result is rebuilt from the task result alone, which does not carry
+    the proposal's description.
+    """
+    if (
+        step.get('capability_id') != CAPABILITY_WORKFLOW_PROPOSE or status != STEP_STATUS_COMPLETED
+        or not isinstance(result, dict) or result.get('task_result') is None
+        or isinstance(result.get('workflow_proposal'), dict)
+    ):
+        return result
+    try:
+        from functions_orchestration_workflows import rebuild_workflow_proposal
+
+        sidecar = rebuild_workflow_proposal(
+            step, context, settings=settings, user_id=user_id, task=result['task_result'],
+        )
+    except Exception as exc:
+        log_event(
+            f'{_LOG_PREFIX} A recovered workflow proposal could not be described.',
+            level=logging.WARNING,
+            extra={**_step_log_context(context, step), 'error_type': type(exc).__name__},
+        )
+        return result
+    return {**result, 'workflow_proposal': sidecar} if isinstance(sidecar, dict) else result
 
 
 def _persist(persist, record_type, record):
@@ -637,7 +675,7 @@ def execute_plan(
 
 
 def _dependency_request_context(context):
-    return {
+    request_context = {
         'user_id': context.user_id, 'user_email': context.user_email, 'user_roles': context.user_roles,
         'agent_catalog': context.agent_catalog, 'action_catalog': context.action_catalog,
         'user_enable_agents': context.user_enable_agents,
@@ -653,6 +691,11 @@ def _dependency_request_context(context):
             r'https?://[^\s<>"]+', context.user_message,
         ),
     }
+    # Present only when the turn stored one, matching build_capability_request_context.
+    workflow_planning = getattr(context, 'workflow_planning', None)
+    if workflow_planning is not None:
+        request_context['workflow_planning'] = workflow_planning
+    return request_context
 
 
 def _dependency_source_manifest(context, document_ids, settings, cancel_probe):
@@ -1426,6 +1469,7 @@ def _execute_dependency_plan(
             context._completed_result_step_ids.add(step_id)
         if step['role'] == 'render' and status == STEP_STATUS_COMPLETED:
             context.artifacts.extend(deepcopy(result['artifacts']))
+        result = _restore_workflow_proposal(step, context, status, result, settings=settings, user_id=user_id)
         record = _step_record(context, step, index, status, result, started_at, completed_at, elapsed)
         record.update({
             'checkpoint_available': checkpoints is not None

@@ -54,6 +54,8 @@ Key behaviors:
 
 This keeps the primary PR gate fast while still validating the guardrail itself when the guardrail code changes.
 
+The workflow also runs on pull requests into the V2 React UI branch `paullizer-react-v2-ui`, so Python changes made there get the same check. That trigger is marked temporary in the workflow file and should be removed when the V2 branch merges into Development (#1571).
+
 ## Local Usage
 
 Run the checker against full files from the repository root:

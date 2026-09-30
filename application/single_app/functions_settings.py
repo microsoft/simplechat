@@ -1160,6 +1160,14 @@ def is_user_workflows_enabled_for_user(settings, user_roles=None, authorization_
     return True
 
 
+def is_workflow_assistant_enabled_for_user(settings, user_roles=None):
+    """Return True when the AI workflow assistant is on and personal workflows are available to the user."""
+    source_settings = settings or {}
+    if not is_user_workflows_enabled_for_user(source_settings, user_roles=user_roles):
+        return False
+    return source_settings.get('enable_workflow_ai_assistant', False) is True
+
+
 def _authorize_user_settings_access(user_id, operation, allow_cross_user=False):
     """Authorize user-settings access for the current request context."""
     normalized_user_id = str(user_id or '').strip()
@@ -1410,6 +1418,9 @@ def get_settings(use_cosmos=False, include_source=False):
         'chat_orchestration_total_timeout_seconds': 900,
         'chat_orchestration_ledger_max_bytes': 16384,
         'chat_orchestration_ledger_max_runs': 10,
+        # Lets a chat plan propose a personal workflow that the user approves on a card before
+        # anything is created. Off by default; the capability allowlist can also leave it out.
+        'enable_chat_orchestration_workflows': False,
         # Workflows that a chat plan creates for a user: how many one user may hold, and the
         # shortest interval one may run on (also never shorter than the general workflow minimum).
         'chat_orchestration_max_workflows_per_user': CHAT_ORCHESTRATION_MAX_WORKFLOWS_DEFAULT,
@@ -1436,6 +1447,8 @@ def get_settings(use_cosmos=False, include_source=False):
         'allow_user_plugins': False,
         'allow_user_workflows': False,
         'require_member_of_workflow_user': False,
+        # The AI workflow assistant in the V2 editor. It only applies where personal workflows do.
+        'enable_workflow_ai_assistant': True,
         'workflow_max_tasks': 50,
         'workflow_max_loop_items': WORKFLOW_LOOP_ITEMS_DEFAULT,
         'workflow_max_repeat_iterations': WORKFLOW_REPEAT_ITERATIONS_DEFAULT,
@@ -2182,6 +2195,12 @@ def update_settings(new_settings, *, expected_etag=None):
             'workflow_min_schedule_interval_seconds': validate_workflow_min_schedule_interval_seconds(
                 new_settings['workflow_min_schedule_interval_seconds']
             ),
+        }
+    if isinstance(new_settings, dict) and 'enable_chat_orchestration_workflows' in new_settings:
+        # Only a real boolean true turns workflow proposals on; a string or number saves as off.
+        new_settings = {
+            **new_settings,
+            'enable_chat_orchestration_workflows': new_settings['enable_chat_orchestration_workflows'] is True,
         }
     if isinstance(new_settings, dict) and 'chat_orchestration_max_workflows_per_user' in new_settings:
         new_settings = {
@@ -3853,6 +3872,21 @@ def workflow_user_required(f):
         if _is_api_request():
             return jsonify({'error': 'Forbidden', 'message': message}), 403
         return f'Forbidden: {message}', 403
+    return wrapper
+
+
+def workflow_assistant_required(f):
+    """Allow the route only when the AI workflow assistant is available to the signed-in user."""
+    @wraps(f)
+    def wrapper(*args, **kwargs):
+        settings = get_settings()
+        user_roles = (session.get('user') or {}).get('roles', [])
+        if is_workflow_assistant_enabled_for_user(settings, user_roles=user_roles):
+            return f(*args, **kwargs)
+        return jsonify({
+            'error': 'The AI workflow assistant is not available.',
+            'code': 'workflow_assistant_disabled',
+        }), 403
     return wrapper
 
 

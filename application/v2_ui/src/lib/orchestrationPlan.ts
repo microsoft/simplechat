@@ -177,7 +177,9 @@ export function normalizeStep(raw: unknown, index = 0): OrchestrationStep {
     };
 }
 
-const DELIVERABLE_KINDS: readonly OrchestrationDeliverableKind[] = ['answer', 'file', 'image', 'chart', 'diagram'];
+const DELIVERABLE_KINDS: readonly OrchestrationDeliverableKind[] = [
+    'answer', 'file', 'image', 'chart', 'diagram', 'workflow',
+];
 
 /**
  * The plan's deliverables with safe defaults, or undefined for plans that declared none.
@@ -231,6 +233,8 @@ export function deliverableKindLabel(deliverable: OrchestrationDeliverable): str
             return 'Chart';
         case 'diagram':
             return 'Diagram';
+        case 'workflow':
+            return 'Workflow proposal';
         default:
             return 'Answer';
     }
@@ -294,7 +298,10 @@ export function deliverableRows(
             deliverable,
             label: deliverableKindLabel(deliverable),
             state,
-            stateLabel: DELIVERABLE_STATE_LABELS[state],
+            // A delivered workflow is a proposal waiting on its card: nothing exists until it is approved.
+            stateLabel: deliverable.kind === 'workflow' && state === 'delivered'
+                ? 'Proposed'
+                : DELIVERABLE_STATE_LABELS[state],
             steps: producers.map((step) => step.title || step.step_id),
             ...(deliverable.status === 'unavailable'
                 ? { reason: deliverable.unavailable_message || 'This is not available here.' }

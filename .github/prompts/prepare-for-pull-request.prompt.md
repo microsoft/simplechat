@@ -100,11 +100,12 @@ When Python route files changed:
   `python functional_tests/route_tests/test_route_unauthenticated_policy_contract.py`
   `python functional_tests/route_tests/test_route_policy_test_coverage.py`
 
-When JavaScript, HTML, or Python browser-rendering surfaces changed:
+When JavaScript, TypeScript, HTML, or Python browser-rendering surfaces changed:
 
-- Run `python scripts/check_xss_sinks.py` against changed `application/**/*.js`, `application/**/*.html`, and `application/**/*.py` files.
+- Run `python scripts/check_xss_sinks.py` against changed `application/**/*.js`, `application/**/*.html`, `application/**/*.py`, `application/**/*.ts`, `application/**/*.tsx`, `application/**/*.jsx`, and `application/**/*.mjs` files.
 - If validating only committed changes, prefer changed-line mode:
   `python scripts/check_xss_sinks.py --base-sha <remote>/Development --head-sha HEAD <files>`.
+  For a PR into the temporary V2 branch `paullizer-react-v2-ui`, use `<remote>/paullizer-react-v2-ui` as the base instead.
 - If the working tree has uncommitted changes, use `--full-file` for those files because they are not represented by `HEAD`.
 
 When Python authorization-sensitive surfaces changed:

@@ -60,6 +60,63 @@ you need; saving in V2 never brings a deleted workflow back.
 See [Explicit workflow data flow](../explanation/features/WORKFLOW_EXPLICIT_DATA_FLOW.md)
 for binding semantics, shared references, and validation outcomes.
 
+## Create a workflow from chat
+
+Starting in **0.261.207**, the V2 chat can propose a personal workflow when you
+ask for work that repeats, such as "Every Monday at 8, read my email and tell me
+what I should focus on this week." Chat answers for the current period once, as
+a preview, and a **Proposed workflow** card follows the answer. Nothing is
+created until you choose.
+
+Proposals appear only when your administrator has turned on **Propose Workflows
+From Chat**, you can create personal workflows, and the conversation is private
+to you. They never appear in a shared or collaborative conversation.
+
+The card shows what the workflow would do:
+
+- **When** and **How often**: the schedule, in your browser's time zone, and
+  about how many runs a month. A workflow that watches File Sync "Runs when File
+  Sync finds changes in" its source; its first run covers whatever that source's
+  next sync reports.
+- **Alerts**: a notification after every run, or only when a run fails. It
+  appears in your notifications and never pops up.
+- **Microsoft 365** and **Run as**: the Microsoft 365 data the workflow uses,
+  whether it can send email or calendar invitations, and whose account it uses.
+- Each task, with the agent or model that runs it and the documents it reads.
+  Expand **Instructions** to read exactly what the task is told to do on every
+  run.
+- Similar workflows you already have, so you don't create a duplicate.
+
+A proposed task reads only documents you named in that request: the documents
+you picked in the chat composer and the ones you referenced with `#`. Chat never
+adds a document it found by searching, even one that helped answer your question.
+To have the workflow read other documents, choose **Edit** and add them to the
+task.
+
+Then choose one of these:
+
+- **Create & start** creates the workflow and turns it on.
+- **Create paused** creates it turned off. Turn it on in Workflows when you're
+  ready.
+- **Create** appears instead for a manual workflow. It runs only when you start
+  it from Workflows.
+- **Edit** opens the proposal in the workflow editor. **Save** creates it as you
+  edited it, and it stays off unless you turn on **Workflow enabled**.
+- **Deny** declines the proposal. Nothing is created.
+
+Once it's created, **Open workflow** opens it in Workflows. If you delete it
+later, **Create again** creates it again, paused. A proposal expires 14 days
+after chat made it; after that, ask in chat again.
+
+A workflow created from chat can't turn on URL Access. Create it first, then
+turn on URL Access in the workflow editor. A task that uses Microsoft 365 runs as
+you, and as with any workflow, its first run waits for you to approve Run as.
+When Microsoft 365 isn't connected for workflows, the card links to the
+connection in your profile.
+
+See [Chat orchestration workflow proposals](../explanation/features/CHAT_ORCHESTRATION_WORKFLOW_PROPOSALS.md)
+for how proposals are checked and created.
+
 ## Run on a calendar schedule
 
 From version **0.261.193**, a scheduled workflow can run at a local time rather
@@ -127,11 +184,13 @@ keep running, and calendar schedules aren't affected.
 See [Workflow calendar schedules](../explanation/features/WORKFLOW_CALENDAR_SCHEDULES.md)
 for the stored format and the full rules.
 
-## Run a group workflow when File Sync finds changes
+## Run a workflow when File Sync finds changes
 
 From version **0.261.141**, the V2 editor for group workflows can author File
-Sync. Owners, Admins, and other workflow managers see these choices when the
-group has File Sync sources:
+Sync, and from version **0.261.207** so can the editor for personal workflows.
+Owners, Admins, and other workflow managers of a group, and anyone editing
+their own personal workflow, see these choices when there are File Sync
+sources to choose from:
 
 - **Monitor File Sync changes** is a trigger. On the schedule you set, it syncs
   the selected sources, waits for the sync to finish, and runs the workflow only
@@ -142,16 +201,24 @@ group has File Sync sources:
 - **Use changed files as Analyze targets** lets an Analyze task with no
   selected documents work on the files each sync changed.
 
-Choose between 1 and 10 of the group's own sources. A source the group no
-longer offers is marked **No longer available**; remove it before saving. From
-version **0.261.149**, if a source is deleted while you're editing, saving is
-refused with "A selected File Sync source is no longer available. Remove it and
-save again." Your changes stay in the editor, and the source is marked so you
-can remove it. When File Sync is turned off for the group, the editor says so
-instead of showing an empty list.
-Personal workflows keep the File Sync settings they already have, but can't
-create new ones in V2 yet. From version **0.261.144**, a personal workflow
-whose Analyze task works on the files File Sync changed can be saved in V2.
+A group workflow uses between 1 and 10 of the group's own sources. A source the
+group no longer offers is marked **No longer available**; remove it before
+saving. From version **0.261.149**, if a source is deleted while you're editing,
+saving is refused with "A selected File Sync source is no longer available.
+Remove it and save again." Your changes stay in the editor, and the source is
+marked so you can remove it. When File Sync is turned off for the group, the
+editor says so instead of showing an empty list.
+
+A personal workflow uses between 1 and 10 of the sources you may sync: your own
+personal sources, and those of your active group and active public workspace
+when you're an Owner, Admin or DocumentManager there. Each source is labelled
+with where it lives, such as "Home share (Personal)". Your personal sources are
+offered only while your administrator allows personal File Sync for you, which
+can require the **PersonalFileSyncUser** role. When it's off, the editor says so,
+and sources the workflow already uses stay selected so you can keep or remove
+them. The save checks every source again: a deleted source is refused with the
+same message as for a group, and a source you're no longer allowed to use with
+"Workflow settings or sources are not allowed for this account."
 
 ## Set up alerts
 

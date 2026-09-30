@@ -258,16 +258,17 @@ def workflow_origin_material_change(existing, workflow):
 def apply_workflow_origin(workflow, existing=None, origin=None):
     """Record server-owned provenance on a built workflow document.
 
-    A new workflow takes the ``origin`` its server create path supplies, never marked edited. A
-    save of an existing workflow leaves the stored origin to the store merge, which preserves it,
-    and writes it only once: to mark the owner's first material change as ``edited``. The origin
-    is outside the definition revision and the Microsoft 365 fingerprint, so recording it never
-    invalidates an editor's revision or a Run as approval.
+    A new workflow takes the ``origin`` its server create path supplies, ``edited`` included:
+    a proposal the user changed in the workflow editor before accepting it is recorded as
+    edited from the start. A save of an existing workflow leaves the stored origin to the store
+    merge, which preserves it, and writes it only once: to mark the owner's first material
+    change as ``edited``. The origin is outside the definition revision and the Microsoft 365
+    fingerprint, so recording it never invalidates an editor's revision or a Run as approval.
     """
     if origin is not None:
         if existing:
             raise WorkflowDefinitionError("Only a new workflow can record where it came from.")
-        workflow["origin"] = {**normalize_workflow_origin(origin), "edited": False}
+        workflow["origin"] = normalize_workflow_origin(origin)
         return workflow
     stored = (existing or {}).get("origin")
     if (

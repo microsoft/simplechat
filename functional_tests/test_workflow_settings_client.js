@@ -1,15 +1,17 @@
 // test_workflow_settings_client.js
 /*
 Functional tests for the V2 workflow editor's settings rules and save error handling.
-Version: 0.261.149
+Version: 0.261.207
 Implemented in: 0.261.149
 
 Executes the production TypeScript in lib/workflowEditor.ts and lib/workflowSettings.ts. Only HTTP
 transport is replaced. It checks what the parity test against the real server cannot reach: how
-the editor words a deleted workflow's 409, reads error codes, parses the group source list and its
-File Sync flag, keeps revisions out of every create, and uses the source list to apply the group
-File Sync gate and the deleted-source check. test_group_workflow_file_sync_client_parity.py pins
-the rules themselves against the real save functions.
+the editor words a deleted workflow's 409, reads error codes, parses the group and personal source
+lists and their File Sync flag, keeps revisions out of every create, and uses the group source list
+to apply the group File Sync gate and the deleted-source check. Since 0.261.207 personal workflows
+author File Sync too, so their creates send the edited `file_sync`, and a personal list marks only
+its own missing personal sources. test_group_workflow_file_sync_client_parity.py pins the rules
+themselves against the real save functions.
 */
 
 const assert = require('node:assert/strict');
@@ -23,6 +25,8 @@ const personal = { type: 'personal' };
 const group = { type: 'group', groupId: 'group-alpha' };
 const finance = { scope_type: 'group', scope_id: 'group-alpha', source_id: 'finance-share' };
 const listedFinance = { ...finance, name: 'Finance share', source_type: 'smb', enabled: true, label: 'Finance share (Group)' };
+const home = { scope_type: 'personal', scope_id: 'owner-1', source_id: 'notes-share' };
+const listedHome = { ...home, name: 'Notes share', source_type: 'smb', enabled: true, label: 'Notes share (Personal)' };
 const sourceUnavailable = 'A selected File Sync source is no longer available. Remove it and save again.';
 const groupFileSyncOff = 'Group File Sync must be enabled before a group workflow can use File Sync sources.';
 const requests = [];
@@ -47,7 +51,7 @@ beforeEach(() => {
             body: init.body === undefined ? undefined : JSON.parse(init.body),
         };
         requests.push(request);
-        return respond(request);
+        return respond();
     };
 });
 
@@ -113,7 +117,85 @@ test('the source list carries the File Sync gate and refuses a response without 
 
     respond = () => Response.json({ sources: [listedFinance] });
     await assert.rejects(editor.fetchWorkflowFileSyncSources(group), /The File Sync source list returned an invalid response\./);
-    await assert.rejects(editor.fetchWorkflowFileSyncSources(personal), /listed only for group workflows/);
+    // A group list offers only that group's sources.
+    respond = () => Response.json({ sources: [listedHome], file_sync_enabled: true });
+    await assert.rejects(editor.fetchWorkflowFileSyncSources(group), /The File Sync source list returned an invalid response\./);
+});
+
+test('the personal source list spans scopes and is requested without a group', async () => {
+    const otherGroup = { ...listedFinance, scope_id: 'group-beta', label: 'Finance share (Group)' };
+    const handbook = {
+        scope_type: 'public', scope_id: 'handbook', source_id: 'handbook-share', name: 'Handbook',
+        source_type: 'sharepoint', enabled: false, label: 'Handbook (Public)',
+    };
+    respond = () => Response.json({ sources: [listedHome, otherGroup, handbook, listedHome], file_sync_enabled: false });
+    const listing = await editor.fetchWorkflowFileSyncSources(personal);
+    assert.deepEqual(listing, { fileSyncEnabled: false, sources: [listedHome, otherGroup, handbook] });
+    assert.equal(requests[0].url.pathname, '/api/user/workflows/file-sync-sources');
+    assert.equal(requests[0].url.search, '');
+
+    for (const entry of [
+        { ...listedHome, scope_type: 'team' },
+        { ...listedHome, scope_id: '' },
+        { ...listedHome, source_id: '  ' },
+        { ...listedHome, enabled: 'yes' },
+    ]) {
+        respond = () => Response.json({ sources: [entry], file_sync_enabled: true });
+        await assert.rejects(editor.fetchWorkflowFileSyncSources(personal), /The File Sync source list returned an invalid response\./);
+    }
+    respond = () => Response.json({ sources: [listedHome] });
+    await assert.rejects(editor.fetchWorkflowFileSyncSources(personal), /The File Sync source list returned an invalid response\./);
+});
+
+test('a personal save sends the File Sync it authored, and only the source identities', () => {
+    const draft = editor.newWorkflowDefinition(personal);
+    draft.name = 'Review new files';
+    draft.tasks[0].instructions = 'Summarize the changed files.';
+    draft.trigger_type = 'file_sync';
+    draft.schedule = { unit: 'hours', value: 1 };
+    draft.file_sync = editor.workflowMonitorFileSyncConfig({ sources: [{ ...listedHome }, { ...listedFinance }] });
+    const payload = editor.workflowForSave(draft, null, personal);
+    assert.deepEqual(payload.file_sync, {
+        enabled: true, wait_mode: 'complete', continue_mode: 'changed', use_changed_documents: true,
+        sources: [home, finance],
+    });
+    assert.equal(Object.hasOwn(payload, 'group_id'), false);
+    assert.deepEqual(editor.workflowSettingsDraftErrors(draft, options(personal), null, null), []);
+
+    // An untouched stored value is sent back as loaded, and File Sync is no longer listed as preserved.
+    const stored = editor.normalizeWorkflowDefinition({
+        ...payload, id: 'wf-1', definition_revision: 'a'.repeat(64),
+        file_sync: { source_id: 'legacy-source', delete_policy: 'preserve' },
+    }, personal);
+    const edited = { ...structuredClone(stored), description: 'Edited in V2.' };
+    assert.deepEqual(editor.workflowForSave(edited, stored, personal).file_sync, { source_id: 'legacy-source', delete_policy: 'preserve' });
+    assert.equal(editor.preservedWorkflowFieldLabels(stored).includes('file sync settings'), false);
+});
+
+test('a personal list marks only its own missing personal sources as gone', () => {
+    const goneHome = { ...home, source_id: 'gone-share' };
+    const unlistedGroup = { ...finance, scope_id: 'group-beta' };
+    const draft = editor.newWorkflowDefinition(personal);
+    draft.trigger_type = 'file_sync';
+    draft.file_sync = editor.workflowMonitorFileSyncConfig({ sources: [home, goneHome, unlistedGroup] });
+    const listed = [listedHome];
+    assert.deepEqual(editor.workflowUnavailableFileSyncSources(draft, listed, ['personal']), [goneHome]);
+    // Without the filter every unlisted source counts, which is the group rule.
+    assert.deepEqual(editor.workflowUnavailableFileSyncSources(draft, listed), [goneHome, unlistedGroup]);
+    // Nothing is checked while File Sync is off for the draft.
+    const manual = { ...draft, trigger_type: 'manual', file_sync: { ...draft.file_sync, enabled: false } };
+    assert.deepEqual(editor.workflowUnavailableFileSyncSources(manual, listed, ['personal']), []);
+});
+
+test('both scopes refuse more than ten sources instead of letting the server drop them', () => {
+    const eleven = Array.from({ length: 11 }, (_, index) => ({ ...home, source_id: `share-${index}` }));
+    const draft = editor.newWorkflowDefinition(personal);
+    draft.name = 'Many sources';
+    draft.tasks[0].instructions = 'Check the files.';
+    draft.file_sync = { enabled: true, wait_mode: 'complete', continue_mode: 'always', use_changed_documents: true, sources: eleven };
+    assert.deepEqual(editor.workflowSettingsDraftErrors(draft, options(personal), null, null), ['Choose at most 10 File Sync sources.']);
+    const groupDraft = draftWithFileSync(eleven.map((source) => ({ ...finance, source_id: source.source_id })));
+    assert.ok(editor.workflowSettingsDraftErrors(groupDraft, options(group), null, null).includes('Choose at most 10 File Sync sources.'));
 });
 
 test('a create never sends a revision, even from a draft that carries one', async () => {

@@ -2,7 +2,7 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
-### **(v0.261.205)**
+### **(v0.261.209)**
 
 #### Bug Fixes
 
@@ -12,6 +12,75 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
     *   Orchestrated deep research also refused to start whenever query planning or linked-page planning was on, which is the default. Both planners now run within the existing Knowledge limits, each planner request still follows a fresh attestation of the planner model, and a planning-setting change during a run stops the step.
     *   A step that continues in the background, where there is no signed-in session, now says so and asks the user to send the request again instead of showing the generic message. Step, saved-wait, finalization and content-preparation failure events log the refusal code as `sc_authority_reason`.
     *   (Ref: #1509, `functions_orchestration_external_identity.py`, `functions_orchestration_bootstrap.py`, `functions_orchestration_external_configuration.py`, `functions_source_review.py`, `access_failure`, [Orchestration Web Search and Deep Research Access Fix](fixes/ORCHESTRATION_SESSION_IDENTITY_FIX.md))
+
+### **(v0.261.208)**
+
+#### New Features
+
+*   **AI Workflow Assistant Endpoint**
+    *   The server side of the AI workflow assistant. `POST /api/user/workflows/assist` takes one plain-language instruction, such as "run this at 7 AM on weekdays and only alert me when something is urgent", with the V2 editor's current draft of a personal workflow, and returns a proposed edit for the author to review. The answer is `changed` with the edited draft, `explained` when nothing should change, or `question` when the request is ambiguous. The editor's **Ask AI** tab, which calls it, arrives in a later release, so nothing calls the endpoint yet.
+    *   It can propose a name and description, manual, interval and calendar schedules, alert settings, the runner (only agents and models the author can already use), tasks (add, remove, reorder, instructions and inputs), and documents attached with `#`, placed by intent: shared by every task, used by selected tasks, or one task's document target. When the placement is unclear it asks instead of guessing.
+    *   It never saves anything. It can't turn a workflow on or off, change Run as, approvals, sharing or URL access, or edit identity fields, and it explains rather than editing File Sync triggers or For each and If structure. Group workflows and tag references are refused. Every proposal is checked the way saving checks it, with one chance for the model to correct itself, and a proposal that still fails is discarded. The response warns when saving will need Run as re-approved, when a task the assistant added or changed sends email but isn't run by an agent with the Microsoft 365 action, or when the Microsoft 365 connection is missing.
+    *   The model never sees raw document IDs; each document gets a short handle for the request. The draft, earlier turns and document excerpts are all sent as untrusted material, excerpts are bounded, and telemetry records counts, outcomes and error codes only, never instructions, workflows, replies or document text.
+    *   Requests and the model's replies are read the way the browser reads JSON. `NaN`, `Infinity` and numbers JavaScript can't hold are refused, and a whole number such as `12.0` is checked as the integer the editor would save.
+    *   Each person may have one request running and send 20 requests every 10 minutes, across every app instance. The count is a small per-user document in the settings container, which is the endpoint's only write. If that store is unavailable, the assistant answers 503 rather than running without a limit.
+    *   New admin setting **Enable AI Workflow Assistant** (`enable_workflow_ai_assistant`) in **Workflow** settings, on by default. It has no effect while Enable Personal Workflows is off, and it follows the WorkflowUser role requirement.
+    *   (Ref: #1548, #1543, `route_backend_workflows.py`, `functions_workflow_assist.py`, `functions_workflow_assist_operations.py`, `functions_workflow_assist_editor.py`, `functions_workflow_assist_limits.py`, `functions_workflow_assist_runtime.py`, [AI Workflow Assistant](features/WORKFLOW_AI_ASSISTANT.md), [Workflow settings](../admin/workflow.md#workflow-ai-assistant))
+
+### **(v0.261.207)**
+
+#### New Features
+
+*   **Workflows Proposed From Chat**
+    *   With **Propose Workflows From Chat** on, a chat orchestration plan can handle a recurring request in two parts. It answers the current period once, as a preview, and proposes a personal workflow for the runs to come. "Every Monday at 8, read my email and tell me what I should focus on this week" gets this week's answer and a proposed Monday 08:00 workflow.
+    *   The proposal is a new `workflow_propose` step with a new `workflow` deliverable. The planner describes the workflow as a closed blueprint, naming the requester's agents, File Sync sources, the documents they named in the request and their existing workflows only by request-local handles. The workflow draft service checks the blueprint without writing anything. A blueprint that still breaks the rules after one repair is dropped with everything bound to it, and the rest of the plan runs.
+    *   Nothing is created until the requester decides on the proposal card. Accepting the same proposal twice creates one workflow, a denied proposal can't be accepted, and a proposal expires after 14 days. A workflow the requester deleted comes back only through **Create again**.
+    *   Proposals are personal only and appear only in a conversation that's private to the requester. A task on an agent with Microsoft 365 actions runs as the requester, and accepting never approves Run as. URL Access can't be turned on from chat.
+    *   Four requester-only routes serve the card: status, accept, deny and draft. Accepting records the workflow creation in the activity log, as a save from Workflows does.
+    *   (Ref: #1547, #1543, `functions_orchestration_workflow_context.py`, `functions_orchestration_workflows.py`, `functions_orchestration_workflow_proposals.py`, `route_backend_orchestration.py`, [Chat orchestration workflow proposals](features/CHAT_ORCHESTRATION_WORKFLOW_PROPOSALS.md))
+
+*   **Propose Workflows From Chat Setting**
+    *   **Admin Settings > Orchestration > Chat Orchestration > Capabilities** adds **Propose Workflows From Chat** (`enable_chat_orchestration_workflows`) to the classic and V2 admin pages. It's off by default, because it lets a conversation lead to standing work that runs later, possibly as the user in Microsoft 365. It also needs Chat Orchestration, personal workflows and, when the capability list is narrowed, **Propose workflows**.
+    *   With it off, planning is unchanged. A golden test captured before this change pins the planner's messages, the deliverable brief and the strict-mode error, with the setting off and with it on while proposals aren't available.
+    *   (Ref: `functions_settings.py`, `admin_settings_fields.py`, `route_frontend_admin_settings.py`, `templates/admin/_panes/chat-orchestration.html`, [Orchestration settings](../admin/orchestration.md))
+
+*   **Chat Plans Use The Browser's Time Zone**
+    *   The V2 chat sends the browser's time zone with each plan request, so "Monday at 08:00" means 08:00 where the user is. The server accepts only a known zone name. The first plan, regenerate and replan, answers to a question card, plan editor revisions and retries all keep it rather than falling back to UTC.
+    *   When a turn may propose a workflow, its answer is written with the user's local date and time, in the words a calendar workflow's run uses, so the preview and the later runs read "this week" the same way. Every other answer is written exactly as before.
+    *   (Ref: `validated_request_time_zone`, `workflow_answer_time_line`, `functions_orchestration_context.py`, `functions_orchestration_composition.py`, `orchestrationController.ts`)
+
+*   **Personal File Sync In The V2 Workflow Editor**
+    *   The V2 editor for personal workflows can now author the **Monitor File Sync changes** trigger, **Run File Sync before each run** and **Use changed files as Analyze targets**, as the V2 group editor and the classic personal editor already could. A personal workflow whose stored source was deleted can now be fixed in V2.
+    *   The source list says when File Sync isn't enabled for the personal workspace, instead of showing an empty list.
+    *   (Ref: `functions_workflow_file_sync_sources.py`, `route_backend_workflows.py`, `WorkflowEditorDialog.tsx`, [V2 personal workflow File Sync](features/V2_PERSONAL_WORKFLOW_FILE_SYNC.md))
+
+#### User Interface Enhancements
+
+*   **Workflow Proposal Card In The V2 Chat**
+    *   A proposed workflow appears as a **Proposed workflow** card under the answer. It shows when the workflow runs, about how often, its alerts, the Microsoft 365 data it uses and whose account it runs as, each task's runner, and each task's full instructions under **Instructions**, as plain text. It also lists similar workflows the user already has.
+    *   **Create & start**, **Create paused** and **Edit** decide it. A manual workflow offers **Create** and says it runs only when started from Workflows. **Edit** opens the proposal in the V2 workflow editor, and Save creates it. **Deny** asks for confirmation, and **Open workflow** goes to the created workflow.
+    *   While the workflow is being created, the card checks back every three seconds for up to two minutes, and waits while the tab is hidden. The plan labels the deliverable **Workflow proposal** and shows a prepared one as **Proposed**. The card is the only place the proposal appears; it's never listed with the answer's files.
+    *   (Ref: `WorkflowProposalCard.tsx`, `workflowProposals.ts`, `orchestrationPlan.ts`, [Chat controls](../reference/chat-controls.md#workflow-proposals-v2-interface), [Create a workflow](../guides/create-a-workflow.md#create-a-workflow-from-chat))
+
+### **(v0.261.205)**
+
+#### Bug Fixes
+
+*   **Workflow Flow Arrows Stay Drawn While The Page Updates**
+    *   The execution arrows in the V2 workflow editor's **Flow** surface disappeared whenever the editor re-rendered without changing the diagram: while saving, after a failed save, or while typing in a field outside the diagram. The read-only Flow view did the same on every runtime poll of a running workflow. The arrows usually came back once React Flow measured the blocks again, but a measurement that arrived between two re-renders could leave them missing, which also made the Flow save-failure UI test flaky.
+    *   The Flow canvas now calls the editor's latest handlers through stable wrappers and keeps each unchanged block's React Flow node between renders, so a re-render that doesn't change the diagram changes nothing on the canvas. A block that does change carries the size React Flow last measured, so its arrows stay drawn while it is measured again, and a block whose selection changes is measured again because its wider border moves its handles.
+    *   Selection, collapse, keyboard navigation, focus requests, dragged positions and change tracking behave as before.
+    *   (Ref: #1573, #1543, `WorkflowFlowCanvas.tsx`, `workflowFlowNodeReuse.ts`, [V2 Workflow Flow Canvas Stable Re-renders Fix](fixes/V2_WORKFLOW_FLOW_CANVAS_STABLE_RERENDERS_FIX.md))
+
+### **(v0.261.204)**
+
+#### User Interface Enhancements
+
+*   **Simpler Orchestration Progress In The V2 Chat**
+    *   While Orchestrate plans a question, the reply now shows just the reasoning step toggle and **Thinking**. The **Orchestration** progress card that sat above them is gone. It showed "Current step: Building a plan", a percentage, a step count and a progress bar, which repeated the reasoning step, stayed at 45% while the planner worked, and disappeared as soon as the plan arrived.
+    *   While a plan runs, the plan card still shows how many steps are done and which one is running, with **Review** for the full list. The planner's steps are still under the reasoning toggle. Expanding a saved answer's reasoning no longer shows the card either.
+    *   Tabular analysis and agent replies keep their progress cards. Nothing changes on the server.
+    *   (Ref: `activityLanes.ts`, `ThoughtsList.tsx`, `showsCard`, [Orchestration Duplicate Progress Card Fix](fixes/ORCHESTRATION_DUPLICATE_PROGRESS_CARD_FIX.md))
 
 ### **(v0.261.203)**
 
