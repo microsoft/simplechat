@@ -18,7 +18,11 @@ and Monitor File Sync trigger rules. They cover:
   source stays selected without being called unavailable, and there is no Monitor trigger to add;
 * a personal Monitor workflow with a schedule the editor can't show opens read-only (F1) and never
   asks for the source list;
-* keyboard selection and focus, in light and dark themes, without horizontal overflow.
+* keyboard selection and focus, in light and dark themes, without horizontal overflow;
+* a structured (version 3) personal workflow switched to the Monitor File Sync changes trigger
+  saves its File Sync settings, which 0.261.203 (#1569) made an authored field of structured drafts;
+* editing a personal workflow's File Sync sources is one row in the Changes tab, whose Jump lands in
+  the File Sync section.
 """
 
 import copy
@@ -52,6 +56,10 @@ from test_v2_group_workflow_file_sync import (  # noqa: E402  (shared record and
     trigger_options,
     workflow_post,
 )
+from ui_tests import test_v2_workflow_flow_authoring as authoring  # noqa: E402
+from ui_tests.fixtures.workflow_flow import FLOW_WORKFLOW_ID  # noqa: E402
+from ui_tests.test_v2_workflow_flow_authoring import authoring_ui  # noqa: E402,F401
+from test_v2_workflow_change_tracking import change_row, open_panel, unsaved_heading  # noqa: E402
 
 
 pytestmark = pytest.mark.ui
@@ -241,6 +249,74 @@ def test_personal_sources_are_chosen_by_keyboard_in_both_themes(workflow_ui, the
     page.get_by_role("button", name="Save workflow", exact=True).click()
     expect(create_dialog(page)).to_have_count(0)
     assert workflow_post(ui).body["file_sync"]["sources"] == [
+        PERSONAL_SOURCE, {"scope_type": "group", "scope_id": GROUP_ID, "source_id": "finance-share"},
+    ]
+
+
+def test_a_structured_personal_workflow_switches_to_file_sync_and_saves_it(authoring_ui):
+    """Before 0.261.203 (#1569), a structured draft rolled this edit back as a change to saved identity."""
+    ui = authoring_ui
+    stored = ui.personal_workflows[FLOW_WORKFLOW_ID]
+    assert stored["definition_version"] == 3 and stored["trigger_type"] == "manual"
+    editor = authoring.open_editor(ui)
+    labelled(editor, "Trigger").select_option("file_sync")
+    home = source_checkbox(editor, "Home share (Personal)")
+    home.check()
+    labelled(editor, "Interval unit").select_option("hours")
+    labelled(editor, "Interval value").fill("2")
+    expect(labelled(editor, "Trigger")).to_have_value("file_sync")
+    expect(home).to_be_checked()
+    expect(before_run_toggle(editor)).to_be_checked()
+    expect(editor.get_by_text("cannot change saved identity", exact=False)).to_have_count(0)
+
+    payload = authoring.save(ui, editor)
+    assert payload["definition_version"] == 3
+    assert payload["trigger_type"] == "file_sync"
+    assert payload["schedule"] == {"unit": "hours", "value": 2}
+    assert payload["file_sync"] == {
+        "enabled": True, "wait_mode": "complete", "continue_mode": "changed", "use_changed_documents": True,
+        "sources": [PERSONAL_SOURCE],
+    }
+    # The real personal rules authorized the source, and the stored structured workflow kept it.
+    assert ("personal", OWNER_ID, "home-share") in ui.file_sync_source_reads
+    saved = ui.personal_workflows[FLOW_WORKFLOW_ID]
+    assert saved["definition_version"] == 3 and saved["trigger_type"] == "file_sync"
+    assert saved["file_sync"]["sources"] == [PERSONAL_SOURCE]
+
+
+def test_editing_personal_sources_is_one_change_and_jump_lands_in_file_sync(workflow_ui):
+    ui, page = workflow_ui, workflow_ui.page
+    ui.active_group_id = GROUP_ID
+    ui.personal_workflows[WORKFLOW_ID].update(
+        trigger_type="file_sync",
+        schedule={"unit": "hours", "value": 2},
+        file_sync=copy.deepcopy(PERSONAL_MONITOR_FILE_SYNC),
+    )
+    ui.open(f"/workspace/workflows?workflow_id={WORKFLOW_ID}")
+    editor = edit_dialog(page)
+    expect(editor).to_be_visible()
+    home = source_checkbox(editor, "Home share (Personal)")
+    expect(home).to_be_checked()
+    source_checkbox(editor, "Finance share (Group)").check()
+
+    panel = open_panel(editor)
+    expect(unsaved_heading(panel, 1)).to_be_visible()
+    expect(panel.locator("li[data-workflow-change-row]")).to_have_count(1)
+    row = change_row(panel, "file_sync")
+    expect(row).to_contain_text("File Sync")
+    expect(row.locator("p")).to_have_text("Before: On, 1 source After: On, 2 sources")
+    row.get_by_role("button", name="Jump", exact=True).click()
+    # The Monitor trigger keeps the before-run toggle disabled, so Jump focuses the first source.
+    section = editor.get_by_role("region", name="File Sync", exact=True)
+    expect(section.locator("ul[aria-label='File Sync sources']")).to_have_count(1)
+    expect(section.locator(":focus")).to_have_count(1)
+    expect(home).to_be_focused()
+
+    page.get_by_role("button", name="Save workflow", exact=True).click()
+    expect(edit_dialog(page)).to_have_count(0)
+    body = workflow_post(ui).body
+    assert body["trigger_type"] == "file_sync"
+    assert body["file_sync"]["sources"] == [
         PERSONAL_SOURCE, {"scope_type": "group", "scope_id": GROUP_ID, "source_id": "finance-share"},
     ]
 
