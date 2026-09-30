@@ -37,8 +37,10 @@ from functions_orchestration_memory import OrchestrationMemoryError, validate_me
 # One definition of each: the step schema, the deliverables and this module read the same values.
 from functions_orchestration_registry import (
     CAPABILITY_WORKFLOW_PROPOSE as WORKFLOW_PROPOSE_CAPABILITY_ID,
+    CAPABILITY_WORKFLOW_RUN as WORKFLOW_RUN_CAPABILITY_ID,
     WORKFLOW_PROPOSAL_MAX_TASKS as WORKFLOW_BLUEPRINT_MAX_TASKS,
     WORKFLOW_PROPOSALS_SETTING,
+    WORKFLOW_RUNS_SETTING,
     WORKFLOW_TASK_ACTION_KINDS as WORKFLOW_ACTION_KINDS,
 )
 from functions_workflow_limits import (
@@ -55,6 +57,7 @@ from functions_workflow_schedules import (
 
 # Closed reasons. They are mapped to application-owned text; none of them carries caller data.
 WORKFLOW_REASON_DISABLED = 'workflow_proposals_disabled'
+WORKFLOW_RUNS_REASON_DISABLED = 'workflow_runs_disabled'
 WORKFLOW_REASON_ROLE_REQUIRED = 'workflow_role_required'
 WORKFLOW_REASON_SHARED_CONVERSATION = 'workflow_shared_conversation'
 WORKFLOW_REASON_QUOTA_REACHED = 'workflow_quota_reached'
@@ -189,6 +192,21 @@ def workflow_proposals_configured(settings):
     return bool(settings.get('enable_chat_orchestration')) and settings.get(WORKFLOW_PROPOSALS_SETTING) is True
 
 
+def workflow_runs_configured(settings):
+    """Whether an administrator turned on starting saved workflows from chat orchestration.
+
+    Only a real boolean ``True`` turns it on. It is independent of workflow proposals: either can be
+    on without the other.
+    """
+    settings = settings if isinstance(settings, dict) else {}
+    return bool(settings.get('enable_chat_orchestration')) and settings.get(WORKFLOW_RUNS_SETTING) is True
+
+
+def workflow_planning_configured(settings):
+    """Whether either workflow capability is configured, so a turn may need a workflow planning context."""
+    return workflow_proposals_configured(settings) or workflow_runs_configured(settings)
+
+
 def workflow_planning_option(workflow_planning):
     """``{'workflow_planning': ...}`` when the turn has one, else ``{}``.
 
@@ -215,6 +233,35 @@ def workflow_planning_gate(settings, user_roles):
     from functions_orchestration_registry import capability_allowlisted
     if not capability_allowlisted(settings, WORKFLOW_PROPOSE_CAPABILITY_ID):
         return WORKFLOW_REASON_DISABLED
+    # Settings initialize application storage, so they are imported only once a gate is reached.
+    from functions_settings import is_user_workflows_enabled_for_user
+    roles = list(user_roles) if isinstance(user_roles, (list, tuple, set)) else []
+    if not is_user_workflows_enabled_for_user(settings, user_roles=roles):
+        return WORKFLOW_REASON_ROLE_REQUIRED
+    return None
+
+
+def workflow_run_settings_gate(settings):
+    """Return None when the deployment lets a plan start a saved workflow, else a closed reason.
+
+    Settings and the capability allowlist only. The caller's WorkflowUser role is checked by
+    ``workflow_run_gate``; linking a run that already started needs only this part.
+    """
+    settings = settings if isinstance(settings, dict) else {}
+    if not workflow_runs_configured(settings) or not settings.get('allow_user_workflows'):
+        return WORKFLOW_RUNS_REASON_DISABLED
+    # Imported here because the registry's workflow capability gates import this module.
+    from functions_orchestration_registry import capability_allowlisted
+    if not capability_allowlisted(settings, WORKFLOW_RUN_CAPABILITY_ID):
+        return WORKFLOW_RUNS_REASON_DISABLED
+    return None
+
+
+def workflow_run_gate(settings, user_roles):
+    """Return None when this user may be offered starting a saved workflow, else a closed reason."""
+    reason = workflow_run_settings_gate(settings)
+    if reason:
+        return reason
     # Settings initialize application storage, so they are imported only once a gate is reached.
     from functions_settings import is_user_workflows_enabled_for_user
     roles = list(user_roles) if isinstance(user_roles, (list, tuple, set)) else []

@@ -105,9 +105,14 @@ CAPABILITY_COMPOSE = 'compose'
 CAPABILITY_GENERATE_IMAGE = 'generate_image'
 CAPABILITY_RENDER_FILE = 'render_file'
 CAPABILITY_WORKFLOW_PROPOSE = 'workflow_propose'
+CAPABILITY_WORKFLOW_RUN = 'workflow_run'
 
 # The settings key that must be exactly True before workflow proposals exist in a deployment.
 WORKFLOW_PROPOSALS_SETTING = 'enable_chat_orchestration_workflows'
+# The settings key that must be exactly True before a plan may start a saved workflow. It is
+# independent of proposals: running is one approved run of a workflow the user already has, while a
+# proposal creates standing work.
+WORKFLOW_RUNS_SETTING = 'enable_chat_orchestration_workflow_runs'
 # The tasks a workflow proposal may hold, and the action kinds the planner may say a task needs.
 # The workflow planning context and the deliverables import these, so each has one definition.
 # The draft service's own task limit (functions_workflow_drafts.BLUEPRINT_MAX_TASKS) stays a
