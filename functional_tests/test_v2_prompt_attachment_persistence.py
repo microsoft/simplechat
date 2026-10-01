@@ -2,10 +2,11 @@
 #!/usr/bin/env python3
 """
 Functional regression for prompt attachments at actual message persistence boundaries.
-Version: 0.261.122
+Version: 0.261.213
 Implemented in: 0.261.096
 Turn-reuse integration coverage expanded in: 0.261.097
 Frozen turn-context persistence integration: 0.261.099
+Harness namespace re-synced with the routes in: 0.261.213
 
 Execute the shipping metadata helper, chat persistence statements, orchestration writer,
 and shared post/stream routes against in-memory Cosmos containers. Importing the full chat
@@ -23,7 +24,7 @@ import time
 import uuid
 from copy import deepcopy
 from datetime import datetime, timezone
-from functools import lru_cache
+from functools import lru_cache, partial
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock, call
@@ -36,6 +37,13 @@ sys.path.insert(0, str(APP_DIR))
 
 # These pure application modules need the application import path, not app/config startup.
 import collaboration_models  # noqa: E402
+from functions_chat_content_checks import (  # noqa: E402
+    CHECK_CONTEXT_KEY,
+    CHECK_METADATA,
+    attach_chat_check,
+    check_chat_content,
+    strip_private_chat_checks,
+)
 from functions_chat_stream_events import build_user_message_persisted_stream_event  # noqa: E402
 from functions_prompt_metadata import build_prompt_selection_metadata  # noqa: E402
 from test_orchestration_conversation_context import load_modules  # noqa: E402
@@ -45,6 +53,22 @@ from test_support.versioning import assert_app_version_at_least  # noqa: E402
 
 SEND_PATHS = ("chat", "chat-stream", "document-action", "orchestration", "shared-post", "shared-stream")
 USER = {"user_id": "author-1", "display_name": "Author", "email": "author@example.test"}
+BOUNDARY_FILENAME = "<shipping-persistence-boundary>"
+
+# chat_api's initial value for this local, which its new-message branch reads. The closed
+# namespace seeds it with the other route locals; a test keeps it equal to the route literal.
+ROUTE_IMAGE_REFERENCES_INITIAL = {
+    "sources": [],
+    "provenance": [],
+    "mask": None,
+    "mask_metadata": None,
+    "input_fidelity": "",
+}
+
+# Content checks are orthogonal to prompt metadata. With every chat scanner off, the shipping
+# check_chat_content returns its "not_required" decision without reaching settings or Azure.
+CHAT_CONTENT_CHECKS_OFF = {"enable_content_safety": False, "enable_content_screening": False}
+check_chat_content_with_checks_off = partial(check_chat_content, settings=CHAT_CONTENT_CHECKS_OFF)
 
 
 class MemoryContainer:
@@ -105,19 +129,36 @@ def _is_message_write(statement):
     )
 
 
+def _raised_by_boundary(error):
+    frame = error.__traceback__
+    while frame.tb_next is not None:
+        frame = frame.tb_next
+    return frame.tb_frame.f_code.co_filename == BOUNDARY_FILENAME
+
+
 def _execute_boundary(statements, namespace, return_name, events):
     wrapper = ast.parse("def exercise_boundary():\n    pass\n").body[0]
     wrapper.body = deepcopy(statements) + [ast.Return(value=ast.Name(id=return_name, ctx=ast.Load()))]
     module = ast.fix_missing_locations(ast.Module(body=[wrapper], type_ignores=[]))
-    exec(compile(module, "<shipping-persistence-boundary>", "exec"), namespace)
-    result = namespace["exercise_boundary"]()
-    if not inspect.isgenerator(result):
-        return result
-    while True:
-        try:
-            events.append(next(result))
-        except StopIteration as finished:
-            return finished.value
+    exec(compile(module, BOUNDARY_FILENAME, "exec"), namespace)
+    try:
+        result = namespace["exercise_boundary"]()
+        if not inspect.isgenerator(result):
+            return result
+        while True:
+            try:
+                events.append(next(result))
+            except StopIteration as finished:
+                return finished.value
+    except NameError as missing:
+        if isinstance(missing, UnboundLocalError) or not _raised_by_boundary(missing):
+            raise
+        # A route started reading a name the closed namespace lacks; say so instead of a bare NameError.
+        raise AssertionError(
+            f"The shipping persistence boundary now reads {missing.name!r}, which this harness's "
+            "closed namespace does not define. Seed it next to the other route locals in the "
+            "matching *_boundary namespace, using the value the route has at that point."
+        ) from missing
 
 
 def prompt_cases():
@@ -165,9 +206,8 @@ def prompt_cases():
     ]
 
 
-def _chat_boundary(path, info, content):
-    storage = MemoryContainer()
-    events = []
+def _chat_namespace(info, content, storage, events):
+    """The closed namespace for chat_api, chat_stream_api and document-action branches."""
     author = {
         "userId": USER["user_id"], "displayName": USER["display_name"],
         "userPrincipalName": USER["email"], "email": USER["email"],
@@ -179,6 +219,7 @@ def _chat_boundary(path, info, content):
         "cosmos_messages_container": storage,
         "build_prompt_selection_metadata": build_prompt_selection_metadata,
         "build_user_message_persisted_stream_event": build_user_message_persisted_stream_event,
+        "attach_chat_check": attach_chat_check,
         "get_current_user_info": lambda: author,
         "publish_background_event": events.append,
         "debug_print": lambda *args, **kwargs: None,
@@ -193,12 +234,23 @@ def _chat_boundary(path, info, content):
         "frontend_gpt_model": "test-deployment", "gpt_endpoint_id": None,
         "gpt_model_id": None, "gpt_provider": "azure_openai", "gpt_model_icon": None,
         "gpt_response_length": 1000, "reasoning_effort": None, "search_results": [],
+        "prepared_chat_image_references": deepcopy(ROUTE_IMAGE_REFERENCES_INITIAL),
+        "input_check": check_chat_content_with_checks_off(
+            content, "chat_input", user_id=USER["user_id"],
+        ),
     }
     for flag in (
         "image_gen_enabled", "hybrid_search_enabled", "web_search_enabled",
         "url_access_enabled", "source_review_enabled", "deep_research_enabled",
     ):
         namespace[flag] = False
+    return namespace
+
+
+def _chat_boundary(path, info, content):
+    storage = MemoryContainer()
+    events = []
+    namespace = _chat_namespace(info, content, storage, events)
 
     if path == "document-action":
         function = _function("route_backend_chats.py", "execute_document_action_chat_request")
@@ -250,6 +302,7 @@ def _orchestration_boundary(info, content):
     storage = MemoryContainer()
     context = load_modules().context
     memory = import_app_module("functions_orchestration_memory")
+    registry = import_app_module("functions_orchestration_registry")
     authorize = Mock(return_value={"id": "conversation-1", "user_id": USER["user_id"]})
     latest_run = Mock(return_value=None)
     persisted_contexts = []
@@ -275,12 +328,15 @@ def _orchestration_boundary(info, content):
         "has_request_context": has_request_context, "g": g,
         "get_latest_turn_run": latest_run,
         "normalize_history_message": context.normalize_history_message,
+        "image_reference_provenance_from_seeds": context.image_reference_provenance_from_seeds,
         "ConversationContextError": context.ConversationContextError,
         "CosmosResourceNotFoundError": KeyError,
         "build_prompt_selection_metadata": build_prompt_selection_metadata,
         "cosmos_messages_container": storage, "datetime": datetime,
         "timezone": timezone, "uuid": uuid, "logging": logging, "log_event": Mock(),
         "create_orchestration_run": capture_run,
+        "CHECK_METADATA": CHECK_METADATA,
+        "DEPENDENCY_PLAN_CONTRACT_VERSION": registry.DEPENDENCY_PLAN_CONTRACT_VERSION,
     }
     _load_functions(
         "route_backend_orchestration.py", namespace,
@@ -374,6 +430,9 @@ def _shared_boundary(path, info, content):
         "CosmosResourceNotFoundError": type("MissingRecord", (Exception,), {}),
         "build_prompt_selection_metadata": build_prompt_selection_metadata,
         "build_user_message_persisted_stream_event": build_user_message_persisted_stream_event,
+        "check_chat_content": check_chat_content_with_checks_off,
+        "CHECK_CONTEXT_KEY": CHECK_CONTEXT_KEY,
+        "strip_private_chat_checks": strip_private_chat_checks,
         "_require_collaboration_feature_enabled": lambda: None,
         "_get_current_collaboration_user": lambda: USER,
         "get_collaboration_conversation": lambda identifier: conversations.read_item(identifier, identifier),
@@ -535,6 +594,49 @@ def test_only_active_string_variables_are_recorded():
     assert metadata["prompt_name"] is None
     assert metadata["selected_prompt_index"] is None
     assert metadata["prompt_edited"] is False
+
+
+def _image_reference_initializers():
+    return [
+        node for node in ast.walk(_function("route_backend_chats.py", "chat_api"))
+        if _assigns(node, "prepared_chat_image_references") and isinstance(node.value, ast.Dict)
+    ]
+
+
+def test_chat_harness_seeds_the_route_initial_image_references():
+    initializers = _image_reference_initializers()
+    namespace = _chat_namespace(None, "Only the user's text.", MemoryContainer(), [])
+    assert len(initializers) == 1, (
+        "Expected chat_api to initialize prepared_chat_image_references with one dict literal, "
+        f"found {len(initializers)}. Re-check what its new-message branch reads."
+    )
+    initializer = initializers[0].value
+    try:
+        route_value = ast.literal_eval(initializer)
+    except ValueError:
+        route_value = None
+    assert isinstance(route_value, dict), (
+        "chat_api now initializes prepared_chat_image_references with a non-literal value, "
+        f"{ast.unparse(initializer)}. Seed the harness with the value the route has at that point."
+    )
+    added = sorted(set(route_value) - set(ROUTE_IMAGE_REFERENCES_INITIAL))
+    removed = sorted(set(ROUTE_IMAGE_REFERENCES_INITIAL) - set(route_value))
+    assert not added and not removed, (
+        "chat_api's prepared_chat_image_references keys drifted from ROUTE_IMAGE_REFERENCES_INITIAL: "
+        f"the route added {added} and dropped {removed}. Update the seed to the route's literal."
+    )
+    assert route_value == ROUTE_IMAGE_REFERENCES_INITIAL, (
+        f"chat_api now initializes prepared_chat_image_references as {route_value!r}; "
+        "update ROUTE_IMAGE_REFERENCES_INITIAL to the route's literal."
+    )
+    assert "prepared_chat_image_references" in namespace, (
+        "The chat harness namespace must seed prepared_chat_image_references: chat_api's "
+        "new-message branch reads it before the user message is written."
+    )
+    assert namespace["prepared_chat_image_references"] == route_value, (
+        "The chat harness must seed chat_api's initial image references, not "
+        f"{namespace['prepared_chat_image_references']!r}."
+    )
 
 
 def test_version_includes_the_persistence_fix():

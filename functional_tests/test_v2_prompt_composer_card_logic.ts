@@ -1,7 +1,7 @@
 // test_v2_prompt_composer_card_logic.ts
 //
 // Runtime test for the attached-prompt card's composition and recovery rules.
-// Version: 0.261.099
+// Version: 0.261.213
 // Implemented in: 0.261.092
 // Shared editor implemented in: 0.261.096
 // Frozen prompt snapshots implemented in: 0.261.096
@@ -657,13 +657,19 @@ check('dispatchPlan carries the prompt into both the optimistic message and requ
         assert.equal(optimistic.metadata?.orchestration_turn_id, body.turn_id);
         assert.deepEqual(optimistic.metadata?.prompt_selection, promptSelectionMetadata(info));
         observed = true;
+        // normalizePlan accepts only planner contract 2, and isPlanRunnable needs an enabled step.
         return new Response(`data: ${JSON.stringify({
             type: 'orchestration_plan', done: true,
             plan: {
                 plan_id: 'plan-1', run_id: 'run-1', turn_id: body.turn_id,
                 conversation_id: body.conversation_id, user_id: 'author-1', revision: 0,
+                planner_contract_version: 2,
                 intent: { summary: body.message, complexity: 'simple' },
-                steps: [], assumptions: [], status: 'awaiting_approval',
+                steps: [{
+                    step_id: 's1', capability_id: 'compose', title: 'Answer',
+                    arguments: {}, role: 'reason', estimated_cost: 'low',
+                }],
+                assumptions: [], status: 'awaiting_approval',
                 approval: { mode: 'manual', state: 'pending' },
                 validation: { valid: true, errors: [], warnings: [], repairs: [] },
             },

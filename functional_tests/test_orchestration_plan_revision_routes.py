@@ -1,7 +1,7 @@
 # test_orchestration_plan_revision_routes.py
 """
 Functional tests for conversational, pre-execution plan revisions.
-Version: 0.261.200
+Version: 0.261.213
 Implemented in: 0.261.102
 Authorized model routing through revisions and clarification: 0.261.103
 Unroutable Auto revisions report model_unavailable: 0.261.134
@@ -12,6 +12,7 @@ Exercises the real Flask routes, planner, executor, and atomic revision persiste
 Only model, search, source-access, and Cosmos service boundaries are replaced.
 """
 
+import importlib
 import json
 import unittest
 import uuid
@@ -108,12 +109,13 @@ class PlanRevisionRouteTests(unittest.TestCase):
             return [
                 {
                     'document_id': document_id, 'file_name': f'{document_id}.pdf',
-                    'scope': 'personal',
+                    'scope': 'personal', 'source_kind': 'narrative',
                     'authorization_status': 'authorized' if document_id in self.allowed_documents else 'denied',
                 }
                 for document_id in ids
             ]
 
+        self.source_manifest = manifest
         self.model.chat.completions.create = completion
         # The config-stub loader restores sys.modules; patch the route-bound module.
         patcher = patch.dict(self.route.build_plan_edit_outcome.__globals__, {
@@ -375,8 +377,26 @@ class PlanRevisionRouteTests(unittest.TestCase):
         self.assertFalse(next(step for step in supplied['steps'] if step['step_id'] == 'search_1')['enabled'])
         self.assertEqual(updated['edits'], {'disabled_step_ids': [], 'removed_document_ids': {}})
 
+    def use_picked_documents(self):
+        """Plan with picked documents under the same authority the plan editor uses.
+
+        Planning confirms every picked document against the strict current-authority
+        manifest before the planner sees it, and the base harness stubs candidate discovery
+        out. Restore the production explicit-selection branch, which makes no service call,
+        and answer the strict check from ``allowed_documents``.
+        """
+        context = self.route.enrich_planner_candidates.__globals__
+        source_access = importlib.import_module('functions_orchestration_source_access')
+        for patcher in (
+            patch.object(self.route, 'resolve_candidate_documents', context['resolve_candidate_documents']),
+            patch.object(source_access, 'resolve_orchestration_source_manifest', self.source_manifest),
+        ):
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
     def test_document_removal_is_not_lost_when_editor_opens(self):
         self.allowed_documents = {'docA', 'docB'}
+        self.use_picked_documents()
         self.model.plan_override = revised_plan(searches=1)
         self.model.plan_override['steps'][0]['arguments']['document_ids'] = ['docA', 'docB']
         plan = self.planned(selected_document_ids=['docA', 'docB'])
