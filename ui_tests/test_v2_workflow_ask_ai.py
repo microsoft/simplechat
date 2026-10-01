@@ -1447,12 +1447,13 @@ def cpu_throttled(page, rate=6):
         session = page.context.new_cdp_session(page)
     except Exception as error:  # noqa: BLE001 - only Chromium has the DevTools protocol
         pytest.skip(f"This browser cannot throttle the CPU: {error}")
-    session.send("Emulation.setCPUThrottlingRate", {"rate": rate})
-    try:
-        yield
-    finally:
-        session.send("Emulation.setCPUThrottlingRate", {"rate": 1})
-        session.detach()
+    else:
+        session.send("Emulation.setCPUThrottlingRate", {"rate": rate})
+        try:
+            yield
+        finally:
+            session.send("Emulation.setCPUThrottlingRate", {"rate": 1})
+            session.detach()
 
 
 def record_focus(page):
