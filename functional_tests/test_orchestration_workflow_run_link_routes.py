@@ -19,6 +19,7 @@ storage, with the network blocked.
 """
 
 import ast
+import hashlib
 import importlib
 import json
 import re
@@ -649,6 +650,16 @@ def test_a_storage_failure_is_unavailable_and_echoes_nothing(h):
     route_logs = [entry for entry in h.record.logs if entry["source"] == "route_backend_orchestration"]
     assert len(route_logs) == 4 and all('"error_type": "AzureError"' in entry["extra"] for entry in route_logs)
     assert all("Private test" not in entry["extra"] for entry in route_logs)
+    # Application Insights keeps the stage, the error type and the hashed ids, never the raw ids.
+    appinsights = importlib.import_module("functions_appinsights")
+    for entry in route_logs:
+        assert RUN not in entry["extra"] and CONVERSATION not in entry["extra"]
+        kept = appinsights._build_logger_extra(
+            entry["message"], appinsights.sanitize_log_properties(json.loads(entry["extra"])),
+        )
+        assert kept["sc_stage"] == "workflow_run_links" and kept["sc_error_type"] == "AzureError"
+        assert kept["sc_run_id_hash"] == hashlib.sha256(RUN.encode("utf-8")).hexdigest()
+        assert kept["sc_conversation_id_hash"] == hashlib.sha256(CONVERSATION.encode("utf-8")).hexdigest()
 
 
 def test_logs_carry_codes_only(h):
