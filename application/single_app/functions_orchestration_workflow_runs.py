@@ -27,7 +27,7 @@ The run is started with a request id derived from the plan's first attempt and t
 run id is deterministic: a retry of the plan, a second tab or a crash between starting the run and
 saving the step finds the run instead of starting another. The only write is the queue's.
 
-Logs carry codes and counts only, never workflow names or handles.
+Logs carry hashed run and step ids and application codes, never workflow names or handles.
 """
 
 import logging
@@ -39,7 +39,7 @@ from datetime import datetime, timezone
 from azure.core.exceptions import AzureError
 from azure.cosmos.exceptions import CosmosResourceNotFoundError
 
-from functions_appinsights import log_event
+from functions_appinsights import log_event, workflow_log_context
 from functions_m365_workflow_binding import M365_ACTIVE_STATES
 from functions_mixed_source_orchestration import MixedSourceCancellationError
 from functions_orchestration_registry import (
@@ -221,9 +221,14 @@ _HANDLE = re.compile(WORKFLOW_HANDLE_PATTERN)
 _LOG_PREFIX = '[ORCHESTRATION_WORKFLOW_RUNS]'
 
 
-def _log(message, level=logging.INFO, **fields):
-    # Codes and counts only: never workflow names, handles or catalog text.
-    log_event(f'{_LOG_PREFIX} {message}', extra={'stage': 'workflow_run', **fields}, level=level)
+def _log(message, level=logging.INFO, *, run_id=None, step_id=None, **fields):
+    # Hashed ids and application codes, under keys the log allowlist keeps: never workflow names,
+    # handles or catalog text.
+    log_event(
+        f'{_LOG_PREFIX} {message}',
+        extra={'stage': 'workflow_run', **workflow_log_context(run_id=run_id, step_id=step_id), **fields},
+        level=level,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -781,8 +786,7 @@ def adapter_workflow_run(step, context, *, settings, user_id, emit=None, cancel_
         )
         _log(
             'A workflow run step finished.',
-            run_id=context.run_id, step_id=step_id,
-            workflow_run_status=outcome['status'], reason_code=outcome['reason'],
+            run_id=context.run_id, step_id=step_id, status=outcome['status'], reason=outcome['reason'],
         )
         result = build_step_result(
             status=STEP_STATUS_COMPLETED, summary=_STEP_SUMMARIES[outcome['status']], task_result=task,
@@ -798,7 +802,7 @@ def adapter_workflow_run(step, context, *, settings, user_id, emit=None, cancel_
         failure = build_failure(exc.code)
         _log(
             'A workflow run step failed.', logging.WARNING,
-            run_id=context.run_id, step_id=step_id, reason_code=failure['code'],
+            run_id=context.run_id, step_id=step_id, failure_code=failure['code'],
         )
         return _failed(failure)
     except Exception as exc:
@@ -806,7 +810,7 @@ def adapter_workflow_run(step, context, *, settings, user_id, emit=None, cancel_
         failure = _failure(exc)
         _log(
             'A workflow run step failed.', logging.WARNING,
-            run_id=context.run_id, step_id=step_id, error_type=type(exc).__name__, reason_code=failure['code'],
+            run_id=context.run_id, step_id=step_id, error_type=type(exc).__name__, failure_code=failure['code'],
         )
         return _failed(failure)
 
@@ -838,6 +842,7 @@ def rebuild_workflow_run(step, context, *, user_id, task):
     except Exception as exc:
         _log(
             'A recovered workflow run could not be described.', logging.WARNING,
+            run_id=getattr(context, 'run_id', None),
             step_id=step.get('step_id') if isinstance(step, dict) else None, error_type=type(exc).__name__,
         )
         return None

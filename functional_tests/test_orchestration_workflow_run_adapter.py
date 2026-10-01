@@ -21,6 +21,7 @@ status, and the adapter runs on a plain thread with no Flask context.
 """
 
 import ast
+import hashlib
 import importlib
 import json
 import threading
@@ -1032,9 +1033,13 @@ def test_a_recovered_step_that_cannot_be_read_is_not_described(adapter, planning
 
 def test_a_step_that_cannot_be_described_at_all_is_skipped(adapter):
     module, logs = adapter
-    rebuilt = module.rebuild_workflow_run({"step_id": "run_digest"}, SimpleNamespace(), user_id=OWNER, task=None)
+    rebuilt = module.rebuild_workflow_run(
+        {"step_id": "run_digest"}, SimpleNamespace(run_id="run-1"), user_id=OWNER, task=None,
+    )
     assert rebuilt is None
     assert logs and logs[-1][1]["extra"]["error_type"] == "AttributeError"
+    assert logs[-1][1]["extra"]["run_id_hash"] == hashlib.sha256(b"run-1").hexdigest()
+    assert logs[-1][1]["extra"]["step_id_hash"] == hashlib.sha256(b"run_digest").hexdigest()
 
 
 def test_the_executor_restores_only_a_completed_run_step_without_its_sidecar(wr, monkeypatch):
@@ -1144,8 +1149,29 @@ def test_the_run_module_logs_constant_messages_only():
         assert call.args and isinstance(call.args[0], ast.Constant) and isinstance(call.args[0].value, str), call.lineno
         # The fields are codes and ids the application made or checked, never text a user wrote.
         assert {keyword.arg for keyword in call.keywords} <= {
-            "run_id", "step_id", "workflow_run_status", "reason_code", "error_type",
+            "run_id", "step_id", "status", "reason", "failure_code", "error_type",
         }, call.lineno
+
+
+@pytest.mark.parametrize("signed_in, kept_codes", [
+    (True, {"sc_status": "queued", "sc_reason": None}),
+    (False, {"sc_failure_code": "external_session_required"}),
+])
+def test_the_run_step_log_keeps_its_codes_and_only_hashed_ids(adapter, world, chat, planning, signed_in, kept_codes):
+    module, logs = adapter
+    appinsights = importlib.import_module("functions_appinsights")
+    _call(module, planning, signed_in=signed_in)
+    assert len(logs) == 1
+    message, kwargs = logs[0]
+    assert "run-1" not in json.dumps(kwargs, default=str) and "run_digest" not in json.dumps(kwargs, default=str)
+    # What Application Insights receives: the logger keeps allowlisted codes and hashes, and only
+    # the length of any other text.
+    kept = appinsights._build_logger_extra(message, appinsights.sanitize_log_properties(kwargs["extra"]))
+    assert kept["sc_stage"] == "workflow_run"
+    assert {key: kept.get(key, "dropped") for key in kept_codes} == kept_codes
+    assert kept["sc_run_id_hash"] == hashlib.sha256(b"run-1").hexdigest()
+    assert kept["sc_step_id_hash"] == hashlib.sha256(b"run_digest").hexdigest()
+    assert [key for key in kept if key.endswith("_length") and key[:-len("_length")] not in kept] == []
 
 
 def test_every_run_context_knows_its_first_attempt_and_whether_a_user_is_signed_in():

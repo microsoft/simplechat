@@ -565,6 +565,12 @@ def test_a_sidecar_that_does_not_belong_to_its_plan_and_step_is_left_out(h, chan
     assert listed(h) == [] and reads(h) == (0, 0)
     mismatches = [entry for entry in h.record.logs if "workflow_run_link_mismatch" in entry["extra"]]
     assert len(mismatches) == 1
+    # Application Insights keeps the code: the logger drops any text not under an allowlisted key.
+    appinsights = importlib.import_module("functions_appinsights")
+    kept = appinsights._build_logger_extra(
+        mismatches[0]["message"], appinsights.sanitize_log_properties(json.loads(mismatches[0]["extra"])),
+    )
+    assert kept["sc_reason"] == "workflow_run_link_mismatch"
 
 
 def test_the_link_is_read_from_the_step_record_when_the_run_has_none(h):

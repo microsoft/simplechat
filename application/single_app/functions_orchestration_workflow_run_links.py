@@ -274,7 +274,7 @@ def workflow_run_links(run, conversation, *, identity, settings, response_remove
         if not _matches(sidecar, run=run, step_id=step_id, user_id=user_id):
             _log(
                 'A workflow run link did not match the plan that started it.', logging.WARNING,
-                code='workflow_run_link_mismatch',
+                reason='workflow_run_link_mismatch',
             )
             continue
         started.append((step_id, sidecar))
