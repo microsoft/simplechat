@@ -20,7 +20,7 @@ from pathlib import Path
 
 import pytest
 from azure.core.exceptions import AzureError
-from azure.cosmos.exceptions import CosmosHttpResponseError
+from azure.cosmos.exceptions import CosmosHttpResponseError, CosmosResourceNotFoundError
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -148,6 +148,42 @@ def test_someone_elses_or_a_missing_run_reads_exactly_like_not_found(scenario):
     assert error.code == "workflow_result_not_found" and error.status == 404
     assert reader.workflow_result_error_payload(error) == reader.workflow_result_error_payload(missing)
     assert WORKFLOW_ID not in error.message and RUN_ID not in error.message
+    assert fixture.store.loads == []
+    assert fixture.containers["run_items"].queries == []
+
+
+def _partition_blind(container):
+    """A read path that lost its partition scope: the id alone picks the document."""
+    def read_item(item, partition_key):
+        container.reads.append((item, partition_key))
+        for document in container.documents:
+            if document.get("id") == item:
+                return {**deepcopy(document), "_etag": "etag-1", "_ts": 1}
+        raise CosmosResourceNotFoundError(status_code=404, message="missing")
+
+    container.read_item = read_item
+
+
+@pytest.mark.parametrize("blind", ["workflows", "runs"])
+def test_each_owner_comparison_holds_if_a_read_ever_loses_its_partition_scope(blind):
+    """The point reads in the requester's partition are the owner check, and the
+    stored user_id is compared again. If a later read path ignored the partition, a
+    cross-partition lookup by id for example, neither someone else's workflow nor
+    someone else's run may pair with the requester's own documents."""
+    fixture = RunFixture()
+    two_text_tasks(fixture)
+    if blind == "workflows":
+        # The requester's own run names the owner's workflow id.
+        fixture.containers["runs"].documents.append({**fixture.run, "user_id": OTHER_USER})
+    else:
+        # The requester's own workflow shares the owner's workflow id.
+        fixture.containers["workflows"].documents.append({**fixture.workflow, "user_id": OTHER_USER})
+    _partition_blind(fixture.containers[blind])
+    fixture.reset_counters()
+
+    error = closed(lambda: fixture.read(user_id=OTHER_USER))
+
+    assert error.code == "workflow_result_not_found" and error.status == 404
     assert fixture.store.loads == []
     assert fixture.containers["run_items"].queries == []
 
