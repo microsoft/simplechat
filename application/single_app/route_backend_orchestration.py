@@ -1450,6 +1450,13 @@ def _workflow_proposals():
     return functions_orchestration_workflow_proposals
 
 
+def _workflow_run_links():
+    """The workflow run links module, imported on first use like the proposal decisions module."""
+    import functions_orchestration_workflow_run_links
+
+    return functions_orchestration_workflow_run_links
+
+
 def _proposal_identity(user_id):
     """The requester's id, email, roles and tenant for a workflow proposal request.
 
@@ -2880,3 +2887,46 @@ def register_route_backend_orchestration(bp):
             )
 
         return _workflow_proposal_response(run_id, _text(request.args.get('conversation_id')), draft)
+
+    @bp.route("/api/v2/orchestration/runs/<run_id>/workflow-runs", methods=["GET"])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    def orchestration_workflow_run_links(run_id):
+        """The saved workflow runs a run's plan started, each with its status when read.
+
+        Only the requester can read them, and only in a private conversation while they may still
+        start workflows from chat; otherwise every link is unavailable, with no name and no ids.
+        A conversation or run the requester cannot open is indistinguishable from a missing one.
+        Nothing is written. Logs carry hashed ids and the error type only.
+        """
+        user_id = get_current_user_id()
+        if not user_id:
+            return jsonify({'error': 'User not authenticated'}), 401
+        links = _workflow_run_links()
+        conversation_id = _text(request.args.get('conversation_id'))
+        if not conversation_id:
+            return jsonify(links.error_payload('invalid_request')), 400
+        try:
+            conversation = _authorize_context_conversation(conversation_id, user_id)
+            record = get_orchestration_run(run_id, user_id, conversation_id=conversation_id, strict=True)
+            if not record or record.get('conversation_id') != conversation_id:
+                return jsonify(links.error_payload('run_not_found')), 404
+            if is_legacy_plan(record.get('plan')):
+                return _legacy_plan_response()
+            payload = links.workflow_run_links(
+                record, conversation, identity=_proposal_identity(user_id), settings=get_settings(),
+                response_removed=lambda: _run_response_removed(record),
+            )
+        except ConversationContextError:
+            return jsonify(links.error_payload('run_not_found')), 404
+        except Exception as exc:
+            log_event(
+                '[ORCHESTRATION] The workflow run links could not be loaded.', level=logging.ERROR,
+                extra={
+                    **workflow_log_context(run_id=run_id, conversation_id=conversation_id),
+                    'stage': 'workflow_run_links', 'error_type': type(exc).__name__,
+                },
+            )
+            return jsonify(links.error_payload(links.SERVICE_UNAVAILABLE_CODE)), 503
+        return jsonify(payload), 200
