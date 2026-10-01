@@ -487,7 +487,8 @@ shared assist thread, so it has the same turn list, **Cancel**, **Retry**, **Edi
 | `stores/workflowAssistStore.ts` | Turn cards and the rate-limit wait, in memory only |
 | `components/workflows/WorkflowEditorDialog.tsx` | Wiring: the gate, the tab, the toggle, the lock, Escape and focus |
 | `components/workflows/WorkflowTaskFields.tsx` | Each task's **Ask AI** and **Draft with AI** buttons |
-| `components/workflows/WorkflowChangeTracking.tsx` | A side panel whose selected tab the dialog controls, and a class for each tab's panel |
+| `components/workflows/WorkflowChangeTracking.tsx` | A side panel whose selected tab the dialog controls, a class for each tab's panel, and a field key on every tracked field, there from its first render, before any highlight |
+| `components/workflows/useWorkflowAuthoring.ts` | `clearFocusRequest`, so a jump that places focus itself drops a block focus that a change requested |
 | `pages/workspace/WorkflowsSection.tsx` | Reopening a saved workflow after a conflict |
 
 Paths are under `application/v2_ui/src/`. The shared thread gained a few options for this tab, all
@@ -625,7 +626,8 @@ reflected:
 A per-field **Revert** is a step of its own, so it leaves the card applied.
 
 - **Changes in this turn** lists each change. While they're applied or partly undone, **Jump to**
-  moves focus to the change, and on the Flow surface it selects the changed block.
+  moves focus to the change, or to its field once a later Undo or Revert has put that field back,
+  and on the Flow surface it selects the changed block.
 - **Read as context** names the documents the assistant read.
 - **Warnings** lists the server's warnings, with **Jump to** when a warning names a field.
 - **Undo this change** calls 3a's `revertTurn`. It reverts each key the turn changed that still
@@ -692,6 +694,9 @@ credentials mode and JSON headers.
 instructions based on the workflow's name and description and the task's name. The answer is added
 as one undoable AI change labeled "Draft with AI: <task>", and focus moves to the instructions.
 
+- Focus goes straight to the drafted instructions, even when a slow device hasn't drawn the AI
+  highlight yet. On the Flow surface the block stays selected, and focus goes to its instructions
+  rather than to the block on the canvas.
 - It needs something to go on: a workflow name or description, or a task name other than the
   default "Task N". Otherwise it asks you to name the workflow or the task first.
 - It doesn't lock the editor. When the task gained instructions or was removed while it worked,
@@ -713,7 +718,7 @@ as one undoable AI change labeled "Draft with AI: <task>", and focus moves to th
   banner isn't announced separately, because the log already announces the pending turn. Undo's
   result takes focus, so it is read out.
 - **Focus.** When the lock ends and focus went with it, focus moves to the Ask AI input. Draft with
-  AI puts focus back on its button when it adds nothing.
+  AI moves focus to the instructions it drafted, or back to its button when it adds nothing.
 - **Names.** Buttons name what they act on, such as "Ask AI about this task: Collect evidence",
   "Jump to Workflow: Description" and "Undo this change: <instruction>". States are text, not
   only color.
@@ -790,7 +795,7 @@ so a change on either side that breaks the contract fails a test.
 | `test_v2_workflow_ask_ai_logic.ts` | Code-point counting and cutting, the request each kind of draft builds, replay (whole exchanges, the control characters, the cap after the suffix, earlier sessions and pending confirmations), each turn's state read from a real authoring session, the response guard and every failure message, the browser request with `Retry-After` and the deadline, the rebase and the change check, and the stores: the card cap, the rate-limit wait, the thread options and held-thread pruning, including a held thread that another conversation's sweep or the 50-thread cap would otherwise drop |
 | `test_v2_workflow_ask_ai_parity.py` | Requests the tab builds from editor-normalized drafts (new, proposal, saved version 2 with its revision, saved version 3, focus, time zone, references, a 20-item conversation with emoji, tabs and new lines, and a 2,000-code-point instruction) are each posted as their exact text through 3b's real Flask route with a scripted model. Every candidate-parity scenario is answered the same way. `test_v2_workflow_ask_ai_parity_logic.ts` then replays each real 200 body through the tab: the guard reads it, the rebased candidate passes `workflowAssistViolation`, and the changes it finds are exactly the server's `changes[].key`. |
 | `test_v2_assist_thread.py` | A1's and A2's checks, updated for the shared thread's new options |
-| `ui_tests/test_v2_workflow_ask_ai.py` | 31 browser cases: the "Done when" instruction from Send to Confirm and save, Run as warnings, each `#` placement and a document read as context, the lock with Cancel and Retry, Ctrl+Z, Ctrl+Y and Ctrl+Shift+Z waiting while a turn or a reload holds the draft, the stale-draft guard, the request a new, saved, focused or flow-focused draft sends, the code-point limit, Undo skipping a field changed later, **Jump to** a task field and a flow block, every failure and the 409 reload, a reload that's closed, superseded by another workflow's editor, or overtaken by a save while it loads, or that fails, hostile model text, where the tab is hidden (setting off, group, reader, unsupported, schedule), the keyboard and Escape, a narrow screen, Draft with AI, the quick actions, and a card from an earlier editing session |
+| `ui_tests/test_v2_workflow_ask_ai.py` | 32 browser cases: the "Done when" instruction from Send to Confirm and save, Run as warnings, each `#` placement and a document read as context, the lock with Cancel and Retry, Ctrl+Z, Ctrl+Y and Ctrl+Shift+Z waiting while a turn or a reload holds the draft, the stale-draft guard, the request a new, saved, focused or flow-focused draft sends, the code-point limit, Undo skipping a field changed later, **Jump to** a task field (including one the turn no longer changes, so it has no highlight) and a flow block, every failure and the 409 reload, a reload that's closed, superseded by another workflow's editor, or overtaken by a save while it loads, or that fails, hostile model text, where the tab is hidden (setting off, group, reader, unsupported, schedule), the keyboard and Escape, a narrow screen, Draft with AI on a List task and on a Flow block (each under 6x CPU throttling, with focus checked on the drafted instructions, again after a settle, and in a log showing nothing else took focus on the way), the quick actions, and a card from an earlier editing session |
 | `ui_tests/test_v2_workflow_ask_ai_proposal.py` | A proposal opened with **Edit** sends no base and saves through review, the tab is hidden when the assistant is off, and the editor's thread leaves the chat's idle image thread alone |
 
 The browser tests answer `POST /api/user/workflows/assist` inside the page with 3b's real

@@ -310,6 +310,8 @@ export function WorkflowEditorDialog({
     };
     const jumpToChange = (change: WorkflowJumpChange) => {
         if (!sidePanelBesideEditor()) closeChanges(false);
+        // The jump places focus, so it drops the block focus that the change it follows requested, such as Draft with AI's.
+        authoring.clearFocusRequest();
         if (surface === 'flow' && draft.definition_version === 3) {
             const info = parseWorkflowChangeKey(change.key);
             const nodeId = change.target.nodeId ?? (info.scope === 'region' ? info.id : undefined);
@@ -369,7 +371,11 @@ export function WorkflowEditorDialog({
             if (!root) return;
             const { change } = jump;
             const itemKey = workflowChangeItemKey(change.key);
-            const exact = root.querySelector<HTMLElement>(`[data-workflow-change-key="${CSS.escape(change.target.focusKey)}"]`)
+            const focusKey = CSS.escape(change.target.focusKey);
+            // A jump made as a change lands, such as Draft with AI's, can run before the highlight's
+            // deferred render stamps the change key, so the field's own key comes next.
+            const exact = root.querySelector<HTMLElement>(`[data-workflow-change-key="${focusKey}"]`)
+                ?? root.querySelector<HTMLElement>(`[data-workflow-field-key="${focusKey}"]`)
                 ?? (itemKey ? root.querySelector<HTMLElement>(`[data-workflow-change-item="${CSS.escape(itemKey)}"]`) : null);
             if (!exact && jump.retry && surface === 'flow') {
                 // The Flow surface shows one block's fields at a time; the List shows every field.

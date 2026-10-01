@@ -83,7 +83,9 @@ The Changes tab has two lists:
   text, its author, **Jump**, and **Revert** (**Restore** for a removed item). Jump moves focus to
   the changed field, opening collapsed sections as needed. On the Flow surface it selects the
   changed block, and switches to List when the field isn't shown on Flow. On narrow screens it
-  closes the panel first, so the field is visible.
+  closes the panel first, so the field is visible. A jump places focus itself, so it clears any
+  block focus that the step it follows requested; otherwise, on Flow, the canvas could take focus
+  back from the field after a **Draft with AI** change.
 - **This session**: the steps in this editing session, newest first, each marked **Edited**,
   **AI assist** or **Restore**, with its turn when it has one. **Restore to here** applies the
   workflow as it was after that step, as a new step. Nothing is deleted: the steps after it stay
@@ -240,8 +242,12 @@ fields. `test_workflow_run_as_fingerprint_parity.py` fails when the two lists dr
 The diff never runs on the whole definition per keystroke. Indexes are cached per task list, flow
 and definition object, and the diff and key deltas are memoized per pair of definitions. The
 editor keeps every task object it did not change, so typing into one task compares only that
-task. The panel reads the diff one deferred render later, so a keystroke never waits for it. With
-100 tasks, a keystroke through the session measured 0.17 ms in the logic tests.
+task. The panel reads the diff one deferred render later, so a keystroke never waits for it. The
+highlights render in that deferred pass too, so every tracked field also carries its field key
+(`data-workflow-field-key`) from its first render, changed or not. Jump looks for the highlighted
+field, then the field key, then the changed item, so a jump made as a change lands, such as Draft
+with AI's, still reaches the field on a slow device. With 100 tasks, a keystroke through the
+session measured 0.17 ms in the logic tests.
 
 ## Seams for later phases
 

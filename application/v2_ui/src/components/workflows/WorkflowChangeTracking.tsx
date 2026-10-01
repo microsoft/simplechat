@@ -241,9 +241,10 @@ export function WorkflowChangedField({ changeKey, className, children }: {
         const result = tracking.session.revertChange([fieldChange.key]);
         if (result.status === 'applied') refocusAfterRevert(rootRef);
     };
+    // The field key is always there, so a jump made before the deferred highlight renders still finds the field.
     return (
         <div ref={rootRef} role={stamp ? 'group' : undefined} aria-labelledby={stamp ? badgeId : undefined}
-            data-workflow-change-key={stamp ? changeKey : undefined}
+            data-workflow-change-key={stamp ? changeKey : undefined} data-workflow-field-key={changeKey}
             className={clsx(className, stamp && ['rounded-lg border p-2', FRAME_CLASS[stamp.author]]) || undefined}>
             {children}
             {stamp ? (

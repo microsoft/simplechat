@@ -12,7 +12,9 @@ the stale-draft guard, the request each kind of draft sends, code-point counting
 that changed later, every status the assist route answers, a reload after a conflict that is closed,
 superseded or overtaken by a save while it loads or that fails, hostile model text, Jump to on a
 task field and on a flow block, where the tab is hidden, the keyboard, a narrow screen, Draft with
-AI, the quick actions, and a card from an earlier editing session.
+AI on a List task and on a Flow block (each under 6x CPU throttling, so focus must reach the
+drafted instructions before their highlight renders and must stay there), the quick actions, and a
+card from an earlier editing session.
 
 `POST /api/user/workflows/assist` is answered in the page by 3b's real pipeline with a scripted
 model (see `fixtures/workflow_ask_ai.py`), so no live model, workflow run, approval or Azure
@@ -25,6 +27,7 @@ import copy
 import json
 import re
 import sys
+from contextlib import contextmanager
 from pathlib import Path
 from urllib.parse import urlsplit
 
@@ -834,6 +837,9 @@ def test_undo_skips_a_field_changed_later_and_jump_reaches_a_task_field(ask_ui):
     expect(changed(editor, "task:task-a:instructions")).to_have_count(0)
     expect(basics_description(editor)).to_have_value(mine)
     expect(author(changed(editor, "description"))).to_have_text("Edited")
+    # Jump to still reaches a field the turn no longer changes, which has no highlight to find.
+    found.get_by_role("button", name="Jump to Collect evidence: Instructions", exact=True).click()
+    expect(field).to_be_focused()
     assert not ui.workflow_writes
 
 
@@ -1434,6 +1440,36 @@ def test_a_narrow_screen_shows_ask_ai_in_place_of_the_editor(ask_ui):
 # Draft with AI, quick actions and an earlier editing session
 # ---------------------------------------------------------------------------------------------
 
+@contextmanager
+def cpu_throttled(page, rate=6):
+    """Slow the page's CPU like a slower device, so the highlight's deferred render lands after the jump."""
+    try:
+        session = page.context.new_cdp_session(page)
+    except Exception as error:  # noqa: BLE001 - only Chromium has the DevTools protocol
+        pytest.skip(f"This browser cannot throttle the CPU: {error}")
+    session.send("Emulation.setCPUThrottlingRate", {"rate": rate})
+    try:
+        yield
+    finally:
+        session.send("Emulation.setCPUThrottlingRate", {"rate": 1})
+        session.detach()
+
+
+def record_focus(page):
+    """Log every element that takes focus from now on, so focus that leaves and comes back is still caught."""
+    page.evaluate("""() => {
+        window.__workflowFocusLog = [];
+        document.addEventListener('focusin', (event) => window.__workflowFocusLog.push(event.target), true);
+    }""")
+
+
+def stray_focus(field):
+    """Everything that took focus since record_focus, other than Draft with AI's button and the field."""
+    return field.evaluate("""(field) => window.__workflowFocusLog
+        .filter((target) => target !== field && !target.matches('[data-workflow-draft-ai]'))
+        .map((target) => target.getAttribute('aria-label') || target.id || target.tagName)""")
+
+
 def test_draft_with_ai_fills_an_empty_task_as_an_undoable_ai_change(ask_ui):
     ui, page = ask_ui, ask_ui.page
     drafted = "Collect the quarter's signed evidence and list anything that is missing."
@@ -1454,10 +1490,17 @@ def test_draft_with_ai_fills_an_empty_task_as_an_undoable_ai_change(ask_ui):
 
     editor.get_by_label("Workflow name", exact=True).fill("Evidence review")
     ui.drafts.queue(drafted)
-    button.click()
     instructions = task.get_by_label("Instructions", exact=True)
-    expect(instructions).to_be_focused()
-    expect(instructions).to_have_value(drafted)
+    record_focus(page)
+    # Focus reaches the drafted instructions even when the highlight renders after the jump.
+    with cpu_throttled(page):
+        button.click()
+        expect(instructions).to_have_value(drafted, timeout=30_000)
+        expect(instructions).to_be_focused(timeout=30_000)
+        # And it stays there once the jump lands, with nothing else taking it on the way.
+        page.wait_for_timeout(1_000)
+        assert instructions.evaluate("element => element === document.activeElement")
+        assert stray_focus(instructions) == []
     assert ui.drafts.bodies == [{
         "workflow_scope": "personal", "name": "Evidence review", "description": "", "brief": "Task 1",
     }]
@@ -1469,6 +1512,40 @@ def test_draft_with_ai_fills_an_empty_task_as_an_undoable_ai_change(ask_ui):
     payload = confirm_save(ui, editor)
     assert payload["name"] == "Evidence review"
     assert payload["tasks"][0]["instructions"] == drafted
+
+
+def test_draft_with_ai_on_a_flow_block_focuses_its_drafted_instructions(ask_ui):
+    ui = ask_ui
+    drafted = "Summarize the evaluated decision as three short bullet points."
+    record = ui.personal_workflows[FLOW_WORKFLOW_ID]
+    # Saved without instructions, so nothing marks the field until Draft with AI fills it.
+    next(task for task in record["tasks"] if task["id"] == "finish")["instructions"] = ""
+    record["definition_revision"] = workflow_definition_revision(record)
+    editor = authoring.open_editor(ui)
+    view = authoring.switch_surface(editor, "Flow")
+    fields = authoring.select_node(view, "finish")
+    instructions = fields.get_by_label("Instructions", exact=True)
+    expect(instructions).to_have_value("")
+    expect(changed(editor, "task:finish:instructions")).to_have_count(0)
+
+    ui.drafts.queue(drafted)
+    record_focus(ui.page)
+    # The change also asks the canvas to focus its block; the jump drops that request, so the drafted field keeps focus.
+    with cpu_throttled(ui.page):
+        fields.get_by_role("button", name="Draft with AI: instructions for Finish", exact=True).click()
+        expect(instructions).to_have_value(drafted, timeout=30_000)
+        expect(instructions).to_be_focused(timeout=30_000)
+        ui.page.wait_for_timeout(1_000)
+        assert instructions.evaluate("element => element === document.activeElement")
+        # The block never took focus, even for a moment before the jump.
+        assert stray_focus(instructions) == []
+    expect(authoring.node_button(view, "finish")).to_have_attribute("aria-pressed", "true")
+    expect(author(changed(fields, "task:finish:instructions"))).to_have_text("AI assist")
+    assert ui.drafts.bodies == [{
+        "workflow_scope": "personal", "name": record["name"], "description": record["description"], "brief": "Finish",
+    }]
+    assert not ui.assist.bodies
+    assert not ui.workflow_writes
 
 
 def test_quick_actions_send_visible_turns_and_cards_outlive_a_save(ask_ui):
