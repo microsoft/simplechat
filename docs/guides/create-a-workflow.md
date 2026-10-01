@@ -411,8 +411,8 @@ personal and group workflows, in every format.
 ### See what changed
 
 Each changed field is framed and labeled **Edited**. Changes made by AI assist
-are framed in blue and labeled **AI assist** instead; nothing in the editor
-makes them yet.
+are framed in blue and labeled **AI assist** instead. From **0.261.211**,
+[**Ask AI**](#ask-ai-to-change-a-workflow) and **Draft with AI** make them.
 
 - **Previously** shows the value the field had when you opened the editor.
   Long values are cut short, with **Show more**.
@@ -462,6 +462,89 @@ Read-only editors show none of this. In a workflow that has never been saved,
 everything is new, so only AI assist changes are pointed out. After you convert
 an ordered workflow to the structured format, changes are still listed, but
 they can only be discarded together, with **Cancel**.
+
+## Ask AI to change a workflow
+
+Starting in **0.261.211**, the V2 editor's **Ask AI** tab changes a personal
+workflow from a plain-language request, such as "run this at 7 AM on weekdays
+and only alert me when something is urgent". Use it when you know what you want
+the workflow to do but not which fields hold it, or to make the same kind of
+change across many tasks. It never saves. Its changes are highlighted like your
+own, and you review them before you save.
+
+**Ask AI** appears when your administrator has turned the assistant on, the
+workflow is personal, and you can edit it. Group workflows don't offer it.
+
+### Ask for a change
+
+1. Open a personal workflow in the V2 editor, or choose **Edit** on a workflow
+   proposal in chat.
+2. Choose **Ask AI** in the editor footer. To ask about one task, choose
+   **Ask AI** on that task instead. The tab shows **About:** with the task's
+   name until you clear it.
+3. Type what you want and send it, or choose a quick action such as **Explain
+   this workflow** or **Add a schedule**.
+4. Wait for the answer. The editor is locked while Ask AI works, so the answer
+   fits the draft you sent. **Cancel request** stops it, and nothing changes.
+
+A message can be up to 2,000 characters, and an emoji counts as one. When your
+browser's time zone is one the schedule editor offers, Ask AI sends it, so
+"7 AM" means 7 AM where you are.
+
+{% include media.html src="guides/create-a-workflow-ask-ai.png"
+                      alt="The V2 workflow editor with the Ask AI tab open beside it, showing a request to run the workflow at 7 AM on weekdays, the assistant's reply, and a card listing the schedule changes with Jump to and Undo this change, while the changed schedule fields are framed in blue and labeled AI assist."
+                      title="Asking AI to change a workflow"
+                      capture="Open a saved personal workflow in the V2 editor at a wide window size, choose Ask AI, and send 'Run this at 7 AM on weekdays'. Capture the answered turn with its card and the highlighted schedule fields. Use sample data." %}
+
+### Point it at a document
+
+Type `#` in your message to pick a document from a personal, group or public
+workspace you can use. Depending on what you ask, Ask AI reads it as
+background, adds it as a reference shared by every task or used by particular
+tasks, or makes it the document a task works on. For example, "Use #X to
+design the steps" only reads it, and "Summarize #X every Friday" adds it to
+that task. When it can't tell, it asks.
+
+You can attach up to 20 documents in one message. Tags and whole workspaces
+aren't offered here, because a workflow refers to documents.
+
+### Review what it changed
+
+An answer that changes the draft shows a card listing the changes, and the
+changed fields are framed in blue and labeled **AI assist**.
+
+- **Jump to** moves to a change. On the Flow surface it selects the block.
+- **Read as context** names the documents Ask AI read.
+- **Warnings** point out anything to check, such as a change that means saving
+  requires re-approving [Run as](#microsoft-365-run-as).
+- **Undo this change** takes back the whole answer. A field you changed again
+  afterwards keeps your value, and the card says it was skipped.
+- **Revert** on one field, and the editor's Undo, work as they do for your own
+  edits.
+
+An answer that explains or asks you something changes nothing. Ask your
+follow-up in the same thread: Ask AI sees the earlier turns, and which of their
+changes you kept or undid.
+
+Because the draft now has AI changes, the first **Save workflow** opens
+[**Review before saving**](#save-after-reviewing). Choose **Confirm and save**.
+
+### Draft task instructions
+
+A task with empty instructions has **Draft with AI**. It writes instructions
+from the workflow's name and description and the task's name, adds them as one
+change you can undo, and moves you to them. Give the workflow or the task a
+name first, so it has something to go on.
+
+### When Ask AI can't help
+
+- If someone saved the workflow after you opened it, Ask AI keeps your draft
+  and offers **Reload workflow**. Reloading discards your unsaved changes.
+- If you've sent a lot of requests, Ask AI tells you when you can send again.
+- A failed or cancelled request changes nothing. **Retry** sends it again with
+  the draft as it is now.
+- The conversation isn't saved with the workflow. Reopening a saved workflow
+  in the same page shows it again; reloading the page starts over.
 
 ## Preview the structure without changing execution
 
@@ -748,6 +831,8 @@ by a workflow**. See
 | Save is refused with "This schedule runs more often than the administrator allows." | The new or changed interval is shorter than the administrator's minimum | Choose the interval the message names or longer, or use a calendar schedule. |
 | A calendar schedule's time zone isn't accepted | The name isn't an exact IANA time zone that the server offers; names are case-sensitive | Choose a zone from the **Time zone** list, such as `America/New_York`. |
 | The classic editor won't open a workflow | It uses a calendar schedule or advanced data flow, which the classic editor can't represent | Edit it in V2. Run and Cancel still work in the classic workspace. |
+| The V2 editor has no **Ask AI** tab | The assistant is turned off, the workflow belongs to a group, or the editor can't change the workflow, for example because it's running or you can only view it | Ask an admin to turn on **Enable AI Workflow Assistant**, or open a personal workflow you can edit. |
+| Ask AI says the saved workflow changed | Someone saved the workflow after you opened it | Choose **Reload workflow**. Reloading discards your unsaved changes, so copy anything you need first. |
 
 ## Related
 

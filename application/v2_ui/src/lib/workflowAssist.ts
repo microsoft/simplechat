@@ -690,7 +690,8 @@ export interface WorkflowAssistHistoryView {
 
 /**
  * Where a completed turn's changes stand now, read from the authoring history rather than
- * remembered, so Undo, Redo and a per-field revert are all reflected.
+ * remembered, so Undo and Redo are reflected. A per-field Revert is a step of its own, without
+ * the turn's id, so it leaves the turn applied.
  */
 export function workflowAssistTurnState(
     turnId: string,

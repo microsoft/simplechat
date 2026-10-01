@@ -42,7 +42,20 @@ HOOK_TS = V2_SRC / "components" / "workflows" / "useWorkflowAssist.ts"
 TAB_TSX = V2_SRC / "components" / "workflows" / "WorkflowAskAiTab.tsx"
 DIALOG_TSX = V2_SRC / "components" / "workflows" / "WorkflowEditorDialog.tsx"
 THREAD_TSX = V2_SRC / "components" / "chat" / "AssistThread.tsx"
+THREAD_TS = V2_SRC / "lib" / "assistThread.ts"
+COMPOSER_TSX = V2_SRC / "components" / "chat" / "ComposerEditor.tsx"
+SERVER_ASSIST_PY = REPO_ROOT / "application" / "single_app" / "functions_workflow_assist.py"
 LOGIC_CHECK = Path(__file__).with_name("test_v2_workflow_ask_ai_logic.ts")
+
+# The four editors that used the shared thread before Ask AI. They must keep today's behaviour.
+CHAT_EDITORS = tuple(
+    V2_SRC / "components" / "chat" / name
+    for name in ("DiagramEditor.tsx", "ChartEditor.tsx", "ImageEditor.tsx", "OrchestrationPlanEditor.tsx")
+)
+THREAD_OPTIONS = (
+    "countCodePoints", "retain", "sendText", "cancelledMessage", "contextDocumentsOnly",
+    "documentsOnly", "renderReply", "holdAssistThread",
+)
 
 NEW_FILES = (CODE_POINTS_TS, ASSIST_TS, STORE_TS, HOOK_TS, TAB_TSX)
 
@@ -111,7 +124,35 @@ def test_the_shared_thread_options_default_off():
     thread = THREAD_TSX.read_text(encoding="utf-8")
     assert re.search(r"contextDocumentsOnly\s*=\s*false", thread), "contextDocumentsOnly must default to false"
     assert "cancelledMessage" in thread, "the thread must accept the editor's own cancel wording"
-    print("  ok  the shared thread's new options default to today's behaviour")
+    composer = COMPOSER_TSX.read_text(encoding="utf-8")
+    assert re.search(r"contextDocumentsOnly\s*=\s*false", composer), (
+        "the composer must offer tags and documents unless an editor opts in to documents only"
+    )
+    logic = THREAD_TS.read_text(encoding="utf-8")
+    for option in ("retain", "countCodePoints"):
+        assert f"const {option} = options.{option} === true;" in logic, f"{option} must default to off"
+
+    for editor in CHAT_EDITORS:
+        source = editor.read_text(encoding="utf-8")
+        used = [option for option in THREAD_OPTIONS if re.search(rf"\b{option}\b", source)]
+        assert not used, f"{editor.name} must keep today's thread behaviour, but uses {used}"
+    print("  ok  the shared thread's new options default to today's behaviour, and the chat editors pass none")
+
+
+def test_the_instruction_limit_matches_the_server():
+    """The tab refuses exactly what the route refuses: the same limit, counted in code points."""
+    server = re.search(r"^ASSIST_INSTRUCTION_MAX_LENGTH = (\d+)$",
+                       SERVER_ASSIST_PY.read_text(encoding="utf-8"), re.MULTILINE)
+    client = re.search(r"^export const WORKFLOW_ASSIST_INSTRUCTION_LIMIT = (\d+);$",
+                       ASSIST_TS.read_text(encoding="utf-8"), re.MULTILINE)
+    assert server and client, "both instruction limits must stay plain constants"
+    assert server.group(1) == client.group(1), (
+        f"the tab allows {client.group(1)} code points but the server allows {server.group(1)}"
+    )
+    hook = HOOK_TS.read_text(encoding="utf-8")
+    assert "maxLength: WORKFLOW_ASSIST_INSTRUCTION_LIMIT," in hook, "the thread must use the shared limit"
+    assert "countCodePoints: true," in hook, "the thread must count code points, as the server does"
+    print(f"  ok  the tab and the server both allow {server.group(1)} code points")
 
 
 def test_the_typescript_logic_checks_pass():
@@ -171,6 +212,7 @@ TESTS = [
     test_model_and_server_text_render_as_plain_text,
     test_the_dialog_gates_ask_ai_on_the_bootstrap_flag,
     test_the_shared_thread_options_default_off,
+    test_the_instruction_limit_matches_the_server,
     test_the_typescript_logic_checks_pass,
 ]
 

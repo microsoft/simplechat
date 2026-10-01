@@ -2,6 +2,26 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.211)**
+
+#### New Features
+
+*   **Ask AI Tab In The V2 Workflow Editor**
+    *   The V2 workflow editor's side panel has a new **Ask AI** tab, after **Changes**, that edits a personal workflow from a plain-language request, such as "run this at 7 AM on weekdays and only alert me when something is urgent". It calls the AI workflow assistant endpoint added in 0.261.208 and never saves. Each answer is applied to the draft as one AI change, with the same highlights, **Previously:** values, per-field **Revert** and **Changes** list as your own edits, and the first save asks you to review the AI changes.
+    *   Open it with the footer's **Ask AI** toggle, or with a task's **Ask AI** button to ask about that task. Quick actions explain the workflow, tighten task instructions, add a schedule, alert only when urgent, or check what's needed to run. Type `#` to attach up to 20 documents; tags and whole workspaces aren't offered, because a workflow refers to documents. The browser's time zone is sent when the schedule editor offers it, and the 2,000-character limit is counted the way the server counts it, so an emoji counts as one.
+    *   The editor is locked while a request runs, and **Cancel request** stops it with nothing changed. An answer that changes the draft gets a card listing what changed, taken from the editor's own comparison of the draft that was sent with the answer, with **Jump to**, the documents read as context, any warnings, and **Undo this change**, which reverts the turn except fields edited since. Follow-up requests include the earlier completed turns and what became of their changes.
+    *   When the saved workflow changed after the editor opened, the draft is kept and **Reload workflow** is offered. `Retry-After` is honored with "You can send again in N s.", and a failed, cancelled or timed-out request changes nothing and can be retried against the current draft.
+    *   The tab appears only when **Enable AI Workflow Assistant** is on, for a personal workflow the editor can change. Group workflows, read-only editors and workflows with an active run don't offer it. It also works on a workflow proposal opened from chat with **Edit**.
+    *   Replies, errors, warnings, document names and the admin's rate-limit message are shown as plain text, never as HTML or Markdown. The side panel is an ARIA tab list, the thread is a live log, and Escape closes the panel and returns focus to its toggle.
+    *   The conversation lives only in the page. Nothing is stored on the server or in the browser, so reloading starts over. Reopening a saved workflow in the same page shows its earlier turns, marked as coming from an earlier editing session.
+    *   The shared assist thread gained opt-in options for the tab: counting by code points, holding its thread while the editor is open, a custom cancelled message, documents-only `#` references and a reply wrapper. All are off by default, so the chat's image, chart, diagram and plan editors are unchanged. Because the editor holds its thread, using it never clears a chat's idle image or plan editor conversation.
+    *   (Ref: #1548, #1543, `WorkflowAskAiTab.tsx`, `useWorkflowAssist.ts`, `workflowAssist.ts`, `codePoints.ts`, `workflowAssistStore.ts`, `assistThreadStore.ts`, `WorkflowEditorDialog.tsx`, [AI Workflow Assistant](features/WORKFLOW_AI_ASSISTANT.md#the-ask-ai-tab), [V2 Shared Assist Thread](features/V2_SHARED_ASSIST_THREAD.md#options-for-the-workflow-editor), [Create a workflow](../guides/create-a-workflow.md#ask-ai-to-change-a-workflow))
+
+*   **Draft With AI For Workflow Task Instructions**
+    *   A task with empty instructions in the V2 workflow editor has **Draft with AI**. It drafts instructions from the workflow's name and description and the task's name, adds them as one undoable AI change, and moves focus to them. Instructions longer than the editor's 12,000-character limit aren't added, and the message says so.
+    *   It uses the route behind the classic editor's **Draft Workflow Instructions** button, and it's offered only where **Ask AI** is. The classic button is unchanged.
+    *   (Ref: #1548, `useWorkflowAssist.ts`, `WorkflowTaskFields.tsx`, `/api/workflows/draft-instructions`, [AI Workflow Assistant](features/WORKFLOW_AI_ASSISTANT.md#draft-with-ai))
+
 ### **(v0.261.210)**
 
 #### Bug Fixes

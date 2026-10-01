@@ -1,4 +1,4 @@
-# Workflow AI Assistant (v0.261.208)
+# Workflow AI Assistant (v0.261.211)
 
 ## Overview
 
@@ -8,13 +8,19 @@ plain language: "run this at 7 AM on weekdays and only alert me when something i
 workflow editor shows it as highlighted, attributed, revertible changes that the person reviews
 before saving. The assistant never saves anything.
 
-This release adds the server half: `POST /api/user/workflows/assist`. It takes one instruction and
-the editor's current draft, asks the model for a small set of allowlisted operations, applies them
-to a copy of the draft, checks the result the way a save would, and returns a candidate draft for
-the editor's `applyAssist` seam. The **Ask AI** tab that calls it comes in the next release.
+The server half is `POST /api/user/workflows/assist`, added in 0.261.208. It takes one
+instruction and the editor's current draft, asks the model for a small set of allowlisted
+operations, applies them to a copy of the draft, checks the result the way a save would, and
+returns a candidate draft. It writes nothing.
 
-Implemented in version: **0.261.208**, tracked in `application/single_app/config.py`.
-Phase 3b of the [chat orchestration workflows roadmap](CHAT_ORCHESTRATION_WORKFLOWS_ROADMAP.md)
+The editor half is the **Ask AI** tab, added in 0.261.211. It sends the instruction, checks the
+answer against the draft it was sent with, and applies the candidate through the editor's
+`applyAssist` seam, so every change is highlighted, attributed to the turn and undoable. The same
+release adds **Draft with AI**, which writes instructions for an empty task.
+
+Implemented in version: **0.261.208** (the endpoint) and **0.261.211** (the **Ask AI** tab and
+**Draft with AI**), tracked in `application/single_app/config.py`.
+Phases 3b and 3c of the [chat orchestration workflows roadmap](CHAT_ORCHESTRATION_WORKFLOWS_ROADMAP.md)
 (#1548, part of #1543).
 
 The assistant ships in three layers:
@@ -22,8 +28,8 @@ The assistant ships in three layers:
 | Layer | What it adds | Status |
 | --- | --- | --- |
 | 3a | Change tracking in the V2 editor, including `WorkflowAuthoringSession.applyAssist(candidate, {turnId, label})` | Shipped in 0.261.203 ([Workflow editor change tracking](WORKFLOW_EDITOR_CHANGE_TRACKING.md)) |
-| 3b | This endpoint: instruction in, validated candidate out | This release |
-| 3c | The **Ask AI** tab on the shared assist thread, which calls this endpoint | Next |
+| 3b | The endpoint: instruction in, validated candidate out | Shipped in 0.261.208 |
+| 3c | The **Ask AI** tab on the shared assist thread, which calls the endpoint, and **Draft with AI** | Shipped in 0.261.211 |
 
 Dependencies:
 
@@ -35,6 +41,10 @@ Dependencies:
   (`load_workflow_reference`).
 - The draft-instructions model deployment that `/api/workflows/draft-instructions` already uses.
   No new model setting is added.
+- For the tab: Track A1's shared assist thread (`AssistThread`, `useAssistThread` and
+  `assistThreadStore`, see [V2 shared assist thread](V2_SHARED_ASSIST_THREAD.md)), Track A2's
+  `#` references in `lib/planReferences.ts`, and 3a's `applyAssist`, `revertTurn` and **Changes**
+  tab.
 
 ## What it does and doesn't do
 
@@ -89,8 +99,8 @@ setting on top:
 | `enable_workflow_ai_assistant` | On | Users who can edit personal workflows can use the AI assistant in the V2 workflow editor. It has no effect while **Enable Personal Workflows** is off. |
 
 The V2 bootstrap route (`/api/v2/bootstrap`) reports the per-user result as
-`features.enable_workflow_ai_assistant`, so 3c can hide the **Ask AI** tab when the assistant isn't
-available.
+`features.enable_workflow_ai_assistant`, and the editor hides the **Ask AI** tab and **Draft with
+AI** when it's false. See [When the tab is offered](#when-the-tab-is-offered).
 
 ### Request
 
@@ -460,6 +470,249 @@ only these fields: `user_id`, `submission_id`, `status`, `outcome`, `code`, `sta
 `warning_codes`, `fault_location` (file and line, on a 500 only) and `duration_ms`. A body that
 can't be read logs `[WorkflowAssist] Assist request refused` with its code, status and stage.
 
+### The Ask AI tab
+
+**Ask AI** is the second tab in the editor's side panel, after **Changes**. It runs on Track A1's
+shared assist thread, so it has the same turn list, **Cancel**, **Retry**, **Edit and resend** and
+`#` composer as the chat's image and plan editors. A turn that changes the draft goes through 3a's
+`applyAssist`, so its changes get the same highlights, **Previously:** values, per-field
+**Revert** and **Changes** list as your own edits, and saving asks you to review them first.
+
+| File | Role |
+| --- | --- |
+| `components/workflows/WorkflowAskAiTab.tsx` | The tab, its turn cards, the footer toggle and the lock banner |
+| `components/workflows/useWorkflowAssist.ts` | The tab's state: sending a turn, applying the answer, **Undo this change**, **Jump to** and **Draft with AI** |
+| `lib/workflowAssist.ts` | Pure logic: the request, replay, the response guard, error messages, the rebase and the change check |
+| `lib/codePoints.ts` | Counting and cutting text by code points, as the server counts |
+| `stores/workflowAssistStore.ts` | Turn cards and the rate-limit wait, in memory only |
+| `components/workflows/WorkflowEditorDialog.tsx` | Wiring: the gate, the tab, the toggle, the lock, Escape and focus |
+| `components/workflows/WorkflowTaskFields.tsx` | Each task's **Ask AI** and **Draft with AI** buttons |
+| `components/workflows/WorkflowChangeTracking.tsx` | A side panel whose selected tab the dialog controls, and a class for each tab's panel |
+| `pages/workspace/WorkflowsSection.tsx` | Reopening a saved workflow after a conflict |
+
+Paths are under `application/v2_ui/src/`. The shared thread gained a few options for this tab, all
+off by default. See [V2 shared assist thread](V2_SHARED_ASSIST_THREAD.md#options-for-the-workflow-editor).
+
+### When the tab is offered
+
+The editor offers Ask AI only when all three of these hold:
+
+1. The bootstrap reports `features.enable_workflow_ai_assistant` as true for this user. That
+   follows the admin setting, personal workflows and the `WorkflowUser` role.
+2. The workflow is personal. Group workflows never offer it (roadmap decision 3).
+3. The editor can change the workflow. It can't when you don't have edit rights, when the workflow
+   has an active run, when access was lost while the editor was open, or when the workflow uses
+   something this editor can't change, such as an unsupported flow feature or a stored schedule it
+   can't show exactly.
+
+When it's offered, the footer shows an **Ask AI** toggle before **Changes**, each task has an
+**Ask AI** button, and a task with empty instructions has **Draft with AI**. When it isn't, the
+editor is as it was: the side panel has only **Changes**, and a read-only editor has no side panel.
+
+It also works on a workflow proposal opened from chat with **Edit** (Phase 4). That draft is a new
+personal workflow, so the tab sends it without a base, and there is no saved workflow to reload.
+
+### The thread
+
+A saved workflow has one thread, keyed `workflow:personal:<workflow id>`. A new workflow or a
+proposal draft gets a new key, `workflow:new:<id>`, each time the editor opens, so it starts empty.
+Every thread uses the conversation ID `workflow-editor` and the thread's local mode, which keeps
+the last 20 finished exchanges.
+
+While the editor is open it holds its thread, so A1's pruning never drops it, and using it never
+sweeps away the chat's idle image and plan threads. Closing the editor releases the thread but
+leaves it in memory, so reopening a saved workflow in the same page shows the conversation. After
+that, A1's usual pruning applies: using an image or plan editor in chat drops idle threads of other
+conversations, and the store keeps at most 50 threads.
+
+The conversation is ephemeral in version 1 (roadmap §9). Nothing is stored on the server or in the
+browser's storage, so reloading the page starts over. The turn cards, which record what each turn
+changed and what its Undo did, live in `workflowAssistStore`, up to 200 across every editor in the
+page, oldest dropped first.
+
+### Sending a turn
+
+**Send**, a quick action, **Retry** and **Edit and resend** each post one request:
+
+| Field | What the tab sends |
+| --- | --- |
+| `submission_id` | A new ID for the turn |
+| `instruction` | The text, trimmed, without the control characters the server refuses (`[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]`). Tab, line feed and carriage return are kept. |
+| `draft` | The editor's draft as it stands |
+| `base` | `{workflow_id, definition_revision}` for a saved workflow. A new or proposal draft sends `null`, and must have no `id`. |
+| `conversation` | At most 20 `{role, text}` items: the last 10 completed exchanges, whole |
+| `references` | The `#` documents in the message, deduplicated and ordered by A2's `canonicalPlanReferences` |
+| `focus` | The task you asked about, as its task ID, or on a structured (v3) workflow as its flow block's ID. Sent only while that task still exists. |
+| `time_zone` | The browser's IANA time zone, when the schedule editor offers it, so "7 AM" means your 7 AM |
+
+The instruction is limited to 2,000 characters counted as code points, the way the server counts,
+so an emoji counts as one. The counter and the over-limit message use the same count.
+
+Only completed turns are replayed. Failed and cancelled turns never are, because the draft doesn't
+reflect them. A user item is the instruction as it was sent. An assistant item is the reply,
+followed by what became of its changes, read from the editor's history when the request is built:
+
+| The turn's changes | What the assistant item adds |
+| --- | --- |
+| Applied | "Changes applied: …" |
+| Partly undone | "Changes applied: … The user later undid some of them." |
+| Undone | "These changes were applied and later undone: …" |
+| Waiting for the impact confirmation | "These changes are waiting for the user's confirmation and are not applied yet: …" |
+| Not applied | "No changes were applied." |
+| From an earlier editing session | "These changes were made in an earlier editing session and may not have been saved: …" |
+
+The list names at most 12 changes, each cut to 120 characters, then "and N more". Each item is
+capped at 4,000 code points without splitting a surrogate pair, and an item that is blank after
+trimming is left out. This lets the model build on what the draft actually holds, rather than on
+what it proposed.
+
+References are checked before anything is sent, and nothing is dropped silently. More than 20
+documents is refused with "Attach at most 20 documents." The picker offers documents only, but a
+tag or a whole workspace can still arrive through **Edit and resend**, and is refused with a
+message, because a workflow reference is a document.
+
+While a turn runs, the editor is locked, because the answer is a whole draft built from the one
+that was sent. A banner reads "Ask AI is working. The editor is locked until it answers.", with the
+seconds elapsed and **Cancel request**. The fields, the flow canvas, Undo and Redo (including
+Ctrl+Z and Ctrl+Y) and **Save workflow** are disabled. Closing the editor cancels the turn. The
+browser gives up after 170 seconds; the server's own deadline is 150.
+
+### Applying the answer
+
+The tab first checks that nothing moved while it was working: the same editor, the same opened
+version, and a draft equal to the one it sent. If anything differs, nothing is applied, and the
+turn fails with "Nothing was applied because the draft changed while Ask AI was working. Send it
+again to use the current draft." **Retry** sends it against the current draft.
+
+On `changed`, three steps follow:
+
+1. **Rebase.** The candidate arrives as JSON, which has no `undefined` and no non-finite numbers.
+   The editor's draft can hold both; a proposal or saved draft, for example, has `id: undefined`
+   once the editor normalizes it. So the candidate is rebased on the live draft. Wherever it
+   equals the live value as JSON, the live value is kept, object identity included. Arrays are
+   matched by `id` when both sides have unique IDs, and by position otherwise. Keys the model
+   removed stay removed. Without this step, `applyAssist` would refuse every answer for a new
+   draft as a change to `id`, and unchanged objects would look edited.
+2. **Check.** The card lists only what the editor's own `diffWorkflowChanges` finds between the
+   draft that was sent and the rebased candidate. The server's summaries are used for keys the
+   diff also found, and its flow block only when that block exists in the result. A change the
+   server lists that the diff doesn't find isn't shown. When the diff finds nothing, the turn is
+   treated as an explanation.
+3. **Apply.** `applyAssist(candidate, {turnId, label: "Ask AI: <instruction>"})` applies it as one
+   history step with origin `ai`. When the change removes blocks or affects other references, 3a's
+   impact confirmation asks first, and Send stays busy until you answer it. A candidate that
+   `applyAssist` refuses, such as one that changes a forbidden field, applies nothing, and the card
+   says why.
+
+On `explained` or `question`, the reply is shown and nothing changes. A `question` reply is
+labeled **Question**.
+
+### The turn card
+
+Each answered turn shows the reply as text. A turn that changed the draft adds a card, whose state
+is read from the editor's history rather than remembered, so the editor's Undo and Redo are
+reflected:
+
+| State | What the card says |
+| --- | --- |
+| Applied | "Changed N things in the draft. Review before saving." |
+| Partly undone | "Some of these changes were undone." |
+| Undone | "These changes were undone." |
+| Waiting for the impact confirmation | "Confirm to apply these changes." |
+| Not applied | "Nothing was applied: <reason>", or "You chose not to apply these changes." |
+| From an earlier editing session | "Made in an earlier editing session." |
+
+A per-field **Revert** is a step of its own, so it leaves the card applied.
+
+- **Changes in this turn** lists each change. While they're applied or partly undone, **Jump to**
+  moves focus to the change, and on the Flow surface it selects the changed block.
+- **Read as context** names the documents the assistant read.
+- **Warnings** lists the server's warnings, with **Jump to** when a warning names a field.
+- **Undo this change** calls 3a's `revertTurn`. It reverts each key the turn changed that still
+  holds what the turn left; a key changed afterwards is skipped. The result is shown and focused,
+  for example "Undone: 1 reverted, 1 skipped because it changed later.", "Nothing left to undo for
+  this turn." or "This turn can no longer be undone.", which is what a turn from an earlier
+  editing session gets. Undo is disabled while a turn runs.
+
+Saving closes the editor, so reopening a saved workflow starts a new editing session, and its
+earlier cards are marked as such. Their changes may have been saved, or discarded with Cancel.
+
+### When a turn fails
+
+A failed turn changes nothing. The tab shows the server's `error` as plain text. When `error` is a
+single code word and the body has a `message`, it shows the message. When there's neither, it
+shows a message for the status:
+
+| Status | Message |
+| --- | --- |
+| 400 | The assistant couldn't use this request. Nothing was changed. |
+| 401 | Your session expired. Sign in again to use Ask AI. |
+| 403 | Ask AI isn't available to you right now. |
+| 404 | This workflow couldn't be found. It may have been deleted. |
+| 409 | The saved workflow changed after the editor opened. Your draft was kept. Reload the workflow to use the assistant. |
+| 413 | This request is too large for the assistant. Ask for a smaller change, or start a new thread. |
+| 429 | The assistant is busy. Wait a moment, then try again. |
+| 500 | The assistant failed. Nothing was changed. Try again. |
+| 502 | The assistant's answer couldn't be used. Nothing was changed. Try again. |
+| 503 | The assistant is unavailable right now. Nothing was changed. Try again later. |
+
+- **A conflict.** A 409 `workflow_definition_conflict` means the saved workflow changed after the
+  editor opened. The draft is kept, and the tab offers **Reload workflow**. It asks first,
+  "Reloading discards your unsaved changes to this workflow.", and **Discard and reload** reopens
+  the editor on the saved version. When the workflow was deleted, the message adds "Your draft is
+  still in the editor."
+- **A wait.** On 429 and 503, `Retry-After` is honored, as seconds or an HTTP date, or the body's
+  `retry_after_seconds`, clamped to an hour. Send, the quick actions and Retry wait, and the tab
+  shows "You can send again in N s." A 429 without either waits one second. The wait belongs to the
+  user, so every editor in the page shares it.
+- **The rate-limit message** is the admin's Markdown, and is shown as plain text.
+- **No answer in time.** After 170 seconds: "The assistant took too long to answer. Nothing was
+  changed. Try again, or ask for a smaller change."
+- **No connection.** "Couldn't reach the assistant. Nothing was changed. Check your connection and
+  try again."
+- **An unreadable answer**, such as a sign-in page after the session expired: "The assistant's
+  answer couldn't be read. Nothing was changed."
+- **Cancel** shows "Cancelled. Nothing was changed."
+
+The tab calls the route with `fetch` rather than the app's API client, because the client's errors
+don't carry `Retry-After`, and a throttled 503 has nothing else. It keeps the client's base URL,
+credentials mode and JSON headers.
+
+### Draft with AI
+
+**Draft with AI** appears on a task whose instructions are empty. It asks
+`/api/workflows/draft-instructions`, the route behind the classic editor's draft button, for
+instructions based on the workflow's name and description and the task's name. The answer is added
+as one undoable AI change labeled "Draft with AI: <task>", and focus moves to the instructions.
+
+- It needs something to go on: a workflow name or description, or a task name other than the
+  default "Task N". Otherwise it asks you to name the workflow or the task first.
+- It doesn't lock the editor. When the task gained instructions or was removed while it worked,
+  nothing is added, and the message says so.
+- Instructions longer than the editor's 12,000-character limit aren't added; the message says so.
+- It's offered only where Ask AI is. The route checks personal workflow access but not
+  `enable_workflow_ai_assistant`, so hiding it with Ask AI keeps the setting's meaning simple.
+
+### Accessibility and plain text
+
+- **Plain text.** Every string from the model or the server, including replies, errors, warnings,
+  change summaries, document names and the rate-limit message, renders as React text, never as
+  HTML or Markdown. Line breaks are kept.
+- **Tabs.** The side panel is an ARIA tab list with automatic activation. The **Ask AI** toggle
+  opens the tab and focuses its input.
+- **Escape.** In an open `#` menu or document picker, Escape closes just that. Otherwise it closes
+  the panel and returns focus to the toggle that matches the tab.
+- **Announcements.** The thread is a polite live log, and a failed turn is an alert. The lock
+  banner isn't announced separately, because the log already announces the pending turn. Undo's
+  result takes focus, so it is read out.
+- **Focus.** When the lock ends and focus went with it, focus moves to the Ask AI input. Draft with
+  AI puts focus back on its button when it adds nothing.
+- **Names.** Buttons name what they act on, such as "Ask AI about this task: Collect evidence",
+  "Jump to Workflow: Description" and "Undo this change: <instruction>". States are text, not
+  only color.
+- **Narrow screens.** The panel takes the editor's place, as **Changes** does, and the footer wraps
+  to two rows. Below the small breakpoint the toggle shows an icon with its name kept.
+
 ## Usage
 
 ### Enable or disable the assistant
@@ -468,15 +721,31 @@ The assistant is on by default wherever personal workflows are on. An administra
 off under **Admin Settings > Workflow > Enable AI Workflow Assistant**. See the
 [workflow admin settings](../../admin/workflow.md).
 
-### How 3c calls it
+### Use the Ask AI tab
 
-1. The **Ask AI** tab posts the instruction, the draft as it stands, the base the editor opened,
-   the tab's recent completed turns, any `#` documents and the focused task.
-2. On `changed`, it passes `candidate` to `applyAssist(candidate, {turnId, label})` and shows
-   `reply`, `changes` (with **Jump to**) and `warnings` on the turn's card.
-3. On `explained` or `question`, it shows `reply` and changes nothing.
-4. On 409, it keeps the draft and offers to reload the workflow. On 429, it waits for
-   `Retry-After`. On any other error, it shows `error` as text, including the rate-limit message.
+1. Open a personal workflow in the V2 editor, or choose **Edit** on a workflow proposal in chat.
+2. Choose **Ask AI** in the footer. To ask about one task, choose **Ask AI** on that task instead.
+   The tab shows **About:** with the task's name, and each turn is about that task until you clear
+   it.
+3. Type a change or a question, or choose a quick action. Type `#` to pick one of your documents;
+   the assistant can read it as context or add it to the workflow.
+4. Wait for the answer. The editor is locked meanwhile, and **Cancel request** stops it.
+5. Review the card and the highlighted fields. **Jump to** takes you to each change.
+6. Keep what you want. **Revert** on a field puts back one change, **Undo this change** on the card
+   takes back the turn, and the editor's Undo works as usual.
+7. Save. Because the draft has AI changes, the first **Save workflow** opens **Review before
+   saving**, and **Confirm and save** saves.
+
+The quick actions send a fixed instruction, with no `#` documents, and leave what you've typed in
+the input alone:
+
+| Quick action | What it sends |
+| --- | --- |
+| Explain this workflow | "Explain what this workflow does, step by step. Don't change anything." |
+| Tighten task instructions | "Tighten each task's instructions so they are clear and specific, without changing what they ask for." |
+| Add a schedule | "Add a schedule that fits this workflow. Ask me if the timing isn't clear." |
+| Alert me only when urgent | "Change the alerts so I am alerted only when something is urgent." |
+| Check what's needed to run | "Check what this workflow still needs before it can run, such as missing fields or connections. Don't change anything." |
 
 ## Testing and validation
 
@@ -503,10 +772,54 @@ $env:PYTHONPATH = "application/single_app;functional_tests"
 python -u -m pytest functional_tests/test_workflow_assist_scenarios.py -q
 ```
 
+### Ask AI tab tests
+
+The tab's tests connect the browser code to 3b's real code rather than to hand-written answers,
+so a change on either side that breaks the contract fails a test.
+
+| Test | Covers |
+| --- | --- |
+| `test_v2_workflow_ask_ai.py` | The tab renders model text as text and never as HTML, imports only local modules, is gated on the bootstrap flag, a personal workflow and a writable editor, and leaves the shared thread's new options off by default. Its instruction limit matches `ASSIST_INSTRUCTION_MAX_LENGTH` and is counted in code points. It runs `test_v2_workflow_ask_ai_logic.ts`. |
+| `test_v2_workflow_ask_ai_logic.ts` | Code-point counting and cutting, the request each kind of draft builds, replay (whole exchanges, the control characters, the cap after the suffix, earlier sessions and pending confirmations), each turn's state read from a real authoring session, the response guard and every failure message, the browser request with `Retry-After` and the deadline, the rebase and the change check, and the stores: the card cap, the rate-limit wait, the thread options and held-thread pruning |
+| `test_v2_workflow_ask_ai_parity.py` | Requests the tab builds from editor-normalized drafts (new, proposal, saved version 2 with its revision, saved version 3, focus, time zone, references, a 20-item conversation with emoji, tabs and new lines, and a 2,000-code-point instruction) are each posted as their exact text through 3b's real Flask route with a scripted model. Every candidate-parity scenario is answered the same way. `test_v2_workflow_ask_ai_parity_logic.ts` then replays each real 200 body through the tab: the guard reads it, the rebased candidate passes `workflowAssistViolation`, and the changes it finds are exactly the server's `changes[].key`. |
+| `test_v2_assist_thread.py` | A1's and A2's checks, updated for the shared thread's new options |
+| `ui_tests/test_v2_workflow_ask_ai.py` | 25 browser cases: the "Done when" instruction from Send to Confirm and save, Run as warnings, each `#` placement and a document read as context, the lock with Cancel and Retry, the stale-draft guard, the request a new, saved, focused or flow-focused draft sends, the code-point limit, Undo skipping a field changed later, **Jump to** a task field and a flow block, every failure and the 409 reload, hostile model text, where the tab is hidden (setting off, group, reader, unsupported, schedule), the keyboard and Escape, a narrow screen, Draft with AI, the quick actions, and a card from an earlier editing session |
+| `ui_tests/test_v2_workflow_ask_ai_proposal.py` | A proposal opened with **Edit** sends no base and saves through review, the tab is hidden when the assistant is off, and the editor's thread leaves the chat's idle image thread alone |
+
+The browser tests answer `POST /api/user/workflows/assist` inside the page with 3b's real
+`run_workflow_assist` and a scripted model, from `ui_tests/fixtures/workflow_ask_ai.py`. Build the
+V2 bundle first, then run each file on its own:
+
+```powershell
+npm --prefix application/v2_ui run build
+$env:PYTHONPATH = "application/single_app;functional_tests;ui_tests/fixtures"
+$env:PLAYWRIGHT_SERVICE_URL = ""
+python -u -m pytest ui_tests/test_v2_workflow_ask_ai.py -q
+```
+
 ## Known limitations and follow-ups
 
-- **Tags.** Workflow references hold documents, so a `#` tag is refused with `tags_unsupported`.
-  3c's picker should offer documents only.
+- **Personal workflows only.** Group workflows never offer Ask AI (roadmap decision 3).
+- **Tags and workspaces.** Workflow references hold documents, so the server refuses a `#` tag with
+  `tags_unsupported`. The tab's picker offers documents only. A tag or a whole workspace that still
+  reaches the input, for example through **Edit and resend**, fails the turn with a message before
+  anything is sent.
+- **Quick actions send no documents.** They send fixed text only. To use a document, type the
+  request and add it with `#`.
+- **A field Revert leaves the card applied.** Reverting one field is your own step, so the turn's
+  card still reads as applied, even when you've reverted every field it changed. **Undo this
+  change** then reverts what's left and leaves the reverted field alone. With nothing left, it says
+  "Nothing left to undo for this turn."
+- **Earlier editing sessions.** Change tracking starts fresh when the editor reopens, so a turn
+  from an earlier session can't be undone. Its card says **Made in an earlier editing session.**
+  and **Undo this change** reports "This turn can no longer be undone." Replay tells the assistant
+  those changes may not have been saved.
+- **Draft with AI isn't gated by the assistant setting on the server.**
+  `POST /api/workflows/draft-instructions` checks workflow access, not
+  `enable_workflow_ai_assistant`. The V2 editor hides **Draft with AI** whenever Ask AI is hidden,
+  but the classic personal and group workspace pages still offer **Draft Workflow Instructions**.
+- **Hidden by an active run or lost access.** These hide the tab through the same read-only check
+  as a reader's editor, which the browser tests cover, but neither has a browser case of its own.
 - **File Sync operations.** Phase 4 (#1547) made personal File Sync editable, and the Python
   `workflowForSave` port now saves an edited File Sync configuration as the editor does. The
   assistant still has no File Sync operations and won't change a File Sync trigger. Adding them is
@@ -529,5 +842,6 @@ python -u -m pytest functional_tests/test_workflow_assist_scenarios.py -q
 - **A global cap.** The limits are per user. A global in-flight cap, like Score's cap of 8, is a
   possible follow-up; provider throttling already returns 503.
 - **The rate-limit message.** `assistant_rate_limited` carries the app's shared rate-limit message,
-  which may be Markdown. 3c should render it as plain text.
-- **The conversation isn't stored.** It's ephemeral in v1, as the roadmap decided.
+  which may be Markdown. The tab shows it as plain text, so any Markdown appears as written.
+- **The conversation isn't stored.** It's ephemeral in v1, as the roadmap decided. The server
+  keeps nothing, and reloading the page starts the thread and its cards over.
