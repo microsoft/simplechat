@@ -4,6 +4,16 @@ import { showToast } from './chat-toast.js';
 
 let reasoningEffortSettings = {}; // Per-model settings: {modelName: 'low', ...}
 
+function getAdminDefaultReasoningEffort() {
+    if (!window.appSettings?.enable_default_model_for_new_conversations) {
+        return '';
+    }
+    if (window.adminNewConversationDefaultsActive === false) {
+        return '';
+    }
+    return String(window.appSettings?.default_reasoning_effort || '').trim().toLowerCase();
+}
+
 function setTooltipText(element, text, options = {}) {
     if (!element) {
         return;
@@ -210,10 +220,15 @@ export function getCurrentModelReasoningEffort() {
     
     const supportedLevels = getModelSupportedLevels(modelName);
     const savedEffort = reasoningEffortSettings[modelName];
+    const adminDefaultEffort = getAdminDefaultReasoningEffort();
     
     // If gpt-5-pro, always return high
     if (modelName.toLowerCase().includes('gpt-5-pro')) {
         return 'high';
+    }
+
+    if (adminDefaultEffort && supportedLevels.includes(adminDefaultEffort)) {
+        return adminDefaultEffort;
     }
     
     // If saved effort exists and is supported, use it
@@ -404,6 +419,7 @@ function selectReasoningLevel(level, modelName) {
  * @param {string} effort - The effort level
  */
 export function saveReasoningEffort(modelName, effort) {
+    window.adminNewConversationDefaultsActive = false;
     reasoningEffortSettings[modelName] = effort;
     saveUserSetting({ reasoningEffortSettings });
 }

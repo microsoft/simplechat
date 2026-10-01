@@ -238,10 +238,45 @@
                     </div>
 
                     <div id="default-model-selection-wrapper" class="mt-3">
-                        <label for="default-model-selection" class="form-label">Default model for fallbacks</label>
-                        <select class="form-select" id="default-model-selection" aria-label="Default model for fallback selection"></select>
+                        <label for="default-model-selection" class="form-label">Default model for fallbacks and new chats</label>
+                        <select class="form-select" id="default-model-selection" aria-label="Default model for fallback and new chat selection"></select>
                         <div class="form-text">
-                            Used for tasks such as conversation summarization, fallback, and other operations when an agent is selected.
+                            Used for tasks such as conversation summarization and agent fallback. When new conversation defaults are enabled, this model also replaces the user's last selected model for new non-agent chats.
+                        </div>
+                    </div>
+
+                    <div class="border rounded p-3 mt-3">
+                        <div class="d-flex flex-column flex-lg-row justify-content-between gap-3">
+                            <div>
+                                <label class="form-label mb-1" for="enable_default_model_for_new_conversations">New conversation defaults</label>
+                                <p class="text-muted small mb-0">
+                                    Force new non-agent chats to start with the default model below instead of the user's last selected model.
+                                </p>
+                            </div>
+                            <div class="form-check form-switch">
+                                <input
+                                    type="checkbox"
+                                    class="form-check-input"
+                                    id="enable_default_model_for_new_conversations"
+                                    name="enable_default_model_for_new_conversations"
+                                    {% if settings.enable_default_model_for_new_conversations %}checked{% endif %}
+                                />
+                                <label class="form-check-label" for="enable_default_model_for_new_conversations">Apply to new chats</label>
+                            </div>
+                        </div>
+                        <div class="mt-3">
+                            <label class="form-label" for="default_reasoning_effort">Default reasoning effort</label>
+                            <select class="form-select" id="default_reasoning_effort" name="default_reasoning_effort">
+                                <option value="" {% if not settings.default_reasoning_effort %}selected{% endif %}>Model default</option>
+                                <option value="none" {% if settings.default_reasoning_effort == 'none' %}selected{% endif %}>None</option>
+                                <option value="minimal" {% if settings.default_reasoning_effort == 'minimal' %}selected{% endif %}>Minimal</option>
+                                <option value="low" {% if settings.default_reasoning_effort == 'low' %}selected{% endif %}>Low</option>
+                                <option value="medium" {% if settings.default_reasoning_effort == 'medium' %}selected{% endif %}>Medium</option>
+                                <option value="high" {% if settings.default_reasoning_effort == 'high' %}selected{% endif %}>High</option>
+                            </select>
+                            <div class="form-text">
+                                Applies only when new conversation defaults are enabled; unsupported effort values are ignored for models that do not accept them.
+                            </div>
                         </div>
                     </div>
 

@@ -478,6 +478,42 @@ def _resolve_reasoning_effort_for_model(reasoning_effort, model_name, provider=N
     return resolved_reasoning_effort
 
 
+def _normalize_default_reasoning_effort(reasoning_effort):
+    normalized_reasoning_effort = str(reasoning_effort or '').strip().lower()
+    if normalized_reasoning_effort in ('', 'none', 'minimal', 'low', 'medium', 'high'):
+        return normalized_reasoning_effort
+    return ''
+
+
+def _apply_admin_new_conversation_model_defaults(settings, data, conversation_id, request_agent_info, *, is_retry=False):
+    """Apply admin model defaults when a normal chat request starts a new conversation."""
+    if (
+        conversation_id
+        or is_retry
+        or _has_chat_agent_selection(request_agent_info)
+        or not settings.get('enable_multi_model_endpoints', False)
+        or not settings.get('enable_default_model_for_new_conversations', False)
+    ):
+        return False
+
+    default_selection = settings.get('default_model_selection', {}) or {}
+    default_endpoint_id = str(default_selection.get('endpoint_id') or '').strip()
+    default_model_id = str(default_selection.get('model_id') or '').strip()
+    default_provider = str(default_selection.get('provider') or '').strip().lower()
+    if not (default_endpoint_id and default_model_id):
+        return False
+
+    data['model_endpoint_id'] = default_endpoint_id
+    data['model_id'] = default_model_id
+    data['model_provider'] = default_provider
+    data['model_deployment'] = ''
+    default_reasoning_effort = _normalize_default_reasoning_effort(settings.get('default_reasoning_effort'))
+    if default_reasoning_effort:
+        data['reasoning_effort'] = None if default_reasoning_effort == 'none' else default_reasoning_effort
+    data['_admin_default_model_applied'] = True
+    return True
+
+
 def _apply_response_length_for_model(api_params, response_length, model_name, provider=None, response_length_parameter=None):
     normalized_response_length = normalize_model_response_length(response_length)
     if not normalized_response_length:
@@ -14453,7 +14489,7 @@ def resolve_streaming_multi_endpoint_gpt_config(settings, data, user_id, active_
     if requested_endpoint_id:
         if not (requested_model_id or requested_deployment):
             raise ValueError('Selected model information is incomplete for the streaming request.')
-        selection_source = 'request'
+        selection_source = 'default' if data.get('_admin_default_model_applied') else 'request'
     elif allow_default_selection:
         default_selection = settings.get('default_model_selection', {}) or {}
         default_endpoint_id = str(default_selection.get('endpoint_id') or '').strip()
@@ -16800,6 +16836,14 @@ def register_route_backend_chats(bp):
             conversation_id = getattr(g, 'conversation_id', None) or data.get('conversation_id')
             if conversation_id is not None:
                 conversation_id = str(conversation_id).strip() or None
+            request_is_retry = bool(data.get('retry_user_message_id') or data.get('edited_user_message_id'))
+            _apply_admin_new_conversation_model_defaults(
+                settings,
+                data,
+                conversation_id,
+                request_agent_info,
+                is_retry=request_is_retry,
+            )
             hybrid_search_enabled = data.get('hybrid_search')
             web_search_enabled = data.get('web_search_enabled')
             url_access_enabled = data.get('url_access_enabled')
@@ -16899,7 +16943,7 @@ def register_route_backend_chats(bp):
             retry_user_message_id = data.get('retry_user_message_id') or data.get('edited_user_message_id')
             retry_thread_id = data.get('retry_thread_id')
             retry_thread_attempt = data.get('retry_thread_attempt')
-            is_retry = bool(retry_user_message_id)
+            is_retry = request_is_retry
             is_edit = bool(data.get('edited_user_message_id'))
 
             if is_retry:
@@ -17869,6 +17913,7 @@ def register_route_backend_chats(bp):
                     'model_icon': gpt_model_icon,
                     'response_length': gpt_response_length,
                     'reasoning_effort': reasoning_effort if reasoning_effort and reasoning_effort != 'none' else None,
+                    'admin_default_applied': bool(data.get('_admin_default_model_applied')),
                     'streaming': 'Disabled'
                 }
 
@@ -21196,6 +21241,13 @@ def register_route_backend_chats(bp):
         data['active_group_id'] = initial_scope_context['active_group_id']
         data['active_public_workspace_ids'] = list(initial_scope_context['active_public_workspace_ids'])
         data['active_public_workspace_id'] = initial_scope_context['active_public_workspace_id']
+        _apply_admin_new_conversation_model_defaults(
+            settings,
+            data,
+            None if is_new_stream_conversation else finalized_conversation_id,
+            data.get('agent_info'),
+            is_retry=is_retry,
+        )
         stream_session = CHAT_STREAM_REGISTRY.start_session(user_id, finalized_conversation_id)
 
         request_message = (data.get('message') or '').strip()
@@ -22453,6 +22505,7 @@ def register_route_backend_chats(bp):
                         'model_icon': gpt_model_icon,
                         'response_length': gpt_response_length,
                         'reasoning_effort': reasoning_effort if reasoning_effort and reasoning_effort != 'none' else None,
+                        'admin_default_applied': bool(data.get('_admin_default_model_applied')),
                         'streaming': 'Enabled'
                     }
 

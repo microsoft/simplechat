@@ -2,9 +2,60 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.048)**
+
+#### Bug Fixes
+
+*   **Agent Model Picker Respects Governance Policies**
+    *   Fixed the persona workspace agent setup modal so its model dropdown now follows the same endpoint governance policies as the chat window model selector.
+    *   Users no longer see restricted global, personal, or group model endpoints when creating or editing agents, and governed multi-endpoint responses no longer fall back to legacy global model lists.
+    *   (Ref: agent model picker, endpoint governance, `route_backend_agents.py`, `agents_common.js`, [Agent Model Governance Filtering Fix](fixes/AGENT_MODEL_GOVERNANCE_FILTERING_FIX.md))
+
+### **(v0.261.046)**
+
+#### Bug Fixes
+
+*   **Chat Upload File Access Errors Avoid Browser-Realm Checks**
+    *   Hardened chat upload recovery messaging so rejected browser upload requests no longer depend on a realm-specific `TypeError` check.
+    *   Fetch preparation and transport failures now consistently identify the selected file and show the same recovery guidance for locked files, cloud-placeholder files, and interrupted local upload requests.
+    *   Also removed unsafe HTML-string construction from the retry modal's model-option cloning and reasoning-level controls.
+    *   (Ref: chat upload file access handling, retry modal rendering, `chat-input-actions.js`, `chat-retry.js`, `test_chat_clipboard_paste_upload_support.py`)
+
 ### **(v0.261.045)**
 
 #### Bug Fixes
+
+*   **Public Workspace Selector Dark Theme Styling**
+    *   Fixed the public workspace selector dropdown so its dark-theme background, border, search area, hover state, and active item styling match the group workspace selector.
+    *   Added the shared workspace selector row class to the public selector row and extended the existing group dropdown dark-theme rules to the public dropdown.
+    *   (Ref: public workspace selector, dark theme dropdown styling, `public_workspaces.html`, `styles.css`)
+
+*   **Revert Premature OneNote Rollout From Development**
+    *   Removed native `.one` and `.onepkg` workspace uploads from Development pending Reactv2 testing, correcting the accidental merge of PR #1525.
+    *   Restored the previous upload formats and container packaging. Existing document formats and the separately adapted Reactv2 OneNote implementation remain unchanged.
+    *   (Ref: `config.py`, `functions_documents.py`, `Dockerfile`, [OneNote Development Rollout Revert](fixes/ONENOTE_DEVELOPMENT_ROLLOUT_REVERT_FIX.md))
+
+### **(v0.261.044)**
+
+#### New Features
+
+*   **Admin Defaults For New Chat Model And Reasoning Effort**
+    *   Added Admin Settings controls that let administrators opt in to a default model and default reasoning effort for new non-agent chats.
+    *   The setting is off by default, preserving each user's existing last-selected model and per-model reasoning preferences until an admin enables the override.
+    *   New-chat defaults use the existing multi-endpoint model selector and continue to leave agent model bindings and existing conversation model history intact.
+    *   (Ref: `enable_default_model_for_new_conversations`, `default_reasoning_effort`, Model Endpoints admin settings, chat model selector)
+
+#### Bug Fixes
+
+*   **New Chat Defaults No Longer Leak Across Conversations**
+    *   Fixed new-chat admin model defaults being overwritten by a user's saved model when a freshly created blank conversation was opened through `/chats?conversationId=...`, including the left-navigation **New Chat** flow.
+    *   Existing conversations now restore their own last-used model from saved message metadata, while blank conversations with no model history apply the admin default model and reasoning effort.
+    *   Programmatic model selector refreshes no longer save the admin default as the user's preferred model or prematurely disable the admin default reasoning state.
+    *   (Ref: `chat-conversations.js`, `chat-model-selector.js`, `chat-messages.js`, `chat-reasoning.js`)
+
+*   **Shared Conversation Prompts Persist After Invite Approval**
+    *   Accepting an invitation now loads the conversation with the authoritative collaborative metadata returned by the approval request, preventing the initial creator prompt from disappearing while the response remains visible.
+    *   (Ref: `chat-collaboration.js`, `chat-conversations.js`)
 
 *   **Shared Conversation Delivery Remains Reliable Across Workers**
     *   Shared event sessions now use a cross-worker Cosmos fallback when Redis is unavailable, preserve Redis event logs during worker attachment, and retry concurrent Cosmos event writes.
@@ -16,14 +67,6 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
     *   Optional Microsoft 365 action-card projection failures no longer terminate collaboration events.
     *   Background action recovery remains silent for ordinary shared conversations, while saved actions retain explicit recovery controls.
     *   (Ref: `route_backend_collaboration.py`, `chat-streaming.js`, `m365-pending-actions.js`)
-
-### **(v0.261.044)**
-
-#### Bug Fixes
-
-*   **Shared Conversation Prompts Persist After Invite Approval**
-    *   Accepting an invitation now loads the conversation with the authoritative collaborative metadata returned by the approval request, preventing the initial creator prompt from disappearing while the response remains visible.
-    *   (Ref: `chat-collaboration.js`, `chat-conversations.js`)
 
 ### **(v0.261.043)**
 

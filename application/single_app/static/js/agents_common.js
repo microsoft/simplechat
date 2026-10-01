@@ -689,7 +689,7 @@ export function getAvailableModels({ apimEnabled, settings, agent }) {
 	let selectedModel = null;
 	const endpoints = Array.isArray(settings?.model_endpoints) ? settings.model_endpoints : [];
 	const multiEndpointEnabled = (settings && settings.enable_multi_model_endpoints) || endpoints.length > 0;
-	if (multiEndpointEnabled && endpoints.length) {
+	if (multiEndpointEnabled) {
 		const agentType = (agent && agent.agent_type) ? agent.agent_type : 'local';
 		endpoints.forEach(endpoint => {
 			if (!endpoint || endpoint.enabled === false) return;

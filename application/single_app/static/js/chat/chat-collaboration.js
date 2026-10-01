@@ -1756,8 +1756,16 @@ function openParticipantConfirmation(userSummary, context = {}) {
     bootstrap.Modal.getOrCreateInstance(confirmModalEl).show();
 }
 
+function normalizeParticipantFlowChatType(chatType) {
+    const normalizedChatType = String(chatType || '').trim();
+    if (normalizedChatType === 'personal' || normalizedChatType === 'new') {
+        return 'personal_single_user';
+    }
+    return normalizedChatType;
+}
+
 function canUseParticipantFlow(conversationId) {
-    const chatType = getConversationChatType(conversationId);
+    const chatType = normalizeParticipantFlowChatType(getConversationChatType(conversationId));
     if (!chatType || !['personal_single_user', 'personal_multi_user', 'group-single-user', 'group_multi_user'].includes(chatType)) {
         return false;
     }

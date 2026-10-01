@@ -97,9 +97,14 @@ async function refreshModelSelection() {
   try {
     const settings = await loadUserSettings();
     const modelSelectorModule = await import('./chat-model-selector.js');
+    const useAdminDefault = Boolean(
+      window.adminNewConversationDefaultsActive
+      && window.appSettings?.enable_default_model_for_new_conversations
+      && window.initialChatModelSelection?.selection_key
+    );
     await modelSelectorModule.populateModelDropdown({
-      preferredModelId: settings?.preferredModelId,
-      preferredModelDeployment: settings?.preferredModelDeployment,
+      preferredModelId: useAdminDefault ? window.initialChatModelSelection.selection_key : settings?.preferredModelId,
+      preferredModelDeployment: useAdminDefault ? null : settings?.preferredModelDeployment,
       preserveCurrentSelection: false,
     });
   } catch (error) {
@@ -1009,7 +1014,7 @@ export function createConversationItem(convo) {
   }
   convoItem.dataset.hasUnreadAssistantResponse = convo.has_unread_assistant_response ? "true" : "false";
   const isCollaborativeConversation = convo.conversation_kind === 'collaborative';
-  const conversationChatType = convo.chat_type === 'personal' ? 'personal_single_user' : convo.chat_type;
+  const conversationChatType = ['personal', 'new'].includes(convo.chat_type) ? 'personal_single_user' : convo.chat_type;
   const canManageMembers = isCollaborativeConversation
     ? Boolean(convo.can_manage_members)
     : ['personal_single_user', 'group-single-user'].includes(conversationChatType || '');
@@ -1042,7 +1047,7 @@ export function createConversationItem(convo) {
   // Use the actual chat_type from conversation metadata if available
   console.log(`createConversationItem: Processing conversation ${convo.id}, chat_type="${convo.chat_type}"`);
   
-  const normalizedChatType = convo.chat_type === 'personal' ? 'personal_single_user' : convo.chat_type;
+  const normalizedChatType = ['personal', 'new'].includes(convo.chat_type) ? 'personal_single_user' : convo.chat_type;
   if (normalizedChatType) {
     convoItem.setAttribute("data-chat-type", normalizedChatType);
     console.log(`createConversationItem: Set data-chat-type to "${normalizedChatType}"`);
@@ -1569,6 +1574,7 @@ export function addConversationToList(conversationId, title = null, classificati
 export async function selectConversation(conversationId, metadataOverride = null) {
   currentConversationId = conversationId;
   window.currentConversationId = conversationId;
+  window.adminNewConversationDefaultsActive = false;
   notifyConversationContextChanged("select", conversationId);
 
   const convoItem = document.querySelector(`.conversation-item[data-conversation-id="${conversationId}"]`);
@@ -2288,6 +2294,10 @@ export async function createNewConversation(callback, options = {}) {
       }
 
       currentConversationId = data.conversation_id;
+      window.adminNewConversationDefaultsActive = Boolean(
+        window.appSettings?.enable_multi_model_endpoints
+        && window.appSettings?.enable_default_model_for_new_conversations
+      );
       // Reset scope lock for new conversation
       resetScopeLock({ preserveSelections });
       // Add to list (pass empty classifications for new convo)

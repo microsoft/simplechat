@@ -38,7 +38,7 @@ function getShortGroupLabel(name) {
 }
 
 function normalizeSidebarChatType(chatType, context = []) {
-  if (chatType === 'personal') {
+  if (chatType === 'personal' || chatType === 'new') {
     return 'personal_single_user';
   }
 

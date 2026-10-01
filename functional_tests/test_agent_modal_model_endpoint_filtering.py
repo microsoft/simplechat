@@ -1,11 +1,13 @@
 # test_agent_modal_model_endpoint_filtering.py
 """
 Functional test for agent modal model endpoint filtering.
-Version: 0.236.056
-Implemented in: 0.236.056
+Version: 0.261.048
+Implemented in: 0.236.056; updated in 0.261.048
 
 This test ensures the agent modal dropdown includes non-AOAI providers for local
-agents and normalizes model IDs/display names when building the model list.
+agents, normalizes model IDs/display names when building the model list, and
+does not fall back to legacy global model settings when governed multi-endpoint
+settings return no available endpoints.
 """
 
 import os
@@ -40,6 +42,8 @@ def test_agent_modal_model_endpoint_filtering():
             "const modelId = model.id",
             "const displayName = model.displayName",
             "display_name: displayName",
+            "if (multiEndpointEnabled) {",
+            "return { models, selectedModel };\n\t}\n\tif (apimEnabled)",
         ]
 
         missing = [snippet for snippet in required_snippets if snippet not in content]
