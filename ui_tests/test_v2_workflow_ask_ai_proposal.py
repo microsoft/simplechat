@@ -10,6 +10,10 @@ works there too: the draft has no saved workflow behind it, so a turn sends `bas
 draft without an `id`, and a Save with an AI change in it opens Review before saving first, then
 accepts the proposal through the card and never through the workflow save route.
 
+The editor holds its assist thread while it is open, and the thread lives outside the chat's
+conversations, so an Ask AI turn opened from a chat must not sweep that chat's idle image or plan
+transcripts. Closing the editor lets its thread go, and the chat prunes as it always did.
+
 Reuses the proposal card harness (the production MessageList, WorkflowProposalCards and
 WorkflowEditorDialog in Chromium with the production CSS). `POST /api/user/workflows/assist` is
 answered in the page by 3b's real pipeline with a scripted model (`fixtures/workflow_ask_ai.py`),
@@ -61,6 +65,10 @@ from ui_tests.test_v2_workflow_change_tracking import (  # noqa: E402
 
 pytestmark = pytest.mark.ui
 DESCRIBED = "Reviews the week's email and flags anything urgent."
+# An image editor's transcript on the proposal's answer, and a diagram thread in another chat.
+IMAGE_THREAD = f"image:{CONVERSATION}:answer-1"
+OTHER_CONVERSATION = "other-conversation"
+OTHER_THREAD = f"block:{OTHER_CONVERSATION}:mermaid:other-answer:0"
 
 
 @pytest.fixture
@@ -94,6 +102,26 @@ def enable_ask_ai(page):
 
 def description_field(dialog):
     return dialog.locator("section[aria-label='Workflow basics']").get_by_label("Description", exact=True)
+
+
+def thread_keys(page):
+    return page.evaluate(
+        "() => Object.keys(window.OrchHarness.stores.assistThread.useAssistThreadStore.getState().threads).sort()"
+    )
+
+
+def touch_thread(page, key, conversation, text):
+    """Record a completed exchange the way an image or diagram editor does, which prunes the store around it."""
+    page.evaluate("""(spec) => {
+        const store = window.OrchHarness.stores.assistThread.useAssistThreadStore;
+        store.getState().updateThread(spec.key, spec.conversation, (record) => ({
+            ...record,
+            exchanges: [...record.exchanges, {
+                id: `${spec.key}:turn`, text: spec.text, status: 'done', startedAt: Date.now(), reply: 'Done.',
+                draft: { text: spec.text, contextItems: [], attachedPrompt: null, promptValues: {}, uploads: [] },
+            }],
+        }));
+    }""", {"key": key, "conversation": conversation, "text": text})
 
 
 def test_a_proposal_draft_sends_no_base_and_saves_through_review(ask_card_ui):
@@ -167,3 +195,40 @@ def test_ask_ai_is_hidden_in_a_proposal_draft_when_the_assistant_is_off(ask_card
     expect(dialog.locator("[data-workflow-draft-ai]")).to_have_count(0)
     expect(dialog.get_by_role("button", name=re.compile(r"^(Ask AI|Draft with AI)"))).to_have_count(0)
     assert not stub.bodies
+
+
+def test_the_editor_leaves_the_chats_idle_assist_threads_alone(ask_card_ui):
+    page, api, stub = ask_card_ui
+    stub.queue(stub.changed({"op": "set_description", "description": DESCRIBED}, text="Updated the description."))
+    mount(page, api)
+    enable_ask_ai(page)
+    # Idle, so a touch in any other conversation would sweep it.
+    touch_thread(page, IMAGE_THREAD, CONVERSATION, "Make it brighter.")
+    assert thread_keys(page) == [IMAGE_THREAD]
+
+    dialog, _ = open_editor(page, card(page))
+    dialog.get_by_role("button", name="Ask AI", exact=True).click()
+    panel = side_panel(dialog)
+    box = panel.get_by_role("textbox", name="Message Ask AI", exact=True)
+    box.fill("Say that it flags anything urgent.")
+    box.press("Enter")
+    body = stub.wait_for_requests(page, 1)
+    found = panel.locator(f"[data-workflow-assist-card='{body['submission_id']}']")
+    expect(found).to_have_attribute("data-state", "applied")
+
+    # The editor's thread is in its own conversation, and recording the turn swept nothing.
+    keys = thread_keys(page)
+    workflow_keys = [key for key in keys if key.startswith("workflow:new:")]
+    assert len(workflow_keys) == 1 and IMAGE_THREAD in keys, keys
+
+    dialog.get_by_role("button", name="Cancel", exact=True).click()
+    page.get_by_role("dialog", name="Discard unsaved workflow changes?").get_by_role(
+        "button", name="Discard changes", exact=True).click()
+    expect(dialog).to_have_count(0)
+    # Closing the editor sweeps nothing either.
+    assert thread_keys(page) == sorted([IMAGE_THREAD, workflow_keys[0]])
+
+    # Once the editor has let its thread go, the chat prunes as before: a touch in another
+    # conversation sweeps both idle threads.
+    touch_thread(page, OTHER_THREAD, OTHER_CONVERSATION, "Add a legend.")
+    assert thread_keys(page) == [OTHER_THREAD]
