@@ -102,9 +102,12 @@ one or take back as a whole.
 
 The assistant is on by default wherever personal workflows are on, and it
 follows the same `WorkflowUser` role rule. Turning it off also hides each task's
-**Draft with AI** button in the V2 editor. The classic workspace's **Draft
-Workflow Instructions** button doesn't follow this setting. Things to know
-before relying on it:
+**Draft with AI** button in the V2 editor and, from version **0.261.215**, the
+**Task Brief** box and **Draft Workflow Instructions** button in the classic
+workspace's personal workflow editor. The server refuses personal draft requests
+too, so calling the API directly doesn't get around the setting. Group workflows
+aren't affected: their **Draft Workflow Instructions** button follows the group
+workflow settings. Things to know before relying on it:
 
 - **It proposes; it never saves.** Nothing changes until the person reviews the
   edit and saves it through the normal save, with the usual checks and the Run

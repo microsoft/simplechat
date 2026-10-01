@@ -2,6 +2,17 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.215)**
+
+#### Bug Fixes
+
+*   **Draft Workflow Instructions Follows The AI Workflow Assistant Setting**
+    *   Turning off **Enable AI Workflow Assistant** now stops personal AI drafting of workflow task instructions everywhere, not just in the V2 editor. Before, only the V2 editor's **Draft with AI** button was hidden; the classic workspace's **Draft Workflow Instructions** button and direct calls to `/api/workflows/draft-instructions` still drafted instructions.
+    *   The route now refuses a personal request with 403 `workflow_assistant_disabled`, the same answer the **Ask AI** route gives, before any model call. Personal workflows that are off and a missing `WorkflowUser` role keep their existing answers, which still come first.
+    *   The classic workspace's personal workflow modal hides its **Task Brief** box and **Draft Workflow Instructions** button when the assistant isn't available to the signed-in user, using the same role-aware check as the V2 editor. **Task Instructions** stays, so instructions can still be written by hand.
+    *   Group workflows aren't affected. Their **Draft Workflow Instructions** button follows the group workflow settings.
+    *   (Ref: #1548, #1543, `route_backend_workflows.py`, `route_frontend_workspace.py`, `workspace.html`, `is_workflow_assistant_enabled_for_user`, [Workflow Draft Instructions Assistant Gate Fix](fixes/WORKFLOW_DRAFT_INSTRUCTIONS_ASSISTANT_GATE_FIX.md))
+
 ### **(v0.261.213)**
 
 #### New Features

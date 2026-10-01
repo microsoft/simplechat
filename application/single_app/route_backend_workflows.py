@@ -117,7 +117,7 @@ from functions_workflow_loop_history import (
     workflow_execution_records_page, workflow_execution_provenance_page, workflow_loop_items_page,
 )
 from functions_workflow_repeat_history import workflow_repeat_iterations_page, workflow_repeat_state_page
-from functions_settings import workflow_assistant_required
+from functions_settings import workflow_assistant_required, is_workflow_assistant_enabled_for_user
 from functions_workflow_assist import ASSIST_MAX_BODY_BYTES, WorkflowAssistError, parse_assist_body, run_workflow_assist
 from functions_workflow_assist_runtime import build_workflow_assist_services
 from werkzeug.exceptions import BadRequest, RequestEntityTooLarge
@@ -1616,6 +1616,16 @@ def register_route_backend_workflows(bp):
                 _resolve_active_group_for_workflow_management(user_id)
             elif workflow_scope == 'personal':
                 _assert_personal_workflow_draft_access(settings)
+                # Runs after the personal access check so its 400 and role 403 keep precedence;
+                # the assistant helper also returns False when personal workflows are unavailable.
+                if not is_workflow_assistant_enabled_for_user(
+                    settings,
+                    user_roles=(session.get('user') or {}).get('roles', []),
+                ):
+                    return jsonify({
+                        'error': 'The AI workflow assistant is not available.',
+                        'code': 'workflow_assistant_disabled',
+                    }), 403
             else:
                 return jsonify({'error': 'Invalid workflow scope.'}), 400
         except ValueError as exc:
