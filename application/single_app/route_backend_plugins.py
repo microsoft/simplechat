@@ -2211,7 +2211,11 @@ def get_core_plugin_settings():
 @admin_required
 def update_core_plugin_settings():
     data = request.get_json(force=True)
-    logging.info("Received plugin settings update request: %s", data)
+    # Plugin settings payloads can carry secrets, so only their size is logged.
+    log_event(
+        "[PLUGINS] Received plugin settings update request.",
+        extra={"field_count": len(data) if isinstance(data, dict) else 0},
+    )
     # Validate input
     expected_keys = [
         'enable_time_plugin',

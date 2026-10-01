@@ -26,6 +26,7 @@ from test_group_document_read_apis import (
     MissingRecord, document, environment, get, load_real_module,
 )
 from test_support.agent_delegation import execute_functions, module_stub
+from test_support.log_sanitizer import real_sanitize_log_message
 
 
 OPERATION = "group_document_collaboration_operation"
@@ -188,7 +189,7 @@ def sharing(management):
     env.cache = CacheStore({})
     cache_helpers = {
         "cosmos_search_cache_container": env.cache, "logger": logging.getLogger(__name__),
-        "_debug_print": env.logs,
+        "_debug_print": env.logs, "sanitize_log_message": real_sanitize_log_message(),
     }
     execute_functions("utils_cache.py", {"invalidate_group_search_cache"}, cache_helpers)
     env.invalidate_cache = Mock(wraps=cache_helpers["invalidate_group_search_cache"])
