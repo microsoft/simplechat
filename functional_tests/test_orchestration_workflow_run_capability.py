@@ -35,7 +35,6 @@ from test_orchestration_workflow_propose_capability import (
 )
 from test_orchestration_workflow_run_planning_context import (  # noqa: F401
     DIGEST_ID,
-    NOT_DURABLE_ID,
     OWNER,
     PRIVATE,
     PROPOSALS,
@@ -44,7 +43,6 @@ from test_orchestration_workflow_run_planning_context import (  # noqa: F401
     SHARED_CHANGES,
     UUID_PATTERN,
     _build,
-    _workflows,
     wf,
 )
 from test_orchestration_workflow_setting_off_golden import (
@@ -475,9 +473,9 @@ def test_a_record_id_that_fits_the_handle_pattern_is_still_unknown(schema, runs,
     assert LETTER_ID not in json.dumps(plan)
 
 
-def test_the_catalog_entry_needs_both_the_catalog_and_a_record_id(runs, planning):
+def test_the_catalog_entry_needs_both_the_catalog_and_a_record_id(schema, planning):
     digest = _handle(planning, "Weekly digest")
-    found = runs.workflow_run_catalog_entry(planning, digest)
+    found = schema.workflow_run_catalog_entry(planning, digest)
     no_record = deepcopy(planning)
     no_record["handles"]["workflows"][digest] = {"id": " "}
     not_listed = deepcopy(planning)
@@ -485,11 +483,11 @@ def test_the_catalog_entry_needs_both_the_catalog_and_a_record_id(runs, planning
         entry for entry in not_listed["catalog"]["workflows"] if entry["handle"] != digest
     ]
     missing = [
-        runs.workflow_run_catalog_entry(no_record, digest),
-        runs.workflow_run_catalog_entry(not_listed, digest),
-        runs.workflow_run_catalog_entry(planning, None),
-        runs.workflow_run_catalog_entry(None, digest),
-        runs.workflow_run_catalog_entry({"handles": "x", "catalog": "y"}, digest),
+        schema.workflow_run_catalog_entry(no_record, digest),
+        schema.workflow_run_catalog_entry(not_listed, digest),
+        schema.workflow_run_catalog_entry(planning, None),
+        schema.workflow_run_catalog_entry(None, digest),
+        schema.workflow_run_catalog_entry({"handles": "x", "catalog": "y"}, digest),
     ]
     assert found["name"] == "Weekly digest"
     assert missing == [None] * 5

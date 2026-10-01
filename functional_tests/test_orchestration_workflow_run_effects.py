@@ -31,7 +31,7 @@ from test_orchestration_workflow_run_adapter import (  # noqa: F401
     world,
     wr,
 )
-from test_orchestration_workflow_run_capability import WORKFLOW_RUN, _handle, _run, planning  # noqa: F401
+from test_orchestration_workflow_run_capability import _handle, _run, planning  # noqa: F401
 from test_orchestration_workflow_run_planning_context import wf  # noqa: F401
 from test_support.orchestration_harness_execution import compose_step
 from test_support.versioning import assert_app_version_at_least

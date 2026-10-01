@@ -992,6 +992,29 @@ def validate_plan_requirements(plan, seeds=None, *, allow_changes=False):
     return plan
 
 
+def workflow_run_catalog_entry(workflow_planning, handle):
+    """The catalog entry the request offered for ``handle``, or None. Never raises.
+
+    The handle must be in both the planner-facing catalog and the server-side handle map, with a
+    record id, so a handle the planner invented, or one whose record is missing, is never used.
+    It is defined here so the workflow runs module, which imports this one, checks run steps with
+    the same lookup that names them on the approval card, without this module importing it back.
+    """
+    if not isinstance(workflow_planning, dict) or not isinstance(handle, str):
+        return None
+    handles = workflow_planning.get('handles')
+    handles = handles.get('workflows') if isinstance(handles, dict) else None
+    record = handles.get(handle) if isinstance(handles, dict) else None
+    if not isinstance(record, dict) or not isinstance(record.get('id'), str) or not record['id'].strip():
+        return None
+    catalog = workflow_planning.get('catalog')
+    entries = catalog.get('workflows') if isinstance(catalog, dict) else None
+    for entry in entries if isinstance(entries, list) else ():
+        if isinstance(entry, dict) and entry.get('handle') == handle:
+            return entry
+    return None
+
+
 def _plan_workflow_inputs(plan, workflow_planning):
     """The saved workflows the plan's enabled run steps start, named for the approval card.
 
@@ -1003,9 +1026,6 @@ def _plan_workflow_inputs(plan, workflow_planning):
     ]
     if not run_steps:
         return []
-    # Imported here: the workflow runs module imports this one.
-    from functions_orchestration_workflow_runs import workflow_run_catalog_entry
-
     workflows = []
     for step in run_steps:
         handle = (step.get('arguments') or {}).get('workflow')

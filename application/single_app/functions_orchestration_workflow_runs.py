@@ -59,6 +59,7 @@ from functions_orchestration_schema import (
     build_failure,
     build_step_result,
     failure_from_exception,
+    workflow_run_catalog_entry,
 )
 from functions_orchestration_workflow_context import (
     NAME_MAX_LENGTH,
@@ -78,13 +79,12 @@ WORKFLOW_RUN_OUTPUT = 'run'
 WORKFLOW_RUN_OUTPUT_KIND = 'structured-v1'
 
 # Plan-check rules. Each is also the reason a dropped step is reported with, except the static
-# input and consumed rules, which both report the plan as invalid.
+# input rule, which reports the plan as invalid, as the schema's workflow_run_consumed rule does.
 RULE_STATIC_INPUT = 'workflow_run_static_input'
 RULE_UNKNOWN = 'workflow_run_unknown'
 RULE_NOT_DURABLE = 'workflow_not_durable'
 RULE_DUPLICATE = 'workflow_run_duplicate'
 RULE_LIMIT = 'workflow_run_limit'
-RULE_CONSUMED = 'workflow_run_consumed'
 RULE_CONTEXT_UNAVAILABLE = 'workflow_context_unavailable'
 
 REASON_INVALID = 'workflow_run_invalid'
@@ -237,27 +237,6 @@ def _log(message, level=logging.INFO, *, run_id=None, step_id=None, **fields):
 
 def _invalid(rule, message):
     return PlanValidationError(message, code=WORKFLOW_RUN_INVALID_CODE, rule=rule)
-
-
-def workflow_run_catalog_entry(workflow_planning, handle):
-    """The catalog entry the request offered for ``handle``, or None. Never raises.
-
-    The handle must be in both the planner-facing catalog and the server-side handle map, with a
-    record id, so a handle the planner invented, or one whose record is missing, is never used.
-    """
-    if not isinstance(workflow_planning, dict) or not isinstance(handle, str):
-        return None
-    handles = workflow_planning.get('handles')
-    handles = handles.get('workflows') if isinstance(handles, dict) else None
-    record = handles.get(handle) if isinstance(handles, dict) else None
-    if not isinstance(record, dict) or not isinstance(record.get('id'), str) or not record['id'].strip():
-        return None
-    catalog = workflow_planning.get('catalog')
-    entries = catalog.get('workflows') if isinstance(catalog, dict) else None
-    for entry in entries if isinstance(entries, list) else ():
-        if isinstance(entry, dict) and entry.get('handle') == handle:
-            return entry
-    return None
 
 
 def prepare_workflow_run_arguments(raw, arguments, *, workflow_planning=None, seen=None):
@@ -962,7 +941,6 @@ __all__ = [
     'prepare_workflow_run_arguments',
     'rebuild_workflow_run',
     'started_workflow_run_id',
-    'workflow_run_catalog_entry',
     'workflow_run_failure_message',
     'workflow_run_link',
     'workflow_run_note',

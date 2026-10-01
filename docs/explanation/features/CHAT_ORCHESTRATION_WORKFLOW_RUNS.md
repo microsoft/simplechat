@@ -541,7 +541,7 @@ codes reach the logs rather than only their lengths.
 | `functions_orchestration_workflow_run_links.py` | The run links. |
 | `functions_orchestration_workflow_context.py` | The setting's gates, ranking for runs and the run catalog. |
 | `functions_orchestration_registry.py` | The `workflow_run` descriptor, its gates and reasons, and `external_effect_capability_ids()`. |
-| `functions_orchestration_schema.py` | The approval floor, the consumed-output rule and the failure messages. |
+| `functions_orchestration_schema.py` | The approval floor, the consumed-output rule, looking up a run step's workflow in the catalog, and the failure messages. |
 | `functions_orchestration_plan_revisions.py` | The floor check in `claim_plan_run`. |
 | `functions_orchestration_planner.py` | The instructions, repair and drop, and the server's `workflow_run_notes`. |
 | `functions_orchestration_deliverables.py` | The planner's facts and recipe for runs. |
@@ -603,6 +603,7 @@ and the controls are listed in
 | `functional_tests/test_orchestration_workflow_run_effects.py` | External effects from the registry in the executor and recovery. |
 | `functional_tests/test_orchestration_workflow_run_answer.py` | The answer's note in every plan outcome. |
 | `functional_tests/test_orchestration_workflow_run_link_routes.py` | The link route in the production Flask app: access, states, unavailable reasons, mismatched sidecars and storage errors. |
+| `functional_tests/test_orchestration_workflow_run_imports.py` | The run and link modules load in fresh normal and optimized interpreters in the application's import orders, with no network, and the schema reaches the run module only to check a run step. |
 | `functional_tests/test_orchestration_workflow_runs_admin.py`, `ui_tests/test_admin_orchestration_workflow_runs.py` | The setting's default, guard, and classic and V2 admin switches. |
 | `functional_tests/test_v2_orchestration_workflow_run_floor.mjs`, `ui_tests/test_v2_orchestration_workflow_run_floor.py` | The floor and the approval card's notice in V2. |
 | `functional_tests/test_v2_orchestration_workflow_run_links.mjs`, `ui_tests/test_v2_orchestration_workflow_run_links.py` | The links in the built V2 app, from the chat to the run in Workflows. |
