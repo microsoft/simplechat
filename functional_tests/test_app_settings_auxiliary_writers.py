@@ -1,12 +1,14 @@
 # test_app_settings_auxiliary_writers.py
 """
 Functional tests for auxiliary app-settings writers.
-Version: 0.261.025
+Version: 0.261.213
 Implemented in: 0.261.025
 
 Execute isolated production functions through AST extraction, without importing
 application configuration or contacting Redis, Cosmos DB, or other cloud services.
-Verify field-only updates, optimistic concurrency, and rejected-write responses.
+The dependency-free action manifest contract (functions_action_manifest) is
+imported as shipped. Verify field-only updates, optimistic concurrency, and
+rejected-write responses.
 """
 
 import ast
@@ -22,6 +24,10 @@ import pytest
 
 
 APP_DIR = Path(__file__).resolve().parents[1] / "application" / "single_app"
+sys.path.insert(0, str(APP_DIR))
+
+from functions_action_manifest import resolve_action_type  # noqa: E402
+
 WRITER_FILES = (
     "background_tasks.py",
     "functions_control_center.py",
@@ -432,14 +438,23 @@ def test_plugin_repairs_preserve_other_plugins_and_reject_failed_writes(
             raise RuntimeError("container unavailable")
         return manifest if container_result == "saved" else None
 
+    logged = []
     route = load_function(
         "plugin_validation_endpoint.py", "repair_plugin", store,
         discover_plugins=lambda: {"Example": object},
         PluginHealthChecker=health_checker,
         PluginErrorRecovery=recovery,
         save_global_action=save_global_action,
+        resolve_action_type=resolve_action_type,
+        _find_plugin_class=load_function(
+            "plugin_validation_endpoint.py", "_find_plugin_class", store,
+            resolve_action_type=resolve_action_type,
+        ),
+        log_event=lambda message, *args, **kwargs: logged.append(message),
     )
     result, status = response_parts(route("repair-me"))
+    # The route reports any failure, including a name this harness lacks, through log_event.
+    assert store.calls, f"repair_plugin must reach its settings write, but it logged {logged!r}"
     assert_delta(store, {"semantic_kernel_plugins"}, etag='"original"')
     assert status == (200 if available and not conflict else 500)
     assert result["success"] is (available and not conflict)
