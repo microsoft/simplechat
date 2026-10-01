@@ -1,7 +1,7 @@
 # functions_orchestration_workflow_context.py
 """Planning context for workflow proposals and workflow runs from chat orchestration.
 
-Version: 0.261.212
+Version: 0.261.214
 
 Chat orchestration can propose a personal workflow (the ``workflow_propose`` capability) and start
 one the user already has (the ``workflow_run`` capability). The planner writes a workflow
@@ -34,7 +34,7 @@ from functions_m365_operations import (
     get_m365_enabled_function_names,
 )
 from functions_msgraph_operations import get_msgraph_enabled_function_names, resolve_msgraph_action_capabilities
-from functions_orchestration_memory import OrchestrationMemoryError, validate_memory_audience
+from functions_orchestration_memory import conversation_is_private
 # One definition of each: the step schema, the deliverables and this module read the same values.
 from functions_orchestration_registry import (
     CAPABILITY_WORKFLOW_PROPOSE as WORKFLOW_PROPOSE_CAPABILITY_ID,
@@ -271,19 +271,6 @@ def workflow_run_gate(settings, user_roles):
     if not is_user_workflows_enabled_for_user(settings, user_roles=roles):
         return WORKFLOW_REASON_ROLE_REQUIRED
     return None
-
-
-def conversation_is_private(conversation, user_id):
-    """Whether only the requester can read this conversation.
-
-    A shared, collaborative or multi-user conversation, or one converted to a collaboration, is
-    not private: a proposal there would put the requester's workflows in front of other people.
-    """
-    try:
-        audience = validate_memory_audience(conversation, user_id)
-    except OrchestrationMemoryError:
-        return False
-    return audience.get('kind') == 'personal' and not conversation.get('converted_to_collaboration_at')
 
 
 # ---------------------------------------------------------------------------

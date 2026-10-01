@@ -42,6 +42,17 @@
                         </label>
                         <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Let users describe a change in plain language and review the assistant's proposed edit in the V2 workflow editor before they save it. It applies only where personal workflows are enabled."></i>
                     </div>
+                    <div class="form-group form-check form-switch mt-3 mb-2">
+                        <input type="checkbox"
+                            class="form-check-input"
+                            id="enable_chat_workflow_results"
+                            name="enable_chat_workflow_results"
+                            {% if settings.enable_chat_workflow_results %}checked{% endif %}>
+                        <label class="form-check-label ms-2" for="enable_chat_workflow_results">
+                            Use Workflow Results In Chat
+                        </label>
+                        <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Let users ask chat about the stored result of one of their own finished workflow runs, in their private chats only. The workflow is not re-run. It applies only where personal workflows are enabled."></i>
+                    </div>
 
                     <div class="form-group mt-3 mb-3">
                         <label for="workflow_max_auto_invoke_attempts" class="form-label">

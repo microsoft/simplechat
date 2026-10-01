@@ -39,6 +39,16 @@ export const AGENT_SCOPE_PARAM = 'agent_scope';
  */
 export const AGENT_SCOPE_ID_PARAM = 'agent_scope_id';
 export const NEW_CHAT_PARAM = 'new';
+/**
+ * A one-shot pair that opens a new chat with a finished workflow run's stored result selected,
+ * as `/chat?result_workflow_id=<id>&result_run_id=<id>&new=1` (phase 6a, Ask in chat).
+ *
+ * The chat page reads them once, during its first render, and asks the server for the run's
+ * current descriptor; the URL is a request, never authorization. Stripped by
+ * `syncedConversationParams`, with `new`, for the same one-shot reason `prompt` is.
+ */
+export const RESULT_WORKFLOW_PARAM = 'result_workflow_id';
+export const RESULT_RUN_PARAM = 'result_run_id';
 
 /**
  * The prompt a set of query parameters names, or null when it names none.
@@ -107,6 +117,45 @@ export function chatHrefForAgent(agentId: string, scope: AgentLinkScope): string
     return `${base}${group}&${NEW_CHAT_PARAM}=1`;
 }
 
+/** The same identifier shape the server accepts for a workflow or a run. */
+const RESULT_IDENTIFIER = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,199}$/;
+
+/** The run a workflow result link names. */
+export interface WorkflowResultLaunch {
+    workflow_id: string;
+    run_id: string;
+}
+
+/** A link that starts a new chat asking about one finished workflow run's stored result. */
+export function chatHrefForWorkflowResult(workflowId: string, runId: string): string {
+    return `/chat?${RESULT_WORKFLOW_PARAM}=${encodeURIComponent(workflowId)}`
+        + `&${RESULT_RUN_PARAM}=${encodeURIComponent(runId)}&${NEW_CHAT_PARAM}=1`;
+}
+
+/** Whether the query names a workflow result at all, valid or not. */
+export function hasWorkflowResultLaunch(params: URLSearchParams): boolean {
+    return params.has(RESULT_WORKFLOW_PARAM) || params.has(RESULT_RUN_PARAM);
+}
+
+/**
+ * The workflow result a new-chat link names, or null when it names none or names it badly.
+ *
+ * Only a new chat can carry one: a link that also opens a conversation, or launches an agent,
+ * is ambiguous about which chat the result belongs to.
+ */
+export function readWorkflowResultLaunch(params: URLSearchParams): WorkflowResultLaunch | null {
+    if (readConversationParam(params) || params.get(NEW_CHAT_PARAM) !== '1' ||
+        params.has(WORKSPACE_AGENT_PARAM)) {
+        return null;
+    }
+    const workflowId = params.get(RESULT_WORKFLOW_PARAM) ?? '';
+    const runId = params.get(RESULT_RUN_PARAM) ?? '';
+    if (!RESULT_IDENTIFIER.test(workflowId) || !RESULT_IDENTIFIER.test(runId)) {
+        return null;
+    }
+    return { workflow_id: workflowId, run_id: runId };
+}
+
 /**
  * A link that opens a conversation on the chat page, as `/chat?conversationId=<id>`.
  *
@@ -167,8 +216,9 @@ export function syncedConversationParams(
     const hasPromptScope = params.has(PROMPT_SCOPE_PARAM) || params.has(PROMPT_SCOPE_ID_PARAM);
     const hasAgentLaunch = params.has(WORKSPACE_AGENT_PARAM) || params.has(AGENT_SCOPE_PARAM)
         || params.has(AGENT_SCOPE_ID_PARAM);
+    const hasResultLaunch = hasWorkflowResultLaunch(params);
 
-    if (!hasLegacy && !hasPrompt && !hasPromptScope && !hasAgentLaunch
+    if (!hasLegacy && !hasPrompt && !hasPromptScope && !hasAgentLaunch && !hasResultLaunch
         && (current ?? null) === conversationId) {
         return null;
     }
@@ -182,6 +232,11 @@ export function syncedConversationParams(
         next.delete(WORKSPACE_AGENT_PARAM);
         next.delete(AGENT_SCOPE_PARAM);
         next.delete(AGENT_SCOPE_ID_PARAM);
+        next.delete(NEW_CHAT_PARAM);
+    }
+    if (hasResultLaunch) {
+        next.delete(RESULT_WORKFLOW_PARAM);
+        next.delete(RESULT_RUN_PARAM);
         next.delete(NEW_CHAT_PARAM);
     }
     if (conversationId) {

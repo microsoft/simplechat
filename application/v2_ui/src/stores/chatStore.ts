@@ -86,6 +86,19 @@ import {
     readSavedAnalysis,
     sameAnalysis,
 } from '../lib/savedAnalysis';
+import {
+    WORKFLOW_RESULT_LAUNCH_PENDING_MESSAGE,
+    WORKFLOW_RESULT_RETRY_UNSUPPORTED_MESSAGE,
+    applyWorkflowResultContext,
+    fetchWorkflowResultDescriptor,
+    latestWorkflowResult,
+    parseWorkflowResultDescriptor,
+    turnAsksAboutWorkflowResult,
+    workflowResultContext,
+    workflowResultFetchErrorMessage,
+    workflowResultRefusal,
+    type SelectedWorkflowResult,
+} from '../lib/workflowResults';
 import type { RunStreamEvent } from '../lib/orchestration';
 import {
     applySelection,
@@ -147,6 +160,7 @@ import type {
     Json,
     SavedAnalysisDescriptor,
     ThoughtEntry,
+    WorkflowResultDescriptor,
 } from '../lib/types';
 import { isCollaborative } from '../lib/types';
 import { fetchConversationKind, fetchConversationMetadata } from '../lib/endpoints';
@@ -293,6 +307,33 @@ interface ChatState {
     analysisTurnRevision: number | null;
     selectAnalysisResult: (descriptor: SavedAnalysisDescriptor, expectedRevision?: number) => void;
     clearAnalysisResultContext: () => void;
+    /**
+     * The finished workflow run the composer is asking about (phase 6a), or null.
+     *
+     * Exclusive with `analysisResultContext`: selecting either clears the other. Shares its
+     * revision and "chosen" flag, so removing one is remembered the same way and an inherited
+     * selection never overrides the user's own choice.
+     */
+    workflowResultContext: SelectedWorkflowResult | null;
+    /** The run a new chat is opening, while its descriptor is read. Sending waits for it. */
+    workflowResultLaunch: { workflow_id: string; run_id: string } | null;
+    /**
+     * Select a workflow result for `conversationId` (null for a new chat). Returns whether it
+     * was selected: an unavailable result, another conversation, a collaborative chat or a
+     * stale revision is refused.
+     */
+    selectWorkflowResult: (
+        descriptor: WorkflowResultDescriptor,
+        conversationId: string | null,
+        expectedRevision?: number,
+    ) => boolean;
+    clearWorkflowResultContext: () => void;
+    /**
+     * Start a new chat asking about one finished personal run. The run's current descriptor is
+     * read first, so the chip always names the result as it is now; a refusal is reported and
+     * leaves nothing selected.
+     */
+    launchWorkflowResult: (workflowId: string, runId: string) => Promise<boolean>;
 
     streaming: boolean;
     streamingContent: string;
@@ -1241,6 +1282,11 @@ function buildStreamHandlers(
             if (descriptor) {
                 getState().selectAnalysisResult(descriptor, analysisRevision);
             }
+            // A Follow up answer carries the run it read, so the next question inherits it.
+            const workflowResult = latestWorkflowResult([finalMessage]);
+            if (workflowResult) {
+                getState().selectWorkflowResult(workflowResult, conversationId, analysisRevision);
+            }
         },
         onCancelled: (_event, accumulated) => {
             if (!isCurrent()) {
@@ -1272,14 +1318,23 @@ function buildStreamHandlers(
             if (!isCurrent()) {
                 return;
             }
+            // A workflow result that can no longer be asked about as selected is said so in
+            // the server's fixed wording, and its chip removed: the turn is never answered
+            // some other way instead.
+            const refusal = workflowResultRefusal(event);
             set({
                 streaming: false,
                 streamingContent: '',
                 streamingReasoningAdjustments: [],
                 reconnectPhase: null,
-                streamError: message,
+                streamError: refusal?.message ?? message,
                 streamAuthUrl: foundryAuthUrl(event),
             });
+            const selectedResult = getState().workflowResultContext;
+            if (refusal?.clears && selectedResult &&
+                (selectedResult.conversation_id === conversationId || selectedResult.conversation_id === null)) {
+                getState().clearWorkflowResultContext();
+            }
         },
         onReconnecting: () => {
             if (!isCurrent()) {
@@ -1861,6 +1916,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
     analysisContextRevision: 0,
     analysisContextChosen: false,
     analysisTurnRevision: null,
+    workflowResultContext: null,
+    workflowResultLaunch: null,
 
     selectAnalysisResult: (value, expectedRevision) => {
         const descriptor = readSavedAnalysis({ saved_analysis: value });
@@ -1871,16 +1928,74 @@ export const useChatStore = create<ChatState>((set, get) => ({
         }
         set((state) => ({
             analysisResultContext: analysisResultContext(descriptor),
+            workflowResultContext: null,
+            workflowResultLaunch: null,
             analysisContextChosen: true,
             analysisContextRevision: state.analysisContextRevision + 1,
         }));
     },
 
+    // Clears whichever stored result the composer is answering from: every control that picks
+    // another source calls this, and a workflow result gives way to it just as an analysis does.
     clearAnalysisResultContext: () => set((state) => ({
         analysisResultContext: null,
+        workflowResultContext: null,
+        workflowResultLaunch: null,
         analysisContextChosen: true,
         analysisContextRevision: state.analysisContextRevision + 1,
     })),
+
+    selectWorkflowResult: (value, conversationId, expectedRevision) => {
+        const descriptor = parseWorkflowResultDescriptor(value);
+        if (!descriptor || descriptor.available === false ||
+            conversationId !== get().activeConversationId ||
+            // Workflow results are private: never offered in a shared conversation.
+            get().activeConversationKind === 'collaborative' ||
+            (expectedRevision !== undefined && expectedRevision !== get().analysisContextRevision)) {
+            return false;
+        }
+        set((state) => ({
+            workflowResultContext: { conversation_id: conversationId, descriptor },
+            workflowResultLaunch: null,
+            analysisResultContext: null,
+            analysisContextChosen: true,
+            analysisContextRevision: state.analysisContextRevision + 1,
+        }));
+        return true;
+    },
+
+    clearWorkflowResultContext: () => set((state) => ({
+        workflowResultContext: null,
+        workflowResultLaunch: null,
+        analysisContextChosen: true,
+        analysisContextRevision: state.analysisContextRevision + 1,
+    })),
+
+    launchWorkflowResult: async (workflowId, runId) => {
+        get().startNewConversation();
+        // Identity, not value: a second launch of the same run replaces this one.
+        const launch = { workflow_id: workflowId, run_id: runId };
+        set({ workflowResultLaunch: launch });
+        const revision = get().analysisContextRevision;
+        let descriptor: WorkflowResultDescriptor;
+        try {
+            descriptor = await fetchWorkflowResultDescriptor(workflowId, runId);
+        } catch (error) {
+            if (get().workflowResultLaunch !== launch) {
+                return false;
+            }
+            set({ workflowResultLaunch: null });
+            toast.error(workflowResultFetchErrorMessage(error));
+            return false;
+        }
+        // Abandoned if the reader opened something else, started another chat or picked
+        // another source while it was read.
+        if (get().workflowResultLaunch !== launch) {
+            return false;
+        }
+        set({ workflowResultLaunch: null });
+        return get().selectWorkflowResult(descriptor, null, revision);
+    },
 
     streaming: false,
     streamingContent: '',
@@ -1982,6 +2097,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
             activeConversationId: conversationId,
             activeConversationKind: knownKind,
             analysisResultContext: analysisConversationChanged ? null : get().analysisResultContext,
+            workflowResultContext: analysisConversationChanged ? null : get().workflowResultContext,
+            workflowResultLaunch: analysisConversationChanged ? null : get().workflowResultLaunch,
             analysisContextChosen: analysisConversationChanged ? false : get().analysisContextChosen,
             analysisContextRevision: get().analysisContextRevision + (analysisConversationChanged ? 1 : 0),
             analysisTurnRevision: analysisConversationChanged ? null : get().analysisTurnRevision,
@@ -2037,6 +2154,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
             const descriptor = latestSavedAnalysis(messages ?? []);
             if (descriptor && !get().analysisContextChosen) {
                 get().selectAnalysisResult(descriptor, analysisRevision);
+            }
+            const workflowResult = latestWorkflowResult(messages ?? []);
+            if (workflowResult && !get().analysisContextChosen) {
+                get().selectWorkflowResult(workflowResult, conversationId, analysisRevision);
             }
 
             // The header badges describe what this conversation is bound to, so its
@@ -2176,6 +2297,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
         set({
             activeConversationId: null,
             analysisResultContext: null,
+            workflowResultContext: null,
+            workflowResultLaunch: null,
             analysisContextChosen: false,
             analysisContextRevision: get().analysisContextRevision + 1,
             analysisTurnRevision: null,
@@ -2583,6 +2706,17 @@ export const useChatStore = create<ChatState>((set, get) => ({
         const collaborative = Boolean(
             conversationId && isCollaborativeConversation(get(), conversationId),
         );
+        // Ask in chat is still reading the run: sent now, the question would go out as an
+        // ordinary turn a moment before the chip appeared.
+        if (!conversationId && get().workflowResultLaunch) {
+            set({ streamError: WORKFLOW_RESULT_LAUNCH_PENDING_MESSAGE, streamAuthUrl: null });
+            return;
+        }
+        const selectedWorkflowResult = get().workflowResultContext;
+        const workflowContext = !collaborative &&
+            selectedWorkflowResult?.conversation_id === (conversationId ?? null)
+            ? selectedWorkflowResult
+            : null;
 
         // A conversation is created up front so the streaming endpoint has a stable id to
         // attach to and so a cancel request has something to address. Only ever a personal
@@ -2608,6 +2742,13 @@ export const useChatStore = create<ChatState>((set, get) => ({
                     // that reasoning continuing to hold, and a shared conversation reachable here
                     // later would silently strand its composer at "checking access".
                     useCollaborationStore.getState().setActiveConversation(conversationId);
+                }
+                // A workflow result picked for the chat that did not exist yet now belongs to
+                // this one, so the next question inherits it. Left alone when the reader has
+                // since opened something else or changed the selection.
+                if (workflowContext && get().workflowResultContext === workflowContext &&
+                    get().activeConversationId === conversationId) {
+                    set({ workflowResultContext: { ...workflowContext, conversation_id: conversationId } });
                 }
             } catch (error) {
                 set({
@@ -2687,7 +2828,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
             // Carried locally so the bubble can draw the prompt as a collapsed block straight
             // away. Without it the message would render as one blob until the server echo
             // arrived and then silently rearrange itself.
-            ...(options.promptInfo || optimisticImageReferences.length > 0
+            ...(options.promptInfo || optimisticImageReferences.length > 0 || workflowContext
                 ? {
                       metadata: {
                           ...(options.promptInfo
@@ -2695,6 +2836,11 @@ export const useChatStore = create<ChatState>((set, get) => ({
                               : {}),
                           ...(optimisticImageReferences.length > 0
                               ? { image_references: optimisticImageReferences }
+                              : {}),
+                          // As the server stores it, so the question is recognised as one
+                          // about a workflow result before its echo arrives.
+                          ...(workflowContext
+                              ? { workflow_result_context: workflowResultContext(workflowContext.descriptor) }
                               : {}),
                       },
                   }
@@ -2853,6 +2999,11 @@ export const useChatStore = create<ChatState>((set, get) => ({
         );
 
         requestBody = applySavedAnalysisContext(requestBody, savedContext);
+        // Bound to the conversation just created when this is a new chat's first question.
+        requestBody = applyWorkflowResultContext(
+            requestBody,
+            workflowContext ? { ...workflowContext, conversation_id: conversationId } : null,
+        );
 
         if (collaborative) {
             // The collaboration stream reads the text as `content` and records who was
@@ -3357,6 +3508,15 @@ export const useChatStore = create<ChatState>((set, get) => ({
                     get().selectAnalysisResult(descriptor, analysisRevision);
                 }
             }
+            // Inherited from the latest answer, never cleared for being absent: a result picked
+            // with Ask in chat is in no message until its first answer arrives. A result that
+            // became unavailable is refused, and its chip removed, when it is next asked about.
+            if (!get().analysisContextChosen) {
+                const workflowResult = latestWorkflowResult(messages ?? []);
+                if (workflowResult) {
+                    get().selectWorkflowResult(workflowResult, conversationId, analysisRevision);
+                }
+            }
             // Attempt switches and deletions change which documents the conversation
             // cites, so cached metadata is no longer trustworthy.
             set({ metadata: null });
@@ -3397,6 +3557,13 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
     retryMessage: async (messageId, options) => {
         if (get().streaming) {
+            return;
+        }
+        // Retry builds its request on the server, without the selected run, so a question
+        // about a workflow result would come back as an ordinary answer. Refused before the
+        // server is asked to create a new attempt.
+        if (turnAsksAboutWorkflowResult(get().messages, messageId)) {
+            set({ streamError: WORKFLOW_RESULT_RETRY_UNSUPPORTED_MESSAGE, streamAuthUrl: null });
             return;
         }
         const message = get().messages.find((candidate) => candidate.id === messageId);
@@ -3476,6 +3643,11 @@ export const useChatStore = create<ChatState>((set, get) => ({
     editMessage: async (messageId, content) => {
         const trimmed = content.trim();
         if (!trimmed || get().streaming) {
+            return;
+        }
+        // For the same reason as retry: the edit endpoint rebuilds the request without the run.
+        if (turnAsksAboutWorkflowResult(get().messages, messageId)) {
+            set({ streamError: WORKFLOW_RESULT_RETRY_UNSUPPORTED_MESSAGE, streamAuthUrl: null });
             return;
         }
         set({

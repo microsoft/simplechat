@@ -139,6 +139,7 @@ from functions_settings import (
     get_user_settings,
     is_admin_settings_redacted_secret,
     is_chat_file_upload_enabled_for_user,
+    is_chat_workflow_results_enabled_for_user,
     is_user_workflows_enabled_for_user,
     is_workflow_assistant_enabled_for_user,
     merge_model_endpoint_payload,
@@ -708,6 +709,10 @@ def register_route_backend_v2(bp):
                     settings, user_roles=current_user_roles
                 ),
                 "enable_workflow_ai_assistant": is_workflow_assistant_enabled_for_user(
+                    settings, user_roles=current_user_roles
+                ),
+                # Only hides the chip and entry points; the server re-checks every read.
+                "enable_chat_workflow_results": is_chat_workflow_results_enabled_for_user(
                     settings, user_roles=current_user_roles
                 ),
                 "enable_source_review": is_source_review_enabled_for_user(
