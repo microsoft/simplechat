@@ -23,6 +23,7 @@ import { GlassButton } from '../ui/primitives';
 import { resolveNotificationLink, type NotificationTarget } from '../../lib/notificationLinks';
 import { formatRelativeTime } from '../../lib/userStats';
 import { growFromRect } from '../../lib/workflowAlertMotion';
+import { openWorkflowResultInChat } from '../../lib/workflowResultFollowUp';
 import {
     WORKFLOW_ALERT_PRIORITY_LABELS,
     describeWorkflowAlertGroup,
@@ -36,6 +37,7 @@ import {
     type WorkflowAlertEntry,
 } from '../../lib/workflowAlertNotices';
 import { WORKFLOW_ALERT_SEVERITIES, type WorkflowAlertSeverity } from '../../lib/workflowAlerts';
+import { useBootstrapStore } from '../../stores/bootstrapStore';
 import {
     WORKFLOW_ALERT_UI_ATTRIBUTE,
     useWorkflowAlertStore,
@@ -229,6 +231,8 @@ function WorkflowAlertCard({ onOpened }: { onOpened: () => void }) {
     const dismissEntry = useWorkflowAlertStore((state) => state.dismissEntry);
     const markAllRead = useWorkflowAlertStore((state) => state.markAllRead);
     const openFromCard = useWorkflowAlertStore((state) => state.openFromCard);
+    const workflowResultsEnabled = useBootstrapStore((state) =>
+        state.data?.features?.enable_chat_workflow_results === true);
     const panelRef = useRef<HTMLDivElement>(null);
 
     const entry = entries[cardIndex] ?? entries[0];
@@ -263,7 +267,10 @@ function WorkflowAlertCard({ onOpened }: { onOpened: () => void }) {
 
     const runPath = workflowAlertOpenRunPath(alert);
     const workflowPath = workflowAlertWorkflowPath(alert);
-    const followUp = workflowAlertFollowUpAction(alert);
+    const followUp = workflowAlertFollowUpAction(alert, {
+        enabled: workflowResultsEnabled,
+        open: (workflowId, runId) => openWorkflowResultInChat(workflowId, runId, { navigate, pathname }),
+    });
 
     const open = (target: NotificationTarget) => {
         if (busy) {

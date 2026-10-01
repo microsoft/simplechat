@@ -195,6 +195,7 @@ The card shows:
 | Mark read, Dismiss | Every alert in the entry shown, so a grouped workflow's alerts are handled together. The button's tooltip says how many, for example "Acts on all 2 alerts from this workflow." |
 | Mark all read | Every alert the card holds, one request each. It never calls the bell's own `mark-all-read`, which would also clear notices the card never showed. |
 | A link, Open workflow | Opens the page and marks the entry's lead alert read, as opening a notice in the bell does |
+| Ask about this | Opens a new chat that answers from the run's stored result ([Phase 6a](CHAT_WORKFLOW_RESULTS_FOLLOW_UP.md)). Nothing is marked, as with Close: the alert stays unread in the bell. |
 | Close (×, Escape, backdrop) | Nothing is marked. The alerts stay unread in the bell and don't pop up again. |
 
 Buttons stay focusable while a request is in flight (`aria-disabled`), so a
@@ -206,9 +207,15 @@ keyboard user doesn't lose their place.
   `lib/notificationLinks.ts`, which returns `null` until Phase 6b adds a V2 run page.
   While it does, the card offers Open workflow, whose `run_id` already opens the
   run's history. Once it returns a path, **Open run** takes Open workflow's place.
-- **Ask about this.** `workflowAlertFollowUpAction` returns `null` until Phase 6a
-  adds the follow-up chat action. When it returns `{ label, run }`, the card shows
-  the button without other changes.
+- **Ask about this.** Phase 6a (0.261.214) fills in `workflowAlertFollowUpAction`.
+  It returns `{ label: 'Ask about this', run }` for a personal workflow's alert that
+  names a run which had finished (`completed` or `completed_partial`, read from the
+  alert's `status`) when the alert was raised, and only while the reader's bootstrap
+  carries `enable_chat_workflow_results`. Group alerts, alerts without a run, and
+  failed or cancelled runs get no button. `run` opens the chat through
+  `openWorkflowResultInChat` (`lib/workflowResultFollowUp.ts`), which reads the run
+  again before anything is selected; see
+  [Workflow Results in Chat](CHAT_WORKFLOW_RESULTS_FOLLOW_UP.md).
 
 ## Priority styling
 
@@ -387,7 +394,8 @@ as Flask does in production. Before, it answered those with Vite's "did you mean
 - The count is polled every 30 seconds, doubling while nothing changes, up to five
   minutes. So in a tab that has been quiet for a while an alert can take up to five
   minutes to appear. Focusing the window or returning to the tab reads it at once.
-- Open run and Ask about this arrive with Phases 6b and 6a.
+- Open run arrives with Phase 6b. Ask about this (Phase 6a) is offered for personal
+  workflows only, and only while **Use Workflow Results In Chat** is on.
 - The card's primary button (**Mark read**) pairs `--accent` with `--on-accent` at
   4.49:1 in the light theme, just under 4.5:1. That is a design-token matter shared
   by every V2 primary button.

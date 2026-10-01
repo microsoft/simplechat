@@ -4,7 +4,7 @@ title: "Chat interface controls"
 description: "Reference for every documented control in the SimpleChat chat interface."
 section: "Reference"
 audience: user
-version: "0.261.212"
+version: "0.261.214"
 ---
 
 ## How to use this reference
@@ -593,3 +593,30 @@ this request, or not started with the reason. Results arrive where the workflow
 already sends them, such as its conversation or alerts, not in the chat answer.
 Stopping the plan doesn't stop a workflow it already started; cancel the run in
 Workflows.
+
+## Workflow results in chat (V2 interface)
+
+Implemented in **0.261.214** (Refs: microsoft/simplechat#1546). You can ask chat
+about the stored result of a finished run of one of your personal workflows. The
+answer uses only that run's saved output, the workflow isn't run again, and the
+answer ends with a line that names the run. See
+[Ask about workflow results]({{ '/guides/ask-about-workflow-results/' | relative_url }}).
+
+| Control | What it does | Why you would use it | Enabled by |
+| --- | --- | --- | --- |
+| Ask in chat | On a run in a personal workflow's run history, opens a new chat with that run selected. | Ask what a run found without copying its output into chat or running the workflow again. | `allow_user_workflows` and `enable_chat_workflow_results`, plus the `WorkflowUser` role while `require_member_of_workflow_user` is on, for a completed or partially completed run that isn't a structured run |
+| Ask about this | In the full workflow alert, opens a new chat with the alert's run selected. The alert closes and stays unread. | Go straight from an alert to asking what the run found. | The same settings, for a personal workflow's alert about a completed or partially completed run |
+| Workflow result notice | Names the run your next question is about, for example "Answering from the Weekly digest run of Mon, Jun 2, 9:02 AM — not re-running the workflow". While it's shown, every other source and **Orchestrate** are off, and the message box reads "Ask about the workflow results…". | Confirm which result the answer will use before you send. | A run selected with Ask in chat or Ask about this, or inherited from the chat's latest answer |
+| Remove workflow result context | Removes the notice, so the next question is an ordinary chat question. | Go back to normal chat in the same conversation. | The notice is shown |
+| Unavailable answer | Shows "This answer is unavailable because access to the workflow result it used could not be confirmed." in place of an answer that used a workflow result. Your question stays. | Know that an answer relied on a result you can no longer read, such as a deleted run's. | The result is no longer available to you, or the chat was shared or converted to a collaboration |
+
+Choosing documents or another source, uploading a file, turning on
+**Orchestrate** or opening another chat also removes the notice. When a run's
+result can't be asked about as selected, for example because it changed or the
+run was deleted, the notice is removed and a message says why. Retry and Edit
+aren't available on a question about a workflow result or its answer, and the
+server refuses them; ask the question again instead. Once a chat is shared or
+converted to a collaboration, its Follow up answers are hidden for everyone, you
+included. The original chat's stored messages are unchanged. The
+collaboration's copies are stored with these answers withheld, and the chat's
+saved summary is cleared on both chats.

@@ -88,6 +88,7 @@ Use this section when you want momentum first: each page is a practical path thr
 | --- | --- | --- |
 | [Create a workflow]({{ '/guides/create-a-workflow/' | relative_url }}) | Save a repeatable multi-step task that can run manually or on a schedule. | Workflow owners |
 | [Trigger a workflow]({{ '/guides/trigger-a-workflow/' | relative_url }}) | Run a workflow now, schedule future runs, and inspect run activity. | Workflow owners |
+| [Ask about workflow results]({{ '/guides/ask-about-workflow-results/' | relative_url }}) | Ask chat about a finished workflow run's stored result without running it again. | Workflow owners |
 | [Application workflows]({{ '/reference/application-workflows/' | relative_url }}) | Review the workflow model, concepts, and reference details. | Workflow owners |
 
 ## Deployment operations

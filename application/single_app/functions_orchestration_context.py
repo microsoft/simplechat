@@ -1784,6 +1784,10 @@ def normalize_history_message(message):
     if (
         metadata.get('masked')
         or metadata.get('is_generated_chat_artifact')
+        # Answers built from a stored workflow result, or inheriting one, stay out of
+        # orchestration history until orchestration can re-check that result itself.
+        or 'workflow_result' in metadata
+        or 'workflow_result_contexts' in metadata
         or (metadata.get('chat_content_checks') or {}).get('decision') == 'block'
         or (metadata.get('content_moderation') or {}).get('removed') is True
         or thread.get('active_thread') is False

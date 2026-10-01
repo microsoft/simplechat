@@ -6,6 +6,7 @@ import { ChevronDown, ChevronRight, FileJson, Loader2 } from 'lucide-react';
 import { WorkflowExecutionHistory } from './WorkflowExecutionHistory';
 import { WorkflowRuntimePanel } from './WorkflowRuntimePanel';
 import { WorkflowFlowView } from './WorkflowFlowView';
+import { WorkflowRunAskInChat } from './WorkflowRunAskInChat';
 import { GlassButton, GlassPanel } from '../ui/primitives';
 import { Pill, RowAction } from '../workspace/primitives';
 import { useSectionResource } from '../workspace/useSectionResource';
@@ -418,6 +419,7 @@ export function WorkflowRunHistory({
                                 {formatTimestamp(run.started_at) || 'Not started'}
                                 {run.completed_at ? ` → ${formatTimestamp(run.completed_at)}` : ''}
                             </span>
+                            <WorkflowRunAskInChat scope={scope} workflowId={workflowId} run={run} />
                         </div>
                         {validation ? <p className="flex flex-wrap items-center gap-1.5 px-3 pb-2 text-xs text-text-3">
                             <span>Validation:</span>
