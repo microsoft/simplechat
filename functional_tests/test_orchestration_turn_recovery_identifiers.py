@@ -2,7 +2,7 @@
 #!/usr/bin/env python3
 """
 Functional test for the identifiers that let an orchestration turn be found again.
-Version: 0.261.131
+Version: 0.261.213
 Implemented in: 0.261.099
 Chat content-check metadata binding included in: 0.261.131
 
@@ -151,6 +151,7 @@ def test_run_record_keeps_the_turn_and_question_ids():
 
         memory = import_app_module("functions_orchestration_memory")
         checks = import_app_module("functions_chat_content_checks")
+        context = import_app_module("functions_orchestration_context")
         authorize = Mock(return_value={"id": "conversation-1", "user_id": "user-1"})
         latest_run = Mock(return_value=None)
         namespace = {
@@ -159,6 +160,7 @@ def test_run_record_keeps_the_turn_and_question_ids():
             '_authorize_context_conversation': authorize,
             'get_latest_turn_run': latest_run,
             'CHECK_METADATA': checks.CHECK_METADATA,
+            'image_reference_provenance_from_seeds': context.image_reference_provenance_from_seeds,
             'g': g, 'has_request_context': has_request_context,
         }
         for name in ('_validate_turn_memory_context', '_persist_planned_turn'):
