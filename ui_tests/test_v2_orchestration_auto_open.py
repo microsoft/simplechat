@@ -222,7 +222,8 @@ def orchestration_page():
             page = stack.enter_context(hb.harness_page(collect_errors=errors))
         except hb.HarnessUnavailable as exc:
             pytest.skip(f"skipped the browser-driven checks: {exc}")
-        yield page
+        else:
+            yield page
     _report_page_errors(errors)
 
 
