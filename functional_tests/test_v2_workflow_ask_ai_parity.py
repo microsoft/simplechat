@@ -12,13 +12,16 @@ TypeScript under node on both sides of real assistant requests that use a script
 * node builds each request with ``buildWorkflowAssistRequest`` from the draft the editor holds (a
   saved workflow, a v3 flow, New workflow's draft and a chat proposal's draft), with ``#`` documents
   as the picker makes them and a thread history, and prints the exact JSON text the browser POSTs;
-* the assistant reads that text with its own checks (``parse_assist_body``, ``parse_assist_request``)
-  and answers it. A new or proposal draft must arrive with ``base: null`` and no ``id``, a saved one
-  with its ``id`` and ``definition_revision``, and the focus, time zone, documents and completed
-  turns as the contract says;
-* node replays each answer as the tab does: ``parseWorkflowAssistResponse``, ``rebaseAssistCandidate``
-  over the live draft, the editor's own diff (``verifyAssistChanges``) and ``applyAssist``. The
-  editor's diff must find exactly the change keys, Jump to targets and wording the server reported.
+* the assistant reads that text with its own checks (``parse_assist_body``, ``parse_assist_request``),
+  and that exact text is POSTed to the real ``POST /api/user/workflows/assist`` route: 3b's route
+  harness from route_tests/test_workflow_assist_policy.py, which runs the real route body, helpers
+  and gates on a closed Flask app over a scripted model. A new or proposal draft must arrive with
+  ``base: null`` and no ``id``, a saved one with its ``id`` and ``definition_revision``, and the
+  focus, time zone, documents and completed turns as the contract says;
+* node replays each 200 body the route answered as the tab does: ``parseWorkflowAssistResponse``,
+  ``rebaseAssistCandidate`` over the live draft, the editor's own diff (``verifyAssistChanges``) and
+  ``applyAssist``. The editor's diff must find exactly the change keys, Jump to targets and wording
+  the server reported.
 
 Every scenario in test_workflow_assist_candidate_parity.py runs this way, plus cases for the request
 shapes. The TypeScript side is test_v2_workflow_ask_ai_parity_logic.ts. The node checks are skipped
@@ -27,6 +30,7 @@ when application/v2_ui/node_modules is missing; run npm ci there first.
 
 import ast
 import copy
+import importlib.util
 import json
 import os
 import subprocess
@@ -53,6 +57,7 @@ from test_workflow_assist_candidate_parity import (  # noqa: E402
 
 V2_DIR = REPO_ROOT / "application" / "v2_ui"
 LOGIC_CHECK = Path(__file__).with_name("test_v2_workflow_ask_ai_parity_logic.ts")
+ROUTE_POLICY = REPO_ROOT / "functional_tests" / "route_tests" / "test_workflow_assist_policy.py"
 FIXTURE_ENV = "WORKFLOW_ASK_AI_PARITY_FIXTURE"
 REQUEST_FIELDS = {"submission_id", "base", "instruction", "conversation", "focus", "time_zone", "draft", "references"}
 
@@ -62,6 +67,26 @@ ASK_AI_OPTIONS = {
     **copy.deepcopy(PARITY_OPTIONS),
     "schedule": build_workflow_schedule_editor_options(min_interval_seconds=300),
 }
+
+
+def _load_route_policy():
+    """3b's route policy module, loaded under its own name for its route harness."""
+    spec = importlib.util.spec_from_file_location("_ask_ai_parity_route_policy", ROUTE_POLICY)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+route_policy = _load_route_policy()
+
+
+class RouteHarness(route_policy.Harness):
+    """3b's route harness, with the services given the editor options the tab was given."""
+
+    def build_services(self, settings, *, client_factory):
+        self.built.append((settings, client_factory))
+        self.bundle = wa.services(self.model, stored=self.stored, limiter=self.limiter, options=ASK_AI_OPTIONS)
+        return self.bundle
 
 # A thread history: eleven completed turns, so the oldest falls out of the ten the tab replays, with
 # a failed and a cancelled turn among them that must never reach the server.
@@ -233,13 +258,23 @@ def _emitted(run, label):
 
 
 def _answer(case, text):
-    """What the assistant does with the exact text the tab sent."""
-    body = core.parse_assist_body(text.encode("utf-8"))
+    """What the assistant's route answers to the exact text the tab sent, over a scripted model."""
+    raw = text.encode("utf-8")
+    body = core.parse_assist_body(raw)
     request = core.parse_assist_request(copy.deepcopy(body), wa.USER_ID)
-    model = wa.ScriptedModel(case["reply"])
-    bundle = wa.services(model, stored=case["stored"] if body["base"] is not None else None, options=ASK_AI_OPTIONS)
-    result = wa.run(body, bundle)
-    return {"body": body, "request": request, "bundle": bundle, "result": result}
+    harness = RouteHarness()
+    harness.model = wa.ScriptedModel(case["reply"])
+    harness.stored = case["stored"] if body["base"] is not None else None
+    response = harness.post(data=raw, content_type="application/json", headers={"Accept": "application/json"})
+    answered = response.get_data(as_text=True)
+    # Raised rather than asserted, so an optimized run still stops on a refusal.
+    if response.status_code != 200:
+        raise AssertionError(f"{case['name']}: the route answered {response.status_code}: {answered[:500]}")
+    return {
+        "body": body, "request": request, "bundle": harness.bundle, "result": json.loads(answered),
+        "read": list(harness.parsed), "runs": list(harness.runs), "mimetype": response.mimetype,
+        "cache_control": response.headers.get("Cache-Control"),
+    }
 
 
 @pytest.fixture(scope="module")
@@ -301,6 +336,16 @@ def test_every_request_the_tab_builds_is_one_the_assistant_accepts(round_trip):
             assert len(body["conversation"]) == 20, name
         else:
             assert body["conversation"] == [], name
+
+
+def test_the_route_answers_the_exact_text_the_tab_sends(round_trip):
+    for case, item, answer in zip(round_trip["cases"], round_trip["requests"], round_trip["answers"]):
+        name = case["name"]
+        assert answer["read"] == [len(item["text"].encode("utf-8"))], name
+        assert answer["runs"] == [wa.USER_ID], name
+        assert answer["mimetype"] == "application/json", name
+        assert answer["cache_control"] == "no-store, private", name
+        assert answer["result"]["submission_id"] == case["submission_id"], name
 
 
 def test_a_new_or_proposal_draft_is_sent_without_a_base_or_an_id(round_trip):
