@@ -2,7 +2,7 @@
 #!/usr/bin/env python3
 """
 Functional regression for group conversation source storage.
-Version: 0.261.213
+Version: 0.261.214
 Implemented in: 0.261.024
 Ported to the React branch in: 0.261.106
 Related issue: microsoft/simplechat#1472
@@ -45,6 +45,10 @@ if str(APP_ROOT) not in sys.path:
 import functions_m365_history  # noqa: E402
 from functions_m365_action_cards import strip_pending_action_references  # noqa: E402
 from functions_m365_approvals import M365ApprovalRequired, M365PolicyError, material_fingerprint  # noqa: E402
+from functions_workflow_result_masking import (  # noqa: E402
+    message_uses_workflow_result,
+    withhold_workflow_result_message,
+)
 
 COLLABORATION_FILE = APP_ROOT / 'functions_collaboration.py'
 ROUTE_FILE = APP_ROOT / 'route_backend_collaboration.py'
@@ -97,6 +101,7 @@ COLLABORATION_FUNCTIONS = {
     'get_personal_collaboration_conversation_by_source_conversation',
     '_is_eligible_legacy_personal_conversation',
     '_copy_legacy_personal_messages_to_collaboration',
+    '_carry_summary_into_collaboration',
     'ensure_personal_collaboration_for_legacy_conversation',
     '_is_eligible_legacy_group_conversation',
     '_copy_legacy_group_messages_to_collaboration',
@@ -356,6 +361,8 @@ class ConversionHarness:
             'log_conversation_deletion': lambda **kwargs: None,
             'sync_chat_upload_workspace_document_sharing_for_collaboration': lambda item: None,
             'strip_pending_action_references': strip_pending_action_references,
+            'message_uses_workflow_result': message_uses_workflow_result,
+            'withhold_workflow_result_message': withhold_workflow_result_message,
             'cancel_m365_conversation_deliveries': lambda conversation_id: (
                 self.cancelled_deliveries.append(conversation_id)
             ),
