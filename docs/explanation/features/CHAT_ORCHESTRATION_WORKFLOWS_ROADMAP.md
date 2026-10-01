@@ -947,8 +947,9 @@ Phase 3 ships as three PRs. 3a needs nothing else, 3b needs Phase 2 and A2, and 
     pending block focus request, so the Flow canvas can't take focus back.
 - **Follow-ups** from #1593:
   - A Latest Feature card, once `docs/images/guides/create-a-workflow-ask-ai.png` exists.
-  - A product decision: should `/api/workflows/draft-instructions` check `enable_workflow_ai_assistant` on the
-    server? It checks workflow access only, and the classic button ignores the setting.
+  - Settled for personal scope in v0.261.215: `/api/workflows/draft-instructions` refuses personal requests with
+    403 `workflow_assistant_disabled` when `enable_workflow_ai_assistant` is off for the person, and the classic
+    personal workspace hides its draft controls. Group-scope AI drafting is to be revisited with Phase 7 (#1550).
   - Structural flow edits (For each and If blocks, adding or moving tasks), File Sync operations, and the rest of
     #1577's list.
   - Disable **Reload workflow** during a save, check focus after a reloaded editor closes, and add browser tests

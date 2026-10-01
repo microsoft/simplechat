@@ -100,7 +100,11 @@ setting on top:
 
 The V2 bootstrap route (`/api/v2/bootstrap`) reports the per-user result as
 `features.enable_workflow_ai_assistant`, and the editor hides the **Ask AI** tab and **Draft with
-AI** when it's false. See [When the tab is offered](#when-the-tab-is-offered).
+AI** when it's false. See [When the tab is offered](#when-the-tab-is-offered). From 0.261.215 the
+same result gates personal requests to `POST /api/workflows/draft-instructions`, which answers 403
+`workflow_assistant_disabled` when it's false, and the classic personal workspace hides its
+**Task Brief** and **Draft Workflow Instructions** controls. Group drafting doesn't follow this
+setting.
 
 ### Request
 
@@ -702,8 +706,9 @@ as one undoable AI change labeled "Draft with AI: <task>", and focus moves to th
 - It doesn't lock the editor. When the task gained instructions or was removed while it worked,
   nothing is added, and the message says so.
 - Instructions longer than the editor's 12,000-character limit aren't added; the message says so.
-- It's offered only where Ask AI is. The route checks personal workflow access but not
-  `enable_workflow_ai_assistant`, so hiding it with Ask AI keeps the setting's meaning simple.
+- It's offered only where Ask AI is. From 0.261.215 the route also refuses a personal request
+  with 403 `workflow_assistant_disabled` when `enable_workflow_ai_assistant` is off for the person,
+  so hiding the button isn't the only control.
 
 ### Accessibility and plain text
 
@@ -826,10 +831,13 @@ python -u -m pytest ui_tests/test_v2_workflow_ask_ai.py -q
   from an earlier session can't be undone. Its card says **Made in an earlier editing session.**
   and **Undo this change** reports "This turn can no longer be undone." Replay tells the assistant
   those changes may not have been saved.
-- **Draft with AI isn't gated by the assistant setting on the server.**
-  `POST /api/workflows/draft-instructions` checks workflow access, not
-  `enable_workflow_ai_assistant`. The V2 editor hides **Draft with AI** whenever Ask AI is hidden,
-  but the classic personal and group workspace pages still offer **Draft Workflow Instructions**.
+- **Group drafting doesn't follow the assistant setting.** From 0.261.215,
+  `POST /api/workflows/draft-instructions` refuses personal requests with 403
+  `workflow_assistant_disabled` when `enable_workflow_ai_assistant` is off for the person, and the
+  classic personal workspace hides its **Task Brief** and **Draft Workflow Instructions** controls.
+  The setting covers personal workflows only, so the classic group workspace still offers
+  **Draft Workflow Instructions**, governed by the group workflow settings. Group-scope AI drafting
+  is to be revisited with Phase 7 (#1550).
 - **Hidden by an active run or lost access.** These hide the tab through the same read-only check
   as a reader's editor, which the browser tests cover, but neither has a browser case of its own.
 - **File Sync operations.** Phase 4 (#1547) made personal File Sync editable, and the Python

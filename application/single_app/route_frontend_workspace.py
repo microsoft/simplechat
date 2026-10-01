@@ -38,6 +38,10 @@ def register_route_frontend_workspace(bp):
             settings,
             user_roles=current_user_roles,
         )
+        public_settings['enable_workflow_ai_assistant'] = is_workflow_assistant_enabled_for_user(
+            settings,
+            user_roles=current_user_roles,
+        )
         if not user_id:
             print("User not authenticated.")
             return redirect(url_for('frontend_authentication.login'))
