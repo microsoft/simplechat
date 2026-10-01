@@ -64,7 +64,7 @@ from functions_orchestration_context import (
 from functions_orchestration_deliverables import explicit_image_shortfalls
 from functions_orchestration_registry import (
     CAPABILITY_TABULAR_ANALYZE, CAPABILITY_WORKFLOW_PROPOSE, CAPABILITY_WORKFLOW_RUN,
-    DEPENDENCY_PLAN_CONTRACT_VERSION, admitted_export_pairs, get_capability,
+    DEPENDENCY_PLAN_CONTRACT_VERSION, admitted_export_pairs, external_effect_capability_ids, get_capability,
     resolve_available_capability_ids,
 )
 from functions_orchestration_result_contracts import (
@@ -220,6 +220,9 @@ _DEFAULT_STEP_TIMEOUT_SECONDS = 120
 _DEFAULT_MAX_REPLANS = 2
 # Stops that bound time rather than express intent; a step that already finished keeps its result.
 _BUDGET_STOP_REASONS = frozenset({'step_timeout', 'run_timeout'})
+# Capabilities whose steps may act outside the plan. One that is interrupted, fails or is stopped
+# may already have acted, so its step is effects_uncertain. The registry owns the list.
+_EFFECT_CAPABILITIES = external_effect_capability_ids()
 
 
 def _now_iso():
@@ -584,7 +587,7 @@ def _step_record(context, step, index, status, result, started_at, completed_at,
         'checkpoint_available': False,
         'reused': False,
         'reused_from_run_id': None,
-        'effects_uncertain': status == STEP_STATUS_RUNNING and step.get('capability_id') in ('agent_invoke', 'action_invoke'),
+        'effects_uncertain': status == STEP_STATUS_RUNNING and step.get('capability_id') in _EFFECT_CAPABILITIES,
     }
     if result.get('saved_analyses'):
         record['saved_analyses'] = deepcopy(result['saved_analyses'])
@@ -1518,7 +1521,7 @@ def _execute_dependency_plan(
             'token_usage': {} if reused else deepcopy(context.step_token_usage),
             'reused': bool(reused),
             'reused_from_run_id': (reused.get('provenance') or {}).get('run_id') if reused else None,
-            'effects_uncertain': step['capability_id'] in ('agent_invoke', 'action_invoke')
+            'effects_uncertain': step['capability_id'] in _EFFECT_CAPABILITIES
             and status in (STEP_STATUS_FAILED, STEP_STATUS_CANCELLED),
         })
         save(record)

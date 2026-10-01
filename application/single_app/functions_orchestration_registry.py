@@ -129,6 +129,9 @@ WORKFLOW_HANDLE_PATTERN = '^[a-z][a-z0-9_-]{0,63}$'
 # A descriptor's ``approval_floor``: a plan with an enabled step of that capability always waits
 # for the user to run it, whatever approval mode was asked for.
 APPROVAL_FLOOR_MANUAL = 'manual'
+# A descriptor's ``external_effects`` (a real True): its step may act outside the plan, in an
+# external service or by starting a saved workflow. A failed, stopped or interrupted step of one
+# is effects_uncertain, and a retry of its plan asks the user to confirm first.
 
 # Explicitly requested images are generated as planned steps. The executor is serial, so a
 # plan may generate at most this many images; a larger ask is reported, never silently cut.
@@ -909,6 +912,8 @@ CAPABILITY_REGISTRY = (
         'cost_class': COST_CLASS_MEDIUM,
         'max_per_plan': None,
         'adapter': CAPABILITY_ACTION_INVOKE,
+        # An action's functions can change something in an external service.
+        'external_effects': True,
     },
     {
         'id': CAPABILITY_AGENT_INVOKE,
@@ -965,6 +970,8 @@ CAPABILITY_REGISTRY = (
         # paying all of that twice.
         'max_per_plan': 1,
         'adapter': CAPABILITY_AGENT_INVOKE,
+        # An agent runs its own tools, which can change something in an external service.
+        'external_effects': True,
     },
     {
         'id': CAPABILITY_COMPOSE,
@@ -1144,6 +1151,9 @@ CAPABILITY_REGISTRY = (
         # arrival or when a countdown ends: normalize_plan forces manual approval and
         # claim_plan_run refuses any other saved mode.
         'approval_floor': APPROVAL_FLOOR_MANUAL,
+        # A step that fails after queueing may already have started the run. A retry links to that
+        # run rather than starting another, but the user still confirms before it.
+        'external_effects': True,
     },
 )
 
@@ -1289,6 +1299,17 @@ def approval_floor_capability_ids():
     return frozenset(
         descriptor['id'] for descriptor in CAPABILITY_REGISTRY
         if descriptor.get('approval_floor') == APPROVAL_FLOOR_MANUAL
+    )
+
+
+def external_effect_capability_ids():
+    """The capabilities whose steps may act outside the plan, so an interrupted one is uncertain.
+
+    Read from the raw descriptors, so the executor and recovery load no other service. Only a
+    real True marks a capability.
+    """
+    return frozenset(
+        descriptor['id'] for descriptor in CAPABILITY_REGISTRY if descriptor.get('external_effects') is True
     )
 
 
