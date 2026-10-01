@@ -526,6 +526,12 @@ function failureChecks() {
         describe(400, { error: 'Choose a time zone.', code: 'time_zone_invalid' }).code === 'time_zone_invalid'
         && describe(400, { error: 'Too large.', code: 'assistant_input_too_large' }).code === 'assistant_input_too_large');
     check('a 403 explains Ask AI is not available', describe(403, { code: 'workflow_assistant_disabled' }).message === "Ask AI isn't available to you right now.");
+    const role = 'Personal workflows require the WorkflowUser app role.';
+    check('a one-word 403 error shows its sentence', describe(403, { error: 'Forbidden', message: role }).message === role);
+    check('a one-word error without a sentence is shown as is', describe(403, { error: 'Forbidden' }).message === 'Forbidden'
+        && describe(403, { error: 'Forbidden', message: '   ' }).message === 'Forbidden');
+    check('a sentence error is not replaced by a message', describe(400, { error: 'Allow User Workflows is disabled.', message: 'x' }).message
+        === 'Allow User Workflows is disabled.');
     check('a 404 says the workflow could not be found', describe(404, { code: 'workflow_not_found' }).message.includes("couldn't be found"));
     const conflict = describe(409, { error: 'The workflow changed.', code: 'workflow_definition_conflict' });
     check('a definition conflict offers a reload', conflict.reload && conflict.code === 'workflow_definition_conflict');

@@ -414,6 +414,9 @@ export function workflowAssistRetryAfter(header: string | null, body: unknown, n
     return typeof seconds === 'number' && Number.isFinite(seconds) && seconds > 0 ? clampRetryAfter(seconds) : null;
 }
 
+/** A one-word `error`, such as the role check's "Forbidden", whose sentence is in `message`. */
+const ONE_WORD_ERROR = /^[A-Za-z][A-Za-z0-9_]*$/;
+
 /**
  * What a failed request means for the reader. The server's `error` is a safe template (the rate
  * limit's is an admin's text, possibly Markdown); it is shown as plain text either way.
@@ -421,7 +424,9 @@ export function workflowAssistRetryAfter(header: string | null, body: unknown, n
 export function describeWorkflowAssistError(status: number, body: unknown, retryAfterHeader: string | null = null): WorkflowAssistFailure {
     const code = isRecord(body) && typeof body.code === 'string' && /^[a-z0-9_]{1,64}$/.test(body.code) ? body.code : '';
     const fallback = STATUS_FALLBACKS[status] ?? `The assistant request failed (status ${status}). Nothing was changed.`;
-    let message = (isRecord(body) ? serverText(body.error, SERVER_TEXT_LIMIT) : null) || fallback;
+    const error = isRecord(body) ? serverText(body.error, SERVER_TEXT_LIMIT) : null;
+    const sentence = isRecord(body) ? serverText(body.message, SERVER_TEXT_LIMIT) : null;
+    let message = (error && ONE_WORD_ERROR.test(error) && sentence ? sentence : error) || fallback;
     if (code === 'workflow_deleted') message = `${message} Your draft is still in the editor.`;
     const retryAfterSeconds = status === 429 || status === 503 ? workflowAssistRetryAfter(retryAfterHeader, body) : null;
     return {

@@ -584,22 +584,26 @@ export function WorkflowEditorDialog({
                 tall
                 bodyClassName="flex min-h-0"
                 footer={
-                    <>
+                    // A narrow screen can't fit the toggles, Cancel and Save on one line once Ask AI is
+                    // offered, so Cancel and Save move together to a second line instead of wrapping a label.
+                    <div className="flex min-w-0 flex-1 flex-wrap items-center justify-end gap-2">
                         {askAiAvailable ? <WorkflowAskAiToggle id={askAiToggleId} open={panelOpen && panelTab === 'askai'}
                             controls={sidePanelId}
                             onToggle={() => (panelOpen && panelTab === 'askai' ? closeChanges(false) : openAskAi())} /> : null}
                         {!readOnly ? <WorkflowChangesToggle id={changesToggleId} open={panelOpen && panelTab === 'changes'}
                             controls={sidePanelId}
                             onToggle={() => (panelOpen && panelTab === 'changes' ? closeChanges(false) : openChanges('tab'))} /> : null}
-                        <GlassButton type="button" onClick={close} disabled={saving}>
-                            {readOnly ? 'Close' : 'Cancel'}
-                        </GlassButton>
-                        {!readOnly ? (
-                            <GlassButton type="button" variant="primary" disabled={interactionDisabled || saving || Boolean(authoring.pending) || Boolean(history.pending) || assistPending} onClick={() => void save()}>
-                                {saving ? 'Saving…' : 'Save workflow'}
+                        <div className="flex shrink-0 items-center gap-2">
+                            <GlassButton type="button" onClick={close} disabled={saving}>
+                                {readOnly ? 'Close' : 'Cancel'}
                             </GlassButton>
-                        ) : null}
-                    </>
+                            {!readOnly ? (
+                                <GlassButton type="button" variant="primary" disabled={interactionDisabled || saving || Boolean(authoring.pending) || Boolean(history.pending) || assistPending} onClick={() => void save()}>
+                                    {saving ? 'Saving…' : 'Save workflow'}
+                                </GlassButton>
+                            ) : null}
+                        </div>
+                    </div>
                 }
             >
                 <div className={`min-w-0 flex-1 overflow-y-auto px-4 py-3${panelOpen ? ' hidden xl:block' : ''}`}
