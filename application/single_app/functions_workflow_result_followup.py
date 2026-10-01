@@ -133,14 +133,23 @@ class FollowUpServices:
     authorize_analysis_context: Optional[Callable] = None
     log_chat_activity: Optional[Callable] = None
     log_token_usage: Optional[Callable] = None
-    serialize: Callable = _identity
+    serialize: Optional[Callable] = None
     cancel_errors: tuple = ()
     unsupported_errors: tuple = ()
-    gate: Callable = _default_gate
-    is_private: Callable = _default_is_private
-    read_result: Callable = read_workflow_result
-    authorize_context: Callable = authorize_workflow_result_context
-    now: Callable = _utc_now
+    gate: Optional[Callable] = None
+    is_private: Optional[Callable] = None
+    read_result: Optional[Callable] = None
+    authorize_context: Optional[Callable] = None
+    now: Optional[Callable] = None
+
+    def __post_init__(self):
+        # Defaults go on the instance: a plain function stored on the class would be bound as a method.
+        self.serialize = self.serialize or _identity
+        self.gate = self.gate or _default_gate
+        self.is_private = self.is_private or _default_is_private
+        self.read_result = self.read_result or read_workflow_result
+        self.authorize_context = self.authorize_context or authorize_workflow_result_context
+        self.now = self.now or _utc_now
 
 
 def _refusal(error, conversation_id=None, user_message_id=None):

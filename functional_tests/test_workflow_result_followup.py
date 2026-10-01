@@ -14,6 +14,8 @@ the privacy rule are real; the chat route's persistence, screening and model
 helpers are recording fakes.
 """
 
+import dataclasses
+import inspect
 import itertools
 import json
 import sys
@@ -655,6 +657,32 @@ def test_the_default_gate_is_the_settings_rule(monkeypatch):
     refused = followup.workflow_result_request_precheck(data, {}, ["User"])
     assert refused[1] == 403 and refused[0]["code"] == "workflow_results_disabled"
     assert calls == [({"enable_chat_workflow_results": True}, ["User"]), ({}, ["User"])]
+
+
+def test_omitted_helpers_default_to_the_real_ones_without_becoming_methods():
+    # A plain function kept as a class-level default is bound as a method when read through an instance.
+    fields = dataclasses.fields(followup.FollowUpServices)
+    assert not [item.name for item in fields if inspect.isroutine(item.default)]
+    required = {
+        item.name: object() for item in fields
+        if item.default is dataclasses.MISSING and item.default_factory is dataclasses.MISSING
+    }
+    services = followup.FollowUpServices(**required)
+    document = {"id": "message-1"}
+    serialized = services.serialize(document)
+
+    assert serialized is document
+    assert services.gate is followup._default_gate
+    assert services.is_private is followup._default_is_private
+    assert services.read_result is reader.read_workflow_result
+    assert services.authorize_context is reader.authorize_workflow_result_context
+    assert services.now is followup._utc_now
+
+    def injected_now():
+        return "2026-01-05T14:02:00"
+
+    kept = followup.FollowUpServices(**required, now=injected_now)
+    assert kept.now is injected_now
 
 
 @pytest.mark.parametrize(("user_id", "message", "expected"), [
