@@ -30,7 +30,7 @@ new chat with that run selected. Each answer:
   Jun 2, 2025, 9:02 AM CDT. The workflow was not re-run._"
 - reads the result again on every turn, and answers only if it's still the
   result the user selected.
-- stops showing once that result is no longer available to its owner.
+- stops showing in V2 once that result is no longer available to its owner.
 
 What this version adds:
 
@@ -42,9 +42,13 @@ What this version adds:
   V2 entry points read before selecting a run.
 - **Follow up**, `functions_workflow_result_followup.py`: the chat path that
   answers a question from the selected run's stored result.
-- **Masking on read.** An answer built from a workflow result is withheld on
-  every later read once the result is unavailable, or once the chat is no longer
-  the owner's private chat.
+- **Masking on read.** An answer built from a workflow result is withheld once
+  the result is unavailable, or once the chat is no longer the owner's private
+  chat, on every read that already withholds saved analyses. A few older reads
+  that only the chat's owner can reach don't mask yet; see
+  [Known limitations](#known-limitations).
+- **Withheld collaboration copies.** Converting a chat to a collaboration stores
+  its Follow up answers withheld, and doesn't carry the chat summary over.
 - **V2 entry points**: the composer chip, **Ask in chat**, **Ask about this**,
   and `followUpWorkflowResult` for Phase 6b's delivered message, run card and
   recurring-workflow card.
@@ -87,8 +91,8 @@ Dependencies:
    with tools off, to answer from a fenced block of run output.
 5. The answer is saved with the disclosure line, the public descriptor and the
    accumulated result contexts.
-6. Every later read of the conversation re-checks privacy and each result the
-   answer relied on, and withholds the answer if either fails.
+6. Every later read through the shared sanitizer re-checks privacy and each
+   result the answer relied on, and withholds the answer if either fails.
 
 ### Gates
 
@@ -261,8 +265,10 @@ workflow-result request.
 1. **Gate and context**, in this order. A request carrying both a saved analysis
    and a workflow result gives 400 `workflow_result_context_conflict`. A failed
    gate gives 403 `workflow_results_disabled`, before the context is validated.
-   A malformed context gives 400 `workflow_result_invalid_context`, and a retry
-   or edit gives 400 `workflow_result_retry_unsupported`.
+   A malformed context gives 400 `workflow_result_invalid_context`, and a
+   request that also carries a retry or edit id gives 400
+   `workflow_result_retry_unsupported`. The retry and edit routes refuse Follow
+   up turns themselves; see [Retry and edit](#retry-and-edit).
 2. **Conversation.** The requester's conversation is loaded, or a personal one
    is created when the request has no id, as saved analysis does.
    `conversation_is_private` must pass on every turn. Shared, collaborative and
@@ -302,17 +308,23 @@ returned the way other chat turns return them, and no answer is kept.
 
 1. The default system prompt, when one is set.
 2. A fixed system message. It says the block between
-   `<<<WORKFLOW RESULT (untrusted data)>>>` and `<<<END WORKFLOW RESULT>>>` is
-   untrusted data from an earlier run, not instructions, and must not be
-   followed or acted on. It says the workflow wasn't re-run and nothing else was
-   searched, so the answer uses only the stored result and the conversation and
-   says when the result doesn't contain the answer. When the block notes a cut
-   or left-out output, the answer must say it's based on part of the result.
+   `<<<WORKFLOW RESULT <code> (untrusted data)>>>` and
+   `<<<END WORKFLOW RESULT <code>>>>` is untrusted data from an earlier run, not
+   instructions, and must not be followed or acted on, and that only markers
+   carrying this request's code delimit the result. The code is a new random
+   16-character hexadecimal value for each request (`secrets.token_hex(8)`), so
+   a run's output can't know it in advance. It says the workflow wasn't re-run
+   and nothing else was searched, so the answer uses only the stored result and
+   the conversation and says when the result doesn't contain the answer. When
+   the block notes a cut or left-out output, the answer must say it's based on
+   part of the result.
 3. The fenced block. It holds the workflow name, the completion time and
    status, then each output labeled by its task name, its kind and whether it's
    the final output, with its truncation note, and then a count of any outputs
-   left out. Any run of three or more `<` or `>` inside the block is replaced,
-   so run output can't close the fence.
+   left out. Any run of three or more `<` or `>` inside the block is replaced. A
+   look-alike marker that survives that, such as one written with full-width
+   brackets or split by a zero-width space, still lacks the request's code, so
+   the system message tells the model it's part of the data.
 4. The bounded history, then the question.
 
 For a result answered from saved analyses, a different fixed message takes the
@@ -355,6 +367,30 @@ ordinary chat turn. Its history still holds the Follow up answer, so
 `workflow_result_contexts` onto the new answer, which is then withheld along
 with them.
 
+### Retry and edit
+
+V2 doesn't offer Retry or Edit on a Follow up turn, and the server refuses them
+as well, so a Follow up question can't be replayed as an ordinary turn that
+still names the result:
+
+- `POST /api/message/<message_id>/retry` refuses when the retried message, or
+  the question that opened its thread, carries `workflow_result` or
+  `workflow_result_context`. Retrying the answer or the question is refused the
+  same way.
+- `POST /api/message/<message_id>/edit` refuses when the edited message carries
+  either key.
+
+Both give 400 `workflow_result_retry_unsupported` with the reader's fixed
+wording. The refusal comes right after the ownership checks, before content
+screening, so a refused request writes nothing: no blocked-attempt record, no
+new attempt, and no change to the active thread.
+
+A later ordinary answer that only inherited the lineage
+(`workflow_result_contexts`) isn't a Follow up turn, and retrying it is
+allowed. It replays its ordinary question through the usual history sanitize,
+so the new answer carries the contexts of every Follow up answer it can still
+see, and is masked on the same terms.
+
 ### Masking on read
 
 `sanitize_saved_analysis_messages(messages, user_id, ...)` in
@@ -372,13 +408,20 @@ A message whose stored contexts are malformed is withheld without any read.
 Otherwise:
 
 - **An answer** keeps only its id, conversation, role, timestamp, model and
-  agent names, thread and user information and masking ranges. Its content
-  becomes "This answer is unavailable because access to the workflow result it
-  used could not be confirmed.", its citations and thoughts are emptied, and its
-  metadata holds only `workflow_result: {version, available: false}`, with no
-  ids, name or contexts.
+  agent names, thread and user information and masking ranges, and, for a
+  collaboration copy, its sender, message kind, reply position and source
+  message id. Its content becomes "This answer is unavailable because access to
+  the workflow result it used could not be confirmed.", its citations and
+  thoughts are emptied, and its metadata holds only
+  `workflow_result: {version, available: false}`, with no ids, name or
+  contexts.
 - **A question** keeps its text. Only the three workflow keys are removed from
   its metadata.
+
+Both forms come from `withhold_workflow_result_message` in
+`functions_workflow_result_masking.py`. That module has no application imports,
+so collaboration storage can use it without importing the reader, and a
+withheld answer looks the same wherever it's withheld.
 
 Every exception masks, a storage failure included, and nothing is raised out of
 the read. Each distinct result is authorized once, and each distinct chat is
@@ -386,14 +429,20 @@ read once, per call. Messages that don't use a workflow result cost nothing, and
 the existing saved-analysis logic runs unchanged on the messages that pass.
 
 Because the check is in the shared sanitizer, it covers every read site that
-already withholds saved analyses: chat history for the model, conversation
-messages and search, export, collaboration, and the orchestration history
-readers. `is_saved_analysis_unavailable` also recognizes
+already withholds saved analyses: chat history for the model, the V2
+conversation messages route (`/api/get_messages`) and search, whole-conversation
+export, collaboration, and the orchestration history readers.
+`is_saved_analysis_unavailable` also recognizes
 `workflow_result.available: false`, and `authorize_saved_analysis_message_read`
 refuses message-derived views, such as thoughts, of an answer whose result is
-unavailable. Conversation search skips its cache when a match uses a workflow
-result, as it does for saved analyses, so a cached snippet can't outlive
-access.
+unavailable. Single-message exports (Word, the email draft, and the PowerPoint
+and generated-file paths) load their message through
+`_load_export_message_for_user`, which now calls
+`authorize_saved_analysis_message_read` and so checks both lineages; before,
+it only re-read saved analyses. Conversation search skips its cache when a
+match uses a workflow result, as it does for saved analyses, so a cached
+snippet can't outlive access. A few older reads that only the chat's owner can
+reach don't run the sanitizer yet; see [Known limitations](#known-limitations).
 
 Masking re-checks access to the result, not the feature entitlement. Turning the
 setting off, or losing the `WorkflowUser` role, stops new questions but doesn't
@@ -406,9 +455,43 @@ refuses any conversation that isn't the requester's own private personal chat,
 on every turn, and masking applies the same rule on read. Converting a chat to a
 collaboration copies its messages, and the collaboration AI bridge feeds the
 source chat's history to shared replies, so **once a chat is shared or converted
-to a collaboration, its Follow up answers are hidden for everyone, you included;
-the stored messages are unchanged.** Relaxing the rule later would show them
-again.
+to a collaboration, its Follow up answers are hidden for everyone, you
+included.** The original chat's stored messages are unchanged. The
+collaboration's copies are stored with these answers withheld, and the chat
+summary isn't carried over. Relaxing the rule later would show the original
+chat's answers again, but not the collaboration's copies.
+
+### Collaboration copies
+
+Participants read a collaboration's copies directly, and several of those reads
+never pass through the sanitizer: the collaboration metadata route (pending
+invitees included), collaboration summaries, reply previews and MCP
+collaboration reads. So conversion withholds the answers when it writes the
+copies, in `functions_collaboration.py`:
+
+- `_copy_legacy_personal_messages_to_collaboration` replaces every message that
+  uses a workflow result with its withheld form before it builds the
+  collaboration message, so `last_message_preview` is built from the withheld
+  form as well. It doesn't ask the lineage check, because the source chat is
+  marked converted only at the end of the conversion, so the check would still
+  allow the message. An answer that only inherited the context is withheld too,
+  and a question keeps its text without the three keys. The copies are built
+  from the messages `prepare_m365_history_publication` returns, so that path is
+  withheld the same way.
+- When any copied message uses a workflow result, the collaboration's `summary`
+  is stored as `None`, with the key present, and the source chat's summary is
+  cleared in the same final write that marks it converted. That write comes
+  after `prepare_m365_history_publication`, so clearing it doesn't change what
+  the publication covers. `ensure_collaboration_source_conversation` and
+  `sync_collaboration_conversation_metadata_from_source`, which runs after each
+  AI-bridge reply, then have no summary to bring back.
+- `build_collaboration_message_metadata_payload`, which merges in the source
+  message's metadata, and `mirror_source_message_to_collaboration`, which copies
+  a later source message into the collaboration, withhold a source message that
+  uses a workflow result first.
+
+Group conversions don't need this, because Follow up runs only in personal
+chats.
 
 Orchestration history (`normalize_history_message` in
 `functions_orchestration_context.py`) skips Follow up answers and every later
@@ -464,7 +547,7 @@ Choosing it closes the alert and leaves it unread.
 | `workflow_result_unsupported` | 409 | A structured (version 3) run, or a result made only of combined reports. | Removed |
 | `workflow_result_invalid` | 409 | The stored result is inconsistent, or the run has more than 200 task rows. | Removed |
 | `workflow_result_conversation_unavailable` | 404 | The chat no longer exists or was deleted. | Removed |
-| `workflow_result_retry_unsupported` | 400 | A retry or edit carries a workflow result context. | Kept |
+| `workflow_result_retry_unsupported` | 400 | A Follow up request also carries a retry or edit id, or the retry or edit route is asked to replay a Follow up turn. | Kept |
 | `workflow_result_too_large` | 400 | The result and history don't fit the model even at a 6 KB excerpt. | Kept |
 | `workflow_result_model_unsupported` | 400 | The selected agent can't answer with its tools off. | Kept |
 | `workflow_result_answer_rejected` | 400 | A saved-analysis answer didn't pass the checks against its saved records. | Kept |
@@ -488,11 +571,14 @@ warning level, and closed reasons at information level.
 | File | Purpose |
 | --- | --- |
 | `functions_workflow_result_reader.py` | The reader, the digest, the descriptor, the closed reasons and their wording, and the disclosure. |
-| `functions_workflow_result_followup.py` | Follow up: the precheck, one turn, the fenced messages and the refusal payload. |
+| `functions_workflow_result_followup.py` | Follow up: the precheck, one turn, the fenced messages and their per-request code, and the refusal payload. |
+| `functions_workflow_result_masking.py` | Recognizing a message that uses a workflow result, and its withheld form. No application imports. |
 | `route_backend_chats.py` | The nested wrapper, the dispatch and prechecks, and inherited contexts in the history helpers. |
 | `route_backend_workflows.py` | The descriptor route. |
 | `functions_saved_analysis.py` | Masking on read, `is_saved_analysis_unavailable` and `authorize_saved_analysis_message_read`. |
-| `route_backend_conversations.py` | Conversation search skips its cache for matches that use a workflow result. |
+| `functions_collaboration.py` | Collaboration copies, the metadata payload and mirrored messages stored withheld, and the dropped summaries. |
+| `route_backend_conversations.py` | Conversation search skips its cache for matches that use a workflow result, and the retry and edit routes refuse Follow up turns. |
+| `route_backend_conversation_export.py` | Single-message exports check both result lineages. |
 | `functions_orchestration_context.py` | Orchestration history skips workflow-result answers. |
 | `functions_settings.py`, `admin_settings_fields.py`, `route_frontend_admin_settings.py`, `templates/admin/_panes/workflow.html` | The setting, its guard, the gate and decorator, and its classic and V2 admin switches. |
 | `route_backend_v2.py` | The bootstrap's per-user flag. |
@@ -532,8 +618,9 @@ the controls are listed in
 | Test | What it covers |
 | --- | --- |
 | `functional_tests/test_workflow_result_reader.py` | Owner-only reads and the non-disclosing 404, every status family, preview-only and structured runs, the real run authorizer, storage failures as 503 rather than "not found", the digest (deterministic, independent of the budget, changed by a rewritten result), the items projection, excerpts, budgets, truncation notes and lenient decoding, saved analyses and combined reports, and a drift check against the runtime store's terminal states. |
-| `functional_tests/test_workflow_result_followup.py` | One turn with the real reader and fake route helpers: private chats only on every turn, the digest binding, no sources whatever the request says, the fixed system message and fence, the disclosure, input and output screening, agents, the descriptor and inherited contexts on the answer, the re-check before saving, budget steps, mixed runs and the refusal payload. |
+| `functional_tests/test_workflow_result_followup.py` | One turn with the real reader and fake route helpers: private chats only on every turn, the digest binding, no sources whatever the request says, the fixed system message and fence, the per-request fence code (a forged, full-width or zero-width-split end marker stays inside the data, and the code differs per request), the disclosure, input and output screening, agents, the descriptor and inherited contexts on the answer, the re-check before saving, budget steps, mixed runs and the refusal payload. |
 | `functional_tests/test_workflow_result_chat_routes.py` | Dispatch at every chat entry point and the stream prechecks, then an offline boot of the real application answering through the real JSON, SSE and history routes. |
+| `functional_tests/test_workflow_result_review_paths.py` | An offline boot of the real application, through `functional_tests/test_support/workflow_result_offline_app.py`. Converting a chat to a collaboration stores its Follow up answers and inherited answers withheld and keeps each question's text without the keys; the preview, a pending invitee's metadata and history, the summary input, MCP collaboration reads, mirrored messages and the M365 publication see only the withheld form; and both summaries stay empty after the source and sync calls. The Word, PowerPoint and email exports of a single message refuse a converted chat and a lost result and still export a normal message. Retry and edit refuse Follow up turns before any content check or write and still replay ordinary turns. A search whose matches use a workflow result is never written to the cache. |
 | `functional_tests/test_workflow_result_masking.py` | Withholding on read for a deleted run, a changed result, lost source access, a storage failure, another reader and a chat that isn't private; the masked shape; the question's text kept; the read sites; and the per-call cost. |
 | `functional_tests/test_workflow_result_orchestration_lineage.py` | Orchestration history skipping workflow-result answers and later answers that inherited them, while keeping the questions. |
 | `functional_tests/test_chat_workflow_results_admin.py`, `functional_tests/test_v2_admin_workflow_parity.py` | The default, the guard, the classic and V2 admin switches, the gate and decorator, and the bootstrap flag. |
@@ -557,6 +644,10 @@ the controls are listed in
   distinct context on each turn, and that authorization includes the manifest
   loads and the consumed-ancestor loads. Opening such a conversation pays the
   same once per read. Conversations without Follow up answers pay nothing.
+- **A single-message export** of an answer that uses a workflow result pays
+  one run authorization per distinct context, and reuses the chat it already
+  read for the privacy check. Other messages export as before. **Converting a
+  chat** only checks each message's metadata keys, with no extra reads.
 - **Excerpts** are at most 48 KB of text per turn. A large output is read as
   one bounded page, and a record output as at most 8 pages.
 
@@ -573,19 +664,33 @@ the controls are listed in
   8 outputs, and says so when it saw only part of the result. A run with more
   than 200 task rows can't be read.
 - **Mixed runs** are answered from their saved analyses only.
-- **Retry and Edit** on a Follow up question or answer are refused. Ask the
-  question again instead.
+- **Retry and Edit** on a Follow up question or answer are refused, by V2 and
+  by the server, with 400 `workflow_result_retry_unsupported`. Ask the question
+  again instead. A later answer that only inherited a workflow-result context
+  retries as an ordinary turn, and its history is withheld on the same terms.
 - **Output formats**, such as "make this a CSV", aren't supported in Follow up.
 - **Orchestration history omits Follow up answers and later answers that
   inherited their workflow-result context**, until the `workflow_results`
   capability ships.
 - **Shared and converted chats.** Once a chat is shared or converted to a
-  collaboration, its Follow up answers are hidden for everyone, you included;
-  the stored messages are unchanged.
+  collaboration, its Follow up answers are hidden for everyone, you included.
+  The original chat's stored messages are unchanged. The collaboration's copies
+  are stored with these answers withheld, and the chat summary isn't carried
+  over.
 - **No retention setting.** A run's result stays available until the run is
   deleted.
-- **Classic chat** has no entry points or chip. Answers are still withheld on
-  read there, because masking runs on the server.
+- **Classic chat** has no entry points or chip, and its message list is one of
+  the owner-only raw reads below.
+- **Owner-only raw reads.** A few older reads return a personal chat's stored
+  messages without the sanitizer, so they still show the chat's owner an answer
+  whose result is no longer available: classic chat's
+  `/conversation/<id>/messages`, the personal branch of
+  `/api/message/<id>/metadata`, personal chat summaries (a new one is generated
+  from the stored messages, and one already saved on the chat stays) and MCP
+  reads of personal chats. Only the chat's owner can reach them, and
+  saved-analysis answers have the same gap. Saved-analysis answers are also
+  still copied into a collaboration as stored. Both are tracked as follow-ups
+  shared with saved analysis.
 
 ### Follow-ups
 
@@ -596,7 +701,12 @@ the controls are listed in
   version in the run history and the alert.
 - Named, non-authoritative outputs.
 - Output formats in Follow up.
-- Retry and edit that keep the workflow result context.
+- Retry and edit that keep the workflow result context. The server refuses them
+  today.
+- Withholding unavailable answers on the owner-only raw reads (classic chat's
+  message list, the personal message metadata route, personal summaries and MCP
+  personal reads), and withholding saved-analysis answers in collaboration
+  copies, together with saved analysis.
 - A retention setting (roadmap §9).
 - Group workflows (Phase 8).
 - Re-checking workflow result contexts when a generated file is published.

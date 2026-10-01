@@ -113,7 +113,7 @@ another chat. Your next question is then an ordinary chat question.
 ## Understand unavailable answers
 
 The run's result is checked again every time you ask about it, and every time a
-chat that used it is opened.
+chat that used it is opened in V2.
 
 - **The result changed.** If the run's stored result is different from the one
   you selected, you're told "This workflow run's result has changed since it was
@@ -129,8 +129,10 @@ chat that used it is opened.
   even ones you asked after removing the notice.
 - **Private chats only.** Answers about a workflow result, called Follow up
   answers, stay in your own private chats. Once a chat is shared or converted to
-  a collaboration, its Follow up answers are hidden for everyone, you included;
-  the stored messages are unchanged.
+  a collaboration, its Follow up answers are hidden for everyone, you included.
+  The original chat's stored messages are unchanged. The collaboration's copies
+  are stored with these answers withheld, and the chat summary isn't carried
+  over.
 
 ## Limitations
 
@@ -139,8 +141,9 @@ chat that used it is opened.
   with **Enable structured control flow** don't offer **Ask in chat**. Runs from
   before the conversion still show it, but asking about them says this kind of
   workflow isn't supported yet.
-- **No Retry or Edit.** Retrying or editing a question about a workflow result
-  isn't supported. Ask the question again instead.
+- **No Retry or Edit.** Retrying or editing a question about a workflow result,
+  or its answer, isn't supported, and the server refuses it. Ask the question
+  again instead.
 - **No files.** An answer is text only. It can't turn the result into a file,
   such as a CSV.
 - **Orchestrate doesn't read workflow results yet.** Turning on **Orchestrate**
@@ -152,8 +155,11 @@ chat that used it is opened.
   administrator turns off **Use Workflow Results In Chat**, or you lose the
   `WorkflowUser` role, you can't ask new questions about a workflow result, but
   earlier answers stay visible while their result is still available to you.
-- **Classic chat** has no buttons for this, but answers about a workflow result
-  are hidden there too once their result is unavailable.
+- **Classic chat** has no buttons for this, and it doesn't hide an answer whose
+  result is no longer available: when you open the chat in classic, you still
+  see it. A few other reads that only you can reach work the same way, such as a
+  chat summary you generate for the chat. Open the chat in V2 to see which
+  answers are still available.
 
 ## Troubleshooting
 

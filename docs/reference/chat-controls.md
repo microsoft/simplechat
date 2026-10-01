@@ -588,6 +588,9 @@ Choosing documents or another source, uploading a file, turning on
 **Orchestrate** or opening another chat also removes the notice. When a run's
 result can't be asked about as selected, for example because it changed or the
 run was deleted, the notice is removed and a message says why. Retry and Edit
-aren't available on a question about a workflow result; ask it again instead.
-Once a chat is shared or converted to a collaboration, its Follow up answers are
-hidden for everyone, you included; the stored messages are unchanged.
+aren't available on a question about a workflow result or its answer, and the
+server refuses them; ask the question again instead. Once a chat is shared or
+converted to a collaboration, its Follow up answers are hidden for everyone, you
+included. The original chat's stored messages are unchanged. The
+collaboration's copies are stored with these answers withheld, and the chat
+summary isn't carried over.
