@@ -1,7 +1,7 @@
 # test_v2_group_participant_invites.py
 """
 Browser regression for React v2 group participant invitations.
-Version: 0.261.106
+Version: 0.261.213
 Implemented in: 0.261.106
 Related issue and backend fix: microsoft/simplechat#1472, #1473.
 
@@ -14,6 +14,7 @@ workspace; neither an application deployment nor live application data is needed
 Run: python .\\ui_tests\\test_v2_group_participant_invites.py
 """
 
+import builtins
 from copy import deepcopy
 from pathlib import Path
 import re
@@ -23,12 +24,15 @@ from urllib.parse import parse_qs, urlsplit
 import pytest
 from playwright.sync_api import expect
 
-# Resolve the existing browser and isolated backend harnesses for standalone runs.
+# Resolve the existing browser and isolated backend harnesses, and the application
+# modules that served messages pass through, for standalone runs.
 REPO_ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(REPO_ROOT / "application" / "single_app"))
 sys.path.insert(0, str(REPO_ROOT / "ui_tests" / "fixtures" / "orchestration"))
 sys.path.insert(0, str(REPO_ROOT / "ui_tests" / "fixtures"))
 sys.path.insert(0, str(REPO_ROOT / "functional_tests"))
 import harness_build as hb  # noqa: E402
+from functions_chat_content_checks import strip_private_chat_checks  # noqa: E402
 from playwright_connection import connect_options  # noqa: E402,F401
 from test_group_collaboration_source_storage_fix import (  # noqa: E402
     COLLABORATION_FILE,
@@ -38,8 +42,10 @@ from test_group_collaboration_source_storage_fix import (  # noqa: E402
     SECOND_INVITEE,
     SOURCE_ID,
     ConversionHarness,
+    global_reads,
     history_fixture,
     load_source_members,
+    production_functions,
 )
 
 
@@ -49,6 +55,11 @@ DIRECTORY_USER = {
     "display_name": "Directory Colleague",
     "email": "colleague@example.com",
 }
+SERVED_HELPERS = {"serialize_collaboration_message", "_get_collaboration_display_role"}
+
+
+def history_has_no_images(*args, **kwargs):
+    raise AssertionError("The participant history has no image messages to serialize.")
 
 
 class ParticipantApi:
@@ -66,12 +77,18 @@ class ParticipantApi:
         self.unexpected = []
         self.expected_errors = set()
         self.fail_member_search = False
-        helpers = load_source_members(
+        self.helpers = load_source_members(
             str(COLLABORATION_FILE),
-            {"serialize_collaboration_message", "_get_collaboration_display_role"},
-            namespace=self.backend.namespace,
+            SERVED_HELPERS,
+            namespace={
+                **self.backend.namespace,
+                "strip_private_chat_checks": strip_private_chat_checks,
+                # The served history is text-only, so image serialization is unreachable.
+                "build_collaboration_image_url": history_has_no_images,
+                "_publicize_image_revisions": history_has_no_images,
+            },
         )
-        self.serialize_message = helpers["serialize_collaboration_message"]
+        self.serialize_message = self.helpers["serialize_collaboration_message"]
 
     def conversations(self):
         return [
@@ -332,6 +349,21 @@ def test_personal_invites_keep_the_personal_conversion_path(participant_page):
     assert conversation["chat_type"] == "personal_multi_user"
     assert ("POST", f"/api/collaboration/conversations/from-personal/{SOURCE_ID}/members") in api.requests
     assert not any(path.startswith("/api/groups/") for _, path in api.requests)
+
+
+def test_participant_api_binds_every_global_its_served_helpers_read():
+    api = ParticipantApi("regular")
+    helpers = dict(production_functions(api.helpers))
+    unbound = {
+        name: sorted(global_reads(function.__code__) - set(api.helpers) - set(dir(builtins)))
+        for name, function in helpers.items()
+    }
+    unbound = {name: names for name, names in unbound.items() if names}
+    assert set(helpers) == SERVED_HELPERS
+    assert unbound == {}, (
+        "Seed these production globals in ParticipantApi, or serving messages fails with "
+        f"NameError: {unbound}"
+    )
 
 
 if __name__ == "__main__":
