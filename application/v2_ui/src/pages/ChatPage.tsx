@@ -25,7 +25,13 @@ import {
 } from '../stores/orchestrationStore';
 import { enabledSteps, isPlanAwaitingApproval } from '../lib/orchestrationPlan';
 import { resumeOrchestrationForConversation } from '../lib/orchestrationResume';
-import { readConversationParam, syncedConversationParams } from '../lib/conversationUrl';
+import {
+    hasWorkflowResultLaunch,
+    readConversationParam,
+    readWorkflowResultLaunch,
+    syncedConversationParams,
+} from '../lib/conversationUrl';
+import { WORKFLOW_RESULT_INVALID_LINK_MESSAGE } from '../lib/workflowResults';
 import { MessageList } from '../components/chat/MessageList';
 import { Composer } from '../components/chat/Composer';
 import { ConversationDrawer } from '../components/chat/ConversationDrawer';
@@ -68,6 +74,12 @@ function useConversationUrlSync() {
     const [launchAgentSelection, setLaunchAgentSelection] = useState<string>();
     const agentLinkConsumed = useRef(false);
     const agentLaunchRequest = useRef<Promise<BootstrapPayload> | null>(null);
+    // Ask in chat (phase 6a): a new chat asking about one finished workflow run. Captured
+    // during the first render like the others, and handled once.
+    const [resultLaunch] = useState(() => readWorkflowResultLaunch(searchParams));
+    const [hasResultRequest] = useState(() => hasWorkflowResultLaunch(searchParams));
+    const [resultLaunchHandled, setResultLaunchHandled] = useState(!hasResultRequest);
+    const resultLinkConsumed = useRef(false);
     // Two flags with two jobs. The ref makes opening the link happen exactly once: React's
     // StrictMode runs effects twice on mount, and a state flag is still false in the second
     // invocation's closure, so it would open the conversation — and refetch its messages —
@@ -128,9 +140,24 @@ function useConversationUrlSync() {
     }, [hasAgentRequest, agentLaunch]);
 
     useEffect(() => {
+        if (!hasResultRequest || resultLinkConsumed.current) return;
+        resultLinkConsumed.current = true;
+        if (!resultLaunch) {
+            toast.error(WORKFLOW_RESULT_INVALID_LINK_MESSAGE);
+        } else {
+            // Starts the new chat synchronously, then reads the run; the store reports a run
+            // that cannot be asked about, and drops the launch if the reader moves on first.
+            void useChatStore.getState().launchWorkflowResult(resultLaunch.workflow_id, resultLaunch.run_id);
+        }
+        // Released after the new chat is open, so the write effect strips the link rather
+        // than writing back the conversation that was open before it.
+        setResultLaunchHandled(true);
+    }, [hasResultRequest, resultLaunch]);
+
+    useEffect(() => {
         // Held back until the link has been consumed, so the parameter survives long enough
         // to be read.
-        if (!linkHandled || !agentLaunchHandled) {
+        if (!linkHandled || !agentLaunchHandled || !resultLaunchHandled) {
             return;
         }
 
@@ -143,7 +170,7 @@ function useConversationUrlSync() {
         // `history.replaceState`: the address bar should describe what is open, not turn the
         // back button into a list of every conversation visited.
         setSearchParams(next, { replace: true });
-    }, [activeConversationId, linkHandled, agentLaunchHandled, searchParams, setSearchParams]);
+    }, [activeConversationId, linkHandled, agentLaunchHandled, resultLaunchHandled, searchParams, setSearchParams]);
 
     return { launchAgentSelection, agentLaunchPending: !agentLaunchHandled };
 }

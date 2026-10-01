@@ -2,6 +2,26 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.214)**
+
+#### New Features
+
+*   **Workflow Results In Chat**
+    *   Ask chat about the stored result of one of your finished personal workflow runs without running the workflow again. The answer uses only that run's saved output, with every other source off, and ends with a server-written line that names the run, such as "_This answer uses the stored result of the Weekly digest run of Mon Jun 2, 2025, 9:02 AM CDT. The workflow was not re-run._" Later questions in the same chat keep using the run.
+    *   The run's output is given to the model as untrusted data, never as instructions. An answer sees at most 48 KB of excerpts from up to 8 task outputs, starting with the last task's, and says when it saw only part of the result. An Analyze task's saved analysis is explained the way **Ask about this analysis** explains it. Tools are off, and the question and answer are screened like other chat turns.
+    *   The selection is bound to a SHA-256 digest of the run's stored outputs and checked again on every question, so an answer never comes from a result other than the one selected. A changed result asks the user to select the run again.
+    *   Works only in the owner's private personal chats. In V2, and wherever chat history, search and export already withhold saved analyses, an answer is withheld once its result can't be confirmed for the chat's owner, for example after the run is deleted, after access to one of its sources is lost, or while storage can't be read. Once a chat is shared or converted to a collaboration, its Follow up answers are hidden for everyone, you included. The original chat's stored messages are unchanged. The collaboration's copies are stored with these answers withheld, and the chat's saved summary is cleared on both chats. Single-message Word, PowerPoint and email exports check the result too. Orchestration history skips these answers. A few older reads that only the chat's owner can reach, such as classic chat's message list, still show the owner an answer whose result is no longer available, as they do for saved analyses.
+    *   New admin setting **Use Workflow Results In Chat** (`enable_chat_workflow_results`) in **Workflow** settings, off by default. It needs **Enable Personal Workflows** and follows **Require WorkflowUser App Role**; chat orchestration isn't required. A new requester-only route, `GET /api/user/workflows/<workflow_id>/runs/<run_id>/result-context`, returns the run's public descriptor. Store references never reach the browser.
+    *   Personal workflows only. Structured workflow runs, named outputs, output formats, Retry and Edit aren't supported yet: the server refuses a retry or edit of a Follow up question or answer. There's no retention setting, so a result stays available until its run is deleted. Letting orchestration read workflow results, the `workflow_results` capability, follows in a later release.
+    *   (Ref: #1546, #1543, `functions_workflow_result_reader.py`, `functions_workflow_result_followup.py`, `functions_workflow_result_masking.py`, `route_backend_chats.py`, `route_backend_workflows.py`, `route_backend_conversations.py`, `route_backend_conversation_export.py`, `functions_saved_analysis.py`, `functions_collaboration.py`, `functions_orchestration_context.py`, `route_backend_v2.py`, [Workflow Results In Chat](features/CHAT_WORKFLOW_RESULTS_FOLLOW_UP.md), [Ask about workflow results](../guides/ask-about-workflow-results.md))
+
+#### User Interface Enhancements
+
+*   **Ask In Chat And Ask About This In V2**
+    *   **Ask in chat** on a completed run in a personal workflow's run history, and **Ask about this** in a workflow alert, open a new V2 chat with that run selected. The composer shows "Answering from the Weekly digest run of Mon, Jun 2, 9:02 AM — not re-running the workflow" with a remove button, and turns other sources and **Orchestrate** off.
+    *   A run that can't be asked about as selected removes the notice and says why, rather than falling back to an ordinary chat answer. Choosing a source, uploading a file, turning on **Orchestrate** or switching chats also removes it.
+    *   (Ref: `workflowResults.ts`, `workflowResultFollowUp.ts`, `chatStore.ts`, `Composer.tsx`, `WorkflowResultChip.tsx`, `WorkflowRunAskInChat.tsx`, `workflowAlertNotices.ts`, `conversationUrl.ts`, [Chat controls](../reference/chat-controls.md#workflow-results-in-chat-v2-interface))
+
 ### **(v0.261.213)**
 
 #### New Features

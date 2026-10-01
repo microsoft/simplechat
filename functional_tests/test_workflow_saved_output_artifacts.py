@@ -666,8 +666,12 @@ def test_history_and_message_export_keep_only_authorized_public_file_metadata(sa
         "Dict": Dict, "Any": Any,
         "cosmos_conversations_container": services.publication.conversations,
         "cosmos_messages_container": services.publication.messages,
-        "analysis_result_contexts": saved_analysis.analysis_result_contexts,
-        "load_saved_analysis": lambda *args: pytest.fail("Collect must not load a fabricated Analyze context."),
+        "authorize_saved_analysis_message_read": lambda *args, **kwargs: (
+            saved_analysis.authorize_saved_analysis_message_read(
+                *args, **kwargs,
+                result_reader=lambda *args: pytest.fail("Collect must not load a fabricated Analyze context."),
+            )
+        ),
         "authorize_analysis_artifact": lambda *args: pytest.fail("The generic source must use its typed reader."),
         "public_history_messages": lambda messages, user: history_messages(services, messages),
         "DocumentHeldError": DocumentHeldError,

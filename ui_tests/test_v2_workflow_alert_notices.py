@@ -1573,7 +1573,8 @@ def test_open_workflow_goes_to_the_run_in_its_workspace(tab, server, alert):
         tab.poll()
         tab.open_button.click()
         expect(tab.card).to_be_visible()
-        # Open run arrives with the run page, Ask about this with the chat follow-up.
+        # Open run arrives with the run page. Ask about this needs Use Workflow Results
+        # In Chat, which this bootstrap leaves off (ui_tests/test_chat_workflow_results.py).
         expect(tab.card.locator("[data-workflow-alert-open-run]")).to_have_count(0)
         expect(tab.card.locator("[data-workflow-alert-follow-up]")).to_have_count(0)
         return tab.card.locator("[data-workflow-alert-open-workflow]")

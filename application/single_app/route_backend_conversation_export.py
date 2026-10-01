@@ -82,10 +82,9 @@ from functions_model_endpoint_types import (
 from functions_simplechat_operations import download_blob_content
 from functions_thoughts import get_thoughts_for_conversation
 from functions_saved_analysis import (
-    analysis_result_contexts,
     authorize_analysis_artifact,
+    authorize_saved_analysis_message_read,
     is_saved_analysis_unavailable,
-    load_saved_analysis,
     sanitize_saved_analysis_messages,
 )
 from foundry_agent_runtime import resolve_authority
@@ -2280,8 +2279,11 @@ def _load_export_message_for_user(user_id: str, conversation_id: str, message_id
     if message.get('conversation_id') != conversation_id:
         raise LookupError('Message not found')
 
-    for analysis_context in analysis_result_contexts(message):
-        load_saved_analysis(user_id, analysis_context)
+    # Covers both result lineages: saved analyses and workflow results in this private chat.
+    authorize_saved_analysis_message_read(
+        user_id, conversation_id, message_id,
+        message_loader=lambda *_: message, conversation_reader=lambda _conversation_id: conversation,
+    )
     if message.get('role') == 'file':
         # File exports retain the same source boundary as direct artifact downloads.
         from functions_generated_artifact_sources import authorize_generated_artifact_source

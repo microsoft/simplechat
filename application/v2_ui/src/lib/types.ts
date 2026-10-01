@@ -29,6 +29,23 @@ export interface SavedAnalysisDescriptor extends AnalysisResultContext {
     available?: boolean;
 }
 
+/** The only selector a browser sends to ask about a finished workflow run's stored result. */
+export interface WorkflowResultContext {
+    workflow_id: string;
+    run_id: string;
+    result_sha256: string;
+}
+
+/** The public description of one run's stored result. Store references never reach the browser. */
+export interface WorkflowResultDescriptor extends WorkflowResultContext {
+    version: 'workflow-result-v1';
+    /** User-authored display text. */
+    workflow_name: string;
+    status: 'completed' | 'completed_partial';
+    completed_at: string | null;
+    available: boolean;
+}
+
 export interface SavedAnalysisRecord {
     record_id: string;
     document_id: string;
@@ -1211,6 +1228,9 @@ export interface ChatStreamRequest {
     message: string;
     conversation_id?: string | null;
     analysis_result_context?: AnalysisResultContext;
+    workflow_result_context?: WorkflowResultContext;
+    /** The browser's IANA zone, so an answer from a workflow result names its run in local time. */
+    time_zone?: string;
     chat_type?: string;
     /**
      * A model is identified by these four fields together, not by the deployment name
