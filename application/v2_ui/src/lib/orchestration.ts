@@ -330,6 +330,18 @@ export interface OrchestrationDeliverable {
     implicit?: boolean;
 }
 
+/**
+ * Why a plan always waits for the user, from `normalize_plan`'s `approval.floor`.
+ *
+ * A plan that starts a saved workflow is forced to manual approval whatever mode was asked for,
+ * so it never runs on arrival or when a countdown ends.
+ */
+export interface OrchestrationApprovalFloor {
+    mode: 'manual';
+    /** The capability that set the floor, for example `workflow_run`. */
+    reason: string;
+}
+
 /** The approval block, from `normalize_plan`'s `approval`. */
 export interface OrchestrationApproval {
     mode: ApprovalMode;
@@ -342,6 +354,8 @@ export interface OrchestrationApproval {
     approved_by: string | null;
     /** Set once the user narrows the plan; see `apply_plan_edits`. */
     edited: boolean;
+    /** Present when the plan's work always waits for the user; see `planHasApprovalFloor`. */
+    floor?: OrchestrationApprovalFloor;
 }
 
 /**
@@ -394,6 +408,20 @@ export interface OrchestrationPlanAction {
     scope_label: string;
 }
 
+/**
+ * A saved workflow the plan starts, from `build_plan_inputs`. Match steps by `handle`, the
+ * request-local name in the step's `workflow` argument; the workflow's id never reaches the plan.
+ */
+export interface OrchestrationPlanWorkflow {
+    handle: string;
+    /** The user's own name for the workflow: plain text, never markup. */
+    name: string;
+    /** How the workflow is triggered, for example "Manual" or "Mondays 08:00". */
+    trigger_summary: string;
+    /** The workflow is turned off. Starting it from chat still runs it once. */
+    paused: boolean;
+}
+
 /** What the plan will act on, for the approval card. */
 export interface OrchestrationPlanInputs {
     /** Original positive selections resolved by the server, never inferred from planned usage. */
@@ -401,6 +429,8 @@ export interface OrchestrationPlanInputs {
     documents: OrchestrationPlanDocument[];
     /** Older plans do not carry action metadata. Match steps by action_ref, not by name. */
     actions?: OrchestrationPlanAction[];
+    /** Present only when the plan starts a saved workflow. */
+    workflows?: OrchestrationPlanWorkflow[];
     image_reference_documents?: OrchestrationImageReferenceDocument[];
     image_reference_messages?: OrchestrationImageReferenceMessage[];
     web: boolean;

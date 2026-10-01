@@ -22,6 +22,36 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
     *   It uses the route behind the classic editor's **Draft Workflow Instructions** button, and it's offered only where **Ask AI** is. The classic button is unchanged.
     *   (Ref: #1548, `useWorkflowAssist.ts`, `WorkflowTaskFields.tsx`, `/api/workflows/draft-instructions`, [AI Workflow Assistant](features/WORKFLOW_AI_ASSISTANT.md#draft-with-ai))
 
+### **(v0.261.212)**
+
+#### New Features
+
+*   **Saved Workflows Started From Chat**
+    *   With **Run Workflows From Chat** on, a chat orchestration plan can start one of the requester's own saved personal workflows. "Run my weekly digest now" queues the same durable run that **Run** in Workflows does, and the answer lists each workflow as started, already started or not started, with the reason.
+    *   The new `workflow_run` step names the workflow by a request-local handle from the workflow planning context. Workflows the request names are listed first, then those with durable execution on. A plan starts at most three workflows, each once. A step that still breaks the rules after one repair is dropped, and the answer says why.
+    *   A plan that starts a workflow always waits for the user to run it, whatever approval mode they chose. The floor holds on every path that saves a plan, including plan editor revisions and manual edits, and a saved plan that lost it is refused when it's run.
+    *   The plan starts the run and links to it. It never waits for the run or reads its results. The run's id comes from the plan's first attempt and the step, so a retry, a second tab or a crash links the run instead of starting another.
+    *   Only personal workflows with durable execution on can be started, from a conversation that's private to the requester. A workflow waiting for a Microsoft 365 approval or sign-in isn't started again, and a background continuation links a run that already exists but never starts a new one. A storage error fails the step instead of reporting the workflow as deleted, and a failed start is retried only when the user selects **Retry**.
+    *   The executor and recovery now read which capabilities act outside the plan from the capability registry instead of a hard-coded list. The queue and the step share one formula for a durable run's id, `workflow_run_id_for_request`, and a run started from chat records the chat step that started it in `chat_invocation`.
+    *   (Ref: #1551, #1543, `functions_orchestration_workflow_runs.py`, `functions_orchestration_workflow_context.py`, `functions_orchestration_registry.py`, `functions_orchestration_schema.py`, `functions_orchestration_planner.py`, `functions_workflow_runtime.py`, [Chat orchestration workflow runs](features/CHAT_ORCHESTRATION_WORKFLOW_RUNS.md))
+
+*   **Run Workflows From Chat Setting**
+    *   **Admin Settings > Orchestration > Chat Orchestration > Capabilities** adds **Run Workflows From Chat** (`enable_chat_orchestration_workflow_runs`) to the classic and V2 admin pages. It's off by default, because it lets a conversation start work that acts outside it. It's independent of **Propose Workflows From Chat**, and it also needs Chat Orchestration, personal workflows and, when the capability list is narrowed, **Run workflows**.
+    *   With it off, planning is unchanged. A golden test captured before this change pins the stored planning context, its reads, the planner's messages, the repair message, the degraded plan and the capability resolution, with the setting off and workflow proposals on.
+    *   (Ref: `functions_settings.py`, `admin_settings_fields.py`, `route_frontend_admin_settings.py`, `templates/admin/_panes/chat-orchestration.html`, [Orchestration settings](../admin/orchestration.md))
+
+#### User Interface Enhancements
+
+*   **Saved Workflows On The V2 Approval Card**
+    *   A plan that starts saved workflows says on its approval card that it always waits for you to run it, and lists each workflow with its trigger. A paused workflow is marked **Paused**, with a note that starting it here runs it once without turning it back on. Auto approval and the countdown never start such a plan.
+    *   The run view shows a **Workflow** row for each run step, and the recovery dialog says a workflow that already started is linked again, never started twice.
+    *   (Ref: `OrchestrationWorkflowRunNotice.tsx`, `OrchestrationPlanCard.tsx`, `OrchestrationRunView.tsx`, `OrchestrationRecoveryNotice.tsx`, `orchestrationPlan.ts`, `orchestrationController.ts`)
+
+*   **Started Workflows Links In The V2 Chat**
+    *   Under the answer, **Started workflows** lists each run the plan started, with the workflow's name and the run's status when the message loaded. **Open run** opens the workflow in Workflows with its run history open at that run. A deleted workflow, or a run that's no longer in its history, shows as unavailable.
+    *   The links come from a requester-only route that writes nothing. When the requester can no longer start workflows from chat, the conversation isn't private any more, or content review removed the response, each link shows as unavailable without the workflow's name, and no workflow or run is read.
+    *   (Ref: `WorkflowRunLinks.tsx`, `orchestrationWorkflowRuns.ts`, `MessageList.tsx`, `workflowRunLink.ts`, `route_backend_orchestration.py`, `functions_orchestration_workflow_run_links.py`, [Chat controls](../reference/chat-controls.md#workflow-runs-v2-interface), [Trigger a workflow](../guides/trigger-a-workflow.md#run-a-workflow-from-chat))
+
 ### **(v0.261.210)**
 
 #### Bug Fixes

@@ -1497,6 +1497,10 @@ def get_settings(use_cosmos=False, include_source=False):
         # Lets a chat plan propose a personal workflow that the user approves on a card before
         # anything is created. Off by default; the capability allowlist can also leave it out.
         'enable_chat_orchestration_workflows': False,
+        # Lets a chat plan start one of the user's saved durable personal workflows when the user
+        # asks for it. Off by default and independent of proposals; such a plan always waits for
+        # the user to approve it, whatever the approval mode.
+        'enable_chat_orchestration_workflow_runs': False,
         # Workflows that a chat plan creates for a user: how many one user may hold, and the
         # shortest interval one may run on (also never shorter than the general workflow minimum).
         'chat_orchestration_max_workflows_per_user': CHAT_ORCHESTRATION_MAX_WORKFLOWS_DEFAULT,
@@ -2279,6 +2283,12 @@ def update_settings(new_settings, *, expected_etag=None):
         new_settings = {
             **new_settings,
             'enable_chat_orchestration_workflows': new_settings['enable_chat_orchestration_workflows'] is True,
+        }
+    if isinstance(new_settings, dict) and 'enable_chat_orchestration_workflow_runs' in new_settings:
+        # Only a real boolean true lets chat plans start saved workflows; anything else saves as off.
+        new_settings = {
+            **new_settings,
+            'enable_chat_orchestration_workflow_runs': new_settings['enable_chat_orchestration_workflow_runs'] is True,
         }
     if isinstance(new_settings, dict) and 'chat_orchestration_max_workflows_per_user' in new_settings:
         new_settings = {

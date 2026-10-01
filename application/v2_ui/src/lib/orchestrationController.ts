@@ -52,6 +52,7 @@ import {
 } from './orchestration';
 import {
     applyPlanEdits, doneFrameHasGeneratedImages, isPlanApproved, isPlanAwaitingApproval, isPlanRunnable, normalizePlan,
+    planHasApprovalFloor,
 } from './orchestrationPlan';
 import type { Json } from './types';
 import { normalizeReasoningAdjustments, type ReasoningResolution } from './reasoning';
@@ -487,7 +488,8 @@ async function dispatchPlan(
         // Auto mode is pre-approved on arrival, so its run starts here rather than waiting for a
         // click or a countdown — and it starts INSTEAD OF settling `planned`, so the thinking
         // state flows straight into the run's streaming without a flicker to idle between them.
-        // Manual and timed settle `planned` and wait for the card.
+        // Manual and timed settle `planned` and wait for the card. So does a plan that starts a
+        // saved workflow: the server saves it as manual, and this guard holds even if it did not.
         const settledPlan = selectPlan(
             useOrchestrationStore.getState(),
             currentConversationId,
@@ -496,6 +498,7 @@ async function dispatchPlan(
         const autoRun =
             settledPlan !== null &&
             settledPlan.approval.mode === 'auto' &&
+            !planHasApprovalFloor(settledPlan) &&
             !selectHasPlanHold(useOrchestrationStore.getState(), currentConversationId, currentTurnId) &&
             isPlanApproved(settledPlan) &&
             isPlanRunnable(settledPlan);
@@ -719,8 +722,10 @@ export async function approveAndRunPlan(params: {
     const { conversationId, turnId } = params;
     const store = useOrchestrationStore.getState();
     const plan = selectPlan(store, conversationId, turnId);
+    // Nothing automatic -- a countdown or auto-run -- may start a plan that starts a saved
+    // workflow; only the user's own click does.
     if (!plan || selectPlanRunBlocked(store, conversationId, turnId)
-        || (params.automatic && selectHasPlanHold(store, conversationId, turnId))) {
+        || (params.automatic && (selectHasPlanHold(store, conversationId, turnId) || planHasApprovalFloor(plan)))) {
         return;
     }
     const edits = selectEdits(store, conversationId, turnId);

@@ -134,6 +134,7 @@ from functions_orchestration_workflow_context import (
     build_workflow_planning_context,
     refresh_workflow_planning_privacy,
     validated_request_time_zone,
+    workflow_planning_configured,
     workflow_planning_documents,
     workflow_planning_option,
     workflow_proposals_configured,
@@ -1226,14 +1227,14 @@ def _checkpoint_artifact_versions(artifacts, conversation_id, user_id):
 
 
 def _current_workflow_planning(record, user_id, settings, conversation_id=None):
-    """The turn's stored workflow proposal context, with its privacy read again now.
+    """The turn's stored workflow planning context, with its privacy read again now.
 
-    None when workflow proposals are off or the turn has no such context, so the run's capability
-    context is exactly what it was before workflow proposals existed. A conversation that became
-    shared since planning makes the proposal capability unavailable.
+    None when both workflow capabilities are off or the turn has no such context, so the run's
+    capability context is exactly what it was before workflow proposals existed. A conversation
+    that became shared since planning makes both workflow capabilities unavailable.
     """
     stored = record.get('workflow_planning')
-    if not workflow_proposals_configured(settings) or not isinstance(stored, dict):
+    if not workflow_planning_configured(settings) or not isinstance(stored, dict):
         return None
     conversation = _authorize_context_conversation(conversation_id or record['conversation_id'], user_id)
     return refresh_workflow_planning_privacy(stored, conversation, user_id)
@@ -1282,10 +1283,13 @@ def _validate_retry_context(record, user_id, settings, *, preparing=False):
         settings, user_id=user_id, seeds=answer_selection(record['plan'], seeds), identity_context=identity,
     )
     try:
+        principal = capture_execution_identity(user_id, conversation_id)
         context = RunContext(
             run_id=record['id'], plan_id=record['plan'].get('plan_id'),
             conversation_id=conversation_id, user_id=user_id,
             attempt_index=record.get('attempt_index') or 1,
+            attempt_root_run_id=record.get('attempt_root_run_id') or record['id'],
+            signed_in_session=getattr(principal, 'bridge', None) is not None,
             plan_contract_version=contract_version,
             user_message=record.get('user_message'), user_message_id=record.get('user_message_id'),
             answered_questions=record.get('answered_questions') or [],
@@ -1308,7 +1312,7 @@ def _validate_retry_context(record, user_id, settings, *, preparing=False):
                 'model_id': model.model_id, 'endpoint_id': model.endpoint_id,
                 'provider': model.provider, 'model_deployment': model.deployment,
             },
-            agent_execution_identity=capture_execution_identity(user_id, conversation_id),
+            agent_execution_identity=principal,
             **workflow_run_options(
                 workflow_planning,
                 record.get('time_zone') if workflow_proposals_configured(settings) else None,
@@ -1444,6 +1448,13 @@ def _workflow_proposals():
     import functions_orchestration_workflow_proposals
 
     return functions_orchestration_workflow_proposals
+
+
+def _workflow_run_links():
+    """The workflow run links module, imported on first use like the proposal decisions module."""
+    import functions_orchestration_workflow_run_links
+
+    return functions_orchestration_workflow_run_links
 
 
 def _proposal_identity(user_id):
@@ -2052,7 +2063,7 @@ def register_route_backend_orchestration(bp):
                     user_groups=seeds.get('active_group_ids') or None,
                 ) if planning_identity.get('user_enable_agents', True) else []
                 workflow_planning = None
-                if workflow_configured:
+                if workflow_planning_configured(settings):
                     workflow_planning = build_workflow_planning_context(
                         settings, user_id=user_id,
                         user_info={
@@ -2065,6 +2076,8 @@ def register_route_backend_orchestration(bp):
                         documents=workflow_planning_documents(
                             source_scopes, labels, seeds.get('document_ids'),
                         ),
+                        # Ranks a workflow the request names first when a plan may start one.
+                        request_text=f'{message}\n{effective_request}',
                     )
                     turn_context['workflow_planning'] = workflow_planning
 
@@ -2874,3 +2887,46 @@ def register_route_backend_orchestration(bp):
             )
 
         return _workflow_proposal_response(run_id, _text(request.args.get('conversation_id')), draft)
+
+    @bp.route("/api/v2/orchestration/runs/<run_id>/workflow-runs", methods=["GET"])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    def orchestration_workflow_run_links(run_id):
+        """The saved workflow runs a run's plan started, each with its status when read.
+
+        Only the requester can read them, and only in a private conversation while they may still
+        start workflows from chat; otherwise every link is unavailable, with no name and no ids.
+        A conversation or run the requester cannot open is indistinguishable from a missing one.
+        Nothing is written. Logs carry hashed ids and the error type only.
+        """
+        user_id = get_current_user_id()
+        if not user_id:
+            return jsonify({'error': 'User not authenticated'}), 401
+        links = _workflow_run_links()
+        conversation_id = _text(request.args.get('conversation_id'))
+        if not conversation_id:
+            return jsonify(links.error_payload('invalid_request')), 400
+        try:
+            conversation = _authorize_context_conversation(conversation_id, user_id)
+            record = get_orchestration_run(run_id, user_id, conversation_id=conversation_id, strict=True)
+            if not record or record.get('conversation_id') != conversation_id:
+                return jsonify(links.error_payload('run_not_found')), 404
+            if is_legacy_plan(record.get('plan')):
+                return _legacy_plan_response()
+            payload = links.workflow_run_links(
+                record, conversation, identity=_proposal_identity(user_id), settings=get_settings(),
+                response_removed=lambda: _run_response_removed(record),
+            )
+        except ConversationContextError:
+            return jsonify(links.error_payload('run_not_found')), 404
+        except Exception as exc:
+            log_event(
+                '[ORCHESTRATION] The workflow run links could not be loaded.', level=logging.ERROR,
+                extra={
+                    **workflow_log_context(run_id=run_id, conversation_id=conversation_id),
+                    'stage': 'workflow_run_links', 'error_type': type(exc).__name__,
+                },
+            )
+            return jsonify(links.error_payload(links.SERVICE_UNAVAILABLE_CODE)), 503
+        return jsonify(payload), 200

@@ -700,6 +700,7 @@ chat-orchestration:
     - enable_chat_orchestration
     - enable_chat_orchestration_actions
     - enable_chat_orchestration_workflows
+    - enable_chat_orchestration_workflow_runs
   reference:
     - title: "Orchestration settings"
       url: /admin/orchestration/

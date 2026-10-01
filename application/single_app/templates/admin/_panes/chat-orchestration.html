@@ -119,11 +119,26 @@
                             Off by default, because an approved proposal becomes a standing personal workflow that keeps running on the user's behalf. Requires Chat Orchestration and Enable Personal Workflows. When a user asks for recurring or automated work, such as a weekly summary, a plan can propose a personal workflow as a card in the user's own private conversation. Nothing is created until the user approves the card, and the workflow limits under Limits apply.
                         </div>
                     </div>
+                    <div class="form-group form-check form-switch mb-3">
+                        <input
+                            type="checkbox"
+                            class="form-check-input"
+                            id="enable_chat_orchestration_workflow_runs"
+                            name="enable_chat_orchestration_workflow_runs"
+                            aria-describedby="chat-orchestration-workflow-runs-help"
+                            {% if settings.enable_chat_orchestration_workflow_runs %}checked{% endif %} />
+                        <label class="form-check-label ms-2" for="enable_chat_orchestration_workflow_runs">
+                            Run Workflows From Chat
+                        </label>
+                        <div class="form-text" id="chat-orchestration-workflow-runs-help">
+                            Off by default, because a run does whatever its workflow is set up to do, with the user's access. Requires Chat Orchestration and Enable Personal Workflows. When a user asks for it, such as "run my weekly digest now", a plan can start one of the user's saved personal workflows from the user's own private conversation. A plan that starts a workflow always waits for the user to run it, whatever the approval mode, and approving it starts each named workflow once. Only workflows with durable execution on can be started this way.
+                        </div>
+                    </div>
                     <p class="text-muted">
                         Which kinds of work a plan may contain. Leave every box ticked to allow whatever the rest of this deployment's settings already permit; untick one to keep it out of plans even where it is otherwise enabled. An empty selection also means every otherwise-enabled capability. Use an action still requires Enable Action Access.
                     </p>
                     <p class="text-muted small">
-                        Plans need Prepare content to write a chat answer or the content of a file, and Create a file to deliver a downloadable file. Generate images also requires Image Generation. Propose workflows also requires Propose Workflows From Chat and personal workflows.
+                        Plans need Prepare content to write a chat answer or the content of a file, and Create a file to deliver a downloadable file. Generate images also requires Image Generation. Propose workflows also requires Propose Workflows From Chat and personal workflows. Run workflows also requires Run Workflows From Chat and personal workflows.
                     </p>
 
                     {% for capability in orchestration_capabilities or [] %}

@@ -169,6 +169,7 @@ from functions_orchestration_schema import (
     summarize_plan,
 )
 from functions_orchestration_workflow_context import (
+    workflow_planning_configured,
     workflow_planning_option,
     workflow_proposals_configured,
     workflow_run_options,
@@ -699,7 +700,9 @@ class HarnessExecution:
             raise
         self._preparation_stage = "capabilities"
         workflow_configured = workflow_proposals_configured(self.settings)
-        workflow_planning = self.record.get("workflow_planning") if workflow_configured else None
+        workflow_planning = (
+            self.record.get("workflow_planning") if workflow_planning_configured(self.settings) else None
+        )
         request_context = build_capability_request_context(
             user_id, identity, user_message, agents, actions, allowed_user_urls=allowed_urls,
             **workflow_planning_option(workflow_planning),
@@ -788,6 +791,8 @@ class HarnessExecution:
                 "user_id": user_id, "active_group_ids": seeds.get("active_group_ids") or [],
             },
             agent_execution_identity=principal, plan_contract_version=2,
+            attempt_root_run_id=self.record.get("attempt_root_run_id") or self.record["id"],
+            signed_in_session=getattr(principal, "bridge", None) is not None,
             **workflow_run_options(
                 workflow_planning, self.record.get("time_zone") if workflow_configured else None,
             ),
@@ -1008,6 +1013,8 @@ class HarnessExecution:
             },
             user_roles=identity.get("user_roles") or [], user_email=principal.email,
             user_enable_agents=False, agent_execution_identity=principal,
+            attempt_root_run_id=self.record.get("attempt_root_run_id") or self.record["id"],
+            signed_in_session=getattr(principal, "bridge", None) is not None,
             plan_contract_version=2, result_service=self.services.results,
             task_results={name: TaskResult.from_dict(value) for name, value in tasks.items()},
             execution_deadline_at=self.record["execution_deadline_at"],
@@ -1284,6 +1291,15 @@ class HarnessExecution:
             )
             if notes:
                 content.append(notes)
+        # Imported here, like every caller of the run step's module. Deterministic, model-free:
+        # the saved workflows the plan started, even when it stopped, failed or waits afterwards.
+        from functions_orchestration_workflow_runs import workflow_run_note
+
+        workflow_runs = workflow_run_note(
+            self.record["plan"], current.get("execution_steps") or [], stopped=status == "cancelled",
+        )
+        if workflow_runs:
+            content.append(workflow_runs)
         if status == "waiting":
             content.append(build_failure("result_not_ready")["message"])
         elif status in {"failed", "cancelled"}:
