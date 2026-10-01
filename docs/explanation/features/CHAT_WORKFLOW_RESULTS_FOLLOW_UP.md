@@ -58,8 +58,8 @@ Not in this version:
 
 - **The `workflow_results` orchestration capability**, which lets an
   orchestrated plan read a run ("What did my digest find last Monday?"). It
-  needs Phase 5's generalized workflow planning context, so it ships in a later
-  pull request.
+  builds on Phase 5's workflow planning context (0.261.212) and on this reader,
+  so it ships in a later pull request.
 - Phase 6b's post-back delivery, run card, recurring-workflow card and chat-list
   indicator, and Phase 6c's in-plan wait.
 
@@ -703,7 +703,8 @@ the controls are listed in
 
 ### Follow-ups
 
-- The `workflow_results` orchestration capability, after Phase 5 lands.
+- The `workflow_results` orchestration capability, in a later pull request built
+  on this reader and Phase 5's workflow planning context.
 - Structured (version 3) runs, with their node, execution and attempt selectors.
   Until then, hiding Ask in chat on older runs of a converted workflow and Ask
   about this on a structured workflow's alerts needs the workflow's definition
