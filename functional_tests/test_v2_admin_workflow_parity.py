@@ -2,7 +2,7 @@
 # test_v2_admin_workflow_parity.py
 """
 Functional test pinning V1/V2 parity for the Admin Settings Workflow group.
-Version: 0.261.208
+Version: 0.261.213
 Implemented in: 0.261.059
 
 The Workflow group rendered completely empty in the V2 React admin surface. The
@@ -248,10 +248,32 @@ def test_sub_settings_are_gated_by_their_capability():
 
     Worth remembering as a shape: fixing a duplicate declaration can expose a bug
     in code that only ever saw the other copy.
+
+    The chain-aware reading had not landed with that note, so the crash stayed live.
+    Every link is now read through ``iter_field_dependencies``, as the renderer reads
+    it. A list means every link must hold, so link order carries no meaning: the
+    expected gate has to be one of the links, and any other link has to be one the
+    gate itself requires, because a link the gate does not need hides the field
+    while its capability is live.
     """
     print("\nTesting the workflow gating chain...")
 
     declared = {field["key"]: field for field in workflow_fields() if field.get("key")}
+    fields_by_key = {
+        field["key"]: field
+        for _section_id, field in fields_module.iter_fields()
+        if field.get("key")
+    }
+
+    def inherited_conditions(gate_key, seen=None):
+        """Every (key, equals) a gate is itself gated on, followed up its own gates."""
+        seen = set() if seen is None else seen
+        for condition in fields_module.iter_field_dependencies(fields_by_key.get(gate_key, {})):
+            entry = (condition.get("key"), condition.get("equals", True))
+            if entry not in seen:
+                seen.add(entry)
+                inherited_conditions(entry[0], seen)
+        return seen
 
     problems = []
     for key, expected_gate in EXPECTED_DEPENDENCIES.items():
@@ -259,13 +281,28 @@ def test_sub_settings_are_gated_by_their_capability():
         if field is None:
             problems.append(f"{key}: not declared")
             continue
-        depends_on = field.get("depends_on") or {}
-        if depends_on.get("key") != expected_gate:
+        conditions = list(fields_module.iter_field_dependencies(field))
+        gate_links = [c for c in conditions if c.get("key") == expected_gate]
+        if not gate_links:
             problems.append(
-                f"{key}: gated on {depends_on.get('key')!r}, expected {expected_gate!r}"
+                f"{key}: gated on {[c.get('key') for c in conditions]!r}, "
+                f"expected {expected_gate!r}"
             )
-        if depends_on.get("equals") is not True:
-            problems.append(f"{key}: gate expects {depends_on.get('equals')!r}, not True")
+        for condition in gate_links:
+            if condition.get("equals") is not True:
+                problems.append(f"{key}: gate expects {condition.get('equals')!r}, not True")
+        allowed = {(expected_gate, True)} | inherited_conditions(expected_gate)
+        unrelated = [
+            condition.get("key")
+            for condition in conditions
+            if condition.get("key") != expected_gate
+            and (condition.get("key"), condition.get("equals", True)) not in allowed
+        ]
+        if unrelated:
+            problems.append(
+                f"{key}: also gated on {unrelated!r}, which {expected_gate!r} does not "
+                "itself require, so the field hides while its capability is live"
+            )
 
     for key in UNGATED_KEYS:
         field = declared.get(key)
@@ -273,8 +310,9 @@ def test_sub_settings_are_gated_by_their_capability():
             problems.append(f"{key}: not declared")
             continue
         if field.get("depends_on"):
+            gates = [c.get("key") for c in fields_module.iter_field_dependencies(field)]
             problems.append(
-                f"{key}: gated on {field['depends_on'].get('key')!r}. It bounds both "
+                f"{key}: gated on {gates!r}. It bounds both "
                 "personal and group runs, so gating it on one capability hides a live "
                 "limit from administrators who use the other."
             )
