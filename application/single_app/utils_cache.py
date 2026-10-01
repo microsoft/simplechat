@@ -722,7 +722,10 @@ def invalidate_group_search_cache(group_id: str, *, document_id=None, strict=Fal
                 "INVALIDATION",
                 group_id=group_id[:8]
             )
-            logger.info(f"Invalidated {count} cache entries for group {sanitize_log_message(group_id)}")
+            # Rebound rather than wrapped inline so the log line keeps its text, and the
+            # clear-text CodeQL alert already reported on it keeps its identity.
+            group_id = sanitize_log_message(group_id)
+            logger.info(f"Invalidated {count} cache entries for group {group_id}")
         
         return count
         

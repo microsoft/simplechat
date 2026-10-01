@@ -67,10 +67,10 @@ if len(message_text) > MAX_LOG_STRING_LENGTH:
 
 ### utils_cache.py
 
-`utils_cache.py` imports `sanitize_log_message` from `functions_appinsights` and wraps each value
-the seven flagged lines write:
+`utils_cache.py` imports `sanitize_log_message` from `functions_appinsights` and passes each value
+the seven flagged lines write through it:
 
-| Function | Wrapped values |
+| Function | Sanitized values |
 |---|---|
 | `get_group_document_fingerprint` | `group_id`, the exception |
 | `get_public_workspace_document_fingerprint` | `public_workspace_id`, the exception |
@@ -83,6 +83,15 @@ the seven flagged lines write:
 - The messages and levels are unchanged. Some f-strings now span several lines.
 - On the cache hit and write lines, the reported taint comes from `doc_scope` and the partition
   key. `cache_key` is a hash, but it is wrapped too, so every value on those lines is covered.
+- `invalidate_group_search_cache` rebinds `group_id = sanitize_log_message(group_id)` on the line
+  before its log call instead of wrapping the value inside the call, so the log line keeps its
+  0.261.213 text. That line also carries an existing `py/clear-text-logging-sensitive-data`
+  alert. CodeQL treats the group ID as a secret because of the name of a function it comes from,
+  `_get_trusted_group_upload_scope_ids()` in `route_frontend_chats.py`. GitHub matches alerts
+  between analyses by a fingerprint of the text at and just after the alert's line, so the first
+  version of this fix, which wrapped `group_id` inline, made GitHub report that existing alert as
+  a new high-severity one. The function returns straight after the log call, so the rebinding
+  changes nothing else.
 - The import adds no cycle. `config.py` already imports `functions_appinsights`, whose only
   application import is `app_settings_cache`, which in turn imports only the standard library,
   Azure, Redis and `app_settings_store`.
@@ -133,7 +142,7 @@ taint tracking finds no request value that reaches them. They are left for follo
 
 - `application/single_app/functions_appinsights.py`: the `replace` chain in
   `sanitize_log_message`.
-- `application/single_app/utils_cache.py`: the import and the seven wrapped lines.
+- `application/single_app/utils_cache.py`: the import and the seven sanitized lines.
 - `application/single_app/route_backend_workflows.py`: the import and the seven wrapped
   arguments.
 - `application/single_app/route_backend_plugins.py`: the field-count log.
@@ -200,19 +209,25 @@ taint tracking finds no request value that reaches them. They are left for follo
 ## Validation
 
 - **Local CodeQL.** CodeQL 2.27.1 with `codeql/python-queries` 1.8.11, the versions in the base
-  analysis, ran `Security/CWE-117/LogInjection.ql` over the four edited modules, the two settings
-  cache modules they import and a synthetic Flask driver. The driver feeds request values into
-  every input of the flagged functions and also logs `sanitize_log_message(value)` directly.
-  - Base: 23 results. They are the 19 alerts, the driver's direct line, and the three
-    `utils_cache.py` lines listed under "What is not changed" that log `user_id` or `cache_key`.
-    The driver reaches those three only by passing request values where the application passes
-    the signed-in user's ID or a hashed cache key.
-  - Fix: 3 results, the same three lines. All 19 alerts cleared, and so did the driver's direct
-    line, which shows that `sanitize_log_message` now works as a sanitizer for its callers.
+  analysis, ran `Security/CWE-117/LogInjection.ql` and `Security/CWE-312/CleartextLogging.ql`
+  over the four edited modules, the two settings cache modules they import and a synthetic Flask
+  driver. The driver registers the workflow routes on a Flask blueprint, as `app.py` does, feeds
+  request values into every input of the flagged functions, passes the return value of a
+  function named `_get_trusted_group_upload_scope_ids` to `invalidate_group_search_cache`, and
+  logs `sanitize_log_message(value)` directly.
+  - Base: 23 log-injection results. They are the 19 alerts, the driver's direct line, and the
+    three `utils_cache.py` lines listed under "What is not changed" that log `user_id` or
+    `cache_key`. The driver reaches those three only by passing request values where the
+    application passes the signed-in user's ID or a hashed cache key.
+  - Fix: 3 log-injection results, the same three lines. All 19 alerts cleared, and so did the
+    driver's direct line, which shows that `sanitize_log_message` now works as a sanitizer for its
+    callers.
+  - Both runs report the same three clear-text results, with the same fingerprints, including the
+    one on the group invalidation log line.
 - **Mutation checks.** 25 mutations, each run normally and under `-O`, 50 runs in all, were each
   caught by at least one test:
-  - unwrapping any one of the 20 wrapped values (13 in `utils_cache.py`, 7 in
-    `route_backend_workflows.py`)
+  - unwrapping any one of the 20 `sanitize_log_message` calls (13 in `utils_cache.py`, one of them
+    the `group_id` rebinding, and 7 in `route_backend_workflows.py`)
   - moving the replaces ahead of the regex (3 tests fail)
   - dropping the replaces (the AST check fails)
   - restoring the payload log (3 plugin tests fail)
@@ -220,7 +235,15 @@ taint tracking finds no request value that reaches them. They are left for follo
     `route_backend_workflows.py` (2 import tests fail)
 
   The source files were restored byte-identical afterwards.
-- **GitHub CodeQL.** The pull request's merge ref is checked once its CodeQL analysis finishes.
+- **GitHub CodeQL.** The pull request's first analysis reported no new `py/log-injection` alert.
+  Its one new alert was the existing clear-text alert on the group invalidation line, which that
+  version had wrapped inline. The `group_id` rebinding described under utils_cache.py fixes it.
+- **Alert fingerprints.** A reimplementation of the fingerprint GitHub computes reproduces all
+  1,096 fingerprints in the base analysis. On the final code, 149 of the 163 base results in the
+  edited files keep their fingerprints. The 14 that change are log-injection alerts on lines this
+  fix edits. The other five log-injection alerts, the four in `functions_appinsights.py` and the
+  group invalidation one, keep their fingerprints, so GitHub closes them only when CodeQL stops
+  reporting them, which the local run shows it does.
 
 ## Related
 
