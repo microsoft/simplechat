@@ -1291,6 +1291,15 @@ class HarnessExecution:
             )
             if notes:
                 content.append(notes)
+        # Imported here, like every caller of the run step's module. Deterministic, model-free:
+        # the saved workflows the plan started, even when it stopped, failed or waits afterwards.
+        from functions_orchestration_workflow_runs import workflow_run_note
+
+        workflow_runs = workflow_run_note(
+            self.record["plan"], current.get("execution_steps") or [], stopped=status == "cancelled",
+        )
+        if workflow_runs:
+            content.append(workflow_runs)
         if status == "waiting":
             content.append(build_failure("result_not_ready")["message"])
         elif status in {"failed", "cancelled"}:

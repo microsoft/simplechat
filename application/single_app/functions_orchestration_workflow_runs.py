@@ -19,7 +19,9 @@ choose which workflow runs. This module
   links to the run. It never waits for the run or reads its results. A small retained ``run``
   result holds the workflow's name and whether it started; the workflow and run ids ride on the
   step record as a server-only sidecar that the run link reads;
-* rebuilds that sidecar when a completed step was recovered or reused without it.
+* rebuilds that sidecar when a completed step was recovered or reused without it;
+* writes the reply's note, after the prepared answer, on which workflows the plan started, which
+  it did not start and why, and where each run's results appear.
 
 The run is started with a request id derived from the plan's first attempt and the step, so the
 run id is deterministic: a retry of the plan, a second tab or a crash between starting the run and
@@ -197,6 +199,23 @@ _STEP_SUMMARIES = {
     WORKFLOW_RUN_STATUS_UNAVAILABLE: 'The saved workflow was not started.',
 }
 _DEFAULT_WORKFLOW_NAME = 'Workflow'
+
+# The reply's note about the saved workflows a plan started. It says where a run's results appear
+# and never promises them in the chat, which only a later delivery step can do.
+WORKFLOW_RUN_NOTE_HEADING = 'Saved workflows:'
+WORKFLOW_RUN_FOLLOW_UP = (
+    "Follow the run's progress and results in the workflow's run history in Workflows. Results also "
+    'appear wherever the workflow already sends them, such as its conversation or alerts.'
+)
+WORKFLOW_RUN_FOLLOW_UP_MANY = (
+    "Follow each run's progress and results in that workflow's run history in Workflows. Results also "
+    'appear wherever each workflow already sends them, such as its conversation or alerts.'
+)
+WORKFLOW_RUN_STOPPED = (
+    "Stopping this plan doesn't stop a workflow it already started. Cancel the run in Workflows if "
+    'you need to.'
+)
+_UNNAMED_WORKFLOW_NOTE = 'A workflow you asked for'
 
 _HANDLE = re.compile(WORKFLOW_HANDLE_PATTERN)
 _LOG_PREFIX = '[ORCHESTRATION_WORKFLOW_RUNS]'
@@ -826,13 +845,99 @@ def rebuild_workflow_run(step, context, *, user_id, task):
 
 def workflow_run_reason_text(reason):
     """The application-owned sentence for a closed reason, or the generic not-started one."""
+    reason = reason if isinstance(reason, str) else None
     return WORKFLOW_RUN_REASON_TEXT.get(reason) or WORKFLOW_RUN_REASON_TEXT[REASON_NOT_STARTED]
+
+
+# ---------------------------------------------------------------------------
+# The reply
+# ---------------------------------------------------------------------------
+
+def _quoted_name(value):
+    """A saved name as inline code that cannot format the reply, or None when nothing is left of it."""
+    text = clean_catalog_text(value, NAME_MAX_LENGTH)
+    if not text.replace('`', '').strip():
+        return None
+    return '`' + text.replace('`', "'") + '`'
+
+
+def _step_line(sidecar):
+    name = _quoted_name(sidecar.get('name')) or f'`{_DEFAULT_WORKFLOW_NAME}`'
+    status = sidecar['status']
+    if status == WORKFLOW_RUN_STATUS_ALREADY_STARTED:
+        return f'- {name} was already started for this request, so it was not started again.'
+    if status in WORKFLOW_RUN_STARTED_STATUSES:
+        return f'- Started {name}.'
+    return f"- {name} was not started. {workflow_run_reason_text(sidecar.get('reason'))}"
+
+
+def _left_out_line(note):
+    reason = note.get('reason') if isinstance(note.get('reason'), str) else None
+    text = WORKFLOW_RUN_SKIP_REASONS.get(reason) or WORKFLOW_RUN_SKIP_REASONS[REASON_INVALID]
+    name = _quoted_name(note.get('name'))
+    return f'- {name or _UNNAMED_WORKFLOW_NOTE} was not started. {text}'
+
+
+def workflow_run_note(plan, execution_steps, *, stopped=False):
+    """What the reply says about the saved workflows a plan started, or ''. Never raises.
+
+    Application-owned text: each completed workflow_run step the plan enables gets a line, in plan
+    order, saying it started, was already started for this request or was not started and why.
+    The run steps the planner left out follow, from the plan's ``workflow_run_notes``. A step that
+    failed or never ran is left to the failure explanation. When a run started, the note says
+    where to follow it, and ``stopped`` adds that stopping the plan does not stop the run. Saved
+    names are inline code, so a name cannot add links, formatting or lines, and no id or handle
+    is shown.
+    """
+    plan = plan if isinstance(plan, dict) else {}
+    steps = plan.get('steps') if isinstance(plan.get('steps'), list) else []
+    records = {
+        record['step_id']: record for record in (execution_steps if isinstance(execution_steps, list) else ())
+        if isinstance(record, dict) and isinstance(record.get('step_id'), str)
+    }
+    lines, started = [], 0
+    for step in steps:
+        if not isinstance(step, dict) or step.get('capability_id') != CAPABILITY_WORKFLOW_RUN:
+            continue
+        if not step.get('enabled', True):
+            continue
+        record = records.get(step.get('step_id')) if isinstance(step.get('step_id'), str) else None
+        if (
+            not isinstance(record, dict) or record.get('capability_id') != CAPABILITY_WORKFLOW_RUN
+            or record.get('status') != STEP_STATUS_COMPLETED
+        ):
+            continue
+        sidecar = record.get('workflow_run')
+        if not isinstance(sidecar, dict) or sidecar.get('status') not in WORKFLOW_RUN_STATUSES:
+            continue
+        if sidecar['status'] in WORKFLOW_RUN_STARTED_STATUSES:
+            started += 1
+        lines.append(_step_line(sidecar))
+    notes = plan.get('workflow_run_notes') if isinstance(plan.get('workflow_run_notes'), list) else []
+    for note in notes:
+        # A duplicate step names a workflow the plan starts once anyway, so it is not news.
+        if not isinstance(note, dict) or note.get('reason') == RULE_DUPLICATE:
+            continue
+        line = _left_out_line(note)
+        if line not in lines:
+            lines.append(line)
+    if not lines:
+        return ''
+    parts = ['\n'.join([WORKFLOW_RUN_NOTE_HEADING, *lines])]
+    if started:
+        parts.append(WORKFLOW_RUN_FOLLOW_UP_MANY if started > 1 else WORKFLOW_RUN_FOLLOW_UP)
+        if stopped:
+            parts.append(WORKFLOW_RUN_STOPPED)
+    return '\n\n'.join(parts)
 
 
 __all__ = [
     'FAILURE_RUNTIME_UNAVAILABLE',
     'NO_WORKFLOW_STARTED',
     'REASON_INVALID',
+    'WORKFLOW_RUN_FOLLOW_UP',
+    'WORKFLOW_RUN_FOLLOW_UP_MANY',
+    'WORKFLOW_RUN_NOTE_HEADING',
     'WORKFLOW_RUN_OUTPUT',
     'WORKFLOW_RUN_OUTPUT_KIND',
     'WORKFLOW_RUN_REASON_TEXT',
@@ -844,6 +949,7 @@ __all__ = [
     'WORKFLOW_RUN_STATUS_QUEUED',
     'WORKFLOW_RUN_STATUS_RUNNING',
     'WORKFLOW_RUN_STATUS_UNAVAILABLE',
+    'WORKFLOW_RUN_STOPPED',
     'WORKFLOW_RUN_TRIGGER_SOURCE',
     'WORKFLOW_RUN_VERSION',
     'adapter_workflow_run',
@@ -854,6 +960,7 @@ __all__ = [
     'workflow_run_catalog_entry',
     'workflow_run_failure_message',
     'workflow_run_link',
+    'workflow_run_note',
     'workflow_run_reason_text',
     'workflow_run_repair_text',
     'workflow_run_request_id',
