@@ -1521,6 +1521,7 @@
               </div>
             </div>
           </div>
+          {% if settings.enable_workflow_ai_assistant %}
           <div class="mb-3 workflow-step-block" data-workflow-step="tasks">
             <label for="workflow-task-brief" class="form-label">Task Brief</label>
             <textarea class="form-control" id="workflow-task-brief" rows="3" placeholder="Briefly describe what this workflow should accomplish."></textarea>
@@ -1531,6 +1532,7 @@
               <span class="text-muted small" id="workflow-draft-instructions-status" aria-live="polite"></span>
             </div>
           </div>
+          {% endif %}
           <div class="mb-3 workflow-step-block" data-workflow-step="tasks">
             <label for="workflow-task-prompt" class="form-label">Task Instructions</label>
             <textarea class="form-control" id="workflow-task-prompt" rows="7" placeholder="Describe exactly what this task should do each time it runs."></textarea>
