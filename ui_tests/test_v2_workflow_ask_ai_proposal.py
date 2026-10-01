@@ -38,21 +38,21 @@ sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "ui_tests"))
 sys.path.insert(0, str(ROOT / "ui_tests" / "fixtures"))
 
-# The shared fixtures import pure application helpers after setting their paths.
-from test_v2_orchestration_workflow_proposal_card import (  # noqa: E402,F401
+# The shared fixtures import pure application helpers after setting their paths. pytest looks up
+# card_ui's own fixtures by name in this module, so each comes from the module that defines it.
+from ui_tests.fixtures.playwright_connection import connect_options  # noqa: E402,F401
+from ui_tests.fixtures.workflow_ask_ai import ASSIST_ROUTE, AssistStub  # noqa: E402
+from ui_tests.test_v2_orchestration_plan_editor import editor_assets, editor_browser  # noqa: E402,F401
+from ui_tests.test_v2_orchestration_workflow_proposal_card import (  # noqa: E402,F401
     CONVERSATION,
     HOSTILE_INSTRUCTIONS,
     NAME,
     card,
     card_ui,
-    connect_options,
-    editor_assets,
-    editor_browser,
     editor_options,
     mount,
     open_editor,
 )
-from ui_tests.fixtures.workflow_ask_ai import ASSIST_ROUTE, AssistStub  # noqa: E402
 from ui_tests.test_v2_workflow_change_tracking import (  # noqa: E402
     RUN_AS_NOTE,
     author,

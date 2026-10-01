@@ -179,6 +179,7 @@ class AssistStub:
             try:
                 _fulfill(route, status, payload, headers)
             except PlaywrightError:
+                # A request the browser cancelled has no route left to answer.
                 pass
 
     def wait_for_requests(self, page, count, timeout_ms=10000):
