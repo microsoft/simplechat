@@ -14,6 +14,7 @@ without reshaping downstream chunking.
 import json
 import logging
 import os
+import re
 import time
 
 import requests
@@ -47,6 +48,11 @@ CONTENT_UNDERSTANDING_MISSING_DEPLOYMENT_MESSAGE = (
     "deployments. Deploy a completion model and an embedding model, then set them as Content "
     "Understanding defaults before using Enhanced extraction."
 )
+
+# Image analyzers such as prebuilt-imageSearch return a bare image reference, for example
+# "![image](pages/1)", as the markdown and put the actual description in a Summary field.
+MARKDOWN_IMAGE_PLACEHOLDER_PATTERN = re.compile(r'!\[[^\]]*\]\([^)]*\)')
+CONTENT_UNDERSTANDING_SUMMARY_FIELD = 'summary'
 
 
 class ContentUnderstandingError(Exception):
@@ -521,8 +527,45 @@ def extract_content_with_content_understanding(file_path, pages=None, settings=N
     return pages_data
 
 
+def _is_image_placeholder_markdown(markdown_text):
+    """Return True when markdown holds nothing but image references such as ``![image](pages/1)``."""
+    return not MARKDOWN_IMAGE_PLACEHOLDER_PATTERN.sub('', str(markdown_text or '')).strip()
+
+
+def _build_string_field_blocks(content):
+    """Return readable text for the non-empty string fields an analyzer extracted.
+
+    The ``Summary`` field is emitted as plain text first, because it is the analyzer's own
+    description of the input. Every other string field is emitted as ``Name: value``.
+    """
+    fields = content.get('fields')
+    if not isinstance(fields, dict):
+        return []
+
+    summary_blocks = []
+    field_blocks = []
+    for field_name, field_value in fields.items():
+        if not isinstance(field_value, dict):
+            continue
+        value_string = field_value.get('valueString')
+        if not isinstance(value_string, str) or not value_string.strip():
+            continue
+
+        if str(field_name).strip().lower() == CONTENT_UNDERSTANDING_SUMMARY_FIELD:
+            summary_blocks.append(value_string.strip())
+        else:
+            field_blocks.append(f"{field_name}: {value_string.strip()}")
+
+    return summary_blocks + field_blocks
+
+
 def analyze_image_with_content_understanding(image_path, settings=None):
-    """Analyze a standalone image and return its description text, or an empty string."""
+    """Analyze a standalone image and return its description text, or an empty string.
+
+    Image analyzers describe the image in extracted fields rather than in the markdown, which is
+    only a placeholder image reference, so string fields are read alongside any real markdown
+    and figure descriptions.
+    """
     resolved_settings = settings if settings is not None else _get_settings()
     config = _resolve_config(settings=resolved_settings)
 
@@ -535,15 +578,27 @@ def analyze_image_with_content_understanding(image_path, settings=None):
     text_blocks = []
     for content in _iter_document_contents(result):
         markdown_text = str(content.get('markdown') or '').strip()
+        if _is_image_placeholder_markdown(markdown_text):
+            markdown_text = ''
         if markdown_text:
             text_blocks.append(markdown_text)
 
+        field_blocks = _build_string_field_blocks(content)
+        text_blocks.extend(field_blocks)
+
+        # De-duplicate figure descriptions against everything already emitted for this content.
+        emitted_text = "\n\n".join([markdown_text] + field_blocks)
         for summary in _build_figure_summaries(content):
-            rendered_summary = _render_figure_summary(summary, markdown_text)
+            rendered_summary = _render_figure_summary(summary, emitted_text)
             if rendered_summary:
                 text_blocks.append(rendered_summary)
 
-    return "\n\n".join(block for block in text_blocks if block).strip()
+    description_text = "\n\n".join(block for block in text_blocks if block).strip()
+    debug_print(
+        f"[CONTENT_UNDERSTANDING] Image analyzer {config['image_analyzer_id']} returned "
+        f"{len(description_text)} character(s) for {os.path.basename(image_path)}"
+    )
+    return description_text
 
 
 def test_content_understanding_connection(config_override, sample_file_path=None):

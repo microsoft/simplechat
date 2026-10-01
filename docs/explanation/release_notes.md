@@ -11,6 +11,29 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
     *   Users no longer see restricted global, personal, or group model endpoints when creating or editing agents, and governed multi-endpoint responses no longer fall back to legacy global model lists.
     *   (Ref: agent model picker, endpoint governance, `route_backend_agents.py`, `agents_common.js`, [Agent Model Governance Filtering Fix](fixes/AGENT_MODEL_GOVERNANCE_FILTERING_FIX.md))
 
+### **(v0.261.047)**
+
+#### Bug Fixes
+
+*   **Images Without OCR Text Are Now Indexed From Their Vision Description**
+    *   Fixed text-free images, such as a photo of an empty room, ending with no search chunk, no title, and nothing chat could use, even though the AI vision model had described them. When OCR finds no text, the vision description is now indexed as the image's chunk, so the image is searchable and final metadata extraction runs as usual.
+    *   Document Intelligence Layout output that is only page-number or page-break annotations, such as a stray `<!-- PageNumber="J" -->` read from floor tape, no longer counts as image text. Header and footer text still does. Failed or empty vision analyses are never indexed.
+    *   Image chunks are now embedded from the same text that is stored, including the vision description, instead of from the OCR text alone. Images with real OCR text keep their existing chunk.
+    *   With Enhanced extraction, a standalone image that the Content Understanding document analyzer returns nothing for is now described by the Content Understanding image analyzer before falling back to Document Intelligence Layout. This applies to workspace uploads and to images uploaded straight into a chat. The image analyzer's `Summary` field is now read, which also replaces the `![image](pages/1)` placeholder that images embedded in DOCX and PPTX files were indexed with.
+    *   The multi-modal vision model is now called through the AI connection that hosts it when multi-endpoint models are enabled, instead of always using the legacy GPT connection, which returned 404 for models deployed on another connection. The Test Vision Analysis button now uses the same connection as ingestion.
+    *   (Ref: #1583, `functions_documents.py`, `functions_content.py`, `functions_content_understanding.py`, `functions_model_endpoint_types.py`, `route_backend_settings.py`, `route_frontend_chats.py`, [Image Description Indexing Without OCR Text Fix](fixes/IMAGE_DESCRIPTION_INDEXING_WITHOUT_OCR_TEXT_FIX.md))
+
+*   **Image Generation Uses The gpt-image API Version By Default**
+    *   The default Azure OpenAI image generation API version is now `2025-04-01-preview`, the newest dated Azure OpenAI API version and the one documented for gpt-image-1, gpt-image-1.5, and gpt-image-2. The previous `2024-12-01-preview` default predates gpt-image support.
+    *   Existing deployments still storing the previous default, or a blank value, are upgraded automatically when settings load. Any other saved version is kept, and the APIM image generation API version is never changed because the gateway defines it.
+    *   (Ref: `functions_settings.py`, `azure_openai_image_gen_api_version`, [Image Generation API Version Default Fix](fixes/IMAGE_GENERATION_API_VERSION_DEFAULT_FIX.md))
+
+*   **Deployers Grant The App Identity Key Vault Secrets Officer**
+    *   Fixed credential saves failing with `ForbiddenByRbac` when Key Vault secret storage is enabled on deployments created by the Bicep, Terraform, or Azure CLI deployers. The deployers gave the application identities **Key Vault Secrets User**, which can read secrets but cannot create, update, or delete the ones SimpleChat writes. **Test Key Vault connection** only lists secrets, so it passed and hid the problem.
+    *   The Bicep (container and native Python), Terraform, and Azure CLI deployers now grant **Key Vault Secrets Officer** at vault scope. On vaults that use access policies, the Azure CLI deployer adds get, list, set, and delete secret permissions instead. Existing Secrets User assignments are left in place, and Terraform stops tracking its old assignment without deleting it.
+    *   Existing environments pick up the new role on their next `azd provision`, Terraform apply, or Azure CLI deployer run; `azd deploy` does not change role assignments. Included in deployer version **1.0.32** as a backport of the deployer portion of [PR #1511](https://github.com/microsoft/simplechat/pull/1511).
+    *   (Ref: [PR #1587](https://github.com/microsoft/simplechat/pull/1587), `setPermissions.bicep`, `setNativeWebAppPermissions.bicep`, `deployers/terraform/main.tf`, `deploy-simplechat.ps1`, `test_deployer_key_vault_secret_permissions.py`)
+
 ### **(v0.261.046)**
 
 #### Bug Fixes
