@@ -87,7 +87,7 @@ def _default_gate(settings, user_roles=None):
 
 
 def _default_is_private(conversation, user_id):
-    from functions_orchestration_workflow_context import conversation_is_private
+    from functions_orchestration_memory import conversation_is_private
 
     return conversation_is_private(conversation, user_id)
 

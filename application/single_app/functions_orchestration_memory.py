@@ -1,7 +1,7 @@
 # functions_orchestration_memory.py
 """Read-only, audience-bound saved memory for orchestration.
 
-Version: 0.261.132
+Version: 0.261.214
 """
 
 from azure.core.exceptions import AzureError
@@ -46,6 +46,21 @@ def validate_memory_audience(conversation, user_id, expected=None):
             code='memory_audience_changed',
         )
     return audience
+
+
+# Kept beside the audience check so saved analysis and Follow up can ask it without importing
+# the workflow planning context, which would close an import cycle.
+def conversation_is_private(conversation, user_id):
+    """Whether only the requester can read this conversation.
+
+    A shared, collaborative or multi-user conversation, or one converted to a collaboration, is
+    not private: a proposal there would put the requester's workflows in front of other people.
+    """
+    try:
+        audience = validate_memory_audience(conversation, user_id)
+    except OrchestrationMemoryError:
+        return False
+    return audience.get('kind') == 'personal' and not conversation.get('converted_to_collaboration_at')
 
 
 def validate_memory_context(conversation, user_id, expected_audience=None, scope=None):

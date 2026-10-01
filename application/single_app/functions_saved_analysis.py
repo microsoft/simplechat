@@ -483,7 +483,7 @@ class _WorkflowResultLineage:
 
     def _private(self, conversation_id):
         # Answers from private results never follow a chat into a shared or converted one.
-        from functions_orchestration_workflow_context import conversation_is_private
+        from functions_orchestration_memory import conversation_is_private
 
         if not isinstance(conversation_id, str) or not conversation_id:
             return False
