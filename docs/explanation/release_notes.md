@@ -2,6 +2,16 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.216)**
+
+#### Bug Fixes
+
+*   **Log Injection CodeQL Alerts Fixed**
+    *   Cleared the 19 open `py/log-injection` CodeQL alerts. The search cache logs and the workflow run cancellation error logs now pass identifiers and exception text through `sanitize_log_message`, so an ID containing a line break can no longer start what looks like a separate log entry. Ordinary values are logged exactly as before, and the cancellation errors keep their traceback.
+    *   The admin plugin settings route no longer logs the request body. It was logged before validation, so a field the route then rejects, such as an API key, was written to the log as sent. The route now logs `[PLUGINS] Received plugin settings update request.` with the number of fields.
+    *   `sanitize_log_message` already removed line breaks with a regular expression, which CodeQL doesn't recognize. It now also calls `replace` for them after the regex, which changes nothing at run time but lets CodeQL see that `log_event` output has none. Its output is unchanged.
+    *   (Ref: #1543, `functions_appinsights.py`, `utils_cache.py`, `route_backend_workflows.py`, `route_backend_plugins.py`, [Log Injection CodeQL Alerts Fix](fixes/LOG_INJECTION_CODEQL_ALERTS_FIX.md))
+
 ### **(v0.261.213)**
 
 #### New Features

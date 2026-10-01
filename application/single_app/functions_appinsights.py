@@ -199,6 +199,8 @@ def sanitize_log_message(message: Any) -> str:
         message_text,
     )
     message_text = LOG_CONTROL_CHAR_RE.sub(" ", message_text)
+    # No-ops after the regex above; they make its line-break removal visible to static analysis.
+    message_text = message_text.replace("\r\n", " ").replace("\n", " ").replace("\r", " ")
     if len(message_text) > MAX_LOG_STRING_LENGTH:
         return f"{message_text[:MAX_LOG_STRING_LENGTH]}... [truncated]"
     return message_text

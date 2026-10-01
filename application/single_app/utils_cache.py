@@ -29,6 +29,7 @@ from config import (
     cosmos_public_documents_container,
     cosmos_search_cache_container
 )
+from functions_appinsights import sanitize_log_message
 from azure.cosmos.exceptions import CosmosResourceNotFoundError
 
 logger = logging.getLogger(__name__)
@@ -212,7 +213,10 @@ def get_group_document_fingerprint(group_id: str) -> str:
         return fingerprint
         
     except Exception as e:
-        logger.error(f"Error generating group document fingerprint for group {group_id}: {e}")
+        logger.error(
+            f"Error generating group document fingerprint for group {sanitize_log_message(group_id)}: "
+            f"{sanitize_log_message(e)}"
+        )
         _debug_print(f"ERROR generating fingerprint: {e}", "FINGERPRINT", group_id=group_id[:8])
         return hashlib.sha256(str(datetime.now().timestamp()).encode()).hexdigest()
 
@@ -262,7 +266,10 @@ def get_public_workspace_document_fingerprint(public_workspace_id: str) -> str:
         return fingerprint
         
     except Exception as e:
-        logger.error(f"Error generating public workspace document fingerprint for workspace {public_workspace_id}: {e}")
+        logger.error(
+            "Error generating public workspace document fingerprint for workspace "
+            f"{sanitize_log_message(public_workspace_id)}: {sanitize_log_message(e)}"
+        )
         _debug_print(f"ERROR generating fingerprint: {e}", "FINGERPRINT", workspace_id=public_workspace_id[:8])
         return hashlib.sha256(str(datetime.now().timestamp()).encode()).hexdigest()
 
@@ -498,7 +505,10 @@ def get_cached_search_results(
                 partition_key=partition_key[:25],
                 ttl_remaining=f"{seconds_remaining:.1f}s"
             )
-            logger.info(f"Cache hit for key: {cache_key} (scope: {doc_scope}, partition: {partition_key[:25]})")
+            logger.info(
+                f"Cache hit for key: {sanitize_log_message(cache_key)} "
+                f"(scope: {sanitize_log_message(doc_scope)}, partition: {sanitize_log_message(partition_key[:25])})"
+            )
             return results
         else:
             # Expired - delete from cache
@@ -568,7 +578,11 @@ def cache_search_results(cache_key: str, results: List[Dict[str, Any]], user_id:
             partition_key=partition_key[:25]
         )
         
-        logger.debug(f"Cached search results with key: {cache_key}, scope: {doc_scope}, partition: {partition_key[:25]}, ttl: {ttl_seconds}s, expires at: {expiry_time}")
+        logger.debug(
+            f"Cached search results with key: {sanitize_log_message(cache_key)}, "
+            f"scope: {sanitize_log_message(doc_scope)}, partition: {sanitize_log_message(partition_key[:25])}, "
+            f"ttl: {ttl_seconds}s, expires at: {expiry_time}"
+        )
     except Exception as e:
         logger.error(f"Error caching search results to Cosmos DB: {e}")
         _debug_print(f"Cache write ERROR: {e}", "CACHE", cache_key=cache_key[:16])
@@ -632,7 +646,7 @@ def invalidate_personal_search_cache(user_id: str) -> int:
                 "INVALIDATION",
                 user_id=user_id[:8]
             )
-            logger.info(f"Invalidated {count} cache entries for user {user_id}")
+            logger.info(f"Invalidated {count} cache entries for user {sanitize_log_message(user_id)}")
         
         return count
         
@@ -708,7 +722,7 @@ def invalidate_group_search_cache(group_id: str, *, document_id=None, strict=Fal
                 "INVALIDATION",
                 group_id=group_id[:8]
             )
-            logger.info(f"Invalidated {count} cache entries for group {group_id}")
+            logger.info(f"Invalidated {count} cache entries for group {sanitize_log_message(group_id)}")
         
         return count
         
@@ -773,7 +787,9 @@ def invalidate_public_workspace_search_cache(public_workspace_id: str) -> int:
                 "INVALIDATION",
                 workspace_id=public_workspace_id[:8]
             )
-            logger.info(f"Invalidated {count} cache entries for public workspace {public_workspace_id}")
+            logger.info(
+                f"Invalidated {count} cache entries for public workspace {sanitize_log_message(public_workspace_id)}"
+            )
         
         return count
         
