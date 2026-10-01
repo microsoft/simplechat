@@ -2,8 +2,8 @@
 # test_v2_workflow_ask_ai.py
 """
 Functional test for the Ask AI tab in the V2 workflow editor.
-Version: 0.261.211
-Implemented in: 0.261.211
+Version: 0.261.213
+Implemented in: 0.261.213
 
 This test ensures the Ask AI tab builds exactly the request POST /api/user/workflows/assist
 accepts: limits counted in code points, base null and no id for a new or proposal draft, only
@@ -33,7 +33,7 @@ sys.path.insert(0, str(REPO_ROOT / "functional_tests"))
 
 from test_support.versioning import assert_app_version_at_least  # noqa: E402
 
-IMPLEMENTED_IN = "0.261.211"
+IMPLEMENTED_IN = "0.261.213"
 
 CODE_POINTS_TS = V2_SRC / "lib" / "codePoints.ts"
 ASSIST_TS = V2_SRC / "lib" / "workflowAssist.ts"

@@ -1,4 +1,4 @@
-# Workflow AI Assistant (v0.261.211)
+# Workflow AI Assistant (v0.261.213)
 
 ## Overview
 
@@ -13,12 +13,12 @@ instruction and the editor's current draft, asks the model for a small set of al
 operations, applies them to a copy of the draft, checks the result the way a save would, and
 returns a candidate draft. It writes nothing.
 
-The editor half is the **Ask AI** tab, added in 0.261.211. It sends the instruction, checks the
+The editor half is the **Ask AI** tab, added in 0.261.213. It sends the instruction, checks the
 answer against the draft it was sent with, and applies the candidate through the editor's
 `applyAssist` seam, so every change is highlighted, attributed to the turn and undoable. The same
 release adds **Draft with AI**, which writes instructions for an empty task.
 
-Implemented in version: **0.261.208** (the endpoint) and **0.261.211** (the **Ask AI** tab and
+Implemented in version: **0.261.208** (the endpoint) and **0.261.213** (the **Ask AI** tab and
 **Draft with AI**), tracked in `application/single_app/config.py`.
 Phases 3b and 3c of the [chat orchestration workflows roadmap](CHAT_ORCHESTRATION_WORKFLOWS_ROADMAP.md)
 (#1548, part of #1543).
@@ -29,7 +29,7 @@ The assistant ships in three layers:
 | --- | --- | --- |
 | 3a | Change tracking in the V2 editor, including `WorkflowAuthoringSession.applyAssist(candidate, {turnId, label})` | Shipped in 0.261.203 ([Workflow editor change tracking](WORKFLOW_EDITOR_CHANGE_TRACKING.md)) |
 | 3b | The endpoint: instruction in, validated candidate out | Shipped in 0.261.208 |
-| 3c | The **Ask AI** tab on the shared assist thread, which calls the endpoint, and **Draft with AI** | Shipped in 0.261.211 |
+| 3c | The **Ask AI** tab on the shared assist thread, which calls the endpoint, and **Draft with AI** | Shipped in 0.261.213 |
 
 Dependencies:
 

@@ -1,8 +1,8 @@
 # workflow_ask_ai.py
 """
 Browser stubs for the workflow editor's Ask AI tab (Phase 3c).
-Version: 0.261.211
-Implemented in: 0.261.211
+Version: 0.261.213
+Implemented in: 0.261.213
 Refs: microsoft/simplechat#1548
 
 `POST /api/user/workflows/assist` is answered inside the page, never by a live model. A normal

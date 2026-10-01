@@ -39,7 +39,7 @@ A changed field is framed in its author's color and gets a text badge, so color 
 only cue:
 
 - **Edited**, in violet, for your own changes.
-- **AI assist**, in blue, for changes an AI assist turn made. From 0.261.211 the **Ask AI** tab
+- **AI assist**, in blue, for changes an AI assist turn made. From 0.261.213 the **Ask AI** tab
   and **Draft with AI** make them; see [Workflow AI assistant](WORKFLOW_AI_ASSISTANT.md).
 
 Beside the badge, **Previously** opens the value the field had when the editor opened, as plain
@@ -73,7 +73,7 @@ saved order; a task you added keeps its slot.
 ### The Changes panel
 
 **Changes** in the editor footer opens a side panel and shows how many unsaved changes there are.
-The panel is built as a tab list, so later phases can add tabs beside **Changes**. From 0.261.211
+The panel is built as a tab list, so later phases can add tabs beside **Changes**. From 0.261.213
 **Ask AI** is the second tab, on a personal workflow you can edit when the admin has turned the
 assistant on.
 
@@ -226,7 +226,7 @@ candidate as one history entry with origin `ai`. It rejects a candidate that:
 - changes what an ID it keeps refers to
 
 An accepted candidate takes the normal edit path: eligibility, impact confirmation, and the
-history budget's oversized-edit prompt. From 0.261.211 the **Ask AI** tab calls it with each
+history budget's oversized-edit prompt. From 0.261.213 the **Ask AI** tab calls it with each
 answer, and **Draft with AI** calls it with drafted task instructions.
 
 ### The Run as consequence
@@ -253,7 +253,7 @@ session measured 0.17 ms in the logic tests.
 
 - **The assist endpoint (3b)** returns candidates; `applyAssist` is where they enter the editor.
   It already enforces the forbidden fields and approvals client-side.
-- **The Ask AI tab (3c)** shipped in 0.261.211 as the second entry in `WorkflowEditorSidePanel`'s
+- **The Ask AI tab (3c)** shipped in 0.261.213 as the second entry in `WorkflowEditorSidePanel`'s
   tab list, beside Changes. Each turn's **Undo this change** calls `revertTurn` and reports the
   reverted and skipped counts it returns. Ask AI is personal-only; change tracking itself also
   covers group workflows.
@@ -304,7 +304,7 @@ session measured 0.17 ms in the logic tests.
   can't show; a group workflow; light and dark themes; a narrow viewport;
   a new workflow; and keyboard focus staying in a schedule, Run when, output contract or final
   outputs control, with every typed character kept, while its highlight appears or clears.
-- From 0.261.211, `ui_tests/test_v2_workflow_ask_ai.py` reaches the Review before saving step
+- From 0.261.213, `ui_tests/test_v2_workflow_ask_ai.py` reaches the Review before saving step
   in a browser: an **Ask AI** answer is applied, and the save goes through **Confirm and save**.
 
 ## Related

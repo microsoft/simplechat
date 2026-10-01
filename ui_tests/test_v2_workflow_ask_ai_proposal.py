@@ -1,8 +1,8 @@
 # test_v2_workflow_ask_ai_proposal.py
 """
 Real-component browser test for Ask AI on a workflow proposal's draft (Phase 3c).
-Version: 0.261.211
-Implemented in: 0.261.211
+Version: 0.261.213
+Implemented in: 0.261.213
 Refs: microsoft/simplechat#1548
 
 Phase 4's proposal card opens the workflow editor on the proposal's draft through Edit. Ask AI

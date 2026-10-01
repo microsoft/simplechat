@@ -4,7 +4,7 @@ Implemented in version: **0.261.200**.
 
 Document and tag references in the plan editor added in version: **0.261.201**.
 
-Options for the workflow editor's **Ask AI** tab added in version: **0.261.211**.
+Options for the workflow editor's **Ask AI** tab added in version: **0.261.213**.
 
 Application version tracking: `application\single_app\config.py`.
 
@@ -47,7 +47,7 @@ them for the person asking as the request arrives, adds them to that revision's 
 exactly once, and stores them on the user turn so the thread can show them. The other three
 editors don't offer them. See **Document and tag references in the plan editor** below.
 
-From version **0.261.211**, the V2 workflow editor's **Ask AI** tab runs on the same thread. It
+From version **0.261.213**, the V2 workflow editor's **Ask AI** tab runs on the same thread. It
 needed a few things the four editors above don't, such as counting in code points and keeping its
 thread while the editor is open. Each one is an option that's off by default, so the four editors
 are unchanged. See **Options for the workflow editor** below, and
@@ -85,7 +85,7 @@ A thread is keyed by what it edits:
 - `block:<conversation>:<kind>:<message>:<index>` for a diagram or chart;
 - `image:<conversation>:<message>` for an image;
 - `plan:<conversation>:<turn>` for a plan;
-- from 0.261.211, `workflow:personal:<workflow>` for a saved personal workflow, or
+- from 0.261.213, `workflow:personal:<workflow>` for a saved personal workflow, or
   `workflow:new:<id>` for a new or proposal draft, with an id made when the workflow editor opens.
   These threads use the conversation id `workflow-editor`, because the workflow editor isn't part
   of a chat.
@@ -97,7 +97,7 @@ starts every thread empty.
 The store drops threads nobody needs. When you use an editor, threads from other conversations
 with nothing running, no failed or cancelled turn and no unsent text are dropped. Past 50 threads,
 the least recently used go too. A thread with a request in flight is never dropped, because its
-answer still has to land. From 0.261.211, a thread an open editor holds is never dropped either,
+answer still has to land. From 0.261.213, a thread an open editor holds is never dropped either,
 and using it doesn't drop other conversations' threads. See **Held threads** below.
 
 ### Restricted input
@@ -116,7 +116,7 @@ all the plan route accepts: its search scope sets `workspacesEnabled: false`, wh
 `searchContextCandidates` (as `includeWorkspaces`) and `DocumentPickerPopover` honour. The main
 composer and the orchestration question card don't pass `restricted`, so they're unchanged.
 
-From 0.261.211 the workflow editor's **Ask AI** tab passes `allowContext` with
+From 0.261.213 the workflow editor's **Ask AI** tab passes `allowContext` with
 `contextDocumentsOnly`, so its input offers documents only, without tags, because the workflow
 assist route refuses tags.
 
@@ -247,7 +247,7 @@ Every editor accepts up to 2,000 characters, which matches the server:
 | Diagram and chart | `MAX_INSTRUCTION_LENGTH` in `functions_block_revision_assist.py` |
 | Image | `MAX_INSTRUCTION_LENGTH` in `functions_message_image_revisions.py` |
 | Plan | `EDIT_INSTRUCTION_LIMIT` in `functions_orchestration_plan_revisions.py` |
-| Workflow (**Ask AI**, from 0.261.211) | `ASSIST_INSTRUCTION_MAX_LENGTH` in `functions_workflow_assist.py`, counted in code points |
+| Workflow (**Ask AI**, from 0.261.213) | `ASSIST_INSTRUCTION_MAX_LENGTH` in `functions_workflow_assist.py`, counted in code points |
 
 The counter turns red past the limit and says how many characters to remove. The send button stays
 off until the message fits. A functional test fails if either side changes without the other; for
@@ -422,7 +422,7 @@ makes a document readable, and a document a workflow created is referenced like 
 
 ### Options for the workflow editor
 
-Added in **0.261.211** (#1548). The V2 workflow editor's **Ask AI** tab runs on this thread. Its
+Added in **0.261.213** (#1548). The V2 workflow editor's **Ask AI** tab runs on this thread. Its
 route counts characters differently, its server writes nothing, and the editor can open from a
 chat, so it needed a few options the other editors don't use. Each one is off by default, and the
 diagram, chart, image and plan editors don't pass any of them.
@@ -528,7 +528,7 @@ Added for document and tag references in 0.261.201:
   `application/v2_ui/src/lib/contextMentions.ts`, `assistThread.ts`, `orchestration.ts`,
   `orchestrationController.ts` and `planSubmissionIds.ts`.
 
-Added for the workflow editor's **Ask AI** tab in 0.261.211:
+Added for the workflow editor's **Ask AI** tab in 0.261.213:
 
 - `application/v2_ui/src/lib/codePoints.ts` (new): code point length and a prefix that never
   splits a surrogate pair.
@@ -624,7 +624,7 @@ In **Ask planner**, while the `#` list is open:
 | `functional_tests/test_assist_reference_canonicalization.py` | The server's canonical form against `fixtures/plan_reference_canonicalization.json`, the request identity it gives, `references` allowed only on `ask`, and the bounded chips and notice on stored turns. |
 | `functional_tests/test_v2_plan_editor_references.py` | Only the plan editor offers references, documents and tags only, canonical references on the request, the browser's limits, chips as text, chips never lost, Escape, and no remote assets. It runs `test_v2_plan_references_logic.ts`, which checks the browser's canonical form against the same fixture, the submission ids a changed selection goes out under, and the notice text. |
 | `ui_tests/test_v2_plan_editor_references.py` | In a browser with stubbed routes: `#` by keyboard to a chip, a chip in the thread and a plan that reads it; **Add context** with group documents and tags, and Escape keeping the editor open; a removed chip not sent; the refusal with **Edit and resend**; chips coming back; titles rendered as text; a lost reply retried under the same id; the main composer and question card keeping their tools; and no `#` in the diagram, chart and image editors. |
-| `functional_tests/test_v2_workflow_ask_ai.py` | The workflow editor's options, from 0.261.211: each defaults to off, and the diagram, chart, image and plan editors pass none of them. The tab's limit matches `ASSIST_INSTRUCTION_MAX_LENGTH` and is counted in code points. It runs `test_v2_workflow_ask_ai_logic.ts`, which checks the limit in code points against the default count in UTF-16 units, a quick action sent as its own message with the input left alone, and held and quiet threads: a held thread, a released one whose answer lands late, one held twice, and pruning as before once nothing holds it. |
+| `functional_tests/test_v2_workflow_ask_ai.py` | The workflow editor's options, from 0.261.213: each defaults to off, and the diagram, chart, image and plan editors pass none of them. The tab's limit matches `ASSIST_INSTRUCTION_MAX_LENGTH` and is counted in code points. It runs `test_v2_workflow_ask_ai_logic.ts`, which checks the limit in code points against the default count in UTF-16 units, a quick action sent as its own message with the input left alone, and held and quiet threads: a held thread, a released one whose answer lands late, one held twice, and pruning as before once nothing holds it. |
 | `ui_tests/test_v2_workflow_ask_ai.py` and `ui_tests/test_v2_workflow_ask_ai_proposal.py` | The workflow **Ask AI** tab in a browser, including the limit in code points, a `#` list with documents only, Escape closing only that list or the picker, the cancelled wording and quick actions. The proposal file opens the workflow editor from a chat with an idle image thread through the proposal card's **Edit**, sends a turn and closes the editor. The image thread is still there, and once the editor has let go the chat prunes as before. |
 
 ### Known limitations
@@ -639,7 +639,7 @@ In **Ask planner**, while the `#` list is open:
 - Threads belong to one browser tab. Another tab, or a reload, doesn't see a request in flight.
   Its stored result appears there when the conversation is reloaded, or through the live update in
   a shared conversation.
-- `#` references are offered only in **Ask planner** and, from 0.261.211, the workflow editor's
+- `#` references are offered only in **Ask planner** and, from 0.261.213, the workflow editor's
   **Ask AI** tab, which offers documents only. The diagram, chart and image editors don't offer
   them.
 - A planner reply that changes nothing doesn't keep the documents and tags you sent. The chips go

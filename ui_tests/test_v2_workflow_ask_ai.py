@@ -1,8 +1,8 @@
 # test_v2_workflow_ask_ai.py
 """
 Offline real-bundle browser regressions for the workflow editor's Ask AI tab (Phase 3c).
-Version: 0.261.211
-Implemented in: 0.261.211
+Version: 0.261.213
+Implemented in: 0.261.213
 Refs: microsoft/simplechat#1548
 
 Covers the "Done when" instruction end to end (highlights, Previously, Undo this change, a single

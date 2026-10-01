@@ -2,8 +2,8 @@
 // Behavioural checks for the workflow editor's Ask AI tab: the request it builds, the answer it
 // accepts, the failures it explains, and how an answer is laid over the draft before it applies.
 //
-// Version: 0.261.211
-// Implemented in: 0.261.211
+// Version: 0.261.213
+// Implemented in: 0.261.213
 //
 // The V2 interface has no unit test runner, so this follows test_v2_workflow_change_tracking_logic.ts:
 // bundled with the esbuild Vite already brings in, run under node by test_v2_workflow_ask_ai.py,

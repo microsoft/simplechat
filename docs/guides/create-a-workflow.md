@@ -411,7 +411,7 @@ personal and group workflows, in every format.
 ### See what changed
 
 Each changed field is framed and labeled **Edited**. Changes made by AI assist
-are framed in blue and labeled **AI assist** instead. From **0.261.211**,
+are framed in blue and labeled **AI assist** instead. From **0.261.213**,
 [**Ask AI**](#ask-ai-to-change-a-workflow) and **Draft with AI** make them.
 
 - **Previously** shows the value the field had when you opened the editor.
@@ -465,7 +465,7 @@ they can only be discarded together, with **Cancel**.
 
 ## Ask AI to change a workflow
 
-Starting in **0.261.211**, the V2 editor's **Ask AI** tab changes a personal
+Starting in **0.261.213**, the V2 editor's **Ask AI** tab changes a personal
 workflow from a plain-language request, such as "run this at 7 AM on weekdays
 and only alert me when something is urgent". Use it when you know what you want
 the workflow to do but not which fields hold it, or to make the same kind of
