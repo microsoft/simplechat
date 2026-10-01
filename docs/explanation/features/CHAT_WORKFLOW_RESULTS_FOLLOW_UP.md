@@ -589,7 +589,7 @@ warning level, and closed reasons at information level.
 | `route_backend_conversations.py` | Conversation search skips its cache for matches that use a workflow result, and the retry and edit routes refuse Follow up turns. |
 | `route_backend_conversation_export.py` | Single-message exports check both result lineages. |
 | `functions_orchestration_context.py` | Orchestration history skips workflow-result answers. |
-| `functions_orchestration_memory.py` | `conversation_is_private`, moved here from `functions_orchestration_workflow_context.py`, which now imports it from here, so saved analysis and Follow up can check whether a chat is private without an import cycle. |
+| `functions_orchestration_memory.py` | `conversation_is_private`, moved here unchanged from `functions_orchestration_workflow_context.py`, which now imports it from here. Saved analysis and Follow up import it from here too, so they no longer import the planning context, whose imports reach back to saved analysis and closed the import cycle CodeQL reported. |
 | `functions_settings.py`, `admin_settings_fields.py`, `route_frontend_admin_settings.py`, `templates/admin/_panes/workflow.html` | The setting, its guard, the gate and decorator, and its classic and V2 admin switches. |
 | `route_backend_v2.py` | The bootstrap's per-user flag. |
 | `application/v2_ui/src/...` | See [V2](#v2). |
