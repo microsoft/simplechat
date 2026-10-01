@@ -634,6 +634,25 @@ def test_the_new_failures_are_retried_only_by_the_user(modules):
     assert not registry.get_capability(WORKFLOW_RUN).get("retry_on_transient")
 
 
+def test_the_executor_never_retries_a_workflow_run_step_on_its_own(modules):
+    schema = importlib.import_module("functions_orchestration_schema")
+    registry = importlib.import_module("functions_orchestration_registry")
+    executor = importlib.import_module("functions_orchestration_executor")
+
+    def retried(capability_id, code):
+        result = {"status": schema.STEP_STATUS_FAILED, "failure": schema.build_failure(code)}
+        return executor._should_retry_transient({"capability_id": capability_id}, result, lambda: False)
+
+    codes = ("provider_timeout", "connection_failed", "provider_failed", "workflow_runtime_unavailable")
+    search_retried = retried(registry.CAPABILITY_DOCUMENT_SEARCH, "provider_timeout")
+    run_retried = {code: retried(WORKFLOW_RUN, code) for code in codes}
+
+    # A read-only search gets its one automatic retry after a temporary provider failure.
+    assert search_retried is True
+    # A failed start may already have queued a run, so only the user retries it.
+    assert run_retried == {code: False for code in codes}
+
+
 M365_STATES = (
     "awaiting_approval", "awaiting_sharing_approval", "awaiting_analysis_approval", "awaiting_run_as_approval",
     "awaiting_sign_in", "ready_to_resume", "resuming",
