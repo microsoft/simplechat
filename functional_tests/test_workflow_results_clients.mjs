@@ -368,12 +368,21 @@ function testRetryGuard() {
         // Masked on read: the question lost its selector, the answer kept only the flag.
         { id: 'masked-q', role: 'user', content: 'And before?', metadata: thread('t-2') },
         { id: 'masked-a', role: 'assistant', content: 'Unavailable', metadata: { ...thread('t-2'), workflow_result: { version: 'workflow-result-v1', available: false } } },
+        // No thread info, so only the message's own metadata can say it asks about a result.
+        { id: 'unthreaded-q', role: 'user', content: 'Why?', metadata: { workflow_result_context: context } },
+        { id: 'unthreaded-a', role: 'assistant', content: 'Because', metadata: { workflow_result: descriptor } },
+        { id: 'unthreaded-plain', role: 'user', content: 'Thanks', metadata: {} },
+        { id: 'bare', role: 'user', content: 'Ok' },
     ];
     assert.equal(client.turnAsksAboutWorkflowResult(messages, 'plain-q'), false);
     assert.equal(client.turnAsksAboutWorkflowResult(messages, 'plain-a'), false);
     assert.equal(client.turnAsksAboutWorkflowResult(messages, 'result-q'), true);
     assert.equal(client.turnAsksAboutWorkflowResult(messages, 'result-a'), true);
     assert.equal(client.turnAsksAboutWorkflowResult(messages, 'masked-q'), true, 'found through its thread');
+    assert.equal(client.turnAsksAboutWorkflowResult(messages, 'unthreaded-q'), true, 'found on the message itself');
+    assert.equal(client.turnAsksAboutWorkflowResult(messages, 'unthreaded-a'), true, 'found on the message itself');
+    assert.equal(client.turnAsksAboutWorkflowResult(messages, 'unthreaded-plain'), false);
+    assert.equal(client.turnAsksAboutWorkflowResult(messages, 'bare'), false);
     assert.equal(client.turnAsksAboutWorkflowResult(messages, 'missing'), false);
     assert.equal(client.messageAsksAboutWorkflowResult(undefined), false);
 }
