@@ -105,6 +105,8 @@ import { createPrompt } from '../../lib/workspaceApi';
 import { resolvePublicPromptForChat } from '../../lib/promptWorkbench';
 import { messageToPlainText } from '../../lib/messageText';
 import { ANALYSIS_CONTEXT_NOTICE } from '../../lib/savedAnalysis';
+import { WORKFLOW_RESULT_PLACEHOLDER } from '../../lib/workflowResults';
+import { WorkflowResultChip } from './WorkflowResultChip';
 import type { Json, PromptOption, WorkspaceRef } from '../../lib/types';
 import { rememberPromptValues } from '../../lib/promptVariableMemory';
 import {
@@ -163,10 +165,20 @@ export function Composer({ initialAgentSelection }: { initialAgentSelection?: st
     const {
         streaming, sendMessage, stopStreaming, activeConversationId,
         analysisResultContext, clearAnalysisResultContext,
+        workflowResultContext, workflowResultLaunch, clearWorkflowResultContext,
         composerImageReferences, consumeComposerImageReferences,
     } = useChatStore();
     const savedAnalysis = analysisResultContext?.conversation_id === activeConversationId
         ? analysisResultContext : null;
+    // A finished workflow run's stored result (phase 6a), bound to this chat. Opening names the
+    // moment Ask in chat is still reading the run for a new chat, when sending waits.
+    const workflowResult = workflowResultContext?.conversation_id === activeConversationId
+        ? workflowResultContext.descriptor : null;
+    const workflowResultOpening = Boolean(workflowResultLaunch) && !activeConversationId;
+    // Either kind of stored result answers the next question on its own: every other source,
+    // and orchestration, is off while one is selected.
+    const storedResult = savedAnalysis ?? workflowResult;
+    const answeringFromStoredResult = Boolean(storedResult) || workflowResultOpening;
     // Read for the built-in prompt variables ({{last_response}} and friends) and for the name
     // suggested when saving what is written as a prompt.
     const messages = useChatStore((state) => state.messages);
@@ -285,7 +297,7 @@ export function Composer({ initialAgentSelection }: { initialAgentSelection?: st
         agentSelection: initialAgentSelection,
     });
     useEffect(() => {
-        if (savedAnalysis) {
+        if (storedResult) {
             setOptions((current) => ({
                 ...current, documentSearch: false, webSearch: false, imageGeneration: false,
                 deepResearch: false, urlAccess: false,
@@ -293,7 +305,7 @@ export function Composer({ initialAgentSelection }: { initialAgentSelection?: st
             setDraft((current) => ({ ...current, contextItems: [] }));
             setPickerOpen(false);
         }
-    }, [savedAnalysis]);
+    }, [storedResult]);
 
     // A new picked/mentioned/uploaded source wins over a response that completes later.
     const sourceSelectionKey = JSON.stringify([
@@ -344,9 +356,9 @@ export function Composer({ initialAgentSelection }: { initialAgentSelection?: st
     const toggleOrchestration = () => {
         clearAnalysisResultContext();
         orchestrationChosen.current = true;
-        setOrchestrationOn((on) => savedAnalysis ? true : !on);
+        setOrchestrationOn((on) => answeringFromStoredResult ? true : !on);
     };
-    const orchestrating = orchestrationOn && orchestrationAvailable && !savedAnalysis;
+    const orchestrating = orchestrationOn && orchestrationAvailable && !answeringFromStoredResult;
 
     // The disclosure that hides the manual controls while orchestrating. Only reachable when the
     // administrator leaves them reachable; otherwise the planner owns every decision and there is
@@ -972,7 +984,7 @@ export function Composer({ initialAgentSelection }: { initialAgentSelection?: st
         ]);
 
     const submit = (allowUnfilled = false) => {
-        if (streaming || !canPost || uploadsBlocked) {
+        if (streaming || !canPost || uploadsBlocked || workflowResultOpening) {
             return;
         }
         if (orchestrating && orchestrationBlocked) {
@@ -1019,7 +1031,7 @@ export function Composer({ initialAgentSelection }: { initialAgentSelection?: st
         // Estimated against the whole message: a prompt that asks for every row is a long run
         // whether the request came from the card or from the box.
         const estimate = estimateLargeTabularRun(outgoing.message, tabularRunSettings);
-        if (!savedAnalysis && estimate.shouldConfirm) {
+        if (!storedResult && estimate.shouldConfirm) {
             setLargeRun({ estimate, outgoing, draftKey: outgoingDraftKey() });
             return;
         }
@@ -1487,6 +1499,15 @@ export function Composer({ initialAgentSelection }: { initialAgentSelection?: st
                             ><X size={14} /></button>
                         </div>
                     )}
+                    {(workflowResult || workflowResultOpening) && (
+                        <WorkflowResultChip
+                            descriptor={workflowResult}
+                            onRemove={() => {
+                                clearWorkflowResultContext();
+                                textareaRef.current?.focus();
+                            }}
+                        />
+                    )}
                     {replyTo && (
                         <div className="mb-1 flex items-start gap-2 rounded-xl bg-surface-2 px-3 py-2">
                             <Reply size={13} className="mt-0.5 shrink-0 text-text-3" />
@@ -1518,7 +1539,7 @@ export function Composer({ initialAgentSelection }: { initialAgentSelection?: st
                         promptContext={promptContext()}
                         actionsRef={editorActionsRef}
                         showPromptWarning={showPromptWarning && promptReview.instance === promptInstance}
-                        submitDisabled={streaming || uploadsBlocked || (orchestrating && orchestrationBlocked)}
+                        submitDisabled={streaming || uploadsBlocked || workflowResultOpening || (orchestrating && orchestrationBlocked)}
                         promptReviewRequest={promptReview.instance === promptInstance ? promptReview.request : 0}
                         onSendWithUnfilled={() => submit(true)}
                         knowledgeAgent={buildSelectionFields({
@@ -1575,6 +1596,8 @@ export function Composer({ initialAgentSelection }: { initialAgentSelection?: st
                                     ? 'You do not have permission to write in this conversation'
                                     : savedAnalysis
                                       ? 'Ask about the saved analysis…'
+                                      : workflowResult || workflowResultOpening
+                                      ? WORKFLOW_RESULT_PLACEHOLDER
                                       : shared
                                       ? 'Message the group, or @mention a model or agent to ask the assistant…'
                                       : 'Send a message, or type # to add a document…'
@@ -1912,7 +1935,7 @@ export function Composer({ initialAgentSelection }: { initialAgentSelection?: st
                                 <button
                                     type="button"
                                     onClick={() => submit()}
-                                    disabled={(!text.trim() && !attachedPrompt) || !canPost || uploadsBlocked || (orchestrating && orchestrationBlocked)}
+                                    disabled={(!text.trim() && !attachedPrompt) || !canPost || uploadsBlocked || workflowResultOpening || (orchestrating && orchestrationBlocked)}
                                     aria-label={
                                         shared && !streaming
                                             ? 'Send to this conversation'

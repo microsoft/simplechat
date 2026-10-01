@@ -22,6 +22,7 @@ import { groupWorkspacePath } from './groupWorkspaceNavigation';
 import { requireWorkspaceId } from './workspaceContext';
 import { WORKFLOW_ALERT_SEVERITIES, type WorkflowAlertSeverity } from './workflowAlerts';
 import { WORKFLOW_LINK_PARAM, WORKFLOW_RUN_LINK_PARAM } from './workflowRunLink';
+import { isWorkflowResultIdentifier, isWorkflowResultReadableStatus } from './workflowResults';
 
 export const WORKFLOW_ALERT_NOTIFICATION_TYPE = 'workflow_priority_alert';
 
@@ -86,6 +87,8 @@ export interface WorkflowAlert {
     runnerType: string;
     agentName: string;
     runId: string | null;
+    /** The run's status when the alert was raised, lowercased. Empty when the alert names none. */
+    runStatus: string;
     scope: WorkflowAlertScope | null;
     links: WorkflowAlertLink[];
 }
@@ -376,6 +379,7 @@ export function readWorkflowAlert(raw: unknown): WorkflowAlert | null {
         runnerType: cap(oneLine(metadata.runner_type), 40),
         agentName,
         runId: safeId(metadata.run_id),
+        runStatus: cap(oneLine(metadata.status), 40).toLowerCase(),
         scope: readScope(metadata),
         links: readLinks(metadata, notification),
     };
@@ -530,15 +534,33 @@ export interface WorkflowAlertFollowUp {
     run: () => void | Promise<void>;
 }
 
+export interface WorkflowAlertFollowUpOptions {
+    /** The reader may ask about workflow results in chat: the bootstrap's per-user flag. */
+    enabled: boolean;
+    /** Open a chat about the run; the card passes the shared entry point. */
+    open: (workflowId: string, runId: string) => void;
+}
+
 /**
  * The follow-up chat action for an alert: phase 6a's Ask about this.
  *
- * Returns null until that phase adds the chip, and the card hides the button while it does.
- * When it lands this returns what the button needs, and nothing else in the card changes.
+ * Offered for a personal workflow's alert that names a run which had finished when the alert
+ * was raised, and only while the reader may ask about workflow results. A group alert, an
+ * alert without a run, and a failed or cancelled run get none. The chat reads the run again
+ * before anything is selected, so a result that changed or went away since is reported there.
  */
-export function workflowAlertFollowUpAction(alert: WorkflowAlert): WorkflowAlertFollowUp | null {
-    void alert;
-    return null;
+export function workflowAlertFollowUpAction(
+    alert: WorkflowAlert,
+    options?: WorkflowAlertFollowUpOptions,
+): WorkflowAlertFollowUp | null {
+    const { workflowId, runId } = alert;
+    if (!options?.enabled || alert.scope?.kind !== 'personal' ||
+        !isWorkflowResultIdentifier(workflowId) || !isWorkflowResultIdentifier(runId) ||
+        !isWorkflowResultReadableStatus(alert.runStatus)) {
+        return null;
+    }
+    const { open } = options;
+    return { label: 'Ask about this', run: () => open(workflowId, runId) };
 }
 
 /**

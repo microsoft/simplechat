@@ -442,6 +442,12 @@ from functions_saved_analysis import (
     sanitize_saved_analysis_messages,
     update_analysis_conversation,
 )
+from functions_workflow_result_followup import (
+    FollowUpServices,
+    run_workflow_result_follow_up,
+    workflow_result_request_precheck,
+)
+from functions_settings import is_chat_workflow_results_enabled_for_user
 from functions_simplechat_operations import (
     delete_generated_chat_artifact_for_current_user,
     derive_conversation_title_from_message,
@@ -2638,6 +2644,9 @@ def _sanitize_saved_analysis_history(messages, user_id=None):
         any((message.get('metadata') or {}).get(key) for key in (
             'saved_analysis', 'saved_analyses', 'analysis_result_contexts',
         ))
+        or any(key in (message.get('metadata') or {}) for key in (
+            'workflow_result', 'workflow_result_context', 'workflow_result_contexts',
+        ))
         for message in messages if isinstance(message, dict)
     ):
         return messages
@@ -2651,12 +2660,28 @@ def _sanitize_saved_analysis_history(messages, user_id=None):
                 if context not in contexts:
                     contexts.append(context)
         g.analysis_result_contexts = contexts
+        # An answer built on a workflow result passes that result's lineage to later answers.
+        workflow_contexts = list(getattr(g, 'workflow_result_contexts', []) or [])
+        for message in safe_messages:
+            metadata = message.get('metadata') or {}
+            if isinstance(metadata.get('workflow_result'), dict) and metadata['workflow_result'].get('available') is False:
+                continue
+            values = metadata.get('workflow_result_contexts')
+            for context in values if isinstance(values, list) else []:
+                if isinstance(context, dict) and context not in workflow_contexts:
+                    workflow_contexts.append(context)
+        if workflow_contexts:
+            g.workflow_result_contexts = workflow_contexts
     return safe_messages
 
 
 def _analysis_history_metadata():
     contexts = list(getattr(g, 'analysis_result_contexts', []) or []) if has_request_context() else []
-    return {'analysis_result_contexts': contexts} if contexts else {}
+    metadata = {'analysis_result_contexts': contexts} if contexts else {}
+    workflow_contexts = list(getattr(g, 'workflow_result_contexts', []) or []) if has_request_context() else []
+    if workflow_contexts:
+        metadata['workflow_result_contexts'] = workflow_contexts
+    return metadata
 
 
 class SavedAnalysisFollowupUnsupported(ValueError):
@@ -15863,6 +15888,37 @@ def register_route_backend_chats(bp):
                 'conversation_id': conversation_id, 'user_message_id': user_message_id,
             }, status
 
+    def execute_workflow_result_chat_request(data, publish_background_event=None, cancel_requested=None):
+        """Answer from a finished personal workflow run's stored result (functions_workflow_result_followup)."""
+        user_id = get_current_user_id()
+        settings = get_settings()
+        services = FollowUpServices(
+            user_id=user_id, settings=settings, messages=cosmos_messages_container,
+            user_roles=(session.get('user') or {}).get('roles', []),
+            user_info=get_current_user_info() or {},
+            conversation_id=getattr(g, 'conversation_id', None),
+            load_conversation=_load_or_create_analyze_conversation,
+            bind_conversation=lambda conversation_id: setattr(g, 'conversation_id', conversation_id),
+            invoke_reply=lambda messages, conversation_id, **options: _invoke_saved_analysis_chat_reply(
+                data, settings, user_id, conversation_id, messages, **options,
+            ),
+            check_chat_content=check_chat_content, reject_chat_submission=_reject_chat_submission,
+            attach_chat_check=attach_chat_check,
+            initialize_response_tracking=_initialize_assistant_response_tracking,
+            sanitize_history=_sanitize_saved_analysis_history, history_metadata=_analysis_history_metadata,
+            build_history_segments=build_conversation_history_segments,
+            persist_assistant=_persist_screened_assistant, set_initial_title=_set_initial_conversation_title,
+            update_conversation=update_analysis_conversation,
+            invalidate_conversation=invalidate_conversation_cache_for_item,
+            authorize_analysis_context=lambda context: load_saved_analysis(user_id, context),
+            log_chat_activity=log_chat_activity, log_token_usage=log_token_usage,
+            serialize=make_json_serializable, gate=is_chat_workflow_results_enabled_for_user,
+            cancel_errors=(AgentExecutionCancelled,), unsupported_errors=(SavedAnalysisFollowupUnsupported,),
+        )
+        return run_workflow_result_follow_up(
+            services, data, publish_background_event=publish_background_event, cancel_requested=cancel_requested,
+        )
+
     def execute_document_action_chat_request(
         data=None,
         publish_background_event=None,
@@ -15876,6 +15932,10 @@ def register_route_backend_chats(bp):
             request_correlation_id
         )
         data = data if isinstance(data, dict) else (request.get_json() or {})
+        if data.get('workflow_result_context') is not None:
+            return execute_workflow_result_chat_request(
+                data, publish_background_event=publish_background_event, cancel_requested=cancel_requested,
+            )
         if data.get('analysis_result_context') is not None:
             return execute_saved_analysis_chat_request(
                 data, publish_background_event=publish_background_event, cancel_requested=cancel_requested,
@@ -16949,6 +17009,12 @@ def register_route_backend_chats(bp):
             return jsonify({'error': 'User not authenticated'}), 401
 
         data = request.get_json() or {}
+        if data.get('workflow_result_context') is not None:
+            workflow_result_refusal = workflow_result_request_precheck(
+                data, get_settings(), (session.get('user') or {}).get('roles', []),
+            )
+            if workflow_result_refusal is not None:
+                return jsonify(workflow_result_refusal[0]), workflow_result_refusal[1]
         conversation_id = getattr(g, 'conversation_id', None) or data.get('conversation_id')
         if conversation_id is not None:
             conversation_id = str(conversation_id).strip() or None
@@ -16960,7 +17026,8 @@ def register_route_backend_chats(bp):
         analysis_message_id = (
             f'{conversation_id}_assistant_{uuid.uuid4().hex}'
             if requested_document_action.get('type') == DOCUMENT_ACTION_TYPE_ANALYZE
-            and data.get('analysis_result_context') is None else None
+            and data.get('analysis_result_context') is None
+            and data.get('workflow_result_context') is None else None
         )
         stream_session = CHAT_STREAM_REGISTRY.start_session(
             user_id, conversation_id, **({'analysis_message_id': analysis_message_id} if analysis_message_id else {}),
@@ -17047,6 +17114,12 @@ def register_route_backend_chats(bp):
             return jsonify({'error': 'User not authenticated'}), 401
 
         data = request.get_json() or {}
+        if data.get('workflow_result_context') is not None:
+            workflow_result_refusal = workflow_result_request_precheck(
+                data, get_settings(), (session.get('user') or {}).get('roles', []),
+            )
+            if workflow_result_refusal is not None:
+                return jsonify(workflow_result_refusal[0]), workflow_result_refusal[1]
         conversation_id = getattr(g, 'conversation_id', None) or data.get('conversation_id')
         if conversation_id is not None:
             conversation_id = str(conversation_id).strip() or None
@@ -17055,7 +17128,8 @@ def register_route_backend_chats(bp):
         data['conversation_id'] = conversation_id
         g.conversation_id = conversation_id
         analysis_message_id = (
-            f'{conversation_id}_assistant_{uuid.uuid4().hex}' if data.get('analysis_result_context') is None else None
+            f'{conversation_id}_assistant_{uuid.uuid4().hex}'
+            if data.get('analysis_result_context') is None and data.get('workflow_result_context') is None else None
         )
         stream_session = CHAT_STREAM_REGISTRY.start_session(
             user_id, conversation_id, **({'analysis_message_id': analysis_message_id} if analysis_message_id else {}),
@@ -17385,6 +17459,12 @@ def register_route_backend_chats(bp):
                 return jsonify({
                     'error': 'User not authenticated'
                 }), 401
+
+            if data.get('workflow_result_context') is not None:
+                payload, status = execute_workflow_result_chat_request(
+                    data, publish_background_event=publish_background_event,
+                )
+                return jsonify(make_json_serializable(payload)), status
 
             if data.get('analysis_result_context') is not None:
                 payload, status = execute_saved_analysis_chat_request(
@@ -21757,6 +21837,11 @@ def register_route_backend_chats(bp):
             )
             return jsonify({'error': 'Invalid request payload'}), 400
 
+        if data.get('workflow_result_context') is not None:
+            workflow_result_refusal = workflow_result_request_precheck(data, settings, current_user_roles)
+            if workflow_result_refusal is not None:
+                return jsonify(workflow_result_refusal[0]), workflow_result_refusal[1]
+
         retry_user_message_id = data.get('retry_user_message_id') or data.get('edited_user_message_id')
         retry_thread_id = data.get('retry_thread_id')
         retry_thread_attempt = data.get('retry_thread_attempt')
@@ -21796,7 +21881,8 @@ def register_route_backend_chats(bp):
             return Response(f"data: {json.dumps(payload)}\n\n", mimetype="text/event-stream")
         finalized_conversation_id = requested_conversation_id or (
             _load_or_create_analyze_conversation(user_id)['id']
-            if data.get('analysis_result_context') is not None else str(uuid.uuid4())
+            if data.get('analysis_result_context') is not None or data.get('workflow_result_context') is not None
+            else str(uuid.uuid4())
         )
         is_new_stream_conversation = requested_conversation_id is None
         data['conversation_id'] = finalized_conversation_id
@@ -21936,6 +22022,31 @@ def register_route_backend_chats(bp):
                     exceptionTraceback=True,
                 )
                 yield build_stream_error_event()
+
+        if data.get('workflow_result_context') is not None:
+            def generate_workflow_result_response(publish_background_event=None):
+                g.conversation_id = finalized_conversation_id
+                payload, status = execute_workflow_result_chat_request(
+                    data, publish_background_event=publish_background_event,
+                    cancel_requested=stream_session.is_cancel_requested,
+                )
+                if payload.get('canceled'):
+                    yield _build_stream_cancel_event(
+                        finalized_conversation_id, user_message_id=payload.get('user_message_id'),
+                    )
+                elif status >= 400:
+                    yield build_stream_error_event(
+                        payload['error'], conversation_id=finalized_conversation_id,
+                        user_message_id=payload.get('user_message_id'),
+                        warning_type=payload.get('warning_type'),
+                        error_code=payload.get('code'), status_code=status,
+                    )
+                else:
+                    yield f"data: {json.dumps(normalize_terminal_chat_payload(payload))}\n\n"
+
+            return build_background_stream_response(
+                generate_workflow_result_response, stream_session=stream_session,
+            )
 
         if data.get('analysis_result_context') is not None:
             def generate_saved_analysis_response(publish_background_event=None):

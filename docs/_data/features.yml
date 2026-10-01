@@ -443,6 +443,24 @@ workflow-ai-assistant:
   reference:
     - title: "Workflow settings"
       url: /admin/workflow/
+workflow-results-in-chat:
+  name: "Workflow results in chat"
+  area: "Chat and retrieval"
+  audience: "End users"
+  summary: "Answers questions in chat from the stored result of one of your finished personal workflow runs, without re-running the workflow."
+  why: "Use this when a workflow, such as a weekly digest, has already done the work and you want to ask about what it found. The answer uses only that run's saved output, stays in your private chats, and says which run it came from. It stops showing in V2 if the run is deleted or you lose access to its sources."
+  default_state: "Disabled"
+  admin_tab: workflow
+  setting_keys:
+    - enable_chat_workflow_results
+  guides:
+    - title: "Ask about workflow results"
+      url: /guides/ask-about-workflow-results/
+  reference:
+    - title: "Workflow settings"
+      url: /admin/workflow/
+    - title: "Chat interface controls"
+      url: /reference/chat-controls/
 core-actions:
   name: "Core actions"
   area: "Agents and actions"

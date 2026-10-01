@@ -120,6 +120,10 @@ links the alert carries. From there you can:
 
 - Select **Open workflow** to go to the workflow in its personal or group workspace,
   with the run that raised the alert open. This marks the alert read.
+- Select **Ask about this**, on an alert about a completed run of one of your
+  personal workflows, to ask chat about that run's stored result without running
+  the workflow again. The alert closes and stays unread. See
+  [Ask about workflow results]({{ '/guides/ask-about-workflow-results/' | relative_url }}).
 - Select **Mark read** or **Dismiss**. When the notice stands for several alerts
   from one workflow, both act on all of them.
 - Select **Next** to step through the other waiting alerts, or **Mark all read** to
@@ -154,4 +158,5 @@ Unread notifications lose unread styling after being marked read. Filters and se
 
 - [Update profile preferences]({{ '/guides/update-profile-preferences/' | relative_url }})
 - [Trigger a workflow]({{ '/guides/trigger-a-workflow/' | relative_url }})
+- [Ask about workflow results]({{ '/guides/ask-about-workflow-results/' | relative_url }})
 - [Safety settings]({{ '/admin/security/' | relative_url }})
