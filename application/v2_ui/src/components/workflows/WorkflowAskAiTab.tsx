@@ -125,17 +125,19 @@ function UndoResult({ undo, state, confirming }: {
 }
 
 /** One answer's card: the reply, then what it did to the draft. */
-function WorkflowAssistTurnCard({ turnId, record, assist }: {
+function WorkflowAssistTurnCard({ turnId, record, assist, reloading }: {
     turnId: string;
     record: WorkflowAssistTurnRecord;
     assist: WorkflowAssist;
+    /** The saved workflow is reloading, so the draft this card would undo in is locked. */
+    reloading: boolean;
 }) {
     const state = workflowAssistTurnState(turnId, record, assist.historyView, assist.epoch);
     const undoRef = useRef<HTMLDivElement>(null);
     const seen = useRef({ sequence: record.undoSequence, state });
     const pendingAction = assist.historyView.pending?.action;
     const confirmingUndo = pendingAction?.origin === 'restore' && pendingAction.turnId === turnId;
-    const locked = Boolean(assist.pending) || !assist.available;
+    const locked = Boolean(assist.pending) || !assist.available || reloading;
     const jumpable = state === 'applied' || state === 'partly_undone';
     const undoable = state === 'applied' || state === 'earlier';
     const shortInstruction = record.instruction.length > 60 ? `${record.instruction.slice(0, 59).trimEnd()}…` : record.instruction;
@@ -256,7 +258,7 @@ export function WorkflowAskAiTab({ assist, inputId, onReload }: {
         if (!record || record.threadKey !== thread.key) {
             return <p className="whitespace-pre-wrap break-words">{exchange.reply}</p>;
         }
-        return <WorkflowAssistTurnCard turnId={exchange.id} record={record} assist={assist} />;
+        return <WorkflowAssistTurnCard turnId={exchange.id} record={record} assist={assist} reloading={reloadStep === 'loading'} />;
     };
 
     return (

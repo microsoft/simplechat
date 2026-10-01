@@ -27,6 +27,7 @@ import {
 import {
     blankDraft,
     holdAssistThread,
+    MAX_THREADS,
     newThread,
     pruneThreads,
     useAssistThreadStore,
@@ -848,6 +849,14 @@ async function storeChecks() {
     const quiet = pruneThreads({ w: newThread(CONVERSATION, 1), [image]: { ...newThread('conv-1', 1), exchanges: [doneExchange('x')] } },
         'w', CONVERSATION, undefined, new Set(['w']));
     check('touching a quiet thread sweeps nothing', Boolean(quiet[image]));
+    const heldTouch = pruneThreads({ w: newThread(CONVERSATION, 1), [image]: { ...newThread('conv-1', 1), exchanges: [doneExchange('x')] } },
+        'w', CONVERSATION, new Set(['w']));
+    check('touching a held thread sweeps nothing, even one not yet marked quiet', Boolean(heldTouch[image]));
+    const crowd: Record<string, AssistThreadRecord> = {};
+    for (let index = 0; index <= MAX_THREADS; index += 1) crowd[`t${index}`] = newThread(CONVERSATION, index + 1);
+    const capped = pruneThreads(crowd, `t${MAX_THREADS}`, CONVERSATION, new Set(['t0']));
+    check('past the cap, the least recently touched thread is kept while held, and the next oldest goes',
+        Boolean(capped.t0) && !capped.t1 && Object.keys(capped).length === MAX_THREADS);
     idleImage();
     const release = holdAssistThread('workflow:new:held');
     put('workflow:new:held', CONVERSATION, (record) => ({ ...record, draft: draftOf('typing') }));
@@ -868,6 +877,15 @@ async function storeChecks() {
     check('the image editor still sweeps the idle released workflow thread', !threadOf('workflow:new:held') && Boolean(threadOf(image)));
     put('workflow:new:held', CONVERSATION, (record) => ({ ...record, draft: draftOf('back') }));
     check('once swept, the workflow thread is forgotten as quiet', !threadOf(image));
+    // An image request that finishes after the user moved to the workflow editor sweeps from the
+    // image's conversation. The idle workflow thread the open editor holds must survive it.
+    store.resetThreads();
+    const releaseKept = holdAssistThread('workflow:new:kept');
+    put('workflow:new:kept', CONVERSATION, (record) => ({ ...record, exchanges: [doneExchange('kept')], draft: blankDraft() }));
+    idleImage();
+    check('another conversation\'s sweep never drops an idle thread an editor holds',
+        Boolean(threadOf('workflow:new:kept')) && Boolean(threadOf(image)));
+    releaseKept();
     store.resetThreads();
 }
 

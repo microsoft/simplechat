@@ -320,19 +320,31 @@ export function WorkflowEditorDialog({
         }
         setJump({ change, retry: true, sequence: ++focusSequence.current });
     };
+    // Reloading the saved workflow locks the draft it is about to discard. Close stays available.
+    const [reloading, setReloading] = useState(false);
     const assist = useWorkflowAssist({
         available: askAiAvailable,
         history,
         options,
         workflowId: original?.id || null,
-        blocked: saving || Boolean(history.pending) || Boolean(authoring.pending) || interactionDisabled,
+        blocked: saving || Boolean(history.pending) || Boolean(authoring.pending) || interactionDisabled || reloading,
         onJump: jumpToChange,
     });
     // While Ask AI works, the editor is locked so its answer applies to the draft it was sent with.
     const assistPending = Boolean(assist.pending);
+    const draftLocked = assistPending || reloading;
     const historyBlockedReason = saving ? 'Workflow history is unavailable while saving.'
         : authoring.pending || history.pending ? 'Finish or cancel the current confirmation first.'
-            : assistPending ? 'Wait for Ask AI to finish, or cancel it.' : '';
+            : assistPending ? 'Wait for Ask AI to finish, or cancel it.'
+                : reloading ? 'Wait for the saved workflow to reload.' : '';
+    const reloadSaved = onReload ? async () => {
+        setReloading(true);
+        try {
+            await onReload();
+        } finally {
+            setReloading(false);
+        }
+    } : undefined;
 
     useEffect(() => {
         if (!panelFocus) return;
@@ -488,7 +500,7 @@ export function WorkflowEditorDialog({
             return;
         }
         history.session.closeGroup();
-        if (saving || history.session.saving || readOnly || authoring.pending || history.session.getSnapshot().pending || assistPending) {
+        if (saving || history.session.saving || readOnly || authoring.pending || history.session.getSnapshot().pending || draftLocked) {
             return;
         }
         const savingDraft = history.session.draft;
@@ -598,7 +610,7 @@ export function WorkflowEditorDialog({
                                 {readOnly ? 'Close' : 'Cancel'}
                             </GlassButton>
                             {!readOnly ? (
-                                <GlassButton type="button" variant="primary" disabled={interactionDisabled || saving || Boolean(authoring.pending) || Boolean(history.pending) || assistPending} onClick={() => void save()}>
+                                <GlassButton type="button" variant="primary" disabled={interactionDisabled || saving || Boolean(authoring.pending) || Boolean(history.pending) || draftLocked} onClick={() => void save()}>
                                     {saving ? 'Saving…' : 'Save workflow'}
                                 </GlassButton>
                             ) : null}
@@ -610,7 +622,7 @@ export function WorkflowEditorDialog({
                     onKeyDownCapture={(event) => {
                         // Workflow undo and redo wait for Ask AI too.
                         const key = event.key.toLowerCase();
-                        if (assistPending && (event.ctrlKey || event.metaKey) && (key === 'z' || key === 'y')) event.preventDefault();
+                        if (draftLocked && (event.ctrlKey || event.metaKey) && (key === 'z' || key === 'y')) event.preventDefault();
                     }}>
                 {assist.pending ? <WorkflowAssistLockBanner pending={assist.pending} onCancel={assist.cancel} /> : null}
                 <WorkflowHistoryBoundary session={history.session}>
@@ -675,8 +687,8 @@ export function WorkflowEditorDialog({
                         </p>
                     </div> : null}
                     {!accessLost ? <div ref={authoringRef} className="min-w-0">
-                    <fieldset disabled={readOnly || saving || Boolean(history.pending) || Boolean(authoring.pending) || assistPending}
-                        aria-busy={assistPending || undefined} className="min-w-0 space-y-5">
+                    <fieldset disabled={readOnly || saving || Boolean(history.pending) || Boolean(authoring.pending) || draftLocked}
+                        aria-busy={draftLocked || undefined} className="min-w-0 space-y-5">
                         <section className="space-y-4 rounded-2xl border border-edge p-4" aria-label="Workflow basics">
                             <div className="grid gap-3 md:grid-cols-2">
                                 <WorkflowChangedField changeKey="name">
@@ -920,7 +932,7 @@ export function WorkflowEditorDialog({
                                         }} onEdit={authoring.execute} renderTask={renderStructuredTask}
                                         positions={authoring.positions} setPositions={authoring.setPositions}
                                         collapsed={authoring.collapsed} setCollapsed={authoring.setCollapsed}
-                                        focusRequest={authoring.focusRequest} disabled={readOnly || saving || Boolean(history.pending) || Boolean(authoring.pending) || assistPending} onAccessLost={onAccessLost} />
+                                        focusRequest={authoring.focusRequest} disabled={readOnly || saving || Boolean(history.pending) || Boolean(authoring.pending) || draftLocked} onAccessLost={onAccessLost} />
                                 </> : <WorkflowStructuredList workflow={draft} options={options} scope={scope}
                                     onEdit={authoring.execute} selectedId={authoring.selectedId}
                                     onSelect={(id) => {
@@ -973,7 +985,7 @@ export function WorkflowEditorDialog({
                         tabs={[{
                             id: 'changes', label: 'Changes',
                             content: <WorkflowChangesTab confirming={confirmingSave}
-                                disabled={saving || Boolean(authoring.pending) || Boolean(history.pending) || assistPending}
+                                disabled={saving || Boolean(authoring.pending) || Boolean(history.pending) || draftLocked}
                                 onConfirmSave={() => void save(true)}
                                 onKeepReviewing={() => {
                                     setConfirmingSave(false);
@@ -982,7 +994,7 @@ export function WorkflowEditorDialog({
                                 onJump={jumpToChange} confirmHeadingRef={confirmHeadingRef} listHeadingRef={changesHeadingRef} />,
                         }, ...(askAiAvailable ? [{
                             id: 'askai', label: 'Ask AI', panelClassName: 'flex flex-col overflow-hidden',
-                            content: <WorkflowAskAiTab assist={assist} inputId={askAiInputId} onReload={original ? onReload : undefined} />,
+                            content: <WorkflowAskAiTab assist={assist} inputId={askAiInputId} onReload={original ? reloadSaved : undefined} />,
                         }] : [])]} />
                 ) : null}
                 {/* Outside the editor pane, which narrow screens hide while the side panel is open. */}

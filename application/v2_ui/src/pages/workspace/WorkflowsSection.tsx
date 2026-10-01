@@ -89,6 +89,9 @@ export function WorkflowsSection({
     const [editing, setEditing] = useState<WorkflowDefinition | null | 'new'>(null);
     // Reloading the workflow opens a fresh editor on the saved version.
     const [editorInstance, setEditorInstance] = useState(0);
+    // Opening, closing or saving an editor supersedes a reload still loading, so it cannot
+    // reopen a closed editor or replace another workflow's.
+    const editorRequest = useRef(0);
     const [viewingFlow, setViewingFlow] = useState<{ workflowId: string; scopeKey: string } | null>(null);
     const [options, setOptions] = useState<WorkflowEditorOptions | null>(null);
     const [optionsLoading, setOptionsLoading] = useState(false);
@@ -130,6 +133,7 @@ export function WorkflowsSection({
     }, [items, query]);
 
     const openEditor = useCallback(async (workflow: WorkflowDefinition | 'new') => {
+        editorRequest.current += 1;
         if (interactionDisabled || (workflow === 'new' && !canCreate)) {
             setOptionsError('You cannot create workflows with the current workspace access.');
             return;
@@ -155,10 +159,12 @@ export function WorkflowsSection({
     const reloadEditing = async () => {
         if (!editing || editing === 'new' || !editing.id) return;
         const workflowId = editing.id;
+        const request = ++editorRequest.current;
         const [workflows, freshOptions] = await Promise.all([
             fetchScopedWorkflows(scope),
             fetchWorkflowEditorOptions(scope),
         ]);
+        if (request !== editorRequest.current) return;
         setItems(workflows);
         setOptions(freshOptions);
         const fresh = workflows.find((item) => item.id === workflowId);
@@ -456,10 +462,12 @@ export function WorkflowsSection({
                     onDirtyChange={setEditorDirty}
                     onReload={editing === 'new' ? undefined : reloadEditing}
                     onClose={() => {
+                        editorRequest.current += 1;
                         setEditing(null);
                         setEditorDirty(false);
                     }}
                     onSaved={(workflow) => {
+                        editorRequest.current += 1;
                         const index = items.findIndex((item) => item.id === workflow.id);
                         setItems(index < 0
                             ? [workflow, ...items]

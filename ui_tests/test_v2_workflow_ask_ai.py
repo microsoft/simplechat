@@ -9,9 +9,10 @@ Covers the "Done when" instruction end to end (highlights, Previously, Undo this
 field Revert and Confirm and save, with the Run as case), the three `#` placement outcomes and a
 document read only as context, immediate send with the editor lock, its timer, Cancel and Retry,
 the stale-draft guard, the request each kind of draft sends, code-point counting, Undo with a key
-that changed later, every status the assist route answers, hostile model text, Jump to on a task
-field and on a flow block, where the tab is hidden, the keyboard, a narrow screen, Draft with AI,
-the quick actions, and a card from an earlier editing session.
+that changed later, every status the assist route answers, a reload after a conflict that is closed,
+superseded or overtaken by a save while it loads or that fails, hostile model text, Jump to on a
+task field and on a flow block, where the tab is hidden, the keyboard, a narrow screen, Draft with
+AI, the quick actions, and a card from an earlier editing session.
 
 `POST /api/user/workflows/assist` is answered in the page by 3b's real pipeline with a scripted
 model (see `fixtures/workflow_ask_ai.py`), so no live model, workflow run, approval or Azure
@@ -25,6 +26,7 @@ import json
 import re
 import sys
 from pathlib import Path
+from urllib.parse import urlsplit
 
 import pytest
 from playwright.sync_api import expect
@@ -191,6 +193,22 @@ class AskAiFixture(authoring.WorkflowAuthoringFixture):
             self._json(route, {"documents": documents, "total_count": len(documents)})
             return
         super()._dispatch(route, entry)
+
+    def fail_held_responses(self, status=503):
+        """Answer every held request with a failure, as a `reject_next` that waited would."""
+        pending, self.pending_responses = self.pending_responses, []
+        for route, _ in pending:
+            self._json(route, {"error": "Fixture request failed."}, status)
+
+    def release_held(self, method, path):
+        """Answer the one held `method path` request, and leave the others held."""
+        matches = [
+            index for index, (_, entry) in enumerate(self.pending_responses)
+            if (entry.method, entry.path) == (method, path)
+        ]
+        assert len(matches) == 1, f"Expected one held {method} {path}, found {len(matches)}."
+        route, entry = self.pending_responses.pop(matches[0])
+        self._dispatch(route, entry)
 
     def assert_clean(self):
         self.assist.assert_clean()
@@ -963,6 +981,170 @@ def test_a_conflict_keeps_the_draft_and_offers_a_reload(ask_ui):
     assert body["conversation"] == []
     answered(panel, body)
     assert not ui.workflow_writes
+
+
+RELOAD_READS = ("/api/user/workflows", "/api/user/workflows/editor-options")
+
+
+def conflicted_editor(ui, mine, *, applied=None):
+    """The saved workflow, renamed here and changed elsewhere, so Ask AI offers to reload it.
+
+    With `applied`, an earlier turn made that change first, and its card is returned as well.
+    """
+    editor = open_classic(ui)
+    name = editor.get_by_label("Workflow name", exact=True)
+    name.fill(mine)
+    panel = open_ask_ai(editor)
+    found = None
+    if applied:
+        ui.assist.queue(ui.assist.changed(applied))
+        found = answered(panel, ask(ui, panel, "Collect only signed evidence in the first task."))
+        expect(undo_button(found)).to_be_enabled()
+    ui.mutate_revision()
+    ui.assist.queue(ui.assist.pipeline())
+    ask(ui, panel, "Add a description.")
+    expect(failed(panel).get_by_role("alert")).to_have_text(core._ERRORS["workflow_definition_conflict"][1])
+    return editor, panel, name, found
+
+
+def held(ui, method):
+    return sorted(entry.path for _, entry in ui.pending_responses if entry.method == method)
+
+
+def wait_until_held(ui, method, paths):
+    """Wait until the page has made each of `paths`, and they are the `method` requests held."""
+    waited = 0
+    while len(held(ui, method)) < len(paths):
+        assert waited < 10000, f"The held {method} requests never arrived."
+        ui.page.wait_for_timeout(50)
+        waited += 50
+    assert held(ui, method) == sorted(paths)
+
+
+def hold_reload(ui, panel):
+    """Choose Discard and reload with both of the reload's reads held, so it is still loading."""
+    group = panel.get_by_role("group", name="Reload workflow", exact=True)
+    group.get_by_role("button", name="Reload workflow", exact=True).click()
+    for path in RELOAD_READS:
+        ui.defer_next("GET", path)
+    group.get_by_role("button", name="Discard and reload", exact=True).click()
+    expect(group.get_by_role("button", name="Reloading…", exact=True)).to_be_disabled()
+    wait_until_held(ui, "GET", RELOAD_READS)
+    return group
+
+
+def finished(path, method="GET"):
+    return lambda request: request.method == method and urlsplit(request.url).path == path
+
+
+def release_reload(ui):
+    """Answer the held reads, and wait until the page has read both before anything is checked."""
+    page = ui.page
+    with page.expect_event("requestfinished", predicate=finished(RELOAD_READS[0])):
+        with page.expect_event("requestfinished", predicate=finished(RELOAD_READS[1])):
+            ui.release_responses()
+    # The page acts on the answers once it has read them; give it time to do the wrong thing.
+    page.wait_for_timeout(500)
+
+
+def discard_and_close(page, editor):
+    page.get_by_role("dialog", name="Discard unsaved workflow changes?", exact=True).get_by_role(
+        "button", name="Discard changes", exact=True).click()
+    expect(editor).to_have_count(0)
+
+
+def test_a_closed_editor_stays_closed_when_its_reload_finishes(ask_ui):
+    ui, page = ask_ui, ask_ui.page
+    mine = "Quarterly review, my draft"
+    editor, panel, name, _ = conflicted_editor(ui, mine)
+    hold_reload(ui, panel)
+
+    # The draft the reload is about to discard is locked while it loads. Closing is not.
+    expect(name).to_be_disabled()
+    expect(name).to_have_value(mine)
+    expect(editor.get_by_role("button", name="Save workflow", exact=True)).to_be_disabled()
+    expect(panel.get_by_role("group", name="Quick actions", exact=True).get_by_role("button").first).to_be_disabled()
+    expect(editor.get_by_role("button", name="Cancel", exact=True)).to_be_enabled()
+    page.keyboard.press("Escape")
+    discard_and_close(page, editor)
+
+    release_reload(ui)
+    expect(editor).to_have_count(0)
+    expect(page.get_by_role("button", name="Edit Quarterly review workflow", exact=True)).to_be_visible()
+    assert not ui.workflow_writes
+
+
+def test_a_reload_never_replaces_another_workflows_editor(ask_ui):
+    ui, page = ask_ui, ask_ui.page
+    other = ui.personal_workflows[FLOW_WORKFLOW_ID]["name"]
+    editor, panel, _, _ = conflicted_editor(ui, "Quarterly review, my draft")
+    hold_reload(ui, panel)
+    editor.get_by_role("button", name="Cancel", exact=True).click()
+    discard_and_close(page, editor)
+
+    # Another workflow is opened and edited while the first one's reload is still loading.
+    page.get_by_role("button", name=f"Edit {other}", exact=True).click()
+    name = editor.get_by_label("Workflow name", exact=True)
+    expect(name).to_have_value(other)
+    typed = f"{other}, my draft"
+    name.fill(typed)
+
+    release_reload(ui)
+    expect(editor).to_have_count(1)
+    expect(name).to_have_value(typed)
+    expect(name).to_be_enabled()
+    expect(page.get_by_role("dialog", name="Discard unsaved workflow changes?", exact=True)).to_have_count(0)
+    assert not ui.workflow_writes
+
+
+def test_a_failed_reload_unlocks_the_draft_it_kept(ask_ui):
+    ui = ask_ui
+    mine = "Quarterly review, my draft"
+    operation = {"op": "set_task_instructions", "task": "task_1", "instructions": "Collect only signed evidence."}
+    editor, panel, name, found = conflicted_editor(ui, mine, applied=operation)
+    group = hold_reload(ui, panel)
+    expect(name).to_be_disabled()
+    expect(undo_button(found)).to_be_disabled()
+
+    ui.fail_held_responses()
+    expect(group.get_by_role("alert")).to_have_text("Couldn't reload the workflow. Try again.")
+    expect(group.get_by_role("button", name="Reload workflow", exact=True)).to_be_focused()
+    expect(name).to_be_enabled()
+    expect(name).to_have_value(mine)
+    expect(undo_button(found)).to_be_enabled()
+    expect(author(changed(editor, "task:task-a:instructions"))).to_have_text("AI assist")
+    expect(editor.get_by_role("button", name="Save workflow", exact=True)).to_be_enabled()
+    expect(panel.get_by_role("group", name="Quick actions", exact=True).get_by_role("button").first).to_be_enabled()
+    assert not ui.workflow_writes
+
+
+def test_a_save_that_lands_during_a_reload_keeps_the_editor_closed(ask_ui):
+    ui, page = ask_ui, ask_ui.page
+    stored = ui.personal_workflows[WORKFLOW_ID]
+    opened = stored["definition_revision"]
+    mine = "Quarterly review, my draft"
+    editor, panel, _, _ = conflicted_editor(ui, mine)
+
+    # Saving locks the form, not the side panel, so Discard and reload can be chosen mid-save.
+    ui.defer_next("POST", "/api/user/workflows")
+    editor.get_by_role("button", name="Save workflow", exact=True).click()
+    wait_until_held(ui, "POST", ["/api/user/workflows"])
+    hold_reload(ui, panel)
+
+    # The change made elsewhere is undone, so the save is accepted and lands first. The editor
+    # closes on the saved workflow, and the list is read again.
+    stored["definition_revision"] = opened
+    with page.expect_event("requestfinished", predicate=finished(RELOAD_READS[0])):
+        ui.release_held("POST", "/api/user/workflows")
+    expect(editor).to_have_count(0)
+    assert len(ui.workflow_writes) == 1
+    assert ui.workflow_writes[0].body["name"] == mine
+
+    # The reload finishes after the save, and is ignored.
+    release_reload(ui)
+    expect(editor).to_have_count(0)
+    expect(page.get_by_role("button", name=f"Edit {mine}", exact=True)).to_be_visible()
+    assert len(ui.workflow_writes) == 1
 
 
 # ---------------------------------------------------------------------------------------------

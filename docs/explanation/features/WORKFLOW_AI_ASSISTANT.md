@@ -661,6 +661,13 @@ shows a message for the status:
   "Reloading discards your unsaved changes to this workflow.", and **Discard and reload** reopens
   the editor on the saved version. When the workflow was deleted, the message adds "Your draft is
   still in the editor."
+- **While a reload loads.** The draft it's about to discard is locked: the fields, **Save
+  workflow**, undo and redo, the **Changes** tab, Send, the quick actions and each card's **Undo
+  this change**. **Cancel** and Escape still close the editor, so a slow reload can't trap the
+  user. A reload that finishes after its editor was closed, saved, or replaced by another
+  workflow's editor is ignored, so it can't reopen a closed editor or replace one with unsaved
+  changes. If the reload fails, the tab says "Couldn't reload the workflow. Try again." and the
+  draft unlocks as it was.
 - **A wait.** On 429 and 503, `Retry-After` is honored, as seconds or an HTTP date, or the body's
   `retry_after_seconds`, clamped to an hour. Send, the quick actions and Retry wait, and the tab
   shows "You can send again in N s." A 429 without either waits one second. The wait belongs to the
@@ -780,10 +787,10 @@ so a change on either side that breaks the contract fails a test.
 | Test | Covers |
 | --- | --- |
 | `test_v2_workflow_ask_ai.py` | The tab renders model text as text and never as HTML, imports only local modules, is gated on the bootstrap flag, a personal workflow and a writable editor, and leaves the shared thread's new options off by default. Its instruction limit matches `ASSIST_INSTRUCTION_MAX_LENGTH` and is counted in code points. It runs `test_v2_workflow_ask_ai_logic.ts`. |
-| `test_v2_workflow_ask_ai_logic.ts` | Code-point counting and cutting, the request each kind of draft builds, replay (whole exchanges, the control characters, the cap after the suffix, earlier sessions and pending confirmations), each turn's state read from a real authoring session, the response guard and every failure message, the browser request with `Retry-After` and the deadline, the rebase and the change check, and the stores: the card cap, the rate-limit wait, the thread options and held-thread pruning |
+| `test_v2_workflow_ask_ai_logic.ts` | Code-point counting and cutting, the request each kind of draft builds, replay (whole exchanges, the control characters, the cap after the suffix, earlier sessions and pending confirmations), each turn's state read from a real authoring session, the response guard and every failure message, the browser request with `Retry-After` and the deadline, the rebase and the change check, and the stores: the card cap, the rate-limit wait, the thread options and held-thread pruning, including a held thread that another conversation's sweep or the 50-thread cap would otherwise drop |
 | `test_v2_workflow_ask_ai_parity.py` | Requests the tab builds from editor-normalized drafts (new, proposal, saved version 2 with its revision, saved version 3, focus, time zone, references, a 20-item conversation with emoji, tabs and new lines, and a 2,000-code-point instruction) are each posted as their exact text through 3b's real Flask route with a scripted model. Every candidate-parity scenario is answered the same way. `test_v2_workflow_ask_ai_parity_logic.ts` then replays each real 200 body through the tab: the guard reads it, the rebased candidate passes `workflowAssistViolation`, and the changes it finds are exactly the server's `changes[].key`. |
 | `test_v2_assist_thread.py` | A1's and A2's checks, updated for the shared thread's new options |
-| `ui_tests/test_v2_workflow_ask_ai.py` | 25 browser cases: the "Done when" instruction from Send to Confirm and save, Run as warnings, each `#` placement and a document read as context, the lock with Cancel and Retry, the stale-draft guard, the request a new, saved, focused or flow-focused draft sends, the code-point limit, Undo skipping a field changed later, **Jump to** a task field and a flow block, every failure and the 409 reload, hostile model text, where the tab is hidden (setting off, group, reader, unsupported, schedule), the keyboard and Escape, a narrow screen, Draft with AI, the quick actions, and a card from an earlier editing session |
+| `ui_tests/test_v2_workflow_ask_ai.py` | 29 browser cases: the "Done when" instruction from Send to Confirm and save, Run as warnings, each `#` placement and a document read as context, the lock with Cancel and Retry, the stale-draft guard, the request a new, saved, focused or flow-focused draft sends, the code-point limit, Undo skipping a field changed later, **Jump to** a task field and a flow block, every failure and the 409 reload, a reload that's closed, superseded by another workflow's editor, or overtaken by a save while it loads, or that fails, hostile model text, where the tab is hidden (setting off, group, reader, unsupported, schedule), the keyboard and Escape, a narrow screen, Draft with AI, the quick actions, and a card from an earlier editing session |
 | `ui_tests/test_v2_workflow_ask_ai_proposal.py` | A proposal opened with **Edit** sends no base and saves through review, the tab is hidden when the assistant is off, and the editor's thread leaves the chat's idle image thread alone |
 
 The browser tests answer `POST /api/user/workflows/assist` inside the page with 3b's real
