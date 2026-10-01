@@ -70,14 +70,18 @@ test('every started state links its run, and an unavailable run says why without
     assert.deepEqual(list.workflow_runs.map((item) => item.state), [...states, 'unavailable']);
     list.workflow_runs.slice(0, -1).forEach((item, index) => {
         assert.equal(item.reason, null);
-        assert.equal(item.href, workflowRunHref(`wf-run_${index}`, `wr-run_${index}`));
+        assert.deepEqual(item.run, { workflowId: `wf-run_${index}`, runId: `wr-run_${index}` });
+        assert.equal(
+            workflowRunHref(item.run.workflowId, item.run.runId),
+            `/workspace/workflows?workflow_id=wf-run_${index}&run_id=wr-run_${index}`,
+        );
     });
     assert.deepEqual(list.workflow_runs.at(-1), {
-        step_id: 'gone', name: '', state: 'unavailable', reason: 'workflow_deleted', href: null,
+        step_id: 'gone', name: '', state: 'unavailable', reason: 'workflow_deleted', run: null,
     });
-    // The parsed links keep no raw ids beside the link itself.
+    // A parsed link keeps only what it shows and the run it opens.
     for (const item of list.workflow_runs) {
-        assert.deepEqual(Object.keys(item).sort(), ['href', 'name', 'reason', 'state', 'step_id']);
+        assert.deepEqual(Object.keys(item).sort(), ['name', 'reason', 'run', 'state', 'step_id']);
     }
 });
 

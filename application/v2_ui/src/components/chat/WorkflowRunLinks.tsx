@@ -19,6 +19,7 @@ import {
     type WorkflowRunLinkItem,
     type WorkflowRunLinkState,
 } from '../../lib/orchestrationWorkflowRuns';
+import { workflowRunHref } from '../../lib/workflowRunLink';
 
 const LOAD_ERROR = 'Could not load the workflow runs this plan started.';
 
@@ -43,15 +44,15 @@ function RunLink({ item }: { item: WorkflowRunLinkItem }) {
                     <p className={clsx('rounded px-2 py-0.5 font-medium', stateTone(item.state))}>
                         {workflowRunStateLabel(item.state)}
                     </p>
-                    {item.href ? (
-                        <Link to={item.href} aria-label={`Open run of ${name}`}
+                    {item.run ? (
+                        <Link to={workflowRunHref(item.run.workflowId, item.run.runId)} aria-label={`Open run of ${name}`}
                             className="inline-flex h-8 items-center rounded-xl px-3 text-sm font-medium text-accent hover:bg-surface-3 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent">
                             Open run
                         </Link>
                     ) : null}
                 </div>
             </div>
-            {item.href ? null : <p className="break-words text-text-2">{workflowRunReasonText(item.reason)}</p>}
+            {item.run ? null : <p className="break-words text-text-2">{workflowRunReasonText(item.reason)}</p>}
         </li>
     );
 }

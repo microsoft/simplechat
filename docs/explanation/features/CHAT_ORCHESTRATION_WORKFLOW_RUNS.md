@@ -459,7 +459,12 @@ masked. It reads the route once, shows **Started workflows** with each
 workflow's name and status, and opens each run with **Open run** (labelled
 "Open run of <name>" for assistive technology). The link is built by
 `workflowRunHref` as `/workspace/workflows?workflow_id=<id>&run_id=<id>`, the
-route from #1562 that opens the workflow's run history at that run. It doesn't
+route from #1562 that opens the workflow's run history at that run. The checked
+response keeps only the two ids, and the component calls `workflowRunHref` in
+the link itself. The XSS sink checker (`scripts/check_xss_sinks.py`) lists
+`workflowRunHref` as a reviewed same-origin URL builder, as it does Phase 4's
+`workflowProposalLink`, because it only returns that fixed path with the ids
+encoded as query values. It doesn't
 poll; the status is as of the read, and **Try again** reloads after a failed
 read. A 404 renders nothing.
 
@@ -548,6 +553,7 @@ codes reach the logs rather than only their lengths.
 | `application/v2_ui/src/components/chat/OrchestrationWorkflowRunNotice.tsx`, `application/v2_ui/src/lib/orchestrationPlan.ts` | The approval card's notice and the floor in the browser. |
 | `application/v2_ui/src/components/chat/WorkflowRunLinks.tsx`, `application/v2_ui/src/lib/orchestrationWorkflowRuns.ts` | The links and their API client. |
 | `application/v2_ui/src/components/chat/MessageList.tsx`, `OrchestrationPlanCard.tsx`, `OrchestrationRunView.tsx`, `OrchestrationRecoveryNotice.tsx`, `application/v2_ui/src/lib/orchestration.ts`, `orchestrationController.ts`, `workflowRunLink.ts` | Mounting the links and the notice, the Workflow row, the retry text, no automatic run of a floored plan, and `workflowRunHref`. |
+| `scripts/check_xss_sinks.py` | `workflowRunHref` added to the reviewed same-origin URL builders. |
 
 ## Usage
 
@@ -600,6 +606,7 @@ and the controls are listed in
 | `functional_tests/test_orchestration_workflow_runs_admin.py`, `ui_tests/test_admin_orchestration_workflow_runs.py` | The setting's default, guard, and classic and V2 admin switches. |
 | `functional_tests/test_v2_orchestration_workflow_run_floor.mjs`, `ui_tests/test_v2_orchestration_workflow_run_floor.py` | The floor and the approval card's notice in V2. |
 | `functional_tests/test_v2_orchestration_workflow_run_links.mjs`, `ui_tests/test_v2_orchestration_workflow_run_links.py` | The links in the built V2 app, from the chat to the run in Workflows. |
+| `functional_tests/test_v2_orchestration_workflow_run_links_xss_guardrail.py` | The links pass the XSS sink checker: the component calls the approved `workflowRunHref` in the link, and a link taken from a plain property is still flagged. |
 
 ### Performance
 

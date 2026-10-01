@@ -7,7 +7,6 @@
 // response of the wrong shape fails closed rather than linking to the wrong run.
 
 import { api } from './apiClient';
-import { workflowRunHref } from './workflowRunLink';
 
 /** The orchestration capability whose completed step leaves a run link on its answer. */
 export const WORKFLOW_RUN_CAPABILITY = 'workflow_run';
@@ -19,6 +18,12 @@ export const WORKFLOW_RUN_LINK_STATES = [
 ] as const;
 export type WorkflowRunLinkState = typeof WORKFLOW_RUN_LINK_STATES[number];
 
+/** The saved workflow and run a link opens, with `workflowRunHref`. */
+export interface WorkflowRunTarget {
+    workflowId: string;
+    runId: string;
+}
+
 export interface WorkflowRunLinkItem {
     step_id: string;
     /** The workflow's name, as plain text. Empty when the link cannot be used here. */
@@ -26,8 +31,8 @@ export interface WorkflowRunLinkItem {
     state: WorkflowRunLinkState;
     /** Why the run cannot be opened; only for an unavailable link. */
     reason: string | null;
-    /** The run in Workflows, with its run history open; null for an unavailable link. */
-    href: string | null;
+    /** The run the link opens in Workflows; null for an unavailable link. */
+    run: WorkflowRunTarget | null;
 }
 
 export interface WorkflowRunLinkList {
@@ -103,10 +108,10 @@ function itemOf(value: unknown): WorkflowRunLinkItem {
     if (state === 'unavailable') {
         // An unavailable run is never linked, and it always says why.
         if (value.workflow_id !== null || value.workflow_run_id !== null) invalid();
-        return { ...base, reason: idOf(value.reason), href: null };
+        return { ...base, reason: idOf(value.reason), run: null };
     }
     if (value.reason !== null) invalid();
-    return { ...base, reason: null, href: workflowRunHref(idOf(value.workflow_id), idOf(value.workflow_run_id)) };
+    return { ...base, reason: null, run: { workflowId: idOf(value.workflow_id), runId: idOf(value.workflow_run_id) } };
 }
 
 /** Check a link response. Exported so a test can hold the checks against real responses. */
