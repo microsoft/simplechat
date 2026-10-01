@@ -7,7 +7,7 @@ doesn't change the version. Each phase records the version it ships in.
 
 Planning branch: `paullizer-orchestration-workflows-capability`.
 
-Status updated: **2026-09-30**, with `paullizer-react-v2-ui` at 0.261.208. The PRs for this work target that branch
+Status updated: **2026-10-01**, with `paullizer-react-v2-ui` at 0.261.213. The PRs for this work target that branch
 (§10).
 
 This is the master plan for letting chat orchestration propose, create, run and hand off saved workflows. It's the
@@ -26,10 +26,10 @@ Dependencies: V2 chat orchestration (`functions_orchestration*.py`), durable wor
 | 0 | Tracking: roadmap doc + GitHub issues | [#1543](https://github.com/microsoft/simplechat/issues/1543) (umbrella) | — | **Done** ([#1557](https://github.com/microsoft/simplechat/pull/1557)) |
 | 1 | Calendar schedules (day, time, timezone) | [#1544](https://github.com/microsoft/simplechat/issues/1544) | — | **Done**: [#1561](https://github.com/microsoft/simplechat/pull/1561), v0.261.193 |
 | 2 | Workflow draft service (dry-run build, blueprint builder, provenance) | [#1545](https://github.com/microsoft/simplechat/issues/1545) | 1 | **Done**: [#1566](https://github.com/microsoft/simplechat/pull/1566), v0.261.202. It also took gotcha 13 and Phase 1's two V2 editor follow-ups |
-| 3 | AI workflow assistant (Score-style assisted editing in the V2 editor) | [#1548](https://github.com/microsoft/simplechat/issues/1548) | 3a: — · 3b: 2, A2 · 3c: 3a, 3b, A1 | **3a done**: [#1569](https://github.com/microsoft/simplechat/pull/1569), v0.261.203. **3b done**: [#1577](https://github.com/microsoft/simplechat/pull/1577), v0.261.208. **3c in progress** |
+| 3 | AI workflow assistant (Score-style assisted editing in the V2 editor) | [#1548](https://github.com/microsoft/simplechat/issues/1548) | 3a: — · 3b: 2, A2 · 3c: 3a, 3b, A1 | **3a done**: [#1569](https://github.com/microsoft/simplechat/pull/1569), v0.261.203. **3b done**: [#1577](https://github.com/microsoft/simplechat/pull/1577), v0.261.208. **3c done**: [#1593](https://github.com/microsoft/simplechat/pull/1593), v0.261.213. Phase 3 is complete |
 | 4 | Orchestration proposes workflows (`workflow_propose` + Approve / Deny / Edit card) | [#1547](https://github.com/microsoft/simplechat/issues/1547) | 2 | **Done**: [#1580](https://github.com/microsoft/simplechat/pull/1580), v0.261.207, behind **Propose Workflows From Chat** (off by default). It includes personal File Sync authoring in the V2 editor (gotcha 58) |
-| 5 | Orchestration runs existing workflows (`workflow_run`, start-and-link) | [#1551](https://github.com/microsoft/simplechat/issues/1551) | 4 | Not started |
-| 6 | Results back in chat: 6a results reader + **Follow up**; 6b post-back delivery, run card and chat-list indicator; 6c in-plan wait (later) | [#1546](https://github.com/microsoft/simplechat/issues/1546) | 6a: 4 · 6b: 5, 6a, N1 | Not started |
+| 5 | Orchestration runs existing workflows (`workflow_run`, start-and-link) | [#1551](https://github.com/microsoft/simplechat/issues/1551) | 4 | **Done**: [#1594](https://github.com/microsoft/simplechat/pull/1594), v0.261.212, behind **Run Workflows From Chat** (off by default) |
+| 6 | Results back in chat: 6a results reader + **Follow up**; 6b post-back delivery, run card and chat-list indicator; 6c in-plan wait (later) | [#1546](https://github.com/microsoft/simplechat/issues/1546) | 6a: 4 · 6b: 5, 6a, N1 | **6a in review**: [#1592](https://github.com/microsoft/simplechat/pull/1592). 6b and 6c not started |
 | 7 | Hand-off of big one-time jobs | [#1549](https://github.com/microsoft/simplechat/issues/1549) | 4, 6b | Not started |
 | 8 | Follow-ons: group workflows, #1347 parity, plan-replay task | [#1550](https://github.com/microsoft/simplechat/issues/1550) | 4+ | Not started |
 | A1 | Shared AI-assist thread: immediate send, Cancel/Retry, one component for every assist editor | [#1552](https://github.com/microsoft/simplechat/issues/1552) | — | **Done**: [#1564](https://github.com/microsoft/simplechat/pull/1564), v0.261.200 |
@@ -39,17 +39,18 @@ Dependencies: V2 chat orchestration (`functions_orchestration*.py`), durable wor
 | P | Document provenance: hidden origin IDs on saved documents, a removable `workflow` tag, "Open the run / chat" links | [#1555](https://github.com/microsoft/simplechat/issues/1555) | — | **Done**: [#1562](https://github.com/microsoft/simplechat/pull/1562), v0.261.194 |
 | — | `#` references + document search in the orchestration question card | — | — | **Already done** (`7c355534f`). No new work; A1's Playwright run includes a regression check |
 
-Track A (AI-assist UX) is independent of the workflow phases, and both of its parts have landed (#1564). Phase 3 ships
-as three PRs: 3a (change tracking) and 3b (the assist endpoint) have landed, and 3c (the **Ask AI** tab) is underway.
-Phase 4 landed before 3c, so the proposal card's **Edit** opens the V2 editor now, and 3c adds the assistant there.
-Tracks N (V2 notifications) and P (document provenance) are independent too, and all three of their items have landed,
-so 6b can rely on the V2 bell for undeliverable results.
+Track A (AI-assist UX) is independent of the workflow phases, and both of its parts have landed (#1564). Phase 3
+shipped as three PRs: 3a (change tracking), 3b (the assist endpoint) and 3c (the **Ask AI** tab, which also works on
+a proposal opened with **Edit**). Phase 5 (#1594) lets a plan start a saved workflow and link to the run, and 6a
+(#1592), the results reader and **Follow up**, is in review. Tracks N (V2 notifications) and P (document provenance)
+are independent too, and all three of their items have landed, so 6b can rely on the V2 bell for undeliverable
+results.
 
 Repository follow-ups found along the way, not tied to one phase:
 
 - The generated release-notes pages under `docs/explanation/release-notes/` are stale, so
-  `test_docs_release_notes_integrity.py` fails on the base. The PRs above leave them alone; regenerate them once, in a
-  docs-only change, after the in-flight PRs land.
+  `test_docs_release_notes_integrity.py` fails on the base, with 149 stale releases at 0.261.213. The PRs above leave
+  them alone; regenerate them once, in a docs-only change, after the in-flight PRs land.
 - Other docs pages have pre-existing broken relative links (`test_docs_link_integrity.py`).
 - **Fixed in [#1576](https://github.com/microsoft/simplechat/pull/1576)** (#1571): the PR guardrail workflows (broken
   access control, XSS sinks, Swagger routes, Python syntax, the malicious-PR review and CodeQL) now run on PRs into
@@ -74,6 +75,24 @@ Repository follow-ups found along the way, not tied to one phase:
 - `test_v2_admin_settings_schema.py` fails on `paullizer-react-v2-ui`, because `m365_trusted_download_hosts` has a
   `[]` default on a string field. It appears to pass under `python -O`, because that check is a bare `assert` in
   `__main__`.
+- Other failures on `paullizer-react-v2-ui` that the phase PRs report and leave alone:
+  - `test_v2_prompt_composer_card.py`: two tests fail with `NameError: prepared_chat_image_references`. #1585 made
+    the shipping-persistence block in `route_backend_chats.py` read that name, and the test's extracted copy of the
+    block doesn't define it.
+  - `ui_tests/test_v2_orchestration_auto_open.py` passes 1 of 5, even as `python <file>`, because its `_plan()`
+    fixture has no `turn_id` or `conversation_id`, which `orchestrationController` needs before it accepts a plan.
+  - `test_v2_chat_context_picker.py` still expects `onPickerOpenChange={setPickerOpen}` in `Composer.tsx`.
+  - `test_block_revision_assist.py` reads `ASSIST_SYSTEM_PROMPT`, which is now `CHART_ASSIST_SYSTEM_PROMPT`.
+  - `test_workflow_runtime_integration.py`: four tests fail because each run ends `failed` with a `NameError` for
+    `WORKFLOW_SCHEDULED_TRIGGER_TYPES`. The test's copy of the runner keeps only literal constants, and the runner
+    imports that name.
+  - `test_orchestration_failure_telemetry.py` fails only after `test_orchestration_elicitation_context.py` in the
+    same process. That file reimports `functions_orchestration_context` and `functions_orchestration_planner` while
+    its stubs are installed, and leaves those copies in `sys.modules`.
+  - Single tests: `test_document_removal_is_not_lost_when_editor_opens` in
+    `test_orchestration_plan_revision_routes.py`, `test_run_record_keeps_the_turn_and_question_ids` in
+    `test_orchestration_turn_recovery_identifiers.py`, and `test_revoked_record_refresh_clears_the_previous_page` in
+    `ui_tests/test_v2_workflow_loops.py`.
 
 ## 1. Goal
 
@@ -906,6 +925,34 @@ Phase 3 ships as three PRs. 3a needs nothing else, 3b needs Phase 2 and A2, and 
 - **Follow-ups** from #1577: 3c's client rules are listed in its PR body. Later: File Sync operations; porting
   `flowUnsupportedReason`, so a draft with a publication the editor can't save gets `draft_has_errors`; eliding very
   large drafts; structured build errors from Phase 2's dry run; and an optional global in-flight cap.
+- **3c shipped** in [#1593](https://github.com/microsoft/simplechat/pull/1593) (v0.261.213), which completes Phase 3.
+  The V2 editor gains an **Ask AI** tab after **Changes**:
+  - It shows only when `enable_workflow_ai_assistant` is on and the editor can change a personal workflow, so group
+    workflows, readers, unsupported drafts and active runs don't get it. It also works on a Phase 4 proposal opened
+    with **Edit**. There's no new admin setting.
+  - An answer goes through 3a's `applyAssist` as one AI change, and the tab never saves. The candidate is rebased
+    onto the live draft first (`rebaseAssistCandidate`), because JSON drops `undefined` (gotcha 25).
+  - The card lists changes from the editor's own diff, never the server's list. A parity test replays every 3b
+    scenario and finds `verifyAssistChanges` equal to the server's `changes[]`.
+  - Threads are keyed `workflow:personal:<id>` or `workflow:new:<id>` in A1's in-memory store, and each request
+    replays at most the last 10 completed exchanges. Nothing is stored.
+  - The editor is locked while a request runs, and **Cancel request** answers "Cancelled. Nothing was changed." If
+    the draft changed mid-request, the turn fails and offers Retry; it never merges. A 409 keeps the draft and
+    offers **Reload workflow**, which locks the draft while it loads. `Retry-After` is honored.
+  - The `#` picker offers documents only, at most 20. The browser's time zone is sent only when the editor's list
+    has it.
+  - **Draft with AI** fills empty task instructions through `/api/workflows/draft-instructions`, and it shows only
+    where Ask AI does.
+  - **Jump to** finds a field by `data-workflow-field-key` before the deferred highlight appears, and it clears any
+    pending block focus request, so the Flow canvas can't take focus back.
+- **Follow-ups** from #1593:
+  - A Latest Feature card, once `docs/images/guides/create-a-workflow-ask-ai.png` exists.
+  - A product decision: should `/api/workflows/draft-instructions` check `enable_workflow_ai_assistant` on the
+    server? It checks workflow access only, and the classic button ignores the setting.
+  - Structural flow edits (For each and If blocks, adding or moving tasks), File Sync operations, and the rest of
+    #1577's list.
+  - Disable **Reload workflow** during a save, check focus after a reloaded editor closes, and add browser tests
+    for hiding Ask AI on active runs and after lost access.
 
 ### Phase 4 — Orchestration proposes workflows
 
@@ -1000,6 +1047,39 @@ Phase 3 ships as three PRs. 3a needs nothing else, 3b needs Phase 2 and A2, and 
   exists today.
 - Start-and-link result.
 - **Done when** "run my weekly digest now" asks for manual approval, queues exactly one run, and links to it.
+- **Shipped** in [#1594](https://github.com/microsoft/simplechat/pull/1594) (v0.261.212), behind the admin setting
+  **Run Workflows From Chat** (`enable_chat_orchestration_workflow_runs`, off by default), which is independent of
+  Propose. Choices that later phases build on:
+  - A run also needs `allow_user_workflows`, the WorkflowUser role when `require_member_of_workflow_user` is on, a
+    durable workflow, and `workflow_run` in **Capabilities** when that list is narrowed. Paused workflows can run.
+  - `workflow_run` is a Gather capability: at most 3 per plan, each naming a different workflow handle from the
+    Phase 4 catalog, and no step may consume its output (`workflow_run_consumed`). A step that still fails after one
+    repair round is dropped with its bindings, and the server's `workflow_run_notes` say why. With the setting off,
+    the capability is dormant, and a golden test pins planning byte for byte.
+  - A plan with an enabled `workflow_run` step is always manual, whatever mode was asked for, and records why in
+    `approval.floor`. `claim_plan_run` refuses a saved plan that lost the floor (409 `approval_floor_required`),
+    and the V2 client guards it too.
+  - The request ID comes from the plan's first attempt and the step, and `workflow_run_id_for_request` gives the
+    queue and the step one run ID. The step reads the run before it queues, so retries, second tabs and crashes
+    link the existing run instead of starting another, and an orphaned run heals.
+  - Only starting a new run needs a signed-in session. A background continuation links an existing run but never
+    queues one (`external_session_required`). The run records a `chat_invocation`, separate from
+    `mcp_invocation`.
+  - The registry's `external_effect_capability_ids()` marks a failed or interrupted step `effects_uncertain`, and
+    there's no automatic transient retry.
+  - The answer gets a server-written note listing what started, what didn't, and why. It promises no post-back.
+  - V2's **Started workflows** links come from the requester-only
+    `GET /api/v2/orchestration/runs/<run_id>/workflow-runs`, not from message metadata. They're built by
+    `workflowRunHref` in Track P's `lib/workflowRunLink.ts`, which `scripts/check_xss_sinks.py` approves as a
+    same-origin builder. `workflow_run_catalog_entry` lives in `functions_orchestration_schema.py` for 6a and 6b.
+- **Follow-ups** from #1594:
+  - **Create & run now** on the proposal card; non-durable runs; group workflows (Phase 8).
+  - The catalog scans 500 workflows and offers the top 20. Scanning further, and cleaning up orphaned runs in the
+    queue.
+  - The alert text shows the raw trigger ("completed from the chat_orchestration trigger",
+    `functions_workflow_runner.py`), and V2 run history doesn't show the trigger.
+  - Phase 4's proposal log fields aren't allowlisted.
+  - A run waiting on Microsoft 365 is finished in Workflows, not in chat.
 
 ### Phase 6 — Results back in chat
 
@@ -1063,6 +1143,9 @@ chat later (decision #11). Nothing stays connected, and closing the browser does
 - **Done when** Follow up answers only from the stored run result, a changed result or lost access shows the
   unavailable message, "what did my digest find last Monday?" reads the right run, and shared chats can't read workflow
   results.
+- **In review** in [#1592](https://github.com/microsoft/simplechat/pull/1592), behind the new admin setting
+  **Use Workflow Results In Chat** (`enable_chat_workflow_results`, off by default). The `workflow_results` planner
+  capability will be a separate PR after #1592 merges, under the same setting.
 
 #### 6b — Post-back delivery, run card and chat-list indicator
 
@@ -1121,7 +1204,8 @@ chat later (decision #11). Nothing stays connected, and closing the browser does
   open only. Scheduled results stay in the workflow's own conversation (decision #4).
 - **Run deep link**: a new V2 route, for example `/workspace/workflows/:workflowId/runs/:runId`, that opens the run
   inspector. None exists today (`App.tsx:183-187`). Pointing `v2WorkflowRunPath` at it also moves Microsoft 365
-  pending-action links and N2's alert buttons; see gotcha 61.
+  pending-action links and N2's alert buttons; see gotcha 61. Phase 5's **Started workflows** links use
+  `workflowRunHref` (`lib/workflowRunLink.ts`), so point it there too, or route both through one helper.
 - **Done when**:
   - a run started from a private chat posts exactly one answer, through restarts, retries and concurrent sweeps
   - closing the browser, reloading, or pinning the chat and coming back later all work: the unread dot appears, with
@@ -1323,6 +1407,16 @@ chat later (decision #11). Nothing stays connected, and closing the browser does
     group runs under the group's workflows page, and an unknown scope keeps the classic link. Once it returns a path,
     N2's alert card shows **Open run** instead of **Open workflow**, so the run link has to lead somewhere the
     workflow link doesn't.
+62. **Result answers outside the message list.** Answers built from stored results (saved analysis or workflow
+    results) are masked when messages are read, but some reads skip that sanitizer: collaboration copies and their
+    `last_message_preview`, the collaboration metadata route (pending invitees included), summaries, reply
+    previews and MCP reads. #1592 stores collaboration copies with workflow-result answers withheld and clears the
+    saved summary; saved-analysis answers are still copied as stored. Owner-only raw reads still return the stored
+    answer: classic `/conversation/<id>/messages`, the personal `/api/message/<id>/metadata`, personal summaries
+    and MCP personal reads. 6b's posted answer carries the same `workflow_result` lineage, so it inherits both.
+63. **Retry and Edit of a result-backed turn.** Retry and Edit don't carry the result context, so a retried answer
+    replays as an ordinary question. #1592 refuses both on Follow up turns (`workflow_result_retry_unsupported`);
+    saved-analysis follow-ups still replay. 6b's posted answer needs the same decision.
 
 ## 9. Open decisions (settle at each phase's start)
 
@@ -1337,7 +1431,7 @@ chat later (decision #11). Nothing stays connected, and closing the browser does
 | 4 | Proposal expiry; where Deny state persists | **Settled in #1580**: proposals expire 14 days after they're created, and every decision, Deny included, is stored on the producing run's document. |
 | 6a | How long run results stay available for Follow up | Until the run is deleted; add an admin retention setting later |
 | 6b | How long to keep trying to deliver | The durable deadline plus 24 hours, then the undeliverable notice |
-| 6b | Run deep-link route | P (#1562) already opens a run with `?workflow_id=…&run_id=…` on the workflows pages. Reuse it unless 6b needs a separate run page. Either way, `v2WorkflowRunPath` (`lib/notificationLinks.ts`) is the one place to point at it, after the checks in gotcha 61. |
+| 6b | Run deep-link route | P (#1562) already opens a run with `?workflow_id=…&run_id=…` on the workflows pages. Reuse it unless 6b needs a separate run page. Either way, point both builders at it: `v2WorkflowRunPath` (`lib/notificationLinks.ts`), after the checks in gotcha 61, and `workflowRunHref` (`lib/workflowRunLink.ts`), which Phase 5's links use. Or route both through one helper. |
 | 6c | Add an in-plan wait? | Only if planners need a workflow's output later in the same plan |
 | N1 | Where the bell sits in the sidebar | **Settled in #1563**: beside the brand mark in the header row, with a dot when collapsed |
 | N2 | Which entrance style ships | **Settled in the lab review**: A, the sidebar callout. It was judged with the rail collapsed and on a 360 px phone, not only on an expanded desktop |
