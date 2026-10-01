@@ -207,7 +207,7 @@ keyboard user doesn't lose their place.
   `lib/notificationLinks.ts`, which returns `null` until Phase 6b adds a V2 run page.
   While it does, the card offers Open workflow, whose `run_id` already opens the
   run's history. Once it returns a path, **Open run** takes Open workflow's place.
-- **Ask about this.** Phase 6a (0.261.213) fills in `workflowAlertFollowUpAction`.
+- **Ask about this.** Phase 6a (0.261.214) fills in `workflowAlertFollowUpAction`.
   It returns `{ label: 'Ask about this', run }` for a personal workflow's alert that
   names a run which had finished (`completed` or `completed_partial`, read from the
   alert's `status`) when the alert was raised, and only while the reader's bootstrap

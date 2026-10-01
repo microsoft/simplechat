@@ -4,7 +4,7 @@ title: "Chat interface controls"
 description: "Reference for every documented control in the SimpleChat chat interface."
 section: "Reference"
 audience: user
-version: "0.261.213"
+version: "0.261.214"
 ---
 
 ## How to use this reference
@@ -596,7 +596,7 @@ Workflows.
 
 ## Workflow results in chat (V2 interface)
 
-Implemented in **0.261.213** (Refs: microsoft/simplechat#1546). You can ask chat
+Implemented in **0.261.214** (Refs: microsoft/simplechat#1546). You can ask chat
 about the stored result of a finished run of one of your personal workflows. The
 answer uses only that run's saved output, the workflow isn't run again, and the
 answer ends with a line that names the run. See

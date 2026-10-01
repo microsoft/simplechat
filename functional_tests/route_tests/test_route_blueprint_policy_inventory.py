@@ -2,7 +2,7 @@
 #!/usr/bin/env python3
 """
 Functional test for route blueprint policy inventory.
-Version: 0.261.213
+Version: 0.261.214
 Implemented in: 0.242.069
 Plan editor policy coverage: 0.261.102
 Selected-group context policy coverage: 0.261.126
@@ -11,7 +11,7 @@ Group directory policy coverage: 0.261.146
 Group membership policy coverage: 0.261.151
 Workflow proposal policy coverage: 0.261.207
 Workflow assistant policy coverage: 0.261.208
-Workflow result context policy coverage: 0.261.213
+Workflow result context policy coverage: 0.261.214
 
 This test ensures every SimpleChat route is assigned to a Blueprint-based
 security policy or an explicit reviewed route exemption.

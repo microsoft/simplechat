@@ -1,8 +1,8 @@
 # test_workflow_result_review_paths.py
 """
 Functional test for the workflow-result paths outside the chat history read.
-Version: 0.261.213
-Implemented in: 0.261.213
+Version: 0.261.214
+Implemented in: 0.261.214
 
 This test ensures, in a fresh offline process that boots the real application,
 that a workflow result's answer never leaves the owner's private chat through a
@@ -47,7 +47,7 @@ def require(condition, message):
 
 
 def test_version_is_at_least_the_workflow_results_release():
-    assert_app_version_at_least("0.261.213")
+    assert_app_version_at_least("0.261.214")
 
 
 def run_offline_scenarios():

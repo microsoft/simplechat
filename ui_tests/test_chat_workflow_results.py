@@ -1,8 +1,8 @@
 # test_chat_workflow_results.py
 """
 Browser regressions for asking chat about a finished workflow run's stored result.
-Version: 0.261.213
-Implemented in: 0.261.213
+Version: 0.261.214
+Implemented in: 0.261.214
 
 Exercises the real V2 chat page, composer, chat store, run history and workflow alert card,
 bundled by fixtures/workflow_results, against a fake server. The fake answers with the real
@@ -130,7 +130,7 @@ SEED = """(seed) => {
     const H = window.WorkflowResultsHarness;
     H.stores.bootstrap.useBootstrapStore.setState({
         data: {
-            version: '0.261.213',
+            version: '0.261.214',
             user: {id: 'user-1', display_name: 'Riley Chen', roles: []},
             features: {enable_chat_workflow_results: seed.enabled, enable_chat_orchestration: true},
             orchestration: {

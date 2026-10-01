@@ -1,8 +1,8 @@
 // test_workflow_results_clients.mjs
 /**
  * Workflow results in chat (Follow up) client contract regressions.
- * Version: 0.261.213
- * Implemented in: 0.261.213
+ * Version: 0.261.214
+ * Implemented in: 0.261.214
  *
  * Executes the bundled V2 helpers behind the workflow result chip: descriptor parsing and
  * inheritance, request shaping, refusal wording and which refusals remove the chip, the

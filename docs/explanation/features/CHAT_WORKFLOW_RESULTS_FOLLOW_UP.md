@@ -1,6 +1,6 @@
 # Workflow results in chat
 
-Implemented in version: **0.261.213**.
+Implemented in version: **0.261.214**.
 
 Application version tracking: `application\single_app\config.py`.
 

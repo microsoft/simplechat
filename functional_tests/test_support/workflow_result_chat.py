@@ -1,8 +1,8 @@
 # workflow_result_chat.py
 """
 Shared fixtures for the workflow-results-in-chat functional tests.
-Version: 0.261.213
-Implemented in: 0.261.213
+Version: 0.261.214
+Implemented in: 0.261.214
 
 Fake Cosmos containers that honour a query's projection, an in-memory result store
 that keeps canonical ASCII JSON like the real byte transport, a source resolver, and

@@ -1,8 +1,8 @@
 # workflow_result_offline_app.py
 """
 Offline application harness for the workflow-results-in-chat route tests.
-Version: 0.261.213
-Implemented in: 0.261.213
+Version: 0.261.214
+Implemented in: 0.261.214
 
 Boots the real application with only storage, the chat model and the network
 faked, so a test can drive the real JSON, SSE, history, export and collaboration

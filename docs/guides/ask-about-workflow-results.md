@@ -4,7 +4,7 @@ title: "Ask about workflow results"
 description: "Ask chat about what one of your finished workflow runs found, without running the workflow again."
 section: "Guides"
 audience: user
-version: "0.261.213"
+version: "0.261.214"
 ---
 
 ## What this does
@@ -14,7 +14,7 @@ about the stored result of one finished run of one of your personal workflows.
 The answer uses only that run's saved output: the workflow isn't run again, and
 nothing else is searched.
 
-Implemented in version: **0.261.213**. Application version alignment is tracked in
+Implemented in version: **0.261.214**. Application version alignment is tracked in
 `application/single_app/config.py`.
 
 ## Why you would use this
