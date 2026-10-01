@@ -2059,10 +2059,12 @@ def invite_group_conversation_members_for_current_user(
     if not is_group_collaboration_conversation(conversation_doc):
         raise LookupError(CONVERSATION_ACCESS_ERROR)
 
+    group_id = str(((conversation_doc.get("scope") or {}).get("group_id")) or "").strip()
     participants_to_add = _build_invited_participants(
         creator_user=current_user,
         participants=participants,
         participant_identifiers=participant_identifiers,
+        group_members=_group_member_summaries(find_group_by_id(group_id) if group_id else None),
     )
     if not participants_to_add:
         raise ValueError("At least one participant identifier is required")
@@ -2339,6 +2341,7 @@ def _build_invited_participants(
     creator_user: Dict[str, str],
     participants: Optional[Iterable[Dict[str, Any]]] = None,
     participant_identifiers: Any = None,
+    group_members: Optional[List[Dict[str, str]]] = None,
 ) -> List[Dict[str, str]]:
     invited_participants: List[Dict[str, str]] = []
     seen_user_ids = {creator_user.get("user_id")}
@@ -2354,7 +2357,9 @@ def _build_invited_participants(
         invited_participants.append(normalized_participant)
 
     for raw_identifier in _split_participant_identifiers(participant_identifiers):
-        resolved_user = resolve_directory_user(user_identifier=raw_identifier)
+        resolved_user = _match_group_member(group_members, raw_identifier)
+        if resolved_user is None:
+            resolved_user = resolve_directory_user(user_identifier=raw_identifier)
         normalized_participant = normalize_collaboration_user(resolved_user)
         if not normalized_participant:
             continue
@@ -2365,6 +2370,42 @@ def _build_invited_participants(
         invited_participants.append(normalized_participant)
 
     return invited_participants
+
+
+def _group_member_summaries(group_doc: Optional[Dict[str, Any]]) -> List[Dict[str, str]]:
+    """The group's owner and members as collaboration user summaries, once each."""
+    if not isinstance(group_doc, dict):
+        return []
+    owner = group_doc.get("owner") if isinstance(group_doc.get("owner"), dict) else {}
+    raw_members = [
+        {"userId": owner.get("id"), "displayName": owner.get("displayName"), "email": owner.get("email")},
+        *(group_doc.get("users") or []),
+    ]
+    members: Dict[str, Dict[str, str]] = {}
+    for raw_member in raw_members:
+        summary = normalize_collaboration_user(raw_member)
+        if summary:
+            members.setdefault(summary["user_id"], summary)
+    return list(members.values())
+
+
+def _match_group_member(group_members: Optional[List[Dict[str, str]]], identifier: str) -> Optional[Dict[str, str]]:
+    """The one group member an invite identifier names by user ID, email or display name.
+
+    Matching the group's own records needs no directory lookup, which a scheduled
+    workflow run cannot make. An identifier that names no member, or several, is left
+    to the directory.
+    """
+    wanted = str(identifier or "").strip().lower()
+    matches = [
+        member for member in group_members or []
+        if wanted in {
+            str(member.get("user_id") or "").lower(),
+            str(member.get("email") or "").lower(),
+            str(member.get("display_name") or "").lower(),
+        }
+    ]
+    return matches[0] if len(matches) == 1 else None
 
 
 def _split_participant_identifiers(raw_identifiers: Any) -> List[str]:
