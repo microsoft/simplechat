@@ -261,6 +261,11 @@ plan to run automatically. If another tab already started the work before the
 edit hold was acquired, the editor reports a conflict instead of pretending it
 can modify that run.
 
+Since **0.261.212**, a plan that starts one of your saved workflows never counts
+down or runs automatically, whatever approval mode you chose. It waits for you to
+approve it, and the card says why and names each workflow. See
+[Run a workflow from chat]({{ '/guides/trigger-a-workflow/' | relative_url }}#run-a-workflow-from-chat).
+
 ## Return to an earlier version
 
 Use **History** to inspect prior versions and restore one that better matches
@@ -313,6 +318,10 @@ An agent step may have performed several tool calls before failing. If retry
 could repeat external effects, read and confirm the warning before continuing.
 The retry resumes at the orchestration-step boundary, not inside that agent's
 tool loop.
+
+A step that starts a saved workflow asks for the same confirmation, because its
+workflow may already have started. Its retry never starts the workflow twice: if
+the plan already started it, the retry links that run instead of starting another.
 
 The new attempt retains the original question and effective plan, including
 source restrictions, clarification answers, and the selected model. It does not

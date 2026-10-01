@@ -167,6 +167,13 @@ change the deployment default or the user's approval preference. Immediate Auto 
 still start without an editing window. See
 [Review and edit orchestration plans]({{ '/guides/review-and-edit-orchestration-plans/' | relative_url }}).
 
+From version **0.261.212**, a plan that starts a saved workflow always waits for the user
+to approve it, whatever the deployment default or the user's own choice. Starting a
+workflow begins work that carries on outside the conversation, so neither a countdown nor
+Auto ever starts one. The plan card says why the plan is waiting and names each workflow
+it would start. Plans that start no workflow follow the approval modes above. See **Run
+Workflows From Chat** under [Capabilities](#chat-orchestration-capabilities-section).
+
 #### Settings
 
 | Setting | What it does | Default | Notes |
@@ -271,7 +278,7 @@ not claim that research verified the requested details.
 | --- | --- | --- | --- |
 | Enable Action Access | Lets the planner choose an existing action the user may already use, without loading a configured agent. | Off | `enable_chat_orchestration_actions`; requires Chat Orchestration and Semantic Kernel. |
 | Propose Workflows From Chat | Lets a plan turn a request for recurring or automated work, such as "email me a summary of my week every Monday", into a personal workflow proposal. The proposal appears as a card in the conversation, and no workflow exists until the user approves it there. Proposals are offered only in the user's own private conversations, and only to users who may already create personal workflows. | Off | `enable_chat_orchestration_workflows`; requires Chat Orchestration and personal workflows (`allow_user_workflows`), and the **Propose workflows** capability when the Capabilities list is narrowed. Since **0.261.207** |
-| Run Workflows From Chat | Lets a plan start one of the user's saved personal workflows when the user asks for it, such as "run my weekly digest now". A plan that starts a workflow always waits for the user to run it, even when the approval mode would run it automatically or after a countdown, and approving it starts each named workflow once. Runs are offered only in the user's own private conversations, only to users who may already create personal workflows, and only for workflows with durable execution on. It is independent of Propose Workflows From Chat, so either can be on without the other. | Off | `enable_chat_orchestration_workflow_runs`; requires Chat Orchestration and personal workflows (`allow_user_workflows`). Since **0.261.212** |
+| Run Workflows From Chat | Lets a plan start one of the user's saved personal workflows when the user asks for it, such as "run my weekly digest now". A plan that starts a workflow always waits for the user to run it, even when the approval mode would run it automatically or after a countdown, and approving it starts each named workflow once. Runs are offered only in the user's own private conversations, only to users who may already create personal workflows, and only for workflows with durable execution on. It is independent of Propose Workflows From Chat, so either can be on without the other. | Off | `enable_chat_orchestration_workflow_runs`; requires Chat Orchestration and personal workflows (`allow_user_workflows`), and the **Run workflows** capability when the Capabilities list is narrowed. Since **0.261.212** |
 | Capabilities | Restricts which capabilities a plan may use. An empty selection means every capability the other settings already permit. | All | `chat_orchestration_enabled_capabilities` |
 
 ### Actions and agents
@@ -469,6 +476,13 @@ may already have changed an external system, the user must acknowledge that the
 step's internal effects could repeat. Checkpoints do not restore an agent's
 individual tool calls, and cannot guarantee exactly-once remote execution.
 
+From **0.261.212**, a failed, stopped or interrupted step that starts a saved workflow
+also asks for that confirmation, because its workflow may already have started. Its
+retry never starts the workflow a second time. Each run the plan starts gets an
+identifier derived from the plan's first attempt and the step, so the retry finds the run
+that attempt started and links it. Stopping a plan does not stop a workflow it already
+started; the user cancels that run in Workflows.
+
 A live execution cannot be retried. Missing, incompatible, or unauthorized
 checkpoints block recovery rather than causing completed actions to run again.
 Older runs without full checkpoints remain readable but require a new plan.
@@ -529,7 +543,10 @@ then report a rejected proposal.
 | Execution returns 503, run detail repeatedly returns 404, and every step remains pending | In affected versions, Cosmos SDK response objects were rejected as invalid dictionaries at execution and status-read boundaries. | Upgrade to 0.261.140 or later, then inspect the existing attempt. Do not reset its deadline or assume that resubmitting is safe. |
 | The plan could not account for everything requested | The proposal and its correction failed deliverables validation. Earlier guidance could lead the model to put file-only fields on an answer. | Upgrade to 0.261.140 for explicit kind-specific guidance. For a remaining rejection, inspect `sc_validation_rule` and `sc_attempt`; preserve selected sources and requested outputs rather than disabling validation. |
 | A PDF/CSV comparison tries to analyze the CSV as a narrative document | Earlier planning relied on display labels rather than current source-kind metadata. | Version 0.261.140 supplies authorized file types and rejects incompatible steps before execution. Native tabular work still requires its existing capability; inspect `source_kind_invalid` or `source_binding_required` if a correction cannot produce a valid plan. |
-| Retry requires confirmation | An agent/action may have performed external effects before it failed. | Review those effects before confirming. Retry reexecutes that failed step, not its internal tool-call checkpoint. |
+| Plans never start a saved workflow | Run Workflows From Chat or personal workflows are off, the **Run workflows** capability is excluded, the user lacks the `WorkflowUser` role your deployment requires, the conversation is shared, the workflow does not have durable execution on, or the request did not ask to run a workflow now. | Check the setting and the capability selection, then the user's role. Ask from the user's own conversation, name the workflow and ask to run it now, and turn on **Durable execution** for the workflow in its editor. |
+| A workflow step says the user's sign-in is not available | The plan's remaining work continued in the background after the user's browser request ended, so the user's signed-in session was not available to start a new workflow run. A run the plan had already started is still linked. | Ask the user to select **Retry from failed step** in the chat. The retry uses their signed-in session and never starts a workflow the plan already started. |
+| A workflow step says saved workflows were temporarily unavailable | Workflow storage could not be read or written when the step ran, so the workflow may not have started. It is not retried automatically. | Once storage is reachable, the user can select **Retry from failed step**. A run the plan already started is linked rather than started again. |
+| Retry requires confirmation | An agent/action may have performed external effects before it failed, or a step may already have started a saved workflow. | Review those effects before confirming. Retry reexecutes that failed step, not its internal tool-call checkpoint. A workflow the plan already started is linked again, never started twice. |
 | A saved run cannot be resumed | Checkpoints are absent or invalid, relevant context/access changed, or a newer/live attempt exists. | Follow the recovery explanation. Open the current attempt or create a new plan as appropriate; do not infer results from old summaries. |
 
 ## Related
