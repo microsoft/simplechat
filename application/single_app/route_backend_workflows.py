@@ -20,7 +20,7 @@ from functions_activity_logging import (
     log_workflow_deletion,
     log_workflow_update,
 )
-from functions_appinsights import log_event
+from functions_appinsights import log_event, sanitize_log_message
 from functions_authentication import get_current_user_id, get_current_user_info, login_required, user_required
 from functions_file_sync import (
     FILE_SYNC_MANAGER_ROLES,
@@ -1933,16 +1933,16 @@ def register_route_backend_workflows(bp):
         except LookupError:
             logging.exception(
                 "LookupError while cancelling personal workflow run. workflow_id=%s run_id=%s user_id=%s",
-                workflow_id,
-                run_id,
+                sanitize_log_message(workflow_id),
+                sanitize_log_message(run_id),
                 user_id,
             )
             return jsonify({'error': 'Workflow run not found.'}), 404
         except WorkflowCancellationConflictError:
             logging.exception(
                 "WorkflowCancellationConflictError while cancelling personal workflow run. workflow_id=%s run_id=%s user_id=%s",
-                workflow_id,
-                run_id,
+                sanitize_log_message(workflow_id),
+                sanitize_log_message(run_id),
                 user_id,
             )
             return jsonify({'error': 'Workflow run cancellation conflict.'}), 409
@@ -2355,21 +2355,21 @@ def register_route_backend_workflows(bp):
             logging.exception(
                 "Invalid group workflow request during cancellation. user_id=%s workflow_id=%s",
                 user_id,
-                workflow_id,
+                sanitize_log_message(workflow_id),
             )
             return jsonify({'error': 'Invalid group workflow request.'}), 400
         except LookupError as exc:
             logging.exception(
                 "Group workspace lookup failed during workflow cancellation. user_id=%s workflow_id=%s",
                 user_id,
-                workflow_id,
+                sanitize_log_message(workflow_id),
             )
             return jsonify({'error': 'Group workspace not found.'}), 404
         except PermissionError as exc:
             logging.exception(
                 "Unauthorized group workflow cancellation attempt. user_id=%s workflow_id=%s",
                 user_id,
-                workflow_id,
+                sanitize_log_message(workflow_id),
             )
             return jsonify({'error': 'Not authorized to access this group workspace.'}), 403
 
