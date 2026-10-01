@@ -267,7 +267,8 @@ def test_the_route_decorator_refuses_with_a_closed_code():
 
     app = Flask("chat-workflow-results-admin")
     with app.test_request_context("/"):
-        assert view() == "answered"
+        answered = view()
+        assert answered == "answered"
         assert calls == ["view"]
 
         for changes, roles in (
@@ -288,7 +289,9 @@ def test_the_route_decorator_refuses_with_a_closed_code():
         settings.clear()
         settings.update(settings_with(require_member_of_workflow_user=True))
         session["user"]["roles"] = ["WorkflowUser"]
-        assert view() == "answered"
+        answered_again = view()
+        assert answered_again == "answered"
+        assert calls == ["view", "view"]
     assert view.__name__ == "view"
 
 

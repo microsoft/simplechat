@@ -27,6 +27,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "application" / "single_app"))
 sys.path.insert(0, str(ROOT / "functional_tests"))
 
+import functions_workflow_result_masking as masking  # noqa: E402
 import functions_workflow_result_reader as reader  # noqa: E402
 from functions_analysis_access import AnalysisResultUnavailable  # noqa: E402
 from functions_saved_analysis import SavedAnalysisInput  # noqa: E402
@@ -265,7 +266,8 @@ def test_too_many_or_duplicate_task_rows_are_invalid():
     fixture = RunFixture()
     two_text_tasks(fixture)
     fixture.items.append({**deepcopy(fixture.items[0]), "id": "duplicate"})
-    assert closed(fixture.read).code == "workflow_result_invalid"
+    duplicated = closed(fixture.read)
+    assert duplicated.code == "workflow_result_invalid"
 
     crowded = RunFixture()
     two_text_tasks(crowded)
@@ -273,7 +275,8 @@ def test_too_many_or_duplicate_task_rows_are_invalid():
         {**deepcopy(crowded.items[0]), "id": f"extra-{index}", "status": "skipped"}
         for index in range(reader.MAX_TASK_ROWS)
     )
-    assert closed(crowded.read).code == "workflow_result_invalid"
+    overflowed = closed(crowded.read)
+    assert overflowed.code == "workflow_result_invalid"
 
 
 @pytest.mark.parametrize("stage", [
@@ -439,7 +442,8 @@ def test_lost_source_access_anywhere_in_the_run_denies_the_result(where):
     status = "succeeded" if where == "included_output" else "failed"
     fixture.add_task("task-analyze-74", analysis_result(), order=1, status=status)
     fixture.add_task("task-summary-72", {"reply": "The digest."}, order=2)
-    assert fixture.read()["descriptor"]["available"] is True
+    readable = fixture.read()
+    assert readable["descriptor"]["available"] is True
 
     fixture.sources.allowed = False
     error = closed(fixture.read)
@@ -451,12 +455,29 @@ def test_a_row_that_points_at_another_tasks_result_is_refused():
     fixture = RunFixture()
     two_text_tasks(fixture)
     fixture.items[1]["workflow_result"]["result_ref"] = deepcopy(fixture.items[0]["workflow_result"]["result_ref"])
-    assert closed(fixture.read).code == "workflow_result_access_denied"
+    pointed = closed(fixture.read)
+    assert pointed.code == "workflow_result_access_denied"
 
     other = RunFixture()
     two_text_tasks(other)
     other.items[1]["workflow_result"]["authoritative_output"] = "records"
-    assert closed(other.read).code == "workflow_result_invalid"
+    relabeled = closed(other.read)
+    assert relabeled.code == "workflow_result_invalid"
+
+
+def test_the_reader_rechecks_that_each_manifest_names_its_own_task(monkeypatch):
+    # Run authorization already refuses this row (above). The reader's own identity check
+    # must still hold if authorization ever stops comparing task ids, so it's replaced here.
+    fixture = RunFixture()
+    two_text_tasks(fixture)
+    fixture.items[1]["workflow_result"]["result_ref"] = deepcopy(fixture.items[0]["workflow_result"]["result_ref"])
+    authorized = []
+    monkeypatch.setattr(reader, "authorize_workflow_run_read", lambda *args, **kwargs: authorized.append(args))
+
+    error = closed(fixture.read)
+
+    assert len(authorized) == 1
+    assert error.code == "workflow_result_invalid" and error.status == 409
 
 
 def test_one_long_text_output_uses_the_whole_budget_and_says_it_was_cut():
@@ -780,9 +801,11 @@ def test_the_workflow_name_is_treated_as_user_authored_display_text():
     assert "\\*bold\\*" in disclosure and "\\[link\\]\\(x\\)" in disclosure and "\\_under\\_" in disclosure
 
     fixture.workflow["name"] = ""
-    assert fixture.read()["descriptor"]["workflow_name"].startswith("Digest")
+    renamed = fixture.read()
+    assert renamed["descriptor"]["workflow_name"].startswith("Digest")
     fixture.run["workflow_name"] = None
-    assert fixture.read()["descriptor"]["workflow_name"] == "Workflow"
+    unnamed = fixture.read()
+    assert unnamed["descriptor"]["workflow_name"] == "Workflow"
 
 
 def test_the_browser_selector_and_message_contexts_are_validated():
@@ -800,16 +823,16 @@ def test_the_browser_selector_and_message_contexts_are_validated():
     }}
     contexts, malformed = reader.workflow_result_message_contexts(message)
     assert contexts == [context, second] and malformed is False
-    assert reader.message_uses_workflow_result(message) is True
+    assert masking.message_uses_workflow_result(message) is True
 
     question = {"metadata": {"workflow_result_context": context}}
     assert reader.workflow_result_message_contexts(question) == ([context], False)
     for metadata in ({"workflow_result_contexts": "not-a-list"}, {"workflow_result": {"run_id": RUN_ID}}):
         found, malformed = reader.workflow_result_message_contexts({"metadata": metadata})
         assert found == [] and malformed is True
-        assert reader.message_uses_workflow_result({"metadata": metadata}) is True
+        assert masking.message_uses_workflow_result({"metadata": metadata}) is True
     assert reader.workflow_result_message_contexts({"metadata": {"other": 1}}) == ([], False)
-    assert reader.message_uses_workflow_result({"content": "plain"}) is False
+    assert masking.message_uses_workflow_result({"content": "plain"}) is False
 
 
 def test_closed_reasons_have_fixed_payloads_and_logs_never_carry_exception_text(monkeypatch):

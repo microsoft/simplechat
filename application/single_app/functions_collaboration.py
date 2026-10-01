@@ -69,6 +69,7 @@ from functions_thoughts import (
     delete_thoughts_for_conversation,
     get_thoughts_for_message,
 )
+from functions_workflow_result_masking import message_uses_workflow_result, withhold_workflow_result_message
 
 
 PERSONAL_COLLABORATION_MANAGER_ROLES = {
@@ -700,6 +701,9 @@ def create_collaboration_message_notifications(conversation_doc, message_doc):
 
 def build_collaboration_message_metadata_payload(message_doc, conversation_doc):
     source_message_doc = _get_collaboration_source_message(message_doc)
+    # The source is the owner's raw chat message; participants only ever see its withheld form.
+    if message_uses_workflow_result(source_message_doc):
+        source_message_doc = withhold_workflow_result_message(source_message_doc)
     message_metadata = deepcopy(message_doc.get('metadata', {}) if isinstance(message_doc.get('metadata'), dict) else {})
     source_metadata = deepcopy(source_message_doc.get('metadata', {}) if isinstance((source_message_doc or {}).get('metadata'), dict) else {})
     merged_metadata = _publicize_image_revisions({
@@ -967,6 +971,9 @@ def _copy_legacy_personal_messages_to_collaboration(source_conversation_id, coll
     copied_messages = []
     source_to_collaboration_message_ids = {}
     for raw_message in raw_messages:
+        # Participants read these copies directly, so a workflow result's answer is stored withheld.
+        if message_uses_workflow_result(raw_message):
+            raw_message = withhold_workflow_result_message(raw_message)
         collaboration_message = build_collaboration_message_doc_from_legacy(
             collaboration_conversation_id,
             raw_message,
@@ -1065,7 +1072,11 @@ def ensure_personal_collaboration_for_legacy_conversation(source_conversation_id
         source_conversation_doc,
     )
     collaboration_conversation_doc['strict'] = bool(source_conversation_doc.get('strict', False))
-    collaboration_conversation_doc['summary'] = source_conversation_doc.get('summary')
+    # A summary may repeat withheld workflow-result answers. Both chats drop it so syncing can't restore it.
+    withholds_workflow_results = any(message_uses_workflow_result(message) for message in publication.messages)
+    collaboration_conversation_doc['summary'] = (
+        None if withholds_workflow_results else source_conversation_doc.get('summary')
+    )
 
     source_context = list(source_conversation_doc.get('context', []) or [])
     if source_context:
@@ -1099,6 +1110,8 @@ def ensure_personal_collaboration_for_legacy_conversation(source_conversation_id
     source_conversation_doc['converted_to_collaboration_at'] = conversion_timestamp
     source_conversation_doc['is_hidden'] = True
     source_conversation_doc['last_updated'] = conversion_timestamp
+    if withholds_workflow_results:
+        source_conversation_doc['summary'] = None
     cosmos_conversations_container.upsert_item(source_conversation_doc)
 
     log_event(
@@ -2172,6 +2185,8 @@ def mirror_source_message_to_collaboration(
     if existing_message:
         return existing_message, conversation_doc, False
 
+    if message_uses_workflow_result(source_message_doc):
+        source_message_doc = withhold_workflow_result_message(source_message_doc)
     collaboration_message = build_collaboration_message_doc_from_legacy(
         (conversation_doc or {}).get('id'),
         source_message_doc,

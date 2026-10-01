@@ -18,6 +18,7 @@ from functions_appinsights import log_event
 from functions_generated_file_exports import build_saved_analysis_export
 from functions_workflow_context import WorkflowContextBudgetError, calculate_workflow_context_budget
 from functions_workflow_identity import normalize_workflow_iteration_path
+from functions_workflow_result_masking import message_uses_workflow_result, withhold_workflow_result_message
 from functions_workflow_result_store import WorkflowResultStorageUnavailableError, _quota_bytes
 from functions_workflow_runtime_store import WorkflowRuntimeConflict
 from functions_workflow_results import (
@@ -444,7 +445,6 @@ def is_saved_analysis_unavailable(message):
     )
 
 
-_WORKFLOW_RESULT_KEYS = ("workflow_result", "workflow_result_context", "workflow_result_contexts")
 _WORKFLOW_RESULT_WITHHELD_LOG = "[WorkflowResults] A chat answer's workflow result was withheld on read."
 
 
@@ -528,36 +528,8 @@ class _WorkflowResultLineage:
         return all(self._readable(context) for context in contexts)
 
     def sanitize(self, message):
-        from functions_workflow_result_reader import WORKFLOW_RESULT_UNAVAILABLE_MESSAGE, WORKFLOW_RESULT_VERSION
-
-        if self.allows(message):
-            return message
-        metadata = message.get("metadata") if isinstance(message.get("metadata"), Mapping) else {}
-        if message.get("role") == "user":
-            # The question is the reader's own text; only its link to the result goes.
-            kept = deepcopy(message)
-            kept["metadata"] = {key: value for key, value in kept["metadata"].items() if key not in _WORKFLOW_RESULT_KEYS}
-            return kept
-        safe = {
-            key: deepcopy(message[key]) for key in (
-                "id", "conversation_id", "role", "timestamp", "model_deployment_name",
-                "agent_display_name", "agent_name",
-            ) if key in message
-        }
-        safe["content"] = WORKFLOW_RESULT_UNAVAILABLE_MESSAGE
-        safe["metadata"] = {
-            key: deepcopy(metadata[key]) for key in ("thread_info", "user_info", "masked", "masked_ranges")
-            if key in metadata
-        }
-        safe["metadata"]["workflow_result"] = {"version": WORKFLOW_RESULT_VERSION, "available": False}
-        for field in ("agent_citations", "hybrid_citations", "web_search_citations", "thoughts"):
-            safe[field] = []
-        return safe
-
-
-def _uses_workflow_result(message):
-    metadata = message.get("metadata") if isinstance(message, Mapping) else None
-    return isinstance(metadata, Mapping) and any(key in metadata for key in _WORKFLOW_RESULT_KEYS)
+        # A question keeps the reader's own text; only its link to the result goes.
+        return message if self.allows(message) else withhold_workflow_result_message(message)
 
 
 def authorize_saved_analysis_message_read(
@@ -572,7 +544,7 @@ def authorize_saved_analysis_message_read(
             raise
         _authorize_conversation(user_id, conversation_id)
         return False
-    if _uses_workflow_result(message):
+    if message_uses_workflow_result(message):
         lineage = _WorkflowResultLineage(
             user_id, result_reader=workflow_result_reader, conversation_reader=conversation_reader,
         )
@@ -1819,7 +1791,7 @@ def sanitize_saved_analysis_messages(
     lineage = None
     sanitized = []
     for message in messages:
-        if _uses_workflow_result(message):
+        if message_uses_workflow_result(message):
             # Checked first: a withheld answer keeps no analysis lineage to check afterwards.
             if lineage is None:
                 lineage = _WorkflowResultLineage(

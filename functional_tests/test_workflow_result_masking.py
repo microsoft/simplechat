@@ -28,11 +28,13 @@ sys.path.insert(0, str(ROOT / "application" / "single_app"))
 sys.path.insert(0, str(ROOT / "functional_tests"))
 
 import functions_saved_analysis as saved  # noqa: E402
+import functions_workflow_result_masking as masking  # noqa: E402
 import functions_workflow_result_reader as reader  # noqa: E402
 from collaboration_models import (  # noqa: E402
     COLLABORATION_KIND,
     COLLABORATION_SOURCE_KIND,
     PERSONAL_MULTI_USER_CHAT_TYPE,
+    build_collaboration_message_doc_from_legacy,
 )
 from functions_workflow_result_store import WorkflowResultStorageUnavailableError  # noqa: E402
 from test_support.versioning import assert_app_version_at_least  # noqa: E402
@@ -170,14 +172,14 @@ class World:
 
 def assert_withheld(message, original):
     assert set(message) == WITHHELD_KEYS | ({"agent_display_name", "agent_name"} & set(original))
-    assert message["content"] == reader.WORKFLOW_RESULT_UNAVAILABLE_MESSAGE
+    assert message["content"] == masking.WORKFLOW_RESULT_UNAVAILABLE_MESSAGE
     for field in ("id", "conversation_id", "role", "timestamp", "model_deployment_name"):
         assert message[field] == original[field]
     assert message["metadata"] == {
         "thread_info": original["metadata"]["thread_info"],
         "user_info": original["metadata"]["user_info"],
         "masked": original["metadata"]["masked"],
-        "workflow_result": {"version": reader.WORKFLOW_RESULT_VERSION, "available": False},
+        "workflow_result": {"version": masking.WORKFLOW_RESULT_VERSION, "available": False},
     }
     for field in ("agent_citations", "hybrid_citations", "web_search_citations", "thoughts"):
         assert message[field] == []
@@ -238,7 +240,7 @@ def test_one_authorization_per_distinct_result_and_one_read_per_chat():
     result = world.sanitize(messages)
 
     assert result[:7] == messages[:7]
-    assert result[7]["content"] == result[8]["content"] == reader.WORKFLOW_RESULT_UNAVAILABLE_MESSAGE
+    assert result[7]["content"] == result[8]["content"] == masking.WORKFLOW_RESULT_UNAVAILABLE_MESSAGE
     assert sorted(world.authorizer.calls) == sorted([
         (USER, reader.workflow_result_context_key(world.context)),
         (USER, reader.workflow_result_context_key(stale)),
@@ -270,13 +272,15 @@ def test_a_changed_result_is_withheld_until_it_matches_again():
     assert messages == before
 
     world.restore_result()
-    assert world.sanitize(messages) == before
+    restored = world.sanitize(messages)
+    assert restored == before
 
 
 def test_lost_source_access_withholds_an_answer_that_used_an_analysis_output():
     world = World(with_analysis=True)
     answer = world.answer()
-    assert world.sanitize([answer]) == [answer]
+    readable = world.sanitize([answer])
+    assert readable == [answer]
 
     world.fixture.sources.allowed = False
 
@@ -339,7 +343,7 @@ def test_another_reader_and_a_message_without_a_chat_are_withheld():
     orphan = world.answer()
     del orphan["conversation_id"]
     withheld = world.sanitize([orphan])[0]
-    assert withheld["content"] == reader.WORKFLOW_RESULT_UNAVAILABLE_MESSAGE
+    assert withheld["content"] == masking.WORKFLOW_RESULT_UNAVAILABLE_MESSAGE
     assert "conversation_id" not in withheld
     assert world.authorizer.calls == []
 
@@ -364,10 +368,10 @@ def test_malformed_lineage_is_withheld_without_reads(metadata):
 
     result = world.sanitize([question, answer])
 
-    assert result[1]["content"] == reader.WORKFLOW_RESULT_UNAVAILABLE_MESSAGE
-    assert result[1]["metadata"]["workflow_result"] == {"version": reader.WORKFLOW_RESULT_VERSION, "available": False}
+    assert result[1]["content"] == masking.WORKFLOW_RESULT_UNAVAILABLE_MESSAGE
+    assert result[1]["metadata"]["workflow_result"] == {"version": masking.WORKFLOW_RESULT_VERSION, "available": False}
     assert result[0]["content"] == QUESTION
-    assert not reader.message_uses_workflow_result(result[0])
+    assert not masking.message_uses_workflow_result(result[0])
     assert world.authorizer.calls == []
     assert world.conversations.reads == []
 
@@ -387,10 +391,41 @@ def test_withholding_is_idempotent_and_reads_nothing_the_second_time():
     assert world.conversations.reads == []
 
 
+def test_a_shared_copy_keeps_its_sender_and_place_when_withheld_again_on_read():
+    world = World()
+    answer = world.answer()
+    owner = {"user_id": USER, "display_name": "Owner", "email": "owner@example.test"}
+    # The collaboration copy is built from the withheld answer; the serializer lifts the sender to the top level.
+    stored = build_collaboration_message_doc_from_legacy(
+        "collab-1", masking.withhold_workflow_result_message(answer), owner,
+    )
+    serialized = {**deepcopy(stored), "sender": deepcopy(stored["metadata"]["sender"])}
+
+    reread = world.sanitize([stored, serialized])
+    again = world.sanitize(reread)
+
+    assert stored["metadata"]["sender"]["display_name"] == "Digest helper"
+    assert reread[1]["sender"] == stored["metadata"]["sender"]
+    for message, original in zip(reread, (stored, serialized)):
+        assert message["content"] == masking.WORKFLOW_RESULT_UNAVAILABLE_MESSAGE
+        for field in ("id", "conversation_id", "role", "timestamp", "message_kind", "reply_to_message_id"):
+            assert message[field] == original[field]
+        for field in ("sender", "user_info", "thread_info", "source_message_id", "source_role"):
+            assert message["metadata"][field] == original["metadata"][field]
+        assert message["metadata"]["source_message_id"] == answer["id"]
+        shown = json.dumps(message)
+        for private in (WORKFLOW_ID, RUN_ID, "Weekly digest", "CANARY", world.context["result_sha256"]):
+            assert private not in shown
+    assert again == reread
+    assert world.authorizer.calls == []
+    assert world.conversations.reads == []
+
+
 def test_an_ordinary_answer_that_inherited_the_lineage_follows_it():
     world = World()
     inherited = world.answer(descriptor=False)
-    assert world.sanitize([inherited]) == [inherited]
+    readable = world.sanitize([inherited])
+    assert readable == [inherited]
 
     world.delete_run()
 
@@ -402,7 +437,8 @@ def test_saved_analysis_checks_still_run_after_the_workflow_check():
     answer = world.answer()
     answer["metadata"]["analysis_result_contexts"] = [dict(ANALYSIS_CONTEXT)]
 
-    assert world.sanitize([answer]) == [answer]
+    readable = world.sanitize([answer])
+    assert readable == [answer]
     assert world.analysis_reads == [ANALYSIS_CONTEXT]
 
     def lost(user_id, context):
@@ -410,12 +446,12 @@ def test_saved_analysis_checks_still_run_after_the_workflow_check():
 
     analysis_withheld = world.sanitize([answer], result_reader=lost)[0]
     assert analysis_withheld["content"] == saved.UNAVAILABLE_ANALYSIS_MESSAGE
-    assert not reader.message_uses_workflow_result(analysis_withheld)
+    assert not masking.message_uses_workflow_result(analysis_withheld)
 
     world.analysis_reads.clear()
     world.delete_run()
     workflow_withheld = world.sanitize([answer])[0]
-    assert workflow_withheld["content"] == reader.WORKFLOW_RESULT_UNAVAILABLE_MESSAGE
+    assert workflow_withheld["content"] == masking.WORKFLOW_RESULT_UNAVAILABLE_MESSAGE
     assert world.analysis_reads == []
 
 
@@ -443,11 +479,13 @@ def test_message_views_follow_the_workflow_lineage():
         arguments.update(options)
         return saved.authorize_saved_analysis_message_read(USER, CONVERSATION_ID, message["id"], **arguments)
 
-    assert authorize(answer) is True
+    allowed = authorize(answer)
+    assert allowed is True
     plain = {"id": "plain", "conversation_id": CONVERSATION_ID, "role": "assistant", "metadata": {}}
     world.authorizer.calls.clear()
     world.conversations.reads.clear()
-    assert authorize(plain) is True
+    plain_allowed = authorize(plain)
+    assert plain_allowed is True
     assert world.authorizer.calls == [] and world.conversations.reads == []
 
     world.authorizer.error = AzureError("down")
@@ -485,6 +523,69 @@ def test_withholding_logs_fixed_messages_with_codes_only(monkeypatch):
     assert {"check": "result", "code": "workflow_result_not_found", "error_type": "WorkflowResultUnavailable"} in [
         extra for _, extra in logged
     ]
+
+
+@pytest.mark.parametrize(("metadata", "uses", "asks"), [
+    ({"workflow_result": {"version": "workflow-result-v1"}}, True, True),
+    ({"workflow_result_context": {"run_id": RUN_ID}}, True, True),
+    ({"workflow_result_contexts": [{"run_id": RUN_ID}]}, True, False),
+    ({"workflow_result": None}, True, True),
+    ({"workflow_result_contexts": []}, True, False),
+    ({"analysis_result_contexts": [ANALYSIS_CONTEXT]}, False, False),
+    ({"analysis_result_context": ANALYSIS_CONTEXT, "thread_info": {"thread_id": "t"}}, False, False),
+    ({}, False, False),
+])
+def test_the_helpers_recognize_a_workflow_result_by_key_presence(metadata, uses, asks):
+    message = {"id": "m", "role": "assistant", "metadata": deepcopy(metadata)}
+
+    found = (masking.message_uses_workflow_result(message), masking.message_asks_about_workflow_result(message))
+
+    assert found == (uses, asks)
+    assert message["metadata"] == metadata
+
+
+@pytest.mark.parametrize("message", [
+    None, "workflow_result", ["workflow_result"], {"metadata": None}, {"metadata": ["workflow_result"]},
+    {"metadata": "workflow_result_context"}, {"workflow_result": {"version": "workflow-result-v1"}},
+])
+def test_a_message_without_mapping_metadata_never_uses_a_workflow_result(message):
+    found = (masking.message_uses_workflow_result(message), masking.message_asks_about_workflow_result(message))
+
+    assert found == (False, False)
+
+
+def test_the_withheld_form_never_changes_its_input_and_is_stable():
+    world = World()
+    question, answer = world.question(), world.answer()
+    question["metadata"]["workflow_result_contexts"] = [dict(world.context)]
+    originals = deepcopy([question, answer])
+
+    withheld_question = masking.withhold_workflow_result_message(question)
+    withheld_answer = masking.withhold_workflow_result_message(answer)
+    again = [masking.withhold_workflow_result_message(message) for message in (withheld_question, withheld_answer)]
+
+    assert [question, answer] == originals
+    assert withheld_question["content"] == QUESTION
+    assert not set(masking.WORKFLOW_RESULT_MESSAGE_KEYS) & set(withheld_question["metadata"])
+    assert withheld_question["metadata"]["prompt_selection"] == question["metadata"]["prompt_selection"]
+    assert_withheld(withheld_answer, answer)
+    assert again == [withheld_question, withheld_answer]
+
+    # The withheld form shares no nested value with the stored message.
+    withheld_answer["metadata"]["thread_info"]["thread_id"] = "changed"
+    withheld_question["metadata"]["user_info"]["display_name"] = "changed"
+    assert [question, answer] == originals
+
+
+def test_withholding_something_that_isnt_a_message_returns_only_the_withheld_answer():
+    for value in (None, "text", ["workflow_result"]):
+        withheld = masking.withhold_workflow_result_message(value)
+
+        assert withheld == {
+            "content": masking.WORKFLOW_RESULT_UNAVAILABLE_MESSAGE,
+            "metadata": {"workflow_result": {"version": masking.WORKFLOW_RESULT_VERSION, "available": False}},
+            "agent_citations": [], "hybrid_citations": [], "web_search_citations": [], "thoughts": [],
+        }
 
 
 def test_version_is_at_least_the_implementation_version():

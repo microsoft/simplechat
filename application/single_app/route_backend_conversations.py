@@ -96,7 +96,8 @@ from functions_saved_analysis import (
     is_saved_analysis_unavailable,
     sanitize_saved_analysis_messages,
 )
-from functions_workflow_result_reader import message_uses_workflow_result
+from functions_workflow_result_masking import message_asks_about_workflow_result, message_uses_workflow_result
+from functions_workflow_result_reader import WorkflowResultUnavailable, workflow_result_error_payload
 from utils_cache import invalidate_personal_search_cache
 
 
@@ -3163,6 +3164,16 @@ def register_route_backend_conversations(bp):
             if not user_msg_results:
                 return jsonify({"error": "User message not found in thread"}), 404
             original_user_msg = user_msg_results[0]
+            if (
+                message_asks_about_workflow_result(original_msg)
+                or message_asks_about_workflow_result(original_user_msg)
+            ):
+                # A retry would replay a Follow up question as an ordinary turn that still names the result.
+                # A later answer that only inherited the lineage replays an ordinary question and re-checks it.
+                payload, status = workflow_result_error_payload(
+                    WorkflowResultUnavailable("workflow_result_retry_unsupported")
+                )
+                return jsonify(payload), status
             user_content = original_user_msg.get("content", "")
             input_check = check_chat_content(user_content, "chat_input", user_id=user_id)
             if input_check.blocked:
@@ -3373,6 +3384,13 @@ def register_route_backend_conversations(bp):
                     return jsonify({'error': 'Conversation not found'}), 404
             elif message_user_id != user_id:
                 return jsonify({'error': 'You can only edit your own messages'}), 403
+
+            if message_asks_about_workflow_result(original_msg):
+                # An edit would replay a Follow up question as an ordinary turn that still names the result.
+                payload, status = workflow_result_error_payload(
+                    WorkflowResultUnavailable("workflow_result_retry_unsupported")
+                )
+                return jsonify(payload), status
 
             input_check = check_chat_content(edited_content, "chat_input", user_id=user_id)
             if input_check.blocked:

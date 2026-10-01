@@ -47,6 +47,7 @@ from ui_tests.fixtures.v2_notification_stubs import (  # noqa: E402
     workflow_alert_document,
 )
 import functions_workflow_result_followup as followup  # noqa: E402
+import functions_workflow_result_masking as masking  # noqa: E402
 import functions_workflow_result_reader as reader  # noqa: E402
 from functions_chat_stream_events import build_user_message_persisted_stream_event  # noqa: E402
 
@@ -319,7 +320,7 @@ class ResultsServer:
         """The public descriptor: all the browser is ever told about a result."""
         run = self.runs[run_id]
         return {
-            "version": reader.WORKFLOW_RESULT_VERSION, "workflow_id": WORKFLOW_ID, "run_id": run_id,
+            "version": masking.WORKFLOW_RESULT_VERSION, "workflow_id": WORKFLOW_ID, "run_id": run_id,
             "workflow_name": self.workflow_name, "status": run["status"], "completed_at": run["completed_at"],
             "result_sha256": self.result_sha[run_id], "available": True,
         }
@@ -630,10 +631,10 @@ def seed_conversation(server, conversation_id, *, answered_from=None, masked=Fal
         # Only the question's own text is kept; the answer keeps no trace of the result.
         reply = {
             **{key: reply[key] for key in ("id", "conversation_id", "role", "timestamp", "model_deployment_name")},
-            "content": reader.WORKFLOW_RESULT_UNAVAILABLE_MESSAGE,
+            "content": masking.WORKFLOW_RESULT_UNAVAILABLE_MESSAGE,
             "metadata": {
                 "thread_info": thread,
-                "workflow_result": {"version": reader.WORKFLOW_RESULT_VERSION, "available": False},
+                "workflow_result": {"version": masking.WORKFLOW_RESULT_VERSION, "available": False},
             },
             "agent_citations": [], "hybrid_citations": [], "web_search_citations": [], "thoughts": [],
         }
@@ -889,7 +890,8 @@ def test_ask_about_this_on_a_personal_alert_opens_a_chat_about_its_run(tab, serv
     if start.startswith("/chat"):
         expect(tab.message("conv-old_assistant_1")).to_contain_text("Three items changed this week.")
 
-    assert tab.show_alerts([alert("n-1")]) == 1
+    shown = tab.show_alerts([alert("n-1")])
+    assert shown == 1
     expect(tab.alert_card).to_have_count(1)
     expect(tab.follow_up).to_have_text("Ask about this")
     tab.follow_up.click()
@@ -913,7 +915,8 @@ def test_ask_about_this_on_a_personal_alert_opens_a_chat_about_its_run(tab, serv
 ], ids=["group", "failed-run", "no-run"])
 def test_alerts_that_name_no_readable_personal_run_offer_no_follow_up(tab, server, fields):
     tab.open("/work")
-    assert tab.show_alerts([alert("n-2", **fields)]) == 1
+    shown = tab.show_alerts([alert("n-2", **fields)])
+    assert shown == 1
     expect(tab.alert_card).to_have_count(1)
     expect(tab.alert_card.locator("[data-workflow-alert-links]")).to_have_count(1)
     expect(tab.follow_up).to_have_count(0)
@@ -933,7 +936,8 @@ def test_with_the_setting_off_nothing_offers_a_workflow_result(tab, server):
     expect(tab.route).to_have_text("/chat")
     assert server.descriptor_reads == ["run-1"]
 
-    assert tab.show_alerts([alert("n-1")]) == 1
+    shown = tab.show_alerts([alert("n-1")])
+    assert shown == 1
     expect(tab.alert_card).to_have_count(1)
     expect(tab.alert_card.locator("[data-workflow-alert-links]")).to_have_count(1)
     expect(tab.follow_up).to_have_count(0)
@@ -965,7 +969,7 @@ def test_reopening_a_chat_whose_answer_was_withheld_selects_nothing(tab, server)
     seed_conversation(server, "conv-old", masked=True)
     tab.open("/chat?conversationId=conv-old")
     answer = tab.message("conv-old_assistant_1")
-    expect(answer).to_contain_text(reader.WORKFLOW_RESULT_UNAVAILABLE_MESSAGE)
+    expect(answer).to_contain_text(masking.WORKFLOW_RESULT_UNAVAILABLE_MESSAGE)
     expect(answer).not_to_contain_text("Three items changed this week.")
     expect(tab.chip).to_have_count(0)
     expect(tab.composer).to_have_attribute("placeholder", DEFAULT_PLACEHOLDER)

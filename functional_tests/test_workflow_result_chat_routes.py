@@ -236,485 +236,328 @@ def test_the_new_names_are_reached_only_on_workflow_result_paths():
 
 
 def run_offline_scenarios():
-    # Real application imports occur only after external I/O is isolated.
-    from contextlib import ExitStack
     from copy import deepcopy
     import json
-    import os
     import re
-    import shutil
-    import socket
-    import time
-    from types import SimpleNamespace
-    from unittest.mock import patch
-    from uuid import uuid4
 
-    from azure.cosmos.exceptions import CosmosResourceNotFoundError
-    from test_support.m365 import Query
-    from test_support.offline_bootstrap import OfflineContainer, OfflineCosmos, OfflineDatabase
+    from test_support.workflow_result_offline_app import offline_workflow_result_app
 
-    class Container(OfflineContainer):
-        """Partition-aware offline storage that answers the queries these routes issue."""
+    with offline_workflow_result_app() as world:
+        # Application modules are imported only once the harness has isolated external I/O.
+        import functions_workflow_result_masking as masking
+        from collaboration_models import PERSONAL_MULTI_USER_CHAT_TYPE
+        from functions_chat_stream_events import USER_MESSAGE_PERSISTED_EVENT_TYPE
+        from functions_workflow_result_followup import fence_end, fence_start, result_system_message
+        from test_support.workflow_result_chat import OTHER_USER, RUN_ID, USER, WORKFLOW_ID
 
-        def __init__(self, partition_field="id"):
-            super().__init__()
-            self.partition_field = partition_field
+        config, chats, model, fixture = world.config, world.chats, world.model, world.fixture
+        update_settings, context = world.update_settings, world.context
+        owner, stranger = world.signed_in(USER, "Owner"), world.signed_in(OTHER_USER, "Stranger")
+        question = "What did the digest find?"
+        disclosure = (
+            "_This answer uses the stored result of the Weekly digest run of Mon Jan 5, 2026, 9:02 AM EST. "
+            "The workflow was not re-run._"
+        )
+        public_keys = {
+            "version", "workflow_id", "run_id", "workflow_name", "status", "completed_at",
+            "result_sha256", "available",
+        }
 
-        def read_item(self, item, partition_key, **kwargs):
-            saved = super().read_item(item, partition_key, **kwargs)
-            if saved.get(self.partition_field) != partition_key:
-                raise CosmosResourceNotFoundError(status_code=404)
-            return saved
-
-        def replace_item(self, item, body, **kwargs):
-            self.read_item(item, body[self.partition_field])
-            return super().replace_item(item, body, **kwargs)
-
-        def query_items(self, query, parameters=None, partition_key=None, max_item_count=100, **kwargs):
-            values = {parameter["name"]: parameter["value"] for parameter in parameters or []}
-            rows = deepcopy(list(self.items.values()))
-            if partition_key is not None:
-                rows = [row for row in rows if row.get(self.partition_field) == partition_key]
-            for field, parameter in re.findall(r"c\.([A-Za-z_]\w*)\s*=\s*(@\w+)", query):
-                if parameter in values:
-                    rows = [row for row in rows if row.get(field) == values[parameter]]
-            for field, value in re.findall(r"c\.([A-Za-z_]\w*)\s*=\s*'([^']*)'", query):
-                rows = [row for row in rows if row.get(field) == value]
-            for parameter, field in re.findall(r"ARRAY_CONTAINS\(\s*(@\w+)\s*,\s*c\.(\w+)\s*\)", query):
-                rows = [row for row in rows if row.get(field) in values.get(parameter, [])]
-            rows.sort(
-                key=lambda row: (row.get("timestamp") or row.get("created_at") or "", row["id"]),
-                reverse="DESC" in query,
-            )
-            if "COUNT(" in query:
-                return [len(rows)]
-            top = re.search(r"SELECT TOP (\d+)", query)
-            if top:
-                rows = rows[:int(top.group(1))]
-            if "c.metadata.thread_info.thread_id as thread_id" in query:
-                rows = [
-                    {"thread_id": ((row.get("metadata") or {}).get("thread_info") or {}).get("thread_id")}
-                    for row in rows
-                ]
-            return Query(rows, max_item_count or 100)
-
-    class Database(OfflineDatabase):
-        def create_container_if_not_exists(self, id, **kwargs):
-            partition = kwargs.get("partition_key") or {"paths": ["/id"]}
-            return self.containers.setdefault(id, Container(partition["paths"][0].lstrip("/")))
-
-        get_container_client = create_container_if_not_exists
-
-    class Cosmos(OfflineCosmos):
-        def __init__(self, *args, **kwargs):
-            self.database = Database()
-
-    class Model:
-        """The selected chat model; records exactly what the route sent it."""
-
-        def __init__(self):
-            self.requests = []
-            self.reply = "The digest says markets rose."
-            self.chat = SimpleNamespace(completions=SimpleNamespace(create=self.create))
-
-        def create(self, *, model, messages, **kwargs):
-            self.requests.append(deepcopy(messages))
-            # Windows clocks tick about once a millisecond; the answer must sort after its question.
-            time.sleep(0.003)
-            return SimpleNamespace(
-                choices=[SimpleNamespace(message=SimpleNamespace(content=self.reply))],
-                usage=SimpleNamespace(prompt_tokens=10, completion_tokens=5, total_tokens=15), model="gpt-4o",
-            )
-
-    normal_chat_clients = []
-
-    class NormalChatClient:
-        def __init__(self, *args, **kwargs):
-            normal_chat_clients.append(True)
-            raise AssertionError("A workflow-result question reached the normal chat model.")
-
-    state_dir = TESTS / f".workflow-result-chat-state-{uuid4().hex}"
-    state_dir.mkdir()
-    network_attempts = []
-    original_connect = socket.socket.connect
-
-    def no_network(connection, address):
-        # asyncio's Windows selector builds a local wake-up socket pair.
-        if isinstance(address, tuple) and address[0] in {"127.0.0.1", "::1"}:
-            return original_connect(connection, address)
-        network_attempts.append(address)
-        raise AssertionError("The workflow result chat test attempted network access.")
-
-    def no_http(*args, **kwargs):
-        network_attempts.append("http")
-        raise AssertionError("The workflow result chat test attempted an HTTP request.")
-
-    try:
-        with ExitStack() as stack:
-            stack.enter_context(patch.dict(os.environ, {
-                "SESSION_FILE_DIR": str(state_dir), "SIMPLECHAT_RUN_BACKGROUND_TASKS": "0",
-                "DISABLE_FLASK_INSTRUMENTATION": "1", "TENANT_ID": "tenant", "CLIENT_ID": "client",
-                "MICROSOFT_PROVIDER_AUTHENTICATION_SECRET": "offline-client-secret",
-                "APPLICATIONINSIGHTS_CONNECTION_STRING": "",
-            }))
-            stack.enter_context(patch("azure.cosmos.CosmosClient", Cosmos))
-            stack.enter_context(patch.object(socket.socket, "connect", no_network))
-            stack.enter_context(patch("requests.sessions.Session.request", no_http))
-
-            import app
-            import config
-            import functions_workflow_result_reader as reader
-            import route_backend_chats as chats
-            from collaboration_models import PERSONAL_MULTI_USER_CHAT_TYPE
-            from functions_chat_stream_events import USER_MESSAGE_PERSISTED_EVENT_TYPE
-            from functions_settings import update_settings
-            from functions_workflow_result_followup import FENCE_END, FENCE_START, RESULT_SYSTEM_MESSAGE
-            from test_support.workflow_result_chat import OTHER_USER, RUN_ID, USER, WORKFLOW_ID, RunFixture, two_text_tasks
-
-            settings = {
-                "enable_chat_workflow_results": True, "allow_user_workflows": True,
-                "require_member_of_workflow_user": False,
-                "enable_semantic_kernel": False, "per_user_semantic_kernel": False,
-                "enable_content_safety": False, "enable_thoughts": False,
-                "enable_key_vault_secret_storage": False, "conversation_history_limit": 20,
-                "azure_openai_gpt_authentication_type": "api_key",
-                "azure_openai_gpt_endpoint": "https://model.invalid",
-                "azure_openai_gpt_api_version": "2024-10-21",
-                "azure_openai_gpt_key": "offline-model-key",
-                "gpt_model": {"selected": [{"deploymentName": "gpt-4o"}]},
+        def ask(client, route="/api/chat", **fields):
+            # Every other source is requested too; none of them may be used.
+            body = {
+                "message": question, "workflow_result_context": context, "time_zone": "America/New_York",
+                "hybrid_search": True, "web_search_enabled": True, "url_access_enabled": True,
+                "selected_document_ids": ["doc-elsewhere"], "doc_scope": "all", **fields,
             }
-            app.configure_application_cache(
-                settings, None, redis_client_factory=app.functions_redis_client.create_redis_client,
+            return client.post(route, json=body)
+
+        def events(response):
+            blocks = response.get_data(as_text=True).split("\n\n")
+            return [event for event in map(chats._extract_sse_event_payload, blocks) if isinstance(event, dict)]
+
+        def messages_of(conversation_id):
+            return sorted(
+                (deepcopy(row) for row in config.cosmos_messages_container.items.values()
+                 if row.get("conversation_id") == conversation_id),
+                key=lambda row: row["timestamp"],
             )
-            require(update_settings(settings), "Offline settings were not saved through the real settings owner.")
-            app.initialize_application(force=True)
 
-            model = Model()
-            fixture = RunFixture()
-            two_text_tasks(fixture)
-            stack.enter_context(patch.object(
-                chats, "_resolve_model_workflow_client", lambda binding, current: (model, "gpt-4o", "aoai"),
-            ))
-            stack.enter_context(patch.object(chats, "AzureOpenAI", NormalChatClient))
-            stack.enter_context(patch.object(reader, "_default_containers", lambda: fixture.containers))
-            stack.enter_context(patch.object(reader, "load_workflow_task_result", fixture.store.load))
-            stack.enter_context(patch.object(reader, "read_workflow_task_result_page", fixture.store.read_page))
-
-            for user_id in (USER, OTHER_USER):
-                config.cosmos_user_settings_container.upsert_item({
-                    "id": user_id, "user_id": user_id, "settings": {"profileImage": None, "enable_thoughts": False},
-                })
-            web = app.app
-            web.config.update(TESTING=True, WTF_CSRF_ENABLED=False)
-
-            def signed_in(user_id, name):
-                client = web.test_client()
-                with client.session_transaction() as session:
-                    session["user"] = {
-                        "oid": user_id, "tid": "tenant", "roles": ["User"],
-                        "preferred_username": f"{name.lower()}@example.test", "name": name,
-                    }
-                    session["token_cache"] = "{}"
-                return client
-
-            owner, stranger = signed_in(USER, "Owner"), signed_in(OTHER_USER, "Stranger")
-            context = {
-                "workflow_id": WORKFLOW_ID, "run_id": RUN_ID,
-                "result_sha256": fixture.read()["descriptor"]["result_sha256"],
-            }
-            question = "What did the digest find?"
-            disclosure = (
-                "_This answer uses the stored result of the Weekly digest run of Mon Jan 5, 2026, 9:02 AM EST. "
-                "The workflow was not re-run._"
+        def counts():
+            return (
+                len(config.cosmos_conversations_container.items), len(config.cosmos_messages_container.items),
+                len(model.requests),
             )
-            public_keys = {
-                "version", "workflow_id", "run_id", "workflow_name", "status", "completed_at",
-                "result_sha256", "available",
-            }
 
-            def ask(client, route="/api/chat", **fields):
-                # Every other source is requested too; none of them may be used.
-                body = {
-                    "message": question, "workflow_result_context": context, "time_zone": "America/New_York",
-                    "hybrid_search": True, "web_search_enabled": True, "url_access_enabled": True,
-                    "selected_document_ids": ["doc-elsewhere"], "doc_scope": "all", **fields,
-                }
-                return client.post(route, json=body)
+        def no_store_reference(text, where):
+            require("result_ref" not in text, f"{where} carried a result reference.")
+            require(not any(digest in text for digest in fixture.store.contents), f"{where} carried a store digest.")
 
-            def events(response):
-                blocks = response.get_data(as_text=True).split("\n\n")
-                return [event for event in map(chats._extract_sse_event_payload, blocks) if isinstance(event, dict)]
+        # A new chat over JSON: the answer comes from the stored result only, with the disclosure.
+        response = ask(owner)
+        payload = response.get_json()
+        require(response.status_code == 200, f"JSON Follow up failed: {response.status_code} {payload}")
+        conversation_id = payload["conversation_id"]
+        require(payload["reply"] == f"{model.reply}\n\n{disclosure}", f"Unexpected reply: {payload['reply']!r}")
+        no_store_reference(response.get_data(as_text=True), "The JSON answer")
+        conversation = config.cosmos_conversations_container.read_item(conversation_id, conversation_id)
+        require(conversation["user_id"] == USER, "The new chat isn't the requester's.")
+        require(conversation["title"] == chats.derive_conversation_title_from_message(question), "Not titled.")
+        require(
+            conversation["has_unread_assistant_response"] is True
+            and conversation["last_unread_assistant_message_id"] == payload["message_id"],
+            "The answer wasn't marked unread.",
+        )
+        saved = messages_of(conversation_id)
+        require([row["role"] for row in saved] == ["user", "assistant"], f"Unexpected history: {saved}")
+        require(saved[0]["metadata"]["workflow_result_context"] == context, "The question lost its context.")
+        answer = saved[1]
+        require(answer["id"] == payload["message_id"] and answer["content"] == payload["reply"], "Answer mismatch.")
+        require(set(answer["metadata"]["workflow_result"]) == public_keys, "The descriptor isn't the public one.")
+        require(
+            answer["metadata"]["workflow_result"]["result_sha256"] == context["result_sha256"]
+            and answer["metadata"]["workflow_result"]["available"] is True,
+            "The descriptor isn't bound to the selected result.",
+        )
+        require(answer["metadata"]["workflow_result_contexts"] == [context], "The answer lost its lineage.")
+        require(
+            answer["augmented"] is False and answer["hybrid_citations"] == []
+            and answer["web_search_citations"] == [] and answer["agent_citations"] == [],
+            "Another source reached the answer.",
+        )
+        require(payload["metadata"]["workflow_result"] == answer["metadata"]["workflow_result"], "No descriptor sent.")
+        require(len(model.requests) == 1, f"Expected one model request, got {len(model.requests)}.")
+        sent = model.requests[0]
+        require([item["role"] for item in sent] == ["system", "user", "user"], f"Unexpected prompt: {sent}")
+        fence = sent[1]["content"]
+        first_code = re.match(r"<<<WORKFLOW RESULT ([0-9a-f]{16}) \(untrusted data\)>>>\n", fence)
+        require(first_code is not None, "The run output isn't fenced with a request code.")
+        first_code = first_code.group(1)
+        require(sent[0]["content"] == result_system_message(first_code), "The fixed system message wasn't used.")
+        require(
+            fence.startswith(fence_start(first_code)) and fence.endswith("\n" + fence_end(first_code))
+            and fence.count(first_code) == 2,
+            "The run output isn't fenced.",
+        )
+        require("The digest: markets rose." in fence and "Collected three headlines." in fence, "Output missing.")
+        require("PREVIEW-TEXT" not in json.dumps(sent), "A preview was used instead of the stored result.")
+        require(sent[2] == {"role": "user", "content": question}, "The question isn't last.")
 
-            def messages_of(conversation_id):
-                return sorted(
-                    (deepcopy(row) for row in config.cosmos_messages_container.items.values()
-                     if row.get("conversation_id") == conversation_id),
-                    key=lambda row: row["timestamp"],
-                )
+        # The next question in that chat keeps the same result and passes its lineage on once.
+        model.reply = "It also collected three headlines."
+        follow = ask(owner, conversation_id=conversation_id, message="And the headlines?")
+        require(follow.status_code == 200, f"The second question failed: {follow.get_json()}")
+        second = model.requests[-1]
+        require(
+            [item["role"] for item in second] == ["system", "user", "user", "assistant", "user"],
+            f"The earlier turn wasn't in the history: {second}",
+        )
+        second_code = re.match(r"<<<WORKFLOW RESULT ([0-9a-f]{16}) \(untrusted data\)>>>\n", second[1]["content"])
+        require(
+            second_code is not None and second_code.group(1) != first_code
+            and second[0]["content"] == result_system_message(second_code.group(1))
+            and first_code not in json.dumps(second),
+            "The fence code wasn't drawn again for the next request.",
+        )
+        require("The digest says markets rose." in second[3]["content"], "The earlier answer is missing.")
+        require(messages_of(conversation_id)[-1]["metadata"]["workflow_result_contexts"] == [context], "Lineage.")
 
-            def counts():
-                return (
-                    len(config.cosmos_conversations_container.items), len(config.cosmos_messages_container.items),
-                    len(model.requests),
-                )
+        # The streamed route answers the same way and reports the saved question first.
+        model.reply = "The digest says markets rose."
+        streamed = ask(owner, "/api/chat/stream", conversation_id=conversation_id)
+        require(streamed.status_code == 200 and streamed.mimetype == "text/event-stream", "No stream.")
+        stream_events = events(streamed)
+        no_store_reference(streamed.get_data(as_text=True), "The streamed answer")
+        persisted = [event for event in stream_events if event.get("type") == USER_MESSAGE_PERSISTED_EVENT_TYPE]
+        final = [event for event in stream_events if event.get("done")]
+        require(len(persisted) == 1 and len(final) == 1, f"Unexpected events: {stream_events}")
+        require(stream_events.index(persisted[0]) < stream_events.index(final[0]), "Events out of order.")
+        require(final[0]["full_content"] == f"{model.reply}\n\n{disclosure}", "The stream lost the disclosure.")
+        require(final[0]["metadata"]["workflow_result_contexts"] == [context], "The stream lost the lineage.")
+        require(not any(event.get("error") for event in stream_events), f"Stream error: {stream_events}")
+        require(len(messages_of(conversation_id)) == 6, "The streamed turn wasn't saved.")
 
-            def no_store_reference(text, where):
-                require("result_ref" not in text, f"{where} carried a result reference.")
-                require(not any(digest in text for digest in fixture.store.contents), f"{where} carried a store digest.")
+        # A new streamed chat is created as the requester's own private chat.
+        fresh = events(ask(owner, "/api/chat/stream"))
+        fresh_final = next(event for event in fresh if event.get("done"))
+        fresh_id = fresh_final["conversation_id"]
+        fresh_conversation = config.cosmos_conversations_container.read_item(fresh_id, fresh_id)
+        require(fresh_id != conversation_id and fresh_conversation["user_id"] == USER, "Wrong new chat.")
+        require(fresh_final["conversation_title"] == fresh_conversation["title"] != "New Conversation", "Title.")
+        require([row["role"] for row in messages_of(fresh_id)] == ["user", "assistant"], "New chat not saved.")
 
-            # A new chat over JSON: the answer comes from the stored result only, with the disclosure.
-            response = ask(owner)
-            payload = response.get_json()
-            require(response.status_code == 200, f"JSON Follow up failed: {response.status_code} {payload}")
-            conversation_id = payload["conversation_id"]
-            require(payload["reply"] == f"{model.reply}\n\n{disclosure}", f"Unexpected reply: {payload['reply']!r}")
-            no_store_reference(response.get_data(as_text=True), "The JSON answer")
-            conversation = config.cosmos_conversations_container.read_item(conversation_id, conversation_id)
-            require(conversation["user_id"] == USER, "The new chat isn't the requester's.")
-            require(conversation["title"] == chats.derive_conversation_title_from_message(question), "Not titled.")
+        # The document-action entry point answers from the same executor.
+        analyzed = ask(owner, "/api/chat/analyze", conversation_id=fresh_id)
+        require(analyzed.status_code == 200, f"The analyze route refused: {analyzed.get_json()}")
+        require(analyzed.get_json()["reply"].endswith(disclosure), "The analyze route answered differently.")
+
+        # History shows the answers while the result is readable.
+        def reloaded(chat_id):
+            loaded = owner.get("/api/get_messages", query_string={"conversation_id": chat_id})
+            require(loaded.status_code == 200, f"History failed: {loaded.status_code} {loaded.get_json()}")
+            return loaded
+
+        readable = {chat_id: reloaded(chat_id).get_json()["messages"] for chat_id in (conversation_id, fresh_id)}
+        shown = [item for item in readable[conversation_id] if item.get("role") == "assistant"]
+        require(len(shown) == 3 and all(item["content"].endswith(disclosure) for item in shown), "History.")
+        require(
+            [item["role"] for item in readable[fresh_id]] == ["user", "assistant"] * 2,
+            f"Unexpected new-chat history: {readable[fresh_id]}",
+        )
+
+        def require_withheld(chat_id, why):
+            loaded = reloaded(chat_id)
+            body = loaded.get_data(as_text=True)
+            items, earlier = loaded.get_json()["messages"], readable[chat_id]
             require(
-                conversation["has_unread_assistant_response"] is True
-                and conversation["last_unread_assistant_message_id"] == payload["message_id"],
-                "The answer wasn't marked unread.",
+                [(item["id"], item["role"]) for item in items] == [(item["id"], item["role"]) for item in earlier],
+                f"{why}: the history changed shape.",
             )
-            saved = messages_of(conversation_id)
-            require([row["role"] for row in saved] == ["user", "assistant"], f"Unexpected history: {saved}")
-            require(saved[0]["metadata"]["workflow_result_context"] == context, "The question lost its context.")
-            answer = saved[1]
-            require(answer["id"] == payload["message_id"] and answer["content"] == payload["reply"], "Answer mismatch.")
-            require(set(answer["metadata"]["workflow_result"]) == public_keys, "The descriptor isn't the public one.")
-            require(
-                answer["metadata"]["workflow_result"]["result_sha256"] == context["result_sha256"]
-                and answer["metadata"]["workflow_result"]["available"] is True,
-                "The descriptor isn't bound to the selected result.",
-            )
-            require(answer["metadata"]["workflow_result_contexts"] == [context], "The answer lost its lineage.")
-            require(
-                answer["augmented"] is False and answer["hybrid_citations"] == []
-                and answer["web_search_citations"] == [] and answer["agent_citations"] == [],
-                "Another source reached the answer.",
-            )
-            require(payload["metadata"]["workflow_result"] == answer["metadata"]["workflow_result"], "No descriptor sent.")
-            require(len(model.requests) == 1, f"Expected one model request, got {len(model.requests)}.")
-            sent = model.requests[0]
-            require([item["role"] for item in sent] == ["system", "user", "user"], f"Unexpected prompt: {sent}")
-            require(sent[0]["content"] == RESULT_SYSTEM_MESSAGE, "The fixed system message wasn't used.")
-            fence = sent[1]["content"]
-            require(fence.startswith(FENCE_START) and fence.endswith(FENCE_END), "The run output isn't fenced.")
-            require("The digest: markets rose." in fence and "Collected three headlines." in fence, "Output missing.")
-            require("PREVIEW-TEXT" not in json.dumps(sent), "A preview was used instead of the stored result.")
-            require(sent[2] == {"role": "user", "content": question}, "The question isn't last.")
-
-            # The next question in that chat keeps the same result and passes its lineage on once.
-            model.reply = "It also collected three headlines."
-            follow = ask(owner, conversation_id=conversation_id, message="And the headlines?")
-            require(follow.status_code == 200, f"The second question failed: {follow.get_json()}")
-            second = model.requests[-1]
-            require(
-                [item["role"] for item in second] == ["system", "user", "user", "assistant", "user"],
-                f"The earlier turn wasn't in the history: {second}",
-            )
-            require("The digest says markets rose." in second[3]["content"], "The earlier answer is missing.")
-            require(messages_of(conversation_id)[-1]["metadata"]["workflow_result_contexts"] == [context], "Lineage.")
-
-            # The streamed route answers the same way and reports the saved question first.
-            model.reply = "The digest says markets rose."
-            streamed = ask(owner, "/api/chat/stream", conversation_id=conversation_id)
-            require(streamed.status_code == 200 and streamed.mimetype == "text/event-stream", "No stream.")
-            stream_events = events(streamed)
-            no_store_reference(streamed.get_data(as_text=True), "The streamed answer")
-            persisted = [event for event in stream_events if event.get("type") == USER_MESSAGE_PERSISTED_EVENT_TYPE]
-            final = [event for event in stream_events if event.get("done")]
-            require(len(persisted) == 1 and len(final) == 1, f"Unexpected events: {stream_events}")
-            require(stream_events.index(persisted[0]) < stream_events.index(final[0]), "Events out of order.")
-            require(final[0]["full_content"] == f"{model.reply}\n\n{disclosure}", "The stream lost the disclosure.")
-            require(final[0]["metadata"]["workflow_result_contexts"] == [context], "The stream lost the lineage.")
-            require(not any(event.get("error") for event in stream_events), f"Stream error: {stream_events}")
-            require(len(messages_of(conversation_id)) == 6, "The streamed turn wasn't saved.")
-
-            # A new streamed chat is created as the requester's own private chat.
-            fresh = events(ask(owner, "/api/chat/stream"))
-            fresh_final = next(event for event in fresh if event.get("done"))
-            fresh_id = fresh_final["conversation_id"]
-            fresh_conversation = config.cosmos_conversations_container.read_item(fresh_id, fresh_id)
-            require(fresh_id != conversation_id and fresh_conversation["user_id"] == USER, "Wrong new chat.")
-            require(fresh_final["conversation_title"] == fresh_conversation["title"] != "New Conversation", "Title.")
-            require([row["role"] for row in messages_of(fresh_id)] == ["user", "assistant"], "New chat not saved.")
-
-            # The document-action entry point answers from the same executor.
-            analyzed = ask(owner, "/api/chat/analyze", conversation_id=fresh_id)
-            require(analyzed.status_code == 200, f"The analyze route refused: {analyzed.get_json()}")
-            require(analyzed.get_json()["reply"].endswith(disclosure), "The analyze route answered differently.")
-
-            # History shows the answers while the result is readable.
-            def reloaded(chat_id):
-                loaded = owner.get("/api/get_messages", query_string={"conversation_id": chat_id})
-                require(loaded.status_code == 200, f"History failed: {loaded.status_code} {loaded.get_json()}")
-                return loaded
-
-            readable = {chat_id: reloaded(chat_id).get_json()["messages"] for chat_id in (conversation_id, fresh_id)}
-            shown = [item for item in readable[conversation_id] if item.get("role") == "assistant"]
-            require(len(shown) == 3 and all(item["content"].endswith(disclosure) for item in shown), "History.")
-            require(
-                [item["role"] for item in readable[fresh_id]] == ["user", "assistant"] * 2,
-                f"Unexpected new-chat history: {readable[fresh_id]}",
-            )
-
-            def require_withheld(chat_id, why):
-                loaded = reloaded(chat_id)
-                body = loaded.get_data(as_text=True)
-                items, earlier = loaded.get_json()["messages"], readable[chat_id]
-                require(
-                    [(item["id"], item["role"]) for item in items] == [(item["id"], item["role"]) for item in earlier],
-                    f"{why}: the history changed shape.",
-                )
-                for item, before_item in zip(items, earlier):
-                    if item["role"] == "assistant":
-                        require(
-                            item["content"] == reader.WORKFLOW_RESULT_UNAVAILABLE_MESSAGE
-                            and item["metadata"]["workflow_result"] == {
-                                "version": reader.WORKFLOW_RESULT_VERSION, "available": False,
-                            }
-                            and "workflow_result_contexts" not in item["metadata"],
-                            f"{why}: an answer wasn't withheld: {item}",
-                        )
-                    else:
-                        require(
-                            item["content"] == before_item["content"]
-                            and "workflow_result_context" not in item["metadata"],
-                            f"{why}: a question lost its text or kept its context: {item}",
-                        )
-                for text in ("markets rose", "headlines.", "Weekly digest", WORKFLOW_ID, RUN_ID, context["result_sha256"]):
-                    require(text not in body, f"{why}: the history still carried {text!r}.")
-
-            def search_hits(term):
-                found = owner.post("/api/search_conversations", json={"search_term": term})
-                require(found.status_code == 200, f"Search failed: {found.status_code} {found.get_data(as_text=True)[:300]}")
-                return {
-                    item["conversation"]["id"]: len(item["messages"]) for item in found.get_json()["results"]
-                    if item["messages"]
-                }
-
-            require(
-                search_hits("markets rose") == {conversation_id: 2, fresh_id: 2},
-                f"Search didn't find the readable answers: {search_hits('markets rose')}",
-            )
-
-            # The stream routes refuse a disabled, conflicting, retried or malformed request up front.
-            before = counts()
-            conflict = {"conversation_id": "conv-analysis", "message_id": "msg-analysis", "result_sha256": "d" * 64}
-            for route in ("/api/chat/stream", "/api/chat/document-action/stream", "/api/chat/analyze/stream"):
-                for fields, status, code in (
-                    ({"analysis_result_context": conflict}, 400, "workflow_result_context_conflict"),
-                    ({"retry_user_message_id": "msg-1"}, 400, "workflow_result_retry_unsupported"),
-                    ({"edited_user_message_id": "msg-1"}, 400, "workflow_result_retry_unsupported"),
-                    ({"workflow_result_context": {"workflow_id": WORKFLOW_ID}}, 400, "workflow_result_invalid_context"),
-                ):
-                    refused = ask(owner, route, **fields)
+            for item, before_item in zip(items, earlier):
+                if item["role"] == "assistant":
                     require(
-                        refused.status_code == status and refused.get_json().get("code") == code,
-                        f"{route} {fields}: {refused.status_code} {refused.get_data(as_text=True)[:300]}",
+                        item["content"] == masking.WORKFLOW_RESULT_UNAVAILABLE_MESSAGE
+                        and item["metadata"]["workflow_result"] == {
+                            "version": masking.WORKFLOW_RESULT_VERSION, "available": False,
+                        }
+                        and "workflow_result_contexts" not in item["metadata"],
+                        f"{why}: an answer wasn't withheld: {item}",
                     )
-            require(update_settings({"enable_chat_workflow_results": False}), "The setting wasn't turned off.")
-            for route in (
-                "/api/chat", "/api/chat/stream", "/api/chat/document-action/stream", "/api/chat/analyze/stream",
-            ):
-                refused = ask(owner, route)
-                require(
-                    refused.status_code == 403 and refused.get_json().get("code") == "workflow_results_disabled",
-                    f"{route} with the setting off: {refused.status_code} {refused.get_data(as_text=True)[:300]}",
-                )
-                require("Weekly digest" not in refused.get_data(as_text=True), "A refusal named the workflow.")
-            require(update_settings({"enable_chat_workflow_results": True}), "The setting wasn't turned back on.")
-            require(counts() == before, "A refused request created a chat, saved a message or called the model.")
-
-            # Shared, collaborative and converted chats never read a workflow result.
-            for shared_id, fields in (
-                ("conv-converted-1", {"converted_to_collaboration_at": "2026-01-06T09:00:00"}),
-                ("conv-collaborative-1", {"chat_type": PERSONAL_MULTI_USER_CHAT_TYPE}),
-            ):
-                config.cosmos_conversations_container.upsert_item({
-                    "id": shared_id, "user_id": USER, "title": "Shared chat", "chat_type": "new",
-                    "last_updated": "2026-01-06T09:00:00", **fields,
-                })
-                requests_before = len(model.requests)
-                refused = ask(owner, conversation_id=shared_id)
-                require(
-                    refused.status_code == 403 and refused.get_json().get("code") == "workflow_result_private_only",
-                    f"{shared_id}: {refused.status_code} {refused.get_json()}",
-                )
-                streamed_refusal = ask(owner, "/api/chat/stream", conversation_id=shared_id)
-                if streamed_refusal.mimetype == "text/event-stream":
-                    error = next(event for event in events(streamed_refusal) if event.get("error"))
-                    require(error.get("error_code") == "workflow_result_private_only", f"{shared_id}: {error}")
                 else:
-                    require(streamed_refusal.status_code in (403, 404), f"{shared_id}: {streamed_refusal.status_code}")
-                require(messages_of(shared_id) == [] and len(model.requests) == requests_before, "A shared chat read it.")
+                    require(
+                        item["content"] == before_item["content"]
+                        and "workflow_result_context" not in item["metadata"],
+                        f"{why}: a question lost its text or kept its context: {item}",
+                    )
+            for text in ("markets rose", "headlines.", "Weekly digest", WORKFLOW_ID, RUN_ID, context["result_sha256"]):
+                require(text not in body, f"{why}: the history still carried {text!r}.")
 
-            # Another user can't read the run, from a new chat or from the owner's chat.
+        def search_hits(term):
+            found = owner.post("/api/search_conversations", json={"search_term": term})
+            require(found.status_code == 200, f"Search failed: {found.status_code} {found.get_data(as_text=True)[:300]}")
+            return {
+                item["conversation"]["id"]: len(item["messages"]) for item in found.get_json()["results"]
+                if item["messages"]
+            }
+
+        require(
+            search_hits("markets rose") == {conversation_id: 2, fresh_id: 2},
+            f"Search didn't find the readable answers: {search_hits('markets rose')}",
+        )
+
+        # The stream routes refuse a disabled, conflicting, retried or malformed request up front.
+        before = counts()
+        conflict = {"conversation_id": "conv-analysis", "message_id": "msg-analysis", "result_sha256": "d" * 64}
+        for route in ("/api/chat/stream", "/api/chat/document-action/stream", "/api/chat/analyze/stream"):
+            for fields, status, code in (
+                ({"analysis_result_context": conflict}, 400, "workflow_result_context_conflict"),
+                ({"retry_user_message_id": "msg-1"}, 400, "workflow_result_retry_unsupported"),
+                ({"edited_user_message_id": "msg-1"}, 400, "workflow_result_retry_unsupported"),
+                ({"workflow_result_context": {"workflow_id": WORKFLOW_ID}}, 400, "workflow_result_invalid_context"),
+            ):
+                refused = ask(owner, route, **fields)
+                require(
+                    refused.status_code == status and refused.get_json().get("code") == code,
+                    f"{route} {fields}: {refused.status_code} {refused.get_data(as_text=True)[:300]}",
+                )
+        require(update_settings({"enable_chat_workflow_results": False}), "The setting wasn't turned off.")
+        for route in (
+            "/api/chat", "/api/chat/stream", "/api/chat/document-action/stream", "/api/chat/analyze/stream",
+        ):
+            refused = ask(owner, route)
+            require(
+                refused.status_code == 403 and refused.get_json().get("code") == "workflow_results_disabled",
+                f"{route} with the setting off: {refused.status_code} {refused.get_data(as_text=True)[:300]}",
+            )
+            require("Weekly digest" not in refused.get_data(as_text=True), "A refusal named the workflow.")
+        require(update_settings({"enable_chat_workflow_results": True}), "The setting wasn't turned back on.")
+        require(counts() == before, "A refused request created a chat, saved a message or called the model.")
+
+        # Shared, collaborative and converted chats never read a workflow result.
+        for shared_id, fields in (
+            ("conv-converted-1", {"converted_to_collaboration_at": "2026-01-06T09:00:00"}),
+            ("conv-collaborative-1", {"chat_type": PERSONAL_MULTI_USER_CHAT_TYPE}),
+        ):
+            config.cosmos_conversations_container.upsert_item({
+                "id": shared_id, "user_id": USER, "title": "Shared chat", "chat_type": "new",
+                "last_updated": "2026-01-06T09:00:00", **fields,
+            })
             requests_before = len(model.requests)
-            foreign = ask(stranger)
+            refused = ask(owner, conversation_id=shared_id)
             require(
-                foreign.status_code == 404 and foreign.get_json().get("code") == "workflow_result_not_found",
-                f"A stranger got {foreign.status_code} {foreign.get_json()}",
+                refused.status_code == 403 and refused.get_json().get("code") == "workflow_result_private_only",
+                f"{shared_id}: {refused.status_code} {refused.get_json()}",
             )
-            require("Weekly digest" not in foreign.get_data(as_text=True), "The refusal named the workflow.")
-            stranger_chats = [
-                row["id"] for row in config.cosmos_conversations_container.items.values() if row.get("user_id") == OTHER_USER
-            ]
-            require(all(messages_of(chat_id) == [] for chat_id in stranger_chats), "A stranger's question was kept.")
-            foreign_stream = ask(stranger, "/api/chat/stream", conversation_id=conversation_id)
-            require(foreign_stream.status_code in (403, 404), f"The owner's chat opened: {foreign_stream.status_code}")
-            require(len(model.requests) == requests_before, "A stranger's question reached the model.")
+            streamed_refusal = ask(owner, "/api/chat/stream", conversation_id=shared_id)
+            if streamed_refusal.mimetype == "text/event-stream":
+                error = next(event for event in events(streamed_refusal) if event.get("error"))
+                require(error.get("error_code") == "workflow_result_private_only", f"{shared_id}: {error}")
+            else:
+                require(streamed_refusal.status_code in (403, 404), f"{shared_id}: {streamed_refusal.status_code}")
+            require(messages_of(shared_id) == [] and len(model.requests) == requests_before, "A shared chat read it.")
 
-            # After resume-failed changes the result, the old selection answers nothing.
-            fixture.add_task("task-summary-72", {"reply": "A revised digest."}, order=2, label="Write the digest")
-            before = counts()
-            changed = ask(owner, "/api/chat/stream", conversation_id=conversation_id)
-            changed_events = events(changed)
-            error = next((event for event in changed_events if event.get("error")), None)
-            require(
-                error is not None and error.get("error_code") == "workflow_result_changed"
-                and error.get("status_code") == 409 and error.get("warning_type") == "workflow_result_unavailable",
-                f"The changed result wasn't refused: {changed_events}",
-            )
-            require("A revised digest." not in changed.get_data(as_text=True), "The new result was used.")
-            changed_json = ask(owner, conversation_id=conversation_id)
-            require(
-                changed_json.status_code == 409 and changed_json.get_json().get("code") == "workflow_result_changed",
-                f"JSON: {changed_json.status_code} {changed_json.get_json()}",
-            )
-            require(counts() == before, "A changed result saved a message or reached the model.")
+        # Another user can't read the run, from a new chat or from the owner's chat.
+        requests_before = len(model.requests)
+        foreign = ask(stranger)
+        require(
+            foreign.status_code == 404 and foreign.get_json().get("code") == "workflow_result_not_found",
+            f"A stranger got {foreign.status_code} {foreign.get_json()}",
+        )
+        require("Weekly digest" not in foreign.get_data(as_text=True), "The refusal named the workflow.")
+        stranger_chats = [
+            row["id"] for row in config.cosmos_conversations_container.items.values() if row.get("user_id") == OTHER_USER
+        ]
+        require(all(messages_of(chat_id) == [] for chat_id in stranger_chats), "A stranger's question was kept.")
+        foreign_stream = ask(stranger, "/api/chat/stream", conversation_id=conversation_id)
+        require(foreign_stream.status_code in (403, 404), f"The owner's chat opened: {foreign_stream.status_code}")
+        require(len(model.requests) == requests_before, "A stranger's question reached the model.")
 
-            # Every earlier answer is withheld on reload and in search while the result differs.
-            stored = {chat_id: messages_of(chat_id) for chat_id in (conversation_id, fresh_id)}
-            for chat_id in (conversation_id, fresh_id):
-                require_withheld(chat_id, "After the result changed")
-            require(search_hits("markets rose") == {}, "Search still showed an answer from a changed result.")
-            require(
-                {chat_id: messages_of(chat_id) for chat_id in stored} == stored,
-                "Withholding an answer changed what was stored.",
-            )
+        # After resume-failed changes the result, the old selection answers nothing.
+        fixture.add_task("task-summary-72", {"reply": "A revised digest."}, order=2, label="Write the digest")
+        before = counts()
+        changed = ask(owner, "/api/chat/stream", conversation_id=conversation_id)
+        changed_events = events(changed)
+        error = next((event for event in changed_events if event.get("error")), None)
+        require(
+            error is not None and error.get("error_code") == "workflow_result_changed"
+            and error.get("status_code") == 409 and error.get("warning_type") == "workflow_result_unavailable",
+            f"The changed result wasn't refused: {changed_events}",
+        )
+        require("A revised digest." not in changed.get_data(as_text=True), "The new result was used.")
+        changed_json = ask(owner, conversation_id=conversation_id)
+        require(
+            changed_json.status_code == 409 and changed_json.get_json().get("code") == "workflow_result_changed",
+            f"JSON: {changed_json.status_code} {changed_json.get_json()}",
+        )
+        require(counts() == before, "A changed result saved a message or reached the model.")
 
-            # Restoring the original result shows the same answers again.
-            fixture.add_task("task-summary-72", {"reply": "The digest: markets rose."}, order=2, label="Write the digest")
-            for chat_id in (conversation_id, fresh_id):
-                require(reloaded(chat_id).get_json()["messages"] == readable[chat_id], "The answers didn't return.")
-            require(search_hits("markets rose") == {conversation_id: 2, fresh_id: 2}, "Search didn't recover.")
+        # Every earlier answer is withheld on reload and in search while the result differs.
+        stored = {chat_id: messages_of(chat_id) for chat_id in (conversation_id, fresh_id)}
+        for chat_id in (conversation_id, fresh_id):
+            require_withheld(chat_id, "After the result changed")
+        require(search_hits("markets rose") == {}, "Search still showed an answer from a changed result.")
+        require(
+            {chat_id: messages_of(chat_id) for chat_id in stored} == stored,
+            "Withholding an answer changed what was stored.",
+        )
 
-            # Deleting the run withholds them again, and a stranger never sees the owner's history.
-            fixture.containers["runs"].documents.clear()
-            for chat_id in (conversation_id, fresh_id):
-                require_withheld(chat_id, "After the run was deleted")
-            require(search_hits("markets rose") == {}, "Search still showed an answer from a deleted run.")
-            foreign_history = stranger.get("/api/get_messages", query_string={"conversation_id": conversation_id})
-            require(foreign_history.status_code == 403, f"A stranger read the history: {foreign_history.status_code}")
+        # Restoring the original result shows the same answers again.
+        fixture.add_task("task-summary-72", {"reply": "The digest: markets rose."}, order=2, label="Write the digest")
+        for chat_id in (conversation_id, fresh_id):
+            require(reloaded(chat_id).get_json()["messages"] == readable[chat_id], "The answers didn't return.")
+        require(search_hits("markets rose") == {conversation_id: 2, fresh_id: 2}, "Search didn't recover.")
 
-            require(not normal_chat_clients, "The normal chat model was used.")
-            require(not network_attempts, f"The routes attempted network access: {network_attempts}")
-            print(SCENARIOS_FINISHED)
-    finally:
-        shutil.rmtree(state_dir, ignore_errors=True)
+        # Deleting the run withholds them again, and a stranger never sees the owner's history.
+        fixture.containers["runs"].documents.clear()
+        for chat_id in (conversation_id, fresh_id):
+            require_withheld(chat_id, "After the run was deleted")
+        require(search_hits("markets rose") == {}, "Search still showed an answer from a deleted run.")
+        foreign_history = stranger.get("/api/get_messages", query_string={"conversation_id": conversation_id})
+        require(foreign_history.status_code == 403, f"A stranger read the history: {foreign_history.status_code}")
+
+        require(not world.normal_chat_clients, "The normal chat model was used.")
+        require(not world.network_attempts, f"The routes attempted network access: {world.network_attempts}")
+        print(SCENARIOS_FINISHED)
 
 
 SCENARIOS_FINISHED = "WORKFLOW_RESULT_CHAT_ROUTE_SCENARIOS_FINISHED"
@@ -722,13 +565,14 @@ SCENARIOS_FINISHED = "WORKFLOW_RESULT_CHAT_ROUTE_SCENARIOS_FINISHED"
 
 def test_the_real_routes_answer_only_from_the_selected_stored_result():
     result = subprocess.run(
-        [sys.executable, str(Path(__file__).resolve()), "--offline"],
-        cwd=ROOT, capture_output=True, text=True, timeout=180,
+        [sys.executable, *(["-O"] if sys.flags.optimize else []), str(Path(__file__).resolve()), "--offline"],
+        # app.py switches the child's output to UTF-8, which the parent's locale codec can't always decode.
+        cwd=ROOT, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=180,
     )
     output = result.stdout[-3000:] + result.stderr[-6000:]
 
-    assert result.returncode == 0, output
-    assert SCENARIOS_FINISHED in result.stdout.splitlines(), output
+    require(result.returncode == 0, output)
+    require(SCENARIOS_FINISHED in result.stdout.splitlines(), output)
 
 
 if __name__ == "__main__":

@@ -27,6 +27,7 @@ from azure.core.exceptions import AzureError, ResourceNotFoundError
 from content_screening.contracts import ScreeningError
 
 from functions_appinsights import log_event
+from functions_workflow_result_masking import WORKFLOW_RESULT_VERSION
 from functions_workflow_result_store import (
     MAX_PAGE_BYTES,
     AnalysisWorkUnitConflictError,
@@ -44,10 +45,6 @@ from functions_workflow_results import (
 )
 
 
-WORKFLOW_RESULT_VERSION = "workflow-result-v1"
-WORKFLOW_RESULT_UNAVAILABLE_MESSAGE = (
-    "This answer is unavailable because access to the workflow result it used could not be confirmed."
-)
 READABLE_RUN_STATUSES = frozenset({"completed", "completed_partial"})
 UNFINISHED_RUN_STATUSES = frozenset({"failed", "invalid", "incomplete", "cancelled", "skipped"})
 DEFAULT_EXCERPT_BUDGET_BYTES = 48 * 1024
@@ -202,13 +199,6 @@ def workflow_result_message_contexts(message):
             seen.add(key)
             contexts.append(context)
     return contexts, malformed
-
-
-def message_uses_workflow_result(message):
-    metadata = message.get("metadata") if isinstance(message, Mapping) else None
-    return isinstance(metadata, Mapping) and any(
-        key in metadata for key in ("workflow_result", "workflow_result_context", "workflow_result_contexts")
-    )
 
 
 def _clean_line(value, limit):
