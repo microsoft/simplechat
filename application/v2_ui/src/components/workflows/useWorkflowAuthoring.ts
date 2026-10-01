@@ -39,6 +39,8 @@ export function useWorkflowAuthoring({
     const requestFocus = useCallback((id: string, fields = false) => {
         setFocusRequest({ id, sequence: ++sequence.current, fields });
     }, []);
+    // For a caller that places focus itself, such as a jump to a change.
+    const clearFocusRequest = useCallback(() => setFocusRequest(null), []);
 
     const evaluate = useCallback((command: WorkflowEditCommand, confirmed: boolean): WorkflowEditResult => {
         const current = latest.current;
@@ -141,6 +143,6 @@ export function useWorkflowAuthoring({
 
     return {
         selectedId, setSelectedId, positions, setPositions, collapsed, setCollapsed,
-        focusRequest, requestFocus, pending, cancel, confirm, execute, announcement, recover, reset,
+        focusRequest, requestFocus, clearFocusRequest, pending, cancel, confirm, execute, announcement, recover, reset,
     };
 }

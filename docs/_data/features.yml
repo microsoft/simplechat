@@ -431,7 +431,7 @@ workflow-ai-assistant:
   name: "AI workflow assistant"
   area: "Agents and actions"
   audience: "End users"
-  summary: "Proposes an edit to a personal workflow from a plain-language request, such as a new schedule, alert rules, tasks or attached documents, for the author to review before saving. The V2 editor's Ask AI tab that uses it arrives in a later release."
+  summary: "Changes a personal workflow from a plain-language request, such as a new schedule, alert rules, tasks or attached documents, through the V2 workflow editor's Ask AI tab. The changes are highlighted for the author to review before saving, and empty task instructions can be drafted with Draft with AI."
   why: "Use this when authors know what a workflow should do but not which fields to set, for example \"run this at 7 AM on weekdays and only alert me when something is urgent\". It only proposes: the author reviews each change and saves through the normal checks, and it can't turn a workflow on, change Run as, sharing or approvals, or use documents, agents or models the author can't use."
   default_state: "Enabled"
   admin_tab: workflow

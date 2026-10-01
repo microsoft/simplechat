@@ -132,7 +132,9 @@ def test_sending_does_not_wait_for_the_server():
     submit = submit[: submit.find("\n}\n")]
 
     assert "status: 'pending'" in submit
-    assert "draft: blankDraft()" in submit
+    # A typed message clears the input. Ask AI's quick actions (#1548) send their own text and
+    # leave what the reader is typing in place.
+    assert "draft: ownText ? current.draft : blankDraft()" in submit
     # The thread is updated first; the request only starts afterwards.
     assert submit.find("updateThread(") < submit.find("runExchange("), (
         "the input must clear before the request is sent"
@@ -202,8 +204,12 @@ def test_over_limit_input_is_refused_not_cut_short():
         )
 
     thread = _read(THREAD_TS)
-    assert "draft.text.length > maxLength ? 'too_long'" in thread
-    assert "overLimit: draft.text.length > maxLength" in thread
+    assert "assistTextLength(draft.text, countCodePoints) > maxLength ? 'too_long'" in thread
+    assert "overLimit: length > maxLength" in thread
+    # The limit counts UTF-16 units unless an editor opts in to code points, as Ask AI (#1548)
+    # does because its server counts that way.
+    assert "return countCodePoints ? codePointLength(text) : text.length;" in thread
+    assert "const countCodePoints = options.countCodePoints === true;" in thread
 
     component = _read(THREAD_TSX)
     assert "!thread.overLimit" in component, "Send must be refused while the input is over the limit"

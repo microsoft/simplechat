@@ -45,6 +45,8 @@ export interface ContextSearchScope {
      * composer, whose requests can only use a document or a tag.
      */
     workspacesEnabled?: boolean;
+    /** Offer documents only: no tags and no workspaces. For an editor whose requests hold documents. */
+    documentsOnly?: boolean;
 }
 
 /**
@@ -87,6 +89,7 @@ export function useContextSuggestions(
                 groupsEnabled: scopeRef.current.groupsEnabled,
                 publicEnabled: scopeRef.current.publicEnabled,
                 includeWorkspaces: scopeRef.current.workspacesEnabled !== false,
+                documentsOnly: scopeRef.current.documentsOnly === true,
                 signal: controller.signal,
             })
                 .then((found) => {
@@ -110,7 +113,7 @@ export function useContextSuggestions(
             window.clearTimeout(timer);
             controller.abort();
         };
-    }, [query, groupIds, publicIds, scope.groupsEnabled, scope.publicEnabled, scope.workspacesEnabled]);
+    }, [query, groupIds, publicIds, scope.documentsOnly, scope.groupsEnabled, scope.publicEnabled, scope.workspacesEnabled]);
 
     return { candidates, loading };
 }
