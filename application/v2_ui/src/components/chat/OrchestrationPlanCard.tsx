@@ -3,6 +3,7 @@ import { ReasoningAdjustmentNotice } from './ReasoningAdjustmentNotice';
 import { OrchestrationRecoveryNotice } from './OrchestrationRecoveryNotice';
 import { OrchestrationOutputs } from './OrchestrationOutputs';
 import { OrchestrationDeliverables } from './OrchestrationDeliverables';
+import { OrchestrationWorkflowRunNotice } from './OrchestrationWorkflowRunNotice';
 // The plan, inline in the thread, kept deliberately small.
 //
 // Orchestration turns the composer inside out: instead of the user picking documents, a model and
@@ -37,6 +38,7 @@ import {
     isPlanRunnable,
     isPlanTerminal,
     planBindingIssues,
+    planHasApprovalFloor,
     planRequiresApproval,
     stepRoleLabel,
     summarizePlan,
@@ -162,7 +164,9 @@ export function OrchestrationPlanCard({
         [historyMap, conversationId, turnId],
     );
 
-    const isTimed = plan?.approval.mode === 'timed' && !held;
+    // A plan that starts a saved workflow never counts down, even if it arrives marked timed: the
+    // server saves it as manual, and this guard keeps a stale or altered plan from running itself.
+    const isTimed = plan?.approval.mode === 'timed' && !held && !(plan && planHasApprovalFloor(plan));
     const waiting = plan?.status === 'waiting' || isOrchestrationRunWaiting(recovery ?? {});
     // The saved run is the authority on whether this plan already ran. Its stored plan can still
     // read `running` after the run ended, and a card that trusted it would offer Approve again.
@@ -344,6 +348,8 @@ export function OrchestrationPlanCard({
                     Required inputs are unavailable. Open Review to restore the producers or ask the planner to revise their consumers.
                 </p>
             ) : null}
+
+            <OrchestrationWorkflowRunNotice plan={editedPlan ?? plan} />
 
             {held ? (
                 <p className="mt-2 text-xs text-text-3" role="status">

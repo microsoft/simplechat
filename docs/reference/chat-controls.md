@@ -416,6 +416,9 @@ The composer reports an unsuccessful save rather than claiming the new mode was
 remembered. Choose the mode again to retry. If no choice has been saved, the current
 deployment default applies. See [Orchestration settings]({{ '/admin/orchestration/' | relative_url }}).
 
+Since **0.261.212**, a plan that starts one of your saved workflows always waits for
+you to approve it, whichever mode you saved. See **Workflow runs** below.
+
 ## Visuals in orchestrated answers (V2 interface)
 
 Since **0.261.132**, an orchestrated answer can include the same visuals as ordinary
@@ -489,7 +492,7 @@ saved effective plan, not the current composer selections or a new planner call.
 | Control | What it does | Why you would use it | Enabled by |
 | --- | --- | --- | --- |
 | Retry from failed step | Creates a linked attempt that restores valid completed-step results and executes the incomplete work. | Recover after a failure without repeating successful plan steps or duplicating the question. | `enable_chat_orchestration`, current access, and recoverable saved checkpoints; not a substitute for individual file recovery |
-| Confirm retry / Cancel | Confirms the possible external effects of retrying a failed agent/action, or dismisses the confirmation without executing it. | Decide whether it is safe to repeat the failed step's internal tool activity. | A recoverable attempt that requires external-effect confirmation |
+| Confirm retry / Cancel | Confirms the possible external effects of retrying a failed agent/action, or dismisses the confirmation without executing it. Since **0.261.212** it also appears for a step that starts a saved workflow; its retry never starts the workflow twice, and links the run when the plan already started it. | Decide whether it is safe to repeat the failed step's internal tool activity. | A recoverable attempt that requires external-effect confirmation |
 | Run prepared retry | Starts a recovery attempt that was already prepared but has not executed. | Continue after preparation was saved but execution was interrupted by navigation or connection loss. | An unstarted saved recovery attempt |
 | Review saved attempt | Opens the selected attempt in the Plan/Run view. | Inspect the failure, completed steps, and remaining work without editing or rerunning history. | A saved orchestration attempt |
 | View current attempt / View previous attempt | Opens a linked execution attempt rather than starting another one. | Follow recovery history and avoid retrying an older attempt that already has a successor. | Linked recovery attempts |
@@ -567,6 +570,29 @@ While a proposal is being created, the card checks its status every few seconds
 for up to two minutes, and waits while the browser tab is hidden. When
 Microsoft 365 isn't connected for workflows, the card links to the connection in
 your profile, and while a run waits for Run as approval, it links to Approvals.
+
+## Workflow runs (V2 interface)
+
+Implemented in **0.261.212** (Refs: microsoft/simplechat#1551). When you ask chat
+orchestration to run one of your saved workflows now, such as "run my weekly digest",
+the plan can start it. Only workflows with durable execution on can be started this way,
+and only from a conversation that's private to you. See
+[Run a workflow from chat]({{ '/guides/trigger-a-workflow/' | relative_url }}#run-a-workflow-from-chat).
+
+| Control or state | What it does | Why you would use it | Available when |
+| --- | --- | --- | --- |
+| Saved workflows notice | Says the plan always waits for you to approve it, and lists each workflow it would start with its trigger. A workflow that's turned off shows **Paused**. A paused workflow still runs once when you start it here, and starting it doesn't turn it back on. | Check which workflows will start before you approve. A countdown or Auto never starts one. | `enable_chat_orchestration`, `allow_user_workflows` and `enable_chat_orchestration_workflow_runs`, in a conversation that's private to you |
+| Workflow (Run view) | Shows the name of the workflow a step starts, with **Paused** when it's turned off. | Match each step to the workflow it starts. | A plan with a step that starts a saved workflow |
+| Started workflows | Lists, under the answer, each workflow the plan started with its run's status: **Queued**, **Running**, **Waiting**, **Completed**, **Partly completed**, **Failed**, **Cancelled** or **Skipped**. The status is as of when the message loaded; reload to read it again. | See at a glance whether the work you started is still going. | Your own private conversation, after a plan started a workflow |
+| Open run | Opens the workflow in Workflows with its run history open at that run. | Follow the run's progress and read its results. | The workflow and its run still exist |
+| Unavailable | Replaces **Open run** with the reason the run can't be opened, for example because the workflow was deleted or the run is no longer in its history. | Understand why a link is missing without losing the rest. | The run can't be opened, or starting workflows from chat was turned off |
+| Try again | Reloads the started workflows after a failed read. | Recover the links after a network or server error. | The started workflows couldn't be loaded |
+
+The answer itself lists what happened to each workflow: started, already started for
+this request, or not started with the reason. Results arrive where the workflow
+already sends them, such as its conversation or alerts, not in the chat answer.
+Stopping the plan doesn't stop a workflow it already started; cancel the run in
+Workflows.
 
 ## Workflow results in chat (V2 interface)
 

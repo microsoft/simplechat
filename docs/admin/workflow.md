@@ -140,6 +140,12 @@ Cosmos container is required.
 See [Trigger a workflow]({{ '/guides/trigger-a-workflow/' | relative_url }}) for
 the operator's approval, continuation, and cancellation workflow.
 
+From **0.261.212**, a chat plan can also start a durable personal workflow when
+**Run Workflows From Chat** is on. It queues the same durable run that **Run** does,
+records chat orchestration as the trigger, and needs the background scheduler in the
+same way. A workflow without durable execution is never started from chat. See
+[Orchestration settings]({{ '/admin/orchestration/' | relative_url }}#chat-orchestration-capabilities-section).
+
 ### Structured control-flow budgets
 
 Version **0.261.116** adds an explicit definition-version-3 option in the V2

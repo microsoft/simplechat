@@ -41,7 +41,7 @@ from functions_orchestration_registry import (
 from functions_orchestration_result_contracts import InputBinding, ResultContractError, ResultRef
 from functions_orchestration_schema import (
     LEGACY_PLAN_CODE, LEGACY_PLAN_MESSAGE, PlanValidationError, apply_plan_edits, is_legacy_plan,
-    plan_contract_version, summarize_plan,
+    plan_approval_floor, plan_contract_version, summarize_plan,
 )
 from functions_orchestration_timing import initial_execution_deadline
 
@@ -963,6 +963,27 @@ def release_plan_revision(claim):
         )
 
 
+def _require_approval_floor(record, plan):
+    """Refuse to start a plan whose enabled steps set an approval floor it no longer carries.
+
+    ``normalize_plan`` saves such a plan as manual, and the run record copies that mode. A saved
+    plan or run record that reads otherwise was changed after planning, so it is refused rather
+    than run on its word.
+    """
+    floor = plan_approval_floor(plan)
+    if floor is None:
+        return
+    if any(
+        not isinstance(approval, dict) or approval.get('mode') != floor['mode']
+        for approval in (record.get('approval'), plan.get('approval'))
+    ):
+        raise PlanRevisionError(
+            'A plan that starts a saved workflow runs only when you run it yourself. This saved plan '
+            "was changed, so it can't run. Ask again for a new plan.",
+            code='approval_floor_required',
+        )
+
+
 def claim_plan_run(
     run_id, user_id, conversation_id, *, plan_id=None, expected_version=None,
     edits=None, conversation_context=None, result_alias_resolver=None,
@@ -1000,6 +1021,7 @@ def claim_plan_run(
         contract_version=contract_version, export_catalog=admitted_catalog,
         composition_profiles=composition_profiles,
     )
+    _require_approval_floor(record, plan)
     started_at = _now()
     now = started_at.isoformat()
     plan['status'] = 'running'

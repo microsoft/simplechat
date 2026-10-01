@@ -523,6 +523,20 @@ def test_workflow_proposal_routes_keep_the_orchestration_security_policy() -> No
         assert {"swagger_route", "login_required", "user_required"} <= set(route.decorator_names)
 
 
+def test_workflow_run_link_route_keeps_the_orchestration_security_policy() -> None:
+    """The links to runs a plan started stay on the authenticated orchestration Blueprint, read-only."""
+    path = "/api/v2/orchestration/runs/<run_id>/workflow-runs"
+    routes = [
+        route for route in iter_route_functions()
+        if route.file_name == "route_backend_orchestration.py" and route.path == path
+    ]
+    assert len(routes) == 1
+    route = routes[0]
+    assert route.function_name == "orchestration_workflow_run_links"
+    assert route.route_target == "bp"
+    assert {"swagger_route", "login_required", "user_required"} <= set(route.decorator_names)
+
+
 def test_content_screening_routes_keep_authenticated_blueprint_guards() -> None:
     """Evidence and decisions never become public, even while enrollment is off."""
     routes = [
@@ -556,6 +570,7 @@ if __name__ == "__main__":
         test_public_routes_are_explicitly_listed,
         test_plan_editor_routes_keep_the_orchestration_security_policy,
         test_workflow_proposal_routes_keep_the_orchestration_security_policy,
+        test_workflow_run_link_route_keeps_the_orchestration_security_policy,
         test_content_screening_routes_keep_authenticated_blueprint_guards,
     ]
     results = []

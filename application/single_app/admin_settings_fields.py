@@ -3780,6 +3780,26 @@ ADMIN_SETTINGS_FIELDS = {
             ],
         },
         {
+            "key": "enable_chat_orchestration_workflow_runs",
+            "type": "switch",
+            "label": "Run Workflows From Chat",
+            "help": (
+                "When a user asks for it, such as \"run my weekly digest now\", a plan can start "
+                "one of the user's saved personal workflows from the user's own private "
+                "conversation. A plan that starts a workflow always waits for the user to run "
+                "it, whatever the approval mode, and approving it starts each named workflow "
+                "once. The answer links to the run; results appear where the workflow already "
+                "puts them. Only workflows with durable execution on can be started this way. "
+                "Off by default, because a run does whatever its workflow is set up to do, with "
+                "the user's access. Requires Chat Orchestration and Enable Personal Workflows."
+            ),
+            "default": False,
+            "depends_on": [
+                {"key": "enable_chat_orchestration", "equals": True},
+                {"key": "allow_user_workflows", "equals": True},
+            ],
+        },
+        {
             "key": "chat_orchestration_enabled_capabilities",
             "type": "checkbox_set",
             "label": "Capabilities",
@@ -3790,6 +3810,7 @@ ADMIN_SETTINGS_FIELDS = {
                 "the content of a file, and Create a file to deliver a downloadable file. "
                 "Generate images also requires Image Generation. Use an action also "
                 "requires Enable Action Access. Propose workflows also requires Propose "
+                "Workflows From Chat and personal workflows. Run workflows also requires Run "
                 "Workflows From Chat and personal workflows."
             ),
             "default": [],
@@ -3807,6 +3828,7 @@ ADMIN_SETTINGS_FIELDS = {
                 {"value": "render_file", "label": "Create a file"},
                 {"value": "generate_image", "label": "Generate images"},
                 {"value": "workflow_propose", "label": "Propose workflows"},
+                {"value": "workflow_run", "label": "Run workflows"},
             ],
             "depends_on": {"key": "enable_chat_orchestration", "equals": True},
         },

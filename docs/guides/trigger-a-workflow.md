@@ -52,6 +52,42 @@ A workflow only helps when it runs at the right moment and leaves evidence you c
 
 The workflow's **Last Run** updates, and the activity view or history shows the run status and task output.
 
+## Run a workflow from chat
+
+Since **0.261.212**, you can ask chat orchestration to start one of your saved personal
+workflows, for example "run my weekly digest now". The plan starts the same background
+run that **Run** does, so the run appears in the workflow's run history like any other.
+
+Before you ask:
+
+- Your administrator must turn on **Run Workflows From Chat**, and you need access to
+  personal workflows.
+- The workflow must have **Durable execution** on. Check it in the V2 workflow editor.
+- Ask from a conversation that's private to you. A shared conversation can't start
+  workflows.
+
+1. Turn on **Orchestrate**, name the workflow, and ask to run it now. Asking about a
+   workflow, or asking for work on a schedule, doesn't start one.
+2. Check the plan card. It names each workflow the plan would start and always waits for
+   you, even when your approval mode is a countdown or Auto. A workflow that's turned off
+   shows **Paused**. Starting it here runs it once and leaves it turned off.
+3. Select **Approve**. The plan starts each workflow once.
+4. Read the answer. It says which workflows started, and which didn't and why.
+5. Under the answer, each started workflow shows its run's status as of when the message
+   loaded. Select **Open run** to follow its progress and results in the workflow's run
+   history.
+
+The plan doesn't wait for the workflow to finish, and it doesn't bring the results into
+the chat. They arrive where the workflow already sends them, such as its conversation or
+alerts. Stopping the plan doesn't stop a workflow it already started, so cancel the run
+from its run history if you need to. Retrying a failed step never starts a workflow
+twice: when the plan already started it, the retry links that run instead.
+
+A workflow that's already running isn't started again; the answer says so, and you can
+start it once that run finishes. If a run the plan started waits for a Microsoft 365
+approval or sign-in, its status shows **Waiting**; follow
+[Microsoft 365 authorization waits](#microsoft-365-authorization-waits) to continue it.
+
 ## Continue a durable run
 
 With durable execution enabled in **0.261.111**, **Run** queues background work
@@ -251,6 +287,10 @@ See [Workflow publication completion](../explanation/features/WORKFLOW_PUBLICATI
 | A scheduled workflow does not run | It is disabled or still configured for manual trigger | Edit the trigger and confirm the workflow is enabled. |
 | A calendar-scheduled workflow stopped running | Its saved time zone is no longer in the server's time zone database, so no next run can be worked out | Open it in the V2 editor, choose a time zone from the list, and save. |
 | A run fails immediately | A runner, action, document, or File Sync source is unavailable | Open run details, fix the dependency, and run again. |
+| Chat never plans to run your workflow | **Run Workflows From Chat** is off, the conversation is shared, or the request didn't ask to run the workflow now | Ask from your own conversation, name the workflow and ask to run it now, or ask your administrator about the setting. |
+| The answer says only workflows with durable execution can be started from chat | The workflow runs synchronously | Turn on **Durable execution** in the V2 editor and save, or select **Run** in Workflows. |
+| The answer says the workflow is waiting for a Microsoft 365 approval or sign-in | An earlier run is waiting on Microsoft 365 | Finish that approval or sign-in, then ask again. |
+| A started workflow's link says it's unavailable | The workflow was deleted, or the run is no longer in its run history | Open the workflow in Workflows to start a new run. |
 
 ## Related
 
