@@ -40,6 +40,8 @@ from typing import Iterable
 import pytest
 from flask import Blueprint, Flask, jsonify, request, session
 
+from test_support.log_sanitizer import real_sanitize_log_message
+
 
 ROOT = Path(__file__).resolve().parents[1]
 APP_ROOT = ROOT / "application" / "single_app"
@@ -417,6 +419,7 @@ class RealWorkflowRoutes:
             "queue_durable_workflow_run": queue_durable_workflow_run,
             "cancel_durable_workflow_run": cancel_durable_workflow_run,
             "log_event": lambda *args, **kwargs: self.logs.append((args, kwargs)),
+            "sanitize_log_message": real_sanitize_log_message(),
             "log_workflow_creation": lambda **kwargs: None,
             "log_workflow_update": lambda **kwargs: None,
             "log_workflow_deletion": lambda **kwargs: None,
