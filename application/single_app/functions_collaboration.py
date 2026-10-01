@@ -1003,6 +1003,20 @@ def _copy_legacy_personal_messages_to_collaboration(source_conversation_id, coll
     return copied_messages
 
 
+def _carry_summary_into_collaboration(collaboration_conversation_doc, source_conversation_doc, raw_messages):
+    """Copy the chat summary into the collaboration unless the copies withhold a workflow result.
+
+    A summary may repeat withheld workflow-result answers, so both chats drop it and syncing
+    can't restore it. Call after prepare_m365_history_publication has fingerprinted the original;
+    the caller's final source upsert persists the cleared summary.
+    """
+    if any(message_uses_workflow_result(message) for message in raw_messages):
+        collaboration_conversation_doc['summary'] = None
+        source_conversation_doc['summary'] = None
+        return
+    collaboration_conversation_doc['summary'] = source_conversation_doc.get('summary')
+
+
 def ensure_personal_collaboration_for_legacy_conversation(source_conversation_id, owner_user, invited_participants=None):
     source_conversation_doc = cosmos_conversations_container.read_item(
         item=source_conversation_id,
@@ -1072,10 +1086,8 @@ def ensure_personal_collaboration_for_legacy_conversation(source_conversation_id
         source_conversation_doc,
     )
     collaboration_conversation_doc['strict'] = bool(source_conversation_doc.get('strict', False))
-    # A summary may repeat withheld workflow-result answers. Both chats drop it so syncing can't restore it.
-    withholds_workflow_results = any(message_uses_workflow_result(message) for message in publication.messages)
-    collaboration_conversation_doc['summary'] = (
-        None if withholds_workflow_results else source_conversation_doc.get('summary')
+    _carry_summary_into_collaboration(
+        collaboration_conversation_doc, source_conversation_doc, publication.messages,
     )
 
     source_context = list(source_conversation_doc.get('context', []) or [])
@@ -1110,8 +1122,6 @@ def ensure_personal_collaboration_for_legacy_conversation(source_conversation_id
     source_conversation_doc['converted_to_collaboration_at'] = conversion_timestamp
     source_conversation_doc['is_hidden'] = True
     source_conversation_doc['last_updated'] = conversion_timestamp
-    if withholds_workflow_results:
-        source_conversation_doc['summary'] = None
     cosmos_conversations_container.upsert_item(source_conversation_doc)
 
     log_event(
@@ -1290,7 +1300,9 @@ def ensure_group_collaboration_for_legacy_conversation(source_conversation_id, o
         source_conversation_doc,
     )
     collaboration_conversation_doc['strict'] = bool(source_conversation_doc.get('strict', False))
-    collaboration_conversation_doc['summary'] = source_conversation_doc.get('summary')
+    _carry_summary_into_collaboration(
+        collaboration_conversation_doc, source_conversation_doc, publication.messages,
+    )
     collaboration_conversation_doc[source_link_field] = source_conversation_id
     if publication.request_id:
         collaboration_conversation_doc['m365_publication'] = {

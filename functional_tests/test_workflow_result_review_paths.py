@@ -12,7 +12,9 @@ their context) withheld, keeps each question's text without its link to the run
 and drops the chat summary on both chats, so the copies, the conversation
 preview, a pending invitee's message metadata and history, the summary input,
 MCP reads, mirrored messages and the summary sync only ever see the withheld
-form. The Word, PowerPoint and email exports of a single message refuse an answer
+form. The group route converts a private chat that only group context
+classifies by the same rule, and a group chat without workflow results keeps its
+summary. The Word, PowerPoint and email exports of a single message refuse an answer
 whose run is gone or whose chat was converted. Retrying or editing a Follow up
 turn is refused before any content check or write, while an ordinary turn still
 replays. A search whose matches use a workflow result is never written to the
@@ -321,14 +323,14 @@ def run_offline_scenarios():
         collaboration_id = converted.get_json()["conversation"]["id"]
         require(not leaked(converted.get_data(as_text=True), answer_text), "The conversion response leaked.")
 
-        def require_copies(found, why):
+        def require_copies(found, why, expected=originals, withheld=withheld_ids):
             require(
-                set(found) == {message["id"] for message in originals},
+                set(found) == {message["id"] for message in expected},
                 f"{why}: unexpected copies {sorted(found)}",
             )
-            for message in originals:
+            for message in expected:
                 copied = found[message["id"]]
-                if message["id"] in withheld_ids:
+                if message["id"] in withheld:
                     require(
                         copied["content"] == unavailable
                         and copied["metadata"].get("workflow_result") == withheld_descriptor
@@ -354,39 +356,44 @@ def run_offline_scenarios():
         )
         require(not leaked(json.dumps(shared, default=str)), f"The shared chat leaked: {shared}")
 
-        def summaries():
-            return chats.items[conversation_id], shared_chats.items[collaboration_id]
+        def require_summary_dropped(source_id, shared_id, why):
+            hidden_source, shared = chats.items[source_id], shared_chats.items[shared_id]
+            require(
+                "summary" in shared and shared["summary"] is None
+                and "summary" in hidden_source and hidden_source["summary"] is None
+                and hidden_source.get("converted_to_collaboration_at"),
+                f"A summary survived {why}: {hidden_source.get('summary')} / {shared.get('summary')}",
+            )
 
-        hidden_source, shared = summaries()
-        require(
-            "summary" in shared and shared["summary"] is None
-            and "summary" in hidden_source and hidden_source["summary"] is None
-            and hidden_source.get("converted_to_collaboration_at"),
-            f"A summary survived conversion: {hidden_source.get('summary')} / {shared.get('summary')}",
-        )
+        def synced_without_summary(source_id, shared_id):
+            # Neither the AI bridge's source check nor its metadata sync brings a summary back, even one the
+            # owner regenerated on the hidden source chat.
+            shared = deepcopy(shared_chats.items[shared_id])
+            for regenerated in (None, {"content": "Regenerated: markets rose.", "model_deployment": "gpt-4o"}):
+                if regenerated is not None:
+                    hidden = deepcopy(chats.items[source_id])
+                    hidden["summary"] = regenerated
+                    chats.upsert_item(hidden)
+                source_doc, shared = collaboration.ensure_collaboration_source_conversation(shared, owner_user)
+                require(source_doc.get("id") == source_id, f"Unexpected source chat: {source_doc.get('id')}")
+                shared, _synced = collaboration.sync_collaboration_conversation_metadata_from_source(
+                    shared, source_doc,
+                )
+                hidden_source, stored_shared = chats.items[source_id], shared_chats.items[shared_id]
+                require(
+                    stored_shared.get("summary") is None and shared.get("summary") is None
+                    and hidden_source.get("summary") is None,
+                    f"Syncing restored a summary ({regenerated}): {hidden_source.get('summary')} / "
+                    f"{stored_shared.get('summary')}",
+                )
+            return shared
+
+        require_summary_dropped(conversation_id, collaboration_id, "conversion")
         require(
             [row["content"] for row in messages_of(conversation_id)] == [message["content"] for message in originals],
             "Conversion changed the original chat's stored messages.",
         )
-
-        # Neither the AI bridge's source check nor its metadata sync brings a summary back, even one the
-        # owner regenerated on the hidden source chat.
-        shared = deepcopy(shared_chats.items[collaboration_id])
-        for regenerated in (None, {"content": "Regenerated: markets rose.", "model_deployment": "gpt-4o"}):
-            if regenerated is not None:
-                hidden = deepcopy(chats.items[conversation_id])
-                hidden["summary"] = regenerated
-                chats.upsert_item(hidden)
-            source_doc, shared = collaboration.ensure_collaboration_source_conversation(shared, owner_user)
-            require(source_doc.get("id") == conversation_id, f"Unexpected source chat: {source_doc.get('id')}")
-            shared, _synced = collaboration.sync_collaboration_conversation_metadata_from_source(shared, source_doc)
-            hidden_source, stored_shared = summaries()
-            require(
-                stored_shared.get("summary") is None and shared.get("summary") is None
-                and hidden_source.get("summary") is None,
-                f"Syncing restored a summary ({regenerated}): {hidden_source.get('summary')} / "
-                f"{stored_shared.get('summary')}",
-            )
+        shared = synced_without_summary(conversation_id, collaboration_id)
 
         # A pending invitee's metadata and history reads, MCP and the summary input see only the withheld form.
         a1_copy_id = copies[a1["id"]]["id"]
@@ -476,6 +483,116 @@ def run_offline_scenarios():
         # Once the chat is converted, even its owner can't export the answer.
         require_exports(a1, 403, "After conversion, the Follow up answer")
         require_exports(a2, 200, "After conversion, an ordinary answer")
+
+        # B7: group context only classifies a private chat, so Follow up runs there, and the group route
+        # converts it from the personal store by the same rule.
+        group_id = "group-research-1"
+        config.cosmos_groups_container.upsert_item({
+            "id": group_id, "name": "Research", "status": "active",
+            "owner": {"id": USER, "displayName": "Owner", "email": "owner@example.test"},
+            "users": [
+                {"userId": USER, "displayName": "Owner", "email": "owner@example.test"},
+                {"userId": OTHER_USER, "displayName": "Stranger", "email": "stranger@example.test"},
+            ],
+            "admins": [], "documentManagers": [],
+        })
+
+        def group_chat(chat_id, title, summary, at):
+            chats.upsert_item({
+                "id": chat_id, "user_id": USER, "title": title, "last_updated": at.isoformat(),
+                "chat_type": "group-single-user", "tags": [], "classification": [], "summary": deepcopy(summary),
+                "context": [{"type": "primary", "scope": "group", "id": group_id, "name": "Research"}],
+            })
+
+        def converted_through_group(chat_id):
+            found = owner.post(
+                f"/api/collaboration/conversations/from-group/{chat_id}/members",
+                json={"participants": [
+                    {"user_id": OTHER_USER, "display_name": "Stranger", "email": "stranger@example.test"},
+                ]},
+            )
+            require(
+                found.status_code == 201,
+                f"The group conversion of {chat_id} failed: {found.status_code} {found.get_data(as_text=True)[:300]}",
+            )
+            shared_id = found.get_json()["conversation"]["id"]
+            require(
+                shared_chats.items[shared_id].get("source_conversation_id") == chat_id
+                and chats.items[chat_id].get("collaboration_conversation_id") == shared_id,
+                f"The group route didn't convert {chat_id} from the personal store: {shared_chats.items[shared_id]}",
+            )
+            return found, shared_id
+
+        group_chat_id = "conv-group-digest"
+        group_chat(group_chat_id, "Research notes", None, later(40))
+        group_followed = owner.post("/api/chat", json={
+            "message": "What did the digest find for the group?", "workflow_result_context": context,
+            "conversation_id": group_chat_id, "time_zone": "America/New_York",
+        })
+        require(
+            group_followed.status_code == 200 and group_followed.get_json().get("conversation_id") == group_chat_id,
+            f"The Follow up in the group-classified chat failed: {group_followed.status_code} "
+            f"{group_followed.get_data(as_text=True)[:300]}",
+        )
+        group_turn = messages_of(group_chat_id)
+        require(
+            [row["role"] for row in group_turn] == ["user", "assistant"]
+            and group_turn[1]["metadata"].get("workflow_result_contexts") == [context],
+            f"Unexpected Follow up turn in the group-classified chat: {group_turn}",
+        )
+        gq1, ga1 = group_turn
+        group_answered_at = datetime.fromisoformat(ga1["timestamp"])
+        gq2 = seeded(group_chat_id, "msg-group-recap-q", "user", "Recap that for the group.",
+                     group_answered_at + timedelta(seconds=1), "thread-group-recap")
+        ga2 = seeded(group_chat_id, "msg-group-recap-a", "assistant", "Group recap: markets rose.",
+                     group_answered_at + timedelta(seconds=2), "thread-group-recap",
+                     workflow_result_contexts=[context])
+        group_originals = (gq1, ga1, gq2, ga2)
+        hidden_group = deepcopy(chats.items[group_chat_id])
+        hidden_group["summary"] = {"content": "The group chat covered the digest: markets rose.",
+                                   "model_deployment": "gpt-4o"}
+        chats.upsert_item(hidden_group)
+
+        group_converted, group_shared_id = converted_through_group(group_chat_id)
+        require(not leaked(group_converted.get_data(as_text=True), answer_text), "The group conversion response leaked.")
+        require_copies(
+            copies_in(group_shared_id), "Group conversion", expected=group_originals, withheld={ga1["id"], ga2["id"]},
+        )
+        group_shared = shared_chats.items[group_shared_id]
+        require(
+            group_shared.get("last_message_preview") == _truncate_preview(unavailable)
+            and not leaked(json.dumps(group_shared, default=str)),
+            f"The group collaboration leaked: {group_shared}",
+        )
+        require_summary_dropped(group_chat_id, group_shared_id, "the group conversion")
+        require(
+            [row["content"] for row in messages_of(group_chat_id)] == [row["content"] for row in group_originals],
+            "The group conversion changed the original chat's stored messages.",
+        )
+        group_view = stranger.get(f"/api/collaboration/conversations/{group_shared_id}")
+        require(
+            group_view.status_code == 200 and not leaked(group_view.get_data(as_text=True), answer_text),
+            f"The invitee's read of the group collaboration failed or leaked: {group_view.status_code} "
+            f"{group_view.get_data(as_text=True)[:300]}",
+        )
+        synced_without_summary(group_chat_id, group_shared_id)
+
+        # A group-classified chat without workflow results keeps its summary on both chats and its copies verbatim.
+        picnic_summary = {"content": "The group planned a picnic.", "model_deployment": "gpt-4o"}
+        group_plain_id = "conv-group-plain"
+        group_chat(group_plain_id, "Group picnic", picnic_summary, later(50))
+        gqp = seeded(group_plain_id, "msg-group-picnic-q", "user", "Plan the group picnic.", later(51),
+                     "thread-group-picnic")
+        gap = seeded(group_plain_id, "msg-group-picnic-a", "assistant", "Bring sandwiches for everyone.", later(52),
+                     "thread-group-picnic")
+        _plain_converted, plain_shared_id = converted_through_group(group_plain_id)
+        require_copies(copies_in(plain_shared_id), "Plain group conversion", expected=(gqp, gap), withheld=set())
+        plain_source, plain_shared = chats.items[group_plain_id], shared_chats.items[plain_shared_id]
+        require(
+            plain_shared.get("summary") == picnic_summary and plain_source.get("summary") == picnic_summary
+            and plain_source.get("converted_to_collaboration_at"),
+            f"The plain group chat lost its summary: {plain_source.get('summary')} / {plain_shared.get('summary')}",
+        )
 
         require(not world.normal_chat_clients, "The normal chat model was used.")
         require(not world.network_attempts, f"The routes attempted network access: {world.network_attempts}")
