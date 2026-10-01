@@ -2,8 +2,8 @@
 # test_collaboration_group_agent_stream_fix.py
 """
 Functional test for group collaboration agent stream completion.
-Version: 0.261.045
-Implemented in: 0.261.045
+Version: 0.261.048
+Implemented in: 0.261.045; updated in 0.261.048
 
 This test ensures group collaborative agent responses complete through the
 shared stream bridge even when mirrored agent citation payloads contain nested
@@ -16,6 +16,7 @@ import os
 import sys
 
 from flask import Flask, Response
+from test_support.offline_bootstrap import offline_app_imports
 
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -77,7 +78,12 @@ class FakeEventRegistry:
 
 def build_group_agent_stream_test_app():
     """Register the collaboration stream route with isolated fake dependencies."""
-    import route_backend_collaboration
+    if 'route_backend_collaboration' in sys.modules:
+        route_backend_collaboration = sys.modules['route_backend_collaboration']
+    else:
+        with offline_app_imports():
+            import route_backend_collaboration
+
     from collaboration_models import MESSAGE_KIND_AI_REQUEST, MESSAGE_KIND_ASSISTANT
 
     conversation_id = 'shared-agent-conversation-001'
