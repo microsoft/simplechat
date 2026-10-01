@@ -39,8 +39,8 @@ A changed field is framed in its author's color and gets a text badge, so color 
 only cue:
 
 - **Edited**, in violet, for your own changes.
-- **AI assist**, in blue, for changes an AI assist turn made. Nothing in this release produces
-  one; the Ask AI tab in a later phase will.
+- **AI assist**, in blue, for changes an AI assist turn made. From 0.261.213 the **Ask AI** tab
+  and **Draft with AI** make them; see [Workflow AI assistant](WORKFLOW_AI_ASSISTANT.md).
 
 Beside the badge, **Previously** opens the value the field had when the editor opened, as plain
 text. Values longer than 280 characters are cut short behind **Show more**. **Revert** puts that
@@ -73,7 +73,9 @@ saved order; a task you added keeps its slot.
 ### The Changes panel
 
 **Changes** in the editor footer opens a side panel and shows how many unsaved changes there are.
-The panel is built as a tab list, so later phases can add tabs beside **Changes**.
+The panel is built as a tab list, so later phases can add tabs beside **Changes**. From 0.261.213
+**Ask AI** is the second tab, on a personal workflow you can edit when the admin has turned the
+assistant on.
 
 The Changes tab has two lists:
 
@@ -81,7 +83,9 @@ The Changes tab has two lists:
   text, its author, **Jump**, and **Revert** (**Restore** for a removed item). Jump moves focus to
   the changed field, opening collapsed sections as needed. On the Flow surface it selects the
   changed block, and switches to List when the field isn't shown on Flow. On narrow screens it
-  closes the panel first, so the field is visible.
+  closes the panel first, so the field is visible. A jump places focus itself, so it clears any
+  block focus that the step it follows requested; otherwise, on Flow, the canvas could take focus
+  back from the field after a **Draft with AI** change.
 - **This session**: the steps in this editing session, newest first, each marked **Edited**,
   **AI assist** or **Restore**, with its turn when it has one. **Restore to here** applies the
   workflow as it was after that step, as a new step. Nothing is deleted: the steps after it stay
@@ -222,7 +226,8 @@ candidate as one history entry with origin `ai`. It rejects a candidate that:
 - changes what an ID it keeps refers to
 
 An accepted candidate takes the normal edit path: eligibility, impact confirmation, and the
-history budget's oversized-edit prompt. Nothing in this release calls it; the unit tests do.
+history budget's oversized-edit prompt. From 0.261.213 the **Ask AI** tab calls it with each
+answer, and **Draft with AI** calls it with drafted task instructions.
 
 ### The Run as consequence
 
@@ -237,18 +242,22 @@ fields. `test_workflow_run_as_fingerprint_parity.py` fails when the two lists dr
 The diff never runs on the whole definition per keystroke. Indexes are cached per task list, flow
 and definition object, and the diff and key deltas are memoized per pair of definitions. The
 editor keeps every task object it did not change, so typing into one task compares only that
-task. The panel reads the diff one deferred render later, so a keystroke never waits for it. With
-100 tasks, a keystroke through the session measured 0.17 ms in the logic tests.
+task. The panel reads the diff one deferred render later, so a keystroke never waits for it. The
+highlights render in that deferred pass too, so every tracked field also carries its field key
+(`data-workflow-field-key`) from its first render, changed or not. Jump looks for the highlighted
+field, then the field key, then the changed item, so a jump made as a change lands, such as Draft
+with AI's, still reaches the field on a slow device. With 100 tasks, a keystroke through the
+session measured 0.17 ms in the logic tests.
 
 ## Seams for later phases
 
 - **The assist endpoint (3b)** returns candidates; `applyAssist` is where they enter the editor.
   It already enforces the forbidden fields and approvals client-side.
-- **The Ask AI tab (3c)** is a second entry in `WorkflowEditorSidePanel`'s tab list, beside
-  Changes. Its per-turn "Revert this turn" calls `revertTurn` and reports the reverted and skipped
-  counts it returns. Ask AI is personal-only; change tracking itself also covers group workflows.
-- The Confirm and save step appears once 3c produces AI-authored changes. Until then only the
-  unit tests reach it.
+- **The Ask AI tab (3c)** shipped in 0.261.213 as the second entry in `WorkflowEditorSidePanel`'s
+  tab list, beside Changes. Each turn's **Undo this change** calls `revertTurn` and reports the
+  reverted and skipped counts it returns. Ask AI is personal-only; change tracking itself also
+  covers group workflows.
+- The Confirm and save step now appears when a save includes changes from Ask AI or Draft with AI.
 
 ## Files
 
@@ -273,8 +282,6 @@ task. The panel reads the diff one deferred render later, so a keystroke never w
   strip and the Changes tab.
 - A new workflow points out only AI assist changes, so your own edits are highlighted only after
   the first save.
-- Nothing produces AI-authored changes until the Ask AI tab ships, so the Confirm and save step is
-  covered by unit tests only.
 - Change tracking lasts for one editing session. Saving, cancelling or reopening starts fresh.
 
 ## Testing and validation
@@ -297,6 +304,8 @@ task. The panel reads the diff one deferred render later, so a keystroke never w
   can't show; a group workflow; light and dark themes; a narrow viewport;
   a new workflow; and keyboard focus staying in a schedule, Run when, output contract or final
   outputs control, with every typed character kept, while its highlight appears or clears.
+- From 0.261.213, `ui_tests/test_v2_workflow_ask_ai.py` reaches the Review before saving step
+  in a browser: an **Ask AI** answer is applied, and the save goes through **Confirm and save**.
 
 ## Related
 

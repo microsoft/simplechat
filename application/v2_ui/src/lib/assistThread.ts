@@ -24,6 +24,7 @@ import {
 import type { ComposerDraft } from './composerDraft';
 import { addContextItem, type ContextItem } from './chatContext';
 import { reconcileContextItems } from './chatContextTokens';
+import { codePointLength } from './codePoints';
 import {
     blankDraft,
     capAbandonedIds,
@@ -31,6 +32,7 @@ import {
     draftHasContent,
     exchangeRetryId,
     exchangeSubmissionIds,
+    holdAssistThread,
     selectAssistThread,
     useAssistThreadStore,
     withSentId,
@@ -132,14 +134,23 @@ export function planThreadKey(conversationId: string, turnId: string): string {
 /** Why a message could not be sent. */
 export type AssistSendProblem = 'empty' | 'too_long' | 'pending';
 
+/**
+ * How long the input's text is. UTF-16 units by default; `countCodePoints` counts Unicode code
+ * points instead, for a server that measures its limit that way.
+ */
+export function assistTextLength(text: string, countCodePoints = false): number {
+    return countCodePoints ? codePointLength(text) : text.length;
+}
+
 export function describeDraftProblem(
     draft: ComposerDraft,
     maxLength: number,
+    countCodePoints = false,
 ): Exclude<AssistSendProblem, 'pending'> | null {
     if (!draft.text.trim()) {
         return 'empty';
     }
-    return draft.text.length > maxLength ? 'too_long' : null;
+    return assistTextLength(draft.text, countCodePoints) > maxLength ? 'too_long' : null;
 }
 
 /** Browser requests of this page's threads, by exchange id. */
@@ -332,6 +343,13 @@ export interface AssistSubmitOptions {
     mode: AssistThreadMode;
     maxLength: number;
     send: AssistSend;
+    /** Measure `maxLength` in code points rather than UTF-16 units. Off by default. */
+    countCodePoints?: boolean;
+    /**
+     * Send this text as a message of its own, such as a quick action, and leave the input as it
+     * is. Unset by default: what the input holds is sent and the input clears.
+     */
+    text?: string;
 }
 
 /**
@@ -343,8 +361,9 @@ export interface AssistSubmitOptions {
  */
 export function submitAssistDraft(options: AssistSubmitOptions): string | null {
     const record = readThread(options.key);
-    const draft = record?.draft ?? blankDraft();
-    if (describeDraftProblem(draft, options.maxLength)
+    const ownText = options.text !== undefined;
+    const draft = ownText ? { ...blankDraft(), text: options.text ?? '' } : record?.draft ?? blankDraft();
+    if (describeDraftProblem(draft, options.maxLength, options.countCodePoints === true)
         || record?.exchanges.some((exchange) => exchange.status === 'pending')) {
         return null;
     }
@@ -369,7 +388,7 @@ export function submitAssistDraft(options: AssistSubmitOptions): string | null {
                 ...current.abandonedIds,
                 ...moving.flatMap((item) => exchangeSubmissionIds(item)),
             ]),
-            draft: blankDraft(),
+            draft: ownText ? current.draft : blankDraft(),
             notice: null,
         };
     });
@@ -500,6 +519,13 @@ export interface UseAssistThreadOptions {
     send: AssistSend;
     /** Replaces the default cancel, which only stops the browser waiting. */
     cancel?: (exchange: AssistExchange) => unknown;
+    /** Measure `maxLength` in code points rather than UTF-16 units. Off by default. */
+    countCodePoints?: boolean;
+    /**
+     * Keep the thread while this editor is mounted, even when it is idle and another
+     * conversation's thread is touched. Off by default: threads are pruned as before.
+     */
+    retain?: boolean;
 }
 
 export interface AssistThreadController {
@@ -520,6 +546,8 @@ export interface AssistThreadController {
     inputRef: RefObject<HTMLTextAreaElement>;
     focusInput: () => void;
     send: () => boolean;
+    /** Send `text` as a message of its own, such as a quick action, leaving the input as it is. */
+    sendText: (text: string) => boolean;
     retry: (id: string) => boolean;
     cancel: (id: string) => void;
     editAndResend: (id: string) => boolean;
@@ -530,12 +558,16 @@ const NO_EXCHANGES: AssistExchange[] = [];
 
 export function useAssistThread(options: UseAssistThreadOptions): AssistThreadController {
     const { key, conversationId, mode, maxLength, storedTurns } = options;
+    const countCodePoints = options.countCodePoints === true;
+    const retain = options.retain === true;
     const record = useAssistThreadStore((state) => selectAssistThread(state, key));
     const inputRef = useRef<HTMLTextAreaElement>(null);
     const sendRef = useRef(options.send);
     const cancelRef = useRef(options.cancel);
     sendRef.current = options.send;
     cancelRef.current = options.cancel;
+
+    useEffect(() => (retain && key ? holdAssistThread(key) : undefined), [retain, key]);
 
     const storedIds = useMemo(() => {
         const ids = new Set<string>();
@@ -606,12 +638,23 @@ export function useAssistThread(options: UseAssistThreadOptions): AssistThreadCo
         if (!key) {
             return false;
         }
-        const id = submitAssistDraft({ key, conversationId, mode, maxLength, send: sendRef.current });
+        const id = submitAssistDraft({ key, conversationId, mode, maxLength, send: sendRef.current, countCodePoints });
         if (id) {
             focusInput();
         }
         return Boolean(id);
-    }, [key, conversationId, mode, maxLength, focusInput]);
+    }, [key, conversationId, mode, maxLength, countCodePoints, focusInput]);
+
+    const sendText = useCallback((text: string) => {
+        if (!key) {
+            return false;
+        }
+        const id = submitAssistDraft({ key, conversationId, mode, maxLength, send: sendRef.current, countCodePoints, text });
+        if (id) {
+            focusInput();
+        }
+        return Boolean(id);
+    }, [key, conversationId, mode, maxLength, countCodePoints, focusInput]);
 
     const retry = useCallback((id: string) => {
         const retried = key ? retryAssistExchange(key, id, mode, sendRef.current) : false;
@@ -632,6 +675,8 @@ export function useAssistThread(options: UseAssistThreadOptions): AssistThreadCo
         return edited;
     }, [key, focusInput]);
 
+    const length = useMemo(() => assistTextLength(draft.text, countCodePoints), [draft.text, countCodePoints]);
+
     return {
         key,
         mode,
@@ -644,12 +689,13 @@ export function useAssistThread(options: UseAssistThreadOptions): AssistThreadCo
         notice: record?.notice ?? null,
         dismissNotice,
         maxLength,
-        length: draft.text.length,
-        overLimit: draft.text.length > maxLength,
+        length,
+        overLimit: length > maxLength,
         ownSubmissionIds,
         inputRef,
         focusInput,
         send,
+        sendText,
         retry,
         cancel,
         editAndResend,

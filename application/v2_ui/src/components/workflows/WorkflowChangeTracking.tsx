@@ -241,9 +241,10 @@ export function WorkflowChangedField({ changeKey, className, children }: {
         const result = tracking.session.revertChange([fieldChange.key]);
         if (result.status === 'applied') refocusAfterRevert(rootRef);
     };
+    // The field key is always there, so a jump made before the deferred highlight renders still finds the field.
     return (
         <div ref={rootRef} role={stamp ? 'group' : undefined} aria-labelledby={stamp ? badgeId : undefined}
-            data-workflow-change-key={stamp ? changeKey : undefined}
+            data-workflow-change-key={stamp ? changeKey : undefined} data-workflow-field-key={changeKey}
             className={clsx(className, stamp && ['rounded-lg border p-2', FRAME_CLASS[stamp.author]]) || undefined}>
             {children}
             {stamp ? (
@@ -548,18 +549,28 @@ export interface WorkflowSidePanelTab {
     readonly id: string;
     readonly label: string;
     readonly content: ReactNode;
+    /** Replaces the panel's default scrolling and padding, for a tab that lays out its own. */
+    readonly panelClassName?: string;
 }
 
 /**
  * The editor's side panel. It is a tab list so the Changes tab can gain siblings, such as Ask AI;
- * tabs follow the APG pattern with automatic activation.
+ * tabs follow the APG pattern with automatic activation. Pass `selected` and `onSelect` to choose
+ * the tab from outside, such as a button that opens the panel on Ask AI.
  */
-export function WorkflowEditorSidePanel({ id, tabs, className }: {
+export function WorkflowEditorSidePanel({ id, tabs, className, selected: selectedTab, onSelect }: {
     id: string;
     tabs: readonly WorkflowSidePanelTab[];
     className?: string;
+    selected?: string;
+    onSelect?: (id: string) => void;
 }) {
-    const [selected, setSelected] = useState(tabs[0]?.id ?? '');
+    const [ownSelected, setOwnSelected] = useState(tabs[0]?.id ?? '');
+    const selected = selectedTab ?? ownSelected;
+    const setSelected = (tabId: string) => {
+        if (selectedTab === undefined) setOwnSelected(tabId);
+        onSelect?.(tabId);
+    };
     const baseId = useId();
     const tabRefs = useRef(new Map<string, HTMLButtonElement>());
     const active = tabs.find((tab) => tab.id === selected) ?? tabs[0];
@@ -601,7 +612,7 @@ export function WorkflowEditorSidePanel({ id, tabs, className }: {
             </div>
             {active ? (
                 <div role="tabpanel" id={`${baseId}-panel-${active.id}`} aria-labelledby={`${baseId}-tab-${active.id}`}
-                    className="min-h-0 flex-1 overflow-y-auto p-3">
+                    className={clsx('min-h-0 flex-1', active.panelClassName ?? 'overflow-y-auto p-3')}>
                     {active.content}
                 </div>
             ) : null}

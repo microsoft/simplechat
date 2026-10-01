@@ -54,7 +54,7 @@ visible to its members. Turning one on does not turn on the other.
 | --- | --- | --- | --- |
 | Enable Personal Workflows | Lets users build workflows in their personal workspace and run them manually or on a schedule, either at a fixed interval or at a local time on a calendar schedule. | Off | `allow_user_workflows` |
 | Require WorkflowUser App Role | Restricts personal workflows to holders of the `WorkflowUser` Enterprise App role. Covers opening, creating, editing, running and inspecting them, so assign the role before turning this on or every user loses access at once. | Off | `require_member_of_workflow_user` |
-| Enable AI Workflow Assistant | Lets people who can edit personal workflows describe a change in plain language, such as "run this at 7 AM on weekdays", and review the assistant's proposed edit in the V2 workflow editor before they save it. The assistant never saves, runs or shares a workflow, and it only uses documents the person can already open. | On | `enable_workflow_ai_assistant`; personal workflows only; has no effect while Enable Personal Workflows is off |
+| Enable AI Workflow Assistant | Lets people who can edit personal workflows use the V2 workflow editor's **Ask AI** tab: describe a change in plain language, such as "run this at 7 AM on weekdays", and review the assistant's edit before they save it. It also shows each task's **Draft with AI** button. The assistant never saves, runs or shares a workflow, and it only uses documents the person can already open. | On | `enable_workflow_ai_assistant`; personal workflows only; has no effect while Enable Personal Workflows is off |
 | Use Workflow Results In Chat | Lets people ask chat about the stored result of one of their own finished personal workflow runs, from **Ask in chat** in the run history or **Ask about this** on a workflow alert. The answer uses only that run's saved output: the workflow isn't re-run and nothing else is searched. It works only in the person's private chats, and V2 stops showing an answer once the run is deleted or the person loses access to the run's sources. | Off | `enable_chat_workflow_results`; personal workflows only; has no effect while Enable Personal Workflows is off, and follows Require WorkflowUser App Role |
 | Enable Group Workflows | Lets permitted members create, manage and run workflows from group workspaces. Owners and Admins may author them unless Workspaces restricts group agent, action and workflow management to Owners. | Off | `allow_group_workflows` |
 | Require Group Assignment to Use Workflow | Narrows group workflows to an explicit allow list instead of every group. Groups outside the list lose the capability. | Off | `require_group_assignment_for_group_workflows` |
@@ -94,14 +94,18 @@ for the daylight saving rules and the stored format.
 
 ### AI workflow assistant {#workflow-ai-assistant}
 
-Version **0.261.208** adds the server side of the AI workflow assistant. A person
+Version **0.261.208** adds the server side of the AI workflow assistant, and
+version **0.261.213** adds the V2 workflow editor's **Ask AI** tab. A person
 editing a personal workflow can ask for a change in plain language, such as "run
-this at 7 AM on weekdays and only alert me when something is urgent", and gets a
-proposed edit that the V2 editor shows as highlighted, revertible changes. The
-editor's **Ask AI** tab arrives in a later release.
+this at 7 AM on weekdays and only alert me when something is urgent", and the
+editor applies the proposed edit as highlighted changes they can revert one by
+one or take back as a whole.
 
 The assistant is on by default wherever personal workflows are on, and it
-follows the same `WorkflowUser` role rule. Things to know before relying on it:
+follows the same `WorkflowUser` role rule. Turning it off also hides each task's
+**Draft with AI** button in the V2 editor. The classic workspace's **Draft
+Workflow Instructions** button doesn't follow this setting. Things to know
+before relying on it:
 
 - **It proposes; it never saves.** Nothing changes until the person reviews the
   edit and saves it through the normal save, with the usual checks and the Run
@@ -119,6 +123,9 @@ follows the same `WorkflowUser` role rule. Things to know before relying on it:
   it's temporarily unavailable rather than running without a limit.
 - **Its logs hold no content.** Telemetry records counts, outcomes and error
   categories, never instructions, workflows, replies or document text.
+- **The conversation isn't kept.** The **Ask AI** conversation lives only in
+  the browser page. The server doesn't store it, and reloading the page starts
+  it over.
 
 See [AI workflow assistant](../explanation/features/WORKFLOW_AI_ASSISTANT.md)
 for the request contract, the changes it can propose, and its security model.

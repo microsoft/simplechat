@@ -2,7 +2,7 @@
 // Shared task fields and runner pickers for native workflow authoring.
 
 import { useState } from 'react';
-import { ArrowDown, ArrowUp, Trash2 } from 'lucide-react';
+import { ArrowDown, ArrowUp, Sparkles, Trash2 } from 'lucide-react';
 import { GlassButton, GlassPanel, Toggle } from '../ui/primitives';
 import { Pill } from '../workspace/primitives';
 import { WorkflowDocumentPicker } from './WorkflowDocumentPicker';
@@ -962,6 +962,16 @@ function DocumentActionFields({
     );
 }
 
+/** Draft with AI for a task whose instructions are empty. */
+export interface WorkflowTaskDraftWithAi {
+    readonly onDraft: () => void;
+    readonly pending: boolean;
+    /** Another assistant request is running, so this one waits. */
+    readonly disabled: boolean;
+    /** What the last attempt for this task said, as plain text. */
+    readonly message?: string;
+}
+
 export function WorkflowTaskFields({
     scope,
     task,
@@ -975,6 +985,8 @@ export function WorkflowTaskFields({
     onNeedsDurable,
     structuredNode,
     onStructuredNodeChange,
+    onAskAi,
+    draftWithAi,
 }: {
     scope: WorkflowScope;
     task: WorkflowTask;
@@ -988,11 +1000,17 @@ export function WorkflowTaskFields({
     onNeedsDurable: () => void;
     structuredNode?: WorkflowTaskNode;
     onStructuredNodeChange?: (node: WorkflowTaskNode) => void;
+    /** Ask AI about this task: opens the Ask AI tab with the task in focus. */
+    onAskAi?: () => void;
+    /** Offered while the task has no instructions. */
+    draftWithAi?: WorkflowTaskDraftWithAi;
 }) {
     const previousTasks = workflow.tasks.slice(0, index);
     const errors = taskValidationErrors(task, index, workflow.tasks, workflow);
     const drafts = useWorkflowFieldDrafts();
     const draftOwner: WorkflowFieldDraftOwner = ['task', task.id];
+    const taskLabel = task.name || `Task ${index + 1}`;
+    const classicControls = !structuredNode && onMove && onRemove ? { onMove, onRemove } : null;
     const defaultOutputContract = (kind: WorkflowOutputKind): WorkflowOutputContract => ({
         kind,
         require_complete_coverage: false,
@@ -1004,22 +1022,30 @@ export function WorkflowTaskFields({
         <GlassPanel elevation="flat" className="space-y-4 p-4">
             <div className="flex flex-wrap items-start justify-between gap-3">
                 <div>
-                    <p className="text-sm font-semibold text-text-1">{task.name || `Task ${index + 1}`}</p>
+                    <p className="text-sm font-semibold text-text-1">{taskLabel}</p>
                     <p className="text-xs text-text-3">
                         {runnerLabel(task.runner)} · {taskInputMode(task) === 'auto' ? 'automatic input' : `${task.inputs?.length ?? 0} bound inputs`}
                     </p>
                     <WorkflowItemChangeBadge itemKey={workflowTaskKey(task.id)} unframed={['placement']} className="mt-2" />
                 </div>
-                {!structuredNode && onMove && onRemove ? <div className="flex flex-wrap gap-2">
-                    <GlassButton size="sm" disabled={index === 0} onClick={() => onMove(-1)} aria-label={`Move ${task.name || `Task ${index + 1}`} up`}>
+                {onAskAi || classicControls ? <div className="flex flex-wrap gap-2">
+                    {onAskAi ? (
+                        <GlassButton size="sm" onClick={onAskAi} aria-label={`Ask AI about this task: ${taskLabel}`}
+                            data-workflow-ask-ai-task={task.id}>
+                            <Sparkles size={14} aria-hidden="true" /> Ask AI
+                        </GlassButton>
+                    ) : null}
+                    {classicControls ? <>
+                    <GlassButton size="sm" disabled={index === 0} onClick={() => classicControls.onMove(-1)} aria-label={`Move ${taskLabel} up`}>
                         <ArrowUp size={14} /> Up
                     </GlassButton>
-                    <GlassButton size="sm" disabled={index >= workflow.tasks.length - 1} onClick={() => onMove(1)} aria-label={`Move ${task.name || `Task ${index + 1}`} down`}>
+                    <GlassButton size="sm" disabled={index >= workflow.tasks.length - 1} onClick={() => classicControls.onMove(1)} aria-label={`Move ${taskLabel} down`}>
                         <ArrowDown size={14} /> Down
                     </GlassButton>
-                    <GlassButton size="sm" variant="danger" disabled={workflow.tasks.length <= 1} onClick={onRemove} aria-label={`Remove ${task.name || `Task ${index + 1}`}`}>
+                    <GlassButton size="sm" variant="danger" disabled={workflow.tasks.length <= 1} onClick={classicControls.onRemove} aria-label={`Remove ${taskLabel}`}>
                         <Trash2 size={14} /> Remove
                     </GlassButton>
+                    </> : null}
                 </div> : null}
             </div>
             {errors.length ? (
@@ -1057,6 +1083,19 @@ export function WorkflowTaskFields({
                 </span>
             </label>
             </WorkflowChangedField>
+            {draftWithAi && (!task.instructions.trim() || draftWithAi.message) ? (
+                <div className="flex flex-wrap items-center gap-2">
+                    {!task.instructions.trim() ? (
+                        <GlassButton size="sm" disabled={draftWithAi.pending || draftWithAi.disabled} onClick={draftWithAi.onDraft}
+                            data-workflow-draft-ai={task.id}
+                            aria-label={`${draftWithAi.pending ? 'Drafting' : 'Draft with AI'}: instructions for ${taskLabel}`}>
+                            <Sparkles size={14} aria-hidden="true" /> {draftWithAi.pending ? 'Drafting…' : 'Draft with AI'}
+                        </GlassButton>
+                    ) : null}
+                    {/* Always present so a new message is announced. */}
+                    <p role="status" className="min-w-0 flex-1 break-words text-xs text-text-3">{draftWithAi.message ?? ''}</p>
+                </div>
+            ) : null}
             {structuredNode && onStructuredNodeChange ? (
                 <WorkflowChangedField changeKey={workflowTaskKey(task.id, 'run_when')} className="space-y-3">
                     <Toggle label="Run when" checked={structuredNode.run_when !== undefined}

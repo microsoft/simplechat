@@ -9,7 +9,7 @@ import { useEffect, useId, useRef, useState, type ReactNode } from 'react';
 import { clsx } from 'clsx';
 import { FileText, FolderOpen, Loader2, PenLine, RotateCcw, Send, Tag as TagIcon, X } from 'lucide-react';
 import { ComposerEditor } from './ComposerEditor';
-import type { AssistExchange, AssistThreadController } from '../../lib/assistThread';
+import { CANCELLED_MESSAGE, type AssistExchange, type AssistThreadController } from '../../lib/assistThread';
 
 /** A `#` chip a turn was sent with, shown read-only in the thread. */
 export interface AssistReferenceChip {
@@ -48,6 +48,11 @@ export interface AssistThreadProps {
     logFooter?: ReactNode;
     /** What the assistant said in an exchange the server does not store. */
     renderReply?: (exchange: AssistExchange) => ReactNode;
+    /**
+     * Shown for a request the user cancelled, in place of the default note that the change may
+     * still be applied. Only for an editor whose server writes nothing, so a cancel is safe.
+     */
+    cancelledMessage?: string;
     sendLabel: ReactNode;
     busyLabel?: ReactNode;
     sendAriaLabel?: string;
@@ -67,6 +72,8 @@ export interface AssistThreadProps {
      * the references with its request, and the server must authorise them for the acting user.
      */
     allowContext?: boolean;
+    /** With `allowContext`, offer `#` documents only: no tags and no workspaces. Off by default. */
+    contextDocumentsOnly?: boolean;
     counterHint?: string;
     density?: 'compact' | 'comfortable';
     className?: string;
@@ -125,6 +132,7 @@ export function AssistThread({
     logHeader,
     logFooter,
     renderReply,
+    cancelledMessage,
     sendLabel,
     busyLabel,
     sendAriaLabel,
@@ -135,6 +143,7 @@ export function AssistThread({
     describedBy,
     composerNote,
     allowContext = false,
+    contextDocumentsOnly = false,
     counterHint,
     density = 'compact',
     className,
@@ -208,15 +217,19 @@ export function AssistThread({
                         </button>
                     </p>
                 ) : exchange.status === 'done' ? (
-                    <p className="whitespace-pre-wrap break-words">
-                        {renderReply ? renderReply(exchange) : exchange.reply}
-                    </p>
+                    renderReply ? (
+                        <div className="break-words">{renderReply(exchange)}</div>
+                    ) : (
+                        <p className="whitespace-pre-wrap break-words">{exchange.reply}</p>
+                    )
                 ) : (
                     <>
                         {exchange.status === 'failed' ? (
                             <p role="alert" className="whitespace-pre-wrap break-words text-danger">{exchange.error}</p>
                         ) : (
-                            <p className="whitespace-pre-wrap break-words text-text-3">{exchange.error}</p>
+                            <p className="whitespace-pre-wrap break-words text-text-3">
+                                {cancelledMessage && exchange.error === CANCELLED_MESSAGE ? cancelledMessage : exchange.error}
+                            </p>
                         )}
                         <div className="mt-1.5 flex flex-wrap gap-1">
                             <button
@@ -313,6 +326,7 @@ export function AssistThread({
                             textareaRef={thread.inputRef}
                             restricted
                             allowContext={allowContext}
+                            contextDocumentsOnly={contextDocumentsOnly}
                             describedBy={[describedBy, counterId, thread.overLimit ? limitId : null]
                                 .filter(Boolean).join(' ')}
                             invalid={thread.overLimit}
