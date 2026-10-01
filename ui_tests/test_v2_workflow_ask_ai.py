@@ -1148,6 +1148,102 @@ def test_a_save_that_lands_during_a_reload_keeps_the_editor_closed(ask_ui):
 
 
 # ---------------------------------------------------------------------------------------------
+# Undo and redo keys while the draft is locked
+# ---------------------------------------------------------------------------------------------
+
+HISTORY_KEYS = ("Control+z", "Control+y", "Control+Shift+z")
+FIRST_NAME, SECOND_NAME = "Branch review, first edit", "Branch review, second edit"
+
+
+def history_button(editor, direction):
+    return editor.get_by_role("button", name=f"{direction} workflow edit", exact=True)
+
+
+def structured_editor_with_history(ui):
+    """The structured workflow with one edit left to undo and one to redo, so every key has work to do.
+
+    Also returns a block: it is not a text field, and it stays focusable inside the locked fieldset,
+    so its keys reach workflow history rather than a field's own undo.
+    """
+    editor = authoring.open_editor(ui)
+    name = editor.get_by_label("Workflow name", exact=True)
+    for typed in (FIRST_NAME, SECOND_NAME):
+        name.fill(typed)
+        name.press("Tab")
+    history_button(editor, "Undo").click()
+    expect(name).to_have_value(FIRST_NAME)
+    expect(history_button(editor, "Undo")).to_have_attribute("aria-disabled", "false")
+    expect(history_button(editor, "Redo")).to_have_attribute("aria-disabled", "false")
+    expect(changes_toggle(editor)).to_have_accessible_name("Changes (1 unsaved)")
+    return editor, name, authoring.list_block(editor, "evaluate")
+
+
+def expect_history_keys_ignored(ui, editor, name, block, reason):
+    """Each undo and redo key on the block changes nothing, and says nothing."""
+    for direction in ("Undo", "Redo"):
+        expect(history_button(editor, direction)).to_have_attribute("title", reason)
+    alerts = editor.get_by_role("alert").count()
+    block.focus()
+    expect(block).to_be_focused()
+    for key in HISTORY_KEYS:
+        ui.page.keyboard.press(key)
+        # Give a key that got through time to change the draft.
+        ui.page.wait_for_timeout(200)
+        expect(name).to_have_value(FIRST_NAME)
+        expect(changes_toggle(editor)).to_have_accessible_name("Changes (1 unsaved)")
+        expect(editor.get_by_role("alert")).to_have_count(alerts)
+    expect(block).to_be_focused()
+
+
+def expect_history_keys_work(ui, name, block, original):
+    """The same keys on the same block undo and redo once the draft is unlocked."""
+    for key, value in zip(HISTORY_KEYS, (original, FIRST_NAME, SECOND_NAME)):
+        block.focus()
+        ui.page.keyboard.press(key)
+        expect(name).to_have_value(value)
+
+
+def test_undo_and_redo_keys_wait_while_ask_ai_works(ask_ui):
+    ui = ask_ui
+    original = ui.personal_workflows[FLOW_WORKFLOW_ID]["name"]
+    editor, name, block = structured_editor_with_history(ui)
+    panel = open_ask_ai(editor)
+    ui.assist.hold = 1
+    ui.assist.queue(ui.assist.said("explained", "It reviews each branch."))
+    ask(ui, panel, "What does this workflow review?")
+    lock = editor.locator("[data-workflow-assist-lock]")
+    expect(lock).to_be_visible()
+
+    expect_history_keys_ignored(ui, editor, name, block, "Wait for Ask AI to finish, or cancel it.")
+
+    lock.get_by_role("button", name="Cancel request", exact=True).click()
+    expect(lock).to_have_count(0)
+    ui.assist.release()
+    expect_history_keys_work(ui, name, block, original)
+    assert not ui.workflow_writes
+
+
+def test_undo_and_redo_keys_wait_while_the_saved_workflow_reloads(ask_ui):
+    ui = ask_ui
+    original = ui.personal_workflows[FLOW_WORKFLOW_ID]["name"]
+    editor, name, block = structured_editor_with_history(ui)
+    panel = open_ask_ai(editor)
+    ui.mutate_revision(FLOW_WORKFLOW_ID)
+    ui.assist.queue(ui.assist.pipeline())
+    ask(ui, panel, "Add a description.")
+    expect(failed(panel).get_by_role("alert")).to_have_text(core._ERRORS["workflow_definition_conflict"][1])
+    group = hold_reload(ui, panel)
+
+    expect_history_keys_ignored(ui, editor, name, block, "Wait for the saved workflow to reload.")
+
+    ui.fail_held_responses()
+    expect(group.get_by_role("alert")).to_have_text("Couldn't reload the workflow. Try again.")
+    expect(name).to_be_enabled()
+    expect_history_keys_work(ui, name, block, original)
+    assert not ui.workflow_writes
+
+
+# ---------------------------------------------------------------------------------------------
 # Untrusted text and the client's own diff
 # ---------------------------------------------------------------------------------------------
 
