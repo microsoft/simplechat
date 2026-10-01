@@ -171,8 +171,8 @@ from functions_orchestration_schema import (
 from functions_orchestration_workflow_context import (
     workflow_planning_configured,
     workflow_planning_option,
-    workflow_proposals_configured,
     workflow_run_options,
+    workflow_time_zone_configured,
 )
 from functions_workflow_context import (
     WorkflowContextBudgetError,
@@ -699,7 +699,7 @@ class HarnessExecution:
             self._raise_delivery_infrastructure_failure(exc, storage_required=True)
             raise
         self._preparation_stage = "capabilities"
-        workflow_configured = workflow_proposals_configured(self.settings)
+        workflow_configured = workflow_time_zone_configured(self.settings)
         workflow_planning = (
             self.record.get("workflow_planning") if workflow_planning_configured(self.settings) else None
         )
