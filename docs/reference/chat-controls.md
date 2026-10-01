@@ -592,5 +592,5 @@ aren't available on a question about a workflow result or its answer, and the
 server refuses them; ask the question again instead. Once a chat is shared or
 converted to a collaboration, its Follow up answers are hidden for everyone, you
 included. The original chat's stored messages are unchanged. The
-collaboration's copies are stored with these answers withheld, and the chat
-summary isn't carried over.
+collaboration's copies are stored with these answers withheld, and the chat's
+saved summary is cleared on both chats.

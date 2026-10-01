@@ -457,9 +457,10 @@ collaboration copies its messages, and the collaboration AI bridge feeds the
 source chat's history to shared replies, so **once a chat is shared or converted
 to a collaboration, its Follow up answers are hidden for everyone, you
 included.** The original chat's stored messages are unchanged. The
-collaboration's copies are stored with these answers withheld, and the chat
-summary isn't carried over. Relaxing the rule later would show the original
-chat's answers again, but not the collaboration's copies.
+collaboration's copies are stored with these answers withheld, and the chat's
+saved summary is cleared on both chats. Relaxing the rule later would show the
+original chat's answers again, but not the collaboration's copies or the
+cleared summary.
 
 ### Collaboration copies
 
@@ -478,11 +479,13 @@ copies, in `functions_collaboration.py`:
   and a question keeps its text without the three keys. The copies are built
   from the messages `prepare_m365_history_publication` returns, so that path is
   withheld the same way.
-- When any copied message uses a workflow result, the collaboration's `summary`
-  is stored as `None`, with the key present, and the source chat's summary is
-  cleared in the same final write that marks it converted. That write comes
-  after `prepare_m365_history_publication`, so clearing it doesn't change what
-  the publication covers. `ensure_collaboration_source_conversation` and
+- When any copied message uses a workflow result,
+  `_carry_summary_into_collaboration` stores the collaboration's `summary` as
+  `None`, with the key present, and clears the source chat's summary. The
+  conversion's final write, which marks the source converted, saves the cleared
+  summary. The helper runs after `prepare_m365_history_publication`, so
+  clearing the summary doesn't change what the publication covers.
+  `ensure_collaboration_source_conversation` and
   `sync_collaboration_conversation_metadata_from_source`, which runs after each
   AI-bridge reply, then have no summary to bring back.
 - `build_collaboration_message_metadata_payload`, which merges in the source
@@ -490,8 +493,14 @@ copies, in `functions_collaboration.py`:
   a later source message into the collaboration, withhold a source message that
   uses a workflow result first.
 
-Group conversions don't need this, because Follow up runs only in personal
-chats.
+The group route, `ensure_group_collaboration_for_legacy_conversation`, can also
+convert a personal chat that only group context classifies, such as a
+`group-single-user` chat. That chat is still its owner's private personal chat,
+so Follow up runs in it. For such a chat the route falls back to the personal
+store and `_copy_legacy_personal_messages_to_collaboration`, and both
+conversions decide the summary through `_carry_summary_into_collaboration`, so
+the two can't drift. A chat stored in the group container can't hold Follow up
+messages, so its messages and summary are copied as before.
 
 Orchestration history (`normalize_history_message` in
 `functions_orchestration_context.py`) skips Follow up answers and every later
@@ -620,7 +629,7 @@ the controls are listed in
 | `functional_tests/test_workflow_result_reader.py` | Owner-only reads and the non-disclosing 404, every status family, preview-only and structured runs, the real run authorizer, storage failures as 503 rather than "not found", the digest (deterministic, independent of the budget, changed by a rewritten result), the items projection, excerpts, budgets, truncation notes and lenient decoding, saved analyses and combined reports, and a drift check against the runtime store's terminal states. |
 | `functional_tests/test_workflow_result_followup.py` | One turn with the real reader and fake route helpers: private chats only on every turn, the digest binding, no sources whatever the request says, the fixed system message and fence, the per-request fence code (a forged, full-width or zero-width-split end marker stays inside the data, and the code differs per request), the disclosure, input and output screening, agents, the descriptor and inherited contexts on the answer, the re-check before saving, budget steps, mixed runs and the refusal payload. |
 | `functional_tests/test_workflow_result_chat_routes.py` | Dispatch at every chat entry point and the stream prechecks, then an offline boot of the real application answering through the real JSON, SSE and history routes. |
-| `functional_tests/test_workflow_result_review_paths.py` | An offline boot of the real application, through `functional_tests/test_support/workflow_result_offline_app.py`. Converting a chat to a collaboration stores its Follow up answers and inherited answers withheld and keeps each question's text without the keys; the preview, a pending invitee's metadata and history, the summary input, MCP collaboration reads, mirrored messages and the M365 publication see only the withheld form; and both summaries stay empty after the source and sync calls. The Word, PowerPoint and email exports of a single message refuse a converted chat and a lost result and still export a normal message. Retry and edit refuse Follow up turns before any content check or write and still replay ordinary turns. A search whose matches use a workflow result is never written to the cache. |
+| `functional_tests/test_workflow_result_review_paths.py` | An offline boot of the real application, through `functional_tests/test_support/workflow_result_offline_app.py`. Converting a chat to a collaboration stores its Follow up answers and inherited answers withheld and keeps each question's text without the keys; the preview, a pending invitee's metadata and history, the summary input, MCP collaboration reads, mirrored messages and the M365 publication see only the withheld form; and both summaries stay empty after the source and sync calls, even when the hidden source's summary is regenerated. The group route's conversion of a group-classified private chat does the same, and a group-classified chat without workflow results keeps its summary on both chats. The Word, PowerPoint and email exports of a single message refuse a converted chat and a lost result and still export a normal message. Retry and edit refuse Follow up turns before any content check or write and still replay ordinary turns. A search whose matches use a workflow result is never written to the cache. |
 | `functional_tests/test_workflow_result_masking.py` | Withholding on read for a deleted run, a changed result, lost source access, a storage failure, another reader and a chat that isn't private; the masked shape; the question's text kept; the read sites; and the per-call cost. |
 | `functional_tests/test_workflow_result_orchestration_lineage.py` | Orchestration history skipping workflow-result answers and later answers that inherited them, while keeping the questions. |
 | `functional_tests/test_chat_workflow_results_admin.py`, `functional_tests/test_v2_admin_workflow_parity.py` | The default, the guard, the classic and V2 admin switches, the gate and decorator, and the bootstrap flag. |
@@ -675,8 +684,8 @@ the controls are listed in
 - **Shared and converted chats.** Once a chat is shared or converted to a
   collaboration, its Follow up answers are hidden for everyone, you included.
   The original chat's stored messages are unchanged. The collaboration's copies
-  are stored with these answers withheld, and the chat summary isn't carried
-  over.
+  are stored with these answers withheld, and the chat's saved summary is
+  cleared on both chats.
 - **No retention setting.** A run's result stays available until the run is
   deleted.
 - **Classic chat** has no entry points or chip, and its message list is one of

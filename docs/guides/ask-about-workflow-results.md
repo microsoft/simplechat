@@ -131,8 +131,8 @@ chat that used it is opened in V2.
   answers, stay in your own private chats. Once a chat is shared or converted to
   a collaboration, its Follow up answers are hidden for everyone, you included.
   The original chat's stored messages are unchanged. The collaboration's copies
-  are stored with these answers withheld, and the chat summary isn't carried
-  over.
+  are stored with these answers withheld, and the chat's saved summary is
+  cleared on both chats.
 
 ## Limitations
 
