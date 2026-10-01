@@ -43,6 +43,10 @@ What this version adds:
   [V2 personal workflow File Sync](V2_PERSONAL_WORKFLOW_FILE_SYNC.md).
 - **The admin setting** `enable_chat_orchestration_workflows`, off by default.
 
+Starting saved workflows from chat is described in
+[Chat orchestration workflow runs](CHAT_ORCHESTRATION_WORKFLOW_RUNS.md)
+(0.261.212).
+
 Dependencies:
 
 - Chat orchestration (`enable_chat_orchestration`) and the V2 interface. The card

@@ -50,7 +50,7 @@ function RecoveryConfirmation({
     return (
         <ConfirmDialog
             title="Retry this failed step?"
-            description="The failed agent or action step may already have performed actions in an external service. Retrying it could repeat actions inside that step."
+            description="The failed step may already have acted outside this chat. Retrying an agent or action step could repeat changes it made in an external service. A saved workflow that already started is linked again, never started twice."
             confirmLabel="Confirm retry"
             tone="primary"
             busy={busy}

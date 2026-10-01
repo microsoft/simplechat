@@ -35,6 +35,7 @@ import { IconButton, MessageActions } from './MessageActions';
 import { OrchestrationMessageRecovery } from './OrchestrationRecoveryNotice';
 import { OrchestrationOutputs } from './OrchestrationOutputs';
 import { WorkflowProposalCards } from './WorkflowProposalCard';
+import { WorkflowRunLinks } from './WorkflowRunLinks';
 import { MessageInspector, type InspectorSection } from './MessageInspector';
 import { ThoughtsList, ThoughtsProgressCard } from './ThoughtsList';
 import { OrchestrationPlanCard } from './OrchestrationPlanCard';
@@ -73,6 +74,7 @@ import { readGeneratedArtifacts, suppressesAssistantText } from '../../lib/gener
 import { normalizeOrchestrationAttempt } from '../../lib/orchestration';
 import { isOrchestrationOutputArtifact } from '../../lib/orchestrationOutputs';
 import { orchestrationProposedWorkflow } from '../../lib/workflowProposals';
+import { orchestrationStartedWorkflow } from '../../lib/orchestrationWorkflowRuns';
 import { analysisUnavailableMessage, readSavedAnalysis, sameAnalysis } from '../../lib/savedAnalysis';
 import { readMessagePrompt } from '../../lib/messagePrompt';
 import { PromptCard } from './PromptCard';
@@ -1085,6 +1087,12 @@ function MessageBubbleInner({
                             && message.conversation_id === activeConversationId
                             && orchestrationProposedWorkflow(message.metadata?.orchestration) ? (
                             <WorkflowProposalCards conversationId={message.conversation_id} runId={orchestration.run_id} />
+                        ) : null}
+                        {/* A started workflow's run links only for the person who asked, in their own conversation. */}
+                        {orchestration.run_id && masks.ranges.length === 0 && personalConversation
+                            && message.conversation_id === activeConversationId
+                            && orchestrationStartedWorkflow(message.metadata?.orchestration) ? (
+                            <WorkflowRunLinks conversationId={message.conversation_id} runId={orchestration.run_id} />
                         ) : null}
                         {/* Inside the bubble, because a generated file belongs to the reply
                             that produced it rather than sitting loose in the thread. */}

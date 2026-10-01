@@ -42,12 +42,14 @@ from functions_orchestration_registry import (
     CAPABILITY_GENERATE_IMAGE,
     CAPABILITY_RENDER_FILE,
     CAPABILITY_WORKFLOW_PROPOSE,
+    CAPABILITY_WORKFLOW_RUN,
     MAX_GENERATED_IMAGES_PER_PLAN,
     VISUAL_CHART,
     VISUAL_DIAGRAM,
     VISUAL_IMAGE_PROPOSAL,
     VISUAL_KINDS,
     WORKFLOW_PROPOSALS_SETTING,
+    WORKFLOW_RUNS_SETTING,
     resolve_admitted_export_catalog,
 )
 from functions_orchestration_result_contracts import (
@@ -108,6 +110,18 @@ WORKFLOW_UNAVAILABLE_REASONS = {
         'edit every setting.'
     ),
     'workflow_one_per_request': 'One request can propose one workflow. Ask for the next one in a new message.',
+}
+# Why a saved workflow cannot be started from this request. Starting a workflow is not a
+# deliverable, so these reach the planner as a fact, and only while an administrator has turned
+# starting workflows from chat on.
+WORKFLOW_RUN_UNAVAILABLE_REASONS = {
+    'capability_not_enabled_for_orchestration': 'Starting saved workflows is not enabled for chat orchestration.',
+    'workflow_runs_disabled': 'Starting saved workflows from chat is turned off for this deployment.',
+    'workflow_role_required': 'Your account does not have access to personal workflows.',
+    'workflow_shared_conversation': (
+        'Saved workflows can be started only from your own conversations, not from shared ones.'
+    ),
+    'workflow_context_unavailable': 'Your saved workflows could not be loaded for this request. Try again later.',
 }
 _KIND_LABELS = {
     KIND_ANSWER: 'answer', KIND_FILE: 'file', KIND_IMAGE: 'image',
@@ -184,6 +198,17 @@ def _workflow_availability(available, unavailable):
         return _unavailable(reason)
     # A settings gate, or a condition this module has no text for, reads as turned off.
     return _unavailable('workflow_proposals_disabled')
+
+
+def _workflow_run_reason(unavailable):
+    """The closed reason this caller's plan cannot start a saved workflow."""
+    reason = unavailable.get(CAPABILITY_WORKFLOW_RUN)
+    if reason == 'not_enabled_for_orchestration':
+        return 'capability_not_enabled_for_orchestration'
+    if isinstance(reason, str) and reason in WORKFLOW_RUN_UNAVAILABLE_REASONS:
+        return reason
+    # A settings gate, or a condition this module has no text for, reads as turned off.
+    return 'workflow_runs_disabled'
 
 
 def _image_options(capabilities):
@@ -333,6 +358,27 @@ def build_deliverable_availability(settings, *, capabilities, unavailable=None, 
                 'depends_on and no input bindings) and that delivers the workflow deliverable. When '
                 'the request also wants a result now, answer it once with the usual steps as well.'
             )})
+    # Starting a saved workflow is described only while an administrator has turned it on;
+    # otherwise the planner is told exactly what it was before.
+    if settings.get(WORKFLOW_RUNS_SETTING) is True:
+        if CAPABILITY_WORKFLOW_RUN in available:
+            facts.append(
+                'workflow_run starts one of the user\'s saved workflows after the user approves the plan; '
+                'a plan that starts one always waits for approval. The server adds to the reply whether '
+                'each workflow started, so never say that a workflow started, ran or finished, and never '
+                'promise its results in this conversation.'
+            )
+            recipes.append({'for': 'A saved workflow the user asks to run now', 'steps': (
+                'one workflow_run step per workflow, naming its durable catalog handle, with no depends_on, '
+                'no inputs and no deliverable. When the request only starts workflows, declare no '
+                'deliverables and no final_response; otherwise answer the rest as usual.'
+            )})
+        else:
+            facts.append(
+                'Starting saved workflows is unavailable for this request. '
+                f'{WORKFLOW_RUN_UNAVAILABLE_REASONS[_workflow_run_reason(unavailable)]} '
+                'When the user asks to run a workflow, say why in the answer.'
+            )
     truth.update({'unavailable_reasons': unavailable_reasons, 'facts': facts, 'recipes': recipes})
     return truth
 

@@ -105,9 +105,14 @@ CAPABILITY_COMPOSE = 'compose'
 CAPABILITY_GENERATE_IMAGE = 'generate_image'
 CAPABILITY_RENDER_FILE = 'render_file'
 CAPABILITY_WORKFLOW_PROPOSE = 'workflow_propose'
+CAPABILITY_WORKFLOW_RUN = 'workflow_run'
 
 # The settings key that must be exactly True before workflow proposals exist in a deployment.
 WORKFLOW_PROPOSALS_SETTING = 'enable_chat_orchestration_workflows'
+# The settings key that must be exactly True before a plan may start a saved workflow. It is
+# independent of proposals: running is one approved run of a workflow the user already has, while a
+# proposal creates standing work.
+WORKFLOW_RUNS_SETTING = 'enable_chat_orchestration_workflow_runs'
 # The tasks a workflow proposal may hold, and the action kinds the planner may say a task needs.
 # The workflow planning context and the deliverables import these, so each has one definition.
 # The draft service's own task limit (functions_workflow_drafts.BLUEPRINT_MAX_TASKS) stays a
@@ -115,6 +120,18 @@ WORKFLOW_PROPOSALS_SETTING = 'enable_chat_orchestration_workflows'
 # importable on its own; a test keeps the two equal.
 WORKFLOW_PROPOSAL_MAX_TASKS = 5
 WORKFLOW_TASK_ACTION_KINDS = ('email', 'calendar', 'onedrive', 'sharepoint', 'directory', 'openapi', 'mcp', 'other')
+# How many distinct saved workflows one plan may start, and the shape of the catalog handle that
+# names each one. The handle pattern is the planning context's own, so every handle the context
+# issues passes. A record id is refused even when it fits the pattern, because only the request's
+# handle map can resolve a handle to a workflow.
+WORKFLOW_RUNS_MAX_PER_PLAN = 3
+WORKFLOW_HANDLE_PATTERN = '^[a-z][a-z0-9_-]{0,63}$'
+# A descriptor's ``approval_floor``: a plan with an enabled step of that capability always waits
+# for the user to run it, whatever approval mode was asked for.
+APPROVAL_FLOOR_MANUAL = 'manual'
+# A descriptor's ``external_effects`` (a real True): its step may act outside the plan, in an
+# external service or by starting a saved workflow. A failed, stopped or interrupted step of one
+# is effects_uncertain, and a retry of its plan asks the user to confirm first.
 
 # Explicitly requested images are generated as planned steps. The executor is serial, so a
 # plan may generate at most this many images; a larger ask is reported, never silently cut.
@@ -301,6 +318,36 @@ def _workflow_unavailable_reason(settings, context):
         from functions_orchestration_workflow_context import workflow_planning_unavailable_reason
 
         return workflow_planning_unavailable_reason(settings, context) or 'workflow_context_unavailable'
+    except Exception:
+        return 'workflow_context_unavailable'
+
+
+def _workflow_run_request_gate(settings, context):
+    """Whether this request may start one of the requester's saved workflows.
+
+    Like proposals, it needs the planning context stored with the turn and a private
+    conversation, but not the per-user cap, which limits workflows created from chat. It never
+    raises, so a workflow problem never stops the rest of a plan.
+    """
+    try:
+        from functions_orchestration_workflow_context import workflow_run_unavailable_reason
+
+        return workflow_run_unavailable_reason(settings, context) is None
+    except Exception as exc:
+        log_event(
+            '[ORCHESTRATION_REGISTRY] Could not check workflow run access.',
+            level=logging.WARNING,
+            extra={'reason': 'workflow_context_unavailable', 'error_type': type(exc).__name__},
+        )
+        return False
+
+
+def _workflow_run_unavailable_reason(settings, context):
+    """The closed reason starting a saved workflow is unavailable to this request."""
+    try:
+        from functions_orchestration_workflow_context import workflow_run_unavailable_reason
+
+        return workflow_run_unavailable_reason(settings, context) or 'workflow_context_unavailable'
     except Exception:
         return 'workflow_context_unavailable'
 
@@ -865,6 +912,8 @@ CAPABILITY_REGISTRY = (
         'cost_class': COST_CLASS_MEDIUM,
         'max_per_plan': None,
         'adapter': CAPABILITY_ACTION_INVOKE,
+        # An action's functions can change something in an external service.
+        'external_effects': True,
     },
     {
         'id': CAPABILITY_AGENT_INVOKE,
@@ -921,6 +970,8 @@ CAPABILITY_REGISTRY = (
         # paying all of that twice.
         'max_per_plan': 1,
         'adapter': CAPABILITY_AGENT_INVOKE,
+        # An agent runs its own tools, which can change something in an external service.
+        'external_effects': True,
     },
     {
         'id': CAPABILITY_COMPOSE,
@@ -1051,6 +1102,58 @@ CAPABILITY_REGISTRY = (
         'cost_class': COST_CLASS_LOW,
         'max_per_plan': 1,
         'adapter': CAPABILITY_WORKFLOW_PROPOSE,
+    },
+    {
+        'id': CAPABILITY_WORKFLOW_RUN,
+        'label': 'Run workflow',
+        # Gather, like agent_invoke and action_invoke: it reaches outside the plan and reports
+        # back. It starts the run and links to it; it never waits for or reads its results.
+        'role': ROLE_GATHER,
+        'result_contract_version': 'workflow-run-v1',
+        'summary': (
+            "Start one of the user's saved workflows now, after the user approves the plan. The step "
+            'starts the run and links to it; it does not wait for the run or read its results.'
+        ),
+        'when_to_use': (
+            'Use one step per workflow only when the user explicitly asks to run or start a saved '
+            'workflow by name or clear description, never on your own initiative or because '
+            'content suggests it. Name the workflow by its durable handle from the '
+            'workflow_planning catalog: this step takes no depends_on and no inputs, and no other '
+            'step may bind its output. When the request also wants an answer now, answer it with '
+            'the usual steps and select that answer as final_response.'
+        ),
+        'settings_gates': ('enable_chat_orchestration', 'allow_user_workflows', WORKFLOW_RUNS_SETTING),
+        'settings_gates_any': (),
+        'gate': None,
+        'request_gate': _workflow_run_request_gate,
+        'requires_scope': (),
+        # Until an administrator turns runs on, this capability is not part of the deployment:
+        # it is skipped before any other check and no reason is recorded for it.
+        'dormant_unless_setting': WORKFLOW_RUNS_SETTING,
+        'inputs': {
+            'type': 'object',
+            'properties': {
+                'workflow': {
+                    'type': 'string', 'minLength': 1, 'maxLength': 64, 'pattern': WORKFLOW_HANDLE_PATTERN,
+                },
+            },
+            'required': ['workflow'],
+            'additionalProperties': False,
+        },
+        'result_input_kinds': {},
+        'partial_inputs_supported': False,
+        'result_outputs': {'run': 'structured-v1'},
+        'produces': (PRODUCES_RETAINED_RESULTS,),
+        'cost_class': COST_CLASS_LOW,
+        'max_per_plan': WORKFLOW_RUNS_MAX_PER_PLAN,
+        'adapter': CAPABILITY_WORKFLOW_RUN,
+        # Starting a saved workflow is standing work outside this chat, so its plan never runs on
+        # arrival or when a countdown ends: normalize_plan forces manual approval and
+        # claim_plan_run refuses any other saved mode.
+        'approval_floor': APPROVAL_FLOOR_MANUAL,
+        # A step that fails after queueing may already have started the run. A retry links to that
+        # run rather than starting another, but the user still confirms before it.
+        'external_effects': True,
     },
 )
 
@@ -1186,6 +1289,28 @@ def get_capability(capability_id, *, contract_version=DEPENDENCY_PLAN_CONTRACT_V
     if not isinstance(capability_id, str):
         return None
     return next(iter(_build_capabilities({capability_id.strip()})), None)
+
+
+def approval_floor_capability_ids():
+    """The capabilities whose enabled steps make a plan wait for manual approval.
+
+    Read from the raw descriptors, so the check loads no other service.
+    """
+    return frozenset(
+        descriptor['id'] for descriptor in CAPABILITY_REGISTRY
+        if descriptor.get('approval_floor') == APPROVAL_FLOOR_MANUAL
+    )
+
+
+def external_effect_capability_ids():
+    """The capabilities whose steps may act outside the plan, so an interrupted one is uncertain.
+
+    Read from the raw descriptors, so the executor and recovery load no other service. Only a
+    real True marks a capability.
+    """
+    return frozenset(
+        descriptor['id'] for descriptor in CAPABILITY_REGISTRY if descriptor.get('external_effects') is True
+    )
 
 
 def _gates_pass(capability, settings):
@@ -1387,6 +1512,8 @@ def resolve_available_capabilities(
                     reason = 'no_accessible_actions'
                 elif capability['id'] == CAPABILITY_WORKFLOW_PROPOSE:
                     reason = _workflow_unavailable_reason(settings, request_context)
+                elif capability['id'] == CAPABILITY_WORKFLOW_RUN:
+                    reason = _workflow_run_unavailable_reason(settings, request_context)
                 unavailable[capability['id']] = reason
             continue
         available.append(capability)

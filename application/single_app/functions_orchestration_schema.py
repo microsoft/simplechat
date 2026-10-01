@@ -51,14 +51,17 @@ from openai import APIConnectionError, APITimeoutError
 from agent_execution_context import AgentDelegationTimeout
 from functions_model_catalog import ModelCatalogError
 from functions_orchestration_registry import (
+    APPROVAL_FLOOR_MANUAL,
     CAPABILITY_ACTION_INVOKE,
     CAPABILITY_COMPOSE,
     CAPABILITY_GENERATE_IMAGE,
     CAPABILITY_TABULAR_ANALYZE,
     CAPABILITY_WORKFLOW_PROPOSE,
+    CAPABILITY_WORKFLOW_RUN,
     DEPENDENCY_PLAN_CONTRACT_VERSION,
     GENERAL_KNOWLEDGE_BASES,
     admitted_export_pairs,
+    approval_floor_capability_ids,
     get_capability,
     get_capability_document_limit,
     get_capability_result_outputs,
@@ -185,6 +188,10 @@ PLAN_MAX_ASSUMPTIONS = 8
 # another step or to the answer. The planner repairs either once, then drops the proposal.
 WORKFLOW_BLUEPRINT_INVALID_CODE = 'workflow_blueprint_invalid'
 WORKFLOW_PROPOSAL_NOT_CONSUMABLE_CODE = 'workflow_proposal_not_consumable'
+# A workflow_run step that names no offered durable workflow, is not static, repeats a workflow,
+# exceeds the per-plan limit, or is read by another step or the answer. The planner repairs it
+# once, then drops the steps that still fail.
+WORKFLOW_RUN_INVALID_CODE = 'workflow_run_invalid'
 
 
 class PlanValidationError(ValueError):
@@ -581,6 +588,27 @@ def _reject_workflow_proposal_consumers(steps, final_response):
         )
 
 
+def _reject_workflow_run_consumers(steps, final_response):
+    """Starting a workflow only links to its run, so no step and no answer may read the step."""
+    producers = {step['step_id'] for step in steps if step['capability_id'] == CAPABILITY_WORKFLOW_RUN}
+    if not producers:
+        return
+    named = set()
+    for step in steps:
+        if step['step_id'] in producers:
+            continue
+        named.update(step.get('depends_on') or ())
+        named.update(spec.binding.step_id for spec in step_input_specs(step) if spec.binding.step_id is not None)
+    if isinstance(final_response, dict):
+        named.add(final_response.get('step_id'))
+    if named & producers:
+        raise PlanValidationError(
+            'A workflow_run step only starts its workflow; the reply links to the run. Remove every '
+            'dependency on it, every input bound to its output, and any final_response that selects it.',
+            code=WORKFLOW_RUN_INVALID_CODE, rule='workflow_run_consumed',
+        )
+
+
 _REFERENCE_IMAGE_FIELDS = ('reference_document_ids', 'reference_message_ids')
 
 
@@ -636,8 +664,9 @@ def validate_dependency_plan(
 
     ``deliverable_availability`` is the server truth a new plan is checked against; see
     ``functions_orchestration_deliverables.compile_deliverables``. ``workflow_planning`` is the
-    request's server-only workflow proposal context; with it, a proposal's blueprint is also
-    checked against the handles, limits and agents offered with the request.
+    request's server-only workflow planning context; with it, a proposal's blueprint is also
+    checked against the handles, limits and agents offered with the request, and a workflow_run
+    step must name a durable workflow the request offered.
     """
     settings = settings or {}
     canonical_bytes(composition_profiles or {})
@@ -657,6 +686,8 @@ def validate_dependency_plan(
     available = set(available_capability_ids)
     accepted = []
     counts = {}
+    # Workflows earlier run steps of this plan start; each may be started once.
+    workflow_run_seen = set()
     fields = {
         'step_id', 'capability_id', 'title', 'rationale', 'arguments', 'depends_on',
         'optional', 'enabled', 'estimated_cost', 'role', 'status', 'inputs', 'outputs',
@@ -684,6 +715,14 @@ def validate_dependency_plan(
                 raise PlanValidationError('A model task must be a named task category.')
             if 'model_binding' in raw and type(raw['model_binding']) is not dict:
                 raise PlanValidationError('A model binding is server-owned structured data.')
+            if capability_id == CAPABILITY_WORKFLOW_RUN:
+                # Loaded only when a plan starts a workflow. It runs before the generic limit and
+                # contract checks, so each problem with the step is reported with its own rule.
+                from functions_orchestration_workflow_runs import prepare_workflow_run_arguments
+
+                prepare_workflow_run_arguments(
+                    raw, raw.get('arguments', {}), workflow_planning=workflow_planning, seen=workflow_run_seen,
+                )
             counts[capability_id] = counts.get(capability_id, 0) + 1
             if capability['max_per_plan'] is not None and counts[capability_id] > capability['max_per_plan']:
                 raise PlanValidationError('The plan exceeds a capability work limit.', code='result_step_limit')
@@ -777,6 +816,7 @@ def validate_dependency_plan(
             raise PlanValidationError('The plan contains no enabled work.')
         _apply_image_input_policy(accepted, existing_results)
         _reject_workflow_proposal_consumers(accepted, plan.get('final_response'))
+        _reject_workflow_run_consumers(accepted, plan.get('final_response'))
         bindings = [step_result_bindings(step) for step in accepted]
         dependencies = validate_input_bindings(bindings, existing_results=existing_results, max_steps=max_steps)
         _validate_render_requests(accepted, existing_results, export_catalog=export_catalog)
@@ -952,7 +992,69 @@ def validate_plan_requirements(plan, seeds=None, *, allow_changes=False):
     return plan
 
 
-def build_plan_inputs(plan, seeds=None, document_labels=None, actions=None):
+def workflow_run_catalog_entry(workflow_planning, handle):
+    """The catalog entry the request offered for ``handle``, or None. Never raises.
+
+    The handle must be in both the planner-facing catalog and the server-side handle map, with a
+    record id, so a handle the planner invented, or one whose record is missing, is never used.
+    It is defined here so the workflow runs module, which imports this one, checks run steps with
+    the same lookup that names them on the approval card, without this module importing it back.
+    """
+    if not isinstance(workflow_planning, dict) or not isinstance(handle, str):
+        return None
+    handles = workflow_planning.get('handles')
+    handles = handles.get('workflows') if isinstance(handles, dict) else None
+    record = handles.get(handle) if isinstance(handles, dict) else None
+    if not isinstance(record, dict) or not isinstance(record.get('id'), str) or not record['id'].strip():
+        return None
+    catalog = workflow_planning.get('catalog')
+    entries = catalog.get('workflows') if isinstance(catalog, dict) else None
+    for entry in entries if isinstance(entries, list) else ():
+        if isinstance(entry, dict) and entry.get('handle') == handle:
+            return entry
+    return None
+
+
+def _plan_workflow_inputs(plan, workflow_planning):
+    """The saved workflows the plan's enabled run steps start, named for the approval card.
+
+    Handles, names and triggers only: workflow ids stay in the server-side handle map.
+    """
+    run_steps = [
+        step for step in (plan or {}).get('steps') or ()
+        if step.get('enabled', True) and step.get('capability_id') == CAPABILITY_WORKFLOW_RUN
+    ]
+    if not run_steps:
+        return []
+    workflows = []
+    for step in run_steps:
+        handle = (step.get('arguments') or {}).get('workflow')
+        entry = workflow_run_catalog_entry(workflow_planning, handle)
+        if entry is None or any(workflow['handle'] == handle for workflow in workflows):
+            continue
+        workflows.append({
+            'handle': handle,
+            'name': _text(entry.get('name'), 200) or 'Workflow',
+            'trigger_summary': _text(entry.get('trigger_summary'), 200),
+            'paused': entry.get('enabled') is not True,
+        })
+    return workflows
+
+
+def plan_approval_floor(plan):
+    """``{'mode': 'manual', 'reason': <capability id>}`` when an enabled step sets a floor, else None.
+
+    A capability whose descriptor sets ``approval_floor`` makes its plan wait for the user to run
+    it, whatever approval mode was asked for. Disabled steps never run, so they set no floor.
+    """
+    floors = approval_floor_capability_ids()
+    for step in (plan or {}).get('steps') or ():
+        if isinstance(step, dict) and step.get('enabled', True) and step.get('capability_id') in floors:
+            return {'mode': APPROVAL_FLOOR_MANUAL, 'reason': step['capability_id']}
+    return None
+
+
+def build_plan_inputs(plan, seeds=None, document_labels=None, actions=None, workflow_planning=None):
     """Describe what the plan will actually act on, for the approval card.
 
     Derived from the validated steps rather than from what the planner claimed, because
@@ -962,6 +1064,9 @@ def build_plan_inputs(plan, seeds=None, document_labels=None, actions=None):
     ``document_labels`` maps ids to display names. It is optional because a plan is still
     describable without it -- an id is a poor label but an honest one, and failing to
     resolve a name is not a reason to refuse to show the plan.
+
+    ``workflow_planning`` names the saved workflows the plan starts; ``workflows`` is present
+    only when the plan starts one, so every other plan's inputs are unchanged.
     """
     seeds = seeds if isinstance(seeds, dict) else {}
     labels = document_labels if isinstance(document_labels, dict) else {}
@@ -989,7 +1094,7 @@ def build_plan_inputs(plan, seeds=None, document_labels=None, actions=None):
     if isinstance(seed_prompt, dict):
         prompt = {'id': seed_prompt.get('id'), 'name': seed_prompt.get('name')}
 
-    return {
+    inputs = {
         'documents': [
             {
                 'document_id': document_id,
@@ -1015,6 +1120,10 @@ def build_plan_inputs(plan, seeds=None, document_labels=None, actions=None):
         'model': seeds.get('model'),
         'prompt': prompt,
     }
+    workflows = _plan_workflow_inputs(plan, workflow_planning)
+    if workflows:
+        inputs['workflows'] = workflows
+    return inputs
 
 
 def build_plan_outputs(plan):
@@ -1130,8 +1239,17 @@ def normalize_plan(
 
     plan['inputs'] = build_plan_inputs(
         plan, seeds=seeds, document_labels=document_labels, actions=actions,
+        workflow_planning=workflow_planning,
     )
     plan['outputs'] = build_plan_outputs(plan)
+
+    # Some work always waits for the user, whatever mode was asked for: a plan that starts a
+    # saved workflow is never approved on arrival or by a countdown. The floor is recorded so the
+    # card can say why, and claim_plan_run refuses a saved plan that lost it.
+    floor = plan_approval_floor(plan)
+    if floor is not None:
+        mode = APPROVAL_MODE_MANUAL
+        plan['approval'].update(mode=mode, floor=floor)
 
     # A plan nobody has to look at is approved on arrival; everything else waits. Timed
     # mode waits too, because the countdown belongs to the browser -- a server that
@@ -1277,8 +1395,12 @@ FAILURE_MESSAGES = {
     'result_unavailable': 'A required retained result is unavailable or changed. No preview was substituted.',
     'external_session_required': (
         'This step continued in the background, where your sign-in is not available to confirm '
-        'access to web search, web pages, deep research, agents or actions. Send the request '
-        'again to use them.'
+        'access to web search, web pages, deep research, agents or actions, or to start a saved '
+        'workflow. Send the request again to use them.'
+    ),
+    'workflow_runtime_unavailable': (
+        'Saved workflows were temporarily unavailable, so this workflow may not have started. '
+        "Retrying is safe: a workflow this plan already started won't start again."
     ),
     'result_invalid': 'The operation did not produce the complete named results declared by the plan.',
     'result_input_too_large': 'The complete named inputs exceed the selected model budget. No input was truncated. Use a larger model or revise the plan.',

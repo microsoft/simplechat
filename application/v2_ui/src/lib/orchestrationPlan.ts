@@ -19,6 +19,7 @@ import type {
     CostClass,
     Json,
     OrchestrationApproval,
+    OrchestrationApprovalFloor,
     OrchestrationDeliverable,
     OrchestrationDeliverableKind,
     OrchestrationImageReferenceDocument,
@@ -32,6 +33,7 @@ import type {
     OrchestrationPlanDocument,
     OrchestrationPlanInputs,
     OrchestrationPlanner,
+    OrchestrationPlanWorkflow,
     OrchestrationStep,
     OrchestrationRole,
     OrchestrationValidation,
@@ -398,9 +400,16 @@ function normalizeIntent(raw: unknown): OrchestrationIntent {
     };
 }
 
+function normalizeApprovalFloor(raw: unknown): OrchestrationApprovalFloor | undefined {
+    const source = asRecord(raw);
+    if (source.mode !== 'manual') return undefined;
+    return { mode: 'manual', reason: asString(source.reason) };
+}
+
 function normalizeApproval(raw: unknown): OrchestrationApproval {
     const source = asRecord(raw);
     const timeout = source.timeout_seconds;
+    const floor = normalizeApprovalFloor(source.floor);
     return {
         mode: oneOf(source.mode, APPROVAL_MODES, 'manual'),
         timeout_seconds: typeof timeout === 'number' && Number.isFinite(timeout) ? timeout : 10,
@@ -408,6 +417,7 @@ function normalizeApproval(raw: unknown): OrchestrationApproval {
         approved_at: typeof source.approved_at === 'string' ? source.approved_at : null,
         approved_by: typeof source.approved_by === 'string' ? source.approved_by : null,
         edited: asBoolean(source.edited, false),
+        ...(floor ? { floor } : {}),
     };
 }
 
@@ -586,10 +596,27 @@ function normalizeInputs(raw: unknown): OrchestrationPlanInputs {
         }];
     });
 
+    const rawWorkflows: unknown[] = Array.isArray(source.workflows) ? source.workflows : [];
+    const workflows: OrchestrationPlanWorkflow[] = [];
+    for (const entry of rawWorkflows) {
+        const record = asRecord(entry);
+        const handle = asString(record.handle).trim();
+        if (!handle) {
+            continue;
+        }
+        workflows.push({
+            handle,
+            name: asString(record.name).trim() || 'Workflow',
+            trigger_summary: asString(record.trigger_summary).trim(),
+            paused: asBoolean(record.paused, false),
+        });
+    }
+
     return {
         required_capabilities: asStringList(source.required_capabilities),
         documents,
         actions: source.actions !== undefined ? actions : undefined,
+        ...(Array.isArray(source.workflows) ? { workflows } : {}),
         image_reference_documents: imageReferenceDocuments,
         image_reference_messages: imageReferenceMessages,
         web: asBoolean(source.web, false),
@@ -1025,6 +1052,52 @@ export function isPlanAwaitingApproval(plan: OrchestrationPlan): boolean {
  */
 export function planRequiresApproval(plan: OrchestrationPlan): boolean {
     return plan.approval.mode !== 'auto' && plan.approval.state === 'pending';
+}
+
+/** Capabilities whose steps always wait for the user, mirroring the registry's `approval_floor`. */
+export const APPROVAL_FLOOR_CAPABILITIES: readonly string[] = ['workflow_run'];
+
+/**
+ * Whether the plan must wait for the user to run it, whatever its approval mode says.
+ *
+ * The server already saves such a plan as manual and refuses to start one that lost the floor;
+ * this is the browser's own guard, so neither a countdown nor auto-run can start the plan even
+ * if a stale or altered plan reaches the card. An enabled floor step counts on its own, without
+ * `approval.floor`, so a plan that somehow lost the marker still waits.
+ */
+export function planHasApprovalFloor(plan: Pick<OrchestrationPlan, 'approval' | 'steps'>): boolean {
+    if (plan.approval.floor !== undefined) return true;
+    return plan.steps.some(
+        (step) => step.enabled && APPROVAL_FLOOR_CAPABILITIES.includes(step.capability_id),
+    );
+}
+
+/**
+ * The saved workflows a plan will start, for the approval card.
+ *
+ * `count` is the number of enabled workflow steps, and `workflows` names the ones
+ * `inputs.workflows` describes, once each and in step order. A step whose handle is not in
+ * `inputs.workflows` still counts, so the card still says the plan waits even when it can't
+ * name the workflow. Pass the edited plan: a step the user switched off starts nothing.
+ */
+export function planWorkflowRuns(
+    plan: Pick<OrchestrationPlan, 'steps' | 'inputs'>,
+): { count: number; workflows: OrchestrationPlanWorkflow[] } {
+    const known = new Map((plan.inputs?.workflows ?? []).map((workflow) => [workflow.handle, workflow]));
+    const workflows: OrchestrationPlanWorkflow[] = [];
+    const listed = new Set<string>();
+    let count = 0;
+    for (const step of plan.steps) {
+        if (!step.enabled || step.capability_id !== 'workflow_run') continue;
+        count += 1;
+        const handle = asString(step.arguments.workflow);
+        const workflow = known.get(handle);
+        if (workflow && !listed.has(handle)) {
+            listed.add(handle);
+            workflows.push(workflow);
+        }
+    }
+    return { count, workflows };
 }
 
 /**

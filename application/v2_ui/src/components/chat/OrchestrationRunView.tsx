@@ -56,6 +56,7 @@ import type {
     OrchestrationPlan,
     PlanEdits,
     OrchestrationPlanAction,
+    OrchestrationPlanWorkflow,
     OrchestrationStep,
     StepStatus,
 } from '../../lib/orchestration';
@@ -111,6 +112,10 @@ function readableArguments(step: OrchestrationStep): Array<[string, string]> {
             step.capability_id === 'action_invoke'
             && !((key === 'task' && typeof value === 'string') || key === 'visuals')
         ) {
+            continue;
+        }
+        // So is a saved workflow: its request-local handle means nothing to the reader.
+        if (step.capability_id === 'workflow_run' && key === 'workflow') {
             continue;
         }
         if (hidden.has(key)) {
@@ -211,6 +216,13 @@ export function OrchestrationRunView({
         [plan],
     );
 
+    const planInputWorkflows = useMemo(
+        () => new Map<string, OrchestrationPlanWorkflow>(
+            (plan?.inputs?.workflows ?? []).map((workflow) => [workflow.handle, workflow]),
+        ),
+        [plan],
+    );
+
     const planImageReferences = useMemo(() => {
         const byId = new Map<string, { name: string; reference: ImageReferenceRequest }>();
         for (const entry of plan?.inputs?.image_reference_documents ?? []) {
@@ -279,6 +291,9 @@ export function OrchestrationRunView({
         const isAction = step.capability_id === 'action_invoke';
         const actionRef = (step.arguments as Record<string, unknown>).action_ref;
         const selectedAction = typeof actionRef === 'string' ? planInputActions.get(actionRef) : undefined;
+        const isWorkflowRun = step.capability_id === 'workflow_run';
+        const workflowHandle = (step.arguments as Record<string, unknown>).workflow;
+        const selectedWorkflow = typeof workflowHandle === 'string' ? planInputWorkflows.get(workflowHandle) : undefined;
         const willRun = step.enabled && !disabledStepIds.has(step.step_id);
         const rawStatus = stepRuntime[step.step_id]?.status ?? step.status;
         const status: StepStatus = willRun ? rawStatus : 'skipped';
@@ -363,6 +378,18 @@ export function OrchestrationRunView({
                                     <span>{selectedAction?.display_name || 'Action details unavailable'}</span>
                                     {selectedAction ? (
                                         <span className="ml-2 text-text-3">({selectedAction.scope_label})</span>
+                                    ) : null}
+                                </dd>
+                            </dl>
+                        ) : null}
+
+                        {isWorkflowRun ? (
+                            <dl className="mt-2 text-xs" data-testid="orchestration-workflow-run-input">
+                                <dt className="font-medium text-text-3">Workflow</dt>
+                                <dd className="mt-0.5 break-words text-text-2">
+                                    <span>{selectedWorkflow?.name || 'Workflow details unavailable'}</span>
+                                    {selectedWorkflow?.paused ? (
+                                        <span className="ml-2 text-text-3">(paused)</span>
                                     ) : null}
                                 </dd>
                             </dl>

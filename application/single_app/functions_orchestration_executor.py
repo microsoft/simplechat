@@ -63,8 +63,8 @@ from functions_orchestration_context import (
 )
 from functions_orchestration_deliverables import explicit_image_shortfalls
 from functions_orchestration_registry import (
-    CAPABILITY_TABULAR_ANALYZE, CAPABILITY_WORKFLOW_PROPOSE, DEPENDENCY_PLAN_CONTRACT_VERSION,
-    admitted_export_pairs, get_capability,
+    CAPABILITY_TABULAR_ANALYZE, CAPABILITY_WORKFLOW_PROPOSE, CAPABILITY_WORKFLOW_RUN,
+    DEPENDENCY_PLAN_CONTRACT_VERSION, admitted_export_pairs, external_effect_capability_ids, get_capability,
     resolve_available_capability_ids,
 )
 from functions_orchestration_result_contracts import (
@@ -220,6 +220,9 @@ _DEFAULT_STEP_TIMEOUT_SECONDS = 120
 _DEFAULT_MAX_REPLANS = 2
 # Stops that bound time rather than express intent; a step that already finished keeps its result.
 _BUDGET_STOP_REASONS = frozenset({'step_timeout', 'run_timeout'})
+# Capabilities whose steps may act outside the plan. One that is interrupted, fails or is stopped
+# may already have acted, so its step is effects_uncertain. The registry owns the list.
+_EFFECT_CAPABILITIES = external_effect_capability_ids()
 
 
 def _now_iso():
@@ -360,6 +363,8 @@ class RunContext:
         export_catalog=None,
         workflow_planning=None,
         time_zone=None,
+        attempt_root_run_id=None,
+        signed_in_session=False,
     ):
         self.run_id = run_id
         self.plan_id = plan_id
@@ -367,6 +372,14 @@ class RunContext:
         self.user_id = user_id
         self.turn_index = turn_index
         self.attempt_index = attempt_index
+        # The first attempt's run id, shared by every retry of the plan. A step that starts a saved
+        # workflow derives its request id from it, so a retry finds the run instead of starting one.
+        self.attempt_root_run_id = (
+            attempt_root_run_id if isinstance(attempt_root_run_id, str) and attempt_root_run_id else run_id
+        )
+        # Whether the user's signed-in request is running this attempt. A saved workflow is started
+        # only then, never while a run continues in the background.
+        self.signed_in_session = signed_in_session is True
         if type(plan_contract_version) is not int or plan_contract_version != DEPENDENCY_PLAN_CONTRACT_VERSION:
             raise ResultContractError('result_version_unsupported')
         self.plan_contract_version = plan_contract_version
@@ -574,7 +587,7 @@ def _step_record(context, step, index, status, result, started_at, completed_at,
         'checkpoint_available': False,
         'reused': False,
         'reused_from_run_id': None,
-        'effects_uncertain': status == STEP_STATUS_RUNNING and step.get('capability_id') in ('agent_invoke', 'action_invoke'),
+        'effects_uncertain': status == STEP_STATUS_RUNNING and step.get('capability_id') in _EFFECT_CAPABILITIES,
     }
     if result.get('saved_analyses'):
         record['saved_analyses'] = deepcopy(result['saved_analyses'])
@@ -593,6 +606,9 @@ def _step_record(context, step, index, status, result, started_at, completed_at,
     if step.get('capability_id') == CAPABILITY_WORKFLOW_PROPOSE and isinstance(result.get('workflow_proposal'), dict):
         # Server-only: the proposal card and its accept route read it; public_step_record drops it.
         record['workflow_proposal'] = deepcopy(result['workflow_proposal'])
+    if step.get('capability_id') == CAPABILITY_WORKFLOW_RUN and isinstance(result.get('workflow_run'), dict):
+        # Server-only: the workflow and run ids the run link reads; public_step_record drops it.
+        record['workflow_run'] = deepcopy(result['workflow_run'])
     return record
 
 
@@ -622,6 +638,32 @@ def _restore_workflow_proposal(step, context, status, result, *, settings, user_
         )
         return result
     return {**result, 'workflow_proposal': sidecar} if isinstance(sidecar, dict) else result
+
+
+def _restore_workflow_run(step, context, status, result, *, user_id):
+    """Describe again the run a completed workflow_run step started, when its result came back without it.
+
+    A retained, recovered or reused result is rebuilt from the task result alone, which carries
+    the workflow's name and start status but never its ids.
+    """
+    if (
+        step.get('capability_id') != CAPABILITY_WORKFLOW_RUN or status != STEP_STATUS_COMPLETED
+        or not isinstance(result, dict) or result.get('task_result') is None
+        or isinstance(result.get('workflow_run'), dict)
+    ):
+        return result
+    try:
+        from functions_orchestration_workflow_runs import rebuild_workflow_run
+
+        sidecar = rebuild_workflow_run(step, context, user_id=user_id, task=result['task_result'])
+    except Exception as exc:
+        log_event(
+            f'{_LOG_PREFIX} A recovered workflow run could not be described.',
+            level=logging.WARNING,
+            extra={**_step_log_context(context, step), 'error_type': type(exc).__name__},
+        )
+        return result
+    return {**result, 'workflow_run': sidecar} if isinstance(sidecar, dict) else result
 
 
 def _persist(persist, record_type, record):
@@ -1470,6 +1512,7 @@ def _execute_dependency_plan(
         if step['role'] == 'render' and status == STEP_STATUS_COMPLETED:
             context.artifacts.extend(deepcopy(result['artifacts']))
         result = _restore_workflow_proposal(step, context, status, result, settings=settings, user_id=user_id)
+        result = _restore_workflow_run(step, context, status, result, user_id=user_id)
         record = _step_record(context, step, index, status, result, started_at, completed_at, elapsed)
         record.update({
             'checkpoint_available': checkpoints is not None
@@ -1478,7 +1521,7 @@ def _execute_dependency_plan(
             'token_usage': {} if reused else deepcopy(context.step_token_usage),
             'reused': bool(reused),
             'reused_from_run_id': (reused.get('provenance') or {}).get('run_id') if reused else None,
-            'effects_uncertain': step['capability_id'] in ('agent_invoke', 'action_invoke')
+            'effects_uncertain': step['capability_id'] in _EFFECT_CAPABILITIES
             and status in (STEP_STATUS_FAILED, STEP_STATUS_CANCELLED),
         })
         save(record)

@@ -55,7 +55,7 @@ from functions_orchestration_schema import (
     validate_plan_document_source_kinds,
     validate_plan_requirements,
 )
-from functions_orchestration_workflow_context import workflow_planning_option, workflow_proposals_configured
+from functions_orchestration_workflow_context import workflow_planning_configured, workflow_planning_option
 
 TURN_CONTEXT_FIELDS = (
     'conversation_id', 'turn_id', 'user_message', 'user_message_id',
@@ -330,7 +330,7 @@ def _revision_catalogs(
         user_id, identity, context.get('resolved_message') or context['user_message'],
         agents, actions, allowed_user_urls=revision_allowed_urls(context),
         **workflow_planning_option(
-            context.get('workflow_planning') if workflow_proposals_configured(settings) else None,
+            context.get('workflow_planning') if workflow_planning_configured(settings) else None,
         ),
         **runtime_options,
     )

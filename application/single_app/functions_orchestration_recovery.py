@@ -34,7 +34,7 @@ from functions_orchestration_checkpoints import (
 )
 from functions_orchestration_plan_revisions import PlanRevisionError, read_revision_run
 from functions_orchestration_output_store import build_output_cleanup_intent
-from functions_orchestration_registry import admitted_export_pairs, get_capability
+from functions_orchestration_registry import admitted_export_pairs, external_effect_capability_ids, get_capability
 from functions_orchestration_schema import (
     LEGACY_PLAN_CODE, LEGACY_PLAN_MESSAGE, PlanValidationError, build_failure, build_step_result,
     failure_repeats_on_retry, is_legacy_plan, safe_failure, step_input_specs, summarize_plan,
@@ -51,7 +51,9 @@ from functions_workflow_result_store import (
 
 LEASE_SECONDS = 45
 HEARTBEAT_SECONDS = 10
-EFFECT_CAPABILITIES = {'agent_invoke', 'action_invoke'}
+# Capabilities whose steps may act outside the plan, so a retry after one is uncertain asks the
+# user to confirm. The registry owns the list.
+EFFECT_CAPABILITIES = external_effect_capability_ids()
 _TERMINAL = {'completed', 'failed', 'cancelled'}
 _RETRY_FIELDS = {'conversation_id', 'submission_id', 'expected_version', 'confirm_external_effects'}
 _CONTINUATION_FIELDS = {'conversation_id', 'submission_id', 'expected_version'}

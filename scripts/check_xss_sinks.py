@@ -608,6 +608,7 @@ TS_SAME_ORIGIN_URL_BUILDERS = frozenset({
     # Prefixes the build-time Vite BASE_URL; callers pass VENDOR_PATHS constants.
     'vendorUrl',
     'workflowProposalLink',
+    'workflowRunHref',
     'workspaceBasePath',
     'workspaceDocumentDownloadUrl',
 })
