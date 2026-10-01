@@ -113,7 +113,7 @@ export function useContextSuggestions(
             window.clearTimeout(timer);
             controller.abort();
         };
-    }, [query, groupIds, publicIds, scope.groupsEnabled, scope.publicEnabled, scope.workspacesEnabled, scope.documentsOnly]);
+    }, [query, groupIds, publicIds, scope.documentsOnly, scope.groupsEnabled, scope.publicEnabled, scope.workspacesEnabled]);
 
     return { candidates, loading };
 }

@@ -230,8 +230,7 @@ export function ComposerEditor({
         // workspaces are not offered there.
         workspacesEnabled: !restricted,
         documentsOnly: restricted && contextDocumentsOnly,
-    }), [bootstrap?.scope, features.enable_group_workspaces, features.enable_public_workspaces, restricted,
-        contextDocumentsOnly]);
+    }), [bootstrap?.scope, contextDocumentsOnly, features.enable_group_workspaces, features.enable_public_workspaces, restricted]);
     const { candidates, loading } = useContextSuggestions(
         disabled || !contextEnabled ? null : contextQuery?.query ?? null, scope,
     );
