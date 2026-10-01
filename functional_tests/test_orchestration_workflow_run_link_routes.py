@@ -400,6 +400,20 @@ def test_a_run_or_conversation_the_requester_cannot_open_is_not_found(h):
     assert reads(h) == (0, 0)
 
 
+def test_a_run_whose_record_names_another_conversation_is_not_found(h):
+    run_id = seed_started(h)
+    # Runs are partitioned by conversation, so a real point read cannot return another
+    # conversation's run. A copy planted under the wrong partition pins the route's own check.
+    h.runs.items[(OTHER_CONVERSATION, RUN)] = deepcopy(h.runs.items[(CONVERSATION, RUN)])
+    login(h)
+    response = links(h, conversation_id=OTHER_CONVERSATION)
+    assert response.status_code == 404
+    assert response.get_json() == {"error": "Run not found.", "code": "run_not_found"}
+    assert reads(h) == (0, 0)
+    # The same record still opens from the conversation it names.
+    assert only(h)["workflow_run_id"] == run_id
+
+
 def test_a_legacy_plan_is_refused_like_every_other_run_route(h):
     seed_run(h, plan=_plan(contract_version=1))
     login(h)
