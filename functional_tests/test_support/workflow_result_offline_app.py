@@ -21,7 +21,7 @@ import socket
 import time
 from types import SimpleNamespace
 from unittest.mock import patch
-from uuid import uuid4
+import uuid
 
 from azure.cosmos.exceptions import CosmosResourceNotFoundError
 
@@ -153,7 +153,7 @@ def offline_workflow_result_app(settings_overrides=None):
             normal_chat_clients.append(True)
             raise AssertionError("A workflow-result question reached the normal chat model.")
 
-    state_dir = TESTS / f".workflow-result-chat-state-{uuid4().hex}"
+    state_dir = TESTS / f".workflow-result-chat-state-{uuid.uuid4().hex}"
     state_dir.mkdir()
     network_attempts = []
     original_connect = socket.socket.connect
