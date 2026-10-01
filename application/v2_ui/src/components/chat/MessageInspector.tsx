@@ -29,6 +29,7 @@ import type { ChatMessage, Json, PersistedThought } from '../../lib/types';
 import { buildToolResultView, type RowMode } from '../../lib/agentCitationRows';
 import { GlassButton } from '../ui/primitives';
 import { normalizePersistedThought, ThoughtsList } from './ThoughtsList';
+import { ChatUploadExtractionLoader } from './ChatUploadExtraction';
 
 export type InspectorSection = 'details' | 'sources' | 'reasoning';
 
@@ -356,13 +357,19 @@ export function MessageInspector({
     onClose: () => void;
 }) {
     const sources = readSources(message as unknown as Json);
+    // An uploaded file cites nothing and has no reasoning. Its sources are what ingestion
+    // extracted from it, which is the material any later citation of the file comes from.
+    const upload = message.role === 'file';
+    const conversationId = String(message.conversation_id ?? '').trim();
+    const fileId = String(message.id ?? '').trim();
 
     // Reasoning and sources only exist for a generated response.
-    const available: InspectorSection[] =
-        message.role === 'user'
-            ? ['details']
-            : ['details', 'sources', 'reasoning'];
-    const active = available.includes(section) ? section : 'details';
+    const available: InspectorSection[] = upload
+        ? ['sources', 'details']
+        : message.role === 'user'
+          ? ['details']
+          : ['details', 'sources', 'reasoning'];
+    const active = available.includes(section) ? section : available[0];
 
     return (
         <div className="glass-flat mt-1.5 w-full max-w-[min(64rem,92%)] rounded-xl border border-edge">
@@ -398,7 +405,18 @@ export function MessageInspector({
 
             <div className="max-h-96 overflow-y-auto px-3 py-2">
                 {active === 'details' && <DetailsSection message={message} />}
-                {active === 'sources' && <SourcesSection sources={sources} />}
+                {active === 'sources' && upload && (
+                    conversationId && fileId ? (
+                        <ChatUploadExtractionLoader
+                            conversationId={conversationId}
+                            fileId={fileId}
+                            className="px-1 py-2"
+                        />
+                    ) : (
+                        <Empty>This upload has no stored extraction to show.</Empty>
+                    )
+                )}
+                {active === 'sources' && !upload && <SourcesSection sources={sources} />}
                 {active === 'reasoning' && <ReasoningSection message={message} />}
             </div>
         </div>

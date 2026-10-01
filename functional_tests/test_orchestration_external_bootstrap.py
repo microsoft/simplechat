@@ -1,120 +1,157 @@
 # test_orchestration_external_bootstrap.py
 """
-Application-owned current identity and acquisition wiring for retained results.
-Version: 0.261.140
+Functional test for application-owned session identity and acquisition wiring on retained results.
+Version: 0.261.209
 Implemented in: 0.261.127
 Single orchestration contract updated in: 0.261.139
+Signed-in session roles replaced per-call Microsoft Graph reads in: 0.261.209
 
-Runs the real bootstrap, authentication factory and directory reader with only
-the MSAL client, Cosmos storage and HTTP wire doubled. No tenant calls, consent
-changes, settings repairs, cached role fallback or interactive scope changes.
+Runs the real bootstrap, session capture, current-access reader, retention and
+result store with only Cosmos storage doubled and networking blocked. Roles come
+from the signed-in session, as in classic chat, so no MSAL client or directory
+call is made. Background continuations without that session fail closed with a
+distinct reason instead of restoring saved roles. Refs microsoft/simplechat#1509.
 """
 
 import hashlib
 import hmac
 import importlib
-import json
+import threading
+from contextlib import contextmanager
 from copy import deepcopy
 from dataclasses import replace
 from types import SimpleNamespace
 from unittest.mock import Mock
-from urllib.parse import urlsplit
 
 import pytest
 from azure.core import MatchConditions
 from azure.core.exceptions import AzureError
+from flask import Flask, session
 from requests.exceptions import Timeout
 
 from functions_orchestration_external_identity import ExternalIdentityServiceError
 from functions_orchestration_invocation_capture import OrchestrationInvocationServiceError
-from functions_orchestration_result_contracts import canonical_digest
+from functions_orchestration_result_contracts import EXTERNAL_SESSION_UNAVAILABLE_REASON, canonical_digest
 from functions_orchestration_results import ResultUnavailableError
 from test_orchestration_external_identity import (
-    APP_ID,
-    CONVERSATION_ID,
-    GraphWorld,
-    TOKEN,
-    URL_ROLE,
-    USER_ID,
-    assignment,
+    CONVERSATION_ID, EMAIL, OTHER_ID, SECRET, USER_ID, SessionWorld, read_identity,
 )
-from test_orchestration_harness_routes import modules
+from test_orchestration_harness_routes import modules  # noqa: F401
 from test_support.orchestration_results import ResultContainer
 from test_support.orchestration_revisions import AtomicMemoryContainer
+from test_support.versioning import assert_app_version_at_least
+
+
+URL_ROLES = ("User", "UrlAccessUser")
+POINT_READ = {"connection_timeout": 10.0, "read_timeout": 10.0, "retry_total": 0}
+APP_ID = "b2222222-2222-4222-8222-222222222222"
 
 
 class BoundedMemoryContainer(AtomicMemoryContainer):
     def read_item(self, item, partition_key, **options):
-        if options and options != {
-            "connection_timeout": 10.0, "read_timeout": 10.0, "retry_total": 0,
-        }:
+        if options and options != POINT_READ:
             raise AssertionError("Unexpected point-read options.")
         return super().read_item(item, partition_key)
 
 
 @pytest.fixture
 def external_root(modules, monkeypatch):
-    with GraphWorld() as world:
+    with SessionWorld() as world:
         conversations = BoundedMemoryContainer("id")
         settings = BoundedMemoryContainer("id")
         runs = AtomicMemoryContainer("conversation_id")
+        result_items = ResultContainer()
         conversations.create_item(deepcopy(world.conversation))
         settings.create_item(deepcopy(world.settings))
         settings_read = Mock(wraps=settings.read_item)
+        conversation_read = Mock(wraps=conversations.read_item)
         monkeypatch.setattr(settings, "read_item", settings_read)
-        token = Mock(return_value={"access_token": TOKEN})
-        client = SimpleNamespace(acquire_token_for_client=token)
-        client_factory = Mock(return_value=client)
-        root = modules.bootstrap
-        monkeypatch.setattr(modules.config, "cosmos_conversations_container", conversations)
-        monkeypatch.setattr(modules.config, "cosmos_user_settings_container", settings)
-        monkeypatch.setattr(modules.config, "cosmos_orchestration_runs_container", runs)
+        monkeypatch.setattr(conversations, "read_item", conversation_read)
+        directory_client = Mock(side_effect=AssertionError("Session identity must not build an MSAL client."))
+        for name, value in {
+            "cosmos_conversations_container": conversations,
+            "cosmos_user_settings_container": settings,
+            "cosmos_orchestration_runs_container": runs,
+            "cosmos_personal_workflow_run_items_container": result_items,
+        }.items():
+            monkeypatch.setattr(modules.config, name, value)
         monkeypatch.setattr(modules.runs, "cosmos_orchestration_runs_container", runs)
-        result_items = ResultContainer()
-        monkeypatch.setattr(modules.config, "cosmos_personal_workflow_run_items_container", result_items)
-        monkeypatch.setattr(modules.auth, "CLIENT_ID", APP_ID)
-        monkeypatch.setattr(modules.auth, "CLIENT_SECRET", "synthetic-client-secret")
-        monkeypatch.setattr(modules.auth, "ConfidentialClientApplication", client_factory)
-        monkeypatch.setattr(modules.auth, "get_graph_base_url", lambda: world.base_url)
-        monkeypatch.setattr(modules.auth, "get_graph_authority", lambda: "https://login.example.test/tenant")
-        monkeypatch.setattr(root.requests, "get", world.session.get)
+        monkeypatch.setattr(modules.auth, "ConfidentialClientApplication", directory_client)
+        app = Flask(__name__)
+        app.config.update(TESTING=True, SECRET_KEY="local-session-identity-test")
         yield SimpleNamespace(
-            root=root, auth=modules.auth, world=world, settings=settings,
-            settings_read=settings_read, conversations=conversations,
-            token=token, client_factory=client_factory, runs=runs, result_items=result_items,
+            root=modules.bootstrap, auth=modules.auth, app=app, world=world,
+            settings=settings, settings_read=settings_read,
+            conversations=conversations, conversation_read=conversation_read,
+            directory_client=directory_client, runs=runs, result_items=result_items,
         )
 
 
-def reader_for(runtime):
-    return runtime.root.build_external_identity_reader(USER_ID, CONVERSATION_ID)
+@contextmanager
+def signed_in(runtime, *, oid=USER_ID, roles=("User",), email=EMAIL):
+    """Enter a request whose session has the app's MSAL sign-in shape."""
+    with runtime.app.test_request_context("/api/orchestration/runs"):
+        user = {"oid": oid, "preferred_username": email, "name": "Session Owner"}
+        if roles is not None:
+            user["roles"] = list(roles)
+        session["user"] = user
+        session["token_cache"] = SECRET
+        yield
 
 
-def read_identity(reader):
-    return reader(user_id=USER_ID, conversation_id=CONVERSATION_ID)
+def in_request(runtime, build, *, signed_in_session=True, **claims):
+    if not signed_in_session:
+        return build()
+    with signed_in(runtime, **claims):
+        return build()
 
 
-def test_source_free_service_construction_never_acquires_directory_authority(external_root):
-    runtime = external_root
-    unused_reader = reader_for(runtime)
-    services = runtime.root.build_orchestration_services(
-        USER_ID, CONVERSATION_ID, settings={"max_generated_chat_artifact_size_mb": 1},
+def reader_for(runtime, **options):
+    return in_request(
+        runtime, lambda: runtime.root.build_external_identity_reader(USER_ID, CONVERSATION_ID), **options,
     )
-    catalog = services.export_catalog()
-    bindings = services.capability_request_bindings()
-    assert callable(unused_reader)
-    assert catalog
-    assert all(callable(bindings[name]) for name in (
-        "external_source_preflight",
-        "external_source_admission", "external_source_authorizer",
-        "capture_external_source_configuration",
-    ))
-    assert runtime.world.adapter.requests == []
-    runtime.client_factory.assert_not_called()
-    runtime.settings_read.assert_not_called()
 
 
-def retained_url_runtime(runtime, monkeypatch):
-    """Use the real root, Graph wire, current policy, retention and result store."""
+def services_for(runtime, settings, **options):
+    return in_request(
+        runtime,
+        lambda: runtime.root.build_orchestration_services(USER_ID, CONVERSATION_ID, settings=settings),
+        **options,
+    )
+
+
+def update_user_settings(runtime, **changes):
+    record = deepcopy(runtime.settings.items[(USER_ID, USER_ID)])
+    record["settings"].update(changes)
+    runtime.settings.upsert_item(record)
+
+
+def change_conversation(runtime, change):
+    key = (CONVERSATION_ID, CONVERSATION_ID)
+    if change == "missing":
+        runtime.conversations.items.pop(key)
+        return
+    record = deepcopy(runtime.conversations.items[key])
+    record.update({
+        "owner": {"user_id": "another-owner"},
+        "deleted": {"deleted": True},
+        "orchestration_deleted": {"orchestration_deleted": True},
+    }[change])
+    runtime.conversations.upsert_item(record)
+
+
+def bind_services(runtime, bound, **options):
+    services = services_for(runtime, bound.settings, **options)
+    bound.services = services
+    bound.context.result_service = services.results
+    bound.context.external_source_admission = services.external_source_admission
+    bound.context.external_source_preflight = services.external_source_preflight
+    bound.context.capture_external_source_configuration = services.capture_external_source_configuration
+    return services
+
+
+def retained_url_runtime(runtime, monkeypatch, **options):
+    """Use the real root, signed-in session, current policy, retention and result store."""
     # Runtime imports must follow the initialized application fixture.
     executor = importlib.import_module("functions_orchestration_executor")
     url = "https://example.com/source"
@@ -125,7 +162,6 @@ def retained_url_runtime(runtime, monkeypatch):
     }
     monkeypatch.setattr(runtime.root, "get_settings", lambda: deepcopy(settings))
     monkeypatch.setitem(runtime.root.config.CLIENTS, "storage_account_office_docs_client", None)
-    runtime.world.assignments.append(assignment("url-assignment", role_id=URL_ROLE))
     step = {
         "step_id": "gather", "capability_id": "url_fetch",
         "arguments": {"urls": [url]}, "enabled": True,
@@ -134,31 +170,27 @@ def retained_url_runtime(runtime, monkeypatch):
     context = executor.RunContext(
         user_id=USER_ID, conversation_id=CONVERSATION_ID, run_id="external-root-run",
         attempt_index=1, plan_contract_version=2, user_message=f"Review {url}",
-        user_roles=["User", "UrlAccessUser"], allowed_user_urls=[url],
+        user_roles=list(URL_ROLES), allowed_user_urls=[url],
         result_guard_token_for_step=lambda _step_id: "server-attempt-token",
         result_input_fingerprint_for_step=lambda _step_id: fingerprint,
     )
-    record = {
+    runtime.runs.create_item({
         "id": context.run_id, "user_id": USER_ID, "conversation_id": CONVERSATION_ID,
         "attempt_index": 1, "status": "running", "user_message": context.user_message,
         "memory_audience": {"kind": "personal", "owner_id": USER_ID, "collaboration_id": ""},
         "plan": {"planner_contract_version": 2, "steps": [deepcopy(step)]},
-    }
-    runtime.runs.create_item(record)
-    services = runtime.root.build_orchestration_services(USER_ID, CONVERSATION_ID, settings=settings)
-    context.result_service = services.results
-    context.external_source_admission = services.external_source_admission
-    context.external_source_preflight = services.external_source_preflight
-    context.capture_external_source_configuration = services.capture_external_source_configuration
-    return SimpleNamespace(
+    })
+    bound = SimpleNamespace(
         context=context, producer=context.result_producer(step), step=step, settings=settings,
-        services=services, fingerprint=fingerprint,
+        fingerprint=fingerprint,
         result={
             "status": "completed", "evidence": [],
             "notes": ["Retained source line.\n" * 600 + "The final line: caf\u00e9."],
             "citations": [{"url": url, "title": "Original source"}],
         },
     )
+    bind_services(runtime, bound, **{"roles": URL_ROLES, **options})
+    return bound
 
 
 def retain_root_url(bound):
@@ -170,25 +202,118 @@ def retain_root_url(bound):
     return retention.retain_gather_result(bound.step, bound.context, bound.result, source_manifest=[])
 
 
+def test_version_includes_session_identity():
+    assert_app_version_at_least("0.261.209")
+
+
+def test_source_free_service_construction_reads_no_identity(external_root):
+    runtime = external_root
+    unused_reader = reader_for(runtime)
+    services = services_for(runtime, {"max_generated_chat_artifact_size_mb": 1})
+    catalog = services.export_catalog()
+    bindings = services.capability_request_bindings()
+    assert callable(unused_reader)
+    assert catalog
+    assert all(callable(bindings[name]) for name in (
+        "external_source_preflight",
+        "external_source_admission", "external_source_authorizer",
+        "capture_external_source_configuration",
+    ))
+    runtime.settings_read.assert_not_called()
+    runtime.directory_client.assert_not_called()
+
+
+def test_real_root_reads_session_roles_without_directory_or_token_calls(external_root):
+    runtime = external_root
+    interactive_scopes = deepcopy(runtime.auth.SCOPE)
+    identity = read_identity(reader_for(runtime, roles=URL_ROLES))
+    assert identity.user_id == USER_ID
+    assert identity.roles == ("UrlAccessUser", "User")
+    assert identity.email == EMAIL
+    assert identity.user_enable_agents is True
+    assert runtime.auth.SCOPE == interactive_scopes
+    assert not hasattr(runtime.root, "requests")
+    runtime.directory_client.assert_not_called()
+    assert runtime.settings_read.call_count == 1
+    assert runtime.settings_read.call_args.kwargs == {"item": USER_ID, "partition_key": USER_ID, **POINT_READ}
+    assert runtime.conversation_read.call_args.kwargs == {
+        "item": CONVERSATION_ID, "partition_key": CONVERSATION_ID, **POINT_READ,
+    }
+
+
+def test_session_roles_are_captured_for_the_worker_thread(external_root):
+    runtime = external_root
+    with signed_in(runtime, roles=URL_ROLES):
+        reader = runtime.root.build_external_identity_reader(USER_ID, CONVERSATION_ID)
+        session["user"]["roles"] = []
+    identities, errors = [], []
+
+    def work():
+        try:
+            identities.append(read_identity(reader))
+        except Exception as error:  # Reported by the assertion below.
+            errors.append(error)
+
+    worker = threading.Thread(target=work)
+    worker.start()
+    worker.join(10)
+    assert not worker.is_alive() and errors == []
+    assert [identity.roles for identity in identities] == [("UrlAccessUser", "User")]
+    assert read_identity(reader).roles == ("UrlAccessUser", "User")
+
+
+@pytest.mark.parametrize("session_state", ["background", "anonymous", "another_user"])
+def test_reader_without_the_actors_signed_in_session_fails_closed_before_reads(external_root, session_state):
+    runtime = external_root
+    if session_state == "background":
+        reader = reader_for(runtime, signed_in_session=False)
+    elif session_state == "anonymous":
+        with runtime.app.test_request_context("/api/orchestration/runs"):
+            reader = runtime.root.build_external_identity_reader(USER_ID, CONVERSATION_ID)
+    else:
+        reader = reader_for(runtime, oid=OTHER_ID, roles=URL_ROLES)
+    for _attempt in range(2):
+        with pytest.raises(ResultUnavailableError) as raised:
+            read_identity(reader)
+        assert raised.value.code == EXTERNAL_SESSION_UNAVAILABLE_REASON
+    runtime.conversation_read.assert_not_called()
+    runtime.settings_read.assert_not_called()
+
+
+@pytest.mark.parametrize("roles", [None, (), ("UrlAccessUser",), ("user",)])
+def test_signed_in_session_without_user_or_admin_role_is_refused(external_root, roles):
+    runtime = external_root
+    with pytest.raises(ResultUnavailableError) as raised:
+        read_identity(reader_for(runtime, roles=roles))
+    assert raised.value.code == "external_identity_role_required"
+    runtime.conversation_read.assert_not_called()
+    runtime.settings_read.assert_not_called()
+
+
 def test_default_root_entry_authorization_does_not_create_acquisition_proof(external_root, monkeypatch):
     runtime = external_root
     bound = retained_url_runtime(runtime, monkeypatch)
     authorized = bound.services.external_source_preflight(producer=bound.producer, selector=None)
     assert authorized is None
-    assert runtime.world.adapter.requests
+    assert runtime.settings_read.called
     with pytest.raises(ResultUnavailableError):
         bound.services.external_source_admission(producer=bound.producer, prepared=bound.result)
     assert bound.services.results.access.external_source_catalog == {}
     assert runtime.result_items.items == {}
-    runtime.world.assignments = []
-    with pytest.raises(ResultUnavailableError):
-        bound.services.external_source_preflight(producer=bound.producer, selector=None)
+    for options, code in (
+        ({"roles": ("User",)}, "result_external_capability_unavailable"),
+        ({"signed_in_session": False}, EXTERNAL_SESSION_UNAVAILABLE_REASON),
+    ):
+        services = services_for(runtime, bound.settings, **options)
+        with pytest.raises(ResultUnavailableError) as raised:
+            services.external_source_preflight(producer=bound.producer, selector=None)
+        assert raised.value.code == code
 
 
 def test_default_root_admits_url_and_reopens_full_result_after_restart(external_root, monkeypatch):
     runtime = external_root
     bound = retained_url_runtime(runtime, monkeypatch)
-    assert runtime.world.adapter.requests == []
+    runtime.settings_read.assert_not_called()
     task = retain_root_url(bound)
     assert len(bound.services.results.access.external_source_catalog) == 1
     assert len(task.outputs) == 1 and task.output("prepared").kind == "structured-v1"
@@ -199,9 +324,7 @@ def test_default_root_admits_url_and_reopens_full_result_after_restart(external_
     assert original["content_scope"] == "reported_external_content"
     assert len(original["notes"][0]) > 4096
 
-    restarted = runtime.root.build_orchestration_services(
-        USER_ID, CONVERSATION_ID, settings=bound.settings,
-    )
+    restarted = services_for(runtime, bound.settings, roles=URL_ROLES)
     monkeypatch.setattr(restarted, "external_source_admission", Mock(side_effect=AssertionError("No reacquisition")))
     monkeypatch.setattr(
         restarted, "capture_external_source_configuration", Mock(side_effect=AssertionError("No recapture")),
@@ -216,22 +339,29 @@ def test_default_root_admits_url_and_reopens_full_result_after_restart(external_
     assert restored == original
     assert metadata["origin"] == "grounded" and metadata["external_source_count"] == 1
     assert restarted.results.access.external_source_catalog == {}
-    assert runtime.world.adapter.requests
-    wire = json.dumps(task.to_dict())
-    assert TOKEN not in wire and "synthetic-client-secret" not in wire
+    assert runtime.settings_read.called
+    saved = repr((task.to_dict(), runtime.result_items.items, runtime.runs.items))
+    assert SECRET not in saved and "UrlAccessUser" not in saved
     restarted.external_source_admission.assert_not_called()
     restarted.capture_external_source_configuration.assert_not_called()
+    runtime.directory_client.assert_not_called()
 
 
-@pytest.mark.parametrize("change", ["roles", "account", "settings", "user_url", "owner", "deleted", "missing"])
+@pytest.mark.parametrize("change", [
+    "roles", "background", "another_user", "access", "settings", "user_url",
+    "owner", "deleted", "orchestration_deleted", "missing",
+])
 def test_default_root_preflight_uses_current_authority_before_acquisition(external_root, monkeypatch, change):
     runtime = external_root
-    bound = retained_url_runtime(runtime, monkeypatch)
+    session_options = {
+        "roles": {"roles": ("User",)},
+        "background": {"signed_in_session": False},
+        "another_user": {"oid": OTHER_ID},
+    }.get(change, {})
+    bound = retained_url_runtime(runtime, monkeypatch, **session_options)
     supplied_settings = deepcopy(bound.settings)
-    if change == "roles":
-        runtime.world.assignments = []
-    elif change == "account":
-        runtime.world.user["accountEnabled"] = False
+    if change == "access":
+        update_user_settings(runtime, access={"status": "deny"})
     elif change == "settings":
         bound.settings["enable_url_access"] = False
     elif change == "user_url":
@@ -240,30 +370,23 @@ def test_default_root_preflight_uses_current_authority_before_acquisition(extern
         runtime.runs.replace_item(
             record["id"], record, etag=record["_etag"], match_condition=MatchConditions.IfNotModified,
         )
-    else:
-        conversation = runtime.conversations.read_item(CONVERSATION_ID, CONVERSATION_ID)
-        if change == "missing":
-            runtime.conversations.delete_item(
-                CONVERSATION_ID, CONVERSATION_ID, etag=conversation["_etag"],
-            )
-        else:
-            conversation.update(
-                {"user_id": "another-owner"} if change == "owner" else {"orchestration_deleted": True},
-            )
-            runtime.conversations.replace_item(
-                CONVERSATION_ID, conversation,
-                etag=conversation["_etag"], match_condition=MatchConditions.IfNotModified,
-            )
-    with pytest.raises(ResultUnavailableError):
+    elif change in ("owner", "deleted", "orchestration_deleted", "missing"):
+        change_conversation(runtime, change)
+    with pytest.raises(ResultUnavailableError) as raised:
         bound.services.capture_external_source_configuration(
             "url", producer=bound.producer, settings=supplied_settings,
         )
+    if change in ("background", "another_user"):
+        assert raised.value.code == EXTERNAL_SESSION_UNAVAILABLE_REASON
+        runtime.settings_read.assert_not_called()
+    elif change == "access":
+        assert raised.value.code == "external_identity_access_restricted"
     assert bound.services.results.access.external_source_catalog == {}
     assert runtime.result_items.items == {}
 
 
 @pytest.mark.parametrize("field", ["user_id", "conversation_id"])
-def test_default_root_capture_refuses_a_foreign_producer_before_directory_io(external_root, monkeypatch, field):
+def test_default_root_capture_refuses_a_foreign_producer_before_identity_io(external_root, monkeypatch, field):
     runtime = external_root
     bound = retained_url_runtime(runtime, monkeypatch)
     foreign = replace(bound.producer, **{field: "foreign"})
@@ -271,42 +394,31 @@ def test_default_root_capture_refuses_a_foreign_producer_before_directory_io(ext
         bound.services.capture_external_source_configuration(
             "url", producer=foreign, settings=bound.settings,
         )
-    assert runtime.world.adapter.requests == []
+    runtime.settings_read.assert_not_called()
     assert runtime.result_items.items == {}
-    runtime.client_factory.assert_not_called()
 
 
-@pytest.mark.parametrize("change", ["roles", "account", "settings"])
+@pytest.mark.parametrize("change", ["roles", "background", "another_user", "access", "settings"])
 def test_default_root_retained_reads_recheck_current_authority(external_root, monkeypatch, change):
     runtime = external_root
     bound = retained_url_runtime(runtime, monkeypatch)
     task = retain_root_url(bound)
     before = deepcopy(runtime.result_items.items)
-    if change == "roles":
-        runtime.world.assignments = []
-    elif change == "account":
-        runtime.world.user["accountEnabled"] = False
-    else:
+    session_options = {
+        "roles": {"roles": ("User",)},
+        "background": {"signed_in_session": False},
+        "another_user": {"roles": URL_ROLES, "oid": OTHER_ID},
+    }.get(change, {"roles": URL_ROLES})
+    if change == "access":
+        update_user_settings(runtime, access={"status": "deny"})
+    elif change == "settings":
         bound.settings["enable_url_access"] = False
-    restarted = runtime.root.build_orchestration_services(USER_ID, CONVERSATION_ID, settings=bound.settings)
-    with pytest.raises(ResultUnavailableError):
+    restarted = services_for(runtime, bound.settings, **session_options)
+    with pytest.raises(ResultUnavailableError) as raised:
         restarted.results.open_result(task.output("prepared"), require_current_sources=True)
+    if change in ("background", "another_user"):
+        assert raised.value.code == EXTERNAL_SESSION_UNAVAILABLE_REASON
     assert runtime.result_items.items == before
-
-
-def test_default_root_preserves_directory_timeout_instead_of_denial(external_root, monkeypatch):
-    runtime = external_root
-    bound = retained_url_runtime(runtime, monkeypatch)
-    runtime.world.adapter.error = Timeout("Private directory transport details.")
-    with pytest.raises(ExternalIdentityServiceError) as raised:
-        bound.services.capture_external_source_configuration(
-            "url", producer=bound.producer, settings=bound.settings,
-        )
-    assert raised.value.code == "external_identity_timeout"
-    assert raised.value.retryable is True
-    assert "Private" not in str(raised.value)
-    assert bound.services.results.access.external_source_catalog == {}
-    assert runtime.result_items.items == {}
 
 
 @pytest.mark.parametrize("store", ["conversations", "runs", "app_settings"])
@@ -354,8 +466,8 @@ def test_private_configuration_digest_is_stable_keyed_and_purpose_scoped(externa
     assert first == repeated == text_key == expected
     assert first != changed and first != rotated and first != unkeyed
     assert len(first) == 64 and all(character in "0123456789abcdef" for character in first)
-    assert external_root.world.adapter.requests == []
-    external_root.client_factory.assert_not_called()
+    external_root.settings_read.assert_not_called()
+    external_root.directory_client.assert_not_called()
 
 
 @pytest.mark.parametrize("key", [
@@ -368,8 +480,8 @@ def test_private_configuration_digest_refuses_missing_weak_or_public_default_key
     with pytest.raises(ResultUnavailableError) as raised:
         root.private_external_configuration_digest(b'{"source":"action"}')
     assert raised.value.code == "external_configuration_private_digest_required"
-    assert external_root.world.adapter.requests == []
-    external_root.client_factory.assert_not_called()
+    external_root.settings_read.assert_not_called()
+    external_root.directory_client.assert_not_called()
 
 
 @pytest.mark.parametrize("value", [None, {}, "configuration", bytearray(b"configuration")])
@@ -380,50 +492,36 @@ def test_private_configuration_digest_requires_canonical_bytes(external_root, va
     assert raised.value.code == "external_configuration_payload_invalid"
 
 
-@pytest.mark.parametrize("graph_base, expected_scope", [
-    ("https://graph.microsoft.com/v1.0", "https://graph.microsoft.com/.default"),
-    ("https://graph.microsoft.us/v1.0", "https://graph.microsoft.us/.default"),
-    ("https://graph.example.test/gateway/v1.0", "https://graph.example.test/.default"),
-])
-def test_real_root_uses_current_application_authority_and_trusted_cloud_origin(
-    external_root, graph_base, expected_scope,
-):
-    runtime = external_root
-    runtime.world.base_url = graph_base
-    runtime.world.prefix = urlsplit(graph_base).path.rstrip("/")
-    interactive_scopes = deepcopy(runtime.auth.SCOPE)
-    identity = read_identity(reader_for(runtime))
-    assert identity.user_id == USER_ID
-    assert identity.roles == ("User",)
-    runtime.client_factory.assert_called_once_with(
-        APP_ID, authority="https://login.example.test/tenant",
-        client_credential="synthetic-client-secret", token_cache=None, timeout=10.0,
-    )
-    assert all(call.kwargs == {"scopes": [expected_scope]} for call in runtime.token.call_args_list)
-    assert runtime.auth.SCOPE == interactive_scopes
-    assert len(runtime.world.adapter.requests) == 3
-    assert runtime.settings_read.call_count >= 2
-    assert all(call.kwargs == {
-        "item": USER_ID, "partition_key": USER_ID,
-        "connection_timeout": 10.0, "read_timeout": 10.0, "retry_total": 0,
-    } for call in runtime.settings_read.call_args_list)
-    runtime.world.settings_reader.assert_not_called()
-
-
 def test_current_settings_are_point_read_without_repairs_or_request_cache(external_root):
     runtime = external_root
     reader = reader_for(runtime)
     initial = read_identity(reader)
-    settings = runtime.settings.read_item(USER_ID, USER_ID)
-    settings["settings"]["enable_agents"] = False
-    runtime.settings.upsert_item(settings)
+    update_user_settings(runtime, enable_agents=False)
     changed = read_identity(reader)
     assert initial.user_enable_agents is True
     assert changed.user_enable_agents is False
-    runtime.client_factory.assert_called_once()
-    runtime.world.assignments = []
-    with pytest.raises(ResultUnavailableError):
+    update_user_settings(runtime, access={"status": "deny"})
+    stored = deepcopy(runtime.settings.items)
+    with pytest.raises(ResultUnavailableError) as raised:
         read_identity(reader)
+    assert raised.value.code == "external_identity_access_restricted"
+    assert runtime.settings.items == stored
+    assert runtime.settings_read.call_count == 3
+    assert all(call.kwargs == {
+        "item": USER_ID, "partition_key": USER_ID, **POINT_READ,
+    } for call in runtime.settings_read.call_args_list)
+
+
+def test_session_admin_bypasses_restrictions_but_not_ownership(external_root):
+    runtime = external_root
+    reader = reader_for(runtime, roles=("Admin",))
+    update_user_settings(runtime, access={"status": "deny"}, enable_agents=False)
+    identity = read_identity(reader)
+    assert identity.roles == ("Admin",) and identity.user_enable_agents is False
+    change_conversation(runtime, "owner")
+    with pytest.raises(ResultUnavailableError) as raised:
+        read_identity(reader)
+    assert raised.value.code == "external_identity_access_denied"
 
 
 def test_current_identity_accepts_sdk_conversation_and_settings_responses(external_root):
@@ -432,14 +530,12 @@ def test_current_identity_accepts_sdk_conversation_and_settings_responses(extern
     runtime.settings.sdk_responses = True
     reader = reader_for(runtime)
     initial = read_identity(reader)
-    settings = runtime.settings.read_item(USER_ID, USER_ID)
-    settings["settings"]["enable_agents"] = False
-    runtime.settings.upsert_item(settings)
+    update_user_settings(runtime, enable_agents=False)
     changed = read_identity(reader)
     assert initial.user_id == changed.user_id == USER_ID
     assert initial.roles == changed.roles == ("User",)
     assert initial.user_enable_agents is True and changed.user_enable_agents is False
-    runtime.world.assignments = []
+    update_user_settings(runtime, access={"status": "deny"})
     with pytest.raises(ResultUnavailableError):
         read_identity(reader)
 
@@ -451,32 +547,43 @@ def test_identity_does_not_coerce_non_mapping_settings_into_authority(external_r
         runtime.settings, "read_item",
         lambda *args, **kwargs: list(read_settings(*args, **kwargs).items()),
     )
-    with pytest.raises(ResultUnavailableError):
+    with pytest.raises(ResultUnavailableError) as raised:
         read_identity(reader_for(runtime))
+    assert raised.value.code == "external_identity_settings_unavailable"
 
 
-@pytest.mark.parametrize("change", ["deleted", "foreign", "missing_settings", "denied"])
-def test_current_conversation_or_user_restriction_never_uses_saved_roles(external_root, change):
+@pytest.mark.parametrize("change, code", [
+    ("deleted", "external_identity_access_denied"),
+    ("orchestration_deleted", "external_identity_access_denied"),
+    ("owner", "external_identity_access_denied"),
+    ("missing", "external_identity_access_denied"),
+    ("missing_settings", "external_identity_access_denied"),
+    ("denied", "external_identity_access_restricted"),
+    ("future_allow", "external_identity_access_restricted"),
+])
+def test_current_conversation_or_user_restriction_is_reread_on_every_access(external_root, change, code):
     runtime = external_root
     reader = reader_for(runtime)
-    initial = read_identity(reader)
-    assert initial.roles == ("User",)
-    if change in ("deleted", "foreign"):
-        conversation = runtime.conversations.read_item(CONVERSATION_ID, CONVERSATION_ID)
-        if change == "deleted":
-            conversation["orchestration_deleted"] = True
-        else:
-            conversation["user_id"] = "other-owner"
-        runtime.conversations.upsert_item(conversation)
-    elif change == "missing_settings":
-        settings = runtime.settings.read_item(USER_ID, USER_ID)
-        runtime.settings.delete_item(USER_ID, USER_ID, etag=settings["_etag"])
+    assert read_identity(reader).roles == ("User",)
+    if change == "missing_settings":
+        runtime.settings.items.pop((USER_ID, USER_ID))
+    elif change == "denied":
+        update_user_settings(runtime, access={"status": "deny"})
+    elif change == "future_allow":
+        update_user_settings(runtime, access={"status": "deny", "datetime_to_allow": "2999-01-01T00:00:00Z"})
     else:
-        settings = runtime.settings.read_item(USER_ID, USER_ID)
-        settings["settings"]["access"] = {"status": "deny"}
-        runtime.settings.upsert_item(settings)
-    with pytest.raises(ResultUnavailableError):
+        change_conversation(runtime, change)
+    with pytest.raises(ResultUnavailableError) as raised:
         read_identity(reader)
+    assert raised.value.code == code
+
+
+def test_expired_restriction_is_allowed_without_repairing_the_settings_document(external_root):
+    runtime = external_root
+    update_user_settings(runtime, access={"status": "deny", "datetime_to_allow": "2000-01-01T00:00:00Z"})
+    stored = deepcopy(runtime.settings.items)
+    assert read_identity(reader_for(runtime)).roles == ("User",)
+    assert runtime.settings.items == stored
 
 
 @pytest.mark.parametrize("field", ["user_id", "conversation_id"])
@@ -484,50 +591,11 @@ def test_reader_rejects_another_actor_or_conversation_before_io(external_root, f
     runtime = external_root
     reader = reader_for(runtime)
     arguments = {"user_id": USER_ID, "conversation_id": CONVERSATION_ID, field: "other"}
-    with pytest.raises(ResultUnavailableError):
+    with pytest.raises(ResultUnavailableError) as raised:
         reader(**arguments)
-    runtime.client_factory.assert_not_called()
+    assert raised.value.code == "external_identity_access_denied"
+    runtime.conversation_read.assert_not_called()
     runtime.settings_read.assert_not_called()
-    assert runtime.world.adapter.requests == []
-
-
-@pytest.mark.parametrize("error, code, retryable", [
-    ("server_error", "external_identity_service_unavailable", True),
-    ("temporarily_unavailable", "external_identity_service_unavailable", True),
-    ("too_many_requests", "external_identity_throttled", True),
-    ("unknown_error", "external_identity_response_invalid", False),
-])
-def test_token_service_failure_is_not_reported_as_role_revocation(external_root, error, code, retryable):
-    runtime = external_root
-    runtime.token.return_value = {"error": error, "error_description": "synthetic-private-error"}
-    with pytest.raises(ExternalIdentityServiceError) as caught:
-        read_identity(reader_for(runtime))
-    runtime.token.assert_called_once_with(scopes=[runtime.world.scope])
-    assert caught.value.code == code
-    assert caught.value.retryable is retryable
-    assert "synthetic-private-error" not in str(caught.value)
-    assert runtime.world.adapter.requests == []
-
-
-@pytest.mark.parametrize("error", ["invalid_client", "invalid_scope", "access_denied", "consent_required"])
-def test_missing_application_permission_fails_without_interactive_fallback(external_root, error):
-    runtime = external_root
-    runtime.token.return_value = {"error": error, "error_description": "synthetic-private-error"}
-    with pytest.raises(ResultUnavailableError) as caught:
-        read_identity(reader_for(runtime))
-    assert "synthetic-private-error" not in str(caught.value)
-    assert runtime.world.adapter.requests == []
-
-
-def test_token_network_timeout_is_a_safe_retryable_service_failure(external_root):
-    runtime = external_root
-    runtime.token.side_effect = Timeout("synthetic-private-error")
-    with pytest.raises(ExternalIdentityServiceError) as caught:
-        read_identity(reader_for(runtime))
-    assert caught.value.code == "external_identity_timeout"
-    assert caught.value.retryable is True
-    assert "synthetic-private-error" not in str(caught.value)
-    assert caught.value.__context__ is None
 
 
 @pytest.mark.parametrize("store", ["conversations", "settings"])
@@ -538,14 +606,20 @@ def test_current_authorization_storage_outage_is_not_an_access_denial(external_r
         read_identity(reader_for(runtime))
     assert caught.value.code == "external_identity_service_unavailable"
     assert caught.value.retryable is True
+    assert "Private" not in str(caught.value)
 
 
-def test_existing_auth_factory_keeps_its_default_arguments(external_root):
+def test_existing_auth_factory_keeps_its_default_arguments(external_root, monkeypatch):
     runtime = external_root
+    client = SimpleNamespace(acquire_token_for_client=Mock())
+    client_factory = Mock(return_value=client)
+    monkeypatch.setattr(runtime.auth, "CLIENT_ID", APP_ID)
+    monkeypatch.setattr(runtime.auth, "CLIENT_SECRET", "synthetic-client-secret")
+    monkeypatch.setattr(runtime.auth, "ConfidentialClientApplication", client_factory)
     cache = object()
     application = runtime.auth._build_msal_app(cache=cache)
-    assert application.acquire_token_for_client is runtime.token
-    runtime.client_factory.assert_called_once_with(
+    assert application is client
+    client_factory.assert_called_once_with(
         APP_ID, authority=runtime.auth.AUTHORITY,
         client_credential="synthetic-client-secret", token_cache=cache,
     )
