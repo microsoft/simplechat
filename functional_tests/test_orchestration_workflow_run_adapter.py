@@ -1156,12 +1156,18 @@ def test_every_run_context_knows_its_first_attempt_and_whether_a_user_is_signed_
             continue
         for node in ast.walk(ast.parse(source)):
             if isinstance(node, ast.Call) and getattr(node.func, "id", None) == "RunContext":
-                sites.append((path.name, node.lineno, {keyword.arg for keyword in node.keywords}))
+                sites.append((path.name, node.lineno, {
+                    keyword.arg: ast.unparse(keyword.value) for keyword in node.keywords if keyword.arg
+                }))
     assert {name for name, _line, _keywords in sites} >= {
         "functions_orchestration_execution.py", "route_backend_orchestration.py",
     }
     for name, line, keywords in sites:
-        assert {"attempt_root_run_id", "signed_in_session"} <= keywords, (name, line)
+        assert {"attempt_root_run_id", "signed_in_session"} <= set(keywords), (name, line)
+        # Each reads the plan's first attempt from its run record, never the attempt's own id
+        # alone, and the session from the principal's request bridge, never a constant.
+        assert "attempt_root_run_id" in keywords["attempt_root_run_id"], (name, line)
+        assert "bridge" in keywords["signed_in_session"], (name, line)
 
 
 @pytest.mark.parametrize("root, expected", [(None, "r"), ("", "r"), (5, "r"), ("run-1", "run-1")])
@@ -1346,6 +1352,62 @@ def test_a_retry_that_runs_the_step_again_links_the_run_the_first_attempt_starte
     again = env.steps.read_item(f"{child['id']}:run_digest", child["id"])
     assert again["status"] == "completed" and not again["reused_from_run_id"]
     assert again["workflow_run"] == _sidecar(planning, "already_started", orchestration_run_id=child["id"])
+    assert len(world.queued) == 1 and list(world.runs.items) == [(OWNER, RUN_ID)]
+
+
+def test_a_step_whose_checkpoint_was_lost_after_the_queue_is_reused_with_its_link(world, wr, planning, monkeypatch):
+    checkpoints = importlib.import_module("functions_orchestration_checkpoints")
+    env = _harness(monkeypatch, planning, [_run(_handle(planning, "Weekly digest")), compose_step("answer")],
+                   ["Your priorities."])
+    real_commit = checkpoints.CheckpointStore.commit
+    lost = []
+
+    def commit(store, step, result, context, **kwargs):
+        if step["step_id"] == "run_digest" and not lost:
+            lost.append(step["step_id"])
+            raise checkpoints.CheckpointError("checkpoint_unavailable")
+        return real_commit(store, step, result, context, **kwargs)
+
+    # The run is queued and the step's result retained, then the step's checkpoint is lost, so a
+    # retry can recover the step only from the retained result, which never carries its ids.
+    monkeypatch.setattr(checkpoints.CheckpointStore, "commit", commit)
+    execution = _signed_in(env.prepare())
+    with pytest.raises(checkpoints.CheckpointError):
+        _run_to_end(env, execution)
+    assert lost == ["run_digest"] and len(world.queued) == 1
+    env.recovery._replace(env.read(), {"status": "failed", "execution_lease": None})
+
+    child, second = _retry(env, execution, confirm=True)
+    assert child["attempt_root_run_id"] == "run-1"
+    assert _run_to_end(env, second)["status"] == "completed"
+    again = env.steps.read_item(f"{child['id']}:run_digest", child["id"])
+    assert again["status"] == "completed" and again["reused_from_run_id"] == "run-1"
+    # The ids are computed again from the plan's first attempt and the step, so the link holds.
+    assert again["workflow_run"] == _sidecar(planning, "queued")
+    assert len(world.queued) == 1 and list(world.runs.items) == [(OWNER, RUN_ID)]
+
+
+def test_a_plan_run_without_a_signed_in_session_never_starts_a_workflow(world, wr, planning, monkeypatch):
+    env = _harness(monkeypatch, planning, [_run(_handle(planning, "Weekly digest")), compose_step("answer")],
+                   ["Your priorities."])
+    # Prepared outside a request, the run has no signed-in session to start a workflow for.
+    execution = env.prepare()
+    assert execution.context.signed_in_session is False
+    assert _run_to_end(env, execution)["status"] == "failed"
+    step = env.steps.read_item("run-1:run_digest", "run-1")
+    assert step["status"] == "failed" and step["failure"]["code"] == "external_session_required"
+    assert world.queued == []
+    _no_run_started(world)
+
+
+def test_a_plan_run_with_a_signed_in_session_starts_the_workflow(world, wr, planning, monkeypatch):
+    identity = importlib.import_module("agent_execution_context")
+    env = _harness(monkeypatch, planning, [_run(_handle(planning, "Weekly digest")), compose_step("answer")],
+                   ["Your priorities."])
+    principal = identity.ExecutionIdentity(OWNER, CONVERSATION, bridge=lambda agent: None)
+    execution = env.prepare(execution_identity=principal)
+    assert execution.context.signed_in_session is True
+    assert _run_to_end(env, execution)["status"] == "completed"
     assert len(world.queued) == 1 and list(world.runs.items) == [(OWNER, RUN_ID)]
 
 
