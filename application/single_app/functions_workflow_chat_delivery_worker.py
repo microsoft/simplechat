@@ -1451,7 +1451,7 @@ def _exhausted(delivery, reason):
     """Attempts ran out. Close with a best-effort notice; never post a second message."""
     phase = delivery.record.get('phase')
     created = phase_at_least(phase, PHASE_MESSAGE_CREATED)
-    if not created and phase_at_least(phase, PHASE_PUBLISHING):
+    if not created:
         try:
             created = _message_exists(delivery, delivery.message_id())
         except _Transient:
@@ -1552,11 +1552,10 @@ def _deliver(delivery):
         return _close_silently(delivery, REASON_WORKFLOW_DELETED)
 
     phase = delivery.record.get('phase')
-    if (
-        phase_at_least(phase, PHASE_PUBLISHING) and not phase_at_least(phase, PHASE_MESSAGE_CREATED)
-        and _message_exists(delivery, delivery.message_id())
-    ):
-        # The create landed but its phase write didn't.
+    if not phase_at_least(phase, PHASE_MESSAGE_CREATED) and _message_exists(delivery, delivery.message_id()):
+        # Check before compose (D9 step 4): an earlier attempt at this generation already posted M,
+        # whether its phase write was lost or the record itself was reverted. Skip compose and the
+        # unread mark; the notice below is idempotent by its key.
         _write_phase(delivery, PHASE_MESSAGE_CREATED)
     if phase_at_least(delivery.record.get('phase'), PHASE_MESSAGE_CREATED):
         return _notify_delivered(delivery)
