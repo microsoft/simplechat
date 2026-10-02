@@ -820,6 +820,24 @@ def test_route_maps_status_errors_and_generic_errors_without_secret_text(route_h
     require("secret-text" not in json.dumps(route_harness.logs, default=str), "logs must not contain exception text")
 
 
+FEATURE_DOC = ROOT / "docs" / "explanation" / "features" / "CHAT_WORKFLOW_RESULT_DELIVERY.md"
+ROW_KEYS = {
+    "workflow_id", "workflow_scope", "run_id", "workflow_name", "conversation_id", "orchestration_run_id",
+    "step_id", "requested_at", "status", "phase", "runtime_version", "step_index", "step_count", "step_label",
+    "started_at", "completed_at", "elapsed_seconds", "waiting", "delivery", "error", "error_code",
+    "retry_blocked", "actions", "live",
+}
+DELIVERY_KEYS = {"status", "generation", "message_id", "delivered_at", "reason"}
+ACTION_KEYS = {"cancel", "retry", "approve", "open_run"}
+
+
+def documented_response_example():
+    text = FEATURE_DOC.read_text(encoding="utf-8")
+    match = re.search(r"^### Response example\s*```json\n(.*?)\n```", text, re.S | re.M)
+    require(match is not None, f"no JSON block under '### Response example' in {FEATURE_DOC.name}")
+    return json.loads(match.group(1))
+
+
 def test_route_returns_status_payload_body_shape(route_harness, monkeypatch):
     login(route_harness)
     services = services_for([run_doc(RUN_ID)]).services
@@ -830,7 +848,19 @@ def test_route_returns_status_payload_body_shape(route_harness, monkeypatch):
     require(set(body) == {"available", "runs", "checked_at", "truncated"}, f"top-level body shape changed: {body}")
     require(body["available"] is True and body["truncated"] is False, "body flags should be present")
     require(len(body["runs"]) == 1, f"expected one route row: {body}")
-    require({"workflow_id", "run_id", "status", "actions", "delivery"} <= set(body["runs"][0]), "row shape is incomplete")
+    row = body["runs"][0]
+    require(set(row) == ROW_KEYS, f"row keys changed (6b-2 contract): {sorted(set(row) ^ ROW_KEYS)}")
+    require(row["workflow_scope"] == "personal", f"workflow_scope must be personal: {row['workflow_scope']!r}")
+    require(set(row["delivery"]) == DELIVERY_KEYS, f"delivery keys changed: {sorted(row['delivery'])}")
+    require(set(row["actions"]) == ACTION_KEYS, f"action keys changed: {sorted(row['actions'])}")
+
+    example = documented_response_example()
+    documented = example["runs"][0]
+    require(set(example) == set(body), f"doc example top-level keys drifted: {sorted(set(example) ^ set(body))}")
+    require(set(documented) == ROW_KEYS, f"doc example row keys drifted: {sorted(set(documented) ^ ROW_KEYS)}")
+    require(set(documented["delivery"]) == DELIVERY_KEYS, f"doc example delivery keys drifted: {documented['delivery']}")
+    require(set(documented["actions"]) == ACTION_KEYS, f"doc example action keys drifted: {documented['actions']}")
+    require(documented["workflow_scope"] == "personal", "doc example workflow_scope must be personal")
 
 
 if __name__ == "__main__":

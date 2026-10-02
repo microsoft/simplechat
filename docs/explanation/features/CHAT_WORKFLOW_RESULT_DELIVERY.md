@@ -210,9 +210,18 @@ For each due generation the worker:
    `expired`, and reconciles with the live control in that final write so a
    resume that landed mid-delivery can reopen the next generation.
 
-If attempts are exhausted before a claim can be completed, the worker closes the
-record silently as `delivery_failed`. If a message was already created, it
-finishes as delivered instead of sending an undeliverable notice.
+Attempts are capped at 8. What happens at the cap depends on whether the worker
+managed to claim the record:
+
+- **Before a claim**, when the runtime control can't be read, the worker closes
+  the record silently as `undeliverable` with `delivery_failed`. If an earlier
+  attempt already created the message, the record closes as `delivered` without
+  a notice. No outcome was read, so there is nothing to tell the user.
+- **After a claim**, the worker closes with one best-effort notice and never
+  posts a second message. If the message was created, the record closes as
+  `delivered` with the chat notice. An expiry closes as `expired` with the
+  expired notice. Otherwise the record closes as `undeliverable` with
+  `delivery_failed` and the undeliverable notice.
 
 ### Compose, fencing and token logging
 
