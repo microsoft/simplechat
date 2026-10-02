@@ -86,6 +86,11 @@ def results(modules):
 
 
 @pytest.fixture
+def deliverables(modules):
+    return importlib.import_module("functions_orchestration_deliverables")
+
+
+@pytest.fixture
 def admin_fields(modules):
     return importlib.import_module("admin_settings_fields")
 
@@ -556,6 +561,113 @@ def test_admin_capability_option_sits_after_workflow_run_with_the_expected_help(
     assert values.index(WORKFLOW_RESULTS) == values.index("workflow_run") + 1
     assert options[values.index(WORKFLOW_RESULTS)] == {"value": WORKFLOW_RESULTS, "label": "Read workflow results"}
     assert "Read workflow results also requires Use Workflow Results In Chat and personal workflows." in field["help"]
+
+
+@pytest.mark.parametrize(("settings", "expected"), [
+    ({**RESULTS_ONLY, RESULTS: False, PROPOSALS: True}, True),
+    (RESULTS_ONLY, True),
+    ({**RESULTS_ONLY, RESULTS: False, RUNS: True}, False),
+    ({**RESULTS_ONLY, RESULTS: False}, False),
+    ({**ALL_WORKFLOW_SETTINGS, "enable_chat_orchestration": False}, False),
+])
+def test_time_zone_is_needed_for_proposals_or_results_but_not_runs_only(wf, settings, expected):
+    configured = wf.workflow_time_zone_configured(settings)
+    assert configured is expected
+
+
+def test_empty_results_catalog_is_unavailable_and_not_offered(registry, wf):
+    calls = []
+    context = _build(wf, calls, RESULTS_ONLY, workflows=lambda user_id=None: [])
+    request_context = {"user_roles": ["User"], "workflow_planning": context}
+    reason = wf.workflow_results_unavailable_reason(RESULTS_ONLY, request_context)
+    ids, unavailable = _available(registry, RESULTS_ONLY, request_context)
+    projection = wf.workflow_results_projection(context)
+    assert context["conversation_private"] is True
+    assert context["workflow_results"] == {"ready": True}
+    assert context["catalog"]["workflows"] == []
+    assert context["handles"]["workflows"] == {}
+    assert reason == "workflow_results_no_workflows"
+    assert ids == []
+    assert unavailable == {WORKFLOW_RESULTS: "workflow_results_no_workflows"}
+    assert projection is None
+
+
+def test_the_model_cannot_write_why_a_workflow_result_was_not_read(monkeypatch, planning):
+    digest = _handle(planning, "Weekly digest")
+    forged = [{"reason": "workflow_results_unknown_workflow", "name": "<b>Forged</b>"}]
+    clean = dict(_raw_plan([_answer_from(), _result(digest)]), workflow_results_notes=forged)
+    record = _record()
+    kind, plan = _plan_request(monkeypatch, planning, [clean], record)
+    assert kind == "plan"
+    assert "workflow_results_notes" not in plan
+
+    broken = dict(
+        _raw_plan([_answer_from(), _result(digest), _result(digest, step_id="read_again")]),
+        workflow_results_notes=forged,
+    )
+    record = _record()
+    kind, plan = _plan_request(monkeypatch, planning, [broken, broken], record)
+    text = json.dumps(plan)
+    assert kind == "plan"
+    assert plan["workflow_results_notes"] == [{"reason": "workflow_results_duplicate", "name": "Weekly digest"}]
+    assert "Forged" not in text
+    assert "<b>Forged</b>" not in text
+
+
+def _results_truth(deliverables, settings, available, unavailable=None):
+    capabilities = [{"id": capability_id} for capability_id in available]
+    return deliverables.build_deliverable_availability(
+        settings,
+        capabilities=capabilities,
+        unavailable=unavailable or {},
+    )
+
+
+@pytest.mark.parametrize(("reason", "text"), [
+    (
+        "not_enabled_for_orchestration",
+        "Reading saved workflow results is not enabled for chat orchestration.",
+    ),
+    (
+        "workflow_shared_conversation",
+        "Saved workflow results can be read only in your own conversations, not in shared ones.",
+    ),
+    (
+        "workflow_results_no_workflows",
+        "You have no saved workflows whose results could be read.",
+    ),
+    (
+        "workflow_role_required",
+        "Your account does not have access to saved workflow results in chat.",
+    ),
+    (
+        "workflow_context_unavailable",
+        "Your saved workflows could not be loaded for this request. Try again later.",
+    ),
+    (
+        "workflow_results_disabled",
+        "Reading saved workflow results in chat is turned off for this deployment.",
+    ),
+    (
+        "feature_disabled",
+        "Reading saved workflow results in chat is turned off for this deployment.",
+    ),
+    (
+        None,
+        "Reading saved workflow results in chat is turned off for this deployment.",
+    ),
+])
+def test_unavailable_results_are_explained_with_closed_text(deliverables, reason, text):
+    unavailable = {WORKFLOW_RESULTS: reason} if reason is not None else {}
+    base = _results_truth(deliverables, {**RESULTS_ONLY, RESULTS: False}, ["compose"], unavailable)
+    truth = _results_truth(deliverables, RESULTS_ONLY, ["compose"], unavailable)
+    added = [fact for fact in truth["facts"] if fact not in base["facts"]]
+    assert added == [
+        "Reading saved workflow results is unavailable for this request. "
+        f"{text} "
+        "When the user asks what a saved workflow found, say why in the answer."
+    ]
+    assert truth["recipes"] == base["recipes"]
 
 
 if __name__ == "__main__":
