@@ -25,6 +25,15 @@ starts the run and links to it. It never waits for the run and never reads its
 results. A plan that starts a workflow always waits for the user to run it,
 whatever approval mode they chose.
 
+Since version **0.261.218**, when **Use Workflow Results In Chat** is also on,
+the server can post a chat-started run's outcome back into the chat that asked
+after the run finishes. The started-run note changes from pointing only to run
+history to "I'll post the results here when the run finishes. You can also
+follow it in the workflow's run history in Workflows." For multiple runs it says
+"I'll post each run's results here when it finishes. You can also follow them
+in each workflow's run history in Workflows." See
+[Workflow result delivery to chat](CHAT_WORKFLOW_RESULT_DELIVERY.md).
+
 What this version adds:
 
 - **The `workflow_run` capability.** One plan step per workflow, naming it by a

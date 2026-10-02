@@ -2,6 +2,17 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.218)**
+
+#### New Features
+
+*   **Workflow results posted back to chat**
+    *   When a chat orchestration plan starts one of the user's saved durable personal workflows, the server can now post the run's terminal outcome back into the same private chat after the run finishes, even hours later.
+    *   The behavior is gated by **Use Workflow Results In Chat** (`enable_chat_workflow_results`), checked when the run starts and again when delivery happens, in addition to the existing Run Workflows From Chat gates.
+    *   Delivery is exactly once per durable runtime generation: one deterministic chat message, one unread mark, and one bell notification. If the chat can no longer receive the post, the server posts nothing and sends one workflow notification with a run link instead.
+    *   A new owner-only status route, `GET /api/v2/orchestration/workflow-runs/status`, gives 6b-2 the batched run-card contract. Retry/Edit on delivery messages are refused with fixed 400 codes.
+    *   (Ref: #1546, #1543, `functions_workflow_chat_delivery.py`, `functions_workflow_chat_delivery_worker.py`, `functions_workflow_chat_delivery_status.py`, `functions_orchestration_workflow_runs.py`, `functions_workflow_runtime.py`, `route_backend_orchestration.py`, `route_backend_conversations.py`, [Workflow result delivery to chat](features/CHAT_WORKFLOW_RESULT_DELIVERY.md))
+
 ### **(v0.261.216)**
 
 #### Bug Fixes
