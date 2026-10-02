@@ -115,8 +115,10 @@ def mark_conversation_unread_guarded(
     cache after ``UNREAD_MARKED``. Storage errors other than a missing item or an ETag conflict
     propagate.
     """
-    if not isinstance(message_id, str) or not message_id or not isinstance(planned_at, str) or not planned_at:
-        raise ValueError('An unread mark needs a message id and a planned time.')
+    # An empty user id must never match a conversation that has no owner, so every id is required.
+    required = (conversation_id, user_id, message_id, planned_at)
+    if not all(isinstance(value, str) and value for value in required):
+        raise ValueError('An unread mark needs a conversation id, a user id, a message id and a planned time.')
     attempts = max(1, int(max_retries) + 1)
     conversation_item = None
     for _attempt in range(attempts):
