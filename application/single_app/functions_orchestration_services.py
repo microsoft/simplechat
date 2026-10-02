@@ -20,7 +20,9 @@ from functions_generated_export_registry import (
     get_prepared_slide_deck_schema,
 )
 from functions_orchestration_output_store import OrchestrationOutputStore, OutputError
-from functions_orchestration_registry import CAPABILITY_WORKFLOW_PROPOSE, CAPABILITY_WORKFLOW_RUN
+from functions_orchestration_registry import (
+    CAPABILITY_WORKFLOW_PROPOSE, CAPABILITY_WORKFLOW_RESULTS, CAPABILITY_WORKFLOW_RUN,
+)
 from functions_orchestration_rendering import OrchestrationRenderingService
 from functions_orchestration_result_contracts import (
     InputBinding, ResultContractError, ResultRef, TaskResult, canonical_digest,
@@ -56,6 +58,9 @@ def admitted_result_aliases(record, results):
     for alias, value in values.items():
         InputBinding(existing_result=alias)
         reference = ResultRef.from_dict(value)
+        if reference.producer.capability_id == CAPABILITY_WORKFLOW_RESULTS:
+            # Discovery never stores one; a stored alias naming a saved workflow result fails closed.
+            raise ResultContractError("result_reference_untrusted")
         results.open_result(reference, require_current_sources=True).recheck()
         aliases[alias] = reference
     return aliases
@@ -77,13 +82,27 @@ def discover_result_aliases(runs, results):
             or run.get("checkpoints_deleted")
         ):
             continue
+        steps = (run.get("plan") or {}).get("steps")
+        if any(
+            type(step) is dict and step.get("capability_id") == CAPABILITY_WORKFLOW_RESULTS
+            for step in (steps if type(steps) is list else ())
+        ):
+            # A run that read a stored workflow result offers no result to a later plan, even one
+            # its read left no result for: its answer is masked with that workflow result, and an
+            # alias would carry text computed from it past that masking.
+            continue
         tasks = run.get("task_results") or {}
         if type(tasks) is not dict:
             raise ResultContractError("result_reference_untrusted")
+        parsed = []
         for step_id, value in tasks.items():
             task = TaskResult.from_dict(value)
             if task.producer.step_id != step_id:
                 raise ResultContractError("result_producer_mismatch")
+            parsed.append(task)
+        if any(task.producer.capability_id == CAPABILITY_WORKFLOW_RESULTS for task in parsed):
+            continue
+        for task in parsed:
             if task.producer.capability_id in (CAPABILITY_WORKFLOW_PROPOSE, CAPABILITY_WORKFLOW_RUN):
                 # A workflow proposal is reviewed on its own card, and a started workflow is
                 # followed through its run link; a later plan never reads either.

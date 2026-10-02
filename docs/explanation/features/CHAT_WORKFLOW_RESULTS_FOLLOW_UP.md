@@ -59,7 +59,8 @@ Not in this version:
 - **The `workflow_results` orchestration capability**, which lets an
   orchestrated plan read a run ("What did my digest find last Monday?"). It
   builds on Phase 5's workflow planning context (0.261.212) and on this reader,
-  so it ships in a later pull request.
+  and it shipped in 0.261.217; see
+  [Chat orchestration workflow results](CHAT_ORCHESTRATION_WORKFLOW_RESULTS.md).
 - Phase 6b's post-back delivery, run card, recurring-workflow card and chat-list
   indicator, and Phase 6c's in-plan wait.
 
@@ -680,9 +681,11 @@ the controls are listed in
   again instead. A later answer that only inherited a workflow-result context
   retries as an ordinary turn, and its history is withheld on the same terms.
 - **Output formats**, such as "make this a CSV", aren't supported in Follow up.
-- **Orchestration history omits Follow up answers and later answers that
-  inherited their workflow-result context**, until the `workflow_results`
-  capability ships.
+- **Orchestration history omits Follow up answers, later answers that inherited
+  their workflow-result context, and orchestration answers that read a saved
+  workflow result.** Since 0.261.217, a plan can read a run's result directly
+  with the `workflow_results` capability; see
+  [Chat orchestration workflow results](CHAT_ORCHESTRATION_WORKFLOW_RESULTS.md).
 - **Shared and converted chats.** Once a chat is shared or converted to a
   collaboration, its Follow up answers are hidden for everyone, you included.
   The original chat's stored messages are unchanged. The collaboration's copies
@@ -705,8 +708,9 @@ the controls are listed in
 
 ### Follow-ups
 
-- The `workflow_results` orchestration capability, in a later pull request built
-  on this reader and Phase 5's workflow planning context.
+- The `workflow_results` orchestration capability shipped in 0.261.217, built on
+  this reader and Phase 5's workflow planning context. Its own limits are in
+  [Chat orchestration workflow results](CHAT_ORCHESTRATION_WORKFLOW_RESULTS.md#known-limitations).
 - Structured (version 3) runs, with their node, execution and attempt selectors.
   Until then, hiding Ask in chat on older runs of a converted workflow and Ask
   about this on a structured workflow's alerts needs the workflow's definition

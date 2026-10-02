@@ -422,6 +422,17 @@ export interface OrchestrationPlanWorkflow {
     paused: boolean;
 }
 
+/**
+ * A saved workflow whose stored result the plan reads, from `build_plan_inputs`. Match steps by
+ * `handle`, the request-local name in the step's `workflow` argument; neither the workflow's id
+ * nor anything about its runs reaches the plan.
+ */
+export interface OrchestrationPlanWorkflowResult {
+    handle: string;
+    /** The user's own name for the workflow: plain text, never markup. */
+    name: string;
+}
+
 /** What the plan will act on, for the approval card. */
 export interface OrchestrationPlanInputs {
     /** Original positive selections resolved by the server, never inferred from planned usage. */
@@ -431,6 +442,8 @@ export interface OrchestrationPlanInputs {
     actions?: OrchestrationPlanAction[];
     /** Present only when the plan starts a saved workflow. */
     workflows?: OrchestrationPlanWorkflow[];
+    /** Present only when the plan reads a saved workflow's stored result. */
+    workflow_results?: OrchestrationPlanWorkflowResult[];
     image_reference_documents?: OrchestrationImageReferenceDocument[];
     image_reference_messages?: OrchestrationImageReferenceMessage[];
     web: boolean;

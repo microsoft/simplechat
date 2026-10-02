@@ -42,6 +42,7 @@ from functions_orchestration_registry import (
     CAPABILITY_GENERATE_IMAGE,
     CAPABILITY_RENDER_FILE,
     CAPABILITY_WORKFLOW_PROPOSE,
+    CAPABILITY_WORKFLOW_RESULTS,
     CAPABILITY_WORKFLOW_RUN,
     MAX_GENERATED_IMAGES_PER_PLAN,
     VISUAL_CHART,
@@ -49,6 +50,7 @@ from functions_orchestration_registry import (
     VISUAL_IMAGE_PROPOSAL,
     VISUAL_KINDS,
     WORKFLOW_PROPOSALS_SETTING,
+    WORKFLOW_RESULTS_SETTING,
     WORKFLOW_RUNS_SETTING,
     resolve_admitted_export_catalog,
 )
@@ -122,6 +124,21 @@ WORKFLOW_RUN_UNAVAILABLE_REASONS = {
         'Saved workflows can be started only from your own conversations, not from shared ones.'
     ),
     'workflow_context_unavailable': 'Your saved workflows could not be loaded for this request. Try again later.',
+}
+# Why a saved workflow's stored results cannot be read from this request. Reading a result is not
+# a deliverable either, so these reach the planner as a fact, and only while an administrator has
+# turned using workflow results in chat on.
+WORKFLOW_RESULTS_UNAVAILABLE_REASONS = {
+    'capability_not_enabled_for_orchestration': (
+        'Reading saved workflow results is not enabled for chat orchestration.'
+    ),
+    'workflow_results_disabled': 'Reading saved workflow results in chat is turned off for this deployment.',
+    'workflow_role_required': 'Your account does not have access to saved workflow results in chat.',
+    'workflow_shared_conversation': (
+        'Saved workflow results can be read only in your own conversations, not in shared ones.'
+    ),
+    'workflow_context_unavailable': 'Your saved workflows could not be loaded for this request. Try again later.',
+    'workflow_results_no_workflows': 'You have no saved workflows whose results could be read.',
 }
 _KIND_LABELS = {
     KIND_ANSWER: 'answer', KIND_FILE: 'file', KIND_IMAGE: 'image',
@@ -209,6 +226,17 @@ def _workflow_run_reason(unavailable):
         return reason
     # A settings gate, or a condition this module has no text for, reads as turned off.
     return 'workflow_runs_disabled'
+
+
+def _workflow_results_reason(unavailable):
+    """The closed reason this caller's plan cannot read a saved workflow's stored results."""
+    reason = unavailable.get(CAPABILITY_WORKFLOW_RESULTS)
+    if reason == 'not_enabled_for_orchestration':
+        return 'capability_not_enabled_for_orchestration'
+    if isinstance(reason, str) and reason in WORKFLOW_RESULTS_UNAVAILABLE_REASONS:
+        return reason
+    # A settings gate, or a condition this module has no text for, reads as turned off.
+    return 'workflow_results_disabled'
 
 
 def _image_options(capabilities):
@@ -378,6 +406,27 @@ def build_deliverable_availability(settings, *, capabilities, unavailable=None, 
                 'Starting saved workflows is unavailable for this request. '
                 f'{WORKFLOW_RUN_UNAVAILABLE_REASONS[_workflow_run_reason(unavailable)]} '
                 'When the user asks to run a workflow, say why in the answer.'
+            )
+    # Reading a saved workflow's stored results is described only while an administrator has turned
+    # it on; otherwise the planner is told exactly what it was before.
+    if settings.get(WORKFLOW_RESULTS_SETTING) is True:
+        if CAPABILITY_WORKFLOW_RESULTS in available:
+            facts.append(
+                'workflow_results reads what one of the user\'s saved workflows produced in a run that '
+                'already finished. The server checks access again when the step runs and adds to the reply '
+                'which run was read. What it returns is the user\'s own earlier output, not evidence: use it '
+                'as notes, never cite it as a source, and never say that a workflow ran again.'
+            )
+            recipes.append({'for': 'What one of the user\'s saved workflows found in a finished run', 'steps': (
+                'one workflow_results step per run to read, naming its catalog handle and a selector, with '
+                'no depends_on and no inputs, bound as an input of the compose step that answers and is '
+                'the final_response. To compare runs, read each one and compose once.'
+            )})
+        else:
+            facts.append(
+                'Reading saved workflow results is unavailable for this request. '
+                f'{WORKFLOW_RESULTS_UNAVAILABLE_REASONS[_workflow_results_reason(unavailable)]} '
+                'When the user asks what a saved workflow found, say why in the answer.'
             )
     truth.update({'unavailable_reasons': unavailable_reasons, 'facts': facts, 'recipes': recipes})
     return truth

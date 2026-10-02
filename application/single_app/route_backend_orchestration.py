@@ -137,8 +137,8 @@ from functions_orchestration_workflow_context import (
     workflow_planning_configured,
     workflow_planning_documents,
     workflow_planning_option,
-    workflow_proposals_configured,
     workflow_run_options,
+    workflow_time_zone_configured,
 )
 from functions_orchestration_plan_editing import (
     build_plan_edit_outcome,
@@ -1315,7 +1315,7 @@ def _validate_retry_context(record, user_id, settings, *, preparing=False):
             agent_execution_identity=principal,
             **workflow_run_options(
                 workflow_planning,
-                record.get('time_zone') if workflow_proposals_configured(settings) else None,
+                record.get('time_zone') if workflow_time_zone_configured(settings) else None,
             ),
         )
         context.validate_checkpoint_artifacts = lambda artifacts: _validate_checkpoint_artifacts(artifacts, conversation_id, user_id)
@@ -1659,9 +1659,10 @@ def register_route_backend_orchestration(bp):
             'replan_hint': replan_hint,
             'planner_contract_version': DEPENDENCY_PLAN_CONTRACT_VERSION,
         }
-        # Workflow proposals schedule in the user's browser time zone, validated here and kept
-        # with the turn. Nothing about the turn changes while proposals are off.
-        workflow_configured = workflow_proposals_configured(settings)
+        # Workflow proposals schedule in the user's browser time zone, and a workflow results step
+        # names the local day a run finished on, so it is validated here and kept with the turn.
+        # Nothing about the turn changes while both are off.
+        workflow_configured = workflow_time_zone_configured(settings)
         request_time_zone = validated_request_time_zone(data.get('time_zone')) if workflow_configured else None
         if request_time_zone:
             turn_context['time_zone'] = request_time_zone

@@ -48,8 +48,10 @@ from functions_orchestration_model_routing import (
 )
 from functions_orchestration_registry import (
     CAPABILITY_WORKFLOW_PROPOSE,
+    CAPABILITY_WORKFLOW_RESULTS,
     CAPABILITY_WORKFLOW_RUN,
     DEPENDENCY_PLAN_CONTRACT_VERSION,
+    WORKFLOW_RESULTS_MAX_PER_PLAN,
     WORKFLOW_RUNS_MAX_PER_PLAN,
     build_planner_capability_projection,
     required_capability_ids,
@@ -58,6 +60,7 @@ from functions_orchestration_registry import (
 from functions_orchestration_schema import (
     WORKFLOW_BLUEPRINT_INVALID_CODE,
     WORKFLOW_PROPOSAL_NOT_CONSUMABLE_CODE,
+    WORKFLOW_RESULTS_INVALID_CODE,
     WORKFLOW_RUN_INVALID_CODE,
     PlanValidationError,
     normalize_elicitation,
@@ -82,11 +85,15 @@ WORKFLOW_REPAIR_CODES = frozenset({WORKFLOW_BLUEPRINT_INVALID_CODE, WORKFLOW_PRO
 # A workflow_run step gets the same correction round; each one that still fails is dropped with
 # its reason, and the rest of the plan, including the run steps that pass, still runs.
 WORKFLOW_RUN_REPAIR_CODES = frozenset({WORKFLOW_RUN_INVALID_CODE})
-# A workflow proposal or run step whose check could not run is dropped at once: no correction can fix it.
+# A workflow_results step is handled the same way: each one that still fails after the correction
+# round is dropped with its reason, and the rest of the plan still answers.
+WORKFLOW_RESULTS_REPAIR_CODES = frozenset({WORKFLOW_RESULTS_INVALID_CODE})
+# A workflow proposal, run or results step whose check could not run is dropped at once: no
+# correction can fix it.
 WORKFLOW_CONTEXT_UNAVAILABLE_RULE = 'workflow_context_unavailable'
 REPAIRABLE_PLAN_CODES = frozenset({
     'deliverables_invalid', 'source_kind_invalid', 'source_binding_required', *WORKFLOW_REPAIR_CODES,
-    *WORKFLOW_RUN_REPAIR_CODES,
+    *WORKFLOW_RUN_REPAIR_CODES, *WORKFLOW_RESULTS_REPAIR_CODES,
 })
 DELIVERABLES_FAILURE_MESSAGE = (
     'The plan could not account for everything you asked to receive. Please retry, or '
@@ -106,6 +113,10 @@ WORKFLOW_FAILURE_MESSAGE = (
 WORKFLOW_RUN_FAILURE_MESSAGE = (
     'The plan could not start the workflow you asked for. Please retry, naming the saved workflow '
     'to start, or start it from Workflows.'
+)
+WORKFLOW_RESULTS_FAILURE_MESSAGE = (
+    'The plan could not read the saved workflow result you asked about. Please retry, naming the '
+    'saved workflow, or open its run in Workflows.'
 )
 RESOLUTION_MAX_TOKENS = 1200
 RESOLUTION_MAX_ATTEMPTS = 2
@@ -306,6 +317,27 @@ select that answer as final_response. The plan always waits for the user to appr
 server adds to the reply whether each workflow started. Never say that a workflow started, ran or
 finished, and never promise its results in this conversation: they appear on the workflow's run
 page, in its own conversation and in its alerts.
+"""
+
+# Appended to the system prompt only when the request offers the workflow_results capability, so a
+# request that cannot read a stored workflow result sees exactly the prompt it always did.
+WORKFLOW_RESULTS_INSTRUCTIONS = f"""Reading saved workflow results. workflow_planning.catalog.workflows lists the user's saved workflows
+whose finished runs this request may read with workflow_results. Plan a workflow_results step only
+when the user asks what one of their saved workflows found, said or produced in a run that already
+finished. Its arguments are {{"workflow":<handle>,"selector":"latest"}} for the most recent finished
+run, or {{"workflow":<handle>,"selector":"completed_on","completed_on":"YYYY-MM-DD"}} for the run that
+finished on that day in the user's own time zone; work the day out from
+workflow_planning.request_local_time, so "yesterday" is the day before that date. Add
+"status":"completed", "failed" or "cancelled" only when the user asks about runs with that outcome.
+Give it no "depends_on" and no "inputs". To compare runs, plan one step per run, at most
+{WORKFLOW_RESULTS_MAX_PER_PLAN} per plan, never the same workflow, selector, day and status twice, and
+never a workflow this plan also starts with workflow_run.
+
+Only a compose step may take a workflow_results step as an input or name it in depends_on: no other
+step, file, input binding or final_response may use it. Bind each one to the compose step that
+answers and select that compose step as final_response. A stored result is the user's own earlier
+output, not evidence: treat it as notes and never cite it as a source. When the workflow the user
+names is not in the catalog, plan no step for it: the answer says so. Never write a record id.
 """
 
 PLANNER_SYSTEM_PROMPT = """Plan bounded work; do not execute or answer it. Return one JSON object.
@@ -566,16 +598,20 @@ def build_planner_messages(
 
     workflow_instructions = ''
     if isinstance(payload.get('workflow_planning'), dict):
-        # Each workflow capability adds its own instructions. A context without the run capability
-        # keeps the proposal instructions it always had.
+        # Each workflow capability adds its own instructions. A context without the run or results
+        # capability keeps the proposal instructions it always had.
         offered = {
             capability.get('id') for capability in payload.get('capabilities') or ()
             if isinstance(capability, dict)
         }
-        if CAPABILITY_WORKFLOW_PROPOSE in offered or CAPABILITY_WORKFLOW_RUN not in offered:
+        if CAPABILITY_WORKFLOW_PROPOSE in offered or not offered & {
+            CAPABILITY_WORKFLOW_RUN, CAPABILITY_WORKFLOW_RESULTS,
+        }:
             workflow_instructions += '\n\n' + WORKFLOW_PROPOSAL_INSTRUCTIONS
         if CAPABILITY_WORKFLOW_RUN in offered:
             workflow_instructions += '\n\n' + WORKFLOW_RUN_INSTRUCTIONS
+        if CAPABILITY_WORKFLOW_RESULTS in offered:
+            workflow_instructions += '\n\n' + WORKFLOW_RESULTS_INSTRUCTIONS
 
     if replan_hint:
         user_content += (
@@ -960,6 +996,19 @@ def plan_repair_message(error):
             'why in the answer instead.\n'
             'Return the complete corrected plan as one JSON object for the same request.'
         )
+    if getattr(error, 'code', None) in WORKFLOW_RESULTS_REPAIR_CODES:
+        return (
+            f'The server rejected a workflow_results step in that plan: {error}\n'
+            'Fix every workflow_results step, not just the first. Each names exactly one workflow by a '
+            'workflow_planning.catalog.workflows handle in arguments.workflow, with arguments.selector '
+            '"latest", or "completed_on" plus arguments.completed_on as a YYYY-MM-DD day in the user\'s '
+            'time zone that is not in the future; arguments.status, when given, is "completed", "failed" '
+            'or "cancelled". It takes no depends_on and no inputs, reads at most '
+            f'{WORKFLOW_RESULTS_MAX_PER_PLAN} results per plan, never repeats a read, never reads a '
+            'workflow this plan starts, and only a compose step may name it or its output. Plan no step '
+            'for a workflow that is not in the catalog, and say why in the answer instead.\n'
+            'Return the complete corrected plan as one JSON object for the same request.'
+        )
     return (
         f'The server rejected that plan: {error}\n'
         'The server reports the first validation failure. Recheck every deliverable\'s '
@@ -975,18 +1024,23 @@ def plan_repair_message(error):
 def _workflow_planning_for(request_context, available_ids=()):
     """The turn's workflow planning context and what the planner may see of it.
 
-    Called only when workflow_propose or workflow_run is available, which requires a ready
-    context. With proposals, the planner sees the proposal projection, which holds the workflows
-    catalog as well; with runs alone, only the workflows catalog. A context that still cannot be
+    Called only when workflow_propose, workflow_run or workflow_results is available, which requires
+    a ready context. With proposals, the planner sees the proposal projection, which holds the
+    workflows catalog and the user's local time as well; with results, the same workflows catalog
+    and the local time; with runs alone, only the workflows catalog. A context that still cannot be
     projected comes back as an empty dict, which fails every workflow check closed instead of
-    letting a proposal or run through without its catalog.
+    letting a proposal, run or results step through without its catalog.
     """
     # The planning context module reads agents and sources; it is imported only when needed.
-    from functions_orchestration_workflow_context import workflow_planner_projection, workflow_run_projection
+    from functions_orchestration_workflow_context import (
+        workflow_planner_projection, workflow_results_projection, workflow_run_projection,
+    )
 
     planning = request_context.get('workflow_planning') if isinstance(request_context, dict) else None
     if CAPABILITY_WORKFLOW_PROPOSE in available_ids:
         projection = workflow_planner_projection(planning)
+    elif CAPABILITY_WORKFLOW_RESULTS in available_ids:
+        projection = workflow_results_projection(planning)
     else:
         projection = workflow_run_projection(planning)
     return (planning if projection is not None else {}), projection
@@ -1072,7 +1126,9 @@ def plan_request(
     workflow_planning = None
     # Only the projection below reaches the planner; the stored context holds server ids.
     context.pop('workflow_planning', None)
-    if CAPABILITY_WORKFLOW_PROPOSE in available_ids or CAPABILITY_WORKFLOW_RUN in available_ids:
+    if any(value in available_ids for value in (
+        CAPABILITY_WORKFLOW_PROPOSE, CAPABILITY_WORKFLOW_RUN, CAPABILITY_WORKFLOW_RESULTS,
+    )):
         workflow_planning, projection = _workflow_planning_for(request_context, available_ids)
         if projection is not None:
             context['workflow_planning'] = projection
@@ -1186,8 +1242,9 @@ def plan_request(
         parsed = extract_planner_json(reply)
         if not parsed:
             return _failure('unparseable_plan')
-        # Only the server reports why a workflow was not started; a model cannot write that report.
+        # Only the server reports why a workflow was not started or read; a model cannot write that report.
         parsed.pop('workflow_run_notes', None)
+        parsed.pop('workflow_results_notes', None)
 
         kind = str(parsed.get('kind') or ('plan' if isinstance(parsed.get('steps'), list) else '')).strip().lower()
         if kind not in ('plan', 'elicitation') and not (edit_context is not None and kind == 'message'):
@@ -1287,7 +1344,10 @@ def plan_request(
         except PlanValidationError as exc:
             workflow_error = workflow_planning is not None and exc.code in WORKFLOW_REPAIR_CODES
             run_error = workflow_planning is not None and exc.code in WORKFLOW_RUN_REPAIR_CODES
-            context_failed = (workflow_error or run_error) and exc.rule == WORKFLOW_CONTEXT_UNAVAILABLE_RULE
+            results_error = workflow_planning is not None and exc.code in WORKFLOW_RESULTS_REPAIR_CODES
+            context_failed = (
+                (workflow_error or run_error or results_error) and exc.rule == WORKFLOW_CONTEXT_UNAVAILABLE_RULE
+            )
             repairable = exc.code in REPAIRABLE_PLAN_CODES and not context_failed
             if repairable and attempt <= PLAN_REPAIR_ATTEMPTS:
                 # One correction round: the planner sees exactly why the server refused the
@@ -1306,7 +1366,7 @@ def plan_request(
                     {'role': 'user', 'content': plan_repair_message(exc)},
                 ]
                 continue
-            if not ((workflow_error or run_error) and edit_context is None):
+            if not ((workflow_error or run_error or results_error) and edit_context is None):
                 return _failure(
                     'invalid_plan_or_missing_requirement', exc, stage='plan_normalization',
                     message={
@@ -1315,15 +1375,17 @@ def plan_request(
                         'source_binding_required': SOURCE_BINDING_FAILURE_MESSAGE,
                         **{code: WORKFLOW_FAILURE_MESSAGE for code in WORKFLOW_REPAIR_CODES},
                         **{code: WORKFLOW_RUN_FAILURE_MESSAGE for code in WORKFLOW_RUN_REPAIR_CODES},
+                        **{code: WORKFLOW_RESULTS_FAILURE_MESSAGE for code in WORKFLOW_RESULTS_REPAIR_CODES},
                     }.get(exc.code),
                     attempt=attempt,
                 )
-            # A proposal or run step that still breaks the rules, or could not be checked, is
-            # dropped: the rest of the plan runs, a dropped proposal is reported as not delivered,
-            # and the reply says why each dropped workflow was not started. Each kind is dropped at
-            # most once. A plan edit never gets here; it fails and keeps the previous plan.
+            # A proposal, run or results step that still breaks the rules, or could not be checked,
+            # is dropped: the rest of the plan runs, a dropped proposal is reported as not
+            # delivered, and the reply says why each dropped workflow was not started or read. Each
+            # kind is dropped at most once. A plan edit never gets here; it fails and keeps the
+            # previous plan.
             degraded, degraded_truth, degraded_ids = pristine, deliverable_truth, list(available_ids)
-            error, proposal_error, run_drop = exc, None, None
+            error, proposal_error, run_drop, results_drop = exc, None, None, None
             unavailable_reason = None
             while True:
                 context_unavailable = error.rule == WORKFLOW_CONTEXT_UNAVAILABLE_RULE
@@ -1351,12 +1413,28 @@ def plan_request(
                     }
                     if not runs_remaining:
                         degraded_ids = [value for value in degraded_ids if value != CAPABILITY_WORKFLOW_RUN]
+                elif error.code in WORKFLOW_RESULTS_REPAIR_CODES and results_drop is None:
+                    from functions_orchestration_workflow_results import (
+                        drop_workflow_results, workflow_results_failure_message, workflow_results_repair_text,
+                    )
+
+                    degraded, results_notes, results_remaining = drop_workflow_results(
+                        degraded, workflow_planning=workflow_planning, drop_all=context_unavailable,
+                    )
+                    results_drop = {
+                        'error': error, 'notes': results_notes, 'remaining': results_remaining,
+                        'failure_message': workflow_results_failure_message(results_notes),
+                        'repairs': [workflow_results_repair_text(note) for note in results_notes],
+                    }
+                    if not results_remaining:
+                        degraded_ids = [value for value in degraded_ids if value != CAPABILITY_WORKFLOW_RESULTS]
                 else:
                     return _failure(
                         'invalid_plan_or_missing_requirement', error, stage='plan_normalization',
                         message=' '.join(
                             ([WORKFLOW_FAILURE_MESSAGE] if proposal_error is not None else [])
                             + ([run_drop['failure_message']] if run_drop is not None else [])
+                            + ([results_drop['failure_message']] if results_drop is not None else [])
                         ),
                         attempt=attempt,
                     )
@@ -1364,8 +1442,10 @@ def plan_request(
                     plan = _normalize(
                         degraded, degraded_ids, degraded_truth, image_selected,
                         # A workflow step still in the plan is checked against the request's context again.
-                        **({'workflow_planning': workflow_planning} if (
-                            CAPABILITY_WORKFLOW_PROPOSE in degraded_ids or CAPABILITY_WORKFLOW_RUN in degraded_ids
+                        **({'workflow_planning': workflow_planning} if any(
+                            value in degraded_ids for value in (
+                                CAPABILITY_WORKFLOW_PROPOSE, CAPABILITY_WORKFLOW_RUN, CAPABILITY_WORKFLOW_RESULTS,
+                            )
                         ) else {}),
                     )
                     break
@@ -1394,6 +1474,22 @@ def plan_request(
                 plan['workflow_run_notes'] = run_drop['notes']
                 repairs = plan.setdefault('validation', {}).setdefault('repairs', [])
                 for text in run_drop['repairs']:
+                    if text not in repairs:
+                        repairs.append(text)
+            if results_drop is not None:
+                log_event(
+                    '[ORCHESTRATION_PLANNER] Planning without workflow results reads that could not be prepared.',
+                    level=logging.WARNING, extra={
+                        **correlation, 'reason': 'workflow_results_dropped', 'attempt': attempt,
+                        'revision': revision, 'stage': 'plan_normalization',
+                        'validation_code': results_drop['error'].code, 'validation_rule': results_drop['error'].rule,
+                        'note_count': len(results_drop['notes']), 'remaining_count': results_drop['remaining'],
+                    },
+                )
+                # The reply reports these after the answer; the plan card lists them for review.
+                plan['workflow_results_notes'] = results_drop['notes']
+                repairs = plan.setdefault('validation', {}).setdefault('repairs', [])
+                for text in results_drop['repairs']:
                     if text not in repairs:
                         repairs.append(text)
         break
