@@ -12,7 +12,7 @@
 // downloads nothing extra. Nothing here reaches the network beyond the app's own origin, so
 // the `default-src 'self'` Content-Security-Policy is unchanged.
 
-import type { DomPurifyStatic } from './vendor';
+import type { DomPurifyStatic, OpenLayersStatic } from './vendor';
 
 /**
  * Version-pinned locations of the vendored bundles.
@@ -27,6 +27,8 @@ export const VENDOR_PATHS = {
     mermaid: 'vendor/mermaid-11.17.2/mermaid.min.js',
     chartJs: 'vendor/chartjs-4.5.1/chart.umd.min.js',
     domPurify: 'vendor/dompurify-3.4.14/purify.min.js',
+    openLayersScript: 'vendor/openlayers-10.6.1/ol.js',
+    openLayersStylesheet: 'vendor/openlayers-10.6.1/ol.css',
 } as const;
 
 /**
@@ -107,4 +109,21 @@ export async function loadDomPurify(): Promise<DomPurifyStatic> {
         throw new Error('DOMPurify did not register a global after loading');
     }
     return purify;
+}
+
+/**
+ * OpenLayers, used to draw the interactive maps an Azure Maps action attaches to a reply.
+ *
+ * The same 10.6.1 build the classic chat loads, so a map looks and behaves the same in both.
+ */
+export async function loadOpenLayers(): Promise<OpenLayersStatic> {
+    await Promise.all([
+        loadVendorStylesheet(VENDOR_PATHS.openLayersStylesheet),
+        loadVendorScript(VENDOR_PATHS.openLayersScript),
+    ]);
+    const openLayers = window.ol;
+    if (!openLayers) {
+        throw new Error('OpenLayers did not register a global after loading');
+    }
+    return openLayers;
 }

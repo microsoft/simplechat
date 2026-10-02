@@ -62,6 +62,7 @@ from functions_documents import (
     serialize_chat_upload_workspace_documents_for_conversation,
 )
 from functions_group import get_user_groups
+from functions_azure_maps import refresh_azure_maps_message_citations
 from functions_message_artifacts import (
     build_message_artifact_payload_map,
     filter_assistant_artifact_items,
@@ -1145,6 +1146,7 @@ def register_route_backend_conversations(bp):
 
             all_items = sanitize_saved_analysis_messages(all_items, user_id)
             all_items = hydrate_agent_citations_from_artifacts(all_items, artifact_payload_map)
+            all_items = refresh_azure_maps_message_citations(all_items)
             try:
                 all_items = public_history_messages(all_items, user_id)
             except (

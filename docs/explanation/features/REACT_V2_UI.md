@@ -33,7 +33,7 @@ loaded from a CDN, so the `default-src 'self'` Content-Security-Policy is unchan
 
 ### Vendored browser libraries
 
-The libraries behind maths, diagrams and charts are **not** npm dependencies. They are
+The libraries behind maths, diagrams, charts and maps are **not** npm dependencies. They are
 downloaded once, committed to this repository under
 `application/v2_ui/public/vendor/<library>-<version>/`, and loaded at runtime from that
 local path.
@@ -44,6 +44,7 @@ local path.
 | Mermaid 11.17.2 | `mermaid.min.js` | Diagram rendering |
 | Chart.js 4.5.1 | `chart.umd.min.js` | Inline chat charts and the settings stats charts |
 | DOMPurify 3.4.14 | `purify.min.js` | Sanitizer boundary in front of both HTML sinks |
+| OpenLayers 10.6.1 | `ol.js`, `ol.css` | Interactive maps from the Azure Maps action, the same build the classic chat loads |
 
 Resolving these from a registry at build time would mean the code the browser executes is
 not the code in this repository. Vendoring pins it: a change to any of these libraries is a
@@ -99,7 +100,9 @@ choice driven by how SimpleChat authenticates:
 - The application enforces a **custom same-origin CSRF check** on state-changing requests.
   Same-origin requests pass it unchanged.
 - The Content-Security-Policy is `default-src 'self'`. Same-origin assets need no CSP
-  relaxation.
+  relaxation. Audio and video from an action's own host play inline only when the host is
+  listed in `CSP_MEDIA_SRC_ORIGINS`, which adds validated `https://` origins to `media-src`
+  (see [V2 inline media and agent-posted messages](V2_INLINE_MEDIA_AND_AGENT_MESSAGES.md)).
 - No CORS layer is required.
 
 Hosting the SPA on a separate origin is supported but optional — see
@@ -1158,6 +1161,8 @@ this entirely and is the recommended layout.
 | `functional_tests/test_v2_conversation_details_and_gating.py` | Tags split by category, source documents paged with the citation-tracking note, summary generated on demand, URL access and deep research gated on what is typed, image generation exclusivity, chat width persisted, unsafe tag values not linked |
 | `functional_tests/test_v2_model_identity_and_scope.py` | The whole model identity is sent and the picker keys on `selection_key`, the document scope is computed rather than hardcoded, and workspace ids travel with it |
 | `functional_tests/test_v2_rich_rendering.py` | Browser libraries vendored into the repository with their licences and pinned versions, no equivalent npm dependency, KaTeX fonts complete and locally resolvable, a sanitizer boundary at every HTML sink and nowhere else, KaTeX `trust: false`, mermaid strict with no autostart or icon packs, single `$` not treated as maths, fence wiring and chart language parity with the backend, charts copied as data, CSP unchanged |
+| `functional_tests/test_v2_inline_maps.py` | OpenLayers vendored byte-identical to the published 10.6.1 package, map text written only as text with OpenLayers' HTML attribution control off, tiles loaded only through the tile proxy, map cards wired under assistant replies, and expired tile tokens reissued by both message endpoints |
+| `functional_tests/test_v2_inline_maps_logic.mjs` | Executes the map reading: object and JSON-text results, refused tile templates, coordinate and colour checks, path and area rules, the starting view, de-duplication, compact citations fetched by artifact, and marker photos (https only) and fields |
 | `functional_tests/test_v2_generated_image_lightbox.py` | The image thumbnail opens a dialog rather than a new tab, the dialog is dismissable and manages focus, every source kind is handled by download and open-in-new-tab, and `window.open` is not given `noopener` |
 | `functional_tests/test_v2_chat_notices.py` | Both notices resolved server-side from the shared helpers, the web search notice's three-key condition including consent, all four AI notice frequencies, dismissal only after a successful write, session keys shared with the classic interface, no hardcoded disclaimer, notice text escaped |
 | `functional_tests/test_v2_conversation_deep_link.py` | Both parameter spellings read and only the canonical one written, the incoming link captured before any effect can strip it, the URL replaced rather than pushed, a dead link reported instead of stranded, a list row backfilled behind the stale-response guard, and the classic handover carrying the conversation |

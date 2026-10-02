@@ -167,10 +167,24 @@ def test_add_user_to_group_answers_the_summary_and_keeps_the_member(env):
         "member": MEMBER, "member_role": "user", "group": {"id": "group-1", "name": "Research", "status": "active"},
     }
     assert env.calls == [("add_group_member_for_current_user", {
-        "group_id": "", "user_identifier": "nia.newcomer@example.test", "email": "", "display_name": "",
+        "group_id": "", "user_id": "", "user_identifier": "nia.newcomer@example.test", "email": "", "display_name": "",
         "role": "user", "default_group_id": "group-1",
     })]
     assert_private_values_absent(result)
+
+
+def test_add_user_to_group_passes_a_known_object_id_through(env):
+    # Since 0.261.218 a scheduled workflow run, which has no token for a directory lookup,
+    # adds a member it already knows by object ID, as the REST members route does.
+    env.answers["add_group_member_for_current_user"] = {
+        "success": True, "message": "Member added", "group_id": "group-1", "group_name": "Research",
+        "member": MEMBER, "member_role": "user", "group": STORED_GROUP,
+    }
+    env.plugin.add_user_to_group(user_id="newcomer-1", email="nia.newcomer@example.test", display_name="Nia Newcomer")
+    assert env.calls == [("add_group_member_for_current_user", {
+        "group_id": "", "user_id": "newcomer-1", "user_identifier": "", "email": "nia.newcomer@example.test",
+        "display_name": "Nia Newcomer", "role": "user", "default_group_id": "group-1",
+    })]
 
 
 @pytest.mark.parametrize("old_status,message", [

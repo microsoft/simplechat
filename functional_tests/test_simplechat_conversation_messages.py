@@ -2,12 +2,13 @@
 #!/usr/bin/env python3
 """
 Functional test for SimpleChat conversation message support.
-Version: 0.241.028
+Version: 0.261.222
 Implemented in: 0.241.028
 
 This test ensures SimpleChat can add user-authored messages to personal and
 collaborative conversations and can seed newly created conversations when the
-message capability is enabled.
+message capability is enabled. Since 0.261.222 those messages are marked as
+agent-posted markdown on both paths.
 """
 
 import importlib
@@ -111,6 +112,9 @@ def test_add_message_to_personal_conversation_for_current_user():
     assert result['message']['role'] == 'user'
     assert result['message']['content'] == 'Kick off the personal workflow with this starter note.'
     assert result['message']['metadata']['thread_info']['previous_thread_id'] == 'thread-prev-1'
+    assert result['message']['metadata']['posted_via'] == 'agent_action'
+    assert result['message']['metadata']['content_format'] == 'markdown'
+    assert fake_messages_container.upserts[0]['metadata']['posted_via'] == 'agent_action'
     assert result['conversation']['title'].startswith('Kick off the personal workflow')
     assert len(fake_messages_container.upserts) == 1
     assert len(fake_conversations_container.upserts) == 1
@@ -152,7 +156,7 @@ def test_add_message_to_collaboration_conversation_for_current_user():
                 'group_role': 'User',
                 'conversation_id': conversation_doc.get('id'),
             },
-            'persist_collaboration_message': lambda conversation_doc, sender_user, content, reply_to_message_id=None: (
+            'persist_collaboration_message': lambda conversation_doc, sender_user, content, reply_to_message_id=None, extra_metadata=None: (
                 {
                     'id': 'message-collab-1',
                     'conversation_id': conversation_doc.get('id'),
@@ -160,6 +164,7 @@ def test_add_message_to_collaboration_conversation_for_current_user():
                     'content': content,
                     'metadata': {
                         'sender': sender_user,
+                        **(extra_metadata or {}),
                     },
                 },
                 deepcopy(updated_collaboration_doc),
@@ -176,6 +181,8 @@ def test_add_message_to_collaboration_conversation_for_current_user():
 
     assert result['conversation_kind'] == 'collaboration'
     assert result['message']['content'] == 'Hello group'
+    assert result['message']['metadata']['posted_via'] == 'agent_action'
+    assert result['message']['metadata']['content_format'] == 'markdown'
     assert result['conversation']['message_count'] == 1
     assert len(notifications) == 1
 
