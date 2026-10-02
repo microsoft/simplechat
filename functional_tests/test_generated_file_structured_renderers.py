@@ -211,7 +211,8 @@ def opened_streams(monkeypatch):
     opened = []
 
     def tracked(*args, **kwargs):
-        assert kwargs.get('dir') == '.'
+        # Never the working directory: the container's non-root user cannot write /app.
+        assert kwargs.get('dir') == renderers.scratch_file_dir()
         stream = original(*args, **kwargs)
         opened.append(stream)
         return stream

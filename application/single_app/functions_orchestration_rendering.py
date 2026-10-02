@@ -362,9 +362,33 @@ class _RenderAttempt:
         self._last_full = None
         self._last_recheck = None
         self._due_at = None
+        self.error_type = None
+        self.error_cause_type = None
+        self.error_errno = None
 
     def bind(self, claim):
         self.claim = claim
+
+    def record_error(self, error):
+        """Keep the failure's class names and OS error number, never its message.
+
+        The output code alone can hide the cause: a local file-system PermissionError and
+        a revoked source both classify as ``output_access_denied``.
+        """
+        if self.error_type is not None or not isinstance(error, BaseException):
+            return
+        self.error_type = type(error).__name__
+        chain, current = [], error
+        while current is not None and len(chain) < 8 and all(current is not seen for seen in chain):
+            chain.append(current)
+            current = current.__cause__
+        if len(chain) > 1:
+            self.error_cause_type = type(chain[-1]).__name__
+        for item in chain:
+            number = getattr(item, "errno", None) if isinstance(item, OSError) else None
+            if type(number) is int:
+                self.error_errno = number
+                break
 
     def release_stop(self):
         """Staged bytes are always committed; a later budget overrun is the owner's to report."""
@@ -447,6 +471,12 @@ class _RenderAttempt:
             facts.update({
                 "status": "raised",
                 "output_code": output_failure(failure)[0] if failure is not None else None,
+            })
+        if self.error_type is not None:
+            facts.update({
+                "error_type": self.error_type,
+                "error_cause_type": self.error_cause_type,
+                "error_errno": self.error_errno,
             })
         return facts
 
@@ -931,6 +961,7 @@ class OrchestrationRenderingService:
             return outcome
         except Exception as exc:
             failure = exc
+            attempt.record_error(exc)
             raise
         finally:
             if observe is not None and attempt.claim is not None:
@@ -1020,6 +1051,7 @@ class OrchestrationRenderingService:
         except Exception as exc:
             if observing:
                 raise
+            attempt.record_error(exc)
             return self._record_failure(
                 output_id, exc, claim, skip_commit_reconciliation=skip_commit_reconciliation,
             )

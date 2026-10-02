@@ -376,7 +376,7 @@ file names, file content, prompts, or model responses.
 
 | Event message | Severity | Properties |
 | --- | --- | --- |
-| `[ORCHESTRATION_EXECUTOR] A file render attempt finished.` | Information when the file completed; otherwise Warning | `sc_status`, `sc_output_code`, `sc_output_format`, `sc_size_bytes`, and the timing and check counts described below. |
+| `[ORCHESTRATION_EXECUTOR] A file render attempt finished.` | Information when the file completed; otherwise Warning | `sc_status`, `sc_output_code`, `sc_output_format`, `sc_size_bytes`, the timing and check counts described below, and `sc_error_type`, `sc_error_cause_type`, and `sc_error_errno` when the attempt failed with an exception. |
 | `[ORCHESTRATION_EXECUTOR] A step finished after its time budget; its finished result was kept.` | Warning | `sc_failure_code` (`step_timeout` or `run_timeout`), `sc_elapsed_ms`, `sc_step_timeout_seconds`. |
 | `[ORCHESTRATION_EXECUTOR] Prepared content did not match its declared outputs; asking once more.` | Information | `sc_reason` (`compose_output_retry`), `sc_error_type`, and `sc_execution_code` when the mismatch has one. |
 | `[ORCHESTRATION_EXECUTOR] Content preparation could not complete.` | Warning | `sc_failure_code`, `sc_execution_code`, `sc_error_type`, and `sc_authority_reason` when a retained source was refused. |
@@ -408,6 +408,14 @@ A render attempt records how its time was spent:
   exception. `sc_output_code` carries the output failure category when there is
   one; a render stopped by the step time limit reports `failed` with
   `output_step_time_limit`.
+- Since **0.261.218**, an attempt that failed with an exception also records
+  `sc_error_type`, the exception's class name; `sc_error_cause_type`, the class at
+  the end of its explicit cause chain when the error was wrapped; and
+  `sc_error_errno`, the first operating-system error number in that chain. Messages,
+  paths, and identifiers are never recorded. These fields separate causes that share
+  an output code: a source-access refusal and a local file-system `PermissionError`
+  both report `output_access_denied`, but only the file-system error carries
+  `sc_error_errno` (`13` for permission denied).
 
 To see where a run's file rendering spent its time:
 
@@ -426,7 +434,9 @@ AppTraces
     verifyMs = toint(Properties.sc_verify_ms),
     fullChecks = toint(Properties.sc_full_checks),
     lightChecks = toint(Properties.sc_light_checks),
-    stopObserved = tobool(Properties.sc_stop_observed)
+    stopObserved = tobool(Properties.sc_stop_observed),
+    errorType = tostring(Properties.sc_error_type),
+    errorErrno = toint(Properties.sc_error_errno)
 | order by TimeGenerated asc
 ```
 

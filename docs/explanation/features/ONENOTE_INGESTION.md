@@ -145,8 +145,15 @@ requires correcting the native installation, not re-uploading the same file.
 ## Build and file layout
 
 The Dockerfile has an `onenote-builder` stage with a pinned Rust 1.85.1 image.
-The application inherits the `onenote-runtime` stage, containing the native
-executable on the same Azure Linux distroless Python 3.12 base.
+The application inherits the `onenote-runtime` stage, which carries the
+extractor's third-party notices and corresponding source on the same Azure Linux
+distroless Python 3.12 base. The final stage copies the native executable to
+`/app/native/onenote_extractor/bin/` after `/app` already exists with
+runtime-user ownership. Nothing in `onenote-runtime` may create `/app`: a
+root-owned `/app` stops the non-root application from writing to its working
+directory (see `docs/explanation/fixes/ORCHESTRATION_FILE_RENDER_PERMISSION_FIX.md`).
+The executable stays root-owned, so the application user can run it but not
+replace it.
 The React branch retains its independent `v2uibuilder` stage and copies its
 fresh bundle into that final application image. Publishing the branch is not
 a deployment; an existing test app needs a rebuild from this branch before it

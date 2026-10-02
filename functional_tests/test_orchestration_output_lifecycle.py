@@ -57,6 +57,7 @@ from functions_orchestration_output_store import (
 )
 from functions_orchestration_rendering import OrchestrationRenderingService, execute_render_file
 from functions_orchestration_results import NamedOutput, OrchestrationResultReader
+from functions_temp_files import scratch_file_dir
 from test_support import offline_bootstrap
 from test_support.orchestration_results import COLUMNS, ROWS, ResultFixture, complete, source
 from test_support.orchestration_revisions import AtomicMemoryContainer
@@ -1666,8 +1667,8 @@ def test_output_bounds_and_all_private_streams_close_on_failure(lifecycle, monke
     original = tempfile.TemporaryFile
 
     def tracked(*args, **kwargs):
-        if kwargs.get("dir") != ".":
-            raise AssertionError("Output scratch files must stay in the project.")
+        if kwargs.get("dir") != scratch_file_dir():
+            raise AssertionError("Output scratch files must use the scratch directory, never the working directory.")
         stream = original(*args, **kwargs)
         created.append(stream)
         return stream

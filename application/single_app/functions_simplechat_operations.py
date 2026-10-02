@@ -120,6 +120,7 @@ from functions_public_workspaces import (
 )
 from functions_settings import get_settings, is_user_workflows_enabled_for_user
 from functions_saved_analysis import analysis_artifact_metadata, authorize_analysis_artifact
+from functions_temp_files import scratch_file_dir
 from utils_cache import invalidate_group_search_cache, invalidate_personal_search_cache
 
 
@@ -3346,7 +3347,7 @@ def open_generated_chat_artifact_stream(artifact, *, check=None):
         raise RuntimeError("Blob storage client not available")
     blob_client = blob_service_client.get_blob_client(container=artifact["blob_container"], blob=artifact["blob_path"])
     try:
-        with tempfile.TemporaryFile(mode="w+b", dir=".") as content:
+        with tempfile.TemporaryFile(mode="w+b", dir=scratch_file_dir()) as content:
             digest, size = hashlib.sha256(), 0
             if check is not None:
                 check()
