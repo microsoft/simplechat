@@ -575,14 +575,25 @@ def test_timestamp_parsing_day_windows_and_local_date_selection(results, monkeyp
 def test_latest_skips_unparseable_rows_missing_started_at_sorts_last_and_full_bad_page_fails_closed(results, monkeypatch):
     valid = completed_run("newer-valid", started_at="2025-01-06T16:00:00+00:00")
     missing_started = completed_run("missing-started")
+    missing_started.pop("started_at")
     invalid_completed = completed_run("invalid-completed", completed_at="not-a-date")
+    # Cosmos DB orders an undefined sort property lowest, so a row without started_at comes last under DESC.
     install_runtime_stubs(results, monkeypatch, latest_rows=[invalid_completed, valid, missing_started])
     selected = results._select_latest(USER_ID, WORKFLOW_ID, None)
+    in_progress = {"id": "running", "status": "running", "started_at": "2025-01-06T18:00:00+00:00"}
+    install_runtime_stubs(
+        results, monkeypatch, latest_rows=[invalid_completed, missing_started], in_progress_rows=[in_progress],
+    )
+    lone_missing_started = results._select_latest(USER_ID, WORKFLOW_ID, None)
     bad_rows = [completed_run(f"bad-{index}", completed_at="not-a-date") for index in range(5)]
     install_runtime_stubs(results, monkeypatch, latest_rows=bad_rows)
     full_bad_page = results._select_latest(USER_ID, WORKFLOW_ID, None)
 
+    assert "started_at" not in missing_started
     assert selected[0]["id"] == "newer-valid"
+    assert lone_missing_started[0]["id"] == "missing-started"
+    assert lone_missing_started[1] is False
+    assert lone_missing_started[2] is None
     assert full_bad_page[0] is None
     assert full_bad_page[2] == results.WORKFLOW_RESULTS_OUTCOME_UNAVAILABLE
 
