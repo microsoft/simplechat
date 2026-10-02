@@ -36,6 +36,7 @@ CONVERSATIONS_ROUTE_MODULE = "route_backend_conversations"
 RUNS_MODULE = "functions_orchestration_workflow_runs"
 
 PROBE = r'''
+import faulthandler
 import importlib
 import os
 import socket
@@ -47,6 +48,9 @@ from unittest.mock import patch
 
 from azure.cosmos.exceptions import CosmosResourceNotFoundError
 
+# A probe normally finishes in seconds. If one stalls, dump every thread's stack and exit before
+# the parent's 300 second cap, so the failure shows where it stalled instead of a bare timeout.
+faulthandler.dump_traceback_later(240, exit=True)
 sys.path[:0] = sys.argv[1:3]
 
 CONTRACT_MODULE = "functions_workflow_chat_delivery"
@@ -265,19 +269,38 @@ def require(condition, message):
         raise AssertionError(message)
 
 
+def _output_text(value):
+    if isinstance(value, bytes):
+        return value.decode("utf-8", errors="replace")
+    return value or ""
+
+
 def run_probe(action, *arguments, optimized=False):
     command = [sys.executable, "-B"]
     if optimized:
         command.append("-O")
-    process = subprocess.run(
-        command + ["-c", PROBE, str(APP), str(TESTS), action, *arguments],
-        capture_output=True,
-        text=True,
-        timeout=300,
-        check=False,
-    )
+    label = " ".join((action, *arguments)) + (" (-O)" if optimized else "")
+    try:
+        process = subprocess.run(
+            command + ["-c", PROBE, str(APP), str(TESTS), action, *arguments],
+            capture_output=True,
+            text=True,
+            timeout=300,
+            check=False,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise AssertionError(
+            f"import probe {label} did not finish in 300s and its stack-dump watchdog did not fire; "
+            f"partial output:\n{_output_text(exc.stdout)[-4000:]}{_output_text(exc.stderr)[-4000:]}"
+        ) from exc
     if process.returncode != 0:
-        raise AssertionError(process.stdout[-8000:] + process.stderr[-8000:])
+        stalled = "Timeout (" in process.stderr and "(most recent call first)" in process.stderr
+        lead = (
+            f"import probe {label} stalled for 240s; its thread stacks follow:\n"
+            if stalled
+            else f"import probe {label} exited with {process.returncode}:\n"
+        )
+        raise AssertionError(lead + process.stdout[-8000:] + process.stderr[-8000:])
     require("PASS:" in process.stdout, f"probe did not print a pass marker: {process.stdout}")
     return process
 
