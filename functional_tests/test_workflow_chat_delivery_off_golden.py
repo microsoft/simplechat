@@ -161,9 +161,13 @@ def test_starting_a_workflow_with_results_in_chat_off_is_byte_identical_to_the_b
             _write_section(flow, captured)
         return
     expected = _load_golden()[flow]
+    setting = "absent" if variant == "absent" else "set to Off"
     for part in sorted(expected):
         expected_text, actual_text = _pretty(expected[part]), _pretty(captured.get(part))
-        assert actual_text == expected_text, _diff(expected_text, actual_text, f"{flow} {part}")
+        assert actual_text == expected_text, (
+            f"With Use Workflow Results In Chat {setting}, the {part} of the {flow} flow must match the base "
+            f"golden byte for byte:\n{_diff(expected_text, actual_text, f'{flow} {part}')}"
+        )
     assert sorted(captured) == sorted(expected)
 
 

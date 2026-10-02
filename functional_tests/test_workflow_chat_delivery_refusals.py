@@ -173,7 +173,8 @@ def run_offline_scenarios():
                 outcome = (refused.status_code, refused.get_json(silent=True))
                 require(
                     outcome == (400, refusal),
-                    f"{kind} of the {label}: {refused.status_code} {refused.get_data(as_text=True)[:300]}",
+                    f"{kind} of the {label} must be refused with 400 {refusal['code']}: got "
+                    f"{refused.status_code} {refused.get_data(as_text=True)[:300]}",
                 )
                 require(not checks and not records, f"{kind} of the {label} was checked: {checks} {records}")
                 require(stored() == before, f"{kind} of the {label} wrote to storage.")
@@ -232,6 +233,17 @@ def run_offline_scenarios():
         print(SCENARIOS_FINISHED)
 
 
+def child_failure(result):
+    """The offline child's own failure line, so a failure leads with the broken rule, not the log tail."""
+    lines = (result.stderr or "").splitlines()
+    starts = [index for index, line in enumerate(lines) if line.startswith("Traceback (most recent call last):")]
+    if starts:
+        for line in lines[starts[-1] + 1:]:
+            if line.strip() and not line.startswith((" ", "\t")):
+                return line.removeprefix("AssertionError: ")
+    return f"the offline scenarios exited with code {result.returncode} before finishing"
+
+
 def test_retry_and_edit_refuse_every_message_a_workflow_run_posted():
     result = subprocess.run(
         [sys.executable, *(["-O"] if sys.flags.optimize else []), str(Path(__file__).resolve()), "--offline"],
@@ -240,8 +252,8 @@ def test_retry_and_edit_refuse_every_message_a_workflow_run_posted():
     )
     output = result.stdout[-3000:] + result.stderr[-6000:]
 
-    require(result.returncode == 0, output)
-    require(SCENARIOS_FINISHED in result.stdout.splitlines(), output)
+    require(result.returncode == 0, f"{child_failure(result)}\n\n{output}")
+    require(SCENARIOS_FINISHED in result.stdout.splitlines(), f"the offline scenarios did not finish\n\n{output}")
 
 
 if __name__ == "__main__":

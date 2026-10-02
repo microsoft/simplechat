@@ -33,6 +33,7 @@ from test_support.workflow_chat_delivery_fakes import (  # noqa: E402
     STEP_ID,
     USER,
     WORKFLOW_ID,
+    FakeCheckFailed,
     FakeContainer,
     require,
 )
@@ -323,7 +324,14 @@ def test_projection_survives_reconcile_failure_and_still_writes_runtime(monkeypa
         raise RuntimeError("boom")
 
     monkeypatch.setattr(runtime, "reconcile_chat_delivery", fail_reconcile)
-    projected = project(runtime_world, control_doc, result=terminal_result("completed"))
+    try:
+        projected = project(runtime_world, control_doc, result=terminal_result("completed"))
+    except AssertionError:
+        raise
+    except Exception as exc:
+        raise FakeCheckFailed(
+            f"a delivery reconcile failure must never fail the runtime projection; the projection raised {exc!r}"
+        ) from exc
     saved = stored_run(runtime_world)
     require(projected["status"] == "completed", "projection should return normally after reconcile failure")
     require(saved["status"] == "completed", "projection should still write terminal runtime status")
@@ -342,9 +350,23 @@ def test_projection_survives_broken_hint_queue_and_direct_signal_returns_false(m
     control_doc = control(state="completed", version=9)
     put_run(runtime_world, run_document(chat_delivery=pending_record(control_doc)))
     monkeypatch.setattr(delivery, "_HINT_LOCK", BrokenLock())
-    direct = delivery.signal_workflow_chat_delivery(USER, RUN_ID)
+    try:
+        direct = delivery.signal_workflow_chat_delivery(USER, RUN_ID)
+    except AssertionError:
+        raise
+    except Exception as exc:
+        raise FakeCheckFailed(
+            f"signaling a delivery hint must never raise, even when the hint queue is broken; it raised {exc!r}"
+        ) from exc
     require(direct is False, "direct signal should fail closed when hint internals raise")
-    projected = project(runtime_world, control_doc, result=terminal_result("completed"))
+    try:
+        projected = project(runtime_world, control_doc, result=terminal_result("completed"))
+    except AssertionError:
+        raise
+    except Exception as exc:
+        raise FakeCheckFailed(
+            f"a broken delivery hint queue must never fail the runtime projection; the projection raised {exc!r}"
+        ) from exc
     saved = stored_run(runtime_world)
     record = saved[delivery.CHAT_DELIVERY_KEY]
     require(projected["status"] == "completed", "projection should return normally when hint signaling fails")

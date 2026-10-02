@@ -11,7 +11,6 @@ or tombstone, so chat delivery records reopen exactly when the durable control v
 
 import copy
 import inspect
-import os
 import sys
 from datetime import timedelta
 from pathlib import Path

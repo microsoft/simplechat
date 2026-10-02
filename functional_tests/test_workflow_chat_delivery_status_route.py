@@ -38,16 +38,13 @@ import functions_workflow_chat_delivery_status as status  # noqa: E402
 from functions_m365_workflow_binding import M365_WAITING_STATES  # noqa: E402
 from functions_workflow_alert_safety import sanitize_workflow_alert_record  # noqa: E402
 from functions_workflow_chat_delivery import (  # noqa: E402
-    CHAT_TRIGGER_SOURCE,
     DELIVERY_MESSAGE_ID_PREFIX,
     OPEN_STATUSES,
     REASON_DEADLINE_EXCEEDED,
     RUN_DOCUMENT_TERMINAL_STATUSES,
     STATUS_DELIVERED,
-    STATUS_EXPIRED,
     STATUS_READY,
     format_delivery_timestamp,
-    parse_delivery_timestamp,
 )
 from functions_workflow_definitions import workflow_definition_for_editor, workflow_definition_revision  # noqa: E402
 from functions_workflow_runtime_store import (  # noqa: E402
@@ -64,10 +61,10 @@ from test_support.workflow_chat_delivery_fakes import (  # noqa: E402
     RUN_ID,
     USER,
     WORKFLOW_ID,
+    FakeCheckFailed,
     FakeClock,
     FakeContainer,
     cosmos_error,
-    iso,
     make_invocation,
     make_record,
     make_run,
@@ -121,18 +118,26 @@ ALLOWED_PROJECTION_PATHS = {
 
 
 class StrictQueryContainer(FakeContainer):
-    """FakeContainer that refuses cross-partition status queries."""
+    """FakeContainer that refuses cross-partition status queries and keeps every refusal it raised."""
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.refusals = []
 
     def query_items(self, query=None, parameters=None, partition_key=None,
                     enable_cross_partition_query=None, **kwargs):
-        require(enable_cross_partition_query is None, "status queries must not enable cross-partition reads")
-        return super().query_items(
-            query=query,
-            parameters=parameters,
-            partition_key=partition_key,
-            enable_cross_partition_query=enable_cross_partition_query,
-            **kwargs,
-        )
+        try:
+            require(enable_cross_partition_query is None, "status queries must not enable cross-partition reads")
+            return super().query_items(
+                query=query,
+                parameters=parameters,
+                partition_key=partition_key,
+                enable_cross_partition_query=enable_cross_partition_query,
+                **kwargs,
+            )
+        except AssertionError as exc:
+            self.refusals.append(str(exc))
+            raise
 
 
 class LiveRecorder:
@@ -182,9 +187,13 @@ def _project_run(document, pairs):
     return row
 
 
+def _selects_whole_document(query):
+    return re.search(r"SELECT\s+(?:TOP\s+\d+\s+)?\*", query or "") is not None
+
+
 def status_query_handler(container, query, params, partition_key):
     require(partition_key == params.get("@user_id"), "status query must use the signed-in user's partition")
-    require("SELECT *" not in query, "status query must not use SELECT *")
+    require(not _selects_whole_document(query), "status query must not use SELECT *; it projects only the allowed paths")
     pairs = _projection_pairs(query)
     require({path for path, _alias in pairs} <= ALLOWED_PROJECTION_PATHS, "status projection includes an unsafe path")
     rows = []
@@ -251,7 +260,13 @@ def services_for(runs=None, workflows=None, *, live=None, settings=None, gate=No
 
 def payload_for(runs, workflows=None, conversation_values=None, **kwargs):
     harness = services_for(runs, workflows, **kwargs)
-    payload = status.workflow_run_status_payload(USER, conversation_values, services=harness.services)
+    try:
+        payload = status.workflow_run_status_payload(USER, conversation_values, services=harness.services)
+    except status.WorkflowRunStatusError as exc:
+        # The route correctly fails closed on any query error; name the fake's refusal so a failure says why.
+        if harness.runs.refusals:
+            raise FakeCheckFailed(f"{harness.runs.refusals[0]} (the route failed closed with {exc.code})") from exc
+        raise
     return payload, harness
 
 
@@ -312,7 +327,7 @@ def test_query_shape_is_single_partition_and_projection_only_in_both_modes():
         params = {entry["name"]: entry["value"] for entry in call["parameters"]}
         require(call["partition_key"] == USER, "status query must use the requester partition key")
         require(call.get("enable_cross_partition_query") is None, "status query must not enable cross-partition")
-        require("SELECT *" not in query, "status query must not project the whole document")
+        require(not _selects_whole_document(query), "status query must not project the whole document")
         require(expected_top in query, f"query must use {expected_top}: {query}")
         require("ORDER BY c.chat_invocation.requested_at DESC" in query, "query must sort newest first")
         require(

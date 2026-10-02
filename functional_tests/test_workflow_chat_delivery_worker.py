@@ -185,7 +185,7 @@ def test_delivers_a_composed_reply_once_with_one_unread_mark_and_one_notice():
 
     outcome = deliver(world)
 
-    assert outcome == worker.OUTCOME_DELIVERED
+    assert outcome == worker.OUTCOME_DELIVERED, "a finished run whose chat can take it is delivered on the first pass"
     messages = world.delivery_messages()
     assert [message["id"] for message in messages] == [M5]
     message = messages[0]
@@ -194,7 +194,9 @@ def test_delivers_a_composed_reply_once_with_one_unread_mark_and_one_notice():
     assert message["content"] == f"{LABEL}\n\n{COMPOSED_REPLY}\n\n{DISCLOSURE}"
     assert message["timestamp"] == "2026-05-04T15:00:00.000000"
     assert message["model_deployment_name"] == "gpt-selected"
-    assert message["content_check"] == {"blocked": False, "categories": []}
+    assert message.get("content_check") == {"blocked": False, "categories": []}, (
+        "the composed answer is content-checked and the check is recorded on the message"
+    )
     metadata = message["metadata"]
     assert metadata["workflow_delivery"] == {
         "version": 1,
@@ -217,9 +219,9 @@ def test_delivers_a_composed_reply_once_with_one_unread_mark_and_one_notice():
         "thread_attempt": 1,
     }
     assert metadata["workflow_result"]["result_sha256"] == RESULT_SHA
-    assert metadata["workflow_result_contexts"] == [
+    assert metadata.get("workflow_result_contexts") == [
         {"workflow_id": WORKFLOW_ID, "run_id": RUN_ID, "result_sha256": RESULT_SHA},
-    ]
+    ], "the delivered answer carries workflow_result_contexts, so every read of it re-authorizes the result"
 
     conversation = world.conversation()
     assert conversation["has_unread_assistant_response"] is True
@@ -230,7 +232,9 @@ def test_delivers_a_composed_reply_once_with_one_unread_mark_and_one_notice():
     assert world.cache_bumps.calls == [{"args": (USER,), "kwargs": {"reason": "workflow_chat_delivery"}}]
 
     record = world.record()
-    assert record["status"] == "delivered"
+    assert record["status"] == "delivered", (
+        "a delivered record stays delivered; only a resume, which moves the control past its generation, reopens it"
+    )
     assert record["notice_kind"] == "chat_response"
     assert record["phase"] == "notified"
     assert record["generation"] == 5
@@ -242,7 +246,9 @@ def test_delivers_a_composed_reply_once_with_one_unread_mark_and_one_notice():
     assert record["outcome_reason"] is None
     assert record["delivered_at"] == "2026-05-04T15:00:00.000000Z"
 
-    assert world.notifications.chat_calls == [delivered_notice()]
+    assert world.notifications.chat_calls == [delivered_notice()], (
+        "one chat notice goes out, keyed by the delivery's stable idempotency key"
+    )
     assert world.notifications.notice_calls == []
 
     assert [call["which"] for call in world.models.calls] == ["selected"]
@@ -256,10 +262,12 @@ def test_delivers_a_composed_reply_once_with_one_unread_mark_and_one_notice():
     assert request["max_tokens"] == COMPOSE_MAX_TOKENS
     assert world.prompts.calls == [
         {"budget": 48 * 1024, "question": REQUEST_TEXT, "nonce": "nonce-1", "time_zone": "America/New_York"},
-    ]
+    ], "the compose prompt is fenced with the fresh nonce drawn for this delivery"
     assert world.reader.calls[0]["budget"] == 48 * 1024
     assert world.checker.calls == [{"text": message["content"], "surface": "chat_output", "user_id": USER}]
-    assert world.gates.calls == [("workflows", ["User"]), ("results", ["User"])]
+    assert world.gates.calls == [("workflows", ["User"]), ("results", ["User"])], (
+        "delivery re-checks the workflows gate, then the results-in-chat gate"
+    )
     assert world.tokens.calls == [{
         "args": (),
         "kwargs": {
@@ -275,7 +283,7 @@ def test_delivers_a_composed_reply_once_with_one_unread_mark_and_one_notice():
             "additional_context": {"workflow_result_delivery": True},
             "idempotency_key": f"workflow_result_delivery:{M5}:1",
         },
-    }]
+    }], "the compose's token usage is logged once, keyed by the message and the attempt"
 
 
 def test_reprocessing_a_delivered_run_changes_nothing():
@@ -666,7 +674,9 @@ def test_a_failed_unread_mark_retries_with_the_earlier_planned_time():
     outcome = deliver(world)
     assert outcome == worker.OUTCOME_DELIVERED
 
-    assert [call["skip_if_read_since"] for call in world.unread_calls] == [None, "2026-05-04T15:00:00.000000"]
+    assert [call["skip_if_read_since"] for call in world.unread_calls] == [None, "2026-05-04T15:00:00.000000"], (
+        "a retried unread mark is skipped if the user read the chat after the first planned time"
+    )
     assert [call["planned_at"] for call in world.unread_calls] == [
         "2026-05-04T15:00:00.000000",
         "2026-05-04T15:00:31.000000",
@@ -863,9 +873,9 @@ def expired_notice():
 
 
 def assert_nothing_posted(world):
-    assert world.delivery_messages() == []
-    assert world.unread_calls == []
-    assert world.notifications.chat_calls == []
+    assert world.delivery_messages() == [], "nothing is posted to a chat that can't take the delivery"
+    assert world.unread_calls == [], "a chat that can't take the delivery isn't marked unread"
+    assert world.notifications.chat_calls == [], "a chat that can't take the delivery gets no chat notice"
 
 
 def assert_closed(world, *, status="undeliverable", reason, notice_kind, attempts):
@@ -900,7 +910,9 @@ def test_a_chat_that_cannot_take_the_delivery_gets_one_notice_instead(change):
     assert outcome == worker.OUTCOME_UNDELIVERABLE
 
     assert_nothing_posted(world)
-    assert world.notifications.notice_calls == [undeliverable_notice()]
+    assert world.notifications.notice_calls == [undeliverable_notice()], (
+        "one undeliverable notice goes out, keyed by the delivery's stable idempotency key"
+    )
     assert world.reader.calls == [] and world.models.calls == []
     assert_closed(world, reason="chat_unavailable", notice_kind="undeliverable", attempts=1)
 
@@ -979,7 +991,9 @@ def test_a_run_deleted_after_delivery_stays_delivered(change):
     writes = total_writes(world)
 
     outcome = deliver(world)
-    assert outcome == worker.OUTCOME_NOT_APPLICABLE
+    assert outcome == worker.OUTCOME_NOT_APPLICABLE, (
+        "a run deleted after delivery stays delivered and is never reopened or posted again"
+    )
 
     assert total_writes(world) == writes
     assert len(world.delivery_messages()) == 1
@@ -1171,7 +1185,9 @@ def test_unreadable_chat_activity_backs_off_then_gives_up_with_one_notice():
         waits.append(seconds_until_next_attempt(world))
         make_due(world)
 
-    assert outcomes == [worker.OUTCOME_DEFERRED] * 7 + [worker.OUTCOME_UNDELIVERABLE]
+    assert outcomes == [worker.OUTCOME_DEFERRED] * 7 + [worker.OUTCOME_UNDELIVERABLE], (
+        "an unreadable chat defers and backs off, and never counts as an empty chat"
+    )
     assert waits == [30, 60, 120, 240, 480, 900, 900], "a counted deferral backs off like a failed attempt"
     assert_nothing_posted(world)
     assert world.reader.calls == []
@@ -1368,7 +1384,9 @@ def test_a_resumed_run_delivers_its_new_outcome_after_the_failed_note():
     outcome = deliver(world)
     assert outcome == worker.OUTCOME_DELIVERED
 
-    assert [message["id"] for message in world.delivery_messages()] == [M5, M8]
+    assert [message["id"] for message in world.delivery_messages()] == [M5, M8], (
+        "the resumed run's new outcome is posted as a second message under its own generation's ID"
+    )
     assert world.notifications.chat_calls == [delivered_notice(M5, 5), delivered_notice(M8, 8)]
     record = world.record()
     assert record["generation"] == 8 and record["kind"] == "result" and record["message_id"] == M8
@@ -1458,7 +1476,7 @@ def test_the_sweep_queries_nothing_without_the_lock():
     world.clock.advance(minutes=3)
 
     summary = sweep(world)
-    assert summary == {"locked": False, "processed": 0, "outcomes": {}}
+    assert summary == {"locked": False, "processed": 0, "outcomes": {}}, "without the distributed lock the sweep does nothing"
 
     assert world.runs.query_calls == []
     assert world.lock.released == []

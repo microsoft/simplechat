@@ -10,7 +10,6 @@ This test ensures chat-started workflow run saves preserve delivered chat-delive
 
 import copy
 import importlib
-import logging
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -39,7 +38,6 @@ from test_support.workflow_chat_delivery_fakes import (  # noqa: E402
     USER,
     FakeContainer,
     cosmos_error,
-    make_invocation,
     make_record,
     make_run,
     make_world,
