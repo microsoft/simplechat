@@ -3,6 +3,7 @@
     'use strict';
 
     const apiPath = '/api/msgraph/pending-actions';
+    const retryDelaysMs = [1000, 3000, 7000, 15000, 30000, 60000];
     const actionableStatuses = new Set(['pending', 'scheduled', 'review_required']);
     const entries = new Map();
     let sequence = 0;
@@ -675,6 +676,8 @@
         const pendingReferences = new Set();
         const referenceFailures = new Map();
         let loadPromise = null;
+        let retryHandle = null;
+        let retryAttempt = 0;
         let continuationToken = '';
         let disposed = false;
         let hasError = false;
@@ -707,6 +710,18 @@
             status.setAttribute('role', 'alert');
             status.textContent = message;
             updateVisibility();
+        }
+
+        function scheduleRetry() {
+            if (disposed || retryHandle !== null || retryAttempt >= retryDelaysMs.length) {
+                return;
+            }
+            const delay = retryDelaysMs[retryAttempt];
+            retryAttempt += 1;
+            retryHandle = window.setTimeout(() => {
+                retryHandle = null;
+                void load('', { background: true });
+            }, delay);
         }
 
         function place(id) {
@@ -796,7 +811,7 @@
                 .finally(() => pendingReferences.delete(id));
         }
 
-        async function load(token = '') {
+        async function load(token = '', { background = false } = {}) {
             if (disposed || loadPromise) {
                 return loadPromise;
             }
@@ -827,6 +842,7 @@
                     }
                     payload.pending_actions.forEach(action => add(action, {}, { authoritative: true }));
                     continuationToken = typeof payload.continuation_token === 'string' ? payload.continuation_token : '';
+                    retryAttempt = 0;
                     more.classList.toggle('d-none', !continuationToken);
                     hasError = false;
                     referenceErrorVisible = false;
@@ -848,9 +864,20 @@
                                 notify(entry);
                             }
                         });
-                        showError(error.status === 403
-                            ? 'You do not have permission to view outgoing actions for this conversation.'
-                            : 'Outgoing actions could not be loaded. Refresh to recover saved actions; this is not an empty inbox.');
+                        const hasKnownActionState = views.size > 0 || referenceFailures.size > 0;
+                        if (!background && (error.status === 403 || !chatView || hasKnownActionState)) {
+                            showError(error.status === 403
+                                ? 'You do not have permission to view outgoing actions for this conversation.'
+                                : 'Outgoing actions could not be loaded. Refresh to recover saved actions; this is not an empty inbox.');
+                        } else {
+                            hasError = false;
+                            status.className = 'small text-muted d-none';
+                            status.textContent = '';
+                            updateVisibility();
+                        }
+                        if (error.status !== 403) {
+                            scheduleRetry();
+                        }
                     }
                 } finally {
                     loadPromise = null;
@@ -890,8 +917,8 @@
 
         more.addEventListener('click', () => { void load(continuationToken); });
         refresh.addEventListener('click', () => { void load(); });
-        window.addEventListener('focus', () => { void load(); }, { signal: lifecycle.signal });
-        window.addEventListener('online', () => { void load(); }, { signal: lifecycle.signal });
+        window.addEventListener('focus', () => { void load('', { background: true }); }, { signal: lifecycle.signal });
+        window.addEventListener('online', () => { void load('', { background: true }); }, { signal: lifecycle.signal });
         return {
             add, load, trackMessage,
             async refresh() {
@@ -908,6 +935,10 @@
             destroy() {
                 disposed = true;
                 lifecycle.abort();
+                if (retryHandle !== null) {
+                    window.clearTimeout(retryHandle);
+                    retryHandle = null;
+                }
                 views.forEach(view => view.destroy());
                 views.clear();
                 root.replaceChildren();
@@ -943,7 +974,7 @@
             chatbox.before(root);
         }
         chat = { id, collection: createCollection(root, { conversation_id: id }, { chatView: true }) };
-        void chat.collection.load();
+        void chat.collection.load('', { background: true });
         return chat;
     }
 

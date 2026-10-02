@@ -265,6 +265,56 @@ function updateConversationCache(conversationId, updates = {}) {
   });
 }
 
+function syncConversationAddParticipantsAction(convoItem) {
+  const dropdownMenu = convoItem?.querySelector('.dropdown-menu');
+  if (!dropdownMenu) {
+    return;
+  }
+
+  const chatType = convoItem.dataset.chatType || '';
+  const isCollaborativeConversation = convoItem.dataset.conversationKind === 'collaborative';
+  const canManageMembers = isCollaborativeConversation
+    ? convoItem.dataset.canManageMembers === 'true'
+    : ['personal_single_user', 'personal_multi_user', 'group-single-user', 'group_multi_user'].includes(chatType);
+  const canShowAddParticipants = [
+    'personal_single_user',
+    'personal_multi_user',
+    'group-single-user',
+    'group_multi_user',
+  ].includes(chatType) && canManageMembers;
+  const existingAction = dropdownMenu.querySelector('.add-participants-btn');
+
+  if (!canShowAddParticipants) {
+    existingAction?.closest('li')?.remove();
+    return;
+  }
+
+  if (existingAction) {
+    return;
+  }
+
+  const actionItem = document.createElement('li');
+  const actionLink = document.createElement('a');
+  actionLink.classList.add('dropdown-item', 'add-participants-btn');
+  actionLink.href = '#';
+  const actionIcon = document.createElement('i');
+  actionIcon.classList.add('bi', 'bi-person-plus', 'me-2');
+  actionLink.append(actionIcon, document.createTextNode('Add participants'));
+  actionLink.addEventListener('click', event => {
+    event.preventDefault();
+    event.stopPropagation();
+    const dropdownButton = convoItem.querySelector('[data-bs-toggle="dropdown"]');
+    closeDropdownMenu(dropdownButton);
+    window.chatCollaboration?.openParticipantPicker?.({
+      conversationId: convoItem.dataset.conversationId,
+    });
+  });
+  actionItem.appendChild(actionLink);
+
+  const pinItem = dropdownMenu.querySelector('.pin-btn')?.closest('li');
+  dropdownMenu.insertBefore(actionItem, pinItem || null);
+}
+
 export function applyConversationMetadataUpdate(conversationId, updates = {}) {
   if (!conversationId) {
     return;
@@ -332,6 +382,8 @@ export function applyConversationMetadataUpdate(conversationId, updates = {}) {
     applyConversationContextAttributes(convoItem, updates.chat_type || convoItem.getAttribute('data-chat-type') || '', updates.context || []);
     convoItem.removeAttribute('data-chat-state');
   }
+
+  syncConversationAddParticipantsAction(convoItem);
 
   updateConversationCache(conversationId, {
     title: updates.title,
@@ -962,7 +1014,7 @@ export function createConversationItem(convo) {
   }
   convoItem.dataset.hasUnreadAssistantResponse = convo.has_unread_assistant_response ? "true" : "false";
   const isCollaborativeConversation = convo.conversation_kind === 'collaborative';
-  const conversationChatType = convo.chat_type === 'personal' ? 'personal_single_user' : convo.chat_type;
+  const conversationChatType = ['personal', 'new'].includes(convo.chat_type) ? 'personal_single_user' : convo.chat_type;
   const canManageMembers = isCollaborativeConversation
     ? Boolean(convo.can_manage_members)
     : ['personal_single_user', 'group-single-user'].includes(conversationChatType || '');
@@ -995,7 +1047,7 @@ export function createConversationItem(convo) {
   // Use the actual chat_type from conversation metadata if available
   console.log(`createConversationItem: Processing conversation ${convo.id}, chat_type="${convo.chat_type}"`);
   
-  const normalizedChatType = convo.chat_type === 'personal' ? 'personal_single_user' : convo.chat_type;
+  const normalizedChatType = ['personal', 'new'].includes(convo.chat_type) ? 'personal_single_user' : convo.chat_type;
   if (normalizedChatType) {
     convoItem.setAttribute("data-chat-type", normalizedChatType);
     console.log(`createConversationItem: Set data-chat-type to "${normalizedChatType}"`);
@@ -1519,7 +1571,7 @@ export function addConversationToList(conversationId, title = null, classificati
 }
 
 // Select a conversation, load messages, update UI
-export async function selectConversation(conversationId) {
+export async function selectConversation(conversationId, metadataOverride = null) {
   currentConversationId = conversationId;
   window.currentConversationId = conversationId;
   window.adminNewConversationDefaultsActive = false;
@@ -1539,21 +1591,26 @@ export async function selectConversation(conversationId) {
   }
 
   const conversationTitle = convoItem.getAttribute("data-conversation-title") || "Conversation"; // Use stored title
-  const isCollaborativeConversation = convoItem.dataset.conversationKind === 'collaborative';
-  let metadata = null;
+  let isCollaborativeConversation = convoItem.dataset.conversationKind === 'collaborative'
+    || convoItem.dataset.canAcceptInvite === 'true';
+  let metadata = metadataOverride;
 
   // Fetch the latest conversation metadata to get accurate chat_type, pin, and hide status
   try {
-    if (isCollaborativeConversation && window.chatCollaboration?.fetchConversationMetadata) {
-      metadata = await window.chatCollaboration.fetchConversationMetadata(conversationId);
-    } else {
-      const response = await fetch(`/api/conversations/${conversationId}/metadata`);
-      if (response.ok) {
-        metadata = await response.json();
+    if (!metadata) {
+      if (isCollaborativeConversation && window.chatCollaboration?.fetchConversationMetadata) {
+        metadata = await window.chatCollaboration.fetchConversationMetadata(conversationId);
+      } else {
+        const response = await fetch(`/api/conversations/${conversationId}/metadata`);
+        if (response.ok) {
+          metadata = await response.json();
+        }
       }
     }
 
     if (metadata) {
+      isCollaborativeConversation = isCollaborativeConversation
+        || metadata.conversation_kind === 'collaborative';
       
       // Update Header Title with pin icon and hidden status
       if (currentConversationTitleEl) {
@@ -1665,7 +1722,18 @@ export async function selectConversation(conversationId) {
       const metaLockedContexts = metadata.locked_contexts || [];
       restoreScopeLockState(metaScopeLocked, metaLockedContexts);
 
-      convoItem.dataset.canManageMembers = metadata.can_manage_members ? 'true' : 'false';
+      const metadataIsCollaborative = metadata.conversation_kind === 'collaborative'
+        || convoItem.dataset.conversationKind === 'collaborative';
+      const normalizedChatType = convoItem.dataset.chatType || '';
+      const canManageMembers = Object.prototype.hasOwnProperty.call(metadata, 'can_manage_members')
+        ? Boolean(metadata.can_manage_members)
+        : (!metadataIsCollaborative && [
+          'personal_single_user',
+          'personal_multi_user',
+          'group-single-user',
+          'group_multi_user',
+        ].includes(normalizedChatType));
+      convoItem.dataset.canManageMembers = canManageMembers ? 'true' : 'false';
       convoItem.dataset.canAcceptInvite = metadata.can_accept_invite ? 'true' : 'false';
       convoItem.dataset.canPostMessages = metadata.can_post_messages === false ? 'false' : 'true';
       if (metadata.membership_status) {
@@ -2185,6 +2253,7 @@ export async function createNewConversation(callback, options = {}) {
     }
 
   const { preserveSelections = false, initialMessage = "" } = options;
+  window.chatCollaboration?.deactivateConversation?.();
   if (!preserveSelections) {
     notifyConversationContextChanged("new", null, { preserveSelections });
   }

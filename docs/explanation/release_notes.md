@@ -2,6 +2,15 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.048)**
+
+#### Bug Fixes
+
+*   **Agent Model Picker Respects Governance Policies**
+    *   Fixed the persona workspace agent setup modal so its model dropdown now follows the same endpoint governance policies as the chat window model selector.
+    *   Users no longer see restricted global, personal, or group model endpoints when creating or editing agents, and governed multi-endpoint responses no longer fall back to legacy global model lists.
+    *   (Ref: agent model picker, endpoint governance, `route_backend_agents.py`, `agents_common.js`, [Agent Model Governance Filtering Fix](fixes/AGENT_MODEL_GOVERNANCE_FILTERING_FIX.md))
+
 ### **(v0.261.047)**
 
 #### Bug Fixes
@@ -66,6 +75,46 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
     *   Existing conversations now restore their own last-used model from saved message metadata, while blank conversations with no model history apply the admin default model and reasoning effort.
     *   Programmatic model selector refreshes no longer save the admin default as the user's preferred model or prematurely disable the admin default reasoning state.
     *   (Ref: `chat-conversations.js`, `chat-model-selector.js`, `chat-messages.js`, `chat-reasoning.js`)
+
+*   **Shared Conversation Prompts Persist After Invite Approval**
+    *   Accepting an invitation now loads the conversation with the authoritative collaborative metadata returned by the approval request, preventing the initial creator prompt from disappearing while the response remains visible.
+    *   (Ref: `chat-collaboration.js`, `chat-conversations.js`)
+
+*   **Shared Conversation Delivery Remains Reliable Across Workers**
+    *   Shared event sessions now use a cross-worker Cosmos fallback when Redis is unavailable, preserve Redis event logs during worker attachment, and retry concurrent Cosmos event writes.
+    *   History supplies an EventSource cursor, so retained events do not replay after history loads and invitees retain the owner's existing prompts.
+    *   Accepting an invite while already viewing the conversation now updates membership and composer state in place instead of clearing the rendered history.
+    *   (Ref: `app_settings_cache.py`, `route_backend_collaboration.py`, `chat-collaboration.js`)
+
+*   **Microsoft 365 Enhancements Do Not Interrupt Shared Chat**
+    *   Optional Microsoft 365 action-card projection failures no longer terminate collaboration events.
+    *   Background action recovery remains silent for ordinary shared conversations, while saved actions retain explicit recovery controls.
+    *   (Ref: `route_backend_collaboration.py`, `chat-streaming.js`, `m365-pending-actions.js`)
+
+### **(v0.261.043)**
+
+#### Bug Fixes
+
+*   **Add Participants Remains Available Before Sharing**
+    *   Ordinary personal conversations no longer lose the Add participants action when a metadata response omits collaboration-only permission fields.
+    *   (Ref: `chat-conversations.js`, `chat-sidebar-conversations.js`)
+
+### **(v0.261.042)**
+
+#### Bug Fixes
+
+*   **Add Participants Appears After the First Shared Exchange**
+    *   Collaboration metadata updates now refresh the conversation menus after prompt/response completion, so the Add participants action appears without a page refresh.
+    *   (Ref: `chat-collaboration.js`, `chat-conversations.js`, `chat-sidebar-conversations.js`)
+
+### **(v0.261.041)**
+
+#### Bug Fixes
+
+*   **Shared Conversation State No Longer Leaks Into New Conversations**
+    *   Starting a new conversation now disconnects the previous shared conversation's event stream and clears its typing state, preventing participant activity and messages from appearing in the new conversation.
+    *   Conversation metadata updates now refresh the Add participants action immediately, without requiring a page refresh after sharing a conversation.
+    *   (Ref: `chat-conversations.js`, `chat-collaboration.js`, `chat-sidebar-conversations.js`, [Collaboration Shared AI Workflow Fix](fixes/COLLABORATION_SHARED_AI_WORKFLOW_FIX.md))
 
 ### **(v0.261.040)**
 
