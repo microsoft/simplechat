@@ -12,6 +12,7 @@
 import { Link } from 'react-router-dom';
 import { MessageSquarePlus } from 'lucide-react';
 import { useBootstrapStore } from '../stores/bootstrapStore';
+import { useChatStore } from '../stores/chatStore';
 import { useUiStore } from '../stores/uiStore';
 import { AdminMarkdown } from '../components/admin/AdminMarkdown';
 
@@ -72,8 +73,11 @@ export function HomePage() {
                     />
                 ) : null}
 
+                {/* A fresh chat, as the label promises. The chat store outlives a route change,
+                    so following the link alone reopened whichever conversation was last open. */}
                 <Link
                     to="/chat"
+                    onClick={() => useChatStore.getState().startNewConversation()}
                     className="inline-flex items-center gap-2 rounded-xl bg-accent px-6 py-3 text-base font-medium text-on-accent transition-colors hover:bg-accent-hover"
                 >
                     <MessageSquarePlus size={18} />

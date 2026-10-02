@@ -1,8 +1,9 @@
 # test_v2_orchestration_planning_retry.py
 """
 Browser regressions for failed, unpersisted orchestration planning turns.
-Version: 0.261.115
+Version: 0.261.226
 Implemented in: 0.261.115
+Leaving a planning turn for a new chat also releases its Thinking state and Stop: 0.261.226
 
 The production controller, stores, SSE reader, message actions, and composer run
 with production CSS. Only HTTP responses are deterministic. No live model,
@@ -302,9 +303,16 @@ def test_late_retry_does_not_write_into_a_new_or_deleted_conversation(planning_u
         const H = window.OrchHarness;
         const S = H.stores.chat.useChatStore.getState();
         return {id: S.activeConversationId, messages: S.messages, error: S.streamError,
+            streaming: S.streaming,
             plans: H.stores.orchestration.useOrchestrationStore.getState().plans};
     }""")
     assert state["id"] is None and state["messages"] == [] and state["error"] is None
+    # The retry's Thinking state belonged to the conversation that was left, so the composer is
+    # ready to send rather than offering a Stop with nothing to stop.
+    assert state["streaming"] is False
+    expect(page.get_by_text("Thinking", exact=True)).to_have_count(0)
+    expect(page.get_by_role("button", name="Stop generating", exact=True)).to_have_count(0)
+    expect(page.get_by_role("button", name="Send message", exact=True)).to_be_visible()
     if action == "delete":
         assert state["plans"] == {}
     assert not api.calls(editor_tests.RUN)
