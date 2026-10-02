@@ -65,6 +65,13 @@ visible to its members. Turning one on does not turn on the other.
 | Workflow Repeat Iteration Limit | Bounds one automatic Repeat until batch, including its first round. Authors must choose an explicit per-block maximum; a new run above this ceiling is rejected rather than shortened. | 25 | `workflow_max_repeat_iterations`; supported range 1-1,000; new runs only; active runs and manual continuation retain the admitted policy |
 | Workflow Minimum Schedule Interval (seconds) | Sets the shortest fixed interval a personal or group workflow may be saved with, so no one can schedule a workflow to run every few seconds. It's checked only when an interval schedule is created or changed; workflows already saved on a shorter interval keep running. Calendar schedules run at most once a day and are never checked. The default, 1 second, allows every interval, as before. | 1 | `workflow_min_schedule_interval_seconds`; supported range 1-86,400; new or changed interval schedules only |
 
+When **Use Workflow Results In Chat** is on, the same gate also controls whether
+a durable personal workflow started from chat can post its terminal outcome back
+into that private chat later. The server checks the gate when the chat starts
+the run and again before it reads or posts result text, so turning it off leaves
+future chat-started runs without a post-back and makes already-started runs post
+a fixed status note instead of result text.
+
 The action and task limits apply to personal and group runs alike, so they stay
 in effect whichever capability is enabled.
 
@@ -274,6 +281,7 @@ See [Workflow publication completion](../explanation/features/WORKFLOW_PUBLICATI
 | The AI workflow assistant is temporarily unavailable for everyone | The model deployment is throttled or unreachable, or the settings container that holds the rate-limit count can't be reached. The assistant won't run without its limit. | Check the GPT deployment's health and throttling, and Cosmos DB availability. Each request logs `[WorkflowAssist] Assist request finished` with its `status` and error `code`, and no content. |
 | Users don't see **Ask in chat** or **Ask about this** in V2 | Use Workflow Results In Chat or Enable Personal Workflows is off, or Require WorkflowUser App Role is on and the user doesn't hold the role. Both buttons also need a completed run of a personal workflow, and **Ask in chat** isn't offered on structured runs. | Check both settings, then the `WorkflowUser` role assignment. |
 | A chat answer reads "This answer is unavailable because access to the workflow result it used could not be confirmed." | The run was deleted, its result changed, its owner can no longer read a source its tasks used, the chat was shared or converted to a collaboration, or storage couldn't be read during the check. | Expected. An answer is shown only while its result still checks out for the chat's owner in a private chat; after a storage failure it shows again once a check succeeds. The original chat's stored messages are unchanged. The collaboration's copies are stored with these answers withheld, and the chat's saved summary is cleared on both chats. Classic chat's message list doesn't run this check, so the owner still sees the answer there. Each withheld answer logs `[WorkflowResults] A chat answer's workflow result was withheld on read.` with a `check` of `conversation` or `result`, a `code` or `error_type`, and no content. |
+| Results of a workflow started from chat never appear in the chat | Use Workflow Results In Chat was off when the chat started the run, the requester no longer passes the personal workflow gate, the chat was deleted or shared, the workflow was deleted, the runtime expired, or delivery closed after repeated storage/notification failures. | Check **Use Workflow Results In Chat**, **Enable Personal Workflows**, the `WorkflowUser` role, the chat's privacy, and the run in workflow history. Deleted workflows and missing runtime records close silently; other undeliverable runs create one workflow notification with a run link. |
 
 ## Related
 

@@ -728,3 +728,6 @@ the controls are listed in
 - Re-checking workflow result contexts when a generated file is published.
 - Phase 6b's delivery, run card, recurring-workflow card and chat-list
   indicator, and `v2WorkflowRunPath`.
+- Phase 6b-1 now has its server-side delivery contract in
+  [Workflow result delivery to chat](CHAT_WORKFLOW_RESULT_DELIVERY.md); the V2
+  run card and chat-list indicator still follow in later work.

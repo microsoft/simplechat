@@ -16,6 +16,10 @@ from azure.cosmos.exceptions import CosmosHttpResponseError, CosmosResourceExist
 
 from functions_appinsights import log_event
 from functions_m365_workflow_binding import M365_WAITING_STATES
+from functions_workflow_chat_delivery import (
+    CHAT_DELIVERY_KEY, control_summary, delivery_log, finalize_chat_delivery_seed, reconcile_chat_delivery,
+    signal_workflow_chat_delivery,
+)
 from functions_workflow_definitions import (
     WORKFLOW_DEFINITION_FIELDS, validate_workflow_publication_completion, workflow_definition_revision,
 )
@@ -149,7 +153,7 @@ def workflow_run_id_for_request(workflow, request_id):
 
 def queue_durable_workflow_run(
     workflow, *, actor_user_id, trigger_source="manual", request_id=None, invocation_metadata=None,
-    chat_invocation=None,
+    chat_invocation=None, chat_delivery=None,
 ):
     services = _services(workflow)
     settings = services["settings"]()
@@ -227,6 +231,9 @@ def queue_durable_workflow_run(
     if chat_invocation is not None:
         # Which chat orchestration step started this run, for the requester's own run history.
         run["chat_invocation"] = deepcopy(chat_invocation)
+        if chat_delivery is not None:
+            # The record that has this run's result posted back to that chat when the run finishes.
+            run[CHAT_DELIVERY_KEY] = finalize_chat_delivery_seed(chat_delivery, control)
     try:
         saved = services["runs"].read_item(item=run_id, partition_key=services["partition"])
     except CosmosResourceNotFoundError:
@@ -247,6 +254,28 @@ def queue_durable_workflow_run(
     return {"success": True, "run": saved, "workflow": bound, "runtime": workflow_runtime_projection(control)}
 
 
+def _reconcile_chat_delivery(body, control, run_id):
+    """Move a chat-started run's delivery record along with its runtime. Never raises.
+
+    Returns True when the record is ready for its result to be posted back to the chat. A failure
+    keeps the stored record as it was, and the delivery sweep catches it up later.
+    """
+    record = body.get(CHAT_DELIVERY_KEY)
+    if not isinstance(record, dict):
+        return False
+    try:
+        reconciled, changed, ready = reconcile_chat_delivery(record, control_summary(control))
+    except Exception as exc:
+        delivery_log(
+            'A chat delivery record was not reconciled with its run.', level=logging.WARNING,
+            run_id=run_id, error_type=type(exc).__name__,
+        )
+        return False
+    if changed:
+        body[CHAT_DELIVERY_KEY] = reconciled
+    return bool(ready)
+
+
 def _project_runtime_run(services, workflow, run_id, control, *, result=None, attempt=0):
     latest = workflow_runtime_store(workflow, run_id).read()
     if latest["version"] > control["version"]:
@@ -261,6 +290,11 @@ def _project_runtime_run(services, workflow, run_id, control, *, result=None, at
     body = {key: value for key, value in existing.items() if not key.startswith("_")}
     if result:
         body.update(result.get("run") or {})
+    # The stored chat delivery record wins over any copy a result or checkpoint carried.
+    if CHAT_DELIVERY_KEY in existing:
+        body[CHAT_DELIVERY_KEY] = deepcopy(existing[CHAT_DELIVERY_KEY])
+    else:
+        body.pop(CHAT_DELIVERY_KEY, None)
     body.update(
         durable_execution=True, status=control["state"],
         runtime=workflow_runtime_projection(control),
@@ -272,6 +306,7 @@ def _project_runtime_run(services, workflow, run_id, control, *, result=None, at
     if int(existing.get("runtime_version") or 0) > control["version"]:
         return existing
     body["runtime_version"] = control["version"]
+    delivery_ready = _reconcile_chat_delivery(body, control, run_id)
     try:
         services["runs"].replace_item(
             item=run_id, body=body, etag=existing["_etag"], match_condition=MatchConditions.IfNotModified,
@@ -285,6 +320,8 @@ def _project_runtime_run(services, workflow, run_id, control, *, result=None, at
                 attempt=attempt + 1,
             )
         raise
+    if delivery_ready:
+        signal_workflow_chat_delivery(body.get("user_id"), run_id)
     for _attempt in range(5):
         current = services["definitions"].read_item(item=workflow["id"], partition_key=services["partition"])
         if current.get("deleting"):

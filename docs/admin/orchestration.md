@@ -294,6 +294,13 @@ not claim that research verified the requested details.
 | Run Workflows From Chat | Lets a plan start one of the user's saved personal workflows when the user asks for it, such as "run my weekly digest now". A plan that starts a workflow always waits for the user to run it, even when the approval mode would run it automatically or after a countdown, and approving it starts each named workflow once. Runs are offered only in the user's own private conversations, only to users who may already create personal workflows, and only for workflows with durable execution on. It is independent of Propose Workflows From Chat, so either can be on without the other. | Off | `enable_chat_orchestration_workflow_runs`; requires Chat Orchestration and personal workflows (`allow_user_workflows`), and the **Run workflows** capability when the Capabilities list is narrowed. Since **0.261.212** |
 | Capabilities | Restricts which capabilities a plan may use. An empty selection means every capability the other settings already permit. | All | `chat_orchestration_enabled_capabilities` |
 
+When **Run Workflows From Chat** starts a durable personal workflow, the plan
+still ends right away. If **Use Workflow Results In Chat** is also on in
+Workflow settings, the server records enough context to post the run's eventual
+outcome back to the same private chat later, mark it unread and send one bell
+notification. If the chat can no longer take the result, the server posts
+nothing and sends one workflow notification instead.
+
 ### Actions and agents
 
 Use **Use an action** for a question that needs a particular integration, such as a ticket
@@ -564,6 +571,7 @@ then report a rejected proposal.
 | A step says "Your workflow results couldn't be read right now. Try again in a moment." | Workflow storage could not be read when the step ran. The step is retried once automatically. | Once storage is reachable, the user can select **Retry from failed step** or ask again. Reading a result changes nothing, so trying again is safe. |
 | An answer says a workflow result it used changed or is no longer available, so it was not saved | A run the plan read was deleted or changed, or its owner lost access to a source it used, while the answer was being written. | Expected. Ask again in a new message to read the current result. |
 | A saved run cannot be resumed | Checkpoints are absent or invalid, relevant context/access changed, or a newer/live attempt exists. | Follow the recovery explanation. Open the current attempt or create a new plan as appropriate; do not infer results from old summaries. |
+| A chat-started workflow finishes but no result appears in the chat | The workflow settings gate for result post-back is off, the chat was deleted or shared after the run started, access to personal workflows was lost, the workflow was deleted, or the delivery worker deferred or closed the generation after retryable storage/notification failures. | Check **Use Workflow Results In Chat** under Workflow settings, keep the request in the user's private chat, and open the run from Workflows or the workflow notification. The plan itself is already complete and does not wait for delivery. |
 
 ## Related
 

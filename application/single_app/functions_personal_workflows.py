@@ -8,6 +8,7 @@ import logging
 import uuid
 from datetime import datetime, timedelta, timezone
 
+from azure.core import MatchConditions
 from azure.cosmos import exceptions
 
 from config import (
@@ -40,6 +41,7 @@ from functions_m365_workflow_binding import normalize_workflow_run_as
 from functions_settings import get_settings, get_user_settings, normalize_model_endpoints
 from functions_workflow_alerts import normalize_workflow_alert_settings
 from functions_workflow_alert_safety import sanitize_workflow_alert_record
+from functions_workflow_chat_delivery import delivery_log, merge_stored_run_fields, needs_guarded_run_save
 from functions_workflow_result_store import delete_workflow_run_results
 from functions_workflow_bindings import authorize_workflow_reference
 from functions_workflow_definition_store import (
@@ -86,6 +88,8 @@ WORKFLOW_TASK_INSTRUCTIONS_MAX_LENGTH = 12000
 WORKFLOW_TASK_NAME_MAX_LENGTH = 120
 WORKFLOW_TASK_RUNNER_TYPES = {'inherit', 'agent', 'model'}
 WORKFLOW_CONVERSATION_ACCESS_ERROR = 'Workflow conversation not found or access denied.'
+# A chat-started run's guarded save re-reads and retries at most this many times on a conflict.
+_GUARDED_RUN_SAVE_ATTEMPTS = 8
 def _utc_now():
     return datetime.now(timezone.utc)
 
@@ -1274,8 +1278,50 @@ def save_personal_workflow_run(user_id, run_record):
     run_record = run_record if isinstance(run_record, dict) else {}
     run_record['user_id'] = user_id
     run_record.setdefault('id', str(uuid.uuid4()))
+    if needs_guarded_run_save(run_record):
+        return _strip_cosmos_metadata(_save_chat_started_workflow_run(user_id, run_record))
     result = cosmos_personal_workflow_runs_container.upsert_item(body=run_record)
     return _strip_cosmos_metadata(result)
+
+
+def _save_chat_started_workflow_run(user_id, run_record):
+    """Save a run a chat plan started without undoing what another writer stored meanwhile.
+
+    The stored chat delivery record, chat invocation and cancellation request win over this copy,
+    and each replace lands only on the stored document it was merged from. A save that cannot be
+    guarded falls back to an upsert of the best merge it has, which the delivery's own message id,
+    notification key and unread rules keep from posting or announcing a result twice.
+    """
+    merged = run_record
+    for _attempt in range(_GUARDED_RUN_SAVE_ATTEMPTS):
+        try:
+            stored = cosmos_personal_workflow_runs_container.read_item(
+                item=run_record['id'], partition_key=user_id,
+            )
+        except exceptions.CosmosResourceNotFoundError:
+            return cosmos_personal_workflow_runs_container.upsert_item(body=run_record)
+        except Exception as exc:
+            delivery_log(
+                'A chat-started workflow run was saved without its guard.', level=logging.WARNING,
+                run_id=run_record.get('id'), reason='read_failed', error_type=type(exc).__name__,
+            )
+            return cosmos_personal_workflow_runs_container.upsert_item(body=merged)
+        merged = merge_stored_run_fields(run_record, stored)
+        try:
+            return cosmos_personal_workflow_runs_container.replace_item(
+                item=run_record['id'], body=merged, etag=stored.get('_etag'),
+                match_condition=MatchConditions.IfNotModified,
+            )
+        except exceptions.CosmosResourceNotFoundError:
+            return cosmos_personal_workflow_runs_container.upsert_item(body=merged)
+        except exceptions.CosmosHttpResponseError as exc:
+            if exc.status_code != 412:
+                raise
+    delivery_log(
+        'A chat-started workflow run was saved without its guard.', level=logging.WARNING,
+        run_id=run_record.get('id'), reason='conflicts_exhausted',
+    )
+    return cosmos_personal_workflow_runs_container.upsert_item(body=merged)
 
 
 def save_personal_workflow_run_item(user_id, item_record):
