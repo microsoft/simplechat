@@ -44,6 +44,7 @@ from functions_workflow_chat_delivery import (  # noqa: E402
     RUN_DOCUMENT_TERMINAL_STATUSES,
     STATUS_DELIVERED,
     STATUS_READY,
+    failure_reason_text,
     format_delivery_timestamp,
 )
 from functions_workflow_definitions import workflow_definition_for_editor, workflow_definition_revision  # noqa: E402
@@ -478,6 +479,46 @@ def test_delivery_not_applicable_and_ready_mapping():
     require(ready_delivery["delivery"]["status"] == "pending", "ready delivery should display as pending")
 
 
+def test_delivery_message_id_requires_delivered_status_and_prefix():
+    pending_with_message, _harness = row_for(run_doc(
+        RUN_ID,
+        delivery=make_record(
+            status=STATUS_READY,
+            message_id=f"{DELIVERY_MESSAGE_ID_PREFIX}pending",
+        ),
+    ))
+    require(
+        pending_with_message["delivery"]["message_id"] is None,
+        f"pending delivery must not expose a message id: {pending_with_message}",
+    )
+
+    delivered_without_prefix, _harness = row_for(run_doc(
+        "run-delivered-without-prefix",
+        delivery=make_record(
+            status=STATUS_DELIVERED,
+            message_id="message-without-delivery-prefix",
+            delivered_at=format_delivery_timestamp(parse_iso(NOW)),
+        ),
+    ))
+    require(
+        delivered_without_prefix["delivery"]["message_id"] is None,
+        f"delivered rows must hide message ids without the delivery prefix: {delivered_without_prefix}",
+    )
+
+
+def test_failed_unknown_gate_reason_maps_to_generic_failure_sentence():
+    runtime = {
+        "version": 6,
+        "state": "failed",
+        "can_resume": False,
+        "gate": {"id": "gate-unknown", "reason_code": "future_failure_reason"},
+    }
+    row, _harness = row_for(run_doc(RUN_ID, state="failed", runtime=runtime, completed_at=NOW))
+    expected_error = f"{failure_reason_text('failed')[:1].upper()}{failure_reason_text('failed')[1:]}."
+    require(row["error_code"] == "failed", f"unknown gate reason should fall back to failed: {row}")
+    require(row["error"] == expected_error, f"generic failure sentence mismatch: {row}")
+
+
 def test_live_reads_are_capped_fallback_safe_and_use_editor_workflow():
     workflows = [with_revision(make_workflow(_etag="etag-secret", _ts=123, active_run_id=""))]
     projections = {
@@ -574,6 +615,21 @@ def test_retry_blocked_workflow_read_errors_and_retry_ok():
     harness.workflows.fail("read_item", cosmos_error(500, "secret-workflow-error"))
     payload = status.workflow_run_status_payload(USER, [CONVERSATION_ID], services=harness.services)
     require(payload["runs"][0]["retry_blocked"] == status.RETRY_BLOCKED_UNAVAILABLE, "read errors should be unavailable")
+
+
+def test_retry_blocks_foreign_and_group_workflow_documents_as_deleted():
+    for case_name, workflow_changes in (
+        ("foreign-owner", {"user_id": OTHER_USER}),
+        ("group-workflow", {"group_id": "group-1"}),
+    ):
+        workflow = with_revision(make_workflow(active_run_id="", **workflow_changes))
+        run, _workflow = resumable_run(workflow=workflow)
+        row, _harness = row_for(run, [workflow])
+        require(
+            row["retry_blocked"] == status.RETRY_BLOCKED_WORKFLOW_DELETED,
+            f"{case_name} workflow should be treated as deleted: {row}",
+        )
+        require(row["actions"]["retry"] is False, f"{case_name} workflow must block retry: {row}")
 
 
 @pytest.mark.parametrize("terminal_state", ["skipped", "cancelled"])
