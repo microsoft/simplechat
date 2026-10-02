@@ -2,8 +2,8 @@
 # test_workflow_chat_delivery_imports.py
 """
 Functional test for the workflow chat delivery import lifecycle.
-Version: 0.261.218
-Implemented in: 0.261.218
+Version: 0.261.226
+Implemented in: 0.261.226
 
 This test ensures chat delivery contract, worker, status, route, and runtime imports stay cold-import safe across normal and optimized interpreters.
 The contract-consumer orders start from the app.py bootstrap (config, then functions_settings), because a cold
@@ -306,7 +306,7 @@ def run_probe(action, *arguments, optimized=False):
 
 
 def test_version_is_at_least_the_chat_delivery_release():
-    assert_app_version_at_least("0.261.218")
+    assert_app_version_at_least("0.261.226")
 
 
 @pytest.mark.parametrize("optimized", [False, True], ids=["normal", "optimized"])

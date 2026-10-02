@@ -2,8 +2,8 @@
 # test_workflow_chat_delivery_worker.py
 """
 Functional test for the workflow chat delivery worker.
-Version: 0.261.218
-Implemented in: 0.261.218
+Version: 0.261.226
+Implemented in: 0.261.226
 
 This test ensures that the worker posts a chat-started workflow run's outcome back into the chat
 that asked exactly once per delivery generation, under a dated label, with one unread mark and
@@ -182,7 +182,7 @@ def edit_request_message(world, **changes):
 
 
 def test_app_version_includes_chat_delivery():
-    assert_app_version_at_least("0.261.218")
+    assert_app_version_at_least("0.261.226")
 
 
 def test_delivers_a_composed_reply_once_with_one_unread_mark_and_one_notice():

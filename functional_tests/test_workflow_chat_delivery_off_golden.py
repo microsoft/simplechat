@@ -2,8 +2,8 @@
 # test_workflow_chat_delivery_off_golden.py
 """
 Functional test for the workflow results to chat setting-off golden.
-Version: 0.261.218
-Implemented in: 0.261.218
+Version: 0.261.226
+Implemented in: 0.261.226
 
 This test ensures that, with ``enable_chat_workflow_results`` off (the default) and chat
 orchestration workflow runs on, starting a saved workflow from chat is byte-identical to the
@@ -69,7 +69,7 @@ VOLATILE_KEYS = frozenset({
 
 
 def test_version_includes_the_workflow_chat_delivery_off_golden():
-    assert_app_version_at_least("0.261.218")
+    assert_app_version_at_least("0.261.226")
 
 
 def _pretty(value):

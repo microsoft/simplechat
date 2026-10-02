@@ -2,8 +2,8 @@
 # test_workflow_chat_delivery_contract.py
 """
 Functional test for the workflow chat delivery contract module.
-Version: 0.261.218
-Implemented in: 0.261.218
+Version: 0.261.226
+Implemented in: 0.261.226
 
 This test ensures the pure delivery helpers preserve idempotent chat-result message contracts.
 """
@@ -78,7 +78,7 @@ def clear_delivery_hints():
 
 
 def test_version_is_at_least_the_chat_delivery_release():
-    assert_app_version_at_least("0.261.218")
+    assert_app_version_at_least("0.261.226")
 
 
 def test_workflow_delivery_message_id_is_deterministic_and_prefixed():

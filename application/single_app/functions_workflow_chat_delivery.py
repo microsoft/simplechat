@@ -1,8 +1,8 @@
 # functions_workflow_chat_delivery.py
 """Pure chat delivery contract for chat-started workflow runs.
 
-Version: 0.261.218
-Implemented in: 0.261.218
+Version: 0.261.226
+Implemented in: 0.261.226
 
 This module owns the pure contract for posting a chat-started workflow run's result back into the
 chat. It performs no storage, model calls, or result-text reads. Inline copies of ``_fingerprint``,

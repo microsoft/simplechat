@@ -2,10 +2,10 @@
 # test_route_unauthenticated_policy_contract.py
 """
 Functional test for route unauthenticated access policy contract.
-Version: 0.261.218
+Version: 0.261.226
 Implemented in: 0.242.069
 Workflow result context coverage: 0.261.214
-Workflow run status coverage: 0.261.218
+Workflow run status coverage: 0.261.226
 
 This test ensures every SimpleChat route has an explicit expected unauthenticated
 access behavior: public, browser-session authenticated, admin-only, or external

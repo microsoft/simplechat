@@ -2,8 +2,8 @@
 # test_workflow_chat_delivery_loop.py
 """
 Functional test for the workflow chat delivery background loop.
-Version: 0.261.218
-Implemented in: 0.261.218
+Version: 0.261.226
+Implemented in: 0.261.226
 
 This test ensures that the delivery loop binds the worker's services once with the distributed
 lock helpers, processes hints on every wake, runs the cross-user sweep at most once per sweep
@@ -138,7 +138,7 @@ class LoopHarness:
 
 
 def test_version_is_at_least_the_delivery_release():
-    assert_app_version_at_least("0.261.218")
+    assert_app_version_at_least("0.261.226")
 
 
 def test_the_loop_binds_services_once_and_throttles_the_sweep(monkeypatch):

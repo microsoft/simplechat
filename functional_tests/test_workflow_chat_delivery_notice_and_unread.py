@@ -2,8 +2,8 @@
 # test_workflow_chat_delivery_notice_and_unread.py
 """
 Functional test for workflow chat delivery notices and unread marks.
-Version: 0.261.218
-Implemented in: 0.261.218
+Version: 0.261.226
+Implemented in: 0.261.226
 
 This test ensures chat-started workflow delivery notifications stay idempotent and guarded unread marks preserve owner-scoped conversation state.
 """
@@ -109,7 +109,7 @@ def notifications_fixture():
 
 
 def test_version_is_at_least_the_chat_delivery_release():
-    checked = assert_app_version_at_least("0.261.218")
+    checked = assert_app_version_at_least("0.261.226")
     require(isinstance(checked, str), f"version helper should return the current version, got {checked!r}")
 
 

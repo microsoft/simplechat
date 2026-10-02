@@ -2,8 +2,8 @@
 # test_workflow_chat_delivery_concurrency.py
 """
 Functional test for workflow chat delivery concurrency.
-Version: 0.261.218
-Implemented in: 0.261.218
+Version: 0.261.226
+Implemented in: 0.261.226
 
 This test ensures concurrent chat delivery workers publish each workflow result exactly once.
 """
@@ -163,7 +163,7 @@ def _require_one_delivery_side_effect(world):
 
 
 def test_version_is_at_least_the_chat_delivery_release():
-    assert_app_version_at_least("0.261.218")
+    assert_app_version_at_least("0.261.226")
 
 
 def test_claim_race_allows_one_worker_to_deliver_and_the_other_to_stay_busy(monkeypatch):
