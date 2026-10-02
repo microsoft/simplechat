@@ -3,6 +3,7 @@ import { fetchAgentCitationArtifact } from "./chat-citations.js";
 import { escapeHtml } from "./chat-utils.js";
 
 const AZURE_MAPS_RENDER_TYPE = "azure_maps_openlayers";
+const AZURE_MAPS_TILE_PROXY_PATH = "/api/azure-maps/tile";
 
 function toFiniteNumber(value) {
     const numericValue = Number(value);
@@ -56,6 +57,14 @@ function getCitationResult(candidate) {
     return null;
 }
 
+// Tiles are requested with the user's session, so they only ever come from SimpleChat's tile proxy.
+function isTileProxyTemplate(template) {
+    const value = typeof template === "string" ? template.trim() : "";
+    return value.startsWith(`${AZURE_MAPS_TILE_PROXY_PATH}?`)
+        && !/[\s"'<>\\]/.test(value)
+        && ["{z}", "{x}", "{y}"].every((placeholder) => value.includes(placeholder));
+}
+
 function isAzureMapsVisualization(result) {
     return Boolean(
         result
@@ -63,7 +72,7 @@ function isAzureMapsVisualization(result) {
         && result.render_type === AZURE_MAPS_RENDER_TYPE
         && result.map_payload
         && typeof result.map_payload === "object"
-        && result.map_payload.tile_url_template
+        && isTileProxyTemplate(result.map_payload.tile_url_template)
     );
 }
 
@@ -389,8 +398,9 @@ function initializeOpenLayersMap(mapElement, popupElement, payload) {
 
     const tileLayer = new olRef.layer.Tile({
         source: new olRef.source.XYZ({
-            url: payload.tile_url_template,
-            attributions: payload.tile_attribution || "",
+            url: payload.tile_url_template.trim(),
+            // OpenLayers renders attributions as HTML, and this text comes from a tool result.
+            attributions: escapeHtml(payload.tile_attribution || ""),
             crossOrigin: "anonymous",
             maxZoom: payload.view?.max_zoom || 15,
         }),

@@ -2,6 +2,15 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.049)**
+
+#### Bug Fixes
+
+*   **Inline Map Attribution Shown as Text and Tiles Kept on the Tile Proxy**
+    *   Inline maps in the chat now show a tool result's tile attribution as plain text. OpenLayers renders attribution strings as HTML, so the text is escaped first.
+    *   A tool result is drawn as a map only when its tile template points at SimpleChat's Azure Maps tile proxy (`/api/azure-maps/tile`). Maps from the Azure Maps action are unchanged.
+    *   (Ref: `chat-inline-maps.js`, [Inline Map Attribution Text Fix](fixes/INLINE_MAP_ATTRIBUTION_TEXT_FIX.md))
+
 ### **(v0.261.048)**
 
 #### Bug Fixes
