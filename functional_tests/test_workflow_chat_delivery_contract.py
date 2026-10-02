@@ -321,6 +321,19 @@ def test_delivery_note_text_rejects_unsupported_expired_kind():
         delivery.delivery_note_text(delivery.KIND_EXPIRED, "Daily digest")
 
 
+def test_delivery_log_swallows_logging_failures(monkeypatch):
+    """delivery_log must never let telemetry failures escape."""
+
+    def broken_log_event(*args, **kwargs):
+        raise RuntimeError("telemetry unavailable")
+
+    monkeypatch.setattr(delivery, "log_event", broken_log_event)
+
+    result = delivery.delivery_log("logging failure is non-fatal")
+
+    require(result is None, f"delivery_log should swallow log_event failures, got {result!r}")
+
+
 def test_build_delivery_metadata_shape_and_values_are_pinned():
     metadata = delivery.build_delivery_metadata(
         kind=delivery.KIND_RESULT,
@@ -514,6 +527,20 @@ def test_merge_stored_run_fields_preserves_stored_delivery_invocation_and_strips
     require(merged["chat_invocation"] == {"conversation_id": CONVERSATION_ID}, "stored invocation should be restored")
 
 
+def test_merge_stored_run_fields_drops_incoming_delivery_when_store_has_none():
+    """An incoming stale delivery record must not recreate delivery state missing from storage."""
+
+    incoming = {"id": RUN_ID, "status": "completed", delivery.CHAT_DELIVERY_KEY: {"status": delivery.STATUS_PENDING}}
+    stored = {"id": RUN_ID, "status": "running"}
+
+    merged = delivery.merge_stored_run_fields(incoming, stored)
+
+    require(
+        delivery.CHAT_DELIVERY_KEY not in merged,
+        f"incoming chat_delivery should be removed when stored run has none, got {merged!r}",
+    )
+
+
 def test_merge_stored_run_fields_preserves_cancellation_state():
     incoming = {"id": RUN_ID, "status": "running"}
     stored = {"status": "cancelling", "cancellation_requested_at": NOW_TEXT, "cancellation_requested_by": USER}
@@ -573,6 +600,24 @@ def test_reconcile_pending_terminal_states_become_ready_with_expected_kinds():
         require(updated["generation"] == 8, f"pending {state} should use control version")
         require(updated["kind"] == kind, f"pending {state} should map to {kind}")
         require(updated["run_status"] == state, f"pending {state} should pin run_status")
+
+
+def test_reconcile_pending_terminal_state_is_due_now_even_after_deferral():
+    """A pending record that becomes terminal must clear old deferred retry timing."""
+
+    deferred_record = _record(
+        status=delivery.STATUS_PENDING,
+        next_attempt_at=delivery.format_delivery_timestamp(NOW + timedelta(seconds=60)),
+        first_deferred_at=NOW_TEXT,
+    )
+
+    updated, changed, ready = _reconcile(deferred_record, _summary(state="completed", version=5))
+
+    require(changed is True, f"pending completed summary should change deferred record, got {updated!r}")
+    require(ready is True, f"pending completed summary should be ready, got ready={ready!r}")
+    require(updated["status"] == delivery.STATUS_READY, f"pending completed summary should become ready, got {updated!r}")
+    require(updated["next_attempt_at"] is None, f"ready record must be due now, got {updated.get('next_attempt_at')!r}")
+    require(updated["first_deferred_at"] is None, f"ready record must clear first_deferred_at, got {updated.get('first_deferred_at')!r}")
 
 
 def test_reconcile_pending_non_terminal_states_stay_pending():

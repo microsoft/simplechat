@@ -264,6 +264,63 @@ def test_guard_retries_412_and_keeps_concurrent_delivery(personal_workflows, mon
     require(saved["progress"] == {"runner": "after-conflict"}, "incoming runner fields must survive retry")
 
 
+def test_guarded_replace_uses_read_etag_so_real_conflict_preserves_concurrent_delivery(personal_workflows, monkeypatch):
+    """A concurrent write must only be detected by the guarded replace ETag."""
+
+    stored = make_run()
+    container = FakeContainer("runs", [stored])
+    install_run_container(monkeypatch, personal_workflows, container)
+    concurrent_delivery = make_record(
+        status=STATUS_DELIVERED,
+        generation=9,
+        phase=PHASE_MESSAGE_CREATED,
+        message_id="assistant_workflow_delivery_etag_concurrent",
+    )
+    original_read = container.read_item
+    original_replace = container.replace_item
+    read_etags = []
+    state = {"concurrent_write_done": False}
+
+    def read_item_recording_etag(item=None, partition_key=None, **kwargs):
+        document = original_read(item=item, partition_key=partition_key, **kwargs)
+        read_etags.append((document["id"], document.get("_etag")))
+        return document
+
+    def replace_after_concurrent_write(item=None, body=None, etag=None, match_condition=None, **kwargs):
+        if not state["concurrent_write_done"]:
+            state["concurrent_write_done"] = True
+            current = container.get(RUN_ID)
+            current["chat_delivery"] = copy.deepcopy(concurrent_delivery)
+            container.put(current)
+        return original_replace(item=item, body=body, etag=etag, match_condition=match_condition, **kwargs)
+
+    container.read_item = read_item_recording_etag
+    container.replace_item = replace_after_concurrent_write
+    incoming = copy.deepcopy(stored)
+    incoming["progress"] = {"runner": "after-real-etag-conflict"}
+    incoming["chat_delivery"] = make_record(status="pending")
+
+    save_run(personal_workflows, incoming)
+
+    saved = container.get(RUN_ID)
+    recorded_replace_calls = replace_calls(container)
+    require(
+        state["concurrent_write_done"] is True,
+        f"test hook should perform one concurrent write, state={state!r}",
+    )
+    require(len(read_etags) == 2, f"guarded save must read before initial replace and retry, read_etags={read_etags!r}")
+    require(len(recorded_replace_calls) == 2, f"guarded save must attempt replace twice, calls={container.calls}")
+    for call, read_etag in zip(recorded_replace_calls, read_etags):
+        _operation, item_id, etag = call
+        read_item_id, expected_etag = read_etag
+        require(
+            item_id == read_item_id and etag == expected_etag,
+            f"replace ETag must match immediately preceding read: call={call!r}, read_etag={read_etag!r}",
+        )
+    require(saved["chat_delivery"] == concurrent_delivery, f"concurrent chat_delivery must win, got {saved.get('chat_delivery')!r}")
+    require(saved["progress"] == {"runner": "after-real-etag-conflict"}, f"incoming fields must survive retry, got {saved!r}")
+
+
 def test_guard_read_404_upserts_run_record_unchanged(personal_workflows, monkeypatch):
     container = FakeContainer("runs")
     install_run_container(monkeypatch, personal_workflows, container)
