@@ -63,7 +63,7 @@ from functions_orchestration_context import (
 )
 from functions_orchestration_deliverables import explicit_image_shortfalls
 from functions_orchestration_registry import (
-    CAPABILITY_TABULAR_ANALYZE, CAPABILITY_WORKFLOW_PROPOSE, CAPABILITY_WORKFLOW_RUN,
+    CAPABILITY_TABULAR_ANALYZE, CAPABILITY_WORKFLOW_PROPOSE, CAPABILITY_WORKFLOW_RESULTS, CAPABILITY_WORKFLOW_RUN,
     DEPENDENCY_PLAN_CONTRACT_VERSION, admitted_export_pairs, external_effect_capability_ids, get_capability,
     resolve_available_capability_ids,
 )
@@ -609,6 +609,9 @@ def _step_record(context, step, index, status, result, started_at, completed_at,
     if step.get('capability_id') == CAPABILITY_WORKFLOW_RUN and isinstance(result.get('workflow_run'), dict):
         # Server-only: the workflow and run ids the run link reads; public_step_record drops it.
         record['workflow_run'] = deepcopy(result['workflow_run'])
+    if step.get('capability_id') == CAPABILITY_WORKFLOW_RESULTS and isinstance(result.get('workflow_results'), dict):
+        # Server-only: the result read's lineage and reply descriptor; public_step_record drops it.
+        record['workflow_results'] = deepcopy(result['workflow_results'])
     return record
 
 
@@ -664,6 +667,34 @@ def _restore_workflow_run(step, context, status, result, *, user_id):
         )
         return result
     return {**result, 'workflow_run': sidecar} if isinstance(sidecar, dict) else result
+
+
+def _restore_workflow_results(step, context, status, result, *, user_id):
+    """Re-authorize a completed workflow_results step whose result came back without its sidecar.
+
+    A retained, recovered or reused result is rebuilt from the task result alone. The read is
+    authorized again here; when it no longer is, the sidecar stays missing and the answer fails
+    closed when its lineage is checked.
+    """
+    if (
+        step.get('capability_id') != CAPABILITY_WORKFLOW_RESULTS or status != STEP_STATUS_COMPLETED
+        or not isinstance(result, dict) or result.get('task_result') is None
+        or isinstance(result.get('workflow_results'), dict)
+    ):
+        return result
+    try:
+        from functions_orchestration_workflow_results import rebuild_workflow_results
+
+        rebuilt = rebuild_workflow_results(step, context, user_id=user_id, task=result['task_result'])
+    except Exception as exc:
+        log_event(
+            f'{_LOG_PREFIX} A recovered workflow result could not be described.',
+            level=logging.WARNING,
+            extra={**_step_log_context(context, step), 'error_type': type(exc).__name__},
+        )
+        return result
+    sidecar = rebuilt.get('workflow_results') if isinstance(rebuilt, dict) else None
+    return {**result, 'workflow_results': sidecar} if isinstance(sidecar, dict) else result
 
 
 def _persist(persist, record_type, record):
@@ -1513,6 +1544,7 @@ def _execute_dependency_plan(
             context.artifacts.extend(deepcopy(result['artifacts']))
         result = _restore_workflow_proposal(step, context, status, result, settings=settings, user_id=user_id)
         result = _restore_workflow_run(step, context, status, result, user_id=user_id)
+        result = _restore_workflow_results(step, context, status, result, user_id=user_id)
         record = _step_record(context, step, index, status, result, started_at, completed_at, elapsed)
         record.update({
             'checkpoint_available': checkpoints is not None
