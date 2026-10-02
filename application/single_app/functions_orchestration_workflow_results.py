@@ -834,9 +834,6 @@ def _reader_outcome(user_id, workflow_id, run, *, name, newer_in_progress):
 def _read_workflow_result_step(step, context, *, settings, user_id):
     workflow, workflow_id, planning, name, closed = _check_access(step, context, settings=settings, user_id=user_id)
     if closed is not None:
-        reason = closed.get('reason')
-        if reason in WORKFLOW_RESULTS_REASON_TEXT:
-            closed['reason'] = reason
         return closed
     time_zone = resolve_turn_time_zone(planning.get('time_zone'), getattr(context, 'time_zone', None))
     run, newer_in_progress, empty_outcome = _select_run(user_id, workflow_id, step.get('arguments') or {}, time_zone)
