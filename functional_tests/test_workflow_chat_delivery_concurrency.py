@@ -180,7 +180,11 @@ def test_claim_race_allows_one_worker_to_deliver_and_the_other_to_stay_busy(monk
 
     outcomes = set(results.values())
     expected_outcomes = {worker.OUTCOME_DELIVERED, worker.OUTCOME_BUSY}
-    require(outcomes == expected_outcomes, f"expected {expected_outcomes}, got {results}")
+    require(
+        outcomes == expected_outcomes,
+        "two workers racing for one claim: exactly one delivers and the other stays busy; "
+        f"got {dict(sorted(results.items()))}",
+    )
     _require_one_delivery_side_effect(world)
     record = world.record()
     status = record.get("status")

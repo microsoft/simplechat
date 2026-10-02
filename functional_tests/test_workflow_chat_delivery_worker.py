@@ -16,6 +16,7 @@ models and the notification helpers are the in-memory fakes in
 """
 
 import sys
+from collections import Counter
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -108,7 +109,11 @@ def deliver_until(world, stop_outcomes, *, limit=40):
         if outcome in stop_outcomes:
             return outcomes
         make_due(world)
-    raise AssertionError(f"no outcome in {stop_outcomes} after {limit} attempts: {outcomes}")
+    seen = ", ".join(f"{outcome} x{count}" for outcome, count in Counter(outcomes).items())
+    raise AssertionError(
+        f"delivery must settle on {' or '.join(sorted(stop_outcomes))} within {limit} attempts; "
+        f"it kept returning {seen}"
+    )
 
 
 def set_run_status(world, status, run_id=RUN_ID):
