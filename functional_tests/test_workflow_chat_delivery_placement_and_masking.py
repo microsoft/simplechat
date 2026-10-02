@@ -9,6 +9,7 @@ This test ensures delivered workflow-result chat messages are placed like normal
 """
 
 import copy
+import shutil
 import sys
 from pathlib import Path
 
@@ -50,6 +51,19 @@ from test_support.workflow_result_offline_app import offline_workflow_result_app
 DELIVERED_CANARY = "DELIVERED-WORKFLOW-RESULT-CANARY"
 FOLLOWUP_CANARY = "FOLLOWUP-WORKFLOW-RESULT-CANARY"
 LATER_USER_CANARY = "Can you compare those two workflow answers?"
+
+
+@pytest.fixture(scope="module", autouse=True)
+def remove_reused_session_directory():
+    # app.py binds sessions to the first offline app's directory, so the later offline apps here recreate it.
+    yield
+    application = getattr(sys.modules.get("app"), "app", None)
+    session_dir = application.config.get("SESSION_FILE_DIR") if application is not None else None
+    if not session_dir:
+        return
+    path = Path(session_dir).resolve()
+    if path.parent == ROOT / "functional_tests" and path.name.startswith(".workflow-result-chat-state-"):
+        shutil.rmtree(path, ignore_errors=True)
 
 
 def test_version_is_at_least_the_chat_delivery_release():
