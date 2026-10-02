@@ -73,6 +73,14 @@ from functions_orchestration_workflow_context import (
     workflow_run_ready,
     workflow_run_settings_gate,
 )
+from functions_workflow_chat_delivery import (
+    WORKFLOW_RUN_DELIVERY_FOLLOW_UP,
+    WORKFLOW_RUN_DELIVERY_FOLLOW_UP_MANY,
+    build_chat_delivery_seed,
+    chat_delivery_applies,
+    normalize_model_selection,
+    normalize_requester_roles,
+)
 
 
 WORKFLOW_RUN_OUTPUT = 'run'
@@ -200,8 +208,9 @@ _STEP_SUMMARIES = {
 }
 _DEFAULT_WORKFLOW_NAME = 'Workflow'
 
-# The reply's note about the saved workflows a plan started. It says where a run's results appear
-# and never promises them in the chat, which only a later delivery step can do.
+# The reply's note about the saved workflows a plan started. It says where a run's results appear.
+# It promises them in the chat only when every run it started recorded a chat delivery, because only
+# then does the server post each run's result back into this conversation when the run finishes.
 WORKFLOW_RUN_NOTE_HEADING = 'Saved workflows:'
 WORKFLOW_RUN_FOLLOW_UP = (
     "Follow the run's progress and results in the workflow's run history in Workflows. Results also "
@@ -585,6 +594,40 @@ def _started_status(run):
     return WORKFLOW_RUN_STATUS_QUEUED
 
 
+def _chat_delivery_seed(settings, context, planning):
+    """Return the record that has the run's result posted back to this chat, or None.
+
+    The cheap settings check comes first, so a deployment with Use Workflow Results In Chat off
+    never reaches the role-aware gate. A failure here only means the run is not delivered: it
+    never fails the start.
+    """
+    if not isinstance(settings, dict) or not settings.get('enable_chat_workflow_results'):
+        return None
+    try:
+        # Settings initialize application storage, so they are imported only once a gate is reached.
+        from functions_settings import is_chat_workflow_results_enabled_for_user
+
+        user_roles = getattr(context, 'user_roles', None)
+        if not is_chat_workflow_results_enabled_for_user(settings, user_roles=user_roles):
+            return None
+        time_zone = getattr(context, 'time_zone', None)
+        if not time_zone and isinstance(planning, dict):
+            time_zone = planning.get('time_zone')
+        return build_chat_delivery_seed(
+            time_zone=time_zone,
+            model_selection=normalize_model_selection(
+                getattr(context, 'seeds', None), getattr(context, 'active_group_ids', None),
+            ),
+            requester_roles=normalize_requester_roles(user_roles),
+        )
+    except Exception as exc:
+        _log(
+            'Chat delivery was not recorded for a started workflow run.', logging.WARNING,
+            run_id=getattr(context, 'run_id', None), error_type=type(exc).__name__,
+        )
+        return None
+
+
 def _start(step, context, *, settings, user_id, recheck, requested_at):
     """Start or link the step's workflow run. Returns an outcome; raises only to fail the step.
 
@@ -651,6 +694,7 @@ def _start(step, context, *, settings, user_id, recheck, requested_at):
         return unavailable(RULE_NOT_DURABLE, workflow_id)
     if workflow.get('status') in M365_ACTIVE_STATES:
         return unavailable(REASON_WAITING_FOR_MICROSOFT_365, workflow_id)
+    chat_delivery = _chat_delivery_seed(settings, context, planning)
 
     recheck()
     runtime_unavailable, runtime_conflict = _runtime_errors()
@@ -671,6 +715,7 @@ def _start(step, context, *, settings, user_id, recheck, requested_at):
                 'requested_by': user_id,
                 'requested_at': requested_at,
             },
+            **({'chat_delivery': chat_delivery} if chat_delivery is not None else {}),
         )
     except runtime_conflict as exc:
         code = getattr(exc, 'code', None)
@@ -684,11 +729,19 @@ def _start(step, context, *, settings, user_id, recheck, requested_at):
     except AzureError as exc:
         raise _WorkflowRunStepFailure(FAILURE_RUNTIME_UNAVAILABLE) from exc
     run = queued.get('run') if isinstance(queued, dict) else None
-    return _outcome(_started_status(run), name=name, workflow_id=workflow_id, run_id=run_id, queued=True)
+    outcome = _outcome(_started_status(run), name=name, workflow_id=workflow_id, run_id=run_id, queued=True)
+    # Only a run this call started, carrying this chat's delivery record, is posted back here.
+    if (
+        chat_delivery is not None
+        and outcome['status'] in (WORKFLOW_RUN_STATUS_QUEUED, WORKFLOW_RUN_STATUS_RUNNING)
+        and chat_delivery_applies(run, context.conversation_id)
+    ):
+        outcome['chat_delivery'] = True
+    return outcome
 
 
 def _sidecar(step, context, *, user_id, producer_run_id, outcome):
-    return {
+    sidecar = {
         'version': WORKFLOW_RUN_VERSION,
         'step_id': step['step_id'],
         'orchestration_run_id': producer_run_id,
@@ -702,6 +755,10 @@ def _sidecar(step, context, *, user_id, producer_run_id, outcome):
         'status': outcome.get('status'),
         'reason': outcome.get('reason'),
     }
+    # Set only by a start that recorded this chat's delivery, never for a linked or rebuilt run.
+    if outcome.get('chat_delivery') is True:
+        sidecar['chat_delivery'] = True
+    return sidecar
 
 
 def _failure(exc):
@@ -879,7 +936,7 @@ def workflow_run_note(plan, execution_steps, *, stopped=False):
         record['step_id']: record for record in (execution_steps if isinstance(execution_steps, list) else ())
         if isinstance(record, dict) and isinstance(record.get('step_id'), str)
     }
-    lines, started = [], 0
+    lines, started, delivered = [], 0, 0
     for step in steps:
         if not isinstance(step, dict) or step.get('capability_id') != CAPABILITY_WORKFLOW_RUN:
             continue
@@ -896,6 +953,8 @@ def workflow_run_note(plan, execution_steps, *, stopped=False):
             continue
         if sidecar['status'] in WORKFLOW_RUN_STARTED_STATUSES:
             started += 1
+            if sidecar.get('chat_delivery') is True:
+                delivered += 1
         lines.append(_step_line(sidecar))
     notes = plan.get('workflow_run_notes') if isinstance(plan.get('workflow_run_notes'), list) else []
     for note in notes:
@@ -909,7 +968,11 @@ def workflow_run_note(plan, execution_steps, *, stopped=False):
         return ''
     parts = ['\n'.join([WORKFLOW_RUN_NOTE_HEADING, *lines])]
     if started:
-        parts.append(WORKFLOW_RUN_FOLLOW_UP_MANY if started > 1 else WORKFLOW_RUN_FOLLOW_UP)
+        # The chat promises the result only when every run started here will be posted back to it.
+        if delivered == started:
+            parts.append(WORKFLOW_RUN_DELIVERY_FOLLOW_UP_MANY if started > 1 else WORKFLOW_RUN_DELIVERY_FOLLOW_UP)
+        else:
+            parts.append(WORKFLOW_RUN_FOLLOW_UP_MANY if started > 1 else WORKFLOW_RUN_FOLLOW_UP)
         if stopped:
             parts.append(WORKFLOW_RUN_STOPPED)
     return '\n\n'.join(parts)
@@ -919,6 +982,8 @@ __all__ = [
     'FAILURE_RUNTIME_UNAVAILABLE',
     'NO_WORKFLOW_STARTED',
     'REASON_INVALID',
+    'WORKFLOW_RUN_DELIVERY_FOLLOW_UP',
+    'WORKFLOW_RUN_DELIVERY_FOLLOW_UP_MANY',
     'WORKFLOW_RUN_FOLLOW_UP',
     'WORKFLOW_RUN_FOLLOW_UP_MANY',
     'WORKFLOW_RUN_NOTE_HEADING',

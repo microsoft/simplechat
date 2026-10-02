@@ -16,6 +16,7 @@ from azure.cosmos.exceptions import CosmosHttpResponseError, CosmosResourceExist
 
 from functions_appinsights import log_event
 from functions_m365_workflow_binding import M365_WAITING_STATES
+from functions_workflow_chat_delivery import CHAT_DELIVERY_KEY, finalize_chat_delivery_seed
 from functions_workflow_definitions import (
     WORKFLOW_DEFINITION_FIELDS, validate_workflow_publication_completion, workflow_definition_revision,
 )
@@ -149,7 +150,7 @@ def workflow_run_id_for_request(workflow, request_id):
 
 def queue_durable_workflow_run(
     workflow, *, actor_user_id, trigger_source="manual", request_id=None, invocation_metadata=None,
-    chat_invocation=None,
+    chat_invocation=None, chat_delivery=None,
 ):
     services = _services(workflow)
     settings = services["settings"]()
@@ -227,6 +228,9 @@ def queue_durable_workflow_run(
     if chat_invocation is not None:
         # Which chat orchestration step started this run, for the requester's own run history.
         run["chat_invocation"] = deepcopy(chat_invocation)
+        if chat_delivery is not None:
+            # The record that has this run's result posted back to that chat when the run finishes.
+            run[CHAT_DELIVERY_KEY] = finalize_chat_delivery_seed(chat_delivery, control)
     try:
         saved = services["runs"].read_item(item=run_id, partition_key=services["partition"])
     except CosmosResourceNotFoundError:
