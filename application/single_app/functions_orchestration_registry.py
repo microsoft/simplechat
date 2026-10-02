@@ -77,6 +77,7 @@ def effective_capability_ids(values):
 # produced the `_load_orchestration_helper` shim in `functions_tabular_analysis.py`.
 DOCUMENT_ACTION_TYPE_ANALYZE = 'analyze'
 DOCUMENT_ACTION_TYPE_COMPARISON = 'comparison'
+DOCUMENT_ACTION_TYPE_MERGE = 'merge'
 DOCUMENT_ACTION_CONTEXT_CHAT = 'chat'
 
 COST_CLASS_LOW = 'low'
@@ -96,6 +97,7 @@ CAPABILITY_DOCUMENT_SEARCH = 'document_search'
 CAPABILITY_DOCUMENT_ANALYZE = 'document_analyze'
 CAPABILITY_DOCUMENT_COMPARE = 'document_compare'
 CAPABILITY_TABULAR_ANALYZE = 'tabular_analyze'
+CAPABILITY_TABULAR_MERGE = 'tabular_merge'
 CAPABILITY_WEB_SEARCH = 'web_search'
 CAPABILITY_URL_FETCH = 'url_fetch'
 CAPABILITY_DEEP_RESEARCH = 'deep_research'
@@ -778,6 +780,93 @@ CAPABILITY_REGISTRY = (
         'cost_class': COST_CLASS_MEDIUM,
         'max_per_plan': 2,
         'adapter': CAPABILITY_TABULAR_ANALYZE,
+    },
+    {
+        'id': CAPABILITY_TABULAR_MERGE,
+        'label': 'Merge spreadsheets',
+        'role': ROLE_REASON,
+        'request_gate': None,
+        'summary': (
+            'Combine the rows of two or more CSV or Excel files that share the same columns into '
+            'one table, exactly and without a model.'
+        ),
+        'when_to_use': (
+            'Use when the user asks to merge, combine, append, stack or consolidate several CSV or '
+            'Excel files with the same columns into one table or file. Every row is kept exactly, in '
+            'the order the files are listed. It never matches rows on a key column (no joins or '
+            'lookups) and never edits values; when "merge" could mean matching rows on a key, ask. '
+            'Name the files in document_ids in merge order, or bind inputs.sources to a search '
+            "step's sources output when the files must be found first. Columns are matched by name "
+            'in any order; schema_policy exact_order also requires the same order. sheet picks one '
+            "sheet in every workbook; otherwise each workbook's first visible sheet is read. "
+            'include_source_column adds each row\'s file name. To deliver a file, bind the records '
+            'output to render_file with csv and exact_tabular_records_v1, or xlsx and '
+            'exact_tabular_workbook_v1. Never compose merged rows. A merge of more files than the '
+            'chat limit, or one that should repeat, belongs in a workflow.'
+        ),
+        'settings_gates': (),
+        'settings_gates_any': (
+            'enable_user_workspace',
+            'enable_group_workspaces',
+            'enable_public_workspaces',
+        ),
+        'gate': _document_action_gate(DOCUMENT_ACTION_TYPE_MERGE),
+        'requires_scope': (SCOPE_PERSONAL, SCOPE_GROUP, SCOPE_PUBLIC),
+        'inputs': {
+            'type': 'object',
+            'properties': {
+                'document_ids': {
+                    'type': 'array',
+                    'items': {'type': 'string'},
+                    'minItems': 2,
+                    'uniqueItems': True,
+                    'description': 'The CSV or Excel files to merge, in the order their rows should appear.',
+                },
+                'doc_scope': {
+                    'type': 'string',
+                    'enum': ['all', 'personal', 'group', 'public'],
+                    'default': 'all',
+                },
+                'schema_policy': {
+                    'type': 'string',
+                    'enum': ['by_name', 'exact_order'],
+                    'default': 'by_name',
+                    'description': (
+                        'by_name accepts the same columns in any order; exact_order also requires '
+                        'the same order.'
+                    ),
+                },
+                'sheet': {
+                    'type': 'string',
+                    'minLength': 1,
+                    'maxLength': 31,
+                    'description': "The sheet to read in every Excel file. Omit for each workbook's first visible sheet.",
+                },
+                'include_source_column': {
+                    'type': 'boolean',
+                    'default': True,
+                    'description': "Add a column holding each row's file name.",
+                },
+                'source_column_name': {
+                    'type': 'string',
+                    'minLength': 1,
+                    'maxLength': 128,
+                    'default': 'Source File',
+                },
+            },
+            'additionalProperties': False,
+        },
+        'result_contract_version': 'tabular-merge-v1',
+        'result_outputs': {'records': 'records-v1', 'report': 'structured-v1'},
+        # Files a search found can be merged by binding its source set by name.
+        'result_input_kinds': {'sources': ('source-set-v1',)},
+        'partial_inputs_supported': False,
+        'produces': (PRODUCES_RETAINED_RESULTS,),
+        'cost_class': COST_CLASS_MEDIUM,
+        'max_per_plan': 2,
+        'adapter': CAPABILITY_TABULAR_MERGE,
+        # Enforced by the validator against the administrator's chat limit for Merge.
+        'document_action_type': DOCUMENT_ACTION_TYPE_MERGE,
     },
     {
         'id': CAPABILITY_WEB_SEARCH,

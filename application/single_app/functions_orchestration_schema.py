@@ -56,6 +56,7 @@ from functions_orchestration_registry import (
     CAPABILITY_COMPOSE,
     CAPABILITY_GENERATE_IMAGE,
     CAPABILITY_TABULAR_ANALYZE,
+    CAPABILITY_TABULAR_MERGE,
     CAPABILITY_WORKFLOW_PROPOSE,
     CAPABILITY_WORKFLOW_RESULTS,
     CAPABILITY_WORKFLOW_RUN,
@@ -871,6 +872,15 @@ def validate_dependency_plan(
                 )
             if capability_id == 'document_analyze' and arguments.get('document_ids') and 'sources' in step['inputs']:
                 raise PlanValidationError('Use either explicit document IDs or a named source-set input.')
+            if capability_id == CAPABILITY_TABULAR_MERGE:
+                if not arguments.get('document_ids') and 'sources' not in step['inputs']:
+                    raise PlanValidationError(
+                        'Merge requires arguments.document_ids naming at least two CSV or Excel files in '
+                        'merge order, or an inputs.sources source-set binding.',
+                        code='source_binding_required', rule='merge_sources_required',
+                    )
+                if arguments.get('document_ids') and 'sources' in step['inputs']:
+                    raise PlanValidationError('Use either explicit document IDs or a named source-set input.')
             accepted.append(step)
         if not any(step['enabled'] for step in accepted):
             raise PlanValidationError('The plan contains no enabled work.')
@@ -1007,6 +1017,18 @@ def validate_plan_document_source_kinds(plan, document_source_kinds):
     if not isinstance(document_source_kinds, dict):
         raise PlanValidationError('Document type metadata is unavailable.', code='source_metadata_invalid')
     for step in plan.get('steps') or []:
+        if step.get('enabled', True) and step.get('capability_id') == CAPABILITY_TABULAR_MERGE:
+            if any(
+                document_source_kinds.get(document_id) not in (None, 'tabular')
+                for document_id in plan_document_ids({'steps': [step]})
+            ):
+                raise PlanValidationError(
+                    f'Step "{step["step_id"]}" merges only CSV or Excel files, and a selected source is '
+                    'another kind of document. Merge only the tabular sources, or prepare the others '
+                    'with compatible offered capabilities. Keep every selected source.',
+                    code='source_kind_invalid', rule='tabular_source_required',
+                )
+            continue
         if not step.get('enabled', True) or step.get('capability_id') not in (
             'document_analyze', 'document_compare',
         ):
@@ -1509,6 +1531,28 @@ FAILURE_MESSAGES = {
     'image_generation_unavailable': 'Image generation is not available for this deployment right now.',
     'image_request_invalid': 'The image model did not accept the planned image request.',
     'retry_would_repeat': 'A retry would send the same request that was declined. Ask again with a different description instead.',
+    'merge_schema_mismatch': (
+        "The selected files don't all have the same columns, so nothing was merged. Ask to "
+        'inspect their columns to see how they differ.'
+    ),
+    'merge_columns_invalid': (
+        'A selected file has duplicate or overly long column headers, no header row, or too many '
+        'columns, so nothing was merged.'
+    ),
+    'merge_rows_invalid': (
+        'A selected file has a row with more values than column headers, or a value longer than a '
+        'spreadsheet cell allows, so nothing was merged.'
+    ),
+    'merge_source_unreadable': (
+        "A selected file couldn't be read as a CSV or Excel file. It may be damaged or "
+        'password-protected.'
+    ),
+    'merge_sheet_not_found': "A selected workbook doesn't have the requested sheet, so nothing was merged.",
+    'merge_sources_invalid': 'Merging needs at least two different CSV or Excel files (.csv, .xlsx, .xlsm or .xls).',
+    'merge_limit_exceeded': (
+        'The merge is larger than chat allows. Merge fewer or smaller files, or ask for a workflow '
+        'to merge them.'
+    ),
     'step_failed': 'This operation could not complete.',
     'message_not_saved': 'The explanation could not be saved. Reload this run to check its durable status.',
     LEGACY_PLAN_CODE: LEGACY_PLAN_MESSAGE,

@@ -21,7 +21,7 @@ from functions_generated_export_contracts import (
     GeneratedFileExportReadiness,
     GeneratedFileExportStream,
 )
-from functions_generated_export_registry import resolve_generated_file_export_format
+from functions_generated_export_registry import EXACT_TABULAR_PROFILES, resolve_generated_file_export_format
 
 
 _CHUNK_CHARACTERS = 16384
@@ -252,6 +252,18 @@ def _validate_columns(columns, limits, checks):
     return tuple(columns), safe_columns
 
 
+def _tabular_request_columns(source, request):
+    """Explicit projections name their columns; exact profiles write the retained schema in order."""
+    if request.profile not in EXACT_TABULAR_PROFILES:
+        return request.columns
+    if request.columns is not None:
+        raise GeneratedFileExportError('invalid_options', 'Exact tabular exports write every retained column.')
+    columns = getattr(source, 'columns', None)
+    if type(columns) not in (tuple, list) or not columns:
+        raise GeneratedFileExportError('unsupported_source', 'Exact tabular exports need a retained column schema.')
+    return tuple(columns)
+
+
 def _csv_cell(value):
     if value is None:
         return ''
@@ -265,7 +277,7 @@ def _csv_cell(value):
 
 
 def _render_csv(writer, source, request, limits, checks):
-    columns, safe_columns = _validate_columns(request.columns, limits, checks)
+    columns, safe_columns = _validate_columns(_tabular_request_columns(source, request), limits, checks)
     expected_keys = set(columns)
     csv_writer = csv.writer(writer, lineterminator='\r\n')
     csv_writer.writerow(safe_columns)

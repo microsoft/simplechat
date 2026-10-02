@@ -310,6 +310,13 @@ DOCUMENT_ACTION_CHAT_DEFAULT_LIMIT = 3
 DOCUMENT_ACTION_WORKFLOW_MIN_LIMIT = 2
 DOCUMENT_ACTION_WORKFLOW_MAX_LIMIT = 1000
 DOCUMENT_ACTION_WORKFLOW_DEFAULT_LIMIT = 10
+# Merge, mirrored from MERGE_* in functions_document_actions.py.
+DOCUMENT_ACTION_MERGE_CHAT_DEFAULT_LIMIT = 10
+DOCUMENT_ACTION_MERGE_WORKFLOW_DEFAULT_LIMIT = 100
+DOCUMENT_ACTION_MERGE_ROW_MIN_LIMIT = 1000
+DOCUMENT_ACTION_MERGE_ROW_MAX_LIMIT = 1_000_000
+DOCUMENT_ACTION_MERGE_CHAT_DEFAULT_ROWS = 250_000
+DOCUMENT_ACTION_MERGE_WORKFLOW_DEFAULT_ROWS = 1_000_000
 
 # Schemes permitted for administrator-configured navigation links. These render
 # into an anchor href, so allowing arbitrary schemes would let a saved link
@@ -3820,6 +3827,7 @@ ADMIN_SETTINGS_FIELDS = {
                 {"value": "document_analyze", "label": "Analyse documents"},
                 {"value": "document_compare", "label": "Compare documents"},
                 {"value": "tabular_analyze", "label": "Analyse spreadsheets"},
+                {"value": "tabular_merge", "label": "Merge spreadsheets"},
                 {"value": "web_search", "label": "Search the web"},
                 {"value": "url_fetch", "label": "Read linked pages"},
                 {"value": "deep_research", "label": "Research in depth"},
@@ -4606,6 +4614,73 @@ ADMIN_SETTINGS_FIELDS = {
             "max": DOCUMENT_ACTION_WORKFLOW_MAX_LIMIT,
             "group": "Comparison",
             "depends_on": {"key": "document_action_comparison_enabled", "equals": True},
+        },
+        {
+            "key": "document_action_merge_enabled",
+            "settings_path": ["document_action_capabilities", "merge", "enabled"],
+            "type": "switch",
+            "label": "Enable Merge",
+            "help": (
+                "Lets chat orchestration combine the rows of several CSV or Excel files "
+                "that share the same columns into one table, then deliver it as a CSV or "
+                "Excel file. Rows are appended exactly by code, not rewritten by a model."
+            ),
+            "default": True,
+            "group": "Merge",
+        },
+        {
+            "key": "document_action_merge_chat_max_documents",
+            "settings_path": ["document_action_capabilities", "merge", "chat_max_documents"],
+            "type": "number",
+            "label": "Merge: Chat Document Limit",
+            "help": (
+                "Most files one chat request may merge. Merging is cheaper than Analyze "
+                "because no model reads the files, so this can be higher."
+            ),
+            "default": DOCUMENT_ACTION_MERGE_CHAT_DEFAULT_LIMIT,
+            "min": DOCUMENT_ACTION_CHAT_MIN_LIMIT,
+            "max": DOCUMENT_ACTION_CHAT_MAX_LIMIT,
+            "group": "Merge",
+            "depends_on": {"key": "document_action_merge_enabled", "equals": True},
+        },
+        {
+            "key": "document_action_merge_workflow_max_documents",
+            "settings_path": ["document_action_capabilities", "merge", "workflow_max_documents"],
+            "type": "number",
+            "label": "Merge: Workflow Document Limit",
+            "help": "The same limit for a workflow run, where large batches belong.",
+            "default": DOCUMENT_ACTION_MERGE_WORKFLOW_DEFAULT_LIMIT,
+            "min": DOCUMENT_ACTION_WORKFLOW_MIN_LIMIT,
+            "max": DOCUMENT_ACTION_WORKFLOW_MAX_LIMIT,
+            "group": "Merge",
+            "depends_on": {"key": "document_action_merge_enabled", "equals": True},
+        },
+        {
+            "key": "document_action_merge_chat_max_rows",
+            "settings_path": ["document_action_capabilities", "merge", "chat_max_rows"],
+            "type": "number",
+            "label": "Merge: Chat Row Limit",
+            "help": (
+                "Most rows one chat merge may produce. A few very large files can cost more "
+                "than many small ones, so rows are limited as well as files."
+            ),
+            "default": DOCUMENT_ACTION_MERGE_CHAT_DEFAULT_ROWS,
+            "min": DOCUMENT_ACTION_MERGE_ROW_MIN_LIMIT,
+            "max": DOCUMENT_ACTION_MERGE_ROW_MAX_LIMIT,
+            "group": "Merge",
+            "depends_on": {"key": "document_action_merge_enabled", "equals": True},
+        },
+        {
+            "key": "document_action_merge_workflow_max_rows",
+            "settings_path": ["document_action_capabilities", "merge", "workflow_max_rows"],
+            "type": "number",
+            "label": "Merge: Workflow Row Limit",
+            "help": "The same row limit for a workflow run.",
+            "default": DOCUMENT_ACTION_MERGE_WORKFLOW_DEFAULT_ROWS,
+            "min": DOCUMENT_ACTION_MERGE_ROW_MIN_LIMIT,
+            "max": DOCUMENT_ACTION_MERGE_ROW_MAX_LIMIT,
+            "group": "Merge",
+            "depends_on": {"key": "document_action_merge_enabled", "equals": True},
         },
     ],
     # Rendered by V1 only while Workspace Mode is on, matching agent-toggles-card.
@@ -7111,7 +7186,7 @@ def _apply_nested_paths(normalized, current_settings, warnings=None):
     Deep Research reading the stale copy.
 
     ``settings_path`` names a single destination as a list of segments.
-    ``document_action_capabilities`` holds six values across two action types,
+    ``document_action_capabilities`` holds the Analyze, Comparison and Merge values,
     and nothing reads a flattened form of them, so writing the flat keys through
     would save a setting the application never looks at.
 

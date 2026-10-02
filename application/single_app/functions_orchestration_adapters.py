@@ -88,6 +88,7 @@ from functions_orchestration_registry import (
     CAPABILITY_DOCUMENT_COMPARE,
     CAPABILITY_DOCUMENT_SEARCH,
     CAPABILITY_TABULAR_ANALYZE,
+    CAPABILITY_TABULAR_MERGE,
     CAPABILITY_URL_FETCH,
     CAPABILITY_WEB_SEARCH,
     CAPABILITY_WORKFLOW_PROPOSE,
@@ -105,6 +106,7 @@ from functions_orchestration_schema import (
     STEP_STATUS_COMPLETED,
     STEP_STATUS_FAILED,
     STEP_STATUS_PARTIAL,
+    access_failure,
     build_step_result,
     build_failure,
     failure_from_exception,
@@ -929,6 +931,99 @@ def run_document_compare(step, context, *, settings, user_id, emit, cancel_reque
         summary=f'Retained {count} of {len(right_ids)} target comparison(s) ({task_result.status}).',
         failure=build_failure() if failed else None, task_result=task_result,
     )
+
+
+# --------------------------------------------------------------------------------------
+# tabular_merge -> functions_tabular_merge through functions_orchestration_merge
+# --------------------------------------------------------------------------------------
+
+def run_tabular_merge(step, context, *, settings, user_id, emit, cancel_requested):
+    """Append the rows of authorized same-structure spreadsheets; no model and no file.
+
+    The retained ``records`` output is what ``render_file`` turns into a CSV or XLSX file.
+    """
+    arguments = _arguments(step)
+    # The merge engine is standard-library only; its Excel readers load only when used.
+    from functions_tabular_merge import TabularMergeCancelled, TabularMergeError
+
+    try:
+        raise_if_mixed_source_cancelled(cancel_requested, 'orchestration_merge')
+        input_fingerprint = _internal_result_input_fingerprint(step, context)
+        from functions_orchestration_merge import (
+            build_tabular_merge_sources,
+            merge_step_summary,
+            persist_tabular_merge_result,
+            require_tabular_merge_manifest,
+            tabular_merge_limits,
+            tabular_merge_options,
+        )
+        from functions_tabular_merge import merge_tabular_sources
+
+        with orchestration_file_policy(allow_generated_files=False):
+            document_ids = _string_list(arguments.get('document_ids'))
+            limits = tabular_merge_limits(settings)
+            if len(document_ids) > limits.max_sources:
+                # A bound source set is checked here; explicit IDs were checked at planning.
+                raise TabularMergeError('too_many_sources', 'Too many files were selected to merge here.')
+            options = tabular_merge_options(arguments)
+            service, producer, token, input_fingerprint = _internal_result_context(
+                step, context, user_id, CAPABILITY_TABULAR_MERGE, input_fingerprint=input_fingerprint,
+            )
+            manifest = resolve_context_source_manifest(
+                context, document_ids, settings=settings, user_id=user_id, cancel_requested=cancel_requested,
+            )
+            require_tabular_merge_manifest(manifest, document_ids)
+            _emit(emit, _progress(step, CAPABILITY_TABULAR_MERGE, 'Merging spreadsheets'))
+            sources = build_tabular_merge_sources(
+                manifest, user_id, byte_reader=_ctx(context, 'merge_source_reader', None),
+            )
+            with merge_tabular_sources(
+                sources, options=options, limits=limits,
+                cancel_requested=lambda: _is_cancelled(cancel_requested),
+            ) as merge_result:
+                raise_if_mixed_source_cancelled(cancel_requested, 'orchestration_merge_saving')
+                task_result = persist_tabular_merge_result(
+                    service=service, producer=producer, merge_result=merge_result, sources=manifest,
+                    guard_token=token, input_fingerprint=input_fingerprint,
+                )
+                summary = merge_step_summary(merge_result)
+            raise_if_mixed_source_cancelled(cancel_requested, 'orchestration_merge_finalization')
+    except (MixedSourceCancellationError, TabularMergeCancelled):
+        return _cancelled_result('Merging spreadsheets was cancelled.')
+    except TabularMergeError as exc:
+        from functions_orchestration_merge import merge_failure_code
+
+        failure = build_failure(merge_failure_code(exc))
+        log_event(
+            f'{_LOG_PREFIX} Spreadsheet merge was refused.',
+            extra={
+                'user_id': user_id, 'step_id': (step or {}).get('step_id'),
+                'merge_code': exc.code, 'failure_code': failure['code'],
+            },
+            level=logging.WARNING,
+        )
+        return build_step_result(
+            status=STEP_STATUS_FAILED, summary=failure['message'], error=failure['message'], failure=failure,
+        )
+    except Exception as exc:
+        # Typed authority, cancellation and lifecycle controls belong to the owning runtime.
+        from functions_orchestration_result_runtime import raise_source_service_failure
+
+        raise_source_service_failure(exc)
+        log_event(
+            f'{_LOG_PREFIX} Spreadsheet merge failed.',
+            extra={'user_id': user_id, 'step_id': (step or {}).get('step_id'), 'error_type': type(exc).__name__},
+            level=logging.ERROR, exceptionTraceback=True,
+        )
+        if isinstance(exc, (PermissionError, LookupError)) or type(exc).__name__ in (
+            'ResultUnavailableError', 'DocumentHeldError',
+        ):
+            failure = access_failure(exc)
+            return build_step_result(
+                status=STEP_STATUS_FAILED, summary=failure['message'], error=failure['message'], failure=failure,
+            )
+        return _failed_result('The spreadsheet merge could not be completed.', exc)
+    return build_step_result(status=STEP_STATUS_COMPLETED, summary=summary, task_result=task_result)
 
 
 # --------------------------------------------------------------------------------------
@@ -1890,6 +1985,7 @@ ADAPTER_REGISTRY = {
     CAPABILITY_DOCUMENT_ANALYZE: run_document_analyze,
     CAPABILITY_DOCUMENT_COMPARE: run_document_compare,
     CAPABILITY_TABULAR_ANALYZE: run_tabular_analyze,
+    CAPABILITY_TABULAR_MERGE: run_tabular_merge,
     CAPABILITY_WEB_SEARCH: run_web_search,
     CAPABILITY_URL_FETCH: run_url_fetch,
     CAPABILITY_DEEP_RESEARCH: run_deep_research,

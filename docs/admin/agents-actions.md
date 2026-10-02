@@ -201,12 +201,20 @@ full, so an answer covers all of them rather than only the passages a search
 returned; Comparison reads one baseline document against the others, which is
 what answers questions about what changed between versions.
 
+**Merge** combines the rows of several CSV or Excel files that share the same
+columns into one table. Since **0.261.218**, V2 chat orchestration uses it when
+someone asks to merge, combine or append spreadsheets, and the plan delivers the
+result as a CSV or Excel file. Code appends the rows; no model reads them, so a
+merge costs far less than analyzing the same files. That is why its limits are
+higher, and why it is limited by merged rows as well as by files: a few very
+large files can cost more than many small ones.
+
 Because each document is read in full, the limits are the control that matters.
 They bound how long a single message can take and how much it costs. Chat and
 workflow are limited separately: a chat message has someone waiting on it, while
 a workflow run does not and can be allowed a much larger batch.
 
-These six values are stored as one object, `document_action_capabilities`, rather
+These values are stored as one object, `document_action_capabilities`, rather
 than as separate settings.
 
 #### Settings
@@ -219,6 +227,11 @@ than as separate settings.
 | Enable Document Comparison | Offers Document Comparison in the Action menu. | On | — | `document_action_capabilities.comparison.enabled` |
 | Comparison: Chat Document Limit | Most documents one chat message may compare, including the baseline. | 3 | 2–300 | `comparison.chat_max_documents` |
 | Comparison: Workflow Document Limit | The same limit for a workflow run. | 10 | 2–1000 | `comparison.workflow_max_documents` |
+| Enable Merge | Lets chat orchestration combine same-structure CSV and Excel files into one file. | On | — | `document_action_capabilities.merge.enabled`; also governed by the **Merge spreadsheets** orchestration capability. |
+| Merge: Chat Document Limit | Most files one chat request may merge. | 10 | 2–300 | `merge.chat_max_documents` |
+| Merge: Workflow Document Limit | The same limit for a workflow run. | 100 | 2–1000 | `merge.workflow_max_documents` |
+| Merge: Chat Row Limit | Most rows one chat merge may produce. A merge over the limit stops without creating a file. | 250,000 | 1,000–1,000,000 | `merge.chat_max_rows` |
+| Merge: Workflow Row Limit | The same row limit for a workflow run. | 1,000,000 | 1,000–1,000,000 | `merge.workflow_max_rows` |
 
 Values outside the range are clamped on save rather than rejected.
 

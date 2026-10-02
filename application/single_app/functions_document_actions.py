@@ -16,6 +16,7 @@ DOCUMENT_ACTION_TYPE_NONE = 'none'
 DOCUMENT_ACTION_TYPE_SEARCH = 'search'
 DOCUMENT_ACTION_TYPE_ANALYZE = 'analyze'
 DOCUMENT_ACTION_TYPE_COMPARISON = 'comparison'
+DOCUMENT_ACTION_TYPE_MERGE = 'merge'
 DOCUMENT_ACTION_ANALYSIS_MODE_COMBINED = 'combined'
 DOCUMENT_ACTION_ANALYSIS_MODE_PER_DOCUMENT = 'per_document'
 DOCUMENT_ACTION_TARGET_MODE_ALL = 'all'
@@ -38,6 +39,7 @@ VALID_DOCUMENT_ACTION_TYPES = {
     DOCUMENT_ACTION_TYPE_SEARCH,
     DOCUMENT_ACTION_TYPE_ANALYZE,
     DOCUMENT_ACTION_TYPE_COMPARISON,
+    DOCUMENT_ACTION_TYPE_MERGE,
 }
 DOCUMENT_ACTION_LIMIT_BOUNDS = {
     DOCUMENT_ACTION_CONTEXT_CHAT: {
@@ -49,6 +51,13 @@ DOCUMENT_ACTION_LIMIT_BOUNDS = {
         'max': 1000,
     },
 }
+# Merging is bounded by rows as well as files: a few very large files can cost more than
+# many small ones. CSV exports allow at most 1,000,000 records.
+MERGE_ROW_LIMIT_BOUNDS = {'min': 1000, 'max': 1_000_000}
+MERGE_CHAT_DEFAULT_MAX_DOCUMENTS = 10
+MERGE_WORKFLOW_DEFAULT_MAX_DOCUMENTS = 100
+MERGE_CHAT_DEFAULT_MAX_ROWS = 250_000
+MERGE_WORKFLOW_DEFAULT_MAX_ROWS = 1_000_000
 DEFAULT_DOCUMENT_ACTION_CAPABILITIES = {
     DOCUMENT_ACTION_TYPE_ANALYZE: {
         'enabled': True,
@@ -60,7 +69,21 @@ DEFAULT_DOCUMENT_ACTION_CAPABILITIES = {
         'chat_max_documents': CHAT_DOCUMENT_ANALYSIS_MAX_DOCUMENTS,
         'workflow_max_documents': WORKFLOW_DOCUMENT_ANALYSIS_MAX_DOCUMENTS,
     },
+    DOCUMENT_ACTION_TYPE_MERGE: {
+        'enabled': True,
+        'chat_max_documents': MERGE_CHAT_DEFAULT_MAX_DOCUMENTS,
+        'workflow_max_documents': MERGE_WORKFLOW_DEFAULT_MAX_DOCUMENTS,
+        'chat_max_rows': MERGE_CHAT_DEFAULT_MAX_ROWS,
+        'workflow_max_rows': MERGE_WORKFLOW_DEFAULT_MAX_ROWS,
+    },
 }
+# Classic chat and its document-action payloads only know Analyze and Comparison. Merge is
+# reached through V2 orchestration and, later, workflow tasks, so it is never offered to a
+# caller that does not ask for it explicitly.
+DOCUMENT_ACTION_TYPES_WITH_PAYLOAD_SUPPORT = (
+    DOCUMENT_ACTION_TYPE_ANALYZE,
+    DOCUMENT_ACTION_TYPE_COMPARISON,
+)
 
 
 def normalize_document_action_type(action_type):
@@ -108,6 +131,14 @@ def _coerce_document_action_limit(value, default_value, execution_context):
     return max(bounds['min'], min(bounds['max'], normalized_value))
 
 
+def _coerce_merge_row_limit(value, default_value):
+    try:
+        normalized_value = int(value)
+    except (TypeError, ValueError):
+        normalized_value = int(default_value)
+    return max(MERGE_ROW_LIMIT_BOUNDS['min'], min(MERGE_ROW_LIMIT_BOUNDS['max'], normalized_value))
+
+
 def get_default_document_action_capabilities():
     return copy.deepcopy(DEFAULT_DOCUMENT_ACTION_CAPABILITIES)
 
@@ -138,6 +169,15 @@ def normalize_document_action_capabilities(settings_or_capabilities=None):
                 DOCUMENT_ACTION_CONTEXT_WORKFLOW,
             ),
         }
+        if action_type == DOCUMENT_ACTION_TYPE_MERGE:
+            normalized_capabilities[action_type].update({
+                'chat_max_rows': _coerce_merge_row_limit(
+                    raw_capability.get('chat_max_rows'), default_capability['chat_max_rows'],
+                ),
+                'workflow_max_rows': _coerce_merge_row_limit(
+                    raw_capability.get('workflow_max_rows'), default_capability['workflow_max_rows'],
+                ),
+            })
 
     return normalized_capabilities
 
@@ -158,12 +198,30 @@ def is_document_action_enabled(action_type, settings=None):
     return bool(capability.get('enabled', False))
 
 
-def get_enabled_document_action_types(settings=None):
+def get_enabled_document_action_types(settings=None, *, include_merge=False):
+    """Enabled action types for a payload owner.
+
+    ``include_merge`` is opt-in so callers whose payloads cannot carry a merge action
+    (classic chat) never accept one.
+    """
     enabled_action_types = {DOCUMENT_ACTION_TYPE_NONE, DOCUMENT_ACTION_TYPE_SEARCH}
-    for action_type in (DOCUMENT_ACTION_TYPE_ANALYZE, DOCUMENT_ACTION_TYPE_COMPARISON):
+    action_types = DOCUMENT_ACTION_TYPES_WITH_PAYLOAD_SUPPORT + (
+        (DOCUMENT_ACTION_TYPE_MERGE,) if include_merge else ()
+    )
+    for action_type in action_types:
         if is_document_action_enabled(action_type, settings=settings):
             enabled_action_types.add(action_type)
     return enabled_action_types
+
+
+def get_document_action_max_rows(action_type, execution_context, settings=None):
+    """The merged-row ceiling for Merge in chat or workflows; None for other actions."""
+    if normalize_document_action_type(action_type) != DOCUMENT_ACTION_TYPE_MERGE:
+        return None
+    capability = get_document_action_capability(DOCUMENT_ACTION_TYPE_MERGE, settings=settings)
+    field_name = 'workflow_max_rows' if execution_context == DOCUMENT_ACTION_CONTEXT_WORKFLOW else 'chat_max_rows'
+    default_value = DEFAULT_DOCUMENT_ACTION_CAPABILITIES[DOCUMENT_ACTION_TYPE_MERGE][field_name]
+    return _coerce_merge_row_limit(capability.get(field_name, default_value), default_value)
 
 
 def get_document_action_max_documents(action_type, execution_context, settings=None):
@@ -193,6 +251,11 @@ def get_document_action_max_documents_by_type(execution_context, settings=None):
             execution_context,
             settings=settings,
         ),
+        DOCUMENT_ACTION_TYPE_MERGE: get_document_action_max_documents(
+            DOCUMENT_ACTION_TYPE_MERGE,
+            execution_context,
+            settings=settings,
+        ),
     }
 
 
@@ -209,6 +272,8 @@ def _build_document_action_disabled_message(action_type):
         return 'Document analysis is currently disabled in admin settings.'
     if action_type == DOCUMENT_ACTION_TYPE_COMPARISON:
         return 'Document comparison is currently disabled in admin settings.'
+    if action_type == DOCUMENT_ACTION_TYPE_MERGE:
+        return 'Merging files is not available here.'
     return 'The selected document action is currently disabled in admin settings.'
 
 
@@ -303,6 +368,9 @@ def normalize_document_action_config(
         normalized_allowed_action_types.add(DOCUMENT_ACTION_TYPE_NONE)
         if action_type not in normalized_allowed_action_types:
             raise ValueError(_build_document_action_disabled_message(action_type))
+
+    if action_type == DOCUMENT_ACTION_TYPE_MERGE:
+        raise ValueError(_build_document_action_disabled_message(action_type))
 
     if action_type == DOCUMENT_ACTION_TYPE_ANALYZE:
         if 'analysis_options' in source_action or 'transformation_spec' in source_action:

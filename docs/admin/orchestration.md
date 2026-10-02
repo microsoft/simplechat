@@ -228,6 +228,20 @@ use personal workflows, in their own private conversations. Reading a result
 changes nothing, so it never makes a plan wait for approval. Clearing it keeps
 saved results out of plans; **Ask in chat** on a run is not affected.
 
+Since **0.261.218**, **Merge spreadsheets** (`tabular_merge`) combines the rows
+of two or more CSV or Excel files that share the same columns into one table,
+which the plan then delivers as a CSV or Excel file through **Create a file**.
+Code appends every row exactly, in the order the files are listed, and adds a
+**Source File** column by default; no model reads or rewrites the rows, so
+codes such as `007` keep their leading zeros. Columns may appear in any order.
+Files whose columns differ are not merged: the run says so and nothing is
+created. Merge never matches rows on a key column the way a lookup or join
+would. It's offered while **Enable Merge** is on under
+[Document Action Capabilities]({{ '/admin/agents-actions/' | relative_url }}#document-action-capabilities-card),
+which also sets how many files and rows one chat request may merge. Clearing
+it here keeps merges out of plans. See
+[Merge files in chat]({{ '/guides/merge-files/' | relative_url }}).
+
 Selecting a capability does not grant source/model access or enable another
 feature's prerequisite. Orchestration still publishes truthful delivery status
 when composition is not requested, including file-only plans that consume already

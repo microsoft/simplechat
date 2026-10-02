@@ -33,7 +33,7 @@ RESULT_KINDS = frozenset({
 })
 RESULT_STATES = frozenset({"pending", "partial", "complete", "invalid", "cancelled", "failed", "unavailable"})
 RESULT_ROLES = frozenset({"gather", "reason", "render"})
-REASON_CAPABILITIES = frozenset({"document_analyze", "document_compare", "tabular_analyze"})
+REASON_CAPABILITIES = frozenset({"document_analyze", "document_compare", "tabular_analyze", "tabular_merge"})
 MAX_OUTPUTS = 32
 MAX_COLUMNS = 256
 MAX_BINDING_STEPS = 64

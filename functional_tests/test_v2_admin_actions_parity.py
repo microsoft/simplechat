@@ -139,6 +139,18 @@ def document_action_default_limits():
     }
 
 
+def merge_default_limits():
+    """Return Merge's own document and row defaults and its row bounds."""
+    source = DOCUMENT_ACTIONS_MODULE.read_text(encoding="utf-8")
+    return {
+        "chat_max_documents": literal_assignment(source, "MERGE_CHAT_DEFAULT_MAX_DOCUMENTS"),
+        "workflow_max_documents": literal_assignment(source, "MERGE_WORKFLOW_DEFAULT_MAX_DOCUMENTS"),
+        "chat_max_rows": literal_assignment(source, "MERGE_CHAT_DEFAULT_MAX_ROWS"),
+        "workflow_max_rows": literal_assignment(source, "MERGE_WORKFLOW_DEFAULT_MAX_ROWS"),
+        "row_bounds": literal_assignment(source, "MERGE_ROW_LIMIT_BOUNDS"),
+    }
+
+
 def test_removing_a_section_did_not_orphan_its_settings():
     """A section can be emptied, but not at the cost of losing a setting.
 
@@ -269,6 +281,27 @@ def test_document_action_fields_write_into_the_nested_container():
             "comparison",
             "workflow_max_documents",
         ],
+        "document_action_merge_enabled": ["document_action_capabilities", "merge", "enabled"],
+        "document_action_merge_chat_max_documents": [
+            "document_action_capabilities",
+            "merge",
+            "chat_max_documents",
+        ],
+        "document_action_merge_workflow_max_documents": [
+            "document_action_capabilities",
+            "merge",
+            "workflow_max_documents",
+        ],
+        "document_action_merge_chat_max_rows": [
+            "document_action_capabilities",
+            "merge",
+            "chat_max_rows",
+        ],
+        "document_action_merge_workflow_max_rows": [
+            "document_action_capabilities",
+            "merge",
+            "workflow_max_rows",
+        ],
     }
 
     actual = {field["key"]: field.get("settings_path") for field in fields}
@@ -286,6 +319,7 @@ def test_document_action_bounds_match_the_application():
 
     bounds = document_action_bounds()
     defaults = document_action_default_limits()
+    merge_defaults = merge_default_limits()
     schema = fields_module.get_admin_settings_fields()
 
     problems = []
@@ -297,18 +331,24 @@ def test_document_action_bounds_match_the_application():
                 problems.append(f"{field['key']}: default {field.get('default')!r}, expected True")
             continue
 
-        context = "chat" if leaf == "chat_max_documents" else "workflow"
-        if field.get("min") != bounds[context]["min"]:
+        if leaf in ("chat_max_rows", "workflow_max_rows"):
+            expected_bounds = merge_defaults["row_bounds"]
+            expected_default = merge_defaults[leaf]
+        else:
+            context = "chat" if leaf == "chat_max_documents" else "workflow"
+            expected_bounds = bounds[context]
+            expected_default = merge_defaults[leaf] if path[1] == "merge" else defaults[context]
+        if field.get("min") != expected_bounds["min"]:
             problems.append(
-                f"{field['key']}: min {field.get('min')!r} != {bounds[context]['min']!r}"
+                f"{field['key']}: min {field.get('min')!r} != {expected_bounds['min']!r}"
             )
-        if field.get("max") != bounds[context]["max"]:
+        if field.get("max") != expected_bounds["max"]:
             problems.append(
-                f"{field['key']}: max {field.get('max')!r} != {bounds[context]['max']!r}"
+                f"{field['key']}: max {field.get('max')!r} != {expected_bounds['max']!r}"
             )
-        if field.get("default") != defaults[context]:
+        if field.get("default") != expected_default:
             problems.append(
-                f"{field['key']}: default {field.get('default')!r} != {defaults[context]!r}"
+                f"{field['key']}: default {field.get('default')!r} != {expected_default!r}"
             )
 
     assert not problems, (

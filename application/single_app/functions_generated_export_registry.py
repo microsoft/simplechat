@@ -37,6 +37,10 @@ class GeneratedFileExportFormat:
 
 
 PREPARED_SLIDE_DECK_VERSION = 'prepared_slide_deck_v1'
+EXACT_TABULAR_RECORDS_PROFILE = 'exact_tabular_records_v1'
+EXACT_TABULAR_WORKBOOK_PROFILE = 'exact_tabular_workbook_v1'
+EXACT_TABULAR_PROFILES = (EXACT_TABULAR_RECORDS_PROFILE, EXACT_TABULAR_WORKBOOK_PROFILE)
+EXACT_TABULAR_DEFAULT_SHEET_NAME = 'Sheet1'
 GENERATED_IMAGE_REFERENCE_PATTERN = r'^asset:[A-Za-z0-9][A-Za-z0-9._-]{0,127}$'
 _OPTION_SCHEMAS = {
     'columns': {
@@ -161,7 +165,11 @@ _STRUCTURED_PROFILES = (
 GENERATED_FILE_EXPORT_REGISTRY = (
     GeneratedFileExportFormat(
         'csv', ('csv',), 'csv', 'text/csv; charset=utf-8',
-        (GeneratedFileExportProfile('tabular_records_v1', ('records',), ('columns',)),),
+        (
+            GeneratedFileExportProfile('tabular_records_v1', ('records',), ('columns',)),
+            # Every retained column in retained order, for results whose schema is known only at run time.
+            GeneratedFileExportProfile(EXACT_TABULAR_RECORDS_PROFILE, ('records',)),
+        ),
         'csv',
     ),
     GeneratedFileExportFormat(
@@ -190,7 +198,10 @@ GENERATED_FILE_EXPORT_REGISTRY = (
     ),
     GeneratedFileExportFormat(
         'xlsx', ('xlsx',), 'xlsx', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-        (GeneratedFileExportProfile('tabular_workbook_v1', ('records',), ('columns', 'sheet_name')),),
+        (
+            GeneratedFileExportProfile('tabular_workbook_v1', ('records',), ('columns', 'sheet_name')),
+            GeneratedFileExportProfile(EXACT_TABULAR_WORKBOOK_PROFILE, ('records',), optional_options=('sheet_name',)),
+        ),
         'office', ('openpyxl',),
     ),
     GeneratedFileExportFormat(
@@ -241,7 +252,7 @@ def _input_schema(profile):
         return {'type': 'string'}
     if profile.source_kinds == ('records',):
         record = {'type': 'object'}
-        if profile.profile in ('tabular_records_v1', 'tabular_workbook_v1'):
+        if profile.profile in ('tabular_records_v1', 'tabular_workbook_v1', *EXACT_TABULAR_PROFILES):
             record['additionalProperties'] = {'type': ['string', 'number', 'boolean', 'null']}
         return {'type': 'array', 'items': record}
     return {}

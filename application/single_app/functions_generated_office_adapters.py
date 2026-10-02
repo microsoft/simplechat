@@ -18,6 +18,8 @@ from functions_generated_export_contracts import (
     GeneratedFileExportStream,
 )
 from functions_generated_export_registry import (
+    EXACT_TABULAR_DEFAULT_SHEET_NAME,
+    EXACT_TABULAR_WORKBOOK_PROFILE,
     GENERATED_IMAGE_REFERENCE_PATTERN,
     PREPARED_SLIDE_DECK_VERSION,
     get_prepared_slide_deck_schema,
@@ -29,6 +31,7 @@ from functions_structured_file_renderers import (
     _SourceChecks,
     _iter_records,
     _render_text,
+    _tabular_request_columns,
     _validate_column_names,
     _validate_export_limits,
     _validate_source_limits,
@@ -272,12 +275,17 @@ def _render_generated_office_source(
     rows = None
     with ExitStack() as resources:
         if entry.format_id == 'xlsx':
-            columns = _validate_column_names(request.columns, limits, checks, label='XLSX')
+            columns = _validate_column_names(
+                _tabular_request_columns(source, request), limits, checks, label='XLSX',
+            )
+            sheet_name = request.sheet_name
+            if sheet_name is None and request.profile == EXACT_TABULAR_WORKBOOK_PROFILE:
+                sheet_name = EXACT_TABULAR_DEFAULT_SHEET_NAME
             rows = resources.enter_context(ClosingExportResource(
                 boundary.rows(_workbook_records(source, request, columns, limits, checks)),
             ))
             prepared = office.PreparedWorkbook((
-                office.PreparedSheet(request.sheet_name, columns, rows, checks.expected_count),
+                office.PreparedSheet(sheet_name, columns, rows, checks.expected_count),
             ))
             renderer = office.render_prepared_xlsx
         elif entry.format_id in ('docx', 'pdf'):

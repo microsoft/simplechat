@@ -41,6 +41,7 @@ from functions_orchestration_registry import (
     CAPABILITY_DOCUMENT_COMPARE,
     CAPABILITY_GENERATE_IMAGE,
     CAPABILITY_RENDER_FILE,
+    CAPABILITY_TABULAR_MERGE,
     CAPABILITY_WORKFLOW_PROPOSE,
     CAPABILITY_WORKFLOW_RESULTS,
     CAPABILITY_WORKFLOW_RUN,
@@ -331,6 +332,15 @@ def build_deliverable_availability(settings, *, capabilities, unavailable=None, 
                 'with pptx and prepared_slide_deck_v1.'
             )},
         ])
+        if CAPABILITY_TABULAR_MERGE in available:
+            recipes.append({'for': 'One file merged from several CSV or Excel files', 'steps': (
+                'tabular_merge with the files in merge order, then render_file binding its "records" '
+                'output with csv and exact_tabular_records_v1, or xlsx and exact_tabular_workbook_v1 '
+                '(options.sheet_name is optional). Never compose merged rows.'
+            )})
+            facts.append(
+                'tabular_merge appends rows exactly; it does not match rows on a key column or change values.'
+            )
     if explicit_images['status'] == 'available':
         facts.extend([
             'generate_image follows the visual style the user asks for, including photorealistic '

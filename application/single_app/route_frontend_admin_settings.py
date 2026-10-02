@@ -1703,6 +1703,33 @@ def register_route_frontend_admin_settings(bp):
                             10,
                         ),
                     },
+                    'merge': {
+                        'enabled': form_data.get('document_action_merge_enabled') == 'on',
+                        'chat_max_documents': parse_admin_int(
+                            form_data.get('document_action_merge_chat_max_documents'),
+                            current_document_action_capabilities.get('merge', {}).get('chat_max_documents', 10),
+                            'document_action_merge_chat_max_documents',
+                            10,
+                        ),
+                        'workflow_max_documents': parse_admin_int(
+                            form_data.get('document_action_merge_workflow_max_documents'),
+                            current_document_action_capabilities.get('merge', {}).get('workflow_max_documents', 100),
+                            'document_action_merge_workflow_max_documents',
+                            100,
+                        ),
+                        'chat_max_rows': parse_admin_int(
+                            form_data.get('document_action_merge_chat_max_rows'),
+                            current_document_action_capabilities.get('merge', {}).get('chat_max_rows', 250000),
+                            'document_action_merge_chat_max_rows',
+                            250000,
+                        ),
+                        'workflow_max_rows': parse_admin_int(
+                            form_data.get('document_action_merge_workflow_max_rows'),
+                            current_document_action_capabilities.get('merge', {}).get('workflow_max_rows', 1000000),
+                            'document_action_merge_workflow_max_rows',
+                            1000000,
+                        ),
+                    },
                 }
             })
 

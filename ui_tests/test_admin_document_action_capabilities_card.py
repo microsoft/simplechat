@@ -1,13 +1,14 @@
 # test_admin_document_action_capabilities_card.py
 """
 UI test for admin document action capabilities placement.
-Version: 0.260.019
+Version: 0.261.218
 Implemented in: 0.241.089
-Updated in: 0.260.019
+Updated in: 0.261.218
 
 This test ensures the Document Action Capabilities card is visible at the top of
 the Actions tab, explains that it controls the Action dropdown in Chat and
-Workflow, and renders its configured limits.
+Workflow, and renders its configured limits, including the Merge file and row
+limits added in 0.261.218.
 
 The limit assertions are the regression guard for the Admin Settings 500: the
 card reads values that used to be set in the Agents pane, and sibling
@@ -97,6 +98,10 @@ def test_admin_document_action_capabilities_card_is_top_of_actions_tab(playwrigh
             "document_action_analyze_workflow_max_documents",
             "document_action_comparison_chat_max_documents",
             "document_action_comparison_workflow_max_documents",
+            "document_action_merge_chat_max_documents",
+            "document_action_merge_workflow_max_documents",
+            "document_action_merge_chat_max_rows",
+            "document_action_merge_workflow_max_rows",
         )
         for input_id in limit_input_ids:
             limit_input = page.locator(f"#{input_id}")
@@ -105,8 +110,18 @@ def test_admin_document_action_capabilities_card_is_top_of_actions_tab(playwrigh
                 f"Expected #{input_id} to render a configured limit."
             )
 
-        for toggle_id in ("document_action_analyze_enabled", "document_action_comparison_enabled"):
+        for toggle_id in (
+            "document_action_analyze_enabled", "document_action_comparison_enabled", "document_action_merge_enabled",
+        ):
             expect(page.locator(f"#{toggle_id}")).to_be_visible()
+
+        # The range and number controls stay in step, as they do for Analyze and Comparison.
+        merge_rows = page.locator("#document_action_merge_chat_max_rows")
+        merge_rows_range = page.locator("#document_action_merge_chat_max_rows_range")
+        merge_rows_range.fill("120000")
+        expect(merge_rows).to_have_value("120000")
+        expect(page.locator("#document_action_merge_chat_max_rows_value")).to_have_text("120000")
+        expect(card).to_contain_text("Merge")
     finally:
         context.close()
         browser.close()

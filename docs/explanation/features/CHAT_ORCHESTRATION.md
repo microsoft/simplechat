@@ -130,6 +130,7 @@ permissions cannot be supplied as bindings.
 | `document_analyze` | Narrative `findings: records-v1` and `coverage: structured-v1`; public `records` and a Markdown `report` are optional outputs only when genuinely produced. |
 | `document_compare` | Narrative `comparison: comparison-v1` and `coverage: structured-v1`; a Markdown `report` is optional when available. |
 | `tabular_analyze` | Server-bound native query/transform returns `records` and `coverage`; analysis-only returns `analysis` and `coverage`; combined transformation/analysis returns all three. |
+| `tabular_merge` | Since **0.261.218**: `records: records-v1` holding every row of two or more same-structure CSV or Excel sources, appended by code in source order, and `report: structured-v1` (`tabular-merge-report-v1`) with the policy, columns, per-source rows and limitations. Coverage counts sources. See [V2 file merge](V2_FILE_MERGE.md). |
 | `compose` | Explicitly named text, Markdown, records or structured values. There is no default output declaration. |
 | Server-bound external Gather | `prepared: structured-v1` with exact returned content and separately authorized external-source lineage. |
 

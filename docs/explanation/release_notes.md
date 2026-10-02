@@ -2,6 +2,22 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.218)**
+
+#### New Features
+
+*   **Merge Spreadsheets In V2 Chat**
+    *   V2 chat orchestration can now combine two or more CSV or Excel files that share the same columns into one table and deliver it as a CSV or Excel file, for example "merge these three regional sales files into one Excel file". It is a new Reason capability, **Merge spreadsheets** (`tabular_merge`), alongside Analyze and Compare; a following **Create a file** step renders the result.
+    *   Code appends the rows, not a model: every row is copied exactly in the order the files are listed, values stay text so codes such as `007` keep their leading zeros, and a **Source File** column records where each row came from. Columns may appear in any order in each file; files whose columns differ are not merged, and nothing is created.
+    *   Files can be selected, or found by a search step whose source set the merge binds. Every file is authorized again and read through the screening-aware byte reader, at the revision the plan approved. CSV encodings and delimiters are detected, Excel values become canonical text (ISO dates, `TRUE`/`FALSE`), and encrypted or damaged workbooks are refused.
+    *   A new **Merge** entry under **Document Action Capabilities** turns the feature on or off (on by default) and sets how many files and merged rows one chat request may merge (10 files, 250,000 rows by default) and, for upcoming workflow merges, the workflow limits (100 files, 1,000,000 rows).
+    *   Merge failures reach users only as fixed, application-owned messages, such as "The selected files don't all have the same columns, so nothing was merged."
+    *   (Ref: #1619, `functions_tabular_merge.py`, `functions_orchestration_merge.py`, `functions_orchestration_adapters.py`, `functions_orchestration_registry.py`, `functions_orchestration_schema.py`, `functions_orchestration_executor.py`, `functions_document_actions.py`, [V2 File Merge](features/V2_FILE_MERGE.md), [Phase 1](features/V2_FILE_MERGE_PHASE_1_SPREADSHEETS.md), [Merge files in chat](../guides/merge-files.md))
+
+*   **Exact-Schema CSV And Excel Exports**
+    *   Two new generated-file profiles, `exact_tabular_records_v1` (CSV) and `exact_tabular_workbook_v1` (XLSX, optional sheet name), export every retained column in its retained order. They let a plan deliver a table whose columns are only known when it runs, such as a merge of files a search found, without the planner having to name the columns.
+    *   (Ref: `functions_generated_export_registry.py`, `functions_structured_file_renderers.py`, `functions_generated_office_adapters.py`, [Generated File Export Framework](features/GENERATED_FILE_EXPORT_FRAMEWORK.md))
+
 ### **(v0.261.217)**
 
 #### New Features
