@@ -477,6 +477,52 @@ def _mark_closed(record, reason, timestamp):
     return updated
 
 
+def _mark_delivered_without_notice(record, timestamp):
+    updated = deepcopy(dict(record))
+    updated.update({
+        'status': STATUS_DELIVERED,
+        'notice_kind': NOTICE_NONE,
+        'delivered_at': updated.get('delivered_at') or timestamp,
+        'lease_id': None,
+        'lease_expires_at': None,
+        'next_attempt_at': None,
+        'updated_at': timestamp,
+    })
+    return updated
+
+
+def _close_for_runtime(record, reason, timestamp):
+    # A message that already exists stays delivered; only an unposted generation closes.
+    if phase_at_least(record.get('phase'), PHASE_MESSAGE_CREATED):
+        return _mark_delivered_without_notice(record, timestamp)
+    return _mark_closed(record, reason, timestamp)
+
+
+def _abandon_generation(current, candidate):
+    """Reset the per-generation fields when a ready generation is replaced before it finished."""
+    updated = deepcopy(candidate)
+    if phase_at_least(current.get('phase'), PHASE_MESSAGE_CREATED):
+        history = list(current.get('history') if isinstance(current.get('history'), list) else [])
+        entry = _history_entry(current)
+        entry.update({'status': STATUS_DELIVERED, 'notice_kind': NOTICE_NONE})
+        history.append(entry)
+        updated['history'] = history[-HISTORY_MAX:]
+    updated.update({
+        'phase': None,
+        'planned_at': None,
+        'message_id': None,
+        'attempts': 0,
+        'outcome_reason': None,
+        'notice_kind': None,
+        'delivered_at': None,
+        'next_attempt_at': None,
+        'first_deferred_at': None,
+        'lease_id': None,
+        'lease_expires_at': None,
+    })
+    return updated
+
+
 def _generation_from_summary(summary):
     version = summary.get('version') if isinstance(summary, Mapping) else None
     if type(version) is int and version >= 0:
@@ -525,12 +571,12 @@ def reconcile_chat_delivery(record, summary, now=None):
         return current, False, False
     if not isinstance(summary, Mapping) or not summary.get('exists'):
         if status in {STATUS_PENDING, STATUS_READY}:
-            updated = _mark_closed(current, REASON_RUNTIME_MISSING, timestamp)
+            updated = _close_for_runtime(current, REASON_RUNTIME_MISSING, timestamp)
             return updated, True, False
         return current, False, False
     if summary.get('deleted'):
         if status in {STATUS_PENDING, STATUS_READY}:
-            updated = _mark_closed(current, REASON_WORKFLOW_DELETED, timestamp)
+            updated = _close_for_runtime(current, REASON_WORKFLOW_DELETED, timestamp)
             return updated, True, False
         return current, False, False
     reopened = False
@@ -577,6 +623,14 @@ def reconcile_chat_delivery(record, summary, now=None):
             candidate.update(_ready_fields(summary, KIND_EXPIRED))
         elif status == STATUS_READY:
             candidate.update({'status': STATUS_PENDING, 'generation': None, 'kind': None, 'run_status': None})
+        if status == STATUS_READY and candidate.get('generation') != current.get('generation'):
+            # The run moved on (resumed, or resumed and finished again) before this generation was posted.
+            candidate = _abandon_generation(current, candidate)
+        if candidate.get('status') == STATUS_READY and (
+            status == STATUS_PENDING or candidate.get('generation') != current.get('generation')
+        ):
+            # A record that just became deliverable is due now, not after a wait scheduled while it was pending.
+            candidate.update({'next_attempt_at': None, 'first_deferred_at': None})
         if reopened or _changed_record(current, candidate):
             candidate['updated_at'] = timestamp
             return candidate, True, candidate.get('status') == STATUS_READY
