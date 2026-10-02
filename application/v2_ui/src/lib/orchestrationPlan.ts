@@ -34,6 +34,7 @@ import type {
     OrchestrationPlanInputs,
     OrchestrationPlanner,
     OrchestrationPlanWorkflow,
+    OrchestrationPlanWorkflowResult,
     OrchestrationStep,
     OrchestrationRole,
     OrchestrationValidation,
@@ -612,11 +613,23 @@ function normalizeInputs(raw: unknown): OrchestrationPlanInputs {
         });
     }
 
+    const rawWorkflowResults: unknown[] = Array.isArray(source.workflow_results) ? source.workflow_results : [];
+    const workflowResults: OrchestrationPlanWorkflowResult[] = [];
+    for (const entry of rawWorkflowResults) {
+        const record = asRecord(entry);
+        const handle = asString(record.handle).trim();
+        if (!handle) {
+            continue;
+        }
+        workflowResults.push({ handle, name: asString(record.name).trim() || 'Workflow' });
+    }
+
     return {
         required_capabilities: asStringList(source.required_capabilities),
         documents,
         actions: source.actions !== undefined ? actions : undefined,
         ...(Array.isArray(source.workflows) ? { workflows } : {}),
+        ...(Array.isArray(source.workflow_results) ? { workflow_results: workflowResults } : {}),
         image_reference_documents: imageReferenceDocuments,
         image_reference_messages: imageReferenceMessages,
         web: asBoolean(source.web, false),

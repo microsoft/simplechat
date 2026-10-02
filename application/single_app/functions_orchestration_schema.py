@@ -57,6 +57,7 @@ from functions_orchestration_registry import (
     CAPABILITY_GENERATE_IMAGE,
     CAPABILITY_TABULAR_ANALYZE,
     CAPABILITY_WORKFLOW_PROPOSE,
+    CAPABILITY_WORKFLOW_RESULTS,
     CAPABILITY_WORKFLOW_RUN,
     DEPENDENCY_PLAN_CONTRACT_VERSION,
     GENERAL_KNOWLEDGE_BASES,
@@ -192,6 +193,10 @@ WORKFLOW_PROPOSAL_NOT_CONSUMABLE_CODE = 'workflow_proposal_not_consumable'
 # exceeds the per-plan limit, or is read by another step or the answer. The planner repairs it
 # once, then drops the steps that still fail.
 WORKFLOW_RUN_INVALID_CODE = 'workflow_run_invalid'
+# A workflow_results step that is not static, names no offered workflow, repeats a read, exceeds
+# the per-plan limit, reads a workflow this plan also starts, or is read by anything but an answer
+# step. The planner repairs it once, then drops the steps that still fail.
+WORKFLOW_RESULTS_INVALID_CODE = 'workflow_results_invalid'
 
 
 class PlanValidationError(ValueError):
@@ -609,6 +614,44 @@ def _reject_workflow_run_consumers(steps, final_response):
         )
 
 
+def _reject_workflow_results_consumers(steps, final_response):
+    """A stored workflow result reaches the answer only, so only answer steps may read it.
+
+    The result's text is masked wherever the answer is read. Any step that names a results
+    step, or names a step that does, is tainted; only ``compose`` may name a tainted step, so
+    no file export, analysis, agent or action can copy the text out of that masking.
+    """
+    producers = {step['step_id'] for step in steps if step['capability_id'] == CAPABILITY_WORKFLOW_RESULTS}
+    if not producers:
+        return
+    named = {}
+    for step in steps:
+        names = set(step.get('depends_on') or ())
+        names.update(spec.binding.step_id for spec in step_input_specs(step) if spec.binding.step_id is not None)
+        named[step['step_id']] = names
+    tainted = set(producers)
+    changed = True
+    while changed:
+        changed = False
+        for step in steps:
+            if step['step_id'] not in tainted and named[step['step_id']] & tainted:
+                tainted.add(step['step_id'])
+                changed = True
+    for step in steps:
+        if step['capability_id'] != CAPABILITY_COMPOSE and named[step['step_id']] & tainted:
+            raise PlanValidationError(
+                'A workflow_results step is read only by the answer. Bind its output to a compose '
+                'step, and remove every other step that depends on it or on a step that reads it.',
+                code=WORKFLOW_RESULTS_INVALID_CODE, rule='workflow_results_consumed',
+            )
+    if isinstance(final_response, dict) and final_response.get('step_id') in producers:
+        raise PlanValidationError(
+            'A workflow_results step gathers notes for the answer. Bind the final response to the '
+            'compose step that reads it instead.',
+            code=WORKFLOW_RESULTS_INVALID_CODE, rule='workflow_results_consumed',
+        )
+
+
 _REFERENCE_IMAGE_FIELDS = ('reference_document_ids', 'reference_message_ids')
 
 
@@ -688,6 +731,14 @@ def validate_dependency_plan(
     counts = {}
     # Workflows earlier run steps of this plan start; each may be started once.
     workflow_run_seen = set()
+    # Reads earlier workflow_results steps of this plan make, and the workflows this plan starts:
+    # a run is queued, so the same plan reading that workflow's results would read a stale run.
+    workflow_results_seen = set()
+    workflow_run_handles = {
+        raw['arguments']['workflow'] for raw in raw_steps
+        if isinstance(raw, dict) and raw.get('capability_id') == CAPABILITY_WORKFLOW_RUN
+        and isinstance(raw.get('arguments'), dict) and isinstance(raw['arguments'].get('workflow'), str)
+    }
     fields = {
         'step_id', 'capability_id', 'title', 'rationale', 'arguments', 'depends_on',
         'optional', 'enabled', 'estimated_cost', 'role', 'status', 'inputs', 'outputs',
@@ -722,6 +773,15 @@ def validate_dependency_plan(
 
                 prepare_workflow_run_arguments(
                     raw, raw.get('arguments', {}), workflow_planning=workflow_planning, seen=workflow_run_seen,
+                )
+            if capability_id == CAPABILITY_WORKFLOW_RESULTS:
+                # Loaded only when a plan reads a workflow's results; checked before the generic
+                # limit and contract checks, like a run step, so each problem has its own rule.
+                from functions_orchestration_workflow_results import prepare_workflow_results_arguments
+
+                prepare_workflow_results_arguments(
+                    raw, raw.get('arguments', {}), workflow_planning=workflow_planning,
+                    seen=workflow_results_seen, run_handles=workflow_run_handles,
                 )
             counts[capability_id] = counts.get(capability_id, 0) + 1
             if capability['max_per_plan'] is not None and counts[capability_id] > capability['max_per_plan']:
@@ -817,6 +877,7 @@ def validate_dependency_plan(
         _apply_image_input_policy(accepted, existing_results)
         _reject_workflow_proposal_consumers(accepted, plan.get('final_response'))
         _reject_workflow_run_consumers(accepted, plan.get('final_response'))
+        _reject_workflow_results_consumers(accepted, plan.get('final_response'))
         bindings = [step_result_bindings(step) for step in accepted]
         dependencies = validate_input_bindings(bindings, existing_results=existing_results, max_steps=max_steps)
         _validate_render_requests(accepted, existing_results, export_catalog=export_catalog)
@@ -1041,6 +1102,23 @@ def _plan_workflow_inputs(plan, workflow_planning):
     return workflows
 
 
+def _plan_workflow_results_inputs(plan, workflow_planning):
+    """The saved workflows the plan's enabled results steps read, named for the approval card.
+
+    Handles and names only: workflow and run ids stay on the server, and nothing about a run.
+    """
+    workflows = []
+    for step in (plan or {}).get('steps') or ():
+        if not step.get('enabled', True) or step.get('capability_id') != CAPABILITY_WORKFLOW_RESULTS:
+            continue
+        handle = (step.get('arguments') or {}).get('workflow')
+        entry = workflow_run_catalog_entry(workflow_planning, handle)
+        if entry is None or any(workflow['handle'] == handle for workflow in workflows):
+            continue
+        workflows.append({'handle': handle, 'name': _text(entry.get('name'), 200) or 'Workflow'})
+    return workflows
+
+
 def plan_approval_floor(plan):
     """``{'mode': 'manual', 'reason': <capability id>}`` when an enabled step sets a floor, else None.
 
@@ -1066,7 +1144,8 @@ def build_plan_inputs(plan, seeds=None, document_labels=None, actions=None, work
     resolve a name is not a reason to refuse to show the plan.
 
     ``workflow_planning`` names the saved workflows the plan starts; ``workflows`` is present
-    only when the plan starts one, so every other plan's inputs are unchanged.
+    only when the plan starts one, and ``workflow_results`` only when it reads one's results, so
+    every other plan's inputs are unchanged.
     """
     seeds = seeds if isinstance(seeds, dict) else {}
     labels = document_labels if isinstance(document_labels, dict) else {}
@@ -1123,6 +1202,9 @@ def build_plan_inputs(plan, seeds=None, document_labels=None, actions=None, work
     workflows = _plan_workflow_inputs(plan, workflow_planning)
     if workflows:
         inputs['workflows'] = workflows
+    workflow_results = _plan_workflow_results_inputs(plan, workflow_planning)
+    if workflow_results:
+        inputs['workflow_results'] = workflow_results
     return inputs
 
 
@@ -1402,6 +1484,11 @@ FAILURE_MESSAGES = {
         'Saved workflows were temporarily unavailable, so this workflow may not have started. '
         "Retrying is safe: a workflow this plan already started won't start again."
     ),
+    'workflow_results_unavailable': "Your workflow results couldn't be read right now. Try again in a moment.",
+    'workflow_result_changed': (
+        'A workflow result this answer used changed or is no longer available, so the answer was not '
+        'saved. Ask again to read the current result.'
+    ),
     'result_invalid': 'The operation did not produce the complete named results declared by the plan.',
     'result_input_too_large': 'The complete named inputs exceed the selected model budget. No input was truncated. Use a larger model or revise the plan.',
     'result_not_ready': 'Required computation is still pending. Its result is not ready to consume.',
@@ -1489,7 +1576,9 @@ def access_failure(exc, *, _depth=0):
 
 # Failures one bounded retry of a read-only step could plausibly outlast. Configuration,
 # authorization and validation failures are never retried; they would fail the same way.
-TRANSIENT_FAILURE_CODES = frozenset({'provider_timeout', 'connection_failed', 'provider_failed'})
+TRANSIENT_FAILURE_CODES = frozenset({
+    'provider_timeout', 'connection_failed', 'provider_failed', 'workflow_results_unavailable',
+})
 TRANSIENT_PROVIDER_STATUSES = frozenset({408, 429, 500, 502, 503, 504})
 
 

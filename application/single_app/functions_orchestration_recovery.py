@@ -34,7 +34,9 @@ from functions_orchestration_checkpoints import (
 )
 from functions_orchestration_plan_revisions import PlanRevisionError, read_revision_run
 from functions_orchestration_output_store import build_output_cleanup_intent
-from functions_orchestration_registry import admitted_export_pairs, external_effect_capability_ids, get_capability
+from functions_orchestration_registry import (
+    CAPABILITY_WORKFLOW_RESULTS, admitted_export_pairs, external_effect_capability_ids, get_capability,
+)
 from functions_orchestration_schema import (
     LEGACY_PLAN_CODE, LEGACY_PLAN_MESSAGE, PlanValidationError, build_failure, build_step_result,
     failure_repeats_on_retry, is_legacy_plan, safe_failure, step_input_specs, summarize_plan,
@@ -94,6 +96,10 @@ def _reuse_invalidated_by_rerun(record, retained, *, new_attempt=True):
     it would otherwise fail the attempt with ``recovery_changed`` as soon as the producer
     succeeded, and the retry could never deliver what the first attempt missed.
 
+    In a new attempt a ``workflow_results`` step also always runs again, and so does every
+    step computed from it. The attempt reads the stored result as it is now, under the
+    access checks of now, instead of reusing text an earlier attempt read.
+
     Callers refuse a run from the removed legacy contract before asking.
     """
     retained = set(retained)
@@ -102,8 +108,13 @@ def _reuse_invalidated_by_rerun(record, retained, *, new_attempt=True):
         step['step_id'] for step in steps
         if new_attempt and step['step_id'] in retained and step.get('role') == 'render'
     }
+    # A disabled read counts as well, so nothing computed from its earlier text is reused.
+    reads = {
+        step['step_id'] for step in record['plan'].get('steps') or []
+        if new_attempt and step['step_id'] in retained and step.get('capability_id') == CAPABILITY_WORKFLOW_RESULTS
+    }
     rerun = {step['step_id'] for step in steps} - retained
-    if not rerun:
+    if not rerun and not reads:
         # Run listings project recovery for every run; one with nothing to run again,
         # such as any completed run, needs no input parsing.
         return renders
@@ -111,7 +122,7 @@ def _reuse_invalidated_by_rerun(record, retained, *, new_attempt=True):
         step['step_id']: {spec.binding.step_id for spec in step_input_specs(step) if spec.binding.step_id is not None}
         for step in steps if step['step_id'] in retained
     }
-    invalidated = set(renders)
+    invalidated = renders | reads
     while True:
         added = {
             step_id for step_id, producers in consumed.items()

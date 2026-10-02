@@ -1,19 +1,20 @@
 # functions_orchestration_workflow_context.py
-"""Planning context for workflow proposals and workflow runs from chat orchestration.
+"""Planning context for workflow proposals, runs and results from chat orchestration.
 
-Version: 0.261.214
+Version: 0.261.217
 
-Chat orchestration can propose a personal workflow (the ``workflow_propose`` capability) and start
-one the user already has (the ``workflow_run`` capability). The planner writes a workflow
-blueprint, or names the workflow to start, by request-local handles such as
+Chat orchestration can propose a personal workflow (the ``workflow_propose`` capability), start
+one the user already has (the ``workflow_run`` capability) and read the stored result of one of
+the user's finished workflow runs (the ``workflow_results`` capability). The planner writes a
+workflow blueprint, or names the workflow to start or read, by request-local handles such as
 ``agent-mail-helper-3f2a1c``. This module builds those handles from what the requesting user may
 use and keeps the map from each handle to its stored record on the server. The planner sees names,
 kinds and limits as bounded data, never record ids, task instructions or credentials.
 
-Everything here reads and never writes. Nothing is read unless at least one of the two
+Everything here reads and never writes. Nothing is read unless at least one of the three
 capabilities is configured, the user may use personal workflows, and the conversation is private
-to the requester. The two are independent: with only proposals on, a request plans exactly as it
-did before workflow runs existed, and with both off it plans as it did before either existed.
+to the requester. They are independent: with only proposals on, a request plans exactly as it
+did before workflow runs existed, and with all of them off it plans as it did before any existed.
 """
 
 import hashlib
@@ -38,9 +39,11 @@ from functions_orchestration_memory import conversation_is_private
 # One definition of each: the step schema, the deliverables and this module read the same values.
 from functions_orchestration_registry import (
     CAPABILITY_WORKFLOW_PROPOSE as WORKFLOW_PROPOSE_CAPABILITY_ID,
+    CAPABILITY_WORKFLOW_RESULTS as WORKFLOW_RESULTS_CAPABILITY_ID,
     CAPABILITY_WORKFLOW_RUN as WORKFLOW_RUN_CAPABILITY_ID,
     WORKFLOW_PROPOSAL_MAX_TASKS as WORKFLOW_BLUEPRINT_MAX_TASKS,
     WORKFLOW_PROPOSALS_SETTING,
+    WORKFLOW_RESULTS_SETTING,
     WORKFLOW_RUNS_SETTING,
     WORKFLOW_TASK_ACTION_KINDS as WORKFLOW_ACTION_KINDS,
 )
@@ -59,6 +62,8 @@ from functions_workflow_schedules import (
 # Closed reasons. They are mapped to application-owned text; none of them carries caller data.
 WORKFLOW_REASON_DISABLED = 'workflow_proposals_disabled'
 WORKFLOW_RUNS_REASON_DISABLED = 'workflow_runs_disabled'
+WORKFLOW_RESULTS_REASON_DISABLED = 'workflow_results_disabled'
+WORKFLOW_RESULTS_REASON_NO_WORKFLOWS = 'workflow_results_no_workflows'
 WORKFLOW_REASON_ROLE_REQUIRED = 'workflow_role_required'
 WORKFLOW_REASON_SHARED_CONVERSATION = 'workflow_shared_conversation'
 WORKFLOW_REASON_QUOTA_REACHED = 'workflow_quota_reached'
@@ -205,9 +210,31 @@ def workflow_runs_configured(settings):
     return bool(settings.get('enable_chat_orchestration')) and settings.get(WORKFLOW_RUNS_SETTING) is True
 
 
+def workflow_results_configured(settings):
+    """Whether an administrator lets chat orchestration read stored workflow results.
+
+    Only a real boolean ``True`` for Use Workflow Results In Chat turns it on. It is independent of
+    workflow proposals and runs: any of the three can be on without the others.
+    """
+    settings = settings if isinstance(settings, dict) else {}
+    return bool(settings.get('enable_chat_orchestration')) and settings.get(WORKFLOW_RESULTS_SETTING) is True
+
+
 def workflow_planning_configured(settings):
-    """Whether either workflow capability is configured, so a turn may need a workflow planning context."""
-    return workflow_proposals_configured(settings) or workflow_runs_configured(settings)
+    """Whether any workflow capability is configured, so a turn may need a workflow planning context."""
+    return (
+        workflow_proposals_configured(settings) or workflow_runs_configured(settings)
+        or workflow_results_configured(settings)
+    )
+
+
+def workflow_time_zone_configured(settings):
+    """Whether a turn's workflow planning needs the user's time zone.
+
+    A proposal schedules in it and a workflow results step names the local day a run finished on.
+    Starting a saved workflow needs neither, so with only runs on a turn is exactly what it was.
+    """
+    return workflow_proposals_configured(settings) or workflow_results_configured(settings)
 
 
 def workflow_planning_option(workflow_planning):
@@ -269,6 +296,38 @@ def workflow_run_gate(settings, user_roles):
     from functions_settings import is_user_workflows_enabled_for_user
     roles = list(user_roles) if isinstance(user_roles, (list, tuple, set)) else []
     if not is_user_workflows_enabled_for_user(settings, user_roles=roles):
+        return WORKFLOW_REASON_ROLE_REQUIRED
+    return None
+
+
+def workflow_results_settings_gate(settings):
+    """Return None when the deployment lets a plan read stored workflow results, else a closed reason.
+
+    Settings and the capability allowlist only; ``workflow_results_gate`` adds the caller's roles.
+    """
+    settings = settings if isinstance(settings, dict) else {}
+    if not workflow_results_configured(settings) or not settings.get('allow_user_workflows'):
+        return WORKFLOW_RESULTS_REASON_DISABLED
+    # Imported here because the registry's workflow capability gates import this module.
+    from functions_orchestration_registry import capability_allowlisted
+    if not capability_allowlisted(settings, WORKFLOW_RESULTS_CAPABILITY_ID):
+        return WORKFLOW_RESULTS_REASON_DISABLED
+    return None
+
+
+def workflow_results_gate(settings, user_roles):
+    """Return None when this user may be offered reading their workflow results, else a closed reason.
+
+    The role check is the one that decides whether chat answers from a finished run's result at all,
+    so a plan never reads a result the user could not ask about in chat.
+    """
+    reason = workflow_results_settings_gate(settings)
+    if reason:
+        return reason
+    # Settings initialize application storage, so they are imported only once a gate is reached.
+    from functions_settings import is_chat_workflow_results_enabled_for_user
+    roles = list(user_roles) if isinstance(user_roles, (list, tuple, set)) else []
+    if not is_chat_workflow_results_enabled_for_user(settings, user_roles=roles):
         return WORKFLOW_REASON_ROLE_REQUIRED
     return None
 
@@ -806,6 +865,11 @@ def build_workflow_planning_context(settings, *, user_id, user_info, conversatio
     whole name appears in ``request_text`` comes first, then durable ones, each group newest
     first. A failed workflows read leaves the marker off, so starting a workflow fails closed.
 
+    Reading the results of the user's finished workflow runs works the same way with its own
+    ``workflow_results: {'ready': True}`` marker, whether or not proposals or runs are open, and it
+    always carries ``time_zone`` and ``request_local_time``: a results step names the local day a
+    run finished on.
+
     ``readers`` replaces the storage reads, for tests.
     """
     settings = settings if isinstance(settings, dict) else {}
@@ -816,29 +880,53 @@ def build_workflow_planning_context(settings, *, user_id, user_info, conversatio
         return context
     proposals = workflow_planning_gate(settings, user_info.get('roles')) is None
     runs = workflow_run_gate(settings, user_info.get('roles')) is None
-    if not proposals and not runs:
+    results = workflow_results_gate(settings, user_info.get('roles')) is None
+    if not proposals and not runs and not results:
         return context
 
     readers = _readers(readers)
+    # Starting a workflow and reading its results both name a workflow the user already has.
+    names_workflows = runs or results
     if proposals:
         context = _proposal_planning_context(
             settings, context, user_id=user_id, user_info=user_info, time_zone=time_zone, now=now,
-            documents=documents, readers=readers, rank_for_runs=runs, request_text=request_text,
+            documents=documents, readers=readers, rank_for_runs=names_workflows, request_text=request_text,
         )
-        if not runs:
+        if not names_workflows:
             return context
         if workflow_planning_ready(context):
-            return {**context, 'workflow_runs': {'ready': True}}
-    return _with_run_catalog(context, user_id=user_id, readers=readers, request_text=request_text)
+            return _with_workflow_markers(context, runs=runs, results=results, time_zone=time_zone, now=now)
+    return _with_run_catalog(
+        context, user_id=user_id, readers=readers, request_text=request_text,
+        runs=runs, results=results, time_zone=time_zone, now=now,
+    )
 
 
-def _with_run_catalog(context, *, user_id, readers, request_text):
-    """Add the workflows a plan may start to a context that has no ready proposal catalog.
+def _with_workflow_markers(context, *, runs, results, time_zone=None, now=None):
+    """Mark which of starting and reading saved workflows the stored catalog supports.
+
+    Reading results also needs the user's local time, which a ready proposal context already has.
+    """
+    markers = {}
+    if runs:
+        markers['workflow_runs'] = {'ready': True}
+    if results:
+        markers['workflow_results'] = {'ready': True}
+        if not context.get('time_zone'):
+            zone = resolve_turn_time_zone(time_zone)
+            markers['time_zone'] = zone
+            markers['request_local_time'] = request_local_time_line(zone, now)
+    return {**context, **markers}
+
+
+def _with_run_catalog(context, *, user_id, readers, request_text, runs=True, results=False, time_zone=None,
+                      now=None):
+    """Add the saved workflows a plan may start or read to a context that has no ready proposal catalog.
 
     Proposals may be off, unavailable to this user, at the per-user cap or unreadable; starting an
-    existing workflow needs only the workflows themselves. The proposal fields keep their meaning,
-    so proposals stay unavailable for the same reason. A failed read returns ``context`` unchanged,
-    without the marker, so starting a workflow fails closed.
+    existing workflow, or reading its results, needs only the workflows themselves. The proposal
+    fields keep their meaning, so proposals stay unavailable for the same reason. A failed read
+    returns ``context`` unchanged, without a marker, so both fail closed.
     """
     started = time.monotonic()
     try:
@@ -855,12 +943,11 @@ def _with_run_catalog(context, *, user_id, readers, request_text):
         'Workflow run planning context built.', logging.INFO,
         workflow_count=len(workflows), duration_ms=int((time.monotonic() - started) * 1000),
     )
-    return {
+    return _with_workflow_markers({
         **context,
         'catalog': {'workflows': workflows},
         'handles': {'workflows': {item['entry']['handle']: item['record'] for item in entries}},
-        'workflow_runs': {'ready': True},
-    }
+    }, runs=runs, results=results, time_zone=time_zone, now=now)
 
 
 def _proposal_planning_context(settings, context, *, user_id, user_info, time_zone, now, documents, readers,
@@ -1033,6 +1120,64 @@ def workflow_run_projection(context):
     if not workflow_run_ready(context):
         return None
     return deepcopy({'catalog': {'workflows': context['catalog']['workflows']}})
+
+
+def workflow_results_ready(context):
+    """Whether a stored planning context can support reading a saved workflow's results in this turn."""
+    if not isinstance(context, dict) or context.get('conversation_private') is not True:
+        return False
+    marker = context.get('workflow_results')
+    catalog = context.get('catalog')
+    handles = context.get('handles')
+    return (
+        isinstance(marker, dict) and marker.get('ready') is True
+        and isinstance(catalog, dict) and isinstance(catalog.get('workflows'), list)
+        and isinstance(handles, dict) and isinstance(handles.get('workflows'), dict)
+    )
+
+
+def workflow_results_unavailable_reason(settings, request_context):
+    """Return None when this request may read a saved workflow's results, else a closed reason. Never raises.
+
+    Like ``workflow_run_unavailable_reason``, plus at least one saved workflow to name: a user with
+    none has no result a plan could read.
+    """
+    try:
+        request_context = request_context if isinstance(request_context, dict) else {}
+        reason = workflow_results_gate(settings, request_context.get('user_roles'))
+        if reason is not None:
+            return reason
+        planning = request_context.get('workflow_planning')
+        if not isinstance(planning, dict):
+            return WORKFLOW_REASON_CONTEXT_UNAVAILABLE
+        if planning.get('conversation_private') is not True:
+            return WORKFLOW_REASON_SHARED_CONVERSATION
+        if not workflow_results_ready(planning):
+            return WORKFLOW_REASON_CONTEXT_UNAVAILABLE
+        if not planning['catalog']['workflows']:
+            return WORKFLOW_RESULTS_REASON_NO_WORKFLOWS
+        return None
+    except Exception as exc:
+        _log_context(
+            'Workflow results access could not be checked; reading workflow results is unavailable for this request.',
+            logging.WARNING, reason=WORKFLOW_REASON_CONTEXT_UNAVAILABLE, error_type=type(exc).__name__,
+        )
+        return WORKFLOW_REASON_CONTEXT_UNAVAILABLE
+
+
+def workflow_results_projection(context):
+    """What the planner may see to read a saved workflow's results.
+
+    The same handle-only workflows catalog a plan may start from, and the user's local time, so the
+    planner can turn "yesterday" into a date. Nothing else from the stored context.
+    """
+    if not workflow_results_ready(context) or not context['catalog']['workflows']:
+        return None
+    return deepcopy({
+        'time_zone': context.get('time_zone') or WORKFLOW_DEFAULT_TIME_ZONE,
+        'request_local_time': context.get('request_local_time') or '',
+        'catalog': {'workflows': context['catalog']['workflows']},
+    })
 
 
 def workflow_answer_time_line(workflow_planning, time_zone, now=None):

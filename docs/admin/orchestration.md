@@ -215,6 +215,19 @@ the plan then lists them as not available with the reason "The capability that p
 this is not enabled for orchestration." Images a plan only suggests remain approval cards,
 controlled by image generation alone.
 
+Since **0.261.217**, **Read workflow results** (`workflow_results`) lets a plan
+read the stored result of one of the user's own finished personal workflow runs
+when the user asks about it, such as "what did my weekly digest find on
+Monday?". The plan reads the workflow's latest finished run, or the newest run
+that finished on a day the user names in their own time zone, and the answer
+uses the run's saved output as notes rather than as a cited source. The workflow
+isn't re-run, and a plan reads at most two results. There is no setting for it on
+this page: it's offered only while **Use Workflow Results In Chat** is on in
+[Workflow settings]({{ '/admin/workflow/' | relative_url }}), to users who may
+use personal workflows, in their own private conversations. Reading a result
+changes nothing, so it never makes a plan wait for approval. Clearing it keeps
+saved results out of plans; **Ask in chat** on a run is not affected.
+
 Selecting a capability does not grant source/model access or enable another
 feature's prerequisite. Orchestration still publishes truthful delivery status
 when composition is not requested, including file-only plans that consume already
@@ -547,6 +560,9 @@ then report a rejected proposal.
 | A workflow step says the user's sign-in is not available | The plan's remaining work continued in the background after the user's browser request ended, so the user's signed-in session was not available to start a new workflow run. A run the plan had already started is still linked. | Ask the user to select **Retry from failed step** in the chat. The retry uses their signed-in session and never starts a workflow the plan already started. |
 | A workflow step says saved workflows were temporarily unavailable | Workflow storage could not be read or written when the step ran, so the workflow may not have started. It is not retried automatically. | Once storage is reachable, the user can select **Retry from failed step**. A run the plan already started is linked rather than started again. |
 | Retry requires confirmation | An agent/action may have performed external effects before it failed, or a step may already have started a saved workflow. | Review those effects before confirming. Retry reexecutes that failed step, not its internal tool-call checkpoint. A workflow the plan already started is linked again, never started twice. |
+| Plans never read a saved workflow's result | Use Workflow Results In Chat or personal workflows are off, the **Read workflow results** capability is excluded, the user lacks the `WorkflowUser` role your deployment requires, the conversation is shared, or the request did not name one of the user's saved workflows. | Check Use Workflow Results In Chat in [Workflow settings]({{ '/admin/workflow/' | relative_url }}) and the capability selection, then the user's role. Ask from the user's own conversation and name the workflow. |
+| A step says "Your workflow results couldn't be read right now. Try again in a moment." | Workflow storage could not be read when the step ran. The step is retried once automatically. | Once storage is reachable, the user can select **Retry from failed step** or ask again. Reading a result changes nothing, so trying again is safe. |
+| An answer says a workflow result it used changed or is no longer available, so it was not saved | A run the plan read was deleted or changed, or its owner lost access to a source it used, while the answer was being written. | Expected. Ask again in a new message to read the current result. |
 | A saved run cannot be resumed | Checkpoints are absent or invalid, relevant context/access changed, or a newer/live attempt exists. | Follow the recovery explanation. Open the current attempt or create a new plan as appropriate; do not infer results from old summaries. |
 
 ## Related

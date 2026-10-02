@@ -30,8 +30,8 @@ from functions_orchestration_deliverables import (
 )
 from functions_orchestration_memory import OrchestrationMemoryError
 from functions_orchestration_registry import (
-    CAPABILITY_GENERATE_IMAGE, KNOWLEDGE_BASIS_GENERAL, KNOWLEDGE_BASIS_MIXED, KNOWLEDGE_BASIS_SOURCES,
-    VISUAL_CHART, VISUAL_DIAGRAM, VISUAL_IMAGE_PROPOSAL,
+    CAPABILITY_GENERATE_IMAGE, CAPABILITY_WORKFLOW_RESULTS, KNOWLEDGE_BASIS_GENERAL, KNOWLEDGE_BASIS_MIXED,
+    KNOWLEDGE_BASIS_SOURCES, VISUAL_CHART, VISUAL_DIAGRAM, VISUAL_IMAGE_PROPOSAL,
 )
 from functions_generated_export_registry import PREPARED_SLIDE_DECK_VERSION
 from functions_orchestration_result_contracts import (
@@ -50,7 +50,7 @@ from functions_orchestration_visuals import (
     build_answer_visual_guidance, build_existing_charts_note, collect_run_charts,
     image_proposals_available, place_chart_blocks,
 )
-from functions_orchestration_workflow_context import workflow_answer_time_line
+from functions_orchestration_workflow_context import resolve_turn_time_zone, workflow_answer_time_line
 
 
 COMPOSE_POLICY = (
@@ -302,6 +302,7 @@ def adapter_compose(step, context, *, settings, user_id, emit=None, cancel_reque
         for reader in readers.values():
             reader.recheck()
 
+    workflow_results_error = ()
     try:
         recheck()
         if sum(reader.reference.size_bytes for reader in readers.values()) > MAX_VALUE_BYTES:
@@ -320,6 +321,26 @@ def adapter_compose(step, context, *, settings, user_id, emit=None, cancel_reque
             }
             for name, reader in readers.items() if name not in image_names
         }
+        # A saved workflow's result reaches the model only as fenced, untrusted notes, read again
+        # for this call; the retained value it replaces never does.
+        workflow_results_policy = None
+        if any(
+            getattr(getattr(reader.reference, 'producer', None), 'capability_id', None) == CAPABILITY_WORKFLOW_RESULTS
+            for reader in readers.values()
+        ):
+            # The workflow result reader loads only when a plan read a saved result.
+            from functions_orchestration_workflow_results import (
+                WorkflowResultsComposeError, workflow_results_compose_inputs,
+            )
+
+            workflow_results_error = WorkflowResultsComposeError
+            planning = getattr(context, 'workflow_planning', None)
+            inputs, workflow_results_policy = workflow_results_compose_inputs(
+                readers, inputs, user_id=user_id, time_zone=resolve_turn_time_zone(
+                    planning.get('time_zone') if isinstance(planning, dict) else None,
+                    getattr(context, 'time_zone', None),
+                ),
+            )
         outputs = step['outputs']
         plain_text = len(outputs) == 1 and outputs[0]['kind'] in ('text-v1', 'markdown-v1')
         unavailable = _missing_optional_inputs(step, context)
@@ -369,6 +390,8 @@ def adapter_compose(step, context, *, settings, user_id, emit=None, cancel_reque
         )
         if time_line:
             messages.append({'role': 'system', 'content': time_line})
+        if workflow_results_policy:
+            messages.append({'role': 'system', 'content': workflow_results_policy})
         messages.append({
             'role': 'user',
             'content': json.dumps({
@@ -522,6 +545,8 @@ def adapter_compose(step, context, *, settings, user_id, emit=None, cancel_reque
             authority_reason = code
         if code == 'result_requires_streaming' or isinstance(exc, WorkflowContextBudgetError):
             failure = build_failure('result_input_too_large')
+        elif isinstance(exc, workflow_results_error):
+            failure = build_failure(exc.code)
         elif isinstance(exc, OrchestrationMemoryError):
             failure = build_failure('context_unavailable')
         elif isinstance(exc, (ResultUnavailableError, PermissionError, ScreeningError)):
