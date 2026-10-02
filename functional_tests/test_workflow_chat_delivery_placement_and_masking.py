@@ -252,6 +252,43 @@ def test_delivered_message_is_placed_after_the_newest_existing_thread_and_update
     require(thread_info["thread_attempt"] == 1, f"delivery must not be a retry attempt: {thread_info}")
 
 
+def test_delivered_message_is_stamped_after_newer_assistant_messages():
+    cases = [
+        ("future", "2026-05-04T15:00:05.000000", "2026-05-04T15:00:05.000001"),
+        ("same", "2026-05-04T15:00:00.000000", "2026-05-04T15:00:00.000001"),
+    ]
+    for label, newest_timestamp, expected_timestamp in cases:
+        world = make_world()
+        newest_thread_id = f"thread-newest-{label}"
+        world.messages.put({
+            "id": f"message-assistant-newest-{label}",
+            "conversation_id": CONVERSATION_ID,
+            "role": "assistant",
+            "content": "A newer assistant message that delivery must follow.",
+            "timestamp": newest_timestamp,
+            "metadata": {
+                "thread_info": {
+                    "thread_id": newest_thread_id,
+                    "previous_thread_id": "thread-request",
+                    "active_thread": True,
+                    "thread_attempt": 1,
+                },
+            },
+        })
+
+        message = deliver(world)
+
+        require(
+            message["timestamp"] == expected_timestamp,
+            f"{label}: delivery timestamp should be newest + 1 microsecond; got {message['timestamp']!r}",
+        )
+        thread_info = message["metadata"]["thread_info"]
+        require(
+            thread_info["previous_thread_id"] == newest_thread_id,
+            f"{label}: delivery should follow newest assistant thread, got {thread_info}",
+        )
+
+
 def test_delivered_result_shape_is_assistant_and_failed_notes_do_not_carry_result_lineage():
     result_world = make_world()
     message = deliver(result_world)

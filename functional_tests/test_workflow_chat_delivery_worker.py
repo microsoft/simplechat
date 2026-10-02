@@ -935,6 +935,41 @@ def test_losing_workflow_access_gets_one_notice_instead():
     assert_closed(world, reason="access_lost", notice_kind="undeliverable", attempts=1)
 
 
+@pytest.mark.parametrize("change", ["removed", "deleted", "orchestration_deleted", "another_owner"])
+def test_a_chat_lost_during_the_unread_mark_closes_undeliverable(change):
+    world = make_world()
+    real_mark_unread = world.services.mark_unread_guarded
+
+    def change_chat_then_mark(*args, **kwargs):
+        if change == "removed":
+            world.conversations.items.pop(CONVERSATION_ID, None)
+        else:
+            conversation = world.conversation()
+            conversation.update({
+                "deleted": {"deleted": True},
+                "orchestration_deleted": {"orchestration_deleted": True},
+                "another_owner": {"user_id": OTHER_USER},
+            }[change])
+            world.conversations.put(conversation)
+        return real_mark_unread(*args, **kwargs)
+
+    world.services.mark_unread_guarded = change_chat_then_mark
+
+    outcome = deliver(world)
+    assert outcome == worker.OUTCOME_UNDELIVERABLE, (
+        f"a chat that disappears during the unread mark must be undeliverable, got {outcome!r}"
+    )
+
+    assert world.delivery_messages() == [], f"no delivery message should be posted after {change}: {world.delivery_messages()}"
+    assert len(world.unread_calls) == 1, f"the guarded unread mark should be attempted once, got {world.unread_calls!r}"
+    assert world.cache_bumps.calls == [], f"a failed unread mark must not bump chat cache, got {world.cache_bumps.calls!r}"
+    assert world.notifications.chat_calls == [], f"no chat notice should be sent after {change}: {world.notifications.chat_calls!r}"
+    assert world.notifications.notices() == [undeliverable_notice()], (
+        f"exactly one undeliverable notice should be stored after {change}: {world.notifications.notices()!r}"
+    )
+    assert_closed(world, reason="chat_unavailable", notice_kind="undeliverable", attempts=1)
+
+
 @pytest.mark.parametrize("change", ["removed", "deleting", "status_deleting", "another_owner"])
 def test_a_deleted_workflow_closes_silently(change):
     world = make_world()
@@ -955,6 +990,41 @@ def test_a_deleted_workflow_closes_silently(change):
     assert_nothing_posted(world)
     assert world.notifications.notice_calls == []
     assert_closed(world, reason="workflow_deleted", notice_kind="none", attempts=1)
+
+
+def test_a_workflow_deleted_during_result_read_closes_silently():
+    world = make_world()
+
+    def delete_workflow_then_report_missing(_budget):
+        world.workflows.items.pop(WORKFLOW_ID, None)
+        raise FakeResultUnavailable("workflow_result_not_found")
+
+    world.reader.outcomes.append(delete_workflow_then_report_missing)
+
+    outcome = deliver(world)
+    assert outcome == worker.OUTCOME_CLOSED_SILENTLY, (
+        f"a workflow deleted during result read should close silently, got {outcome!r}"
+    )
+
+    assert_nothing_posted(world)
+    assert world.notifications.notices() == [], f"a deleted workflow must not notify: {world.notifications.notices()!r}"
+    assert_closed(world, reason="workflow_deleted", notice_kind="none", attempts=1)
+
+
+def test_a_missing_result_for_an_existing_workflow_gets_one_notice():
+    world = make_world()
+    world.reader.outcomes.append(FakeResultUnavailable("workflow_result_not_found"))
+
+    outcome = deliver(world)
+    assert outcome == worker.OUTCOME_UNDELIVERABLE, (
+        f"a missing result for an existing workflow should be undeliverable, got {outcome!r}"
+    )
+
+    assert_nothing_posted(world)
+    assert world.notifications.notices() == [undeliverable_notice()], (
+        f"exactly one undeliverable notice should be stored: {world.notifications.notices()!r}"
+    )
+    assert_closed(world, reason="access_lost", notice_kind="undeliverable", attempts=1)
 
 
 def test_a_run_deleted_while_pending_closes_silently_without_an_attempt():
@@ -1638,6 +1708,20 @@ def test_missing_ids_are_not_applicable(user_id, run_id):
     assert outcome == worker.OUTCOME_NOT_APPLICABLE
 
     assert total_writes(world) == 0
+    assert world.runs.calls == [], f"invalid ids must return before reading runs, got {world.runs.calls!r}"
+    assert world.runtime.reads == [], f"invalid ids must not read runtime control, got {world.runtime.reads!r}"
+
+
+@pytest.mark.parametrize("user_id, run_id", [(123, RUN_ID), (USER, 123), (USER, []), ([], RUN_ID)])
+def test_non_string_ids_are_not_applicable_without_reading_runs(user_id, run_id):
+    world = make_world()
+
+    outcome = worker.process_workflow_chat_delivery(user_id, run_id, services=world.services)
+    assert outcome == worker.OUTCOME_NOT_APPLICABLE
+
+    assert total_writes(world) == 0
+    assert world.runs.calls == [], f"non-string ids must return before reading runs, got {world.runs.calls!r}"
+    assert world.runtime.reads == [], f"non-string ids must not read runtime control, got {world.runtime.reads!r}"
 
 
 def test_a_run_without_a_delivery_record_is_not_applicable():
@@ -1687,6 +1771,60 @@ def test_an_abandoned_claim_is_taken_over_after_its_lease_lapses():
     record = world.record()
     assert record["attempts"] == 2 and record["lease_id"] is None
     assert [message["id"] for message in world.delivery_messages()] == [M5]
+
+
+def test_an_exhausted_abandoned_claim_closes_undeliverable_without_composing():
+    world = make_world(run=make_run(record=claimed_record(attempts=8, lease_expires_at="2026-05-04T14:59:59.000000Z")))
+
+    outcome = deliver(world)
+    assert outcome == worker.OUTCOME_UNDELIVERABLE, (
+        f"an abandoned claim at the attempt cap should close undeliverable, got {outcome!r}"
+    )
+
+    assert_nothing_posted(world)
+    assert world.notifications.notices() == [undeliverable_notice()], (
+        f"exactly one undeliverable notice should be stored: {world.notifications.notices()!r}"
+    )
+    assert world.reader.calls == [], f"an exhausted claim must not read the result, got {world.reader.calls!r}"
+    assert world.models.calls == [], f"an exhausted claim must not call a model, got {world.models.calls!r}"
+    assert_closed(world, reason="delivery_failed", notice_kind="undeliverable", attempts=9)
+
+
+def test_an_exhausted_abandoned_claim_after_message_creation_closes_delivered_without_reposting():
+    record = claimed_record(
+        attempts=8,
+        lease_expires_at="2026-05-04T14:59:59.000000Z",
+        phase="message_created",
+        message_id=M5,
+    )
+    world = make_world(run=make_run(record=record))
+    world.messages.put({
+        "id": M5,
+        "conversation_id": CONVERSATION_ID,
+        "role": "assistant",
+        "content": "posted by an earlier exhausted attempt",
+        "timestamp": "2026-05-04T14:59:59.000000",
+    })
+
+    outcome = deliver(world)
+    assert outcome == worker.OUTCOME_DELIVERED, (
+        f"an exhausted claim with an existing message should close delivered, got {outcome!r}"
+    )
+
+    assert [message["id"] for message in world.delivery_messages()] == [M5], (
+        f"the exhausted retry must not post a second message: {world.delivery_messages()!r}"
+    )
+    assert world.unread_calls == [], f"an existing message must not be marked unread again, got {world.unread_calls!r}"
+    assert world.reader.calls == [], f"an existing message must not read the result again, got {world.reader.calls!r}"
+    assert world.models.calls == [], f"an existing message must not call a model again, got {world.models.calls!r}"
+    assert world.notifications.chat_calls == [delivered_notice()], (
+        f"the existing message should receive one chat notice: {world.notifications.chat_calls!r}"
+    )
+    assert world.notifications.notice_calls == [], f"no undeliverable notice should be sent: {world.notifications.notice_calls!r}"
+    record = world.record()
+    assert record["status"] == "delivered", f"the record should close delivered: {record!r}"
+    assert record["notice_kind"] == "chat_response", f"the delivered close should record a chat notice: {record!r}"
+    assert record["attempts"] == 9, f"the reclaimed exhausted attempt should be counted: {record!r}"
 
 
 def test_a_record_that_is_not_due_is_left_alone():
