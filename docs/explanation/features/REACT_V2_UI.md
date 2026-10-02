@@ -99,7 +99,9 @@ choice driven by how SimpleChat authenticates:
 - The application enforces a **custom same-origin CSRF check** on state-changing requests.
   Same-origin requests pass it unchanged.
 - The Content-Security-Policy is `default-src 'self'`. Same-origin assets need no CSP
-  relaxation.
+  relaxation. Audio and video from an action's own host play inline only when the host is
+  listed in `CSP_MEDIA_SRC_ORIGINS`, which adds validated `https://` origins to `media-src`
+  (see [V2 inline media and agent-posted messages](V2_INLINE_MEDIA_AND_AGENT_MESSAGES.md)).
 - No CORS layer is required.
 
 Hosting the SPA on a separate origin is supported but optional — see

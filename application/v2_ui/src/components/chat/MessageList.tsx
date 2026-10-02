@@ -66,6 +66,7 @@ import {
 } from '../../lib/imageProposalSpec';
 import {
     isAiRequest,
+    isAgentPostedMessage,
     isOwnMessage,
     messageAuthorName,
     resolveReplyContext,
@@ -818,6 +819,12 @@ function MessageBubbleInner({
      * there.
      */
     const alignRight = author ? own : isUser;
+    /**
+     * A message an agent posted through an action on the sender's behalf. It keeps the
+     * sender's side of the thread, but renders as markdown in the neutral bubble: briefings
+     * carry tables, links and media that would be unreadable on the accent colour.
+     */
+    const agentPosted = isAgentPostedMessage(message);
     const replyContext = useMemo(
         () => resolveReplyContext(message, messages, currentUserId),
         [message, messages, currentUserId],
@@ -975,6 +982,7 @@ function MessageBubbleInner({
                 <p className="mb-1 flex items-center gap-1.5 px-1 text-[11px] text-text-3">
                     <span className="font-medium">{author}</span>
                     {isAiRequest(message) && <span>asked the assistant</span>}
+                    {agentPosted && <span>posted through an agent</span>}
                 </p>
             )}
             <div className={clsx('flex w-full', alignRight ? 'justify-end' : 'justify-start')}>
@@ -985,7 +993,7 @@ function MessageBubbleInner({
                     'rounded-2xl px-4 py-3',
                     // These are repeated per message, so they use the non-blurred surface:
                     // a backdrop-filter per bubble makes long threads scroll badly.
-                    alignRight
+                    alignRight && !agentPosted
                         ? 'bg-accent text-on-accent'
                         : 'glass-flat text-text-1',
                 )}
@@ -1003,7 +1011,7 @@ function MessageBubbleInner({
                         })}
                         className={clsx(
                             'flex items-center gap-2 text-[15px] italic',
-                            alignRight ? 'text-on-accent/80' : 'text-text-3',
+                            alignRight && !agentPosted ? 'text-on-accent/80' : 'text-text-3',
                         )}
                     >
                         <EyeOff size={14} className="shrink-0" />
@@ -1011,7 +1019,22 @@ function MessageBubbleInner({
                         {masks.maskedBy ? ` by ${masks.maskedBy}` : ''}.
                     </p>
                 ) : isUser ? (
-                    promptUsed ? (
+                    agentPosted ? (
+                        <>
+                            <AssistantMarkdown
+                                content={message.content}
+                                masks={masks.ranges}
+                                messageId={message.id}
+                            />
+                            {/* A shared thread already says this beside the author's name. */}
+                            {!author && (
+                                <p className="mt-2 flex items-center gap-1.5 text-[11px] text-text-3">
+                                    <Sparkles size={11} />
+                                    Posted through an agent
+                                </p>
+                            )}
+                        </>
+                    ) : promptUsed ? (
                         <>
                             <PromptUsedBlock
                                 name={promptUsed.name}

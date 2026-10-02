@@ -125,6 +125,9 @@ from utils_cache import invalidate_group_search_cache, invalidate_personal_searc
 
 SIMPLECHAT_PLUGIN_TYPE = "simplechat"
 SIMPLECHAT_DEFAULT_ENDPOINT = "simplechat://internal"
+# Marks a message an agent posted through add_conversation_message. Clients render it as
+# markdown, the same way they render the agent's replies (see isAgentPostedMessage in the V2 UI).
+AGENT_POSTED_MESSAGE_METADATA = {"posted_via": "agent_action", "content_format": "markdown"}
 GENERATED_CHAT_ARTIFACT_LIFECYCLE_STAGED = "staged"
 GENERATED_CHAT_ARTIFACT_LIFECYCLE_PUBLISHED = "published"
 GENERATED_CHAT_ARTIFACT_LIFECYCLE_ROLLED_BACK = "rolled_back"
@@ -1127,6 +1130,12 @@ def add_conversation_message_for_current_user(
     content: str,
     reply_to_message_id: str = "",
 ) -> Dict[str, Any]:
+    """Post a message an agent wrote, through the SimpleChat action, as the current user.
+
+    The message is stored as the user's own, because it is sent with their permissions, and is
+    marked with AGENT_POSTED_MESSAGE_METADATA so clients render it as markdown, the way the
+    agent's replies are rendered, while messages people type stay plain text.
+    """
     current_user_info = _require_current_user_info()
     normalized_conversation_id = str(conversation_id or "").strip()
     normalized_content = str(content or "").strip()
@@ -1154,6 +1163,7 @@ def add_conversation_message_for_current_user(
             current_user_info=current_user_info,
             content=normalized_content,
             reply_to_message_id=normalized_reply_to_message_id,
+            extra_metadata=AGENT_POSTED_MESSAGE_METADATA,
         )
         return {
             "conversation": updated_conversation,
@@ -1182,6 +1192,7 @@ def add_conversation_message_for_current_user(
         current_user,
         normalized_content,
         reply_to_message_id=normalized_reply_to_message_id,
+        extra_metadata=AGENT_POSTED_MESSAGE_METADATA,
     )
     create_collaboration_message_notifications(updated_conversation, message_doc)
     return {
@@ -2429,6 +2440,7 @@ def _persist_personal_conversation_message(
     current_user_info: Dict[str, str],
     content: str,
     reply_to_message_id: Optional[str] = None,
+    extra_metadata: Optional[Dict[str, Any]] = None,
 ) -> Tuple[Dict[str, Any], Dict[str, Any]]:
     conversation_id = str(conversation_item.get("id") or "").strip()
     if not conversation_id:
@@ -2475,6 +2487,8 @@ def _persist_personal_conversation_message(
             },
         },
     }
+    if extra_metadata:
+        message_doc["metadata"].update(extra_metadata)
 
     cosmos_messages_container.upsert_item(message_doc)
 
