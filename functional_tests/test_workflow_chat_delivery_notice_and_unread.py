@@ -19,6 +19,7 @@ for _path in (ROOT / "application" / "single_app", ROOT / "functional_tests"):
         sys.path.insert(0, str(_path))
 
 import pytest  # noqa: E402
+from azure.core import MatchConditions  # noqa: E402
 
 from functions_conversation_unread import (  # noqa: E402
     UNREAD_ALREADY_MARKED,
@@ -328,6 +329,41 @@ def test_guarded_unread_retry_preserves_concurrent_edit():
     require(attempts == 2, f"one conflict should produce exactly two replace attempts, got {attempts}")
     require(stored.get("title") == "Concurrent title", f"retry should preserve concurrent title: {stored}")
     require(stored.get("last_unread_assistant_message_id") == MESSAGE_ID, f"retry should still set unread mark: {stored}")
+
+
+def test_guarded_unread_write_is_conditional_on_the_etag_it_read():
+    container = FakeContainer("conversations", [make_conversation(title="Original title")])
+    read_etag = container.get(CONVERSATION_ID).get("_etag")
+    guards = []
+    original_replace_item = container.replace_item
+
+    def recording_replace_item(item=None, body=None, etag=None, match_condition=None, **kwargs):
+        guards.append((etag, match_condition))
+        return original_replace_item(item=item, body=body, etag=etag, match_condition=match_condition, **kwargs)
+
+    def concurrent_title_update_without_error():
+        # The edit lands between the read and the write and raises nothing, so only the ETag guard can catch it.
+        current = container.get(CONVERSATION_ID)
+        current["title"] = "Concurrent title"
+        container.put(current)
+        return None
+
+    container.replace_item = recording_replace_item
+    container.fail("replace_item", concurrent_title_update_without_error)
+    outcome, _conversation = mark_conversation_unread_guarded(container, CONVERSATION_ID, USER, MESSAGE_ID, PLANNED_AT)
+    stored = container.get(CONVERSATION_ID)
+
+    require(guards, "the unread mark should write the conversation")
+    require(
+        guards[0] == (read_etag, MatchConditions.IfNotModified),
+        f"the unread write must be guarded by the ETag it read ({read_etag!r}), got {guards[0]!r}",
+    )
+    unguarded = [guard for guard in guards if not guard[0] or guard[1] != MatchConditions.IfNotModified]
+    require(not unguarded, f"every unread write must carry an ETag and IfNotModified, got {guards!r}")
+    require(stored.get("title") == "Concurrent title", f"an unguarded write overwrote the concurrent edit: {stored}")
+    require(outcome == UNREAD_MARKED, f"the reread attempt should mark, got {outcome}")
+    require(len(guards) == 2, f"one lost ETag race should produce exactly two writes, got {len(guards)}")
+    require(stored.get("last_unread_assistant_message_id") == MESSAGE_ID, f"the retry should still set the unread mark: {stored}")
 
 
 @pytest.mark.parametrize("field_name,conversation_id,user_id,message_id", [
