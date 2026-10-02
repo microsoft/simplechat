@@ -69,7 +69,27 @@ class FakeConfigCosmosClient:
         return self.database
 
 
-MODULES_WITH_CONFIG = ("config", "functions_notifications")
+APP_DIR = (ROOT / "application" / "single_app").resolve()
+
+
+def is_app_module(module):
+    location = getattr(module, "__file__", None)
+    if not location:
+        return False
+    try:
+        return Path(location).resolve().is_relative_to(APP_DIR)
+    except (OSError, ValueError):
+        return False
+
+
+@pytest.fixture(scope="module", autouse=True)
+def forget_app_modules_imported_here():
+    # config.py binds its containers on first import, so a later file must not inherit these fake ones.
+    before = set(sys.modules)
+    yield
+    added = [name for name, module in list(sys.modules.items()) if name not in before and is_app_module(module)]
+    for name in added:
+        sys.modules.pop(name, None)
 
 
 def import_app_module_without_live_cosmos(module_name):
