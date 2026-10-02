@@ -679,19 +679,22 @@ def assemble_delivery_content(label, body, disclosure=''):
     return '\n\n'.join(parts)
 
 
+_FAILURE_REASONS = {
+    'failed': 'the run stopped before it finished',
+    'invalid': "the workflow couldn't run as defined",
+    'incomplete': "some of its steps didn't finish",
+    'skipped': 'no new or changed files were detected',
+    REASON_DEADLINE_EXCEEDED: 'it reached its time limit',
+    'execution_budget_exceeded': 'it reached its execution limit',
+    'repeat_iteration_limit': 'it reached its repeat limit',
+    'm365_authorization': 'Microsoft 365 access needs to be reconnected',
+    'authorization': 'your workflow access must be restored',
+}
+FAILURE_REASON_CODES = frozenset(_FAILURE_REASONS)
+
+
 def failure_reason_text(code):
-    reasons = {
-        'failed': 'the run stopped before it finished',
-        'invalid': "the workflow couldn't run as defined",
-        'incomplete': "some of its steps didn't finish",
-        'skipped': 'no new or changed files were detected',
-        REASON_DEADLINE_EXCEEDED: 'it reached its time limit',
-        'execution_budget_exceeded': 'it reached its execution limit',
-        'repeat_iteration_limit': 'it reached its repeat limit',
-        'm365_authorization': 'Microsoft 365 access needs to be reconnected',
-        'authorization': 'your workflow access must be restored',
-    }
-    return reasons.get(code, reasons['failed'])
+    return _FAILURE_REASONS.get(code, _FAILURE_REASONS['failed'])
 
 
 def delivery_note_text(kind, workflow_name, *, reason_code=None):
@@ -968,6 +971,7 @@ __all__ = (
     'delivery_label',
     'assemble_delivery_content',
     'delivery_note_text',
+    'FAILURE_REASON_CODES',
     'failure_reason_text',
     'notice_workflow_name',
     'notice_title',

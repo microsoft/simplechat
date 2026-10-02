@@ -207,7 +207,7 @@ from functions_orchestration_schema import (
     normalize_elicitation,
     safe_failure,
 )
-from functions_settings import get_settings, get_user_settings
+from functions_settings import enabled_required, get_settings, get_user_settings, workflow_user_required
 from functions_model_catalog import ModelCatalogError
 from functions_orchestration_model_routing import answer_selection, validate_auto_bindings
 from functions_prompt_metadata import build_prompt_selection_metadata
@@ -1455,6 +1455,13 @@ def _workflow_run_links():
     import functions_orchestration_workflow_run_links
 
     return functions_orchestration_workflow_run_links
+
+
+def _workflow_run_status():
+    """The workflow run status module, imported on first use like the run links module."""
+    import functions_workflow_chat_delivery_status
+
+    return functions_workflow_chat_delivery_status
 
 
 def _proposal_identity(user_id):
@@ -2929,4 +2936,41 @@ def register_route_backend_orchestration(bp):
                 },
             )
             return jsonify(links.error_payload(links.SERVICE_UNAVAILABLE_CODE)), 503
+        return jsonify(payload), 200
+
+    @bp.route("/api/v2/orchestration/workflow-runs/status", methods=["GET"])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    @enabled_required('allow_user_workflows')
+    @workflow_user_required
+    def orchestration_workflow_run_status():
+        """Status rows for the saved workflow runs the requester's chats started.
+
+        With one ``conversation_id``, the rows are that chat's runs, newest request first. Without
+        one, they are the requester's runs still in flight, still waiting to post back, or posted
+        in the last ten minutes. Each row reads only the requester's own runs and carries fixed
+        codes and labels, never a run's output or error text. Nothing is written.
+        """
+        user_id = get_current_user_id()
+        if not user_id:
+            return jsonify({'error': 'User not authenticated'}), 401
+        status = _workflow_run_status()
+        conversation_values = request.args.getlist('conversation_id')
+        try:
+            payload = status.workflow_run_status_payload(user_id, conversation_values)
+        except status.WorkflowRunStatusError as exc:
+            body, code = exc.payload()
+            return jsonify(body), code
+        except Exception as exc:
+            conversation_id = conversation_values[0] if len(conversation_values) == 1 else None
+            log_event(
+                '[ORCHESTRATION] The workflow run status could not be loaded.', level=logging.ERROR,
+                extra={
+                    **workflow_log_context(conversation_id=conversation_id),
+                    'stage': 'workflow_run_status', 'error_type': type(exc).__name__,
+                },
+            )
+            body, code = status.WorkflowRunStatusError(status.STATUS_UNAVAILABLE_CODE).payload()
+            return jsonify(body), code
         return jsonify(payload), 200
