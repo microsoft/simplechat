@@ -78,6 +78,10 @@ class BlobStore:
         return BlobClient()
 
 
+def _blob_service_client_factory():
+    return object()
+
+
 def load_upload(container, blobs):
     namespace = {
         "logging": logging,
@@ -88,7 +92,7 @@ def load_upload(container, blobs):
         "_get_document_family_items_from_document": lambda document, **kwargs: [document],
         "_document_revision_sort_key": lambda document: document.get("version", 0),
         "_archive_previous_document_blob": lambda *args, **kwargs: None,
-        "_get_blob_service_client": lambda: object(),
+        "_get_blob_service_client": _blob_service_client_factory,
         "_ensure_blob_container_ready": lambda client, name: blobs,
         "CURRENT_ALIAS_BLOB_PATH_MODE": "current_alias",
         "log_event": lambda *args, **kwargs: None,
