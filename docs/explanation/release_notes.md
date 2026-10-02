@@ -24,6 +24,18 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
     *   **Chat** on selected workspace documents or on a tag, and **Start chatting** on the home page, now always open a brand-new conversation, as the classic interface does. The documents or tag arrive as context in the new chat instead of being added to whichever conversation was last open. Text you've typed but not sent stays in the message box.
     *   (Ref: #1617, `chatStore.ts`, `orchestrationController.ts`, `DocumentExplorer.tsx`, `TagsSection.tsx`, `HomePage.tsx`, [V2 New Chat Reset Fix](fixes/V2_NEW_CHAT_RESET_FIX.md))
 
+### **(v0.261.225)**
+
+#### New Features
+
+*   **Photos and Facts on V2 Map Points**
+    *   A point an agent puts on a map can now carry a photo of the place and labelled facts about it, such as a reading's time, a transponder ID or a lane. Hovering the point in the V2 chat shows the photo, its caption and the facts with the point's label and description. Clicking keeps them open, and clicking the photo opens it full size in the image viewer.
+    *   A point without a photo shows its facts on their own, so a reading with no camera image still shows when and where it was taken.
+    *   **List what the map shows** includes each point's facts and a thumbnail of its photo, for keyboard and screen reader users.
+    *   The details open on whichever side of the point has room, and pinned details move the map so all of them are visible.
+    *   Agents send `image_url`, `image_caption` and `fields` with each point in `locations_json`. Only `https` photo links are kept; any other link is left out, and the action tells the agent how many it dropped. Photos load without a referrer, and captions and facts are only ever written as text. The classic chat still shows a point's label and description only.
+    *   (Ref: #1609, `azure_maps_openlayers_plugin.py`, `InlineMapCard.tsx`, `lib/inlineMaps.ts`, [V2 Interactive Maps](features/V2_INTERACTIVE_MAPS.md))
+
 ### **(v0.261.224)**
 
 #### Bug Fixes
