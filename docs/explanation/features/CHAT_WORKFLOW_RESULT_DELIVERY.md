@@ -568,6 +568,12 @@ Waiting mapping:
 | `paused` with `deadline_exceeded` | `deadline_exceeded` | `open_run` | Runtime gate id or null |
 | Other `paused` | `paused` | `open_run` | Runtime gate id or null |
 
+`waiting` is null for every other state. It is not tied to `phase`: a
+`waiting_recovery` row reports `status: running` and `phase: running`, because
+the runtime recovers it without the user, but still carries
+`waiting: {reason: recovery, action: open_run}`. 6b-2 should show the waiting
+reason without treating the row as needing the user.
+
 Delivery mapping:
 
 | Stored delivery state | Row `delivery.status` | Other fields |
