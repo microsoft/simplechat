@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """
 Functional test for V2 interactive maps from Azure Maps action results.
-Version: 0.261.223
+Version: 0.261.224
 Implemented in: 0.261.223
+Tile token kept through tool-result redaction in: 0.261.224
 
 This test ensures that:
   - OpenLayers is vendored into the V2 SPA at the same pinned 10.6.1 build the classic chat
@@ -12,7 +13,9 @@ This test ensures that:
   - action output on a map is only ever written as text, and tiles only load through
     SimpleChat's tile proxy;
   - the personal and collaborative message endpoints V2 reads reissue expired map tile tokens,
-    so a map in an older reply or a group conversation still loads its tiles.
+    so a map in an older reply or a group conversation still loads its tiles;
+  - redacting a tool result before it is stored keeps the tile proxy token, and only that
+    token, so a stored map can load its tiles at all.
 """
 
 import ast
@@ -38,7 +41,7 @@ sys.path.insert(0, str(ROOT / "functional_tests"))
 
 from test_support.versioning import assert_app_version_at_least  # noqa: E402
 
-IMPLEMENTED_IN = "0.261.223"
+TILE_TOKEN_KEPT_IN = "0.261.224"
 
 # SHA-256 of the files in the published ol@10.6.1 npm package.
 OPENLAYERS_SHA256 = {
@@ -261,8 +264,68 @@ def test_inline_map_helpers_behave():
     print("Inline map helpers passed!")
 
 
+def _load_invocation_logger():
+    stubs = {
+        "agent_execution_context": types.ModuleType("agent_execution_context"),
+        "functions_appinsights": types.ModuleType("functions_appinsights"),
+        "functions_authentication": types.ModuleType("functions_authentication"),
+        "functions_debug": types.ModuleType("functions_debug"),
+    }
+    stubs["agent_execution_context"].current_agent_execution = lambda: None
+    stubs["functions_appinsights"].log_event = lambda *args, **kwargs: None
+    stubs["functions_appinsights"].get_appinsights_logger = lambda: None
+    stubs["functions_authentication"].get_current_user_id = lambda: None
+    stubs["functions_debug"].debug_print = lambda *args, **kwargs: None
+
+    spec = importlib.util.spec_from_file_location(
+        "plugin_invocation_logger_under_test",
+        APP_DIR / "semantic_kernel_plugins" / "plugin_invocation_logger.py",
+    )
+    module = importlib.util.module_from_spec(spec)
+    with _isolated_modules(**stubs):
+        spec.loader.exec_module(module)
+    return module
+
+
+def test_tool_result_redaction_keeps_only_the_tile_proxy_token():
+    """Stored map citations keep their tile token; every other secret is still redacted."""
+    print("Testing tool result redaction of map tile templates...")
+
+    logger = _load_invocation_logger()
+    helpers = _load_azure_maps_helpers()
+    sanitize = logger.sanitize_plugin_invocation_value
+    redacted = logger.REDACTED_INVOCATION_VALUE
+    assert logger.AZURE_MAPS_TILE_PROXY_QUERY_PREFIX == f"{helpers.AZURE_MAPS_TILE_PROXY_ROUTE}?"
+
+    template = helpers.build_tile_proxy_url_template(helpers.create_tile_proxy_token("maps-test-key"))
+    result = {
+        "success": True,
+        "render_type": helpers.AZURE_MAPS_RENDER_TYPE,
+        "map_payload": {"title": "Route", "tile_url_template": template},
+    }
+    assert sanitize(result)["map_payload"]["tile_url_template"] == template
+    assert json.loads(sanitize(json.dumps(result)))["map_payload"]["tile_url_template"] == template
+    kept = sanitize(result)["map_payload"]["tile_url_template"]
+    assert helpers.decode_tile_proxy_token(_token(kept))["subscription_key"] == "maps-test-key"
+
+    still_redacted = {
+        "token=abc": f"token={redacted}",
+        "/api/other?token=abc": f"/api/other?token={redacted}",
+        "/api/azure-maps/tile?api_key=abc": f"/api/azure-maps/tile?api_key={redacted}",
+        "/api/azure-maps/tile?zoom=1&token=abc": f"/api/azure-maps/tile?zoom=1&token={redacted}",
+        "x/api/azure-maps/tile?access_token=abc": f"x/api/azure-maps/tile?access_token={redacted}",
+    }
+    for value, expected in still_redacted.items():
+        assert sanitize(value) == expected, value
+    # An absolute URL is never the app's own template, so its token is redacted as before.
+    assert "token=abc" not in sanitize("https://tiles.example.test/api/azure-maps/tile?token=abc")
+    mixed = sanitize("/api/azure-maps/tile?token=keep-me and password=hunter2")
+    assert mixed == f"/api/azure-maps/tile?token=keep-me and password={redacted}"
+    print("Tool result redaction passed!")
+
+
 def test_version_was_incremented():
-    assert_app_version_at_least(IMPLEMENTED_IN)
+    assert_app_version_at_least(TILE_TOKEN_KEPT_IN)
 
 
 if __name__ == "__main__":
@@ -273,6 +336,7 @@ if __name__ == "__main__":
         test_message_loads_reissue_map_tile_tokens,
         test_refresh_helper_reissues_expired_tokens,
         test_inline_map_helpers_behave,
+        test_tool_result_redaction_keeps_only_the_tile_proxy_token,
         test_version_was_incremented,
     ]
     failures = 0

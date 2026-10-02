@@ -101,6 +101,15 @@ group conversation drew markers on blank tiles.
 - `refresh_azure_maps_function_result` no longer parses JSON-text tool results that cannot be
   maps, because these endpoints now pass every citation through it.
 
+### Tile tokens in stored tool results
+
+Added in 0.261.224. Tool results are redacted before they are stored as a reply's citations,
+and that redaction used to replace the map's tile token with `***REDACTED***`. Every stored map
+then drew on blank tiles, in both chats. `sanitize_plugin_invocation_value` now keeps the
+`token=` value that directly follows `/api/azure-maps/tile?`, and nothing else. That token is
+encrypted with the app's secret key, expires, and only works on SimpleChat's signed-in tile
+proxy. See [Azure Maps Tile Token Redaction Fix](../fixes/AZURE_MAPS_TILE_TOKEN_REDACTION_FIX.md).
+
 ### Configuration
 
 There is nothing to configure. A map appears when an agent with the Azure Maps action returns
@@ -135,5 +144,7 @@ one.
 - A map is drawn only in the chat. Exported conversations do not include a map image.
 - A tile token issued when the conversation was opened lasts 240 minutes; reopen the conversation
   to reissue it.
+- Maps stored before 0.261.224 have a redacted tile token that cannot be reissued, so they show
+  their markers, paths and areas without tiles. Running the request again produces a working map.
 - An agent that calls the map action twice with different data shows two maps, as the classic
   chat does.
