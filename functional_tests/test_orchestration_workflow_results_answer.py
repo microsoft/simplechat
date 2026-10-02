@@ -374,6 +374,7 @@ def test_sidecar_stays_server_only_and_restore_reauthorizes_or_fails_closed(
     _install_workflow_result_runtime(results_module, monkeypatch)
     monkeypatch.setattr(results_module, "require_result_service", lambda context: context.result_service)
     from functions_orchestration_result_contracts import ProducerIdentity, TaskResult
+    from functions_orchestration_runs import public_step_record
 
     producer = ProducerIdentity(
         USER_ID,
@@ -416,6 +417,8 @@ def test_sidecar_stays_server_only_and_restore_reauthorizes_or_fails_closed(
         7,
     )
     task_result = output["task_result"].to_dict()
+    # The /steps route serves committed step records through this allowlist.
+    public_step = public_step_record(record)
     public = recovery_module.public_execution_fields({
         "attempt_index": 1,
         "status": "completed",
@@ -462,6 +465,9 @@ def test_sidecar_stays_server_only_and_restore_reauthorizes_or_fails_closed(
     _require_equal(record["workflow_results"]["context"]["run_id"], RUN_ID, "server step record should keep sidecar")
     _assert_absent(task_result, EXCERPT_MARKER, RUN_ID, WORKFLOW_ID, NONCE)
     _assert_absent(public, EXCERPT_MARKER, RUN_ID, WORKFLOW_ID, NONCE)
+    _require("workflow_results" not in public_step, "public step record must drop the workflow_results sidecar")
+    _require_equal(public_step["summary"], record["summary"], "public step summary should be the fixed step summary")
+    _assert_absent(public_step, EXCERPT_MARKER, RUN_ID, WORKFLOW_ID, NONCE, HANDLE, WORKFLOW_NAME)
     _require_equal(restored["workflow_results"]["context"]["run_id"], RUN_ID, "restore should rebuild sidecar")
     _require("workflow_results" not in failed_restore, "failed restore should leave sidecar missing")
     _require(isinstance(TaskResult.from_dict(task_result), TaskResult), "persisted task result should remain valid")
