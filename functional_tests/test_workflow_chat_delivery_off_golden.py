@@ -29,20 +29,29 @@ from copy import deepcopy
 from difflib import unified_diff
 from pathlib import Path
 
-import pytest
+ROOT = Path(__file__).resolve().parents[1]
+for _path in (ROOT / "application" / "single_app", ROOT / "functional_tests"):
+    if str(_path) not in sys.path:
+        sys.path.insert(0, str(_path))
 
-from test_orchestration_harness_routes import modules  # noqa: F401
-from test_orchestration_workflow_run_adapter import (  # noqa: F401
+import pytest  # noqa: E402
+
+from test_orchestration_harness_routes import modules  # noqa: E402, F401
+from test_orchestration_workflow_run_adapter import (  # noqa: E402, F401
     RUN_ID,
     _signed_in,
     world,
     wr,
 )
-from test_orchestration_workflow_run_answer import _plan_harness
-from test_orchestration_workflow_run_capability import _handle, _run, planning  # noqa: F401
-from test_orchestration_workflow_run_planning_context import OWNER, wf  # noqa: F401
-from test_support.orchestration_harness_execution import compose_step, decoded_frames, input_binding
-from test_support.versioning import assert_app_version_at_least
+from test_orchestration_workflow_run_answer import _plan_harness  # noqa: E402
+from test_orchestration_workflow_run_capability import _handle, _run, planning  # noqa: E402, F401
+from test_orchestration_workflow_run_planning_context import OWNER, wf  # noqa: E402, F401
+from test_support.orchestration_harness_execution import (  # noqa: E402
+    compose_step,
+    decoded_frames,
+    input_binding,
+)
+from test_support.versioning import assert_app_version_at_least  # noqa: E402
 
 
 GOLDEN = Path(__file__).resolve().parent / "test_support" / "workflow_chat_delivery_off_golden.json"

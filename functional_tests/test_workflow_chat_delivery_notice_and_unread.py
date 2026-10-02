@@ -12,6 +12,7 @@ import copy
 import importlib
 import sys
 from pathlib import Path
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 for _path in (ROOT / "application" / "single_app", ROOT / "functional_tests"):
@@ -98,14 +99,8 @@ def import_app_module_without_live_cosmos(module_name):
     if module_name in sys.modules:
         return sys.modules[module_name]
 
-    import azure.cosmos as azure_cosmos
-
-    original_cosmos_client = azure_cosmos.CosmosClient
-    azure_cosmos.CosmosClient = FakeConfigCosmosClient
-    try:
+    with patch("azure.cosmos.CosmosClient", FakeConfigCosmosClient):
         return importlib.import_module(module_name)
-    finally:
-        azure_cosmos.CosmosClient = original_cosmos_client
 
 
 @pytest.fixture(name="notifications")

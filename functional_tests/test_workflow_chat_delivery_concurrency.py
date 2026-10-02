@@ -125,7 +125,7 @@ def _run_threads(actions, *, on_return=None):
     def target(name, action):
         try:
             results[name] = action()
-        except BaseException as exc:
+        except Exception as exc:
             errors[name] = exc
         finally:
             if on_return is not None:
@@ -145,6 +145,8 @@ def _run_threads(actions, *, on_return=None):
     if errors:
         name, error = next(iter(errors.items()))
         raise AssertionError(f"delivery thread {name} failed") from error
+    silent = [name for name in actions if name not in results]
+    require(not silent, f"delivery threads ended without a result: {silent}")
     return results
 
 
