@@ -1,12 +1,13 @@
 # test_v2_chat_context_selection.py
 """
 Browser regressions for V2 context selection and explicitly chosen inline mentions.
-Version: 0.261.183
+Version: 0.261.218
 Implemented in: 0.261.094
 Single orchestration contract updated in: 0.261.181 (the React V2 branch's 0.261.139)
 Shared editor and prompt dispatch regression coverage added in: 0.261.096
 The public chat list is answered as its route answers it (chat_list), with no generated artifact
 awaiting publication: 0.261.183
+The workspace Chat action starts a brand-new conversation instead of reusing the open one: 0.261.218
 
 The real Composer, DocumentExplorer, stores, router, and request builders run in the
 existing Playwright harness. The shared connection fixture supports a configured Azure
@@ -42,6 +43,8 @@ from ui_tests.fixtures.public_documents import chat_list  # noqa: E402
 pytestmark = pytest.mark.ui
 
 CONVERSATION_ID = "context-selection-chat"
+# The conversation the workspace hand-off's first message creates.
+HANDOFF_CONVERSATION_ID = "context-handoff-chat"
 SCOPES = {
     "personal": {"kind": "personal", "id": None, "name": "My workspace"},
     "group": {"kind": "group", "id": "group-1", "name": "Marketing"},
@@ -112,6 +115,14 @@ class ContextApi:
         url = urlsplit(request.url)
         path = url.path
         self.requests.append((request.method, path))
+
+        if request.method == "POST" and path == "/api/create_conversation":
+            route.fulfill(json={"conversation_id": HANDOFF_CONVERSATION_ID, "title": "New chat"})
+            return
+        if request.method == "GET" and path == "/api/conversations/feed":
+            # Re-read once a new conversation's first answer lands.
+            route.fulfill(json={"conversations": [], "has_more": False, "next_cursor": None})
+            return
 
         if request.method == "POST" and path in STREAM_PATHS.values():
             if path == STREAM_PATHS["chat"]:
@@ -376,7 +387,7 @@ def delete_range(page: Page, start, end):
     draft.press("Backspace")
 
 
-def send_draft(page: Page, api: ContextApi, dispatch="chat"):
+def send_draft(page: Page, api: ContextApi, dispatch="chat", conversation_id=CONVERSATION_ID):
     draft = page.get_by_role("textbox", name="Message", exact=True)
     message = draft.input_value()
     endpoint = STREAM_PATHS[dispatch]
@@ -387,7 +398,7 @@ def send_draft(page: Page, api: ContextApi, dispatch="chat"):
 
     payload = sent.value.post_data_json
     assert payload["message"] == message
-    assert payload["conversation_id"] == CONVERSATION_ID
+    assert payload["conversation_id"] == conversation_id
     expect(draft).to_have_value("")
     expect_pills(page)
     page.wait_for_function(
@@ -407,7 +418,9 @@ def send_draft(page: Page, api: ContextApi, dispatch="chat"):
     )
     assert state["error"] is None
     assert [user["content"] for user in state["users"]] == [message]
-    assert [path for method, path in api.requests if method == "POST"] == [endpoint]
+    # A new chat's first message creates its conversation before it is sent.
+    created = [] if conversation_id == CONVERSATION_ID else ["/api/create_conversation"]
+    assert [path for method, path in api.requests if method == "POST"] == [*created, endpoint]
     if dispatch == "plan":
         assert state["plans"] == 1
     return payload
@@ -532,6 +545,17 @@ def test_tag_or_workspace_alone_enables_search_with_its_scope(context_page, scop
 def test_workspace_chat_action_hands_real_selection_to_pills_only(context_page):
     page, api = context_page
     mount_workflow(page, "/workspace", strict_mode=True)
+    # The conversation left open in chat is busy: a reply is still being written into it.
+    page.evaluate(
+        """(conversationId) => window.OrchHarness.stores.chat.useChatStore.setState({
+            streaming: true,
+            messages: [{
+                id: 'earlier-question', conversation_id: conversationId,
+                role: 'user', content: 'An earlier question in another chat.',
+            }],
+        })""",
+        CONVERSATION_ID,
+    )
     page.get_by_role("checkbox", name="Select Quarterly brief", exact=True).check()
     page.get_by_role("checkbox", name="Select Budget notes", exact=True).check()
     page.get_by_role("button", name="Chat", exact=True).first.click()
@@ -540,10 +564,19 @@ def test_workspace_chat_action_hands_real_selection_to_pills_only(context_page):
     draft = page.get_by_role("textbox", name="Message", exact=True)
     expect(draft).to_have_value("")
     expect_pills(page, "Quarterly brief", "Budget notes")
+    # Chatting with documents always starts a brand-new conversation, not the busy one.
+    state = page.evaluate(
+        """() => {
+            const state = window.OrchHarness.stores.chat.useChatStore.getState();
+            return {active: state.activeConversationId, streaming: state.streaming, messages: state.messages};
+        }"""
+    )
+    assert state == {"active": None, "streaming": False, "messages": []}, state
+    expect(page.get_by_role("button", name="Send message", exact=True)).to_be_visible()
     assert ("GET", "/api/documents/personal-brief") not in api.requests
     assert ("GET", "/api/documents/personal-budget") not in api.requests
     draft.fill("Compare my selected documents.")
-    payload = send_draft(page, api)
+    payload = send_draft(page, api, conversation_id=HANDOFF_CONVERSATION_ID)
     expect_context_metadata(payload, documents=["personal-brief", "personal-budget"])
     draft.fill("Start the next turn without those pills.")
     expect_pills(page)

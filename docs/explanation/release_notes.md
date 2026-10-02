@@ -2,6 +2,17 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.218)**
+
+#### Bug Fixes
+
+*   **V2 New Chat Always Starts A Clean Conversation**
+    *   Clicking **New chat** while chat orchestration was planning or running no longer carries the old turn into the new chat. Before, the new chat kept the previous turn's **Thinking** bubble and a **Stop** button that did nothing. Its empty state never appeared and it wouldn't send until the page was reloaded.
+    *   The previous conversation's plan, run or reply keeps going in the background and is there when you reopen it. If you reopen it while its turn is still running, it shows as working, with **Stop**.
+    *   Clicking **New chat** while the first message of a new chat is still creating its conversation no longer lets that message take over the new chat. The message is still sent, and its conversation appears in the list. Clicking **New chat** while a conversation is loading now shows the empty state instead of loading placeholders.
+    *   **Chat** on selected workspace documents or on a tag, and **Start chatting** on the home page, now always open a brand-new conversation, as the classic interface does. The documents or tag arrive as context in the new chat instead of being added to whichever conversation was last open. Text you've typed but not sent stays in the message box.
+    *   (Ref: #1617, `chatStore.ts`, `orchestrationController.ts`, `DocumentExplorer.tsx`, `TagsSection.tsx`, `HomePage.tsx`, [V2 New Chat Reset Fix](fixes/V2_NEW_CHAT_RESET_FIX.md))
+
 ### **(v0.261.217)**
 
 #### New Features

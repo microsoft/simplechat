@@ -38,6 +38,7 @@ import { ParticipantsPanel } from '../../../application/v2_ui/src/components/cha
 import { Toaster } from '../../../application/v2_ui/src/components/ui/Toaster';
 import { AppShell } from '../../../application/v2_ui/src/components/layout/AppShell';
 import { ChatPage } from '../../../application/v2_ui/src/pages/ChatPage';
+import { HomePage } from '../../../application/v2_ui/src/pages/HomePage';
 import { ModelCatalogManager } from '../../../application/v2_ui/src/components/admin/ModelCatalogManager';
 import { OrchestrationPlannerModelPicker } from '../../../application/v2_ui/src/components/admin/OrchestrationPlannerModelPicker';
 import { PLANNER_MODEL_KEYS } from '../../../application/v2_ui/src/lib/orchestrationPlannerModel';
@@ -45,6 +46,20 @@ import type { AdminField } from '../../../application/v2_ui/src/lib/adminFields'
 
 function ChatExperience() {
     return <div style={{ height: '100dvh' }}><AppShell><ChatPage /></AppShell></div>;
+}
+
+/** The landing page and the chat page behind one shell, so its call to action can be followed. */
+function HomeExperience() {
+    return (
+        <div style={{ height: '100dvh' }}>
+            <AppShell>
+                <Routes>
+                    <Route path="/" element={<HomePage />} />
+                    <Route path="/chat" element={<ChatPage />} />
+                </Routes>
+            </AppShell>
+        </div>
+    );
 }
 
 function PlanEditorExperience() {
@@ -147,6 +162,7 @@ type ComponentName =
     | 'Composer'
     | 'PromptExperience'
     | 'ChatExperience'
+    | 'HomeExperience'
     | 'ApprovalPreferenceWorkflow'
     | 'PlannerModelWorkflow'
     | 'PlanEditorExperience'
@@ -167,6 +183,7 @@ const components: Record<ComponentName, (props: any) => ReactElement | null> = {
     Composer,
     PromptExperience,
     ChatExperience,
+    HomeExperience,
     ApprovalPreferenceWorkflow,
     PlannerModelWorkflow,
     PlanEditorExperience,

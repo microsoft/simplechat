@@ -2,8 +2,9 @@
 """
 Functional test for the V2 interface's New chat button.
 
-Version: 0.261.044
+Version: 0.261.218
 Implemented in: 0.261.044
+Updated in: 0.261.218 (selectors follow the Sidebar's `mobile` prop and inline click handler)
 
 Three defects met at one button.
 
@@ -45,7 +46,8 @@ def _read(path):
 def _sidebar_component():
     """The body of the exported Sidebar component, without its helper components."""
     source = _read(V2_SRC / "components" / "layout" / "Sidebar.tsx")
-    component = re.search(r"export function Sidebar\(\)(.|\n)*", source)
+    # Matched on the name alone: the component takes props (`mobile`) now.
+    component = re.search(r"export function Sidebar\((.|\n)*", source)
     assert component, "Sidebar should export a Sidebar component"
     return component.group(0)
 
@@ -67,7 +69,7 @@ def test_new_chat_is_only_offered_on_the_chat_page():
         "The New chat button must be gated on the chat route. Rendered elsewhere it "
         "resets chat state that is not on screen and leaves the reader where they were"
     )
-    assert "onClick={startNewConversation}" in button.group(0), (
+    assert "startNewConversation();" in button.group(0), (
         "The button must still start a new conversation"
     )
     assert "New chat" in button.group(0), "The gated block must be the New chat button"

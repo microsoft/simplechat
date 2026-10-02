@@ -2,8 +2,10 @@
 """
 Functional test for leaving a V2 conversation without cancelling its generation.
 
-Version: 0.261.051
+Version: 0.261.218
 Implemented in: 0.261.050 (cancellation), 0.261.051 (conversation-creation window)
+Updated in: 0.261.218 (orchestration turns release `streaming` on leave; New chat during the
+creation window; Stop routed through the Composer's handleStop)
 
 Sending a message and then opening a different conversation used to end the answer. Not
 because the reader was dropped -- that is harmless, generation runs in background execution
@@ -200,12 +202,18 @@ def test_the_detach_helper_does_not_cancel():
 
 
 def test_detaching_leaves_the_composer_usable():
-    """The streaming flag has to be cleared by the helper, because no caller clears it.
+    """The streaming flag is cleared by the helper and, for orchestration, by the callers.
 
-    Neither `selectConversation` nor `startNewConversation` sets `streaming: false` in its
-    own state reset -- both relied on `stopStreaming` doing it. If the helper dropped it,
-    leaving a generating thread would strand the composer showing Stop for a stream nothing
-    is reading.
+    `stopStreaming` has no state reset of its own and relies on the helper to drop
+    `streaming`; if the helper stopped doing that, Stop would strand the composer showing
+    Stop for a stream nothing is reading.
+
+    The helper only knows about chat streams, though. An orchestration turn holds the same
+    flag with no controller to detach, and its settle is skipped once its conversation is
+    off screen, so `startNewConversation` and `selectConversation` set `streaming`
+    themselves: New chat clears it, and opening a conversation restores it only for an
+    orchestration turn still running there. Without that, a new chat kept the old turn's
+    Thinking state and a dead Stop button until the page was reloaded.
     """
     print("Testing composer state after detach...")
 
@@ -213,19 +221,24 @@ def test_detaching_leaves_the_composer_usable():
 
     detach = _function_body(store, r"function detachActiveStream\(\): void \{")
     assert "streaming: false" in detach, (
-        "detachActiveStream must clear the streaming flag; its callers do not"
+        "detachActiveStream must clear the streaming flag; stopStreaming relies on it"
     )
     assert "reconnectPhase: null" in detach, (
         "A detach must clear any reconnect phase, or the next thread opens still claiming "
         "to be reconnecting"
     )
 
-    for action in ("selectConversation", "startNewConversation"):
-        body = _store_action_body(store, action)
-        assert "streaming: false" not in body, (
-            f"{action} now clears `streaming` itself. That is fine, but this test's reason "
-            f"for requiring it of detachActiveStream needs rechecking"
-        )
+    start_new = _store_action_body(store, "startNewConversation")
+    assert "streaming: false," in start_new, (
+        "startNewConversation must clear `streaming` itself: an orchestration turn holds it "
+        "with no chat-stream controller for detachActiveStream to find"
+    )
+
+    select = _store_action_body(store, "selectConversation")
+    assert "streaming: conversationId ? orchestrationSurfaces.has(conversationId) : false," in select, (
+        "selectConversation must drop the streaming flag it inherited, restoring it only for "
+        "an orchestration turn still running in the conversation being opened"
+    )
 
     print("Composer state test passed!")
     return True
@@ -246,10 +259,16 @@ def test_stop_still_cancels():
         "stopStreaming should share the teardown rather than repeat it"
     )
 
-    # Stop is a user action, so it stays wired to the button rather than to navigation.
+    # Stop is a user action, so it stays wired to the button rather than to navigation. The
+    # button routes through handleStop, which picks the orchestration cancel when a plan or
+    # run is streaming and otherwise ends the chat stream with stopStreaming.
     composer = _read(V2_SRC / "components" / "chat" / "Composer.tsx")
-    assert "onClick={stopStreaming}" in composer, (
-        "The Stop button is no longer wired to stopStreaming"
+    assert "onClick={handleStop}" in composer, (
+        "The Stop button is no longer wired to handleStop"
+    )
+    handle_stop = re.search(r"const handleStop = \(\) => \{(.|\n)*?\n    \};", composer)
+    assert handle_stop and "stopStreaming();" in handle_stop.group(0), (
+        "handleStop no longer reaches stopStreaming for an ordinary chat stream"
     )
 
     print("Stop cancellation test passed!")
@@ -333,19 +352,25 @@ def test_creating_a_conversation_does_not_take_the_screen_back():
     The first message of a brand-new chat has to create the conversation before it can
     stream, and that round trip is a window in which the reader can click elsewhere. Claiming
     `activeConversationId` unconditionally afterwards snapped them back into the chat they
-    had just left.
+    had just left. Clicking New chat in that window leaves the id null too, so null alone
+    let the old question take over the fresh chat; the claim also needs the conversation
+    epoch to be unchanged since the message was sent.
     """
     print("Testing conversation creation does not steal the screen...")
 
     store = _read(V2_SRC / "stores" / "chatStore.ts")
     send = _store_action_body(store, "sendMessage")
 
+    assert "const epoch = conversationEpoch;" in send, (
+        "sendMessage must note the conversation epoch before creating the conversation"
+    )
     assert re.search(
-        r"if \(get\(\)\.activeConversationId === null\) \{\s*\n\s*set\(\{ activeConversationId: conversationId",
+        r"if \(get\(\)\.activeConversationId === null && conversationEpoch === epoch\) \{\s*\n\s*set\(\{ activeConversationId: conversationId",
         send,
     ), (
         "sendMessage claims activeConversationId without checking whether the reader opened "
-        "something else while the conversation was being created; their click gets undone"
+        "something else, or started another new chat, while the conversation was being "
+        "created; their click gets undone"
     )
 
     print("Screen ownership on creation test passed!")
