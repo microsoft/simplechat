@@ -131,6 +131,7 @@ from functions_message_visual_styles import (
     apply_visual_style,
 )
 from functions_notifications import mark_collaboration_message_notifications_read_for_conversation
+from functions_azure_maps import refresh_azure_maps_message_citations
 from functions_message_artifacts import make_json_serializable
 from functions_m365_runtime import read_pending_m365_chat_request
 from functions_m365_approvals import M365ApprovalRequired, M365PolicyError
@@ -1714,6 +1715,7 @@ def register_route_backend_collaboration(bp):
                 allow_pending=True,
             )
             messages = [serialize_collaboration_message(doc) for doc in list_collaboration_messages(conversation_id)]
+            messages = refresh_azure_maps_message_citations(messages)
             messages = sanitize_saved_analysis_messages(messages, current_user['user_id'])
             attach_generated_file_approval_state(messages, current_user['user_id'])
             messages = hydrate_m365_pending_action_cards(messages, current_user['user_id'], conversation_id)
