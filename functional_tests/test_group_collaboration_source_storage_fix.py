@@ -2,7 +2,7 @@
 #!/usr/bin/env python3
 """
 Functional regression for group conversation source storage.
-Version: 0.261.106
+Version: 0.261.214
 Implemented in: 0.261.024
 Ported to the React branch in: 0.261.106
 Related issue: microsoft/simplechat#1472
@@ -14,12 +14,17 @@ The route is shared by v1 and v2; React interaction coverage lives in ui_tests.
 """
 
 import ast
+import builtins
 from copy import deepcopy
 from datetime import datetime, timezone
+import dis
+import functools
+import inspect
 import logging
 from pathlib import Path
 import runpy
-from types import SimpleNamespace
+import sys
+from types import CodeType, FunctionType, SimpleNamespace
 from typing import Any, Dict, Iterable, List, Optional
 import unittest
 
@@ -33,8 +38,21 @@ from test_retention_policy_conversation_scope_coverage import (
 
 
 APP_ROOT = Path(__file__).resolve().parents[1] / 'application' / 'single_app'
+if str(APP_ROOT) not in sys.path:
+    sys.path.insert(0, str(APP_ROOT))
+
+# Test-only path setup precedes these real modules; none of them load config or Azure clients.
+import functions_m365_history  # noqa: E402
+from functions_m365_action_cards import strip_pending_action_references  # noqa: E402
+from functions_m365_approvals import M365ApprovalRequired, M365PolicyError, material_fingerprint  # noqa: E402
+from functions_workflow_result_masking import (  # noqa: E402
+    message_uses_workflow_result,
+    withhold_workflow_result_message,
+)
+
 COLLABORATION_FILE = APP_ROOT / 'functions_collaboration.py'
 ROUTE_FILE = APP_ROOT / 'route_backend_collaboration.py'
+RUNTIME_FILE = APP_ROOT / 'functions_m365_runtime.py'
 SOURCE_ID = 'source-conversation'
 GROUP_ID = 'group-1'
 OWNER = {
@@ -83,6 +101,7 @@ COLLABORATION_FUNCTIONS = {
     'get_personal_collaboration_conversation_by_source_conversation',
     '_is_eligible_legacy_personal_conversation',
     '_copy_legacy_personal_messages_to_collaboration',
+    '_carry_summary_into_collaboration',
     'ensure_personal_collaboration_for_legacy_conversation',
     '_is_eligible_legacy_group_conversation',
     '_copy_legacy_group_messages_to_collaboration',
@@ -98,11 +117,15 @@ COLLABORATION_FUNCTIONS = {
     '_collaboration_retention_identity',
     '_read_collaboration_conversation_for_retention',
     '_cleanup_collaboration_thoughts',
+    '_read_linked_collaboration_source',
+    '_cancel_collaboration_pending_deliveries',
     '_cleanup_linked_collaboration_source',
     '_delete_collaboration_conversation_records',
     'delete_collaboration_conversation_for_retention',
     'delete_personal_collaboration_conversation',
 }
+# Store callbacks nested in production's history runtime setup.
+HISTORY_RUNTIME_CALLBACKS = ('read_conversation', 'read_messages', 'audience', 'has_active_request')
 
 
 class StorageFailure(RuntimeError):
@@ -216,6 +239,59 @@ def history_fixture():
     return list(reversed(messages))
 
 
+def fixture_has_no_m365_sources(*args, **kwargs):
+    raise AssertionError('The fixture history has no Microsoft 365 sources to publish.')
+
+
+# Approval records and evidence publication are unreachable without Microsoft 365 sources.
+NO_M365_PUBLICATION = SimpleNamespace(
+    upsert_item=fixture_has_no_m365_sources,
+    authorize_sources=fixture_has_no_m365_sources,
+)
+
+
+def load_history_runtime_callbacks(namespace):
+    """Run production's nested history store callbacks against the harness stores."""
+    tree = ast.parse(RUNTIME_FILE.read_text(encoding='utf-8'), filename=str(RUNTIME_FILE))
+    setup = next((
+        node for node in tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == 'configure_m365_history_runtime'
+    ), None)
+    callbacks = [
+        node for node in (setup.body if setup else [])
+        if isinstance(node, ast.FunctionDef) and node.name in HISTORY_RUNTIME_CALLBACKS
+    ]
+    found = sorted(node.name for node in callbacks)
+    if found != sorted(HISTORY_RUNTIME_CALLBACKS):
+        raise AssertionError(
+            f'configure_m365_history_runtime should define {sorted(HISTORY_RUNTIME_CALLBACKS)}; found {found}.'
+        )
+    loaded_namespace = dict(namespace)
+    loaded_namespace.setdefault('__builtins__', __builtins__)
+    exec(compile(ast.Module(body=callbacks, type_ignores=[]), str(RUNTIME_FILE), 'exec'), loaded_namespace)
+    return loaded_namespace
+
+
+def global_reads(code):
+    """Return the global names a compiled function or its nested code reads."""
+    names = {
+        instruction.argval for instruction in dis.get_instructions(code)
+        if instruction.opname == 'LOAD_GLOBAL'
+    }
+    for constant in code.co_consts:
+        if isinstance(constant, CodeType):
+            names |= global_reads(constant)
+    return names
+
+
+def production_functions(namespace):
+    """Yield the functions compiled from production source into namespace."""
+    for name, value in namespace.items():
+        function = inspect.unwrap(value) if isinstance(value, FunctionType) else None
+        if function is not None and function.__globals__ is namespace:
+            yield name, function
+
+
 class ConversionHarness:
     """Load actual helpers with in-memory storage and controlled external effects."""
 
@@ -241,6 +317,8 @@ class ConversionHarness:
             if name == 'collaboration_user_state':
                 partition_field = 'user_id'
             self.containers[name] = TrackingContainer(partition_field)
+        # Production partitions Microsoft 365 execution runs by user.
+        self.containers['m365_execution_runs'] = TrackingContainer('user_id')
         prefix = 'group_' if storage == 'group' else ''
         self.source = self.containers[f'{prefix}conversations']
         self.messages = self.containers[f'{prefix}messages']
@@ -262,14 +340,15 @@ class ConversionHarness:
         self.logs = []
         self.thought_cleanup = []
         self.blob_cleanup = []
-        group_helpers = load_source_members(
+        self.cancelled_deliveries = []
+        self.group_helpers = load_source_members(
             str(APP_ROOT / 'functions_group.py'),
             {'get_user_role_in_group', 'assert_group_role', 'check_group_status_allows_operation'},
             namespace={'Iterable': Iterable, 'find_group_by_id': self.find_group},
         )
         namespace = {
             **MODEL_HELPERS,
-            **group_helpers,
+            **self.group_helpers,
             'deepcopy': deepcopy,
             'datetime': datetime,
             'timezone': timezone,
@@ -281,7 +360,13 @@ class ConversionHarness:
             'log_conversation_archival': lambda **kwargs: None,
             'log_conversation_deletion': lambda **kwargs: None,
             'sync_chat_upload_workspace_document_sharing_for_collaboration': lambda item: None,
-            '_delete_blob_backed_collaboration_files': lambda messages: self.blob_cleanup.extend(
+            'strip_pending_action_references': strip_pending_action_references,
+            'message_uses_workflow_result': message_uses_workflow_result,
+            'withhold_workflow_result_message': withhold_workflow_result_message,
+            'cancel_m365_conversation_deliveries': lambda conversation_id: (
+                self.cancelled_deliveries.append(conversation_id)
+            ),
+            '_delete_blob_backed_collaboration_files': lambda messages, conversation=None: self.blob_cleanup.extend(
                 message['id'] for message in messages
             ),
             'archive_thoughts_for_conversation': lambda conversation_id, user_id, **kwargs: (
@@ -301,9 +386,42 @@ class ConversionHarness:
             assignment_names={'CITATION_TRACKING_CONVERSATION_FIELDS', 'PERSONAL_COLLABORATION_MANAGER_ROLES'},
             namespace=namespace,
         )
+        self.history_namespace = load_history_runtime_callbacks({
+            **{f'cosmos_{name}_container': container for name, container in self.containers.items()},
+            'assert_group_role': self.group_helpers['assert_group_role'],
+            'find_group_by_id': self.find_group,
+            'material_fingerprint': material_fingerprint,
+        })
+        self.history_service = functions_m365_history.M365HistoryService(
+            tenant_id='test-tenant',
+            jobs=NO_M365_PUBLICATION,
+            approvals=NO_M365_PUBLICATION,
+            read_conversation=self.history_namespace['read_conversation'],
+            read_messages=self.history_namespace['read_messages'],
+            memory_resolver=fixture_has_no_m365_sources,
+            audience_resolver=self.history_namespace['audience'],
+            has_active_request=self.history_namespace['has_active_request'],
+        )
+        for name in (
+            'ensure_group_collaboration_for_legacy_conversation',
+            'ensure_personal_collaboration_for_legacy_conversation',
+        ):
+            self.namespace[name] = self.with_history_service(self.namespace[name])
 
     def find_group(self, group_id):
         return deepcopy(self.group) if self.group and self.group['id'] == group_id else None
+
+    def with_history_service(self, function):
+        """Configure the history service only while one conversion runs."""
+        @functools.wraps(function)
+        def convert_with_history_service(*args, **kwargs):
+            previous_service = functions_m365_history._service
+            functions_m365_history.configure_m365_history(self.history_service)
+            try:
+                return function(*args, **kwargs)
+            finally:
+                functions_m365_history.configure_m365_history(previous_service)
+        return convert_with_history_service
 
     def invalidate(self, item, reason):
         self.invalidations.append({
@@ -341,6 +459,8 @@ class ConversionHarness:
                 'request': request,
                 'get_settings': lambda: {'enable_collaborative_conversations': self.feature_enabled},
                 'get_current_user_info': lambda: self.user,
+                'M365ApprovalRequired': M365ApprovalRequired,
+                'M365PolicyError': M365PolicyError,
                 'swagger_route': lambda **kwargs: (lambda function: function),
                 'get_auth_security': lambda: {},
                 'login_required': lambda function: function,
@@ -764,6 +884,11 @@ class GroupCollaborationSourceStorageTests(unittest.TestCase):
                         self.assertEqual(set(harness.blob_cleanup), copied_ids | source_message_ids)
                     thought_operation = 'archive' if mode == 'archive' else 'delete'
                     self.assertIn((thought_operation, SOURCE_ID, OWNER['user_id']), harness.thought_cleanup)
+                    # Destination first, then each reciprocally linked source; the decoy is never cancelled.
+                    expected_cancellations = [conversation['id'], backing['id']]
+                    if storage == 'group':
+                        expected_cancellations.append(SOURCE_ID)
+                    self.assertEqual(harness.cancelled_deliveries, expected_cancellations)
 
     def test_linked_source_cleanup_keeps_owner_and_backlink_guards(self):
         for storage in ('regular', 'group'):
@@ -785,6 +910,7 @@ class GroupCollaborationSourceStorageTests(unittest.TestCase):
                     self.assertIsNone(result)
                     self.assertEqual(harness.snapshot(), before)
                     self.assertEqual(harness.messages.calls, message_calls_before)
+                    self.assertFalse(harness.cancelled_deliveries)
 
     def test_existing_personal_conversion_is_unchanged(self):
         harness = ConversionHarness()
@@ -896,6 +1022,42 @@ class GroupCollaborationSourceStorageTests(unittest.TestCase):
                     self.assertFalse(harness.other_messages.calls)
                     self.assertFalse(harness.events)
                     self.assertTrue(harness.logs)
+
+    def test_harness_binds_every_global_the_loaded_production_code_reads(self):
+        harness = ConversionHarness('group')
+        harness.build_route_app()
+        namespaces = {
+            'collaboration': harness.namespace,
+            'group': harness.group_helpers,
+            'history runtime': harness.history_namespace,
+            'route': harness.route_namespace,
+            'artifact': ARTIFACT_HELPERS,
+        }
+        checked = {label: dict(production_functions(namespace)) for label, namespace in namespaces.items()}
+        unbound = {}
+        for label, functions in checked.items():
+            for name, function in functions.items():
+                missing = sorted(
+                    global_reads(function.__code__) - set(namespaces[label]) - set(dir(builtins))
+                )
+                if missing:
+                    unbound[f'{label}.{name}'] = missing
+        self.assertEqual(
+            unbound, {},
+            'Seed these production globals in ConversionHarness, or the code paths that read them '
+            'fail with NameError.',
+        )
+        self.assertIn('ensure_group_collaboration_for_legacy_conversation', checked['collaboration'])
+        self.assertIn('convert_group_conversation_to_collaboration_api', checked['route'])
+        self.assertLessEqual(set(HISTORY_RUNTIME_CALLBACKS), set(checked['history runtime']))
+
+    def test_harness_scopes_the_history_service_to_each_conversion(self):
+        previous_service = functions_m365_history._service
+        harness = ConversionHarness()
+        _, _, created, _ = harness.convert()
+        restored_service = functions_m365_history._service
+        self.assertTrue(created)
+        self.assertIs(restored_service, previous_service, 'The harness leaked its history service.')
 
 
 if __name__ == '__main__':

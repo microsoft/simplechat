@@ -2,7 +2,7 @@
 # test_workflow_document_picker_recent_targets.py
 """
 Functional test for workflow document picker and recent workflow document targets.
-Version: 0.250.225
+Version: 0.261.213
 Implemented in: 0.241.188
 Enhanced in: 0.250.225
 
@@ -11,10 +11,12 @@ shared chat document picker instead of visible raw ID fields, and recent
 document workflows can be saved and resolved at run time.
 """
 
+import ast
 import importlib
 import os
 import sys
 import types
+from contextlib import contextmanager
 from pathlib import Path
 from test_support.versioning import assert_app_version_at_least
 
@@ -23,8 +25,12 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 APP_ROOT = REPO_ROOT / 'application' / 'single_app'
 sys.path.insert(0, str(APP_ROOT))
 
+DOCUMENT_ACTIONS_MODULE = 'functions_document_actions'
+MODULES_INSTALLED_OVER_STUBS = []
 
-if 'functions_document_analysis' not in sys.modules:
+
+def build_document_action_stubs() -> dict:
+    """Build stand-ins for the service-backed modules functions_document_actions imports."""
     document_analysis_stub = types.ModuleType('functions_document_analysis')
     document_analysis_stub.CHAT_DOCUMENT_ANALYSIS_MAX_DOCUMENTS = 3
     document_analysis_stub.WORKFLOW_DOCUMENT_ANALYSIS_MAX_DOCUMENTS = 10
@@ -51,9 +57,7 @@ if 'functions_document_analysis' not in sys.modules:
         }
 
     document_analysis_stub.normalize_document_analysis_targets = normalize_document_analysis_targets
-    sys.modules['functions_document_analysis'] = document_analysis_stub
 
-if 'functions_search' not in sys.modules:
     search_stub = types.ModuleType('functions_search')
 
     def normalize_search_id_list(values=None):
@@ -88,7 +92,36 @@ if 'functions_search' not in sys.modules:
     search_stub.normalize_search_id_list = normalize_search_id_list
     search_stub.normalize_search_scope = normalize_search_scope
     search_stub.normalize_search_top_n = normalize_search_top_n
-    sys.modules['functions_search'] = search_stub
+    return {
+        'functions_document_analysis': document_analysis_stub,
+        'functions_search': search_stub,
+    }
+
+
+@contextmanager
+def document_actions_over_stubs():
+    """Import functions_document_actions over stubs, then restore those sys.modules entries.
+
+    Only the stubs and the module bound to them are restored. Third-party modules the
+    import loads stay loaded, because unloading compiled extensions mid-process is unsafe.
+    """
+    stubs = build_document_action_stubs()
+    names = (*stubs, DOCUMENT_ACTIONS_MODULE)
+    previous = {name: sys.modules[name] for name in names if name in sys.modules}
+    try:
+        for name, stub in stubs.items():
+            sys.modules.setdefault(name, stub)
+        document_actions = importlib.import_module(DOCUMENT_ACTIONS_MODULE)
+        MODULES_INSTALLED_OVER_STUBS.extend(
+            (name, sys.modules[name]) for name in names if name not in previous
+        )
+        yield document_actions
+    finally:
+        for name in names:
+            if name in previous:
+                sys.modules[name] = previous[name]
+            else:
+                sys.modules.pop(name, None)
 
 
 WORKSPACE_TEMPLATE = APP_ROOT / 'templates' / 'workspace.html'
@@ -102,6 +135,13 @@ CONFIG_PY = APP_ROOT / 'config.py'
 
 def read_text(path: Path) -> str:
     return path.read_text(encoding='utf-8')
+
+
+def function_source(source: str, function_name: str) -> str:
+    for node in ast.walk(ast.parse(source)):
+        if isinstance(node, ast.FunctionDef) and node.name == function_name:
+            return ast.get_source_segment(source, node)
+    raise AssertionError(f'{function_name} was not found in the workflow runner.')
 
 
 def test_workflow_modals_use_picker_contracts() -> None:
@@ -186,8 +226,11 @@ def test_workflow_picker_javascript_contracts() -> None:
 
 def test_recent_target_backend_normalization() -> None:
     print('Testing recent workflow target backend normalization...')
-    document_actions = importlib.import_module('functions_document_actions')
+    with document_actions_over_stubs() as document_actions:
+        assert_recent_target_normalization(document_actions)
 
+
+def assert_recent_target_normalization(document_actions) -> None:
     search_action = document_actions.normalize_document_action_config({
         'type': 'search',
         'document_ids': [],
@@ -283,6 +326,16 @@ def test_recent_target_backend_normalization() -> None:
     assert resolved_comparison_action['recent_targets_resolved'] is True
 
 
+def test_document_action_stubs_do_not_outlive_their_test() -> None:
+    print('Testing that document action stubs are removed after use...')
+    with document_actions_over_stubs():
+        pass
+    left_behind = sorted({
+        name for name, module in MODULES_INSTALLED_OVER_STUBS if sys.modules.get(name) is module
+    })
+    assert not left_behind, f'Modules installed over stubs are still in sys.modules: {left_behind}'
+
+
 def test_recent_target_runner_hooks() -> None:
     print('Testing recent target runner hooks...')
     workflow_runner = read_text(WORKFLOW_RUNNER_PY)
@@ -311,7 +364,10 @@ def test_recent_target_runner_hooks() -> None:
     assert "resolved_action['left_document_id'] = document_ids[0]" in workflow_runner
     assert "resolved_action['right_document_ids'] = document_ids[1:]" in workflow_runner
     assert 'search_documents(' in workflow_runner
-    assert "'hybrid_citations': workflow_search_context.get('citations') or []" in workflow_runner
+    attach_search_context = function_source(workflow_runner, '_attach_workflow_search_context')
+    assert "list(search_context.get('citations') or [])" in attach_search_context
+    assert "'hybrid_citations': hybrid_citations," in attach_search_context
+    assert 'execution_result = _attach_workflow_search_context(execution_result, workflow_search_context)' in workflow_runner
     assert 'workflow = _apply_runtime_document_action_config(workflow, action_config)' in workflow_runner
 
 
@@ -320,6 +376,7 @@ def run_tests() -> bool:
         test_workflow_modals_use_picker_contracts,
         test_workflow_picker_javascript_contracts,
         test_recent_target_backend_normalization,
+        test_document_action_stubs_do_not_outlive_their_test,
         test_recent_target_runner_hooks,
     ]
     results = []

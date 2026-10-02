@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Functional test for the scoped diagram edit request.
-Version: 0.261.043
+Version: 0.261.213
 Implemented in: 0.261.043
 
 This test ensures that asking the AI to change a diagram sends only that diagram's own
@@ -178,7 +178,11 @@ def test_the_prompt_is_honest_about_positioning():
     """The model must not be encouraged to fake node placement Mermaid cannot express."""
     print("Testing positioning guidance in the prompt...")
     try:
-        prompt = assist.ASSIST_SYSTEM_PROMPT
+        # Read the system prompt a diagram edit actually sends rather than a module constant:
+        # adding chart editing renamed the constant when it gave each block kind its own prompt.
+        messages = build_assist_messages(CURRENT_SOURCE, 'put B to the left of A')
+        assert messages[0]['role'] == 'system'
+        prompt = messages[0]['content']
         assert 'no syntax for placing a node at a coordinate' in prompt
         assert 'flow direction' in prompt
         # And the prompt injection instruction is present, since the source is untrusted.

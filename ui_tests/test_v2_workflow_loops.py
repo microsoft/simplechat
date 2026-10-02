@@ -1,7 +1,7 @@
 # test_v2_workflow_loops.py
 """
 Closed browser regressions for serial For each, exact Collect and explicit saved-record reporting.
-Version: 0.261.127
+Version: 0.261.213
 Implemented in: 0.261.117
 
 Loads the real built local SPA and validates authoring payloads with production
@@ -906,13 +906,20 @@ def test_revoked_record_refresh_clears_the_previous_page(workflow_loops_ui):
     expand_history(ui)
     page.get_by_role("button", name=f"Show execution attempts for {COLLECT_EXECUTION_ID}", exact=True).click()
     page.get_by_role("button", name="Load complete records", exact=True).click()
-    expect(page.get_by_role("list", name="Complete saved records", exact=True)).to_contain_text("Private brief")
+    records = page.get_by_role("list", name="Complete saved records", exact=True)
+    expect(records).to_contain_text("Finding from Private brief")
     ui.reject_next("GET", f"/api/user/workflows/{LOOP_WORKFLOW_ID}/runs/{LOOP_RUN_ID}/executions/{COLLECT_EXECUTION_ID}/attempts/1/records",
                    status=403, error="Source access could not be confirmed.")
     panel = page.get_by_role("region", name="Complete record inspection", exact=True)
     panel.get_by_role("button", name="Refresh", exact=True).click()
-    expect(panel.get_by_role("alert").filter(has_text="no longer have access")).to_be_visible()
-    expect(page.get_by_role("list", name="Complete saved records", exact=True)).to_have_count(0)
+    # Lost access is escalated to the run, which removes every cached run detail, not only this page.
+    access_lost = page.get_by_role("alert").filter(has_text="Cached run details were removed")
+    expect(access_lost).to_be_visible()
+    expect(access_lost).to_contain_text("You no longer have access to this workflow run.")
+    assert not ui.failures, "The records refresh never received the revoked-access response."
+    expect(panel).to_have_count(0)
+    expect(records).to_have_count(0)
+    expect(page.get_by_text("Finding from Private brief", exact=False)).to_have_count(0)
 
 
 @pytest.mark.parametrize("group", [False, True])
