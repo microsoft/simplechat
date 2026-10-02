@@ -2,6 +2,31 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.222)**
+
+#### New Features
+
+*   **Inline Audio and Video Players in the V2 Chat**
+    *   A link to an audio file in a reply, such as a recording an action returned, now plays in place as a compact player. Collapsed, it shows play/pause, the title and elapsed and total time; expanded, it adds a seek slider, stop, volume and mute, playback speed and an open-in-new-tab link.
+    *   A link to a video file renders as a card with the browser's own controls, including fullscreen. Starting one recording or clip pauses any other.
+    *   Media that cannot play, for example an expired signed link or a host the page does not allow, shows a short notice and a link instead of a broken player.
+    *   (Ref: #1611, `InlineAudioPlayer.tsx`, `InlineVideoCard.tsx`, `lib/inlineMedia.ts`, [V2 Inline Media and Agent-Posted Messages](features/V2_INLINE_MEDIA_AND_AGENT_MESSAGES.md))
+
+*   **External Media Sources in the Content-Security-Policy**
+    *   The new `CSP_MEDIA_SRC_ORIGINS` app setting lets administrators list the `https://` origins whose audio and video may play inline, for example an action's media host. The origins are added to `media-src`.
+    *   Only bare `https://` origins (with an optional leading `*.` label and port) are accepted. Anything else is ignored and logged, so the setting cannot widen the policy beyond media. Empty by default, which keeps media same-origin.
+    *   (Ref: #1611, `csp_media_sources.py`, `config.py`)
+
+#### User Interface Enhancements
+
+*   **Image Cards in Chat Replies**
+    *   Images in a reply's markdown appear as captioned cards with a bounded height. Selecting one opens the image viewer for the full-size view, saving and opening in a new tab.
+    *   (Ref: #1611, `InlineImageCard.tsx`, `AssistantMarkdown.tsx`)
+
+*   **Agent-Posted Messages Render as Formatted Text**
+    *   A message an agent posts into a personal or shared conversation through the Simple Chat action is now marked as agent-authored markdown. The V2 chat renders it like the agent's own replies, with headings, tables, links, images and players, in the neutral bubble and labeled "posted through an agent". Messages people type are unchanged.
+    *   (Ref: #1611, `functions_simplechat_operations.py`, `MessageList.tsx`, `sharedMessage.ts`)
+
 ### **(v0.261.221)**
 
 #### Bug Fixes
