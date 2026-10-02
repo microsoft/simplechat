@@ -1165,8 +1165,12 @@ def _left_out_line(note):
     return f'- {name or "A saved workflow result"} was not read. {text}'
 
 
-def workflow_results_note(plan, execution_steps, *, time_zone):
-    """What the reply says about stored workflow results read as notes, or None. Never raises."""
+def workflow_results_note(plan, execution_steps, *, time_zone, reads=True):
+    """What the reply says about stored workflow results read as notes, or None. Never raises.
+
+    ``reads`` is False when the reply carries no answer composed from those results, such as a
+    failure: each read's disclosure line is then left out and only the fixed lines remain.
+    """
     plan = plan if isinstance(plan, dict) else {}
     records = _record_map(execution_steps)
     lines = []
@@ -1186,9 +1190,12 @@ def workflow_results_note(plan, execution_steps, *, time_zone):
         sidecar = record.get('workflow_results')
         if not isinstance(sidecar, dict) or sidecar.get('outcome') not in WORKFLOW_RESULTS_OUTCOMES:
             continue
-        line = _read_line(sidecar, time_zone) if sidecar.get('outcome') == WORKFLOW_RESULTS_OUTCOME_READ else (
-            _non_read_line(sidecar, time_zone)
-        )
+        if sidecar.get('outcome') == WORKFLOW_RESULTS_OUTCOME_READ:
+            if not reads:
+                continue
+            line = _read_line(sidecar, time_zone)
+        else:
+            line = _non_read_line(sidecar, time_zone)
         if line not in lines:
             lines.append(line)
     notes = plan.get('workflow_results_notes') if isinstance(plan.get('workflow_results_notes'), list) else []

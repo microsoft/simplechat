@@ -153,7 +153,8 @@ from functions_orchestration_models import (
     resolve_orchestration_model,
 )
 from functions_orchestration_registry import (
-    CapabilityResolutionError, resolve_admitted_export_catalog, resolve_available_capability_ids,
+    CAPABILITY_WORKFLOW_RESULTS, CapabilityResolutionError, resolve_admitted_export_catalog,
+    resolve_available_capability_ids,
 )
 from functions_orchestration_result_contracts import InputBinding, ResultContractError, ResultRef, TaskResult
 from functions_orchestration_result_runtime import read_complete_input, read_result_document_citations
@@ -169,6 +170,7 @@ from functions_orchestration_schema import (
     summarize_plan,
 )
 from functions_orchestration_workflow_context import (
+    resolve_turn_time_zone,
     workflow_planning_configured,
     workflow_planning_option,
     workflow_run_options,
@@ -1202,6 +1204,40 @@ class HarnessExecution:
         except Exception as exc:
             _log_failure("The saved conversation index could not be refreshed.", self.record, exc)
 
+    def _reads_workflow_results(self):
+        return any(
+            step.get("enabled", True) and step.get("capability_id") == CAPABILITY_WORKFLOW_RESULTS
+            for step in self.record["plan"].get("steps") or []
+        )
+
+    def _workflow_result_lineage(self, record_state):
+        """The workflow result contexts the answer read, re-authorized now; [] when it read none."""
+        if not self._reads_workflow_results():
+            return []
+        # Imported here, like every caller of the results step's module.
+        from functions_orchestration_workflow_results import (
+            WorkflowResultsComposeError, workflow_results_lineage,
+        )
+
+        try:
+            return workflow_results_lineage(
+                self.record["user_id"], self.record["plan"], record_state.get("execution_steps") or [],
+            )
+        except WorkflowResultsComposeError as exc:
+            # Without a cause this stays a plain failure, so the failure reply replaces the answer
+            # saved on the run instead of being reported as a storage failure that keeps it.
+            raise HarnessExecutionError(exc.code) from None
+
+    def _workflow_results_time_zone(self):
+        planning = getattr(self.context, "workflow_planning", None) or (
+            self.record.get("workflow_planning") if workflow_planning_configured(self.settings) else None
+        )
+        return resolve_turn_time_zone(
+            planning.get("time_zone") if isinstance(planning, dict) else None,
+            getattr(self.context, "time_zone", None)
+            or (self.record.get("time_zone") if workflow_time_zone_configured(self.settings) else None),
+        )
+
     def _finalize(self, result, error, *, refreshes=0):
         # Recovery is an application-owned store dependency, not an import-time dependency.
         from functions_orchestration_recovery import public_execution_fields
@@ -1217,7 +1253,7 @@ class HarnessExecution:
         if status not in {"completed", "waiting", "failed", "cancelled"}:
             error = error or HarnessExecutionError("result_invalid")
         prepared, citations, reader = "", [], None
-        assets = {}
+        assets, workflow_result_contexts = {}, []
         if error is None:
             try:
                 self._revalidate_context()
@@ -1235,12 +1271,15 @@ class HarnessExecution:
                 if not self._delivery_only:
                     citations = result.get("citations") or []
                 self._validate_citations(citations)
+                if prepared:
+                    # The answer is published only while every result it read is still the user's.
+                    workflow_result_contexts = self._workflow_result_lineage(current)
                 if self.context is not None and not current.get("cancellation_requested_at"):
                     assets = generated_image_assets(self.context.task_results, self._read_image_asset)
             except Exception as exc:
                 self._raise_delivery_infrastructure_failure(exc)
                 _log_failure("Execution context could not be reauthorized.", self.record, exc)
-                error, prepared, citations, assets = exc, "", [], {}
+                error, prepared, citations, assets, workflow_result_contexts = exc, "", [], {}, []
         if error is not None:
             failure = _failure(error)
             status = "cancelled" if failure["code"] == "user_cancelled" else "failed"
@@ -1300,6 +1339,21 @@ class HarnessExecution:
         )
         if workflow_runs:
             content.append(workflow_runs)
+        # Only a reply that carries the composed answer names the results it read; any other reply
+        # keeps just the fixed lines about results that were not read.
+        workflow_result_reads = error is None and bool(prepared)
+        if (
+            (self._reads_workflow_results() or self.record["plan"].get("workflow_results_notes"))
+            and (status not in {"waiting", "cancelled"} or workflow_result_reads)
+        ):
+            from functions_orchestration_workflow_results import workflow_results_note
+
+            workflow_results = workflow_results_note(
+                self.record["plan"], current.get("execution_steps") or [],
+                time_zone=self._workflow_results_time_zone(), reads=workflow_result_reads,
+            )
+            if workflow_results:
+                content.append(workflow_results)
         if status == "waiting":
             content.append(build_failure("result_not_ready")["message"])
         elif status in {"failed", "cancelled"}:
@@ -1387,6 +1441,11 @@ class HarnessExecution:
                 **({"generated_images": generated_images} if generated_images else {}),
             },
             "token_usage": combined_usage, **reasoning,
+            # The lineage the answer's stored workflow results need, so every later read masks it.
+            **(
+                {"workflow_result_contexts": deepcopy(workflow_result_contexts)}
+                if workflow_result_reads and workflow_result_contexts else {}
+            ),
         }
         documents, web, tools = _partition_citations(citations)
         document = {
@@ -1414,6 +1473,8 @@ class HarnessExecution:
                 if reader is not None:
                     reader.recheck()
                 self._validate_citations(citations)
+                if workflow_result_reads and self._workflow_result_lineage(latest) != workflow_result_contexts:
+                    raise HarnessExecutionError("workflow_result_changed")
             latest_outputs, latest_artifacts = self._file_state()
         except Exception as exc:
             self._raise_delivery_infrastructure_failure(exc)
