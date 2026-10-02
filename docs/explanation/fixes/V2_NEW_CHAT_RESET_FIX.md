@@ -1,6 +1,6 @@
 # V2 New Chat Keeps a Busy Conversation's Thinking State
 
-**Fixed in version:** 0.261.218
+**Fixed in version:** 0.261.226
 
 **Issue:** [#1617](https://github.com/microsoft/simplechat/issues/1617)
 
@@ -80,7 +80,7 @@ conversation was still active when the chat page mounted.
 | `application/v2_ui/src/components/documents/DocumentExplorer.tsx` | **Chat** on selected documents calls `startNewConversation()` immediately before navigating |
 | `application/v2_ui/src/pages/workspace/TagsSection.tsx` | **Chat** on a tag does the same |
 | `application/v2_ui/src/pages/HomePage.tsx` | **Start chatting** starts a new chat when followed |
-| `application/single_app/config.py` | Version `0.261.217` -> `0.261.218` |
+| `application/single_app/config.py` | Version `0.261.225` -> `0.261.226` |
 
 ### Design notes
 

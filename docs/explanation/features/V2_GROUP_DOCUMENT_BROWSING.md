@@ -110,7 +110,7 @@ these reads.
 
 This is not a new group-only retrieval mode. The existing chat request mapping
 (`chat_type=user`, `doc_scope=all`, and the established active-group union)
-remains unchanged. From version 0.261.218, choosing **Chat** always starts a
+remains unchanged. From version 0.261.226, choosing **Chat** always starts a
 brand-new conversation, so the selection is never added to whichever
 conversation happened to be open. That conversation's scope lock is not cleared
 or retargeted, and a reply still being written there finishes in the

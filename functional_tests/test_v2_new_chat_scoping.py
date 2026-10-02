@@ -2,9 +2,9 @@
 """
 Functional test for the V2 interface's New chat button.
 
-Version: 0.261.218
+Version: 0.261.226
 Implemented in: 0.261.044
-Updated in: 0.261.218 (selectors follow the Sidebar's `mobile` prop and inline click handler)
+Updated in: 0.261.226 (selectors follow the Sidebar's `mobile` prop and inline click handler)
 
 Three defects met at one button.
 

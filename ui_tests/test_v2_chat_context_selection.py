@@ -1,13 +1,13 @@
 # test_v2_chat_context_selection.py
 """
 Browser regressions for V2 context selection and explicitly chosen inline mentions.
-Version: 0.261.218
+Version: 0.261.226
 Implemented in: 0.261.094
 Single orchestration contract updated in: 0.261.181 (the React V2 branch's 0.261.139)
 Shared editor and prompt dispatch regression coverage added in: 0.261.096
 The public chat list is answered as its route answers it (chat_list), with no generated artifact
 awaiting publication: 0.261.183
-The workspace Chat action starts a brand-new conversation instead of reusing the open one: 0.261.218
+The workspace Chat action starts a brand-new conversation instead of reusing the open one: 0.261.226
 
 The real Composer, DocumentExplorer, stores, router, and request builders run in the
 existing Playwright harness. The shared connection fixture supports a configured Azure

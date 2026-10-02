@@ -1,8 +1,8 @@
 # test_v2_new_chat_reset.py
 """
 Browser regressions for starting a new chat in V2 while the open conversation is busy.
-Version: 0.261.218
-Implemented in: 0.261.218
+Version: 0.261.226
+Implemented in: 0.261.226
 
 Clicking New chat while an orchestration turn was planning or running kept the old turn's
 "Thinking" bubble and a Stop button with nothing to stop, hid the new chat's empty state,

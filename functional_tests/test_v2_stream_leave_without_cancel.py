@@ -2,9 +2,9 @@
 """
 Functional test for leaving a V2 conversation without cancelling its generation.
 
-Version: 0.261.218
+Version: 0.261.226
 Implemented in: 0.261.050 (cancellation), 0.261.051 (conversation-creation window)
-Updated in: 0.261.218 (orchestration turns release `streaming` on leave; New chat during the
+Updated in: 0.261.226 (orchestration turns release `streaming` on leave; New chat during the
 creation window; Stop routed through the Composer's handleStop)
 
 Sending a message and then opening a different conversation used to end the answer. Not

@@ -79,7 +79,7 @@ wait until a reviewer resolves the hold in Content review. On narrow screens,
 use **Filters** and the details toggle to open the same controls in dialogs.
 
 Select eligible documents and choose **Chat** to start a new conversation with
-their group/document context attached. From version **0.261.218**, this always
+their group/document context attached. From version **0.261.226**, this always
 opens a new conversation rather than adding the documents to whichever
 conversation was open, and a reply still being written there keeps going.
 Current access is checked again before those sources are adopted. This does not

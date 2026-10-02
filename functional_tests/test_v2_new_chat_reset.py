@@ -3,8 +3,8 @@
 """
 Functional test for starting a new chat in V2 while the open conversation is busy.
 
-Version: 0.261.218
-Implemented in: 0.261.218
+Version: 0.261.226
+Implemented in: 0.261.226
 
 Clicking New chat while an orchestration turn was planning or running kept the old turn's
 "Thinking" bubble and a Stop button with nothing to stop, hid the new chat's empty state,
@@ -204,7 +204,7 @@ def test_chat_hand_offs_start_a_brand_new_conversation():
 def test_version_is_at_least_implementation_version():
     """The application version is at or beyond the version that added the fix."""
     print("Testing application version...")
-    assert_app_version_at_least("0.261.218")
+    assert_app_version_at_least("0.261.226")
     print("Application version test passed!")
     return True
 
