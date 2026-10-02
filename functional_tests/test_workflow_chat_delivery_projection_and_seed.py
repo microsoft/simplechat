@@ -315,6 +315,22 @@ def test_projection_without_chat_delivery_does_not_create_record_or_hint(runtime
     require(hints == [], "non-chat-started runs must not queue a delivery hint")
 
 
+def test_projection_drops_result_chat_delivery_when_stored_run_has_none(runtime_world):
+    control_doc = control(state="completed", version=4)
+    delivery.clear_workflow_chat_delivery_hints()
+    put_run(runtime_world, run_document(invocation=False))
+    result = terminal_result("completed")
+    result["run"][delivery.CHAT_DELIVERY_KEY] = pending_record(control_doc)
+    project(runtime_world, control_doc, result=result)
+    saved = stored_run(runtime_world)
+    require(
+        delivery.CHAT_DELIVERY_KEY not in saved,
+        f"runtime result chat_delivery must not be saved when the stored run has none: {saved!r}",
+    )
+    hints = delivery.drain_workflow_chat_delivery_hints()
+    require(hints == [], f"discarded runtime result chat_delivery must not queue a delivery hint: {hints!r}")
+
+
 def test_projection_survives_reconcile_failure_and_still_writes_runtime(monkeypatch, runtime_world):
     control_doc = control(state="completed", version=8)
     original_record = pending_record(control_doc)
@@ -568,7 +584,11 @@ def test_start_sets_chat_delivery_sidecar_only_when_seed_applies(monkeypatch):
 
     def queue_run(_workflow, **options):
         queued_options.append(copy.deepcopy(options))
-        run = run_document(chat_delivery=delivery.finalize_chat_delivery_seed(options["chat_delivery"], control()))
+        chat_delivery = options.get("chat_delivery")
+        run = run_document(
+            chat_delivery=delivery.finalize_chat_delivery_seed(chat_delivery, control())
+            if chat_delivery is not None else None
+        )
         run["chat_invocation"] = copy.deepcopy(options["chat_invocation"])
         return {"run": run}
 
@@ -590,10 +610,146 @@ def test_start_sets_chat_delivery_sidecar_only_when_seed_applies(monkeypatch):
     off_settings = dict(settings, enable_chat_workflow_results=False)
     outcome_off = wr._start(step, context, settings=off_settings, user_id=USER, recheck=lambda: None, requested_at=NOW_ISO)  # noqa: SLF001
     sidecar_off = wr._sidecar(step, context, user_id=USER, producer_run_id=context.run_id, outcome=outcome_off)  # noqa: SLF001
+    require(
+        outcome_off["status"] == wr.WORKFLOW_RUN_STATUS_QUEUED,
+        f"6a gate off should still reach a queued workflow start, got {outcome_off!r}",
+    )
     require(outcome_off.get("chat_delivery") is not True, "start outcome must not flag delivery when 6a gate is off")
     require("chat_delivery" not in sidecar_off, "sidecar must not flag delivery when 6a gate is off")
     require(delivery.CHAT_DELIVERY_KEY not in queued_options[0], "start must not pass a seed when the 6a gate is off")
 
+
+def _workflow_start_harness(monkeypatch):
+    """Wire _start to a private chat, an idle durable workflow and both gates on; return (wr, start)."""
+    wr = importlib.import_module("functions_orchestration_workflow_runs")
+    settings_module = ModuleType("functions_settings")
+    settings_module.is_user_workflows_enabled_for_user = lambda settings, user_roles=None: True
+    settings_module.is_chat_workflow_results_enabled_for_user = lambda settings, user_roles=None: True
+    monkeypatch.setitem(sys.modules, "functions_settings", settings_module)
+    monkeypatch.setattr(wr, "_read_conversation", lambda conversation_id: {"id": conversation_id, "user_id": USER})
+    monkeypatch.setattr(wr, "refresh_workflow_planning_privacy", lambda planning, conversation, user_id: planning)
+    monkeypatch.setattr(wr, "_read_workflow", lambda user_id, workflow_id: workflow(id=workflow_id, active_run_id=""))
+    monkeypatch.setattr(wr, "_read_workflow_run", lambda user_id, run_id: None)
+    step = {"step_id": STEP_ID, "capability_id": wr.CAPABILITY_WORKFLOW_RUN, "arguments": {"workflow": "digest"}}
+    planning = {
+        "conversation_private": True,
+        "time_zone": "America/New_York",
+        "workflow_runs": {"ready": True},
+        "handles": {"workflows": {"digest": {"id": WORKFLOW_ID, "name": "Daily digest"}}},
+        "catalog": {"workflows": [{"handle": "digest", "name": "Daily digest"}]},
+    }
+    context = SimpleNamespace(
+        conversation_id=CONVERSATION_ID,
+        workflow_planning=planning,
+        signed_in_session=True,
+        user_roles=["WorkflowUser"],
+        run_id="orchestration-run-1",
+        attempt_root_run_id="orchestration-run-1",
+        user_message_id="message-user-1",
+        seeds={},
+        active_group_ids=[],
+        time_zone="America/New_York",
+    )
+    settings = {
+        "enable_chat_orchestration": True,
+        "enable_chat_orchestration_workflow_runs": True,
+        "allow_user_workflows": True,
+        "enable_chat_workflow_results": True,
+        "chat_orchestration_enabled_capabilities": [wr.CAPABILITY_WORKFLOW_RUN],
+    }
+
+    def start(build_run):
+        """Start the step against a queue fake that returns build_run(options); return (outcome, sidecar)."""
+
+        def queue_run(_workflow, **options):
+            return {"run": build_run(options)}
+
+        monkeypatch.setattr(wr, "_queue_workflow_run", queue_run)
+        outcome = wr._start(step, context, settings=settings, user_id=USER, recheck=lambda: None, requested_at=NOW_ISO)  # noqa: SLF001
+        sidecar = wr._sidecar(step, context, user_id=USER, producer_run_id=context.run_id, outcome=outcome)  # noqa: SLF001
+        return outcome, sidecar
+
+    return wr, start
+
+
+def test_start_does_not_flag_completed_already_started_run_for_delivery(monkeypatch):
+    wr, start = _workflow_start_harness(monkeypatch)
+
+    def completed_run(options):
+        record = delivery.finalize_chat_delivery_seed(options["chat_delivery"], control(state="completed"))
+        run = run_document(status="completed", chat_delivery=record)
+        run["chat_invocation"] = copy.deepcopy(options["chat_invocation"])
+        return run
+
+    outcome, sidecar = start(completed_run)
+    require(
+        outcome["status"] == wr.WORKFLOW_RUN_STATUS_ALREADY_STARTED,
+        f"completed queued result should be classified as already_started, got {outcome!r}",
+    )
+    require(
+        outcome.get("chat_delivery") is not True,
+        f"already-started terminal runs must not flag chat delivery on the start outcome: {outcome!r}",
+    )
+    require(
+        "chat_delivery" not in sidecar,
+        f"already-started terminal runs must not flag chat delivery on the sidecar: {sidecar!r}",
+    )
+
+
+def test_start_requires_queued_run_delivery_record_to_apply_before_flagging(monkeypatch):
+    wr, start = _workflow_start_harness(monkeypatch)
+    cases = [
+        ("missing record", lambda options: run_document()),
+        (
+            "other conversation",
+            lambda options: {
+                **run_document(chat_delivery=delivery.finalize_chat_delivery_seed(options["chat_delivery"], control())),
+                "chat_invocation": {**chat_invocation(), "conversation_id": "other-chat"},
+            },
+        ),
+        (
+            "wrong record version",
+            lambda options: {
+                **run_document(chat_delivery={
+                    **delivery.finalize_chat_delivery_seed(options["chat_delivery"], control()),
+                    "version": 999,
+                }),
+                "chat_invocation": chat_invocation(),
+            },
+        ),
+    ]
+
+    for label, build_run in cases:
+        outcome, sidecar = start(build_run)
+        require(
+            outcome["status"] == wr.WORKFLOW_RUN_STATUS_QUEUED,
+            f"{label} should still start the workflow as queued, got {outcome!r}",
+        )
+        require(
+            outcome.get("chat_delivery") is not True,
+            f"{label} must not flag chat delivery on the start outcome: {outcome!r}",
+        )
+        require("chat_delivery" not in sidecar, f"{label} must not flag chat delivery on the sidecar: {sidecar!r}")
+        note = wr.workflow_run_note(
+            {
+                "steps": [{
+                    "step_id": STEP_ID,
+                    "capability_id": wr.CAPABILITY_WORKFLOW_RUN,
+                    "arguments": {"workflow": "digest"},
+                }],
+            },
+            [{
+                "step_id": STEP_ID,
+                "capability_id": wr.CAPABILITY_WORKFLOW_RUN,
+                "status": wr.STEP_STATUS_COMPLETED,
+                "workflow_run": sidecar,
+            }],
+        )
+        require(wr.WORKFLOW_RUN_FOLLOW_UP in note, f"{label} should use the plain follow-up text: {note!r}")
+        require(
+            wr.WORKFLOW_RUN_DELIVERY_FOLLOW_UP not in note,
+            f"{label} must not promise chat delivery in the note: {note!r}",
+        )
 
 def test_workflow_run_note_uses_delivery_follow_up_texts():
     wr = importlib.import_module("functions_orchestration_workflow_runs")
@@ -631,6 +787,18 @@ def test_workflow_run_note_uses_delivery_follow_up_texts():
     ]
     many = wr.workflow_run_note(many_plan, many_records)
     require(wr.WORKFLOW_RUN_DELIVERY_FOLLOW_UP_MANY in many, "many delivered runs should use the many delivery follow-up")
+
+    mixed_many_records = copy.deepcopy(many_records)
+    mixed_many_records[1]["workflow_run"].pop("chat_delivery")
+    mixed_many = wr.workflow_run_note(many_plan, mixed_many_records)
+    require(
+        wr.WORKFLOW_RUN_FOLLOW_UP_MANY in mixed_many,
+        f"mixed delivery across multiple started runs should use the plain many follow-up: {mixed_many!r}",
+    )
+    require(
+        wr.WORKFLOW_RUN_DELIVERY_FOLLOW_UP_MANY not in mixed_many,
+        f"mixed delivery across multiple started runs must not use the delivery many follow-up: {mixed_many!r}",
+    )
 
     without_delivery_records = copy.deepcopy(one_record)
     without_delivery_records[0]["workflow_run"].pop("chat_delivery")
