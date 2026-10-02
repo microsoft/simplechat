@@ -106,6 +106,7 @@ CAPABILITY_GENERATE_IMAGE = 'generate_image'
 CAPABILITY_RENDER_FILE = 'render_file'
 CAPABILITY_WORKFLOW_PROPOSE = 'workflow_propose'
 CAPABILITY_WORKFLOW_RUN = 'workflow_run'
+CAPABILITY_WORKFLOW_RESULTS = 'workflow_results'
 
 # The settings key that must be exactly True before workflow proposals exist in a deployment.
 WORKFLOW_PROPOSALS_SETTING = 'enable_chat_orchestration_workflows'
@@ -113,6 +114,10 @@ WORKFLOW_PROPOSALS_SETTING = 'enable_chat_orchestration_workflows'
 # independent of proposals: running is one approved run of a workflow the user already has, while a
 # proposal creates standing work.
 WORKFLOW_RUNS_SETTING = 'enable_chat_orchestration_workflow_runs'
+# The settings key (Use Workflow Results In Chat) that must be exactly True before a plan may read
+# the stored result of one of the user's finished workflow runs. It is the same key that shows a
+# finished run's stored result in chat, so a plan never reads a result chat could not answer from.
+WORKFLOW_RESULTS_SETTING = 'enable_chat_workflow_results'
 # The tasks a workflow proposal may hold, and the action kinds the planner may say a task needs.
 # The workflow planning context and the deliverables import these, so each has one definition.
 # The draft service's own task limit (functions_workflow_drafts.BLUEPRINT_MAX_TASKS) stays a
@@ -126,6 +131,14 @@ WORKFLOW_TASK_ACTION_KINDS = ('email', 'calendar', 'onedrive', 'sharepoint', 'di
 # handle map can resolve a handle to a workflow.
 WORKFLOW_RUNS_MAX_PER_PLAN = 3
 WORKFLOW_HANDLE_PATTERN = '^[a-z][a-z0-9_-]{0,63}$'
+# How many stored workflow results one plan may read, which run of the workflow a step reads, and
+# the run statuses a step may ask for. ``completed_on`` is a date in the user's own time zone.
+WORKFLOW_RESULTS_MAX_PER_PLAN = 2
+WORKFLOW_RESULTS_SELECTOR_LATEST = 'latest'
+WORKFLOW_RESULTS_SELECTOR_COMPLETED_ON = 'completed_on'
+WORKFLOW_RESULTS_SELECTORS = (WORKFLOW_RESULTS_SELECTOR_LATEST, WORKFLOW_RESULTS_SELECTOR_COMPLETED_ON)
+WORKFLOW_RESULTS_STATUS_FILTERS = ('completed', 'failed', 'cancelled')
+WORKFLOW_RESULTS_DATE_PATTERN = '^[0-9]{4}-[0-9]{2}-[0-9]{2}$'
 # A descriptor's ``approval_floor``: a plan with an enabled step of that capability always waits
 # for the user to run it, whatever approval mode was asked for.
 APPROVAL_FLOOR_MANUAL = 'manual'
@@ -348,6 +361,35 @@ def _workflow_run_unavailable_reason(settings, context):
         from functions_orchestration_workflow_context import workflow_run_unavailable_reason
 
         return workflow_run_unavailable_reason(settings, context) or 'workflow_context_unavailable'
+    except Exception:
+        return 'workflow_context_unavailable'
+
+
+def _workflow_results_request_gate(settings, context):
+    """Whether this request may read the stored result of one of the requester's workflow runs.
+
+    It needs the planning context stored with the turn, a private conversation and at least one
+    saved workflow to name. It never raises, so a workflow problem never stops the rest of a plan.
+    """
+    try:
+        from functions_orchestration_workflow_context import workflow_results_unavailable_reason
+
+        return workflow_results_unavailable_reason(settings, context) is None
+    except Exception as exc:
+        log_event(
+            '[ORCHESTRATION_REGISTRY] Could not check workflow results access.',
+            level=logging.WARNING,
+            extra={'reason': 'workflow_context_unavailable', 'error_type': type(exc).__name__},
+        )
+        return False
+
+
+def _workflow_results_unavailable_reason(settings, context):
+    """The closed reason reading workflow results is unavailable to this request."""
+    try:
+        from functions_orchestration_workflow_context import workflow_results_unavailable_reason
+
+        return workflow_results_unavailable_reason(settings, context) or 'workflow_context_unavailable'
     except Exception:
         return 'workflow_context_unavailable'
 
@@ -1155,6 +1197,54 @@ CAPABILITY_REGISTRY = (
         # run rather than starting another, but the user still confirms before it.
         'external_effects': True,
     },
+    {
+        'id': CAPABILITY_WORKFLOW_RESULTS,
+        'label': 'Read workflow results',
+        # Gather, like web_search: it reads stored material and leaves notes for the answer. It
+        # reads the result a finished run already stored; it never starts, waits for or changes a run.
+        'role': ROLE_GATHER,
+        'result_contract_version': 'workflow-results-v1',
+        'summary': (
+            "Read the stored result of one of the user's own finished workflow runs, as notes for "
+            'the answer. It never starts or re-runs a workflow.'
+        ),
+        'when_to_use': (
+            'Use when the user asks what one of their saved workflows found, said or produced in a '
+            'run that already finished: its latest run, or the run that finished on a given day. '
+            'Name the workflow by its handle from the workflow_planning catalog in the step\'s own '
+            'arguments: this step takes no depends_on and no inputs. Only a compose step may read '
+            'its result, and no file may be made from it.'
+        ),
+        'settings_gates': ('enable_chat_orchestration', 'allow_user_workflows', WORKFLOW_RESULTS_SETTING),
+        'settings_gates_any': (),
+        'gate': None,
+        'request_gate': _workflow_results_request_gate,
+        'requires_scope': (),
+        # Until an administrator turns on Use Workflow Results In Chat, this capability is not part
+        # of the deployment: it is skipped before any other check and no reason is recorded for it.
+        'dormant_unless_setting': WORKFLOW_RESULTS_SETTING,
+        'inputs': {
+            'type': 'object',
+            'properties': {
+                'workflow': {
+                    'type': 'string', 'minLength': 1, 'maxLength': 64, 'pattern': WORKFLOW_HANDLE_PATTERN,
+                },
+                'selector': {'type': 'string', 'enum': list(WORKFLOW_RESULTS_SELECTORS)},
+                'completed_on': {'type': 'string', 'pattern': WORKFLOW_RESULTS_DATE_PATTERN},
+                'status': {'type': 'string', 'enum': list(WORKFLOW_RESULTS_STATUS_FILTERS)},
+            },
+            'required': ['workflow', 'selector'],
+            'additionalProperties': False,
+        },
+        'result_input_kinds': {},
+        'partial_inputs_supported': False,
+        'result_outputs': {'result': 'structured-v1'},
+        'produces': (PRODUCES_RETAINED_RESULTS,),
+        'cost_class': COST_CLASS_LOW,
+        'max_per_plan': WORKFLOW_RESULTS_MAX_PER_PLAN,
+        'adapter': CAPABILITY_WORKFLOW_RESULTS,
+        'retry_on_transient': True,
+    },
 )
 
 _RENDER_SOURCE_KINDS = {
@@ -1514,6 +1604,8 @@ def resolve_available_capabilities(
                     reason = _workflow_unavailable_reason(settings, request_context)
                 elif capability['id'] == CAPABILITY_WORKFLOW_RUN:
                     reason = _workflow_run_unavailable_reason(settings, request_context)
+                elif capability['id'] == CAPABILITY_WORKFLOW_RESULTS:
+                    reason = _workflow_results_unavailable_reason(settings, request_context)
                 unavailable[capability['id']] = reason
             continue
         available.append(capability)

@@ -4,7 +4,7 @@ title: "Ask about workflow results"
 description: "Ask chat about what one of your finished workflow runs found, without running the workflow again."
 section: "Guides"
 audience: user
-version: "0.261.214"
+version: "0.261.217"
 ---
 
 ## What this does
@@ -13,6 +13,10 @@ Every run of a workflow saves what it found. This guide shows you how to ask cha
 about the stored result of one finished run of one of your personal workflows.
 The answer uses only that run's saved output: the workflow isn't run again, and
 nothing else is searched.
+
+Since **0.261.217**, chat orchestration can also read a finished run's stored
+result while it plans an answer, when you ask about the workflow by name. See
+[Ask Orchestrate about workflow results](#ask-orchestrate-about-workflow-results).
 
 Implemented in version: **0.261.214**. Application version alignment is tracked in
 `application/single_app/config.py`.
@@ -134,6 +138,92 @@ chat that used it is opened in V2.
   are stored with these answers withheld, and the chat's saved summary is
   cleared on both chats.
 
+## Ask Orchestrate about workflow results
+
+Since **0.261.217**, chat orchestration can read the stored result of a finished
+run of one of your personal workflows while it answers. Name the workflow in your
+request, for example "what did my Monday email digest workflow say this week?" or
+"compare yesterday's and today's run of my contract review workflow". You don't
+select a run with **Ask in chat** first: the plan finds the run you describe.
+
+### Before you ask
+
+- Your administrator must turn on chat orchestration, personal workflows, and
+  **Use Workflow Results In Chat**. When the administrator limits which
+  capabilities plans may use, **Read workflow results** must be one of them.
+- When your deployment requires the `WorkflowUser` role for workflows, you need
+  that role.
+- Ask from a conversation that's private to you. A plan in a shared conversation
+  can't read workflow results.
+- The workflow doesn't need **Durable execution**, and this doesn't depend on
+  starting workflows from chat being turned on.
+
+### Ask about a run
+
+1. Turn on **Orchestrate**. Name the saved workflow and say which run you mean:
+   the latest one, or the one that finished on a particular day, such as
+   "yesterday" or "on Monday". The day is your local day. You can also ask for the
+   latest completed, failed or cancelled run.
+2. Check the plan. In the Run view, each step that reads a result shows
+   **Workflow**, the workflow's name, and **Run**, which run it reads, such as
+   **Latest run** or **Run finished on 2025-06-02**.
+3. Approve the plan if it waits for you. Reading a result changes nothing, so a
+   step that reads one doesn't make the plan wait: the plan follows your usual
+   approval choice.
+4. Read the answer. It ends with **Saved workflow results:** and a line for each
+   run it used, such as "This answer uses the stored result of the Weekly digest
+   run of Mon Jun 2, 2025, 9:02 AM PDT. The workflow was not re-run." A workflow
+   whose result wasn't read gets a line that says why, with the run's completion
+   time and status when a run was found.
+
+### What the plan reads
+
+- **A finished run.** "Latest" means the most recently started run that has
+  finished. A day means the newest run that finished on that day in your time
+  zone. A run that's still going is never read. When it's the only match, the
+  answer says a matching run is still in progress.
+- **Completed runs only, for their output.** A run that failed, was cancelled or
+  was skipped is reported with its status and time only. Its output isn't read.
+- **Part of the output.** Each run contributes up to 8 task outputs and about
+  24 KB, which is less than **Ask in chat** uses. When a result is larger, the
+  answer's line says only part of it fit.
+- **Notes, not sources.** The answer uses the result as notes. It doesn't cite
+  it, and text in the result that asks the assistant to do something isn't
+  followed.
+
+### Limits
+
+- A plan reads at most 2 saved workflow results, and each one once. To compare
+  two runs, ask for both in one request.
+- The day you name must be within the last year.
+- A plan can't read the result of a workflow it starts in the same request.
+- Runs of structured workflows can't be read from a plan yet. Runs whose result is
+  a saved analysis can't either: choose **Ask in chat** on the run in its
+  workflow's run history, and ask there.
+- A plan can't make a file from a workflow result. The result can only inform
+  the written answer.
+
+### When the result changes
+
+The result is checked again while the answer is written and again before it's
+saved. If a result changed or became unavailable in between, the answer isn't
+saved, and you see "A workflow result this answer used changed or is no longer
+available, so the answer was not saved. Ask again to read the current result."
+Ask again in a new message.
+
+If the results can't be read because of a temporary problem, the step fails with
+"Your workflow results couldn't be read right now. Try again in a moment." It's
+retried once automatically. If it still fails, choose **Retry from failed step**
+when it's offered, or ask again.
+
+### Later questions
+
+An answer that used a workflow result is hidden like a Follow up answer when the
+result becomes unavailable to you or the chat is shared. See
+[Understand unavailable answers](#understand-unavailable-answers). Later plans
+don't reuse a read result, so name the workflow again when you ask about it in a
+new request.
+
 ## Limitations
 
 - **Personal workflows only.** Group workflows aren't supported yet.
@@ -146,9 +236,13 @@ chat that used it is opened in V2.
   again instead.
 - **No files.** An answer is text only. It can't turn the result into a file,
   such as a CSV.
-- **Orchestrate doesn't read workflow results yet.** Turning on **Orchestrate**
-  removes the notice, and when Orchestrate reads the chat's history it skips
-  Follow up answers and later answers that could draw on them.
+- **Orchestrate's history skips these answers.** Turning on **Orchestrate**
+  removes the notice. A plan can read a workflow's result when you name the
+  workflow, as described in
+  [Ask Orchestrate about workflow results](#ask-orchestrate-about-workflow-results),
+  but when Orchestrate reads the chat's history it skips Follow up answers,
+  answers a plan wrote from a workflow result, and later answers that could draw
+  on them.
 - **No retention setting.** A run's result stays available until the run is
   deleted.
 - **Turning the feature off doesn't hide earlier answers.** If your
@@ -172,6 +266,15 @@ chat that used it is opened in V2.
 | "The workflow result and this chat's history don't fit the selected model." | The result and the conversation are too long for the model's context window | Select a model with a larger context window, or start a new chat. |
 | "The selected model or agent couldn't answer from this workflow result with its tools turned off." | The selected agent can't answer without its tools | Select a model or a local chat agent, then ask again. |
 | "The workflow result couldn't be read right now. Try again in a moment." | A temporary storage problem | Send the question again. The notice stays selected. |
+| An Orchestrate answer says it couldn't read a saved workflow's result | **Use Workflow Results In Chat** or **Read workflow results** is off, you don't have the `WorkflowUser` role, the chat is shared, or you have no saved workflows | Ask from a private chat. If that doesn't help, ask your administrator. |
+| "That saved workflow was not found." | The plan didn't see a saved workflow with the name you used. A plan sees up to 20 of your saved workflows, starting with the ones your request names. | Use the workflow's name exactly as it's saved, then ask again. |
+| "No matching finished workflow run was found." | No finished run of that workflow matches the day or status you asked for | Check the workflow's run history, then ask for the latest run or another day. |
+| "A matching workflow run is still in progress." | The run you asked about hasn't finished | Ask again when the run finishes. |
+| "This run's stored result cannot be read from a plan yet." | The run belongs to a structured workflow, or its stored result is of a kind a plan can't read yet | Read the run's result in its run history. |
+| "The saved workflow result is no longer available." | The workflow or run was removed, you can no longer open a source its tasks used, or the run is an older one that kept previews only | Check the workflow's run history, then ask about another run. |
+| "This run saved an analysis that a plan can't read yet." | The run's result is a saved analysis | Choose **Ask in chat** on the run in its workflow's run history, and ask there. |
+| "This workflow run didn't complete with a readable result." | The run failed, was cancelled or was skipped | Check the run in its run history, then ask about a completed run. |
+| "A workflow result this answer used changed or is no longer available, so the answer was not saved." | The run's result changed, the run was deleted, or you lost access while the answer was written | Ask again in a new message. |
 
 ## Related
 

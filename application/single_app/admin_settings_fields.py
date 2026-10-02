@@ -3811,7 +3811,8 @@ ADMIN_SETTINGS_FIELDS = {
                 "Generate images also requires Image Generation. Use an action also "
                 "requires Enable Action Access. Propose workflows also requires Propose "
                 "Workflows From Chat and personal workflows. Run workflows also requires Run "
-                "Workflows From Chat and personal workflows."
+                "Workflows From Chat and personal workflows. Read workflow results also "
+                "requires Use Workflow Results In Chat and personal workflows."
             ),
             "default": [],
             "options": [
@@ -3829,6 +3830,7 @@ ADMIN_SETTINGS_FIELDS = {
                 {"value": "generate_image", "label": "Generate images"},
                 {"value": "workflow_propose", "label": "Propose workflows"},
                 {"value": "workflow_run", "label": "Run workflows"},
+                {"value": "workflow_results", "label": "Read workflow results"},
             ],
             "depends_on": {"key": "enable_chat_orchestration", "equals": True},
         },
@@ -4066,6 +4068,8 @@ ADMIN_SETTINGS_FIELDS = {
             "help": (
                 "Users can ask chat about the stored result of one of their own "
                 "finished workflow runs, from the run history or a workflow alert. "
+                "With Chat Orchestration on, a plan can also read such a result when "
+                "the user asks about it, such as \"what did my Monday digest say?\". "
                 "The workflow is not re-run, and the answer is only available in "
                 "the user's private chats. Answers stop showing once the run is "
                 "deleted or the user loses access to its sources."

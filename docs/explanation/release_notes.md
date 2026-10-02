@@ -101,6 +101,17 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
 
 ### **(v0.261.217)**
 
+#### New Features
+
+*   **Read Saved Workflow Results From Chat Orchestration**
+    *   Chat orchestration can now read the stored result of one of your own finished personal workflow runs while it answers, for example "what did my Monday email digest workflow say this week?" or "compare yesterday's and today's run of my contract review workflow". A plan step names the workflow and reads its latest finished run, or the newest run that finished on a day you name in your own time zone, optionally only a completed, failed or cancelled one. The workflow isn't re-run, and a plan reads at most two results.
+    *   The new capability, **Read workflow results** (`workflow_results`), is read-only with no approval floor, so a plan that uses it follows the user's approval mode. It's offered only while **Use Workflow Results In Chat** (`enable_chat_workflow_results`) is on, to users who may use personal workflows, in their own private conversations, and only for workflows in the request's workflow catalog. The step checks all of this again when it runs. With the setting off, which is the default, planning is unchanged.
+    *   The planner and the plan name a workflow by a per-request handle, never by its ID. The server picks the run with bounded queries on the user's own runs and reads it through the Phase 6a result reader, which authorizes the run again. At most 24 KB of each run's result, from up to 8 of its outputs, reaches the answer, only as fenced, untrusted notes and never as a cited source. Failed and cancelled runs are reported by their status and time only, and a run still in progress is reported without any of its output.
+    *   The answer adds a server-written **Saved workflow results:** note, with Phase 6a's line for each run it used and the reason for each result it didn't read, and no IDs. The answer stores `workflow_result_contexts`, so Phase 6a's masking withholds it, on the same reads that withhold Follow up answers, once a result it used is no longer available or the chat is no longer the owner's private chat. Each result is authorized again while the answer is written and twice more before it's published. If one changed, the answer is replaced with "A workflow result this answer used changed or is no longer available, so the answer was not saved. Ask again to read the current result."
+    *   Later turns never reuse a read: result aliases skip any run whose plan reads a workflow result, and a new attempt or revised plan runs its reads and the steps built on them again instead of reusing an earlier answer. A plan edit that breaks a results rule is refused, and the previous plan stays.
+    *   Admins can keep it out of plans by clearing **Read workflow results** in the orchestration Capabilities list. Group workflows, structured (version 3) runs and runs that saved an analysis can't be read from a plan, and a plan never waits for a run it starts to finish.
+    *   (Ref: #1546, #1543, `functions_orchestration_workflow_results.py`, `functions_orchestration_registry.py`, `functions_orchestration_workflow_context.py`, `functions_orchestration_planner.py`, `functions_orchestration_schema.py`, `functions_orchestration_execution.py`, `functions_orchestration_executor.py`, `functions_orchestration_composition.py`, `functions_orchestration_services.py`, `functions_orchestration_recovery.py`, `route_backend_orchestration.py`, [Chat Orchestration Workflow Results](features/CHAT_ORCHESTRATION_WORKFLOW_RESULTS.md), [Ask about workflow results](../guides/ask-about-workflow-results.md#ask-orchestrate-about-workflow-results))
+
 #### Bug Fixes
 
 *   **Group Document Uploads With Enhanced Citations**
@@ -112,6 +123,12 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
     *   Saving any Call agent action, whether personal, group or global, failed with "Invalid plugin configuration." The manifest check rejected the server-owned `scope_id` field that binding to a collection adds, so agents couldn't delegate to other agents.
     *   `scope_id` is now accepted. The server always sets it from the authorized collection, and every other extra field is still rejected.
     *   (Ref: `functions_agent_delegation.py`, [Call Agent Action Save Fix](fixes/CALL_AGENT_ACTION_SAVE_FIX.md))
+
+#### User Interface Enhancements
+
+*   **Saved Workflow Results In The V2 Run View**
+    *   A plan step that reads a saved workflow's result shows **Workflow**, the workflow's own name, and **Run**, the run it reads in words, such as **Latest run**, **Latest completed run** or **Run finished on 2025-06-02**, in place of its raw arguments. The name is shown as text, never markup, and a selector the card doesn't recognize shows **Run details unavailable**.
+    *   (Ref: `OrchestrationRunView.tsx`, `orchestrationWorkflowResults.ts`, `orchestrationPlan.ts`, `orchestration.ts`, [Chat controls](../reference/chat-controls.md#saved-workflow-results-in-a-plan))
 
 ### **(v0.261.216)**
 
