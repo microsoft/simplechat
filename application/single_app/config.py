@@ -38,6 +38,7 @@ import pandas
 from functions_latest_features_nav import is_development_env_enabled
 from functions_appinsights import log_event
 from functions_azure_endpoint_validation import validate_configured_chat_blob_endpoint
+from csp_media_sources import build_media_src_directive, parse_csp_media_origins
 
 from functions_environment import load_simplechat_dotenv
 from flask import (
@@ -100,7 +101,7 @@ DOTENV_LOAD_RESULT = load_simplechat_dotenv()
 EXECUTOR_TYPE = 'thread'
 EXECUTOR_MAX_WORKERS = 30
 SESSION_TYPE = 'filesystem'
-VERSION = "0.261.217"
+VERSION = "0.261.225"
 IS_DEVELOPMENT = is_development_env_enabled()
 
 # Opt-out for deployments where App Service Easy Auth is active but the platform
@@ -464,6 +465,18 @@ FRAME_ANCESTORS_DIRECTIVE = "frame-ancestors 'self'"
 if TEAMS_FRAME_ANCESTORS:
     FRAME_ANCESTORS_DIRECTIVE = f"{FRAME_ANCESTORS_DIRECTIVE} {' '.join(TEAMS_FRAME_ANCESTORS)}"
 
+# External hosts whose audio and video the chat may play in place, for example the media links an
+# OpenAPI action returns. Empty by default, which keeps media-src same-origin. Only bare https
+# origins are accepted (see csp_media_sources.py); anything else is ignored and logged.
+CSP_MEDIA_SRC_ORIGINS, _rejected_csp_media_origins = parse_csp_media_origins(os.getenv('CSP_MEDIA_SRC_ORIGINS', ''))
+if _rejected_csp_media_origins:
+    log_event(
+        "[CSP] Ignored CSP_MEDIA_SRC_ORIGINS entries that are not bare https origins.",
+        extra={"rejected_entries": _rejected_csp_media_origins},
+        level=logging.WARNING,
+    )
+MEDIA_SRC_DIRECTIVE = build_media_src_directive(CSP_MEDIA_SRC_ORIGINS)
+
 
 # Security Headers Configuration
 SECURITY_HEADERS = {
@@ -477,7 +490,7 @@ SECURITY_HEADERS = {
         "img-src 'self' data: https: blob:; "
         "font-src 'self'; "
         "connect-src 'self' https: wss: ws:; "
-        "media-src 'self' blob:; "
+        f"{MEDIA_SRC_DIRECTIVE}; "
         "frame-src 'self' blob:; "
         "object-src 'none'; "
         f"{FRAME_ANCESTORS_DIRECTIVE}; "

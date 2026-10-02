@@ -67,7 +67,7 @@ from functions_model_endpoint_urls import (
 
 
 ANTHROPIC_MODEL_MARKERS = ("claude",)
-OPENAI_REASONING_MODEL_PREFIXES = ("gpt-5", "o1", "o3", "o4")
+OPENAI_REASONING_MODEL_PREFIXES = ("gpt-5", "gpt-6", "o1", "o3", "o4")
 MODEL_CONTEXT_MODE_SYSTEM = "system"
 MODEL_CONTEXT_MODE_FOLD_LATEST_USER = "fold_latest_user"
 
@@ -111,6 +111,7 @@ class ModelEndpointBehavior:
         return (
             normalized_model_name.startswith(OPENAI_REASONING_MODEL_PREFIXES)
             or "gpt-5" in normalized_model_name
+            or "gpt-6" in normalized_model_name
         )
 
     @property

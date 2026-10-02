@@ -6822,6 +6822,8 @@ def upload_to_blob(temp_file_path, user_id, document_id, blob_filename, update_c
         return None
 
     try:
+        # The status write changes this record's etag, so it must precede the read that guards the final write.
+        update_callback(status=f"Uploading {blob_filename} to Blob Storage...")
         cosmos_container = _get_documents_container(group_id=group_id, public_workspace_id=public_workspace_id)
         current_document = cosmos_container.read_item(item=document_id, partition_key=document_id)
         storage_account_container_name = current_document.get("blob_container") or _get_blob_container_name(
@@ -6874,8 +6876,6 @@ def upload_to_blob(temp_file_path, user_id, document_id, blob_filename, update_c
         }
 
         metadata = {k: v for k, v in metadata.items() if v is not None}
-
-        update_callback(status=f"Uploading {blob_filename} to Blob Storage...")
 
         with open(temp_file_path, "rb") as f:
             blob_client.upload_blob(f, overwrite=True, metadata=metadata)
