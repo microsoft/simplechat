@@ -865,6 +865,36 @@ let streamingConversationId: string | null = null;
 let streamingConversationKind: ConversationKind = 'personal';
 
 /**
+ * Conversations whose orchestration turn currently holds the streaming surface.
+ *
+ * A plan or run is driven by its own controller, not `activeStreamController`, so
+ * `detachActiveStream` knows nothing about it. The turn takes the shared `streaming` flag in
+ * `beginOrchestrationTurn` and gives it back in `settleOrchestrationTurn`, but both only write
+ * while that conversation is on screen. Relying on that alone, leaving a conversation mid-turn
+ * stranded the flag on whatever came next: a new chat showed the old turn thinking, offered a
+ * Stop with nothing to stop, and refused to send until the page was reloaded.
+ *
+ * Kept per conversation, whatever is on screen, so leaving can drop the flag and reopening a
+ * conversation whose turn is still running in this tab can put it back.
+ */
+const orchestrationSurfaces = new Set<string>();
+
+/**
+ * Bumped each time the reader starts a new chat or opens a conversation.
+ *
+ * A first message creates its conversation in a round trip, then claims the screen only if the
+ * reader is still in the new chat it was sent from. `activeConversationId === null` cannot say
+ * that on its own: clicking New chat during the round trip leaves it null as well, and the old
+ * question used to take over the fresh chat. Comparing the epoch from before the round trip can.
+ */
+let conversationEpoch = 0;
+
+/** The current epoch, for the creation path that lives outside this store (orchestration). */
+export function currentConversationEpoch(): number {
+    return conversationEpoch;
+}
+
+/**
  * Stop reading the in-flight stream without asking the server to stop producing it.
  *
  * These are two different things and only the Stop button means the second one. Generation
@@ -888,9 +918,10 @@ function detachActiveStream(): void {
     activeStreamController.abort();
     activeStreamController = null;
     streamingConversationId = null;
-    // Included here rather than left to callers: neither `selectConversation` nor
-    // `startNewConversation` clears `streaming` itself, so dropping it would leave the
-    // composer stuck showing Stop for a stream that is no longer being read.
+    // Included here rather than left to callers: `stopStreaming` has no state reset of its
+    // own, so dropping it would leave the composer stuck showing Stop for a stream that is no
+    // longer being read. `selectConversation` and `startNewConversation` also set `streaming`
+    // themselves, because an orchestration turn holds it without a controller to detach.
     useChatStore.setState({ streaming: false, streamingContent: '', reconnectPhase: null });
 }
 
@@ -2084,6 +2115,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         // keep delivering the previous conversation's messages into this one.
         stopCollaborationEvents();
         useCollaborationStore.getState().reset();
+        conversationEpoch += 1;
 
         // Known from the rail row when there is one, which is the common case and costs no
         // request. A conversation opened from a link is not in the list yet, so its kind is
@@ -2104,6 +2136,12 @@ export const useChatStore = create<ChatState>((set, get) => ({
             analysisTurnRevision: analysisConversationChanged ? null : get().analysisTurnRevision,
             messages: [],
             messagesError: null,
+            // Anything streaming belonged to the conversation being left. An orchestration turn
+            // still running in this tab for the one being opened gets its Thinking state and
+            // Stop back, which also keeps the composer from sending into a busy turn; its later
+            // thoughts and its settle land here as usual. A chat stream is picked back up by
+            // `resumeChatStream` below.
+            streaming: conversationId ? orchestrationSurfaces.has(conversationId) : false,
             streamingContent: '',
             thoughts: [],
             streamingReasoningAdjustments: [],
@@ -2290,6 +2328,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         detachActiveStream();
         stopCollaborationEvents();
         useCollaborationStore.getState().reset();
+        conversationEpoch += 1;
 
         // The conversation row is created by the server on first send, so a new chat is
         // purely a local reset until then. This avoids leaving empty conversations behind
@@ -2306,7 +2345,16 @@ export const useChatStore = create<ChatState>((set, get) => ({
             // that already exists, so there is no way to start one shared.
             activeConversationKind: null,
             messages: [],
+            // A load still in flight for the conversation being left returns without touching
+            // this once it sees the reader has moved on, so the new chat would otherwise sit
+            // behind loading placeholders instead of its empty state.
+            messagesLoading: false,
             messagesError: null,
+            // Cleared here and not only by `detachActiveStream`, which knows about chat streams
+            // alone. An orchestration turn holds this flag without one, and its settle is skipped
+            // once its conversation is off screen, so the new chat kept the old turn's Thinking
+            // state and a Stop button with nothing to stop. The turn itself keeps running.
+            streaming: false,
             streamingContent: '',
             thoughts: [],
             streamingReasoningAdjustments: [],
@@ -2723,6 +2771,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
         // one: a shared conversation always already exists, because sharing is done to a
         // conversation rather than at the moment of writing into one.
         if (!conversationId) {
+            // Taken before the round trip: New chat leaves `activeConversationId` null too, so
+            // null alone cannot say the reader is still in the chat this was sent from.
+            const epoch = conversationEpoch;
             try {
                 const created = await createConversation(trimmed);
                 conversationId = created.conversation_id;
@@ -2732,8 +2783,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
                 // the interface stays where they put it instead of snapping back to a chat
                 // they have already left. Claiming `activeConversationId` unconditionally
                 // also let the thread they had just opened render its messages under this
-                // new one, because the list is keyed on whatever is active.
-                if (get().activeConversationId === null) {
+                // new one, because the list is keyed on whatever is active. Starting another
+                // new chat is the same case, which the epoch is what tells apart.
+                if (get().activeConversationId === null && conversationEpoch === epoch) {
                     set({ activeConversationId: conversationId, activeConversationKind: 'personal' });
                     // Mirrored like every other write to this field. Today the conversation just
                     // created can only be personal — this branch is reached only when nothing was
@@ -3058,10 +3110,13 @@ export const useChatStore = create<ChatState>((set, get) => ({
         let conversationId = get().activeConversationId;
         const isNewConversation = !conversationId;
         if (!conversationId) {
+            // As in sendMessage: only the epoch tells "still in this new chat" apart from
+            // "started another one" while the conversation is being created.
+            const epoch = conversationEpoch;
             try {
                 const created = await createConversation(trimmed);
                 conversationId = created.conversation_id;
-                if (get().activeConversationId === null) {
+                if (get().activeConversationId === null && conversationEpoch === epoch) {
                     set({ activeConversationId: conversationId, activeConversationKind: 'personal' });
                     useCollaborationStore.getState().setActiveConversation(conversationId);
                 }
@@ -3158,6 +3213,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
     beginOrchestrationTurn: (conversationId, text, addUserMessage = true, turnId, promptInfo) => {
         const trimmed = text.trim();
         const pendingUserMessageId = addUserMessage ? `pending-user-${Date.now()}` : '';
+        // Recorded whether or not the conversation is on screen, so opening it while this turn
+        // is still in flight shows it working.
+        orchestrationSurfaces.add(conversationId);
         // Guarded on the open conversation, exactly like sendMessage's optimistic write: a run
         // started here keeps going after the reader opens another thread, and its question must
         // not appear inside that other thread.
@@ -3237,6 +3295,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
     },
 
     settleOrchestrationTurn: (conversationId, outcome) => {
+        // Released whether or not the conversation is on screen, so reopening it later does not
+        // bring back a Thinking state for a turn that has already finished.
+        orchestrationSurfaces.delete(conversationId);
         // The reader is elsewhere: there is no streaming surface of this conversation's to
         // resolve, and the run's own record in the orchestration store is what remembers it ran.
         if (get().activeConversationId !== conversationId) {
@@ -3393,6 +3454,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
         const turnChanged = Boolean(toTurnId) && toTurnId !== fromTurnId;
         if (!conversationChanged && !turnChanged) {
             return;
+        }
+        // The turn's claim on the streaming surface follows it to the id the server named.
+        if (conversationChanged && orchestrationSurfaces.delete(fromConversationId)) {
+            orchestrationSurfaces.add(toConversationId);
         }
         set((state) => {
             const messages = state.messages.map((message) => {
