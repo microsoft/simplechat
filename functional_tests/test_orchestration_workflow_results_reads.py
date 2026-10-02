@@ -478,6 +478,8 @@ def test_analysis_run_and_in_progress_and_no_match_outcomes(results, monkeypatch
     no_match_output, _service, _calls = run_step(results, monkeypatch, latest_rows=[], in_progress_rows=[])
 
     assert analysis_output["workflow_results"]["outcome"] == results.WORKFLOW_RESULTS_OUTCOME_ANALYSIS_ONLY
+    # The reply points at a surface that exists without Phase 6b: Ask in chat on the run history.
+    assert "Ask in chat" in results.WORKFLOW_RESULTS_REASON_TEXT["workflow_result_analysis_only"]
     assert in_progress_output["workflow_results"]["outcome"] == results.WORKFLOW_RESULTS_OUTCOME_IN_PROGRESS
     assert no_match_output["workflow_results"]["outcome"] == results.WORKFLOW_RESULTS_OUTCOME_NO_MATCH
 

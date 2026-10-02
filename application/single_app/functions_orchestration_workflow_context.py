@@ -318,7 +318,7 @@ def workflow_results_settings_gate(settings):
 def workflow_results_gate(settings, user_roles):
     """Return None when this user may be offered reading their workflow results, else a closed reason.
 
-    The role check is the one that decides whether chat shows a finished run's result card at all,
+    The role check is the one that decides whether chat answers from a finished run's result at all,
     so a plan never reads a result the user could not ask about in chat.
     """
     reason = workflow_results_settings_gate(settings)

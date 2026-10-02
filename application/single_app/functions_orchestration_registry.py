@@ -116,7 +116,7 @@ WORKFLOW_PROPOSALS_SETTING = 'enable_chat_orchestration_workflows'
 WORKFLOW_RUNS_SETTING = 'enable_chat_orchestration_workflow_runs'
 # The settings key (Use Workflow Results In Chat) that must be exactly True before a plan may read
 # the stored result of one of the user's finished workflow runs. It is the same key that shows a
-# finished run's result card in chat, so a plan never reads a result chat could not show.
+# finished run's stored result in chat, so a plan never reads a result chat could not answer from.
 WORKFLOW_RESULTS_SETTING = 'enable_chat_workflow_results'
 # The tasks a workflow proposal may hold, and the action kinds the planner may say a task needs.
 # The workflow planning context and the deliverables import these, so each has one definition.

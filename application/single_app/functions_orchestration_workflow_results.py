@@ -146,8 +146,8 @@ WORKFLOW_RESULTS_REASON_TEXT = {
     'workflow_result_unsupported': "This run's stored result cannot be read from a plan yet.",
     'workflow_result_status_only': "This workflow run didn't complete with a readable result.",
     'workflow_result_analysis_only': (
-        "This run saved an analysis that a plan can't read yet. Open the run's result card in chat "
-        'and ask there.'
+        "This run saved an analysis that a plan can't read yet. Choose Ask in chat on the run in "
+        "its workflow's run history, and ask there."
     ),
 }
 
