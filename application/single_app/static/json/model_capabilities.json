@@ -1,7 +1,7 @@
 {
   "$schema": "https://simplechat.local/schemas/model-capabilities.schema.json",
   "schemaVersion": 4,
-  "lastUpdated": "2026-09-21",
+  "lastUpdated": "2026-10-01",
   "description": "SimpleChat model capability, reasoning-policy, embedding-policy, and token-capacity catalog. Published chat/generation limits retain independently verified evidence and hosting profiles. Embedding input, dimension, and batch policies are separate operation contracts and never supply a chat-token budget.",
   "capabilityFields": {
     "processesText": "Accepts text input.",
@@ -51,7 +51,8 @@
     "OpenAI model pages describe api.openai.com, not Azure deployment readiness. imageProfiles separates direct OpenAI, Azure OpenAI, and Foundry image operations. The application hosting cloud never establishes endpoint capabilities or availability.",
     "Azure documents Responses image generation with a separate GPT Image deployment. SimpleChat deliberately offers only dedicated image models on Azure/Foundry; the conditional Azure Responses integration is not enabled by publisher imageGenerationTool flags or administrator overrides.",
     "Government image-model availability is not established by the reviewed Government model table. Unknown is not unavailable, and a Government-hosted app may use an explicitly configured commercial endpoint without relabeling that endpoint as Government.",
-    "Image operation profiles describe the implemented single-image workflow. MAI and FLUX support source-image edits where stated, but their reviewed APIs do not document uploaded masks. Masking is not inferred from vision, tool calling, or inpainting prose."
+    "Image operation profiles describe the implemented single-image workflow. MAI and FLUX support source-image edits where stated, but their reviewed APIs do not document uploaded masks. Masking is not inferred from vision, tool calling, or inpainting prose.",
+    "GPT-6 Astra token capacities and reasoning efforts were reviewed on 2026-10-01, separately from the 2026-09-19 audit of the original 75 records. Azure Chat Completions rejected function tools for gpt-6-astra (2026-09-03) with the default and low efforts and rejected none. toolReasoningEfforts can't express a model with no tool-capable effort, so that observation is recorded in notes only."
   ],
   "sources": [
     {
@@ -1354,6 +1355,27 @@
       "title": "GPT-6 Astra model and supported Responses tools",
       "url": "https://developers.openai.com/api/docs/models/gpt-6-astra",
       "verifiedAt": "2026-09-16"
+    },
+    {
+      "id": "openai-spec-gpt-6-astra",
+      "provider": "openai",
+      "title": "OpenAI gpt-6-astra exact model specification and reasoning efforts",
+      "url": "https://developers.openai.com/api/docs/models/gpt-6-astra",
+      "verifiedAt": "2026-10-01"
+    },
+    {
+      "id": "azure-spec-gpt-6",
+      "provider": "azure",
+      "title": "Azure OpenAI exact model/version specifications: gpt-6",
+      "url": "https://learn.microsoft.com/en-us/azure/foundry/foundry-models/concepts/models-sold-directly-by-azure#gpt-6",
+      "verifiedAt": "2026-10-01"
+    },
+    {
+      "id": "gpt-6-astra-deployed-contract",
+      "provider": "microsoft",
+      "title": "Observed GPT-6 Astra (2026-09-03) Azure Chat Completions rejections on 2026-10-01: none rejected with low, medium, high and xhigh listed as supported; function tools rejected with the default and low efforts",
+      "url": "https://learn.microsoft.com/en-us/azure/foundry/openai/how-to/reasoning?view=foundry-classic",
+      "verifiedAt": "2026-10-01"
     }
   ],
   "models": [
@@ -11004,18 +11026,136 @@
         "generatesText": true,
         "processesImages": true,
         "generatesImages": false,
-        "imageGenerationTool": true,
-        "toolCalling": true
+        "processesAudio": false,
+        "generatesAudio": false,
+        "processesVideo": false,
+        "generatesVideo": false,
+        "processesBinaryFiles": true,
+        "optimizedForCoding": true,
+        "toolCalling": true,
+        "structuredOutput": true,
+        "supportsStreaming": true,
+        "reasoning": true,
+        "imageGenerationTool": true
       },
       "imageProfiles": {
         "openai": "openai-responses"
       },
       "notes": [
-        "Image generation is a direct OpenAI Responses tool, not native image output or an Azure image deployment."
+        "Most capable GPT-6 tier; text and image input with text output.",
+        "Image generation is a direct OpenAI Responses tool, not native image output or an Azure image deployment.",
+        "OpenAI lists reasoning efforts low, medium, high, xhigh and max. none isn't supported, and Responses-only max is excluded from this Chat Completions policy.",
+        "Azure Chat Completions rejects function tools for this model unless reasoning_effort is none, which the model doesn't accept, so local agents with actions fail on it. See the azure profile note."
       ],
       "sourceIds": [
-        "openai-gpt6-astra"
-      ]
+        "openai-gpt6-astra",
+        "openai-spec-gpt-6-astra",
+        "openai-reasoning",
+        "azure-spec-gpt-6",
+        "azure-reasoning",
+        "gpt-6-astra-deployed-contract"
+      ],
+      "contextWindow": 1050000,
+      "inputTokenLimit": 922000,
+      "outputTokenLimit": 128000,
+      "verifiedAliases": [],
+      "tokenLimitsApplicability": "text",
+      "outputTokenAccounting": "total_generation",
+      "tokenLimitEvidence": {
+        "contextWindow": {
+          "status": "verified",
+          "sourceIds": [
+            "openai-spec-gpt-6-astra"
+          ],
+          "verifiedAt": "2026-10-01",
+          "note": "Direct OpenAI explicitly documents 1,050,000 tokens for the shared context of gpt-6-astra; this is a model capacity, not a requested response length."
+        },
+        "inputTokenLimit": {
+          "status": "verified",
+          "sourceIds": [
+            "openai-spec-gpt-6-astra"
+          ],
+          "verifiedAt": "2026-10-01",
+          "note": "Direct OpenAI explicitly documents 922,000 tokens for the independent maximum input of gpt-6-astra; this is a model capacity, not a requested response length."
+        },
+        "outputTokenLimit": {
+          "status": "verified",
+          "sourceIds": [
+            "openai-spec-gpt-6-astra"
+          ],
+          "verifiedAt": "2026-10-01",
+          "note": "Direct OpenAI explicitly documents 128,000 tokens for the maximum generation of gpt-6-astra; this is a model capacity, not a requested response length."
+        },
+        "outputTokenAccounting": {
+          "status": "verified",
+          "sourceIds": [
+            "openai-reasoning"
+          ],
+          "verifiedAt": "2026-10-01",
+          "note": "gpt-6-astra documents reasoning token support, and native OpenAI generation ceilings include reasoning tokens as well as visible output. Do not reserve reasoning twice or treat visible response length as total generation."
+        }
+      },
+      "tokenLimitProfiles": [
+        {
+          "id": "azure",
+          "provider": "azure",
+          "contextWindow": 1050000,
+          "inputTokenLimit": 922000,
+          "outputTokenLimit": 128000,
+          "outputTokenAccounting": "total_generation",
+          "tokenLimitEvidence": {
+            "contextWindow": {
+              "status": "verified",
+              "sourceIds": [
+                "azure-spec-gpt-6"
+              ],
+              "verifiedAt": "2026-10-01",
+              "note": "Azure explicitly documents 1,050,000 tokens for the shared context of gpt-6-astra (2026-09-03); this is a model capacity, not a requested response length."
+            },
+            "inputTokenLimit": {
+              "status": "verified",
+              "sourceIds": [
+                "azure-spec-gpt-6"
+              ],
+              "verifiedAt": "2026-10-01",
+              "note": "Azure explicitly documents 922,000 tokens for the independent maximum input of gpt-6-astra (2026-09-03); this is a model capacity, not a requested response length."
+            },
+            "outputTokenLimit": {
+              "status": "verified",
+              "sourceIds": [
+                "azure-spec-gpt-6"
+              ],
+              "verifiedAt": "2026-10-01",
+              "note": "Azure explicitly documents 128,000 tokens for the maximum generation of gpt-6-astra (2026-09-03); this is a model capacity, not a requested response length."
+            },
+            "outputTokenAccounting": {
+              "status": "verified",
+              "sourceIds": [
+                "azure-reasoning"
+              ],
+              "verifiedAt": "2026-10-01",
+              "note": "Azure generation limits include reasoning and visible output; the actual request cap is separate from maximum model capacity."
+            }
+          },
+          "notes": [
+            "Azure Chat Completions rejected function tools for gpt-6-astra (2026-09-03) with the default and low reasoning efforts, and rejected reasoning_effort none. The provider error directs tool use to the Responses API, which local agents don't use. toolReasoningEfforts can't express a model with no tool-capable effort. Do not silently change the selected protocol or reasoning policy."
+          ]
+        }
+      ],
+      "reasoningPolicy": {
+        "status": "supported",
+        "efforts": [
+          "low",
+          "medium",
+          "high",
+          "xhigh"
+        ],
+        "default_effort": "low",
+        "sourceIds": [
+          "openai-spec-gpt-6-astra",
+          "gpt-6-astra-deployed-contract"
+        ]
+      }
     },
     {
       "id": "gpt-image-2.5-flare",

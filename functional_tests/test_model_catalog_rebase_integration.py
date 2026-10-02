@@ -1,8 +1,9 @@
 # test_model_catalog_rebase_integration.py
 """
 Offline regression tests for audited token and React V2 metadata coexistence.
-Version: 0.261.122
+Version: 0.261.220
 Implemented in: 0.261.122
+GPT-6 Astra token-evidenced record: 0.261.220
 
 Protect audited, qualitative-capability, reasoning-only, and embedding-policy
 records, provider-qualified image profiles, historical source reviews, and their
@@ -35,7 +36,7 @@ from functions_embedding_policy import EmbeddingPolicyError, resolve_embedding_p
 OPERATION_ONLY_IDS = {
     "gpt-4o", "gpt-4o-mini", "gpt-4.1", "gpt-4.1-mini", "gpt-4.1-nano",
     "o1", "o3", "o3-mini", "o4-mini", "gpt-image-2", "gpt-image-1.5",
-    "gpt-image-1", "gpt-image-1-mini", "dall-e-3", "gpt-6-astra",
+    "gpt-image-1", "gpt-image-1-mini", "dall-e-3",
     "gpt-image-2.5-flare", "gpt-image-2.5-sunburst",
     "MAI-Image-2.5", "MAI-Image-2.5-Flash", "MAI-Image-2.5-Pro",
     "MAI-Image-2.6", "MAI-Image-2.6-Flash",
@@ -50,7 +51,7 @@ REASONING_POLICY_IDS = REASONING_ONLY_IDS | {
     "gpt-5.3-codex", "gpt-5.2-codex", "gpt-5.2", "gpt-5.1",
     "gpt-5.1-codex", "gpt-5.1-codex-mini", "gpt-5.1-codex-max",
     "gpt-5", "gpt-5-pro", "gpt-5-codex", "gpt-5-mini", "gpt-5-nano",
-    "gpt-4o", "gpt-4.1", "o1", "o3", "o3-mini", "o4-mini",
+    "gpt-4o", "gpt-4.1", "o1", "o3", "o3-mini", "o4-mini", "gpt-6-astra",
 }
 OPENAI_EMBEDDING_POLICY = {
     "max_input_tokens": 8192,
@@ -153,6 +154,9 @@ SOURCE_REVIEW_HISTORY = {
         "image-profiles-openai-tools", "image-profiles-openai-images",
         "image-profiles-mai", "image-profiles-flux", "image-profiles-government",
         "openai-gpt6-astra",
+    },
+    "2026-10-01": {
+        "openai-spec-gpt-6-astra", "azure-spec-gpt-6", "gpt-6-astra-deployed-contract",
     },
 }
 
@@ -389,7 +393,7 @@ class TestModelCatalogRebaseIntegration(unittest.TestCase):
     def test_metadata_only_variants_reject_token_fields(self):
         audited = self.models["gpt-5.6-sol"]
         for model_id, field in product(
-            ("gpt-4", "gpt-4o", "gpt-4.1-mini", "gpt-6-astra", "gpt-image-2",
+            ("gpt-4", "gpt-4o", "gpt-4.1-mini", "o3", "gpt-image-2",
              "text-embedding-ada-002", "embed-v-4-0"),
             TOKEN_METADATA_FIELDS,
         ):
