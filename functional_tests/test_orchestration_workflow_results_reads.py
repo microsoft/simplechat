@@ -25,6 +25,8 @@ sys.path.insert(0, str(ROOT / "functional_tests"))
 from test_orchestration_harness_routes import modules  # noqa: E402,F401
 from test_support.versioning import assert_app_version_at_least  # noqa: E402
 
+HARNESS_MODULES_FIXTURE = modules
+
 
 USER_ID = "user-owner-distinct-329"
 OTHER_USER_ID = "user-foreign-distinct-913"
@@ -323,6 +325,21 @@ def assert_no_public_leak(value, forbidden):
         assert secret not in exposed
 
 
+def require(condition, message):
+    if not condition:
+        raise AssertionError(message)
+
+
+def require_equal(actual, expected, message):
+    if actual != expected:
+        raise AssertionError(f"{message}: expected {expected!r}, got {actual!r}")
+
+
+def require_is(actual, expected, message):
+    if actual is not expected:
+        raise AssertionError(f"{message}: expected {expected!r}, got {actual!r}")
+
+
 @pytest.mark.parametrize("scenario", [
     "settings_gate",
     "role_gate",
@@ -344,7 +361,7 @@ def test_runtime_access_chain_fails_closed_before_query_or_result_read(results, 
     settings_reason = None
     role_reason = None
     current_step = step()
-    refresh = None
+    refresh_callback = None
 
     if scenario == "settings_gate":
         settings_reason = "workflow_results_disabled"
@@ -357,10 +374,11 @@ def test_runtime_access_chain_fails_closed_before_query_or_result_read(results, 
     elif scenario == "deleted_conversation":
         conversation = {"id": CONVERSATION_ID, "user_id": USER_ID, "orchestration_deleted": True}
     elif scenario == "shared_after_refresh":
-        def refresh(current, current_conversation, user_id):
+        def refresh_after_share(current, current_conversation, user_id):
             refreshed = deepcopy(current)
             refreshed["conversation_private"] = False
             return refreshed
+        refresh_callback = refresh_after_share
     elif scenario == "not_ready":
         wf_plan = planning(ready=False)
     elif scenario == "unknown_handle":
@@ -381,7 +399,7 @@ def test_runtime_access_chain_fails_closed_before_query_or_result_read(results, 
         workflow=workflow,
         settings_reason=settings_reason,
         role_reason=role_reason,
-        refresh=refresh,
+        refresh=refresh_callback,
     )
     service = ResultService()
 
@@ -749,6 +767,232 @@ def test_logs_and_user_visible_failures_are_sanitized(results, monkeypatch, capl
     for forbidden in (EXCERPT_MARKER, QUERY_SECRET):
         assert forbidden not in user_visible
     assert failure["failure"]["message"] == "This operation could not complete."
+
+
+def test_completed_on_rejects_dates_outside_runtime_window_without_query(results, monkeypatch):
+    calls = []
+    today = results._local_today(LOCAL_ZONE)
+    future_day = (today + results.timedelta(days=1)).isoformat()
+    expired_day = (today - results.timedelta(days=367)).isoformat()
+
+    def query_runs(user_id, query, parameters):
+        calls.append((user_id, query, deepcopy(parameters)))
+        return []
+
+    monkeypatch.setattr(results, "_query_runs", query_runs)
+    future = results._select_completed_on(USER_ID, WORKFLOW_ID, None, future_day, LOCAL_ZONE)
+    expired = results._select_completed_on(USER_ID, WORKFLOW_ID, None, expired_day, LOCAL_ZONE)
+
+    require_equal(future, (None, False, results.WORKFLOW_RESULTS_OUTCOME_NO_MATCH), "future date outcome")
+    require_equal(expired, (None, False, results.WORKFLOW_RESULTS_OUTCOME_NO_MATCH), "expired date outcome")
+    require_equal(calls, [], "out-of-window completed_on must not query")
+
+
+def test_point_reads_raise_retryable_failure_for_cosmos_errors_and_not_found_is_none(results, monkeypatch):
+    import config
+    from azure.cosmos.exceptions import CosmosHttpResponseError, CosmosResourceNotFoundError
+
+    class FailingContainer:
+        def __init__(self, error):
+            self.error = error
+
+        def read_item(self, item, partition_key):
+            raise self.error
+
+    transient_error = CosmosHttpResponseError(status_code=503, message=QUERY_SECRET)
+    not_found = CosmosResourceNotFoundError(status_code=404, message="missing")
+
+    monkeypatch.setattr(config, "cosmos_conversations_container", FailingContainer(transient_error), raising=False)
+    with pytest.raises(results._StepFailure) as conversation_failure:
+        results._read_conversation(CONVERSATION_ID)
+
+    monkeypatch.setattr(config, "cosmos_personal_workflows_container", FailingContainer(transient_error), raising=False)
+    with pytest.raises(results._StepFailure) as workflow_failure:
+        results._read_workflow(USER_ID, WORKFLOW_ID)
+
+    monkeypatch.setattr(config, "cosmos_conversations_container", FailingContainer(not_found), raising=False)
+    missing_conversation = results._read_conversation(CONVERSATION_ID)
+    monkeypatch.setattr(config, "cosmos_personal_workflows_container", FailingContainer(not_found), raising=False)
+    missing_workflow = results._read_workflow(USER_ID, WORKFLOW_ID)
+
+    require_equal(conversation_failure.value.code, "workflow_results_unavailable", "conversation failure code")
+    require_equal(workflow_failure.value.code, "workflow_results_unavailable", "workflow failure code")
+    require_is(missing_conversation, None, "missing conversation")
+    require_is(missing_workflow, None, "missing workflow")
+
+
+def test_storage_backed_query_uses_user_partition_key(results, monkeypatch):
+    import config
+
+    captured = []
+
+    class CapturingRuns:
+        def query_items(self, query, parameters, partition_key):
+            captured.append((query, deepcopy(parameters), partition_key))
+            return []
+
+    monkeypatch.setattr(config, "cosmos_personal_workflow_runs_container", CapturingRuns(), raising=False)
+
+    rows = results._query_runs(USER_ID, results._LATEST_QUERY, [])
+
+    require_equal(rows, [], "query rows")
+    require_equal(len(captured), 1, "query call count")
+    require_equal(captured[0][2], USER_ID, "query partition key")
+
+
+def test_completed_on_skips_margin_rows_from_the_wrong_local_day(results, monkeypatch):
+    monkeypatch.setattr(results, "_utc_now", lambda: datetime(2025, 1, 8, 12, 0, tzinfo=timezone.utc))
+    margin_row = completed_run("margin-next-day", completed_at="2025-01-07T05:00:30Z")
+    in_day_row = completed_run("in-day", completed_at="2025-01-06T20:00:00Z")
+    install_runtime_stubs(results, monkeypatch, completed_rows=[margin_row, in_day_row])
+    selected = results._select_completed_on(USER_ID, WORKFLOW_ID, None, "2025-01-06", LOCAL_ZONE)
+    install_runtime_stubs(results, monkeypatch, completed_rows=[margin_row])
+    margin_only = results._select_completed_on(USER_ID, WORKFLOW_ID, None, "2025-01-06", LOCAL_ZONE)
+
+    require_equal(selected[0]["id"], "in-day", "completed_on selected row")
+    require_is(selected[2], None, "completed_on selected reason")
+    require_equal(margin_only, (None, False, results.WORKFLOW_RESULTS_OUTCOME_NO_MATCH), "margin-only outcome")
+
+
+def test_completed_on_full_bad_page_fails_closed_but_short_bad_page_is_no_match(results, monkeypatch):
+    monkeypatch.setattr(results, "_utc_now", lambda: datetime(2025, 1, 8, 12, 0, tzinfo=timezone.utc))
+    wrong_day_rows = [
+        completed_run(f"margin-next-day-{index}", completed_at="2025-01-07T05:00:30Z")
+        for index in range(20)
+    ]
+    install_runtime_stubs(results, monkeypatch, completed_rows=wrong_day_rows)
+    full_bad_page = results._select_completed_on(USER_ID, WORKFLOW_ID, None, "2025-01-06", LOCAL_ZONE)
+    install_runtime_stubs(results, monkeypatch, completed_rows=wrong_day_rows[:19])
+    short_bad_page = results._select_completed_on(USER_ID, WORKFLOW_ID, None, "2025-01-06", LOCAL_ZONE)
+
+    require_equal(
+        full_bad_page, (None, False, results.WORKFLOW_RESULTS_OUTCOME_UNAVAILABLE), "full bad page outcome",
+    )
+    require_equal(
+        short_bad_page, (None, False, results.WORKFLOW_RESULTS_OUTCOME_NO_MATCH), "short bad page outcome",
+    )
+
+
+def test_latest_marks_only_later_in_progress_runs_as_newer(results, monkeypatch):
+    chosen = completed_run("chosen", started_at="2025-01-06T14:00:00+00:00")
+    later_probe = {"id": "later", "status": "running", "started_at": "2025-01-06T15:00:00+00:00"}
+    earlier_probe = {"id": "earlier", "status": "running", "started_at": "2025-01-06T13:00:00+00:00"}
+    install_runtime_stubs(results, monkeypatch, latest_rows=[chosen], in_progress_rows=[later_probe])
+    later = results._select_latest(USER_ID, WORKFLOW_ID, None)
+    install_runtime_stubs(results, monkeypatch, latest_rows=[chosen], in_progress_rows=[earlier_probe])
+    earlier = results._select_latest(USER_ID, WORKFLOW_ID, None)
+
+    require_equal(later[0]["id"], "chosen", "later selected row")
+    require_is(later[1], True, "later probe newer flag")
+    require_equal(earlier[0]["id"], "chosen", "earlier selected row")
+    require_is(earlier[1], False, "earlier probe newer flag")
+
+
+@pytest.mark.parametrize("sidecar", [
+    retained_value(outcome="no_match"),
+    retained_value(outcome="status_only", status="failed"),
+    retained_value(),
+])
+@pytest.mark.parametrize("closed_reason", [
+    "workflow_deleting",
+    "shared_after_refresh",
+    "settings_gate",
+    "role_gate",
+])
+def test_rebuild_returns_none_when_access_has_closed_since_original_read(
+    results, monkeypatch, sidecar, closed_reason,
+):
+    wf_plan = planning()
+    workflow = {"id": WORKFLOW_ID, "user_id": USER_ID, "name": WORKFLOW_NAME}
+    settings_reason = None
+    role_reason = None
+    refresh_callback = None
+    authorized = []
+
+    if closed_reason == "workflow_deleting":
+        workflow["deleting"] = True
+    elif closed_reason == "shared_after_refresh":
+        def refresh_after_share(current, current_conversation, user_id):
+            refreshed = deepcopy(current)
+            refreshed["conversation_private"] = False
+            return refreshed
+        refresh_callback = refresh_after_share
+    elif closed_reason == "settings_gate":
+        settings_reason = "workflow_results_disabled"
+    elif closed_reason == "role_gate":
+        role_reason = "workflow_role_required"
+
+    install_runtime_stubs(
+        results,
+        monkeypatch,
+        wf_planning=wf_plan,
+        workflow=workflow,
+        settings_reason=settings_reason,
+        role_reason=role_reason,
+        refresh=refresh_callback,
+    )
+    monkeypatch.setattr(results, "_authorize_result_context", lambda user_id, ctx, **options: authorized.append(ctx))
+    service = ResultService(value=sidecar)
+    task = SimpleNamespace(output=lambda name: f"reference:{name}")
+
+    rebuilt = results.rebuild_workflow_results(step(), context(service, wf_plan), user_id=USER_ID, task=task)
+
+    require_is(rebuilt, None, "rebuild result after closed access")
+    require_equal(authorized, [], "authorization calls after closed access")
+
+
+def test_reader_storage_unavailable_fails_step_retryably(results, monkeypatch):
+    output, _service, _calls = run_step(
+        results,
+        monkeypatch,
+        latest_rows=[completed_run()],
+        read_result=FakeWorkflowResultUnavailable("workflow_result_storage_unavailable"),
+    )
+
+    require_equal(output["status"], "failed", "storage-unavailable step status")
+    require_equal(output["failure"]["code"], "workflow_results_unavailable", "storage-unavailable failure code")
+
+
+def test_saved_inputs_force_analysis_only_without_retained_context_or_excerpt(results, monkeypatch):
+    payload = result_payload(analysis_only=False, saved_inputs=[{"name": "private input"}])
+    output, service, _calls = run_step(results, monkeypatch, latest_rows=[completed_run()], read_result=payload)
+    persisted = service.persisted[0]["outputs"][0][2]
+    exposed = json.dumps({"output": output, "persisted": persisted}, default=str)
+
+    require_equal(output["status"], "completed", "saved-inputs step status")
+    require_equal(
+        output["workflow_results"]["outcome"],
+        results.WORKFLOW_RESULTS_OUTCOME_ANALYSIS_ONLY,
+        "saved-inputs public outcome",
+    )
+    require_is(output["workflow_results"]["context"], None, "saved-inputs public context")
+    require_equal(persisted["outcome"], results.WORKFLOW_RESULTS_OUTCOME_ANALYSIS_ONLY, "saved-inputs retained outcome")
+    require_is(persisted["context"], None, "saved-inputs retained context")
+    require(EXCERPT_MARKER not in exposed, "saved-inputs outcome leaked excerpt text")
+
+
+def test_workflow_results_step_rechecks_cancellation_after_read_before_persisting(results, monkeypatch):
+    service = ResultService()
+    wf_plan = planning()
+    ctx = context(service, wf_plan)
+    cancelled = {"value": False}
+
+    def read_step(current_step, current_context, *, settings, user_id):
+        cancelled["value"] = True
+        return retained_value(outcome="no_match")
+
+    monkeypatch.setattr(results, "_read_workflow_result_step", read_step)
+
+    with pytest.raises(results.MixedSourceCancellationError):
+        results.run_workflow_results(
+            step(),
+            ctx,
+            settings=deepcopy(SETTINGS),
+            user_id=USER_ID,
+            cancel_requested=lambda: cancelled["value"],
+        )
+
+    require_equal(service.persisted, [], "cancelled attempt must not persist")
 
 
 if __name__ == "__main__":
