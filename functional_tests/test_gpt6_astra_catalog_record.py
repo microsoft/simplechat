@@ -1,7 +1,7 @@
 # test_gpt6_astra_catalog_record.py
 """
 Functional test for the GPT-6 Astra model catalog record.
-Version: 0.261.220
+Version: 0.261.221
 Implemented in: 0.261.220
 
 Refs #1606. GPT-6 Astra moves from an operation-only record to a token-evidenced
@@ -154,7 +154,7 @@ class TestGpt6AstraCatalogRecord(unittest.TestCase):
         self.assertTrue(capabilities.is_reasoning_model(ASTRA))
 
     def test_siblings_inherit_nothing_and_suffixed_names_get_no_token_limits(self):
-        for name in ("gpt-6", "gpt-6-sol", "gpt-6-luna"):
+        for name in ("gpt-6", "gpt-6-luna"):
             with self.subTest(model=name):
                 self.assertEqual(
                     capabilities.resolve_model_reasoning_policy(name)["status"], "unknown"
@@ -164,7 +164,7 @@ class TestGpt6AstraCatalogRecord(unittest.TestCase):
                 self.assertEqual(
                     capabilities.resolve_model_reasoning_policy(name)["efforts"], EFFORTS
                 )
-        for name in ("gpt-6", "gpt-6-sol", "gpt-6-astra-2026-09-03", "gpt-6-astra-eastus"):
+        for name in ("gpt-6", "gpt-6-luna", "gpt-6-astra-2026-09-03", "gpt-6-astra-eastus"):
             with self.subTest(model=name):
                 budget = capabilities.resolve_model_token_budget(
                     {"modelName": name}, provider="azure", request_output_limit=4096,

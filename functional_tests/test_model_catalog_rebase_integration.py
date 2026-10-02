@@ -1,9 +1,10 @@
 # test_model_catalog_rebase_integration.py
 """
 Offline regression tests for audited token and React V2 metadata coexistence.
-Version: 0.261.220
+Version: 0.261.221
 Implemented in: 0.261.122
 GPT-6 Astra token-evidenced record: 0.261.220
+GPT-6 Sol token-evidenced record: 0.261.221
 
 Protect audited, qualitative-capability, reasoning-only, and embedding-policy
 records, provider-qualified image profiles, historical source reviews, and their
@@ -51,7 +52,7 @@ REASONING_POLICY_IDS = REASONING_ONLY_IDS | {
     "gpt-5.3-codex", "gpt-5.2-codex", "gpt-5.2", "gpt-5.1",
     "gpt-5.1-codex", "gpt-5.1-codex-mini", "gpt-5.1-codex-max",
     "gpt-5", "gpt-5-pro", "gpt-5-codex", "gpt-5-mini", "gpt-5-nano",
-    "gpt-4o", "gpt-4.1", "o1", "o3", "o3-mini", "o4-mini", "gpt-6-astra",
+    "gpt-4o", "gpt-4.1", "o1", "o3", "o3-mini", "o4-mini", "gpt-6-astra", "gpt-6-sol",
 }
 OPENAI_EMBEDDING_POLICY = {
     "max_input_tokens": 8192,
@@ -123,7 +124,7 @@ RESPONSES_IMAGE_IDS = {
     "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-5.5",
     "gpt-5.4", "gpt-5.4-pro", "gpt-5.4-mini", "gpt-5.4-nano",
     "gpt-5.2", "gpt-5.1", "gpt-5", "gpt-5-nano",
-    "gpt-4o", "gpt-4o-mini", "gpt-4.1", "gpt-4.1-nano", "o3", "gpt-6-astra",
+    "gpt-4o", "gpt-4o-mini", "gpt-4.1", "gpt-4.1-nano", "o3", "gpt-6-astra", "gpt-6-sol",
 }
 DIRECT_IMAGE_IDS = {
     "gpt-image-2", "gpt-image-1.5", "gpt-image-1", "gpt-image-1-mini",
@@ -157,6 +158,10 @@ SOURCE_REVIEW_HISTORY = {
     },
     "2026-10-01": {
         "openai-spec-gpt-6-astra", "azure-spec-gpt-6", "gpt-6-astra-deployed-contract",
+        "gpt-6-sol-deployed-contract",
+    },
+    "2026-10-02": {
+        "openai-spec-gpt-6-sol",
     },
 }
 

@@ -57,7 +57,7 @@ There are three new sources: `openai-spec-gpt-6-astra`, `azure-spec-gpt-6` and `
 - Budgets for `gpt-6-astra` resolve to the verified limits for Azure and OpenAI, so file evidence and workflow budgets no longer need manual limits. Limits set in Model Endpoints still take precedence.
 - Chat now sends the selected reasoning effort. If `none` or another unsupported effort is selected, chat sends `low` instead. Agents still send their saved effort as is, so don't save a `gpt-6-astra` agent with None.
 - `gpt-6`, `gpt-6-sol` and `gpt-6-luna` don't inherit anything from this record. Suffixed deployment names such as `gpt-6-astra-eastus` get the reasoning policy, which matches by prefix, but not the token limits, which need the exact model name.
-- Agents with actions on `gpt-6-astra` still fail on Azure Chat Completions. Local agents can't use the Responses API yet, and the runtime doesn't yet fail early with a clear message. #1606 tracks both. For agents with actions, use `gpt-6-sol` with Reasoning Effort set to None.
+- Agents with actions on `gpt-6-astra` still fail on Azure Chat Completions. Local agents can't use the Responses API yet, and the runtime doesn't yet fail early with a clear message. #1606 tracks both. For agents with actions, use `gpt-6-sol`. From 0.261.221, SimpleChat sends Reasoning Effort None for it when tools are present; see [GPT6_SOL_CHAT_COMPLETIONS_TOOLS_FIX.md](GPT6_SOL_CHAT_COMPLETIONS_TOOLS_FIX.md).
 
 ## Validation
 
