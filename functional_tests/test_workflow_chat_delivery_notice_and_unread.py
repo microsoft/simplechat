@@ -255,6 +255,31 @@ def test_guarded_unread_read_since_skips_without_writing():
     require(writes == 0, f"read_since should not write, got {writes} replaces")
 
 
+def test_guarded_unread_read_since_equal_boundary_skips_without_writing():
+    conversation_before = make_conversation(last_updated=PLANNED_AT)
+    container = FakeContainer("conversations", [conversation_before])
+    stored_before = container.get(CONVERSATION_ID)
+    unread_before = stored_before.get("has_unread_assistant_response")
+    outcome, conversation = mark_conversation_unread_guarded(
+        container,
+        CONVERSATION_ID,
+        USER,
+        MESSAGE_ID,
+        shift(PLANNED_AT, minutes=1),
+        skip_if_read_since=PLANNED_AT,
+    )
+    stored_after = container.get(CONVERSATION_ID)
+    writes = replace_count(container)
+
+    require(outcome == UNREAD_READ_SINCE, f"expected read_since at the exact read boundary, got {outcome}")
+    require(conversation.get("last_updated") == PLANNED_AT, f"read_since should return the stored boundary conversation: {conversation}")
+    require(writes == 0, f"exact read boundary should not write, got {writes} replaces")
+    require(
+        stored_after.get("has_unread_assistant_response") == unread_before,
+        f"exact read boundary should leave unread flag unchanged; before {unread_before!r}, after {stored_after}",
+    )
+
+
 def test_guarded_unread_missing_conversation_returns_not_found():
     container = FakeContainer("conversations")
     outcome, conversation = mark_conversation_unread_guarded(container, CONVERSATION_ID, USER, MESSAGE_ID, PLANNED_AT)
@@ -290,6 +315,31 @@ def test_guarded_unread_require_private_false_allows_non_private_conversation():
     stored = container.get(CONVERSATION_ID)
     require(outcome == UNREAD_MARKED, f"require_private=False should allow non-private conversations: {outcome}")
     require(stored.get("last_unread_assistant_message_id") == MESSAGE_ID, f"non-private mark missing: {stored}")
+
+
+def test_guarded_unread_require_private_false_rejects_wrong_owner_without_writing():
+    conversation_before = make_conversation(user_id=OTHER_USER)
+    container = FakeContainer("conversations", [conversation_before])
+    stored_before = container.get(CONVERSATION_ID)
+    unread_before = stored_before.get("has_unread_assistant_response")
+    outcome, conversation = mark_conversation_unread_guarded(
+        container,
+        CONVERSATION_ID,
+        USER,
+        MESSAGE_ID,
+        PLANNED_AT,
+        require_private=False,
+    )
+    stored_after = container.get(CONVERSATION_ID)
+    writes = replace_count(container)
+
+    require(outcome == UNREAD_UNAVAILABLE, f"wrong owner must be unavailable even with require_private=False, got {outcome}")
+    require(conversation.get("user_id") == OTHER_USER, f"wrong-owner rejection should return the stored conversation: {conversation}")
+    require(writes == 0, f"wrong owner with require_private=False should not write, got {writes} replaces")
+    require(
+        stored_after.get("has_unread_assistant_response") == unread_before,
+        f"wrong owner should leave unread flag unchanged; before {unread_before!r}, after {stored_after}",
+    )
 
 
 def test_guarded_unread_conflict_after_retry_budget_counts_attempts():
