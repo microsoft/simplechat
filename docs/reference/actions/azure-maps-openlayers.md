@@ -39,6 +39,21 @@ The new chat also shows a point's details on hover, has a **Full screen** button
 everything on the map as text under **List what the map shows**. There the mouse wheel zooms only
 with Ctrl (Cmd on a Mac), so scrolling a conversation never zooms a map by accident.
 
+## Photos and facts on a point
+
+A point can carry a photo of the place and labelled facts about it, so a reader sees the evidence
+for a location where it sits on the map instead of matching it up from the reply text. An agent
+sends them with each item in `locations_json`:
+
+- `image_url`: an `https` link to the photo. Links that are not `https` are left out, and the
+  action's result tells the agent how many it dropped.
+- `image_caption`: what the photo shows, used as its caption and its alternative text.
+- `fields`: a list of `{label, value}` pairs, such as a reading's time or a transponder ID.
+
+The new chat shows the photo, caption and facts with the point's details, opens the photo full
+size when it is clicked, and lists the facts and a thumbnail under **List what the map shows**.
+The classic chat shows the point's label and description only.
+
 Tiles load through SimpleChat, so the browser never receives the Azure Maps key. The tile link
 stored with a reply expires after four hours and is reissued whenever the conversation is opened,
 so maps in older replies keep loading.

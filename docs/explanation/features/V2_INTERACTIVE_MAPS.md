@@ -2,6 +2,8 @@
 
 Implemented in version: **0.261.223**
 
+Marker photos and fields added in version: **0.261.225**
+
 Related issue: [#1609](https://github.com/microsoft/simplechat/issues/1609)
 
 ## Overview
@@ -18,9 +20,13 @@ The V2 chat now draws the same map under the reply:
   scroll still scrolls the conversation, so a long thread with maps stays easy to read.
 - Hovering a marker, path or area shows its label and description. Clicking keeps the details
   open until you click elsewhere on the map or press **Escape**.
+- A marker can carry a photo of the place and labelled facts about it, such as a toll read's
+  time, transponder and lane. Both show with the marker's details; click the photo to see it
+  full size. A reading with no camera image still shows its facts.
 - The **Full screen** button expands the map to the whole screen.
-- **List what the map shows** opens a text list of every marker, path and area, for keyboard and
-  screen reader users and for reading labels without hunting for points.
+- **List what the map shows** opens a text list of every marker, path and area, with each
+  marker's facts and a thumbnail of its photo, for keyboard and screen reader users and for
+  reading labels without hunting for points.
 - The header names the map, repeats the action's summary and counts what the map holds; the
   footer names the provider, the action and the tile attribution.
 
@@ -64,6 +70,35 @@ that received a workflow's reply.
 - `stripLegacyMapBlocks(content)` removes legacy `{{map:...}}` blocks that older replies stored
   in their text, matching braces outside JSON strings the way the server does. The classic chat
   removes them too; the map itself comes from the tool result.
+
+### Marker photos and fields
+
+Added in 0.261.225. Agents usually map places they found in records that also hold a picture of
+the place, such as a plate reader's overview frame or a rental counter's camera still, and facts
+that matter for each point, such as when a transponder was read. Before this, the only way to
+show either was to repeat it in the reply text, away from the point it belongs to.
+
+- In `locations_json`, each point can carry `image_url`, `image_caption` and `fields`. `fields`
+  is a list of `{label, value}` objects; the action also accepts an object such as
+  `{"Lane": 4}`, and `image` as an object with `url` and `caption` or `label`.
+- The action keeps a photo only when `image_url` is an absolute `https` URL of at most 2,048
+  characters with no whitespace, quotes, angle brackets or backslashes. Anything else is left
+  out, and the result's summary tells the agent how many links it left out, so it can correct
+  them. Captions are capped at 200 characters. Up to 12 fields are kept, with labels capped at
+  60 characters and values at 300; values must be text, numbers or yes/no.
+- `safeImageUrl` in `inlineMaps.ts` applies the same link rules in the browser, so a payload
+  written by anything other than the action cannot point a photo at another scheme or at a
+  SimpleChat path that would be requested with the user's session.
+- The popup shows the photo, its caption, the label and description, then the fields as a
+  definition list, all written with `textContent`. The photo loads only when someone points at
+  the marker, and with `referrerPolicy = 'no-referrer'`, so the host serving it does not learn
+  which page showed it. If it fails to load, the popup says so.
+- The popup opens on whichever side of the marker has more room. Clicks inside it stay in it
+  (`stopEvent: true`), and a pinned popup is panned fully into view. Clicking the photo opens
+  `ImageLightbox`, the viewer the chat already uses for images.
+- Signed photo links keep working when the conversation is reopened: tool-result redaction does
+  not touch their `exp` or `sig` parameters. A photo whose own link expires stops loading when
+  the link does.
 
 ### Drawing the map
 
@@ -120,7 +155,24 @@ one.
 1. Give an agent the Azure Maps action and ask it to map known locations, a route or an area.
 2. The reply shows the map under its text. Hover a point for its details, click to keep them
    open, and use **Full screen** for a closer look.
-3. Open **List what the map shows** to read every label and description as text.
+3. When a point has a photo, click it in the pinned details to see it full size.
+4. Open **List what the map shows** to read every label, description and field as text.
+
+To give points photos and facts, have the agent pass them in `locations_json`, for example:
+
+```json
+[{
+  "label": "MD-T01 10/01 21:14",
+  "description": "Fort McHenry toll plaza, read TR-5101421",
+  "latitude": 39.2648, "longitude": -76.5795,
+  "image_url": "https://media.example.com/tlpr/media/tlpr-scene-TR-5101421.png?exp=...&sig=...",
+  "image_caption": "Overview image MD-T01 lane 4",
+  "fields": [
+    {"label": "Transponder", "value": "GA-PP-4471023"},
+    {"label": "Read at", "value": "10/01 21:14:07 ET"}
+  ]
+}]
+```
 
 ## Testing and Validation
 
@@ -136,11 +188,21 @@ one.
 - `ui_tests/test_v2_inline_maps.py`: the real `MessageList` and card in Chromium with production
   CSS. It covers tiles from the proxy, the expand control, no HTML attribution control, the legacy
   block hidden, hover details, click to pin, Escape, a compact citation fetched and drawn, the
-  text list, and the fallback when OpenLayers cannot load.
+  text list, and the fallback when OpenLayers cannot load. Since 0.261.225 it also covers a
+  marker's photo, caption and fields as text, the photo loaded without a referrer, an `http`
+  photo link never requested, the popup opening below a marker in the top half and above one in
+  the bottom half, the photo opening full size from the pinned popup and from the list.
+- `functional_tests/test_azure_maps_marker_photos_and_fields.py`: which photo links the action
+  keeps and the summary that reports the rest, field normalization and caps, signed photo links
+  surviving tool-result redaction, and the card writing captions and fields only as text.
 
 ### Known limitations
 
 - Classic chat still shows details on click only; hover tooltips are V2-only for now.
+- Marker photos and fields show in the V2 chat only. The classic chat shows a marker's label and
+  description, as before.
+- A photo must be served over `https`. A host that refuses requests without a referrer, or that
+  needs the user's own sign-in, will not show its photos.
 - A map is drawn only in the chat. Exported conversations do not include a map image.
 - A tile token issued when the conversation was opened lasts 240 minutes; reopen the conversation
   to reissue it.

@@ -9,7 +9,8 @@
 //
 // The payload is data an action returned, so none of it is trusted as markup or as a place to
 // load from: text is only ever rendered as text, a colour must look like a colour, a point must
-// be a real longitude and latitude, and tiles only ever come from SimpleChat's own tile proxy.
+// be a real longitude and latitude, tiles only ever come from SimpleChat's own tile proxy, and a
+// marker's photo must be an absolute https link.
 
 export const AZURE_MAPS_RENDER_TYPE = 'azure_maps_openlayers';
 
@@ -22,11 +23,26 @@ export const TILE_PROXY_PATH = '/api/azure-maps/tile';
 /** A point as `[longitude, latitude]`, the order the action and OpenLayers both use. */
 export type LonLat = [number, number];
 
+/** A photo of a marked place, shown with the marker's details. */
+export interface MapImage {
+    /** An absolute https URL. */
+    url: string;
+    caption: string;
+}
+
+/** One labelled fact about a marked place, such as a reading's time or a transponder ID. */
+export interface MapField {
+    label: string;
+    value: string;
+}
+
 export interface MapMarker {
     label: string;
     description: string;
     color: string;
     lonLat: LonLat;
+    image: MapImage | null;
+    fields: MapField[];
 }
 
 export interface MapPath {
@@ -81,6 +97,13 @@ const PATH_WIDTH = 4;
 
 /** Hex, rgb()/rgba() or a plain colour keyword. Anything else falls back to the default. */
 const COLOR_PATTERN = /^(?:#[0-9a-f]{3,8}|rgba?\(\s*[\d.]+%?\s*(?:,\s*[\d.]+%?\s*){2,3}\)|[a-z]{3,20})$/i;
+
+// The same limits the Azure Maps action applies when it builds the payload.
+const IMAGE_URL_MAX_LENGTH = 2048;
+const IMAGE_CAPTION_MAX_LENGTH = 200;
+const FIELD_LIMIT = 12;
+const FIELD_LABEL_MAX_LENGTH = 60;
+const FIELD_VALUE_MAX_LENGTH = 300;
 
 type UnknownRecord = Record<string, unknown>;
 
@@ -174,6 +197,51 @@ export function safeTileTemplate(value: unknown): string | null {
     return ['{z}', '{x}', '{y}'].every((placeholder) => template.includes(placeholder)) ? template : null;
 }
 
+/**
+ * The image link if it is an absolute https URL, otherwise null.
+ *
+ * https is the only scheme the chat's image policy loads from another host. A relative path is
+ * refused too: it would be requested from SimpleChat with the user's session.
+ */
+export function safeImageUrl(value: unknown): string | null {
+    const candidate = typeof value === 'string' ? value.trim() : '';
+    if (!candidate || candidate.length > IMAGE_URL_MAX_LENGTH || /[\s"'<>\\]/.test(candidate)) {
+        return null;
+    }
+    try {
+        const parsed = new URL(candidate);
+        return parsed.protocol === 'https:' && parsed.hostname ? parsed.href : null;
+    } catch {
+        return null;
+    }
+}
+
+function readImage(url: unknown, caption: unknown): MapImage | null {
+    const safeUrl = safeImageUrl(url);
+    return safeUrl ? { url: safeUrl, caption: text(caption).slice(0, IMAGE_CAPTION_MAX_LENGTH) } : null;
+}
+
+function readFields(raw: unknown): MapField[] {
+    if (!Array.isArray(raw)) {
+        return [];
+    }
+    const fields: MapField[] = [];
+    for (const field of raw) {
+        if (!isRecord(field)) {
+            continue;
+        }
+        const value = typeof field.value === 'number' && Number.isFinite(field.value) ? String(field.value) : text(field.value);
+        const label = text(field.label);
+        if (label && value) {
+            fields.push({ label: label.slice(0, FIELD_LABEL_MAX_LENGTH), value: value.slice(0, FIELD_VALUE_MAX_LENGTH) });
+        }
+        if (fields.length === FIELD_LIMIT) {
+            break;
+        }
+    }
+    return fields;
+}
+
 function readMarkers(raw: unknown): MapMarker[] {
     if (!Array.isArray(raw)) {
         return [];
@@ -191,6 +259,8 @@ function readMarkers(raw: unknown): MapMarker[] {
             description: text(marker.description),
             color: color(marker.color, MARKER_COLOR),
             lonLat: point,
+            image: readImage(marker.image_url, marker.image_caption),
+            fields: readFields(marker.fields),
         }];
     });
 }

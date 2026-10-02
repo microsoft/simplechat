@@ -148,6 +148,7 @@ export interface OlMap {
     forEachFeatureAtPixel<T>(pixel: number[], callback: (feature: OlFeature) => T): T | undefined;
     addInteraction(interaction: unknown): void;
     addControl(control: unknown): void;
+    getSize(): number[] | undefined;
     updateSize(): void;
     setTarget(target?: HTMLElement): void;
     dispose(): void;
@@ -164,6 +165,10 @@ export interface OlVectorSource {
 
 export interface OlOverlay {
     setPosition(position?: OlCoordinate): void;
+    /** `top`, `center` or `bottom`, a dash, then `left`, `center` or `right`. */
+    setPositioning(positioning: string): void;
+    setOffset(offset: number[]): void;
+    panIntoView(options?: OlOptions): void;
 }
 
 type OlConstructor<T = unknown> = new (options: OlOptions) => T;

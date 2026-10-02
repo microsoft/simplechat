@@ -1,16 +1,19 @@
 # test_v2_inline_maps.py
 """
 UI test for interactive Azure Maps cards in the V2 chat.
-Version: 0.261.223
+Version: 0.261.225
 Implemented in: 0.261.223
+Marker photos and fields in: 0.261.225
 
 This test ensures that an assistant reply carrying an Azure Maps action result draws an
 interactive OpenLayers map under the reply: tiles load only through the SimpleChat tile proxy,
-hovering a marker shows its details and a click keeps them open, the map can be expanded, a
-compact citation is fetched before it is drawn, everything on the map is also listed as text,
-a legacy {{map:...}} block is hidden from the reply text, and a readable fallback is shown when
-OpenLayers cannot load. Only HTTP boundaries are mocked; the real MessageList, map card and
-vendored OpenLayers build run in Chromium with production CSS.
+hovering a marker shows its details and a click keeps them open, a marker's photo and fields
+show in its popup and in the list and the photo opens full size, the popup opens on the side of
+the marker with room, the map can be expanded, a compact citation is fetched before it is drawn,
+everything on the map is also listed as text, a legacy {{map:...}} block is hidden from the reply
+text, and a readable fallback is shown when OpenLayers cannot load. Only HTTP boundaries are
+mocked; the real MessageList, map card and vendored OpenLayers build run in Chromium with
+production CSS.
 
 Build: npm --prefix .\\application\\v2_ui run build -- --outDir ..\\..\\ui_tests\\artifacts\\orchestration-plan-editor
 Run: python -m pytest .\\ui_tests\\test_v2_inline_maps.py -q
@@ -18,6 +21,7 @@ Run: python -m pytest .\\ui_tests\\test_v2_inline_maps.py -q
 
 import base64
 import json
+import math
 import re
 from pathlib import Path
 from urllib.parse import urlsplit
@@ -92,6 +96,39 @@ HYDRATED = map_citation(
     markers=[],
     areas=[{"label": "Search box", "coordinates": [[-84.5, 33.6], [-84.3, 33.6], [-84.3, 33.8], [-84.5, 33.8]]}],
 )
+# A same-origin https link, because the harness refuses every other host.
+PHOTO = f"{ORIGIN}/map-photos/tlpr-scene-TR-5101421.png?exp=1791043200&sig=0a1b2c"
+PHOTO_CAPTION = "Overview image MD-T01 <b>lane 4</b>"
+PHOTO_VIEW = {"center": [0, 0], "zoom": 3, "max_zoom": 15, "fit_to_features": False}
+# Upper left of the centre, so its popup opens below it; the other is lower right, so its opens above.
+READ_POINT = (-20, 15)
+TAG_POINT = (20, -15)
+PHOTO_MAP = map_citation(
+    "Reads with photos",
+    markers=[
+        {
+            "label": "MD-T01 10/01 21:14",
+            "description": "Fort McHenry toll plaza, toll at 21:14 ET",
+            "longitude": READ_POINT[0],
+            "latitude": READ_POINT[1],
+            "image_url": PHOTO,
+            "image_caption": PHOTO_CAPTION,
+            "fields": [
+                {"label": "Transponder", "value": "GA-PP-4471023"},
+                {"label": "Read at", "value": "10/01 21:14:07 ET"},
+            ],
+        },
+        {
+            "label": "NJ-T03 10/02 01:52",
+            "description": "Transponder read, no camera",
+            "longitude": TAG_POINT[0],
+            "latitude": TAG_POINT[1],
+            "image_url": "http://media.example.test/not-https.png",
+            "fields": [{"label": "Toll", "value": "$4.50"}],
+        },
+    ],
+    view=PHOTO_VIEW,
+)
 COMPACT = {
     "tool_name": "Map: Search area",
     "function_name": "create_map_visualization",
@@ -120,6 +157,7 @@ class MapApi:
         self.assets = assets
         self.openlayers_available = openlayers_available
         self.tiles = []
+        self.photos = []
         self.citation_requests = []
         self.unexpected = []
         self.errors = []
@@ -143,6 +181,10 @@ class MapApi:
             return
         if path == "/api/azure-maps/tile":
             self.tiles.append(f"{path}?{parsed.query}")
+            route.fulfill(status=200, body=TILE, content_type="image/png")
+            return
+        if path.startswith("/map-photos/"):
+            self.photos.append(request.url)
             route.fulfill(status=200, body=TILE, content_type="image/png")
             return
         if path == f"/api/conversation/{CONVERSATION}/agent-citation/artifact-search-area":
@@ -282,6 +324,89 @@ def test_hover_shows_details_and_a_click_keeps_them_open(map_ui):
 
     region.press("Escape")
     expect(popup).to_be_hidden()
+
+
+def marker_pixel(box, point, view=PHOTO_VIEW):
+    """Where a lon/lat point is drawn on a map that shows `view` without fitting to its features."""
+
+    def mercator(lon, lat):
+        return math.radians(lon) * 6378137, math.log(math.tan(math.pi / 4 + math.radians(lat) / 2)) * 6378137
+
+    resolution = 156543.03392804097 / 2 ** view["zoom"]
+    x, y = mercator(*point)
+    center_x, center_y = mercator(*view["center"])
+    return (
+        box["x"] + box["width"] / 2 + (x - center_x) / resolution,
+        box["y"] + box["height"] / 2 - (y - center_y) / resolution,
+    )
+
+
+def test_marker_photo_and_fields_show_with_its_details_and_open_full_size(map_ui):
+    page, api = map_ui
+    mount_messages(page, api, [assistant("photo-reply", [PHOTO_MAP])])
+
+    card = map_card(page, "Reads with photos")
+    region = card.get_by_role("region", name=re.compile("Interactive map: Reads with photos"))
+    expect(region.locator(".ol-viewport")).to_have_count(1)
+    page.wait_for_timeout(300)
+    box = region.bounding_box()
+    read_at = marker_pixel(box, READ_POINT)
+    tag_at = marker_pixel(box, TAG_POINT)
+    away = (box["x"] + 30, box["y"] + box["height"] - 30)
+    popup = card.locator(".ol-overlay-container > div")
+
+    # Hovering the read shows its photo, caption and fields, all as text, below the marker.
+    page.mouse.move(*read_at)
+    expect(popup).to_be_visible()
+    expect(popup).to_contain_text("MD-T01 10/01 21:14")
+    expect(popup).to_contain_text("Fort McHenry toll plaza, toll at 21:14 ET")
+    expect(popup).to_contain_text(PHOTO_CAPTION)
+    expect(popup.locator("dt")).to_have_text(["Transponder", "Read at"])
+    expect(popup.locator("dd")).to_have_text(["GA-PP-4471023", "10/01 21:14:07 ET"])
+    photo = popup.locator("img")
+    expect(photo).to_have_attribute("src", PHOTO)
+    expect(photo).to_have_attribute("alt", PHOTO_CAPTION)
+    expect(photo).to_have_attribute("referrerpolicy", "no-referrer")
+    page.wait_for_function("() => { const image = document.querySelector('.ol-overlay-container img'); return image && image.complete; }")
+    assert api.photos == [PHOTO], api.photos
+    assert popup.locator("b").count() == 0
+    assert popup.bounding_box()["y"] > read_at[1], "a marker in the top half should open its popup below it"
+
+    # The transponder read has no usable photo: its http link is dropped and never requested,
+    # and its fields show on their own, above the marker.
+    page.mouse.move(*tag_at)
+    expect(popup).to_contain_text("NJ-T03 10/02 01:52")
+    expect(popup.locator("dd")).to_have_text(["$4.50"])
+    expect(popup.locator("img")).to_have_count(0)
+    popup_box = popup.bounding_box()
+    assert popup_box["y"] + popup_box["height"] < tag_at[1], "a marker in the bottom half should open its popup above it"
+
+    # A click pins the read's details; its photo then opens full size in the image viewer.
+    page.mouse.click(*read_at)
+    page.mouse.move(*away)
+    expect(popup).to_contain_text("MD-T01 10/01 21:14")
+    popup.get_by_role("button", name=f"View the full-size photo: {PHOTO_CAPTION}").click()
+    viewer = page.get_by_role("dialog")
+    expect(viewer).to_be_visible()
+    expect(viewer.locator(f'img[src="{PHOTO}"]')).to_be_visible()
+    page.keyboard.press("Escape")
+    expect(viewer).to_have_count(0)
+    expect(popup).to_be_visible()
+    region.press("Escape")
+    expect(popup).to_be_hidden()
+
+    # The list names the same photo and fields, for keyboard and screen reader users.
+    card.get_by_text("List what the map shows").click()
+    expect(card.get_by_text("Transponder: GA-PP-4471023 \u00b7 Read at: 10/01 21:14:07 ET")).to_be_visible()
+    expect(card.get_by_text("Toll: $4.50", exact=True)).to_be_visible()
+    listed_photo = card.locator("details").get_by_role("button", name=f"View the full-size photo: {PHOTO_CAPTION}")
+    expect(listed_photo).to_be_visible()
+    expect(card.locator("details img")).to_have_count(1)
+    listed_photo.click()
+    expect(page.get_by_role("dialog")).to_be_visible()
+    page.get_by_role("button", name="Close the image").click()
+    expect(page.get_by_role("dialog")).to_have_count(0)
+    assert all(url == PHOTO for url in api.photos), api.photos
 
 
 def test_compact_citation_is_fetched_and_the_map_is_listed_as_text(map_ui):

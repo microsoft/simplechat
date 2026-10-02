@@ -1,15 +1,17 @@
 // test_v2_inline_maps_logic.mjs
-// Version: 0.261.223
+// Version: 0.261.225
 // Implemented in: 0.261.223
+// Marker photos and fields in: 0.261.225
 // Executes the real V2 inline map helpers: which tool results become maps, how markers, paths,
 // areas and the starting view are read, and that nothing in a payload can point tiles at
-// another host or slip markup or an unchecked colour through.
+// another host, load a marker photo from anything but an https link, or slip markup or an
+// unchecked colour through.
 
 import assert from 'node:assert/strict';
 
 const {
-    AZURE_MAPS_RENDER_TYPE, TILE_PROXY_PATH, collectMapCitations, describeMapContents, readInlineMap, safeTileTemplate,
-    stripLegacyMapBlocks,
+    AZURE_MAPS_RENDER_TYPE, TILE_PROXY_PATH, collectMapCitations, describeMapContents, readInlineMap, safeImageUrl,
+    safeTileTemplate, stripLegacyMapBlocks,
 } = await import('../application/v2_ui/src/lib/inlineMaps.ts');
 
 const TEMPLATE = `${TILE_PROXY_PATH}?token=abc&api-version=2024-04-01&tilesetId=microsoft.base.road&zoom={z}&x={x}&y={y}&tileSize=256`;
@@ -136,6 +138,73 @@ check('only values that look like colours are passed to the map', () => {
     assert.deepEqual(map.markers.map((marker) => marker.color), [
         '#ff000080', 'rgba(1, 2, 3, 0.5)', 'crimson', '#0d6efd', '#0d6efd', '#0d6efd',
     ]);
+});
+
+check('a marker keeps an https photo and its caption, and any other link is dropped', () => {
+    const photo = 'https://media.example.test/tlpr/media/tlpr-scene-TR-1.png?exp=1791043200&sig=0a1b2c';
+    const at = { latitude: 1, longitude: 1 };
+    const map = readInlineMap(citation(mapResult({}, {
+        markers: [
+            { label: 'kept', image_url: photo, image_caption: '  Overview MD-T01  ', ...at },
+            { label: 'no caption', image_url: photo, ...at },
+            { label: 'none', ...at },
+            { label: 'http', image_url: 'http://media.example.test/a.png', ...at },
+            { label: 'relative', image_url: '/api/image/abc', ...at },
+            { label: 'protocol relative', image_url: '//media.example.test/a.png', ...at },
+            { label: 'script', image_url: 'javascript:alert(1)', ...at },
+            { label: 'data', image_url: 'data:image/png;base64,AAAA', ...at },
+            { label: 'quote', image_url: 'https://media.example.test/a.png"onerror="x', ...at },
+            { label: 'space', image_url: 'https://media.example.test/a b.png', ...at },
+            { label: 'too long', image_url: `https://media.example.test/${'a'.repeat(2100)}.png`, ...at },
+            { label: 'object', image_url: { url: photo }, ...at },
+        ],
+    })));
+    assert.deepEqual(map.markers[0].image, { url: photo, caption: 'Overview MD-T01' });
+    assert.deepEqual(map.markers[1].image, { url: photo, caption: '' });
+    assert.deepEqual(map.markers.slice(2).map((marker) => marker.image), Array(10).fill(null));
+    assert.equal(safeImageUrl(`  ${photo}  `), photo);
+    assert.equal(safeImageUrl('https:'), null);
+    assert.equal(safeImageUrl(42), null);
+
+    const longCaption = readInlineMap(citation(mapResult({}, {
+        markers: [{ image_url: photo, image_caption: 'c'.repeat(250), ...at }],
+    })));
+    assert.equal(longCaption.markers[0].image.caption.length, 200);
+});
+
+check('fields are label and value text, capped as the action caps them', () => {
+    const map = readInlineMap(citation(mapResult({}, {
+        markers: [{
+            label: 'Toll read', latitude: 1, longitude: 1,
+            fields: [
+                { label: 'Transponder', value: 'GA-PP-4471023' },
+                { label: 'Toll', value: 4.5 },
+                { label: '  ', value: 'no label' },
+                { label: 'No value', value: '' },
+                { label: 'Object', value: { nested: true } },
+                { label: '<b>Lane</b>', value: '<img src=x>' },
+                'not a field',
+                { label: 'L'.repeat(80), value: 'V'.repeat(400) },
+            ],
+        }],
+    })));
+    const [marker] = map.markers;
+    assert.deepEqual(marker.fields.slice(0, 3), [
+        { label: 'Transponder', value: 'GA-PP-4471023' },
+        { label: 'Toll', value: '4.5' },
+        { label: '<b>Lane</b>', value: '<img src=x>' },
+    ]);
+    assert.equal(marker.fields[3].label.length, 60);
+    assert.equal(marker.fields[3].value.length, 300);
+    assert.equal(marker.fields.length, 4);
+
+    const many = readInlineMap(citation(mapResult({}, {
+        markers: [{ latitude: 1, longitude: 1, fields: Array.from({ length: 20 }, (_, index) => ({ label: `F${index}`, value: 'v' })) }],
+    })));
+    assert.equal(many.markers[0].fields.length, 12);
+    // The action always stores a list; anything else is not read as fields.
+    const notAList = readInlineMap(citation(mapResult({}, { markers: [{ latitude: 1, longitude: 1, fields: { Tag: 'x' } }] })));
+    assert.deepEqual(notAList.markers[0].fields, []);
 });
 
 check('paths need two points and areas three, and an area ring is closed', () => {
