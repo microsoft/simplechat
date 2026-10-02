@@ -26,8 +26,10 @@ import { useUiStore } from '../../stores/uiStore';
 import { bubbleWidthClass, chatWidthClass } from '../../lib/chatWidth';
 import { resolveImageSource, imageEndpointBase } from '../../lib/images';
 import { useImageEditCapability, useImageRevisions } from '../../lib/imageRevisions';
+import { stripLegacyMapBlocks } from '../../lib/inlineMaps';
 import { EmptyState, GlassButton, GlassPanel, Skeleton } from '../ui/primitives';
 import { AssistantMarkdown } from './AssistantMarkdown';
+import { InlineMapCards } from './InlineMapCard';
 import { ChatFilePreview } from './ChatFilePreview';
 import { GeneratedArtifactCard } from './GeneratedArtifactCard';
 import { AnalysisResult } from './AnalysisResult';
@@ -1076,12 +1078,21 @@ function MessageBubbleInner({
                                     generatedImages={generatedImages}
                                 >
                                     <AssistantMarkdown
-                                        content={message.content}
+                                        content={masks.ranges.length === 0
+                                            ? stripLegacyMapBlocks(message.content)
+                                            : message.content}
                                         masks={masks.ranges}
                                         messageId={message.id}
                                     />
                                 </ImageProposalScope>
                             </div>
+                        )}
+                        {/* Maps an action returned live in the message's tool results, not its text. */}
+                        {masks.ranges.length === 0 && (
+                            <InlineMapCards
+                                citations={message.agent_citations}
+                                conversationId={message.conversation_id}
+                            />
                         )}
                         {(message.model_deployment_name || message.agent_display_name) && (
                             <p className="mt-2 flex items-center gap-1.5 text-[11px] text-text-3">

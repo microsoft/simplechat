@@ -2,7 +2,7 @@
 """
 Functional test for V2 TeX, Mermaid and SimpleChart rendering.
 
-Version: 0.261.024
+Version: 0.261.223
 Implemented in: 0.261.024
 
 Three kinds of block the application already produces were shown in the V2 chat as raw
@@ -65,6 +65,11 @@ VENDORED_LIBRARIES = {
         "marker": ("purify.min.js", "DOMPurify"),
         "min_bytes": 10_000,
     },
+    "openlayers-10.6.1": {
+        "files": ["ol.js", "ol.css", "LICENSE.md"],
+        "marker": ("ol.js", "OpenLayers"),
+        "min_bytes": 800_000,
+    },
 }
 
 # npm packages that would move this browser code back out of the repository. Each is the
@@ -79,6 +84,9 @@ FORBIDDEN_NPM_DEPENDENCIES = (
     "remark-math",
     "rehype-katex",
     "@types/katex",
+    "ol",
+    "openlayers",
+    "@types/ol",
 )
 
 

@@ -123,11 +123,84 @@ export interface DomPurifyStatic {
     sanitize(dirty: string, config?: DomPurifyConfig): string;
 }
 
+/**
+ * OpenLayers 10.6.1 — the full build, which registers the `ol` namespace.
+ * https://openlayers.org/en/v10.6.1/apidoc/
+ *
+ * Coordinates are in the map projection (Web Mercator) unless a name says lon/lat.
+ */
+export type OlCoordinate = number[];
+export type OlOptions = Record<string, unknown>;
+
+export interface OlFeature {
+    getProperties(): Record<string, unknown>;
+    setStyle(style: unknown): void;
+}
+
+export interface OlMapBrowserEvent {
+    pixel: number[];
+    coordinate: OlCoordinate;
+    dragging: boolean;
+}
+
+export interface OlMap {
+    on(type: 'click' | 'pointermove', listener: (event: OlMapBrowserEvent) => void): unknown;
+    forEachFeatureAtPixel<T>(pixel: number[], callback: (feature: OlFeature) => T): T | undefined;
+    addInteraction(interaction: unknown): void;
+    addControl(control: unknown): void;
+    updateSize(): void;
+    setTarget(target?: HTMLElement): void;
+    dispose(): void;
+}
+
+export interface OlView {
+    fit(extent: number[], options?: { padding?: number[]; maxZoom?: number; duration?: number }): void;
+}
+
+export interface OlVectorSource {
+    addFeatures(features: OlFeature[]): void;
+    getExtent(): number[];
+}
+
+export interface OlOverlay {
+    setPosition(position?: OlCoordinate): void;
+}
+
+type OlConstructor<T = unknown> = new (options: OlOptions) => T;
+
+export interface OpenLayersStatic {
+    Map: OlConstructor<OlMap>;
+    View: OlConstructor<OlView>;
+    Feature: OlConstructor<OlFeature>;
+    Overlay: OlConstructor<OlOverlay>;
+    layer: { Tile: OlConstructor; Vector: OlConstructor };
+    source: { XYZ: OlConstructor; Vector: new (options?: OlOptions) => OlVectorSource };
+    geom: {
+        Point: new (coordinate: OlCoordinate) => unknown;
+        LineString: new (coordinates: OlCoordinate[]) => unknown;
+        Polygon: new (rings: OlCoordinate[][]) => unknown;
+    };
+    style: { Style: OlConstructor; Circle: OlConstructor; Fill: OlConstructor; Stroke: OlConstructor };
+    proj: { fromLonLat(lonLat: number[]): OlCoordinate };
+    extent: { isEmpty(extent: number[]): boolean };
+    /** The full build exposes each `defaults` module as a namespace holding the function. */
+    interaction: {
+        defaults: { defaults(options?: OlOptions): unknown };
+        MouseWheelZoom: OlConstructor;
+    };
+    control: {
+        defaults: { defaults(options?: OlOptions): unknown };
+        FullScreen: OlConstructor<{ element: HTMLElement }>;
+    };
+    events: { condition: { platformModifierKeyOnly: (event: unknown) => boolean } };
+}
+
 declare global {
     interface Window {
         katex?: KatexStatic;
         mermaid?: MermaidStatic;
         Chart?: ChartJsConstructor;
         DOMPurify?: DomPurifyStatic;
+        ol?: OpenLayersStatic;
     }
 }

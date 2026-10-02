@@ -2,6 +2,29 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.223)**
+
+#### New Features
+
+*   **Interactive Maps in the V2 Chat**
+    *   A reply that used the Azure Maps action now shows its map under the text in the V2 chat, as the classic chat does. It opens fitted to every marker, path and area, and can be panned, zoomed and expanded to full screen.
+    *   Hovering a marker, path or area shows its label and description; clicking keeps them open until you click elsewhere or press Escape. **List what the map shows** lists everything on the map as text for keyboard and screen reader users.
+    *   The mouse wheel zooms only with Ctrl (Cmd on a Mac), so scrolling a conversation never zooms a map by accident.
+    *   OpenLayers 10.6.1, the build the classic chat already uses, is vendored into the V2 app and loaded only when a reply has a map. No CDN assets are added and the Content-Security-Policy is unchanged.
+    *   Map text is only ever written as text, and tiles are only loaded through SimpleChat's tile proxy.
+    *   (Ref: #1609, `InlineMapCard.tsx`, `lib/inlineMaps.ts`, `vendorAssets.ts`, [V2 Interactive Maps](features/V2_INTERACTIVE_MAPS.md))
+
+#### Bug Fixes
+
+*   **Maps in Older Replies and Group Conversations Load Their Tiles**
+    *   The message endpoints the V2 chat reads, including the one for group conversations, returned maps with their original tile token, which expires after four hours. Older maps drew their points on blank tiles.
+    *   Both endpoints now reissue the token when the conversation is opened, as the classic route already did.
+    *   (Ref: #1609, `functions_azure_maps.py`, `route_backend_conversations.py`, `route_backend_collaboration.py`)
+
+*   **Legacy Map Blocks Hidden From V2 Replies**
+    *   Older replies that stored a `{{map:...}}` block in their text showed it as raw JSON in the V2 chat. The block is now hidden, as in the classic chat, and the map is drawn from the tool result.
+    *   (Ref: #1609, `stripLegacyMapBlocks` in `lib/inlineMaps.ts`, `MessageList.tsx`)
+
 ### **(v0.261.222)**
 
 #### New Features

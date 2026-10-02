@@ -29,6 +29,20 @@ Use common setup, then provide **Subscription Key** and test the Azure Maps conn
 
 Shared wizard steps: [Common action setup steps](../#common-action-setup-steps).
 
+## What people see in chat
+
+The map appears under the agent's reply, in personal conversations and in group conversations
+that receive the reply. In both the classic and the new chat it opens fitted to every marker, path
+and area, and people can pan, zoom and click a point to read its label and description.
+
+The new chat also shows a point's details on hover, has a **Full screen** button, and lists
+everything on the map as text under **List what the map shows**. There the mouse wheel zooms only
+with Ctrl (Cmd on a Mac), so scrolling a conversation never zooms a map by accident.
+
+Tiles load through SimpleChat, so the browser never receives the Azure Maps key. The tile link
+stored with a reply expires after four hours and is reissued whenever the conversation is opened,
+so maps in older replies keep loading.
+
 ## Related
 
 - [Actions reference index]({{ '/reference/actions/' | relative_url }})
