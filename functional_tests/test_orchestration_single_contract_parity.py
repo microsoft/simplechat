@@ -836,7 +836,7 @@ def test_new_plans_use_the_dependency_contract_under_auto_routing():
 def test_retry_flag_marks_only_read_only_gather_capabilities(harness):
     registry = importlib.import_module("functions_orchestration_registry")
     flagged = {capability["id"] for capability in registry.CAPABILITY_REGISTRY if capability.get("retry_on_transient")}
-    assert flagged == {"document_search", "web_search", "url_fetch", "deep_research"}
+    assert flagged == {"document_search", "web_search", "url_fetch", "deep_research", "workflow_results"}
     dependency = {
         capability["id"]: capability for capability in registry.capabilities_for_contract(2)
     }

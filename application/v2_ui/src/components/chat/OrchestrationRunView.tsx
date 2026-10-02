@@ -57,12 +57,19 @@ import type {
     PlanEdits,
     OrchestrationPlanAction,
     OrchestrationPlanWorkflow,
+    OrchestrationPlanWorkflowResult,
     OrchestrationStep,
     StepStatus,
 } from '../../lib/orchestration';
 import type { ImageReferenceRequest } from '../../lib/imageReferences';
 import { useDocumentTitles } from '../../lib/documentTitles';
 import { plannedFileSpecification, type OrchestrationExportFormat } from '../../lib/orchestrationExports';
+import {
+    WORKFLOW_RESULTS_ARGUMENT_KEYS,
+    WORKFLOW_RESULTS_CAPABILITY,
+    workflowResultsDisplayName,
+    workflowResultsSelection,
+} from '../../lib/orchestrationWorkflowResults';
 
 const PREVIEW_EDITS: PlanEdits = { disabled_step_ids: [], removed_document_ids: {} };
 const PREVIEW_RUNTIME: StepRuntimeMap = {};
@@ -116,6 +123,10 @@ function readableArguments(step: OrchestrationStep): Array<[string, string]> {
         }
         // So is a saved workflow: its request-local handle means nothing to the reader.
         if (step.capability_id === 'workflow_run' && key === 'workflow') {
+            continue;
+        }
+        // A read of a saved workflow's result is shown in words below: its workflow and its run.
+        if (step.capability_id === WORKFLOW_RESULTS_CAPABILITY && WORKFLOW_RESULTS_ARGUMENT_KEYS.includes(key)) {
             continue;
         }
         if (hidden.has(key)) {
@@ -223,6 +234,13 @@ export function OrchestrationRunView({
         [plan],
     );
 
+    const planInputWorkflowResults = useMemo(
+        () => new Map<string, OrchestrationPlanWorkflowResult>(
+            (plan?.inputs?.workflow_results ?? []).map((workflow) => [workflow.handle, workflow]),
+        ),
+        [plan],
+    );
+
     const planImageReferences = useMemo(() => {
         const byId = new Map<string, { name: string; reference: ImageReferenceRequest }>();
         for (const entry of plan?.inputs?.image_reference_documents ?? []) {
@@ -294,6 +312,8 @@ export function OrchestrationRunView({
         const isWorkflowRun = step.capability_id === 'workflow_run';
         const workflowHandle = (step.arguments as Record<string, unknown>).workflow;
         const selectedWorkflow = typeof workflowHandle === 'string' ? planInputWorkflows.get(workflowHandle) : undefined;
+        const isWorkflowResults = step.capability_id === WORKFLOW_RESULTS_CAPABILITY;
+        const resultsWorkflow = typeof workflowHandle === 'string' ? planInputWorkflowResults.get(workflowHandle) : undefined;
         const willRun = step.enabled && !disabledStepIds.has(step.step_id);
         const rawStatus = stepRuntime[step.step_id]?.status ?? step.status;
         const status: StepStatus = willRun ? rawStatus : 'skipped';
@@ -391,6 +411,19 @@ export function OrchestrationRunView({
                                     {selectedWorkflow?.paused ? (
                                         <span className="ml-2 text-text-3">(paused)</span>
                                     ) : null}
+                                </dd>
+                            </dl>
+                        ) : null}
+
+                        {isWorkflowResults ? (
+                            <dl className="mt-2 text-xs" data-testid="orchestration-workflow-results-input">
+                                <dt className="font-medium text-text-3">Workflow</dt>
+                                <dd className="mt-0.5 break-words text-text-2">
+                                    {workflowResultsDisplayName(resultsWorkflow)}
+                                </dd>
+                                <dt className="mt-1 font-medium text-text-3">Run</dt>
+                                <dd className="mt-0.5 break-words text-text-2">
+                                    {workflowResultsSelection(step.arguments)}
                                 </dd>
                             </dl>
                         ) : null}

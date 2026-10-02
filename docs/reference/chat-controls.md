@@ -4,7 +4,7 @@ title: "Chat interface controls"
 description: "Reference for every documented control in the SimpleChat chat interface."
 section: "Reference"
 audience: user
-version: "0.261.214"
+version: "0.261.217"
 ---
 
 ## How to use this reference
@@ -620,3 +620,25 @@ converted to a collaboration, its Follow up answers are hidden for everyone, you
 included. The original chat's stored messages are unchanged. The
 collaboration's copies are stored with these answers withheld, and the chat's
 saved summary is cleared on both chats.
+
+### Saved workflow results in a plan
+
+Implemented in **0.261.217** (Refs: microsoft/simplechat#1546). With
+**Orchestrate** on, a plan can read the stored result of a finished run of one
+of your personal workflows, for example when you ask "what did my weekly digest
+find on Monday?". You don't select the run first: the plan finds the run you
+describe, and the workflow isn't run again. See
+[Ask Orchestrate about workflow results]({{ '/guides/ask-about-workflow-results/' | relative_url }}#ask-orchestrate-about-workflow-results).
+
+| Control or state | What it does | Why you would use it | Available when |
+| --- | --- | --- | --- |
+| Workflow (Run view) | Shows the name of the saved workflow whose result a step reads, or **Workflow details unavailable** when the name can't be shown. | Match each step to the workflow it reads. | `enable_chat_orchestration`, `allow_user_workflows` and `enable_chat_workflow_results`, plus the `WorkflowUser` role while `require_member_of_workflow_user` is on, in a conversation that's private to you, for a plan with a step that reads a saved workflow's result |
+| Run (Run view) | Shows which run the step reads, in words, such as **Latest run**, **Latest completed run** or **Run finished on 2025-06-02**. The day is your local day. | Check that the plan reads the run you meant before it runs. | Same as Workflow |
+
+The answer ends with **Saved workflow results:**, a note the server writes. It
+has a line for each run the answer used, such as "This answer uses the stored
+result of the Weekly digest run of Mon Jun 2, 2025, 9:02 AM PDT. The workflow
+was not re-run.", and a line for each result that wasn't read, with the reason.
+The answer uses a result as notes, not as a cited source. It's withheld like a
+Follow up answer once a result it used is no longer available to you, or the
+chat is shared or converted to a collaboration.
