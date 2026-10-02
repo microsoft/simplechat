@@ -2,8 +2,8 @@
 # test_workflow_chat_delivery_refusals.py
 """
 Functional test for refusing Retry and Edit on messages a workflow run posted to chat.
-Version: 0.261.226
-Implemented in: 0.261.226
+Version: 0.261.227
+Implemented in: 0.261.227
 
 This test ensures, in a fresh offline process that boots the real application, that the
 classic Retry and Edit routes refuse every message the workflow chat delivery posted (a
@@ -41,7 +41,7 @@ def require(condition, message):
 
 
 def test_version_is_at_least_the_chat_delivery_release():
-    assert_app_version_at_least("0.261.226")
+    assert_app_version_at_least("0.261.227")
 
 
 def run_offline_scenarios():

@@ -2,8 +2,8 @@
 # test_workflow_chat_delivery_status_route.py
 """
 Functional test for the workflow chat delivery status route.
-Version: 0.261.226
-Implemented in: 0.261.226
+Version: 0.261.227
+Implemented in: 0.261.227
 
 This test ensures that the workflow-run status payload and Flask route stay owner-scoped, bounded
 and safe: queries are single-partition projections, global and conversation modes include exactly

@@ -2,8 +2,8 @@
 # test_workflow_chat_delivery_projection_and_seed.py
 """
 Functional test for workflow chat delivery projection and seeding.
-Version: 0.261.226
-Implemented in: 0.261.226
+Version: 0.261.227
+Implemented in: 0.261.227
 
 This test ensures chat-started workflow runs seed delivery records and runtime projection reconciles them without blocking durable progress.
 """
@@ -254,7 +254,7 @@ def terminal_result(state):
 
 
 def test_version_is_at_least_the_chat_delivery_release():
-    assert_app_version_at_least("0.261.226")
+    assert_app_version_at_least("0.261.227")
 
 
 def test_projection_reconciles_terminal_states_and_signals_once(runtime_world):

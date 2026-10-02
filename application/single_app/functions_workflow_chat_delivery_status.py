@@ -1,8 +1,8 @@
 # functions_workflow_chat_delivery_status.py
 """Owner-only status rows for the workflow runs a user's chats started.
 
-Version: 0.261.226
-Implemented in: 0.261.226
+Version: 0.261.227
+Implemented in: 0.261.227
 
 Backs ``GET /api/v2/orchestration/workflow-runs/status``, the batched route the V2 run card polls.
 Every read is a single-partition query in the signed-in user's own partition that projects only

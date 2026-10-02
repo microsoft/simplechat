@@ -2,8 +2,8 @@
 # test_workflow_chat_delivery_save_guard.py
 """
 Functional test for the workflow chat delivery guarded run save.
-Version: 0.261.226
-Implemented in: 0.261.226
+Version: 0.261.227
+Implemented in: 0.261.227
 
 This test ensures chat-started workflow run saves preserve delivered chat-delivery state across stale full-document writes and worker retries.
 """
@@ -143,7 +143,7 @@ def upsert_calls(container):
 
 
 def test_version_is_at_least_the_chat_delivery_release():
-    assert_app_version_at_least("0.261.226")
+    assert_app_version_at_least("0.261.227")
 
 
 def test_guarded_stale_save_preserves_delivery_and_sweep_stays_exactly_once(personal_workflows, monkeypatch):

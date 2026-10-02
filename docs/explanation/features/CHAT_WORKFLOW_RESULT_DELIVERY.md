@@ -1,6 +1,6 @@
 # Workflow result delivery to chat
 
-Implemented in version: **0.261.226**.
+Implemented in version: **0.261.227**.
 
 Application version tracking: `application\single_app\config.py`.
 
@@ -731,7 +731,7 @@ and route responses as the live truth.
 | `application\single_app\route_backend_conversations.py` | Refuses Retry and Edit on delivery messages. |
 | `application\single_app\route_backend_orchestration.py` | Adds the V2 status route. |
 | `application\single_app\background_tasks.py` | Registers the delivery loop in the background task host and scheduler host. |
-| `application\single_app\config.py` | Tracks version `0.261.226`. |
+| `application\single_app\config.py` | Tracks version `0.261.227`. |
 
 ## Usage
 

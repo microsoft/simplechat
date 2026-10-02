@@ -2,8 +2,8 @@
 # test_workflow_chat_delivery_placement_and_masking.py
 """
 Functional test for workflow chat delivery placement and masking parity.
-Version: 0.261.226
-Implemented in: 0.261.226
+Version: 0.261.227
+Implemented in: 0.261.227
 
 This test ensures delivered workflow-result chat messages are placed like normal assistant replies and are masked on read exactly like 6a Follow up answers with the same lineage.
 """
@@ -67,7 +67,7 @@ def remove_reused_session_directory():
 
 
 def test_version_is_at_least_the_chat_delivery_release():
-    assert_app_version_at_least("0.261.226")
+    assert_app_version_at_least("0.261.227")
 
 
 def deliver(world, *, user_id=USER, run_id=RUN_ID):
