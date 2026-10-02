@@ -744,6 +744,28 @@ def test_a_create_whose_reply_was_lost_is_found_on_the_retry():
     assert world.notifications.chat_calls == [delivered_notice()]
 
 
+def test_a_create_that_loses_a_race_keeps_the_message_already_posted():
+    world = make_world()
+    original_create = world.messages.create_item
+
+    def another_attempt_posts_first(body=None, **kwargs):
+        world.messages.create_item = original_create
+        world.messages.put({**body, "content": "posted by a racing attempt"})
+        return original_create(body=body, **kwargs)
+
+    world.messages.create_item = another_attempt_posts_first
+
+    outcome = deliver(world)
+    assert outcome == worker.OUTCOME_DELIVERED, "a 409 on create means the message is already in the chat"
+
+    messages = world.delivery_messages()
+    assert [message["id"] for message in messages] == [M5]
+    assert messages[0]["content"] == "posted by a racing attempt", "the message already posted is kept"
+    assert world.record()["phase"] == "notified"
+    assert world.record()["attempts"] == 1, "a create that lost a race needs no retry"
+    assert world.notifications.chat_calls == [delivered_notice()]
+
+
 def test_a_failed_notice_is_sent_on_the_retry_without_reposting():
     world = make_world()
     world.notifications.chat_errors.append(RuntimeError("bell down"))
