@@ -93,7 +93,7 @@ class ResultService:
         value = self.value
 
         class Opened:
-            def read_value(self_inner):
+            def read_value(self):
                 if isinstance(value, Exception):
                     raise value
                 return deepcopy(value)

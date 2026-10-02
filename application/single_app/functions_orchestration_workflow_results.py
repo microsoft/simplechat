@@ -49,7 +49,6 @@ from functions_orchestration_registry import (
     WORKFLOW_RESULTS_DATE_PATTERN,
     WORKFLOW_RESULTS_MAX_PER_PLAN,
     WORKFLOW_RESULTS_SELECTOR_COMPLETED_ON,
-    WORKFLOW_RESULTS_SELECTOR_LATEST,
     WORKFLOW_RESULTS_SELECTORS,
     WORKFLOW_RESULTS_STATUS_FILTERS,
 )
@@ -741,7 +740,6 @@ def _check_access(step, context, *, settings, user_id):
     arguments = step.get('arguments') if isinstance(step.get('arguments'), dict) else {}
     handle = arguments.get('workflow')
     entry = workflow_run_catalog_entry(getattr(context, 'workflow_planning', None), handle)
-    name = _display_name(None, entry)
 
     def unavailable(reason, workflow_id=None, planning=None, workflow=None):
         return None, workflow_id, planning, _display_name(workflow, entry), _closed(

@@ -11,7 +11,6 @@ import importlib
 import json
 import sys
 from copy import deepcopy
-from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
@@ -23,11 +22,8 @@ sys.path.insert(0, str(APP_ROOT))
 sys.path.insert(0, str(ROOT / "functional_tests"))
 
 from test_orchestration_harness_routes import modules  # noqa: E402,F401
-from test_orchestration_workflow_planning_context import AGENT_SETTINGS  # noqa: E402
-from test_orchestration_workflow_planning_context import _build as _build_proposal_context  # noqa: E402
 from test_orchestration_workflow_run_capability import (  # noqa: E402
     ANSWER,
-    BOTH,
     CANDIDATES,
     IDENTITY,
     MESSAGE,
@@ -39,15 +35,10 @@ from test_orchestration_workflow_run_capability import (  # noqa: E402
     _run,
 )
 from test_orchestration_workflow_run_planning_context import (  # noqa: E402,F401
-    BOTH_SETTINGS,
     DIGEST_ID,
-    NOW,
     OWNER,
-    PRIVATE,
     PROPOSALS,
-    RUN_SETTINGS,
     RUNS,
-    USER_INFO,
     UUID_PATTERN,
     _build,
     _fail,
