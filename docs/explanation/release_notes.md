@@ -2,6 +2,59 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.221)**
+
+#### Bug Fixes
+
+*   **GPT-6 Sol Agents With Actions Send Reasoning Effort None**
+    *   Agents with actions on `gpt-6-sol` failed unless their Reasoning Effort was set to None by hand. Chat Completions accepts function tools for this model only with `reasoning_effort: none`, and with no effort set the model applied its own default and rejected the tools.
+    *   `gpt-6-sol` is now in the model catalog with a Chat Completions tool rule for Azure and direct OpenAI. An agent with tools and no effort set now sends `none`. Another explicit effort fails before the request with "This model's Chat Completions tools require Reasoning Effort None." instead of a provider error.
+    *   The record also carries the verified limits (1,050,000 context, 922,000 input, 128,000 output, counting reasoning tokens) and the reasoning efforts none, low, medium, high and xhigh.
+    *   (Ref: #1606, `model_capabilities.json`, [GPT-6 Sol Chat Completions Tools Fix](fixes/GPT6_SOL_CHAT_COMPLETIONS_TOOLS_FIX.md))
+
+### **(v0.261.220)**
+
+#### Bug Fixes
+
+*   **GPT-6 Astra Limits And Reasoning Efforts In The Model Catalog**
+    *   `gpt-6-astra` now has verified token limits for Azure and direct OpenAI: 1,050,000 context, 922,000 input and 128,000 output, counting reasoning tokens. File evidence and workflow budgets work without limits entered in Model Endpoints, and limits entered there still take precedence.
+    *   Its reasoning efforts are low, medium, high and xhigh. Chat now sends the selected effort; before, with no policy, it sent no effort and the model used its default. None and other unsupported selections are sent as Low. Agents still send their saved effort as is.
+    *   Azure Chat Completions rejects function tools for this model at every effort it accepts, so agents with actions can't run on it yet. The catalog records this in its notes. #1606 tracks a Responses API path and an early, clear error.
+    *   (Ref: #1606, `model_capabilities.json`, [GPT-6 Astra Model Catalog Fix](fixes/GPT6_ASTRA_MODEL_CATALOG_FIX.md))
+
+### **(v0.261.219)**
+
+#### Bug Fixes
+
+*   **GPT-6 Models Use Reasoning Model Request Parameters**
+    *   Requests to GPT-6 deployments failed whenever a response length was set: "Unsupported parameter: 'max_tokens' is not supported with this model. Use 'max_completion_tokens' instead." Every workflow run on a GPT-6 agent failed on its first model call once token limits were configured.
+    *   GPT-6 is now recognized alongside GPT-5, by name prefix and as a family name anywhere in a deployment or display name. Response length is sent as `max_completion_tokens`, and no temperature is sent. Workflow budgets, chat, prompt variables, content screening and orchestration all follow the shared policy.
+    *   (Ref: #1605, `model_endpoint_clients.py`, [GPT-6 Reasoning Model Parameters Fix](fixes/GPT6_REASONING_MODEL_PARAMETERS_FIX.md))
+
+### **(v0.261.218)**
+
+#### Bug Fixes
+
+*   **Scheduled Workflow Runs Act As Their Owner**
+    *   A scheduled run had no signed-in session, so the runner created one that held only the owner's object ID. Groups and conversation messages the run created showed that ID instead of the owner's name, and the run then wrote the ID over the owner's stored display name. The runner now uses the owner's stored display name and email. A manual run keeps the signed-in session, as before.
+    *   The SimpleChat action's `add_user_to_group` now accepts `user_id`. Given with an email or display name, it adds the user without a directory lookup, as the REST members route already does. Scheduled runs have no delegated token for Microsoft Graph, so they couldn't add members before.
+    *   Group conversation invites first match each identifier against the group's current owner and members, by user ID, email or display name. An identifier that matches no member, or more than one, still goes to the directory lookup.
+    *   (Ref: `functions_workflow_runner.py`, `functions_simplechat_operations.py`, `simplechat_plugin.py`, [Workflow Background Identity Fix](fixes/WORKFLOW_BACKGROUND_IDENTITY_FIX.md), [SimpleChat action](../reference/actions/simplechat.md))
+
+### **(v0.261.217)**
+
+#### Bug Fixes
+
+*   **Group Document Uploads With Enhanced Citations**
+    *   With Enhanced Citations on, every document uploaded to a group workspace failed with "Document processing failed." That included Word and Markdown documents an agent or workflow saved to a group. The upload's own status update changed the document record's etag between the read and the guarded write, so the write always saw a conflict.
+    *   The status is now posted before the record is read. A change made by anyone else during the upload is still rejected.
+    *   (Ref: `functions_documents.py`, [Group Document Blob Upload Etag Fix](fixes/GROUP_DOCUMENT_BLOB_UPLOAD_ETAG_FIX.md))
+
+*   **Call Agent Actions Save Again**
+    *   Saving any Call agent action, whether personal, group or global, failed with "Invalid plugin configuration." The manifest check rejected the server-owned `scope_id` field that binding to a collection adds, so agents couldn't delegate to other agents.
+    *   `scope_id` is now accepted. The server always sets it from the authorized collection, and every other extra field is still rejected.
+    *   (Ref: `functions_agent_delegation.py`, [Call Agent Action Save Fix](fixes/CALL_AGENT_ACTION_SAVE_FIX.md))
+
 ### **(v0.261.216)**
 
 #### Bug Fixes
