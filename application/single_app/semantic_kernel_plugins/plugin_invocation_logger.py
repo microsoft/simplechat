@@ -62,6 +62,8 @@ SECRET_ASSIGNMENT_RE = re.compile(
     r"(?i)\b(api[-_]?key|access[-_]?token|client[-_]?secret|connection[-_]?string|password|secret|subscription[-_]?key|token)=([^&\s,;]+)"
 )
 AUTHORIZATION_VALUE_RE = re.compile(r"(?i)\b(Bearer|Basic)\s+[A-Za-z0-9._~+/=-]+")
+# Azure Maps tile templates carry an encrypted, expiring proxy token the browser needs for tiles.
+AZURE_MAPS_TILE_PROXY_QUERY_PREFIX = "/api/azure-maps/tile?"
 
 
 class PluginInvocationResult(str):
@@ -109,9 +111,19 @@ def _redact_url(value: str) -> str:
     return urlunsplit((parts.scheme, netloc, parts.path, urlencode(query_pairs, doseq=True, safe="*"), parts.fragment))
 
 
+def _redact_secret_assignment(match: "re.Match[str]") -> str:
+    is_tile_proxy_token = (
+        match.group(1).lower() == "token"
+        and match.string.endswith(AZURE_MAPS_TILE_PROXY_QUERY_PREFIX, 0, match.start())
+    )
+    if is_tile_proxy_token:
+        return match.group(0)
+    return f"{match.group(1)}={REDACTED_INVOCATION_VALUE}"
+
+
 def _sanitize_invocation_string(value: str, max_string_length: Optional[int]) -> str:
     sanitized = _redact_url(value)
-    sanitized = SECRET_ASSIGNMENT_RE.sub(lambda match: f"{match.group(1)}={REDACTED_INVOCATION_VALUE}", sanitized)
+    sanitized = SECRET_ASSIGNMENT_RE.sub(_redact_secret_assignment, sanitized)
     sanitized = AUTHORIZATION_VALUE_RE.sub(lambda match: f"{match.group(1)} {REDACTED_INVOCATION_VALUE}", sanitized)
     if max_string_length and len(sanitized) > max_string_length:
         return f"{sanitized[:max_string_length]}... [truncated]"
