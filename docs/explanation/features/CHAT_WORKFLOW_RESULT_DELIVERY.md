@@ -758,19 +758,27 @@ silently because the run link would be dead or unknowable.
 When this documentation was written, these workflow chat delivery tests existed
 under `functional_tests\`:
 
+- `test_workflow_chat_delivery_concurrency.py`
+- `test_workflow_chat_delivery_contract.py`
 - `test_workflow_chat_delivery_control_pins.py`
+- `test_workflow_chat_delivery_imports.py`
 - `test_workflow_chat_delivery_loop.py`
 - `test_workflow_chat_delivery_notice_and_unread.py`
 - `test_workflow_chat_delivery_off_golden.py`
+- `test_workflow_chat_delivery_placement_and_masking.py`
+- `test_workflow_chat_delivery_projection_and_seed.py`
 - `test_workflow_chat_delivery_refusals.py`
 - `test_workflow_chat_delivery_save_guard.py`
 - `test_workflow_chat_delivery_status_route.py`
 - `test_workflow_chat_delivery_worker.py`
 
+Shared fakes live in `functional_tests\test_support\workflow_chat_delivery_fakes.py`.
+
 Route-policy changes are covered by:
 
 - `functional_tests\route_tests\test_route_blueprint_policy_inventory.py`
 - `functional_tests\route_tests\test_route_unauthenticated_policy_contract.py`
+- `functional_tests\route_tests\test_route_policy_test_coverage.py`
 
 The docs inventory was regenerated with `scripts\build_docs_inventory.py`, and
 the documentation coverage and site-quality tests were run. Mutation testing
