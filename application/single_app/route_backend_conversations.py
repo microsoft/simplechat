@@ -96,6 +96,12 @@ from functions_saved_analysis import (
     is_saved_analysis_unavailable,
     sanitize_saved_analysis_messages,
 )
+from functions_workflow_chat_delivery import (
+    DELIVERY_EDIT_UNSUPPORTED,
+    DELIVERY_RETRY_UNSUPPORTED,
+    is_workflow_delivery_message,
+    workflow_delivery_refusal_payload,
+)
 from functions_workflow_result_masking import message_asks_about_workflow_result, message_uses_workflow_result
 from functions_workflow_result_reader import WorkflowResultUnavailable, workflow_result_error_payload
 from utils_cache import invalidate_personal_search_cache
@@ -3141,6 +3147,11 @@ def register_route_backend_conversations(bp):
                     return jsonify({'error': 'Conversation not found'}), 404
             elif message_user_id != user_id:
                 return jsonify({'error': 'You can only retry your own messages'}), 403
+
+            if is_workflow_delivery_message(original_msg):
+                # A workflow run posted this message, so there is no question to replay.
+                payload, status = workflow_delivery_refusal_payload(DELIVERY_RETRY_UNSUPPORTED)
+                return jsonify(payload), status
             
             # Get thread info from original message
             thread_id = original_msg.get('metadata', {}).get('thread_info', {}).get('thread_id')
@@ -3364,6 +3375,11 @@ def register_route_backend_conversations(bp):
             original_msg = message_results[0]
             conversation_id = original_msg.get('conversation_id')
             original_role = original_msg.get('role')
+
+            if is_workflow_delivery_message(original_msg):
+                # A workflow run posted this message, so there is nothing of the user's to edit.
+                payload, status = workflow_delivery_refusal_payload(DELIVERY_EDIT_UNSUPPORTED)
+                return jsonify(payload), status
             
             # Only allow editing user messages
             if original_role != 'user':

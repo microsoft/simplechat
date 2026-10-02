@@ -162,6 +162,15 @@ WORKFLOW_RUN_DELIVERY_FOLLOW_UP_MANY = (
 )
 UNDELIVERABLE_NOTICE_MESSAGE = "The chat that started this run can't show it anymore. Open the run in Workflows to see the details."
 EXPIRED_NOTICE_MESSAGE = "The run didn't finish in time to post to the chat. Open it in Workflows to see where it stands."
+DELIVERY_RETRY_UNSUPPORTED = 'workflow_delivery_retry_unsupported'
+DELIVERY_EDIT_UNSUPPORTED = 'workflow_delivery_edit_unsupported'
+_DELIVERY_REFUSALS = {
+    DELIVERY_RETRY_UNSUPPORTED: (
+        "A workflow run posted this message, so it can't be retried here. "
+        "To run the workflow again, open the run in Workflows."
+    ),
+    DELIVERY_EDIT_UNSUPPORTED: "A workflow run posted this message, so it can't be edited. Ask a new question instead.",
+}
 _DEFAULT_WORKFLOW_NAME = 'Workflow'
 _TEXT_NOISE = re.compile('[\x00-\x1f\x7f-\x9f\u200b-\u200f\u2028-\u202e\u2060-\u2069\ufeff]')
 _TIME_ZONE_RE = re.compile(r'[A-Za-z0-9_+\-/]{1,64}')
@@ -258,6 +267,13 @@ def is_workflow_delivery_message(message):
         return True
     metadata = message.get('metadata')
     return isinstance(metadata, Mapping) and isinstance(metadata.get(DELIVERY_METADATA_KEY), Mapping)
+
+
+def workflow_delivery_refusal_payload(code):
+    """Return the fixed 400 body for Retry or Edit on a message a workflow run posted."""
+    if code not in _DELIVERY_REFUSALS:
+        code = DELIVERY_RETRY_UNSUPPORTED
+    return {'error': _DELIVERY_REFUSALS[code], 'code': code}, 400
 
 
 def normalize_requester_roles(roles):
@@ -925,6 +941,8 @@ __all__ = (
     'WORKFLOW_RUN_DELIVERY_FOLLOW_UP_MANY',
     'UNDELIVERABLE_NOTICE_MESSAGE',
     'EXPIRED_NOTICE_MESSAGE',
+    'DELIVERY_RETRY_UNSUPPORTED',
+    'DELIVERY_EDIT_UNSUPPORTED',
     'clean_catalog_text',
     'quoted_workflow_name',
     'display_workflow_name',
@@ -934,6 +952,7 @@ __all__ = (
     'workflow_delivery_message_id',
     'delivery_thread_id',
     'is_workflow_delivery_message',
+    'workflow_delivery_refusal_payload',
     'normalize_requester_roles',
     'normalize_model_selection',
     'normalize_time_zone',
