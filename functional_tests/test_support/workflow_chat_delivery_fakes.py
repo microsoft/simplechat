@@ -776,33 +776,66 @@ def _at_or_before(value, moment):
     return isinstance(value, str) and value <= moment
 
 
+_SWEEP_NEXT_UNDEFINED = "NOT IS_DEFINED(c.chat_delivery.next_attempt_at)"
+_SWEEP_NEXT_NULL = "IS_NULL(c.chat_delivery.next_attempt_at)"
+_SWEEP_NEXT_DUE = "c.chat_delivery.next_attempt_at <= @now"
+_SWEEP_READY = "c.chat_delivery.status = @ready"
+_SWEEP_LEASE = "(c.chat_delivery.status = @delivering AND c.chat_delivery.lease_expires_at <= @now)"
+_SWEEP_PENDING = "c.chat_delivery.status = @pending AND ("
+_SWEEP_EXPIRY = "c.chat_delivery.expires_at <= @now"
+_SWEEP_GRACE = "(ARRAY_CONTAINS(@terminal, c.status) AND c._ts <= @grace_ts)"
+_SWEEP_TOP = "SELECT TOP @top "
+
+
+def _next_attempt_due(query, record, now):
+    """Cosmos semantics: an undefined or null field passes only through its own clause."""
+    if not any(clause in query for clause in (_SWEEP_NEXT_UNDEFINED, _SWEEP_NEXT_NULL, _SWEEP_NEXT_DUE)):
+        return True
+    if "next_attempt_at" not in record:
+        return _SWEEP_NEXT_UNDEFINED in query
+    value = record["next_attempt_at"]
+    if value is None:
+        return _SWEEP_NEXT_NULL in query
+    return _SWEEP_NEXT_DUE in query and _at_or_before(value, now)
+
+
 def sweep_handler(container, query, params, partition_key):
-    """A Python mirror of the sweep's WHERE clause, so the sweep can be driven end to end."""
+    """A Python mirror of the sweep's WHERE clause, so the sweep can be driven end to end.
+
+    Each branch applies only when its clause text is in the query, so a production change that drops
+    or rewrites a branch changes which runs the fake returns instead of being mirrored away.
+    """
     require("IS_DEFINED(c.chat_delivery)" in query, f"unexpected run query {query!r}")
     now = params["@now"]
     rows = []
     for item in container.items.values():
         record = item.get("chat_delivery")
-        if not isinstance(record, dict):
-            continue
-        next_attempt = record.get("next_attempt_at")
-        if next_attempt is not None and not _at_or_before(next_attempt, now):
+        if not isinstance(record, dict) or not _next_attempt_due(query, record, now):
             continue
         status = record.get("status")
         due = (
-            status == params["@ready"]
-            or (status == params["@delivering"] and _at_or_before(record.get("lease_expires_at"), now))
+            (_SWEEP_READY in query and status == params["@ready"])
             or (
-                status == params["@pending"]
+                _SWEEP_LEASE in query
+                and status == params["@delivering"]
+                and _at_or_before(record.get("lease_expires_at"), now)
+            )
+            or (
+                _SWEEP_PENDING in query
+                and status == params["@pending"]
                 and (
-                    _at_or_before(record.get("expires_at"), now)
-                    or (item.get("status") in params["@terminal"] and item.get("_ts", 0) <= params["@grace_ts"])
+                    (_SWEEP_EXPIRY in query and _at_or_before(record.get("expires_at"), now))
+                    or (
+                        _SWEEP_GRACE in query
+                        and item.get("status") in params["@terminal"]
+                        and item.get("_ts", 0) <= params["@grace_ts"]
+                    )
                 )
             )
         )
         if due:
             rows.append({"id": item["id"], "user_id": item["user_id"]})
-    return rows[: params["@top"]]
+    return rows[: params["@top"]] if _SWEEP_TOP in query else rows
 
 
 @dataclass

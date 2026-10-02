@@ -1559,6 +1559,37 @@ def test_the_sweep_picks_up_a_retry_when_it_is_due():
     assert summary["outcomes"] == {worker.OUTCOME_DELIVERED: 1}
 
 
+def test_the_sweep_sends_the_expired_notice_for_a_run_still_running_past_its_window():
+    world = make_world(run=make_run(status="running"), state="running", version=3)
+    expires_at = world.record()["expires_at"]
+    world.clock.now = shift(expires_at, seconds=-1)
+
+    summary = sweep(world)
+    assert summary["processed"] == 0, "a running run inside its delivery window is not due"
+    world.clock.now = shift(expires_at, seconds=1)
+
+    summary = sweep(world)
+    assert summary["outcomes"] == {worker.OUTCOME_EXPIRED: 1}, (
+        "the sweep must pick up a pending record whose window passed while the run kept running"
+    )
+    assert world.notifications.notice_calls == [expired_notice()]
+    assert world.delivery_messages() == []
+
+
+def test_the_sweep_takes_over_a_claim_whose_lease_lapsed():
+    world = make_world(run=make_run(record=claimed_record(lease_expires_at="2026-05-04T15:04:00.000000Z")))
+
+    summary = sweep(world)
+    assert summary["processed"] == 0, "a live lease is not due"
+    world.clock.now = shift(world.record()["lease_expires_at"], seconds=1)
+
+    summary = sweep(world)
+    assert summary["outcomes"] == {worker.OUTCOME_DELIVERED: 1}, (
+        "the sweep must pick up a delivering record whose lease lapsed"
+    )
+    assert [message["id"] for message in world.delivery_messages()] == [M5]
+
+
 def test_hints_are_processed_without_the_sweep_lock():
     world = make_world()
     world.lock.available = False
