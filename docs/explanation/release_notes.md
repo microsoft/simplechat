@@ -2,6 +2,18 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.221)**
+
+#### New Features
+
+*   **Merge PDFs And Build Workbooks In Workflows**
+    *   A workflow **Merge files** task now has a **Merge type**. **Combine PDFs** joins PDFs, in order, into one PDF with a bookmark for each file (keeping each file's own bookmarks beneath it); **One workbook, a sheet per file** puts each CSV or Excel file on its own sheet of one Excel workbook, named after the file. **Combine rows (CSV/Excel)** is the existing row merge.
+    *   Both use the same four ways to choose files as row merges (selected files in order, every matching file, recent files, or the files File Sync changed), authorize every file again, run with code and no model, and attach one file to the run. A workflow can assemble up to 10,000 pages or 500 sheets; a PDF merge reads at most 300 MB of PDFs, because every source stays in memory until the merged PDF is written.
+    *   PDF pages are copied unchanged; encrypted PDFs are refused rather than decrypted, and scripts and actions that could run code, open files or programs, or submit forms are removed wherever they appear (open actions, page, link and form-field scripts, XFA forms), while links to pages and to web and email addresses are kept. Workbooks keep Excel cell types and number formats, copy CSV values as text so codes keep their leading zeros, never evaluate text that looks like a formula, and remove control characters Excel can't store. The same files always produce the same bytes, so a retried task reuses the file it attached. Library errors are reported by file name only, never with text from the file. The task's answer lists the files merged and anything left out or removed.
+    *   Chat can propose PDF and workbook merges: the workflow blueprint's `merge` field gains `kind` (`tabular`, `workbook` or `pdf`), with the new draft code `merge_format_invalid`, and the proposal card describes each kind, for example "Merges every PDF in your personal workspace into one PDF with code. No model runs."
+    *   Merging PDFs or workbooks directly in a chat turn, without a workflow, is planned with Word and PowerPoint for a later release.
+    *   (Ref: #1619, `functions_document_merge.py`, `functions_document_merge_pdf.py`, `functions_document_merge_workbook.py`, `functions_workflow_merge.py`, `functions_document_actions.py`, `functions_workflow_drafts.py`, [Phase 4](features/V2_FILE_MERGE_PHASE_4_PDF_WORKBOOKS.md), [Create a workflow](../guides/create-a-workflow.md#merge-files-in-a-workflow))
+
 ### **(v0.261.220)**
 
 #### New Features

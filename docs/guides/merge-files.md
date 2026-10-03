@@ -4,7 +4,7 @@ title: "Merge files in chat"
 description: "Combine several CSV or Excel files into one CSV or Excel file, even when their columns differ."
 section: "Guides"
 audience: user
-version: "0.261.220"
+version: "0.261.221"
 ---
 
 ## What this does
@@ -177,6 +177,17 @@ task merges the files with code and runs no model. See
 A run with nothing to merge, such as a sync that brought no spreadsheets, finishes and
 says so without creating a file. If a selected file is gone or isn't a spreadsheet, or
 more files match than the workflow limit allows, the task fails and says which.
+
+## Merge PDFs or keep spreadsheets on separate sheets
+
+From version **0.261.221**, a workflow merge task has a **Merge type**. Besides combining
+rows, it can join PDFs into one PDF, with a bookmark for each file, or put each CSV or
+Excel file on its own sheet of one Excel workbook, so the tables stay separate but travel
+as one file. Choose the type after choosing **Merge files**; the rest works the same way.
+You can also ask chat, for example "every month, combine the signed contracts into one
+PDF", and it proposes a workflow that does it. Merging PDFs inside a chat turn, without a
+workflow, is planned for a later release. See
+[Create a workflow]({{ '/guides/create-a-workflow/' | relative_url }}#merge-files-in-a-workflow).
 
 ## Related
 

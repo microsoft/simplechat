@@ -1,8 +1,8 @@
 # test_v2_orchestration_workflow_proposal_card.py
 """
 Real-component browser tests for the workflow proposal card under an orchestration answer.
-Version: 0.261.220
-Implemented in: 0.261.207; merge task wording added in 0.261.220
+Version: 0.261.221
+Implemented in: 0.261.207; merge task wording added in 0.261.220; merge kinds in 0.261.221
 Refs: microsoft/simplechat#1547, microsoft/simplechat#1619
 
 The production MessageList, WorkflowProposalCards, ConfirmDialog and WorkflowEditorDialog run in
@@ -525,30 +525,32 @@ def test_pending_card_discloses_everything_and_renders_planner_text_inert(card_u
     assert not api.writes()
 
 
-def merge_proposal(files, output_format):
+def merge_proposal(files, output_format, kind=None):
     """A proposal whose only task merges files with code; the server sends the task's merge summary."""
     value = proposal()
     value["summary"]["tasks"] = [{
         "title": "Merge regional sales", "runner": "model", "agent_name": "", "action_kinds": [],
         "requested_actions": [], "inputs": ["north.csv", "south.xlsx"] if files == "inputs" else [],
         "instructions": "Merge the regional sales files.",
-        "merge": {"files": files, "output_format": output_format},
+        # Proposals saved before merge kinds existed carry no kind and are row merges.
+        "merge": {"files": files, "output_format": output_format, **({"kind": kind} if kind else {})},
     }]
     return value
 
 
-@pytest.mark.parametrize("files,output_format,text", [
-    ("inputs", "xlsx", "Merges the input files below, in order, into one Excel file with code. No model runs."),
-    ("changed", "csv", "Merges the files each sync adds or changes into one CSV file with code. No model runs."),
-    ("all", "csv", "Merges every CSV and Excel file in your personal workspace into one CSV file with code. No model runs."),
-    ("recent", "xlsx", (
+@pytest.mark.parametrize("files,output_format,kind,text", [
+    ("inputs", "xlsx", None, "Merges the input files below, in order, into one Excel file with code. No model runs."),
+    ("changed", "csv", "tabular", "Merges the files each sync adds or changes into one CSV file with code. No model runs."),
+    ("all", "csv", None, "Merges every CSV and Excel file in your personal workspace into one CSV file with code. No model runs."),
+    ("recent", "xlsx", None, (
         "Merges the CSV and Excel files added or changed recently in your personal workspace into one Excel file "
         "with code. No model runs."
     )),
+    ("all", "pdf", "pdf", "Merges every PDF in your personal workspace into one PDF with code. No model runs."),
 ])
-def test_a_merge_task_says_code_merges_the_files_instead_of_a_model(card_ui, files, output_format, text):
+def test_a_merge_task_says_code_merges_the_files_instead_of_a_model(card_ui, files, output_format, kind, text):
     page, api = card_ui
-    api.proposal = merge_proposal(files, output_format)
+    api.proposal = merge_proposal(files, output_format, kind)
     mount(page, api)
     tasks = card(page).get_by_role("list", name="Workflow tasks")
     expect(tasks).to_contain_text(text)

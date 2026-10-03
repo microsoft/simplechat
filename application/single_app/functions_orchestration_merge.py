@@ -1,7 +1,7 @@
 # functions_orchestration_merge.py
 """Deterministic spreadsheet merging and inspection for Gather / Reason / Render orchestration.
 
-Version: 0.261.219
+Version: 0.261.221
 Implemented in: 0.261.218
 Inspection, reconciliation policies and prepared column mappings added in: 0.261.219
 
@@ -162,6 +162,31 @@ def build_tabular_merge_sources(manifest, user_id, *, byte_reader=None):
             load_bytes=load,
         ))
     return sources
+
+
+def build_document_merge_parts(manifest, user_id, *, byte_reader=None):
+    """Document merge parts whose bytes are read, one file at a time, through the access boundary."""
+    # The document merge engine loads only when files are assembled.
+    from functions_document_merge import DocumentMergePart
+
+    reader = byte_reader or read_available_document_bytes
+    parts = []
+    for entry in manifest:
+        source = deepcopy(entry)
+
+        def load(source=source):
+            _document, content = reader(
+                source, user_id, source.get("group_id"), source.get("public_workspace_id"),
+                purpose=TABULAR_MERGE_SOURCE_PURPOSE,
+            )
+            return content
+
+        parts.append(DocumentMergePart(
+            source_id=source["document_id"],
+            file_name=source.get("file_name") or source.get("display_name") or source["document_id"],
+            load_bytes=load,
+        ))
+    return parts
 
 
 def merge_report_with_mapping(report, mapping):

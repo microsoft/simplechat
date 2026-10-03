@@ -1,8 +1,8 @@
 # test_v2_workflow_merge_task.py
 """
 UI test for the V2 workflow editor Merge files document action.
-Version: 0.261.220
-Implemented in: 0.261.220
+Version: 0.261.221
+Implemented in: 0.261.220; PDF merge authoring added in 0.261.221
 
 This test ensures the workflow editor can author a merge task, keep the user's selected file
 order after reordering, and save the backend document_action shape, and that it doesn't offer
@@ -103,3 +103,36 @@ def test_v2_workflow_merge_task_is_not_offered_while_merge_is_off(workflow_ui):
     expect(action.locator("option", has_text="Compare source and target documents")).to_have_count(1)
     expect(action.locator("option", has_text="Merge files")).to_have_count(0)
     assert not [request for request in ui.workflow_writes if request.method == "POST"]
+
+
+def test_v2_workflow_merge_task_assembles_pdfs_without_bookmarks(workflow_ui):
+    assert_app_version_at_least("0.261.221")
+    ui, page = workflow_ui, workflow_ui.page
+    ui.open("/workspace/workflows")
+
+    page.get_by_role("button", name="Create workflow", exact=True).click()
+    expect(page.get_by_role("dialog", name="Create workflow", exact=True)).to_be_visible()
+    labelled(page, "Workflow name").fill("Board pack")
+    labelled(page, "Description").first.fill("Joins the briefs into one PDF.")
+    labelled(page, "Runner type").select_option("agent")
+    labelled(page, "Agent").select_option(label="Workspace reviewer")
+    labelled(page, "Task name").fill("Join the briefs")
+    labelled(page, "Instructions").fill("Join the briefs into one PDF.")
+
+    open_task_details(page, 0)
+    labelled(page, "Document action").select_option("merge")
+    labelled(page, "Merge type").select_option("pdf")
+    expect(page.get_by_text("Inputs: .pdf", exact=True)).to_be_visible()
+    expect(page.get_by_text("Output format: PDF", exact=False)).to_be_visible()
+    available = page.get_by_role("list", name="Available merge files for Join the briefs")
+    available.locator("li").filter(has_text="Private brief").get_by_role("button", name="Add").click()
+    available.locator("li").filter(has_text="Second brief").get_by_role("button", name="Add").click()
+    page.get_by_text("More merge options", exact=True).click()
+    page.get_by_role("checkbox", name=re.compile("^Add bookmarks")).uncheck(force=True)
+
+    page.get_by_role("button", name="Save workflow", exact=True).click()
+    expect(page.get_by_role("dialog", name="Create workflow", exact=True)).to_have_count(0)
+    action = workflow_post(ui).body["tasks"][0]["document_action"]
+    assert (action["type"], action["merge_kind"], action["output_format"]) == ("merge", "pdf", "pdf")
+    assert action["document_ids"] == ["personal-brief", "personal-second"]
+    assert action["merge_options"] == {"bookmarks": False}

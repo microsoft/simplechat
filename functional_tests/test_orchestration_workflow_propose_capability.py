@@ -2,7 +2,7 @@
 # test_orchestration_workflow_propose_capability.py
 """
 Functional test for the workflow_propose orchestration capability.
-Version: 0.261.220
+Version: 0.261.221
 Implemented in: 0.261.207
 Merge tasks added in: 0.261.220
 
@@ -480,7 +480,7 @@ def test_a_merge_task_is_checked_when_planned_and_described_without_a_model(sche
     )
     assert sidecar["summary"]["tasks"] == [{
         "title": "Merge the sales files", "runner": "model", "agent_name": "", "action_kinds": [],
-        "requested_actions": [], "inputs": [], "merge": {"files": "all", "output_format": "xlsx"},
+        "requested_actions": [], "inputs": [], "merge": {"kind": "tabular", "files": "all", "output_format": "xlsx"},
     }]
     assert (sidecar["status"], sidecar["reason"]) == ("ready", None)
 

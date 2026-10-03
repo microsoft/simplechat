@@ -228,20 +228,27 @@ same message as for a group, and a source you're no longer allowed to use with
 ## Merge files in a workflow
 
 From version **0.261.220**, a task can merge many CSV and Excel files into one CSV
-or Excel file. Use it for a merge that's too big for one chat turn, such as a
-year of weekly exports, or one that should happen on its own, such as every
-Monday or whenever a synced folder gets a new export. A merge task runs with
-code, not a model or agent: rows are copied exactly and the task's answer
-summarizes what was merged.
+or Excel file, and from **0.261.221** it can also join PDFs into one PDF or put
+several spreadsheets on separate sheets of one workbook. Use it for a merge that's
+too big for one chat turn, such as a year of weekly exports, or one that should
+happen on its own, such as every Monday or whenever a synced folder gets a new
+export. A merge task runs with code, not a model or agent: rows and pages are
+copied exactly and the task's answer summarizes what was merged.
 
 1. Add a task and choose **Merge files** as its **Document action**. Write a
    short note in **Instructions** describing the merge; the merge itself
    doesn't read it. **Merge files** isn't offered while your administrator has
    Merge turned off.
-2. Under **Files to merge**, choose:
+2. Choose a **Merge type**:
+   - **Combine rows (CSV/Excel)** stacks the rows of CSV and Excel files into
+     one table.
+   - **One workbook, a sheet per file** keeps each CSV or Excel file as its own
+     sheet of one Excel workbook, named after the file.
+   - **Combine PDFs** joins PDFs into one PDF, with a bookmark for each file.
+3. Under **Files to merge**, choose:
    - **Selected files, in this order** to merge files you pick, at least two.
      Set their order under **Merge order**.
-   - **All matching files in scope** to merge every CSV and Excel file in the
+   - **All matching files in scope** to merge every file of that type in the
      workflow's workspace when the run starts.
    - **Recently added or updated files** to merge those added or changed within
      **Recent window in minutes** before the run, 60 by default.
@@ -250,17 +257,25 @@ summarizes what was merged.
      Analyze targets** is selected.
 
    Files found when the run starts are merged in file-name order.
-3. Choose **Output format**, CSV or Excel workbook, and optionally an **Output
-   file name** without an extension.
-4. Open **More merge options** to decide how columns are matched, add column
-   aliases, choose sheets or a header row, leave out files whose columns don't
-   match, remove duplicates, or sort. These are the same settings you can ask
-   for in a [chat merge]({{ '/guides/merge-files/' | relative_url }}).
+4. For row merges, choose **Output format**, CSV or Excel workbook. Workbook
+   merges create an Excel workbook and PDF merges a PDF. Optionally set an
+   **Output file name** without an extension.
+5. Open **More merge options**. For row merges, decide how columns are matched,
+   add column aliases, choose sheets or a header row, leave out files whose
+   columns don't match, remove duplicates, or sort; these are the same settings
+   you can ask for in a [chat merge]({{ '/guides/merge-files/' | relative_url }}).
+   For workbooks, choose the first sheet, every sheet, or a named sheet of each
+   file. For PDFs, turn **Add bookmarks** off if you don't want a bookmark per
+   file.
 
 Each run attaches the merged file to the run's conversation, and later tasks
 can read the merge task's summary. A workflow merges up to 100 files and
 1,000,000 rows by default; your administrator sets these limits under
 [Document Action Capabilities]({{ '/admin/agents-actions/' | relative_url }}#document-action-capabilities-card).
+A PDF merge reads at most 300 MB of PDFs in total. Merged PDFs keep links to
+pages and to web and email addresses, but not scripts, form actions, or links
+that open other files or programs, and the task's answer says when any were
+removed.
 
 A run with nothing to merge finishes and says so without creating a file.
 Files that can't be merged are handled by how they were chosen:

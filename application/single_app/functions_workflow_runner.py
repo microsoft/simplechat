@@ -9914,7 +9914,7 @@ def _execute_document_merge_workflow(
     run_id=None,
     thought_tracker=None,
 ):
-    """Run a task's Merge document action: many files into one CSV or Excel file, without a model."""
+    """Run a task's Merge document action: many files into one file, without a model."""
     # The merge engine and its upload path load only when a workflow merges files.
     from functions_simplechat_operations import upload_generated_file_artifact_stream_for_user
     from functions_workflow_merge import (
@@ -9968,7 +9968,9 @@ def _execute_document_merge_workflow(
             run_id,
             step_type='file_merge',
             content=f"Merged file {update.get('index')} of {update.get('total')}",
-            detail=f"rows={update.get('rows', 0)}",
+            detail=', '.join(
+                f'{unit}={update[unit]}' for unit in ('rows', 'pages', 'slides', 'sheets') if update.get(unit)
+            ) or None,
             activity_key=activity_key,
             kind='file_merge',
             title='Merge files',

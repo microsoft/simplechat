@@ -1,6 +1,6 @@
 // test_v2_workflow_proposal_merge.mjs
-// Version: 0.261.220
-// Implemented in: 0.261.220
+// Version: 0.261.221
+// Implemented in: 0.261.220; merge kinds added in 0.261.221
 // Checks that the workflow proposal card's response parser accepts a proposed merge task, fails
 // closed on a merge it cannot describe, and words each merge as code that runs no model.
 
@@ -64,8 +64,13 @@ test('a proposed merge task keeps which files it merges and what it creates', ()
         'run-1',
     );
     const [task] = parsed.proposals[0].summary.tasks;
-    assert.deepEqual(task.merge, { files: 'inputs', output_format: 'xlsx' });
+    // A proposal saved before merge kinds existed is a row merge.
+    assert.deepEqual(task.merge, { kind: 'tabular', files: 'inputs', output_format: 'xlsx' });
     assert.deepEqual(task.inputs, ['north.csv', 'south.xlsx']);
+    const pdf = parseWorkflowProposalList(
+        statusResponse({ ...baseTask, merge: { kind: 'pdf', files: 'all', output_format: 'pdf' } }), 'run-1',
+    );
+    assert.deepEqual(pdf.proposals[0].summary.tasks[0].merge, { kind: 'pdf', files: 'all', output_format: 'pdf' });
 });
 
 test('a task without a merge is parsed exactly as before', () => {
@@ -78,8 +83,9 @@ test('a merge the card cannot describe fails closed', () => {
     for (const merge of [
         'inputs',
         { files: 'everything', output_format: 'csv' },
-        { files: 'all', output_format: 'pdf' },
+        { files: 'all', output_format: 'docx' },
         { files: 'all' },
+        { kind: 'zip', files: 'all', output_format: 'csv' },
     ]) {
         assert.throws(
             () => parseWorkflowProposalList(statusResponse({ ...baseTask, merge }), 'run-1'),
@@ -90,21 +96,30 @@ test('a merge the card cannot describe fails closed', () => {
 
 test('each merge is described as code that runs no model', () => {
     assert.equal(
-        workflowProposalMergeText({ merge: { files: 'inputs', output_format: 'xlsx' } }),
+        workflowProposalMergeText({ merge: { kind: 'tabular', files: 'inputs', output_format: 'xlsx' } }),
         'Merges the input files below, in order, into one Excel file with code. No model runs.',
     );
     assert.equal(
-        workflowProposalMergeText({ merge: { files: 'changed', output_format: 'csv' } }),
+        workflowProposalMergeText({ merge: { kind: 'tabular', files: 'changed', output_format: 'csv' } }),
         'Merges the files each sync adds or changes into one CSV file with code. No model runs.',
     );
     assert.equal(
-        workflowProposalMergeText({ merge: { files: 'all', output_format: 'csv' } }),
+        workflowProposalMergeText({ merge: { kind: 'tabular', files: 'all', output_format: 'csv' } }),
         'Merges every CSV and Excel file in your personal workspace into one CSV file with code. No model runs.',
     );
     assert.equal(
-        workflowProposalMergeText({ merge: { files: 'recent', output_format: 'xlsx' } }),
+        workflowProposalMergeText({ merge: { kind: 'tabular', files: 'recent', output_format: 'xlsx' } }),
         'Merges the CSV and Excel files added or changed recently in your personal workspace into one Excel file '
             + 'with code. No model runs.',
+    );
+    assert.equal(
+        workflowProposalMergeText({ merge: { kind: 'pdf', files: 'all', output_format: 'pdf' } }),
+        'Merges every PDF in your personal workspace into one PDF with code. No model runs.',
+    );
+    assert.equal(
+        workflowProposalMergeText({ merge: { kind: 'workbook', files: 'changed', output_format: 'xlsx' } }),
+        'Merges the files each sync adds or changes into one Excel workbook, a sheet per file, with code. '
+            + 'No model runs.',
     );
     assert.equal(workflowProposalMergeText({}), '');
 });

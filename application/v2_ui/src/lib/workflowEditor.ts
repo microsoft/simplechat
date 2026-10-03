@@ -147,7 +147,7 @@ export function workflowMergeEnabled(options: Pick<WorkflowEditorOptions, 'docum
     return options.document_actions?.merge?.enabled !== false;
 }
 
-export const WORKFLOW_MERGE_KINDS_AVAILABLE: readonly WorkflowMergeKind[] = ['tabular'];
+export const WORKFLOW_MERGE_KINDS_AVAILABLE: readonly WorkflowMergeKind[] = ['tabular', 'workbook', 'pdf'];
 export const WORKFLOW_MERGE_KINDS: readonly WorkflowMergeKind[] = ['tabular', 'workbook', 'pdf', 'docx', 'pptx'];
 
 export const WORKFLOW_MERGE_KIND_LABELS: Readonly<Record<WorkflowMergeKind, string>> = {

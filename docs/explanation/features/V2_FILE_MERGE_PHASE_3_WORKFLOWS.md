@@ -271,8 +271,9 @@ Open a workflow in the V2 editor, add a task, and choose **Merge files** as its
 
 ## Known limitations
 
-- Only spreadsheet merges run in workflows. PDF, workbook, Word and PowerPoint merges
-  arrive in Phases 4–6.
+- Phase 3 merges only spreadsheet rows in workflows. From **0.261.221**, PDF and workbook
+  merges run too ([Phase 4](V2_FILE_MERGE_PHASE_4_PDF_WORKBOOKS.md)); Word and PowerPoint
+  arrive in Phases 5 and 6.
 - A resumed run repeats the whole merge rather than continuing from the last file.
 - Files found at run time are merged in file-name order. To control the order, select the
   files instead.

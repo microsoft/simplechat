@@ -39,8 +39,12 @@ from functions_appinsights import log_event
 from functions_document_actions import (
     DOCUMENT_ACTION_TYPE_ANALYZE,
     DOCUMENT_ACTION_TYPE_MERGE,
+    MERGE_KIND_OUTPUT_FORMATS,
+    MERGE_KIND_TABULAR,
+    MERGE_KINDS_AVAILABLE,
     get_enabled_document_action_types,
     is_document_action_enabled,
+    normalize_document_action_config,
 )
 from functions_file_sync import (
     FILE_SYNC_SCOPE_GROUP,
@@ -146,6 +150,9 @@ DRAFT_ERROR_MESSAGES = {
         'These merge options cannot be used together: mapped needs columns, key_columns needs '
         'dedupe_columns, a sheet name cannot be combined with all sheets, and a column is named once.'
     ),
+    'merge_format_invalid': 'Choose an output_format this merge kind creates: ' + '; '.join(
+        f"{kind} creates {' or '.join(MERGE_KIND_OUTPUT_FORMATS[kind])}" for kind in MERGE_KINDS_AVAILABLE
+    ) + '.',
 }
 DRAFT_UNAVAILABLE_REFERENCE_MESSAGE = 'A document or source in this blueprint is not available to you.'
 DRAFT_HANDLE_MAP_ERROR = 'The workflow draft handle map is malformed.'
@@ -463,15 +470,20 @@ def _merge_schema():
         'additionalProperties': False,
         'required': ['files'],
         'description': (
-            'Makes this task merge CSV or Excel files into one file with code instead of running a '
-            "model. files: inputs merges the task's inputs (two or more document handles) in order; "
-            'changed merges the files a File Sync trigger added or changed; all merges every CSV and '
-            "Excel file in the user's personal workspace; recent merges those added in the last "
-            'recent_window_minutes. Rows are appended; rows are never matched on a key.'
+            'Makes this task merge files with code instead of running a model. kind tabular appends the '
+            'rows of CSV and Excel files into one CSV or Excel file; workbook puts each CSV or Excel file '
+            'on its own sheet of one Excel workbook; pdf joins PDFs, in order, into one PDF. files: inputs '
+            "merges the task's inputs (two or more document handles) in order; changed merges the files a "
+            "File Sync trigger added or changed; all merges every matching file in the user's personal "
+            'workspace; recent merges those added in the last recent_window_minutes. Rows are appended; '
+            'rows are never matched on a key.'
         ),
         'properties': {
+            'kind': {'enum': list(MERGE_KINDS_AVAILABLE)},
             'files': {'enum': list(BLUEPRINT_MERGE_FILES)},
-            'output_format': {'enum': ['csv', 'xlsx']},
+            'output_format': {'enum': list(dict.fromkeys(
+                output_format for kind in MERGE_KINDS_AVAILABLE for output_format in MERGE_KIND_OUTPUT_FORMATS[kind]
+            ))},
             'file_name': _text_schema(BLUEPRINT_MERGE_FILE_NAME_MAX_LENGTH),
             'recent_window_minutes': {'type': 'integer', 'minimum': 1, 'maximum': 1440},
             'options': {'$ref': '#/$defs/merge_options'},
@@ -485,8 +497,12 @@ def _merge_options_schema():
     return {
         'type': 'object',
         'additionalProperties': False,
-        'description': 'The same column, sheet, duplicate and sort settings a chat merge accepts.',
+        'description': (
+            'The same column, sheet, duplicate and sort settings a chat merge accepts, for kind tabular. '
+            'kind workbook takes only sheets and sheet; kind pdf takes only bookmarks.'
+        ),
         'properties': {
+            'bookmarks': {'type': 'boolean'},
             'schema_policy': {'enum': ['by_name', 'exact_order', 'union', 'mapped']},
             'columns': {**names, 'maxItems': 255},
             # A list of closed objects rather than a map, so every object in the blueprint stays closed.
@@ -894,12 +910,17 @@ def _merge_options(options, *, aliases_as_pairs=False):
     return options
 
 
+def _merge_kind(merge):
+    return merge.get('kind') or MERGE_KIND_TABULAR
+
+
 def _merge_document_action(merge, task, handles):
     """The workflow Merge action a blueprint task describes; its files are never reference documents."""
+    kind = _merge_kind(merge)
     action = {
         'type': DOCUMENT_ACTION_TYPE_MERGE,
-        'merge_kind': 'tabular',
-        'output_format': merge.get('output_format', 'csv'),
+        'merge_kind': kind,
+        'output_format': merge.get('output_format') or MERGE_KIND_OUTPUT_FORMATS[kind][0],
         'document_ids': [],
         'active_group_ids': [],
         'active_public_workspace_id': [],
@@ -941,20 +962,29 @@ def _merge_errors(blueprint, settings):
         return errors
     if not is_document_action_enabled(DOCUMENT_ACTION_TYPE_MERGE, settings=settings):
         return [draft_error('merge_unavailable', ('tasks', index, 'merge')) for index, _ in merging]
-    # The merge engine imports only the standard library; blueprints share its option rules.
-    from functions_tabular_merge import TabularMergeError, tabular_merge_options_from_arguments
 
     for index, task in merging:
         merge = task['merge']
+        kind = _merge_kind(merge)
         if (task.get('runner') or {}).get('type') == 'agent':
             errors.append(draft_error('merge_runner_invalid', ('tasks', index, 'runner')))
         if merge['files'] == 'inputs' and len(task.get('inputs') or []) < 2:
             errors.append(draft_error('merge_inputs_required', ('tasks', index, 'inputs')))
         if merge['files'] == 'changed' and blueprint['trigger']['type'] != 'file_sync':
             errors.append(draft_error('merge_trigger_required', ('tasks', index, 'merge', 'files')))
+        if merge.get('output_format') and merge['output_format'] not in MERGE_KIND_OUTPUT_FORMATS[kind]:
+            errors.append(draft_error('merge_format_invalid', ('tasks', index, 'merge', 'output_format')))
+            continue
         try:
-            tabular_merge_options_from_arguments(_merge_options(merge.get('options'), aliases_as_pairs=True))
-        except TabularMergeError:
+            # The save's own rules, including the merge engine's, for this kind of merge.
+            normalize_document_action_config(
+                {
+                    'type': DOCUMENT_ACTION_TYPE_MERGE, 'merge_kind': kind, 'target_mode': 'all',
+                    'merge_options': _merge_options(merge.get('options'), aliases_as_pairs=True),
+                },
+                allowed_action_types={DOCUMENT_ACTION_TYPE_MERGE},
+            )
+        except ValueError:
             # Engine messages can quote column names from the blueprint; draft errors never echo input.
             errors.append(draft_error('merge_options_invalid', ('tasks', index, 'merge', 'options')))
     return errors

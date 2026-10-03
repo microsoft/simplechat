@@ -1,5 +1,5 @@
 // test_v2_workflow_merge_task.mjs
-// Version: 0.261.220
+// Version: 0.261.221
 // Implemented in: 0.261.220
 // Exercises the V2 workflow editor's pure merge-task helpers: action construction, option cleanup,
 // alias parsing, and client-side validation for the backend merge document_action contract.
@@ -98,10 +98,14 @@ test('alias parse and format round trip and parse errors are explicit', () => {
 });
 
 test('unavailable loaded kinds are preserved but fail validation', () => {
-    const action = workflowMergeActionFromSelection(documents, { mergeKind: 'pdf' });
-    assert.equal(action.merge_kind, 'pdf');
-    assert.equal(action.output_format, 'pdf');
+    // Word arrives in Phase 5; PDF and workbook merges are available from 0.261.221.
+    const action = workflowMergeActionFromSelection(documents, { mergeKind: 'docx' });
+    assert.equal(action.merge_kind, 'docx');
+    assert.equal(action.output_format, 'docx');
     assert.match(workflowMergeValidationErrors(action).join('\n'), /not enabled/);
+    const pdf = workflowMergeActionFromSelection(documents, { mergeKind: 'pdf' });
+    assert.equal(pdf.output_format, 'pdf');
+    assert.doesNotMatch(workflowMergeValidationErrors(pdf).join('\n'), /not enabled/);
 });
 
 test('changed targets are only valid for File Sync workflows', () => {
