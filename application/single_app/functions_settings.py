@@ -85,11 +85,13 @@ from functions_rate_limit import (
 from functions_service_health import get_default_service_health
 from json_schema_validation import validate_legacy_plugin_settings_update
 from functions_workflow_limits import (
+    CHAT_ORCHESTRATION_MAX_HANDOFFS_PER_DAY_DEFAULT,
     CHAT_ORCHESTRATION_MAX_WORKFLOWS_DEFAULT,
     CHAT_ORCHESTRATION_MIN_WORKFLOW_INTERVAL_DEFAULT,
     WORKFLOW_LOOP_ITEMS_DEFAULT,
     WORKFLOW_MIN_SCHEDULE_INTERVAL_DEFAULT,
     WORKFLOW_REPEAT_ITERATIONS_DEFAULT,
+    validate_chat_orchestration_max_workflow_handoffs_per_day,
     validate_chat_orchestration_max_workflows_per_user,
     validate_chat_orchestration_min_workflow_interval_seconds,
     validate_workflow_max_loop_items,
@@ -1509,10 +1511,16 @@ def get_settings(use_cosmos=False, include_source=False):
         # asks for it. Off by default and independent of proposals; such a plan always waits for
         # the user to approve it, whatever the approval mode.
         'enable_chat_orchestration_workflow_runs': False,
+        # Lets a chat plan hand work too large for a plan to a one-time durable workflow, which the
+        # user approves on the plan and again on a hand-off card. Off by default and separate from
+        # proposals and runs, so an upgrade never turns it on by itself.
+        'enable_chat_orchestration_workflow_handoff': False,
         # Workflows that a chat plan creates for a user: how many one user may hold, and the
         # shortest interval one may run on (also never shorter than the general workflow minimum).
         'chat_orchestration_max_workflows_per_user': CHAT_ORCHESTRATION_MAX_WORKFLOWS_DEFAULT,
         'chat_orchestration_min_workflow_interval_seconds': CHAT_ORCHESTRATION_MIN_WORKFLOW_INTERVAL_DEFAULT,
+        # How many hand-offs one user may start from chat in a rolling 24 hours.
+        'chat_orchestration_max_workflow_handoffs_per_day': CHAT_ORCHESTRATION_MAX_HANDOFFS_PER_DAY_DEFAULT,
         # Planner model binding. Unset falls back to the deployment's default chat model,
         # so orchestration works before an administrator picks a dedicated planner.
         'chat_orchestration_planner_deployment': '',
@@ -2305,6 +2313,23 @@ def update_settings(new_settings, *, expected_etag=None):
         new_settings = {
             **new_settings,
             'enable_chat_orchestration_workflow_runs': new_settings['enable_chat_orchestration_workflow_runs'] is True,
+        }
+    if isinstance(new_settings, dict) and 'enable_chat_orchestration_workflow_handoff' in new_settings:
+        # Only a real boolean true lets chat plans hand work off; anything else saves as off.
+        new_settings = {
+            **new_settings,
+            'enable_chat_orchestration_workflow_handoff': (
+                new_settings['enable_chat_orchestration_workflow_handoff'] is True
+            ),
+        }
+    if isinstance(new_settings, dict) and 'chat_orchestration_max_workflow_handoffs_per_day' in new_settings:
+        new_settings = {
+            **new_settings,
+            'chat_orchestration_max_workflow_handoffs_per_day': (
+                validate_chat_orchestration_max_workflow_handoffs_per_day(
+                    new_settings['chat_orchestration_max_workflow_handoffs_per_day']
+                )
+            ),
         }
     if isinstance(new_settings, dict) and 'chat_orchestration_max_workflows_per_user' in new_settings:
         new_settings = {

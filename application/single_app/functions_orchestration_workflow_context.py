@@ -38,9 +38,11 @@ from functions_msgraph_operations import get_msgraph_enabled_function_names, res
 from functions_orchestration_memory import conversation_is_private
 # One definition of each: the step schema, the deliverables and this module read the same values.
 from functions_orchestration_registry import (
+    CAPABILITY_WORKFLOW_HANDOFF as WORKFLOW_HANDOFF_CAPABILITY_ID,
     CAPABILITY_WORKFLOW_PROPOSE as WORKFLOW_PROPOSE_CAPABILITY_ID,
     CAPABILITY_WORKFLOW_RESULTS as WORKFLOW_RESULTS_CAPABILITY_ID,
     CAPABILITY_WORKFLOW_RUN as WORKFLOW_RUN_CAPABILITY_ID,
+    WORKFLOW_HANDOFF_SETTING,
     WORKFLOW_PROPOSAL_MAX_TASKS as WORKFLOW_BLUEPRINT_MAX_TASKS,
     WORKFLOW_PROPOSALS_SETTING,
     WORKFLOW_RESULTS_SETTING,
@@ -64,6 +66,7 @@ WORKFLOW_REASON_DISABLED = 'workflow_proposals_disabled'
 WORKFLOW_RUNS_REASON_DISABLED = 'workflow_runs_disabled'
 WORKFLOW_RESULTS_REASON_DISABLED = 'workflow_results_disabled'
 WORKFLOW_RESULTS_REASON_NO_WORKFLOWS = 'workflow_results_no_workflows'
+WORKFLOW_HANDOFF_REASON_DISABLED = 'workflow_handoff_disabled'
 WORKFLOW_REASON_ROLE_REQUIRED = 'workflow_role_required'
 WORKFLOW_REASON_SHARED_CONVERSATION = 'workflow_shared_conversation'
 WORKFLOW_REASON_QUOTA_REACHED = 'workflow_quota_reached'
@@ -322,6 +325,58 @@ def workflow_results_gate(settings, user_roles):
     so a plan never reads a result the user could not ask about in chat.
     """
     reason = workflow_results_settings_gate(settings)
+    if reason:
+        return reason
+    # Settings initialize application storage, so they are imported only once a gate is reached.
+    from functions_settings import is_chat_workflow_results_enabled_for_user
+    roles = list(user_roles) if isinstance(user_roles, (list, tuple, set)) else []
+    if not is_chat_workflow_results_enabled_for_user(settings, user_roles=roles):
+        return WORKFLOW_REASON_ROLE_REQUIRED
+    return None
+
+
+def workflow_handoff_configured(settings):
+    """Whether an administrator turned on handing large work off to a one-time workflow.
+
+    A hand-off creates a workflow, starts its one run and posts that run's result back into the
+    chat, so proposals, runs and results must be on as well. Only real booleans ``True`` count.
+    """
+    settings = settings if isinstance(settings, dict) else {}
+    return (
+        settings.get(WORKFLOW_HANDOFF_SETTING) is True and workflow_proposals_configured(settings)
+        and workflow_runs_configured(settings) and workflow_results_configured(settings)
+    )
+
+
+def workflow_handoff_settings_gate(settings):
+    """Return None when the deployment lets a plan hand work off to a one-time workflow, else a closed reason.
+
+    Settings and the capability allowlist only; ``workflow_handoff_gate`` adds the caller's roles.
+    With results in chat off, the run's summary could never be posted back, so that has its own
+    reason.
+    """
+    settings = settings if isinstance(settings, dict) else {}
+    if (
+        settings.get(WORKFLOW_HANDOFF_SETTING) is not True or not workflow_proposals_configured(settings)
+        or not workflow_runs_configured(settings) or not settings.get('allow_user_workflows')
+    ):
+        return WORKFLOW_HANDOFF_REASON_DISABLED
+    if not workflow_results_configured(settings):
+        return WORKFLOW_RESULTS_REASON_DISABLED
+    # Imported here because the registry's workflow capability gates import this module.
+    from functions_orchestration_registry import capability_allowlisted
+    if not capability_allowlisted(settings, WORKFLOW_HANDOFF_CAPABILITY_ID):
+        return WORKFLOW_HANDOFF_REASON_DISABLED
+    return None
+
+
+def workflow_handoff_gate(settings, user_roles):
+    """Return None when this user may be offered a hand-off, else a closed reason.
+
+    The role check is the one that decides whether chat answers from a finished run's result, so
+    a hand-off is never offered to a user whose run's summary could not be posted back.
+    """
+    reason = workflow_handoff_settings_gate(settings)
     if reason:
         return reason
     # Settings initialize application storage, so they are imported only once a gate is reached.
@@ -1178,6 +1233,48 @@ def workflow_results_projection(context):
         'request_local_time': context.get('request_local_time') or '',
         'catalog': {'workflows': context['catalog']['workflows']},
     })
+
+
+def workflow_handoff_ready(context):
+    """Whether a stored planning context can support handing work off to a one-time workflow in this turn.
+
+    The hand-off part is self-contained under ``workflow_handoff``: it does not depend on the
+    proposal catalogs, so a user at the proposal cap can still hand work off.
+    """
+    if not isinstance(context, dict) or context.get('conversation_private') is not True:
+        return False
+    marker = context.get('workflow_handoff')
+    return (
+        isinstance(marker, dict) and marker.get('ready') is True
+        and isinstance(marker.get('catalog'), dict) and isinstance(marker.get('handles'), dict)
+    )
+
+
+def workflow_handoff_unavailable_reason(settings, request_context):
+    """Return None when this request may hand work off to a one-time workflow, else a closed reason. Never raises.
+
+    Like ``workflow_run_unavailable_reason``, with the hand-off gate: proposals, runs and results
+    must all be open to the user as well.
+    """
+    try:
+        request_context = request_context if isinstance(request_context, dict) else {}
+        reason = workflow_handoff_gate(settings, request_context.get('user_roles'))
+        if reason is not None:
+            return reason
+        planning = request_context.get('workflow_planning')
+        if not isinstance(planning, dict):
+            return WORKFLOW_REASON_CONTEXT_UNAVAILABLE
+        if planning.get('conversation_private') is not True:
+            return WORKFLOW_REASON_SHARED_CONVERSATION
+        if not workflow_handoff_ready(planning):
+            return WORKFLOW_REASON_CONTEXT_UNAVAILABLE
+        return None
+    except Exception as exc:
+        _log_context(
+            'Workflow hand-off access could not be checked; handing work off is unavailable for this request.',
+            logging.WARNING, reason=WORKFLOW_REASON_CONTEXT_UNAVAILABLE, error_type=type(exc).__name__,
+        )
+        return WORKFLOW_REASON_CONTEXT_UNAVAILABLE
 
 
 def workflow_answer_time_line(workflow_planning, time_zone, now=None):

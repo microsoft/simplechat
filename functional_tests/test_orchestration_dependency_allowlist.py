@@ -209,7 +209,8 @@ def test_registry_metadata_expresses_roles_without_phases_or_a_terminal_step(run
         'capability_ids': [
             'document_search', 'document_analyze', 'document_compare', 'tabular_analyze',
             'web_search', 'url_fetch', 'deep_research', 'action_invoke', 'agent_invoke',
-            'compose', 'generate_image', 'workflow_propose', 'workflow_run', 'workflow_results', 'render_file',
+            'compose', 'generate_image', 'workflow_propose', 'workflow_run', 'workflow_results',
+            'workflow_handoff', 'render_file',
         ],
         'roles': ['gather', 'reason', 'render'],
     }

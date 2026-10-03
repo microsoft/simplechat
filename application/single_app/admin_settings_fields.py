@@ -134,6 +134,9 @@ from functions_terms_of_use import (
     normalize_terms_of_use_text,
 )
 from functions_workflow_limits import (
+    CHAT_ORCHESTRATION_MAX_HANDOFFS_PER_DAY_DEFAULT,
+    CHAT_ORCHESTRATION_MAX_HANDOFFS_PER_DAY_MAX,
+    CHAT_ORCHESTRATION_MAX_HANDOFFS_PER_DAY_MIN,
     CHAT_ORCHESTRATION_MAX_WORKFLOWS_DEFAULT,
     CHAT_ORCHESTRATION_MAX_WORKFLOWS_MAX,
     CHAT_ORCHESTRATION_MAX_WORKFLOWS_MIN,
@@ -150,6 +153,7 @@ from functions_workflow_limits import (
     WORKFLOW_REPEAT_ITERATIONS_MAX,
     WORKFLOW_REPEAT_ITERATIONS_MIN,
     WorkflowLoopLimitError,
+    validate_chat_orchestration_max_workflow_handoffs_per_day,
     validate_chat_orchestration_max_workflows_per_user,
     validate_chat_orchestration_min_workflow_interval_seconds,
     validate_workflow_max_loop_items,
@@ -3800,6 +3804,29 @@ ADMIN_SETTINGS_FIELDS = {
             ],
         },
         {
+            "key": "enable_chat_orchestration_workflow_handoff",
+            "type": "switch",
+            "label": "Hand Off Large Work From Chat",
+            "help": (
+                "When a request is too large for a chat plan, such as reviewing hundreds of "
+                "documents, a plan can hand the work to a one-time durable workflow instead. The "
+                "user approves the plan, then approves a hand-off card that names the documents, "
+                "or says how many matching documents at most, the workflow will review. Approving "
+                "the card creates the workflow turned off, so it never runs on a schedule, and "
+                "starts it once; when the run finishes, its result is posted back into the "
+                "conversation. The daily limit under Limits applies. Off by default, because a "
+                "hand-off starts background work that keeps running with the user's access after "
+                "the chat turn ends. Requires Chat Orchestration, Enable Personal Workflows, "
+                "Propose Workflows From Chat, Run Workflows From Chat and Use Workflow Results "
+                "In Chat."
+            ),
+            "default": False,
+            "depends_on": [
+                {"key": "enable_chat_orchestration", "equals": True},
+                {"key": "allow_user_workflows", "equals": True},
+            ],
+        },
+        {
             "key": "chat_orchestration_enabled_capabilities",
             "type": "checkbox_set",
             "label": "Capabilities",
@@ -3812,7 +3839,9 @@ ADMIN_SETTINGS_FIELDS = {
                 "requires Enable Action Access. Propose workflows also requires Propose "
                 "Workflows From Chat and personal workflows. Run workflows also requires Run "
                 "Workflows From Chat and personal workflows. Read workflow results also "
-                "requires Use Workflow Results In Chat and personal workflows."
+                "requires Use Workflow Results In Chat and personal workflows. Hand off large "
+                "work also requires Hand Off Large Work From Chat, Propose Workflows From Chat, "
+                "Run Workflows From Chat, Use Workflow Results In Chat and personal workflows."
             ),
             "default": [],
             "options": [
@@ -3831,6 +3860,7 @@ ADMIN_SETTINGS_FIELDS = {
                 {"value": "workflow_propose", "label": "Propose workflows"},
                 {"value": "workflow_run", "label": "Run workflows"},
                 {"value": "workflow_results", "label": "Read workflow results"},
+                {"value": "workflow_handoff", "label": "Hand off large work"},
             ],
             "depends_on": {"key": "enable_chat_orchestration", "equals": True},
         },
@@ -3949,6 +3979,27 @@ ADMIN_SETTINGS_FIELDS = {
             "max": CHAT_ORCHESTRATION_MIN_WORKFLOW_INTERVAL_MAX,
             "step": 1,
             "depends_on": {"key": "enable_chat_orchestration", "equals": True},
+            "group": {"id": "limits", "label": "Limits", "variant": "limits"},
+        },
+        {
+            "key": "chat_orchestration_max_workflow_handoffs_per_day",
+            "type": "number",
+            "label": "Hand-Offs From Chat Per User Per Day",
+            "help": (
+                "How many hand-offs one user may start from chat in any rolling 24 hours. Each "
+                "hand-off creates a one-time workflow and starts a durable run, so this bounds "
+                "how much background work one user can start from chat. Hand-off workflows do "
+                "not count toward Workflows Created From Chat Per User. Default is 5; "
+                "supported range is 1 to 100."
+            ),
+            "default": CHAT_ORCHESTRATION_MAX_HANDOFFS_PER_DAY_DEFAULT,
+            "min": CHAT_ORCHESTRATION_MAX_HANDOFFS_PER_DAY_MIN,
+            "max": CHAT_ORCHESTRATION_MAX_HANDOFFS_PER_DAY_MAX,
+            "step": 1,
+            "depends_on": [
+                {"key": "enable_chat_orchestration", "equals": True},
+                {"key": "enable_chat_orchestration_workflow_handoff", "equals": True},
+            ],
             "group": {"id": "limits", "label": "Limits", "variant": "limits"},
         },
     ],
@@ -6889,6 +6940,12 @@ def _normalize_field_value(key, value, field):
     if key == "chat_orchestration_max_workflows_per_user":
         try:
             return validate_chat_orchestration_max_workflows_per_user(value), None, None
+        except WorkflowLoopLimitError as error:
+            return None, error.public_message, None
+
+    if key == "chat_orchestration_max_workflow_handoffs_per_day":
+        try:
+            return validate_chat_orchestration_max_workflow_handoffs_per_day(value), None, None
         except WorkflowLoopLimitError as error:
             return None, error.public_message, None
 

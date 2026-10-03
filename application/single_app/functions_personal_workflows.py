@@ -855,7 +855,7 @@ def get_due_personal_workflows(limit=20):
 
 def build_personal_workflow_document(user_id, workflow_data, actor_user_id=None, *, settings=None, workflow_id=None,
                                      origin=None, user_settings_reader=None, resolve_document=None,
-                                     sanitize_source=None):
+                                     sanitize_source=None, one_time=False):
     """Normalize and authorize a personal workflow exactly as saving it would, without writing.
 
     Returns ``(workflow, existing_workflow)``: the document a save persists and the stored workflow
@@ -870,7 +870,7 @@ def build_personal_workflow_document(user_id, workflow_data, actor_user_id=None,
 
     ``workflow_id`` and ``origin`` belong to a server create path: the workflow is new, takes that
     id, records where it came from and must meet the schedule minimum for workflows created from
-    chat. No save payload can set either.
+    chat. No save payload can set either. Only the hand-off create path passes ``one_time=True``.
     """
     workflow_data = workflow_data if isinstance(workflow_data, dict) else {}
     settings_options = {'settings': settings} if settings is not None else {}
@@ -1103,7 +1103,7 @@ def build_personal_workflow_document(user_id, workflow_data, actor_user_id=None,
 
         validate_workflow_loop_runners(workflow, actor_user_id=modifying_user_id, settings=settings)
     if origin is not None or (existing_workflow or {}).get('origin'):
-        apply_workflow_origin(workflow, existing_workflow, origin)
+        apply_workflow_origin(workflow, existing_workflow, origin, one_time=one_time)
     return workflow, existing_workflow
 
 
@@ -1120,7 +1120,7 @@ def save_personal_workflow(user_id, workflow_data, actor_user_id=None):
 
 def create_personal_workflow_if_absent(user_id, workflow_data, *, workflow_id, origin, actor_user_id=None,
                                        settings=None, user_settings_reader=None, resolve_document=None,
-                                       sanitize_source=None):
+                                       sanitize_source=None, one_time=False):
     """Create a personal workflow under a server-chosen id and origin, at most once.
 
     Chat orchestration derives ``workflow_id`` from the proposal the user accepted, so accepting the
@@ -1128,7 +1128,8 @@ def create_personal_workflow_if_absent(user_id, workflow_data, *, workflow_id, o
     created)``. A different workflow already stored under that id, or one being deleted, is a
     conflict. The read-only seams are those ``build_personal_workflow_document`` accepts. Like
     ``save_personal_workflow``, it trusts the payload's URL Access authorization fields, so callers
-    prepare them as the save route does.
+    prepare them as the save route does. Only the hand-off create passes ``one_time=True``, and a
+    one-time record is adopted only by a one-time create.
     """
     proposal_id = str((origin or {}).get('proposal_id') or '').strip() if isinstance(origin, dict) else ''
     try:
@@ -1138,19 +1139,19 @@ def create_personal_workflow_if_absent(user_id, workflow_data, *, workflow_id, o
 
     existing = get_personal_workflow(user_id, workflow_id)
     if existing:
-        return existing_server_created_workflow(existing, proposal_id), False
+        return existing_server_created_workflow(existing, proposal_id, one_time=one_time), False
     workflow, _existing = build_personal_workflow_document(
         user_id, {} if workflow_data is None else workflow_data, actor_user_id,
         settings=settings, workflow_id=workflow_id, origin=origin,
         user_settings_reader=user_settings_reader, resolve_document=resolve_document,
-        sanitize_source=sanitize_source,
+        sanitize_source=sanitize_source, one_time=one_time,
     )
     record, created = create_workflow_definition_record_if_absent(
         cosmos_personal_workflows_container, user_id, workflow,
     )
     record = _strip_cosmos_metadata(record)
     if not created:
-        return existing_server_created_workflow(record, proposal_id), False
+        return existing_server_created_workflow(record, proposal_id, one_time=one_time), False
     debug_print(f"[WORKFLOW_STORE] Created workflow {record.get('id')} for user {user_id}")
     return record, True
 

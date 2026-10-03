@@ -112,6 +112,9 @@ class WorkflowCadenceError(WorkflowPublicValidationError):
 # Server-owned provenance. Only a server create path sets ``origin``; no save or update payload can.
 WORKFLOW_ORIGIN_SOURCES = ("orchestration",)
 WORKFLOW_ORIGIN_FIELDS = ("source", "conversation_id", "orchestration_run_id", "proposal_id", "created_at", "edited")
+# Written only by the hand-off create path, and only as ``True``: the workflow was created for a single
+# run. A client value is always dropped, and an editor save keeps the stored one.
+WORKFLOW_ORIGIN_HANDOFF_FIELDS = ("one_time",)
 WORKFLOW_ORIGIN_ID_MAX_LENGTH = 128
 WORKFLOW_ORIGIN_TIMESTAMP_MAX_LENGTH = 64
 # The authored fields whose change means the owner edited what orchestration created: the name and
@@ -223,12 +226,18 @@ def _origin_timestamp(value):
     return value.strip()
 
 
-def normalize_workflow_origin(value):
-    """Validate the provenance a server create path records. It is never read from a save payload."""
+def normalize_workflow_origin(value, *, one_time=False):
+    """Validate the provenance a server create path records. It is never read from a save payload.
+
+    A ``one_time`` key in ``value`` is always dropped; only the hand-off create path records it, by
+    passing ``one_time=True``.
+    """
+    if isinstance(value, dict) and "one_time" in value:
+        value = {key: item for key, item in value.items() if key != "one_time"}
     origin = _object(value, set(WORKFLOW_ORIGIN_FIELDS), "Workflow origin")
     if origin.get("source") not in WORKFLOW_ORIGIN_SOURCES:
         raise WorkflowDefinitionError("Workflow origin source is not supported.")
-    return {
+    normalized = {
         "source": origin["source"],
         "conversation_id": _text(
             origin.get("conversation_id"), "Workflow origin conversation id", WORKFLOW_ORIGIN_ID_MAX_LENGTH,
@@ -240,6 +249,9 @@ def normalize_workflow_origin(value):
         "created_at": _origin_timestamp(origin.get("created_at")),
         "edited": _boolean(origin.get("edited", False), "Workflow origin edited flag"),
     }
+    if one_time is True:
+        normalized["one_time"] = True
+    return normalized
 
 
 def _canonical_json(value):
@@ -255,7 +267,7 @@ def workflow_origin_material_change(existing, workflow):
     )
 
 
-def apply_workflow_origin(workflow, existing=None, origin=None):
+def apply_workflow_origin(workflow, existing=None, origin=None, *, one_time=False):
     """Record server-owned provenance on a built workflow document.
 
     A new workflow takes the ``origin`` its server create path supplies, ``edited`` included:
@@ -264,11 +276,12 @@ def apply_workflow_origin(workflow, existing=None, origin=None):
     merge, which preserves it, and writes it only once: to mark the owner's first material
     change as ``edited``. The origin is outside the definition revision and the Microsoft 365
     fingerprint, so recording it never invalidates an editor's revision or a Run as approval.
+    Only the hand-off create path passes ``one_time=True``.
     """
     if origin is not None:
         if existing:
             raise WorkflowDefinitionError("Only a new workflow can record where it came from.")
-        workflow["origin"] = normalize_workflow_origin(origin)
+        workflow["origin"] = normalize_workflow_origin(origin, one_time=one_time)
         return workflow
     stored = (existing or {}).get("origin")
     if (
@@ -280,12 +293,14 @@ def apply_workflow_origin(workflow, existing=None, origin=None):
     return workflow
 
 
-def existing_server_created_workflow(record, proposal_id):
+def existing_server_created_workflow(record, proposal_id, *, one_time=False):
     """Return the workflow a repeated server create found under its id, if the same proposal made it.
 
     A server create path derives the workflow id from the proposal it accepts, so a record already
     under that id normally means an earlier accept succeeded. A record from any other proposal, or
-    one being deleted, is a conflict: the create never adopts or revives it.
+    one being deleted, is a conflict: the create never adopts or revives it. A hand-off create
+    (``one_time=True``) adopts only a one-time record, and every other create only a record that
+    is not one.
     """
     record = record if isinstance(record, Mapping) else {}
     if record.get("deleting"):
@@ -293,6 +308,8 @@ def existing_server_created_workflow(record, proposal_id):
     stored_origin = record.get("origin") if isinstance(record.get("origin"), Mapping) else {}
     proposal_id = str(proposal_id or "").strip()
     if not proposal_id or stored_origin.get("proposal_id") != proposal_id:
+        raise WorkflowDefinitionConflict("A different workflow already uses this id.")
+    if (stored_origin.get("one_time") is True) is not (one_time is True):
         raise WorkflowDefinitionConflict("A different workflow already uses this id.")
     return record
 
@@ -453,6 +470,7 @@ def normalize_workflow_definition(payload, existing, tasks, *, user_id, group_id
             "last_run_error", "last_run_response_preview", "last_run_trigger_source", "run_count",
             "active_run_id", "active_runtime_version", "last_run_id", "next_run_at",
             "cancellation_requested_at", "cancellation_requested_by", "result_access", "origin",
+            "one_time_status",
         }
         extras = payload.keys() - set(WORKFLOW_DEFINITION_FIELDS) - managed_fields
         if any(key not in existing or payload[key] != existing[key] for key in extras):

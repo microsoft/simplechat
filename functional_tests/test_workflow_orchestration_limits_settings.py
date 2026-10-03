@@ -52,6 +52,7 @@ from functions_workflow_limits import (  # noqa: E402
     get_chat_orchestration_max_workflows_per_user,
     get_chat_orchestration_min_workflow_interval_seconds,
     get_orchestration_workflow_min_interval_seconds,
+    validate_chat_orchestration_max_workflow_handoffs_per_day,
     validate_chat_orchestration_max_workflows_per_user,
     validate_chat_orchestration_min_workflow_interval_seconds,
     validate_workflow_max_loop_items,
@@ -114,6 +115,9 @@ def _settings_writer(storage):
         "validate_chat_orchestration_max_workflows_per_user": validate_chat_orchestration_max_workflows_per_user,
         "validate_chat_orchestration_min_workflow_interval_seconds": (
             validate_chat_orchestration_min_workflow_interval_seconds
+        ),
+        "validate_chat_orchestration_max_workflow_handoffs_per_day": (
+            validate_chat_orchestration_max_workflow_handoffs_per_day
         ),
         "cosmos_settings_container": storage,
         "validate_content_screening_settings": lambda *_args: None,

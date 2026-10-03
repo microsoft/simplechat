@@ -107,6 +107,7 @@ CAPABILITY_RENDER_FILE = 'render_file'
 CAPABILITY_WORKFLOW_PROPOSE = 'workflow_propose'
 CAPABILITY_WORKFLOW_RUN = 'workflow_run'
 CAPABILITY_WORKFLOW_RESULTS = 'workflow_results'
+CAPABILITY_WORKFLOW_HANDOFF = 'workflow_handoff'
 
 # The settings key that must be exactly True before workflow proposals exist in a deployment.
 WORKFLOW_PROPOSALS_SETTING = 'enable_chat_orchestration_workflows'
@@ -118,6 +119,10 @@ WORKFLOW_RUNS_SETTING = 'enable_chat_orchestration_workflow_runs'
 # the stored result of one of the user's finished workflow runs. It is the same key that shows a
 # finished run's stored result in chat, so a plan never reads a result chat could not answer from.
 WORKFLOW_RESULTS_SETTING = 'enable_chat_workflow_results'
+# The settings key that must be exactly True before a plan may hand large work off to a one-time
+# workflow. Hand-off also needs proposals, runs and results turned on, because it creates a
+# workflow, starts its one run and posts that run's result back into the chat.
+WORKFLOW_HANDOFF_SETTING = 'enable_chat_orchestration_workflow_handoff'
 # The tasks a workflow proposal may hold, and the action kinds the planner may say a task needs.
 # The workflow planning context and the deliverables import these, so each has one definition.
 # The draft service's own task limit (functions_workflow_drafts.BLUEPRINT_MAX_TASKS) stays a
@@ -392,6 +397,26 @@ def _workflow_results_unavailable_reason(settings, context):
         return workflow_results_unavailable_reason(settings, context) or 'workflow_context_unavailable'
     except Exception:
         return 'workflow_context_unavailable'
+
+
+def _workflow_handoff_request_gate(settings, context):
+    """Whether this request may hand large work off to a one-time workflow.
+
+    It needs the hand-off part of the planning context stored with the turn, a private
+    conversation and a user who may use workflows and read their results in chat. It never
+    raises, so a hand-off problem never stops the rest of a plan.
+    """
+    try:
+        from functions_orchestration_workflow_context import workflow_handoff_unavailable_reason
+
+        return workflow_handoff_unavailable_reason(settings, context) is None
+    except Exception as exc:
+        log_event(
+            '[ORCHESTRATION_REGISTRY] Could not check workflow hand-off access.',
+            level=logging.WARNING,
+            extra={'reason': 'workflow_context_unavailable', 'error_type': type(exc).__name__},
+        )
+        return False
 
 
 def resolve_admitted_export_catalog(export_catalog=None):
@@ -1245,6 +1270,59 @@ CAPABILITY_REGISTRY = (
         'adapter': CAPABILITY_WORKFLOW_RESULTS,
         'retry_on_transient': True,
     },
+    {
+        'id': CAPABILITY_WORKFLOW_HANDOFF,
+        'label': 'Hand off large work',
+        # Reason, like workflow_propose: the step checks a workflow and returns a card the user
+        # approves. Nothing is created or started until they accept it on that card.
+        'role': ROLE_REASON,
+        'result_contract_version': 'workflow-handoff-v1',
+        'summary': (
+            'Hand work that is too big for a chat plan to a one-time workflow that reviews each '
+            'document in turn and writes one report. The user approves the plan, then the hand-off '
+            'card; the workflow runs once and its summary is posted back into this chat.'
+        ),
+        'when_to_use': (
+            'Use one step only when the request needs more documents, steps or time than the plan '
+            'limits allow, such as reviewing every document that matches a query. Write the '
+            'blueprint from the request and the workflow_planning catalog alone: this step takes no '
+            'depends_on and no inputs, and no other step may bind its output. A plan with this step '
+            'never also proposes or starts a workflow.'
+        ),
+        'settings_gates': (
+            'enable_chat_orchestration', 'allow_user_workflows', WORKFLOW_PROPOSALS_SETTING,
+            WORKFLOW_RUNS_SETTING, WORKFLOW_RESULTS_SETTING, WORKFLOW_HANDOFF_SETTING,
+        ),
+        'settings_gates_any': (),
+        'gate': None,
+        'request_gate': _workflow_handoff_request_gate,
+        'requires_scope': (),
+        # Until an administrator turns hand-off on, this capability is not part of the deployment:
+        # it is skipped before any other check and no reason is recorded for it.
+        'dormant_unless_setting': WORKFLOW_HANDOFF_SETTING,
+        # Turned on but unusable for this request, it is left out without a reason, so every
+        # projection and prompt reads exactly as it did before hand-off existed.
+        'silent_when_unavailable': True,
+        'inputs': {
+            'type': 'object',
+            'properties': {'blueprint': {'type': 'object'}},
+            'required': ['blueprint'],
+            'additionalProperties': False,
+        },
+        'result_input_kinds': {},
+        'partial_inputs_supported': False,
+        'result_outputs': {'handoff': 'structured-v1'},
+        'produces': (PRODUCES_RETAINED_RESULTS,),
+        'cost_class': COST_CLASS_LOW,
+        'max_per_plan': 1,
+        'adapter': CAPABILITY_WORKFLOW_HANDOFF,
+        # Handing work off creates a workflow and starts its run, so its plan never runs on
+        # arrival or when a countdown ends: normalize_plan forces manual approval and
+        # claim_plan_run refuses any other saved mode.
+        'approval_floor': APPROVAL_FLOOR_MANUAL,
+        # No external_effects: the step only checks the blueprint and stores the card. The
+        # workflow is created and queued later by the accept route, which is idempotent.
+    },
 )
 
 _RENDER_SOURCE_KINDS = {
@@ -1523,6 +1601,7 @@ def resolve_available_capabilities(
     narrowed = _allowed_ids(settings, allowed_ids)
     admitted_catalog = resolve_admitted_export_catalog(export_catalog) if export_catalog is not None else None
 
+    reasons = unavailable
     available = []
     for capability in _build_capabilities(candidate_ids):
         dormant_setting = capability.get('dormant_unless_setting')
@@ -1530,6 +1609,9 @@ def resolve_available_capabilities(
             # Not part of this deployment until an administrator turns it on, so it is skipped
             # before every other check and records no reason: planning is exactly what it was.
             continue
+        # A silent capability that fails a check is left out without a reason, so turning it on
+        # changes nothing a request that cannot use it is told.
+        unavailable = None if capability.get('silent_when_unavailable') is True else reasons
         if narrowed is not None and capability['id'] not in narrowed:
             if unavailable is not None:
                 unavailable[capability['id']] = 'not_enabled_for_orchestration'
