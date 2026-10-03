@@ -123,7 +123,7 @@ Example: a user analyzes a contract, and a reviewer later holds the contract aft
 
 ## Delivery
 
-Every layer targets layer 1's branch, `paullizer-workspace-knowledge-holds`. Layers 1 and 2 ship together as 0.261.230; layers 2 and 3a merged into that branch before 3b.
+Layers 2 and 3a merged into layer 1's branch, `paullizer-workspace-knowledge-holds`, which merged into `paullizer-react-v2-ui` through #1628. Layer 3b targets `paullizer-react-v2-ui` directly. Layers 1 and 2 ship together as 0.261.230.
 
 | Layer | Version | Scope | Pull request |
 | --- | --- | --- | --- |
