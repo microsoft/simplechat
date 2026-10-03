@@ -1,8 +1,9 @@
 # test_content_screening_jobs.py
 """
 Behavioral tests for durable content screening jobs and crash recovery.
-Version: 0.261.106
+Version: 0.261.230
 Implemented in: 0.261.106
+Generated metadata applies without a child scan implemented in: 0.261.230
 
 Uses fake Cosmos/Blob clients, real service/detector/CAS methods, a controlled
 clock, and external processor doubles. No live Azure resources are read.
@@ -1569,10 +1570,10 @@ def test_publication_projection_change_during_finalization_cas_cannot_be_retried
 
 
 @pytest.mark.parametrize("changed", [
-    "blob_path", "blob_etag", "source_etag", "file_size", "title",
+    "blob_path", "blob_etag", "source_etag", "file_size",
     "marker_policy", "marker_content", "marker_canonical", "marker_scan", "marker_job", "marker_state",
     "policy", "policy_fingerprint", "content_fingerprint", "units_ref", "publication", "coverage_complete",
-    "publication_metadata", "publication_blob", "scan_state",
+    "publication_blob", "scan_state",
 ])
 def test_publication_retry_never_waives_an_unbound_source_change(service_runtime, monkeypatch, changed):
     runtime = service_runtime
@@ -1581,7 +1582,7 @@ def test_publication_retry_never_waives_an_unbound_source_change(service_runtime
     item = interrupt_publication(runtime, monkeypatch, job)
     document = repository.read_document(subject)
     current = repository.get_scan(scan["id"])
-    if changed in {"blob_path", "blob_etag", "source_etag", "file_size", "title"}:
+    if changed in {"blob_path", "blob_etag", "source_etag", "file_size"}:
         repository.update_document(subject, {
             changed: 123456 if changed == "file_size" else "unrelated-change",
         }, etag=document["_etag"])
@@ -1597,10 +1598,9 @@ def test_publication_retry_never_waives_an_unbound_source_change(service_runtime
         repository.update_document(subject, {
             "content_screening": {**document["content_screening"], field: value},
         }, etag=document["_etag"])
-    elif changed in {"publication_metadata", "publication_blob"}:
-        field = "metadata_fingerprint" if changed == "publication_metadata" else "active_blob"
+    elif changed == "publication_blob":
         repository.replace({
-            **current, "publication": {**current["publication"], field: hash_payload("different-projection")},
+            **current, "publication": {**current["publication"], "active_blob": hash_payload("different-projection")},
         }, current["_etag"])
     else:
         field, value = {
@@ -1622,6 +1622,29 @@ def test_publication_retry_never_waives_an_unbound_source_change(service_runtime
         access._require_release_proof(repository.read_document(subject), repository.container)
     if changed == "marker_scan":
         assert repository.read_document(subject) == before
+
+
+@pytest.mark.parametrize("changed", ["title", "publication_metadata"])
+def test_publication_retry_finishes_a_release_after_a_metadata_change(service_runtime, monkeypatch, changed):
+    runtime = service_runtime
+    repository = runtime.repository
+    subject, scan, job = stage_scan(runtime)
+    interrupt_publication(runtime, monkeypatch, job)
+    document = repository.read_document(subject)
+    current = repository.get_scan(scan["id"])
+    if changed == "title":
+        repository.update_document(subject, {"title": "Edited after release"}, etag=document["_etag"])
+    else:
+        repository.replace({
+            **current, "publication": {**current["publication"], "metadata_fingerprint": hash_payload("other-metadata")},
+        }, current["_etag"])
+    result = jobs.run_scan_job(job["id"], repository=repository)
+    assert result["status"] == "completed" and result["counts"]["completed"] == 1
+    assert len(runtime.published) == len(runtime.inspections) == repository.count("scan") == 1
+    assert repository.get_scan(scan["id"])["state"] == "cleared"
+    released = repository.read_document(subject)
+    assert document_is_available(released)
+    access._require_release_proof(released, repository.container)
 
 
 def test_saved_scan_proof_can_finalize_without_an_item_projection_checkpoint(service_runtime, monkeypatch):
@@ -1694,28 +1717,31 @@ def test_default_processor_rejects_terminal_scans_with_pending_document_markers(
     assert repository.read_document(subject)["content_screening"]["state"] == "pending_scan"
 
 
-def test_publication_resume_finishes_parent_before_enqueuing_metadata_child(service_runtime, monkeypatch):
+def test_publication_resume_applies_generated_metadata_without_a_new_hold(service_runtime, monkeypatch):
     runtime = service_runtime
     repository = runtime.repository
     runtime.settings["enable_extract_meta_data"] = True
     subject, scan, job = stage_scan(runtime, trigger="upload")
     item = interrupt_publication(runtime, monkeypatch, job)
-    children = []
+    generated = []
 
     def extract_metadata(document_id, actor_id, **kwargs):
         assert jobs.PROCESSOR_CONTEXT.get() is None
         assert repository.get(item["id"], job["id"])["status"] == "completed"
-        children.append(service.queue_metadata_rescan(
-            repository.read_document(subject), {"title": "Generated title"}, actor_id, repository=repository,
-        ))
+        document = repository.read_document(subject)
+        # Model-generated metadata is written directly, the same way update_document applies it.
+        generated.append(repository.update_document(subject, {"title": "Generated title"}, etag=document["_etag"]))
 
     runtime.helpers.process_metadata_extraction_background = extract_metadata
     result = jobs.run_scan_job(job["id"], repository=repository)
     assert result["status"] == "completed" and result["counts"]["completed"] == 1
     assert repository.get_scan(scan["id"])["state"] == "cleared"
-    marker = repository.read_document(subject)["content_screening"]
-    assert len(children) == 1 and marker["scan_id"] == children[0]["id"] and marker["state"] == "pending_scan"
-    assert not runtime.notices and repository.count("scan") == repository.count("job") == 2
+    document = repository.read_document(subject)
+    assert len(generated) == 1 and document["title"] == "Generated title"
+    assert document["content_screening"]["scan_id"] == scan["id"] and document_is_available(document)
+    access._require_release_proof(document, repository.container)
+    assert len(runtime.notices) == 1
+    assert repository.count("scan") == repository.count("job") == 1
 
 
 def test_real_completion_failure_does_not_rehold_and_recovers_while_disabled(service_runtime):
@@ -1848,68 +1874,63 @@ def test_disabled_recovery_finds_terminal_items_after_unstarted_keyset_pages(ser
         assert "content_screening" not in repository.read_document(Subject.from_dict(pending["subject"]))
 
 
-def test_real_metadata_child_starts_only_after_parent_item_is_finished(service_runtime):
+def test_generated_metadata_applies_after_the_parent_item_finishes(service_runtime):
     runtime = service_runtime
     repository = runtime.repository
     runtime.settings["enable_extract_meta_data"] = True
     subject, scan, job = stage_scan(runtime, trigger="upload")
-    children = []
 
     def extract_metadata(document_id, actor_id, **kwargs):
         assert jobs.PROCESSOR_CONTEXT.get() is None
         assert repository.query("work_item", filters={"scan_id": scan["id"]})["items"][0]["status"] == "completed"
         document = repository.read_document(subject)
-        children.append(service.queue_metadata_rescan(
-            document, {"title": "Generated title"}, actor_id, repository=repository,
-        ))
+        repository.update_document(subject, {
+            "title": "Generated title", "abstract": "Generated abstract",
+        }, etag=document["_etag"])
 
     runtime.helpers.process_metadata_extraction_background = extract_metadata
     parent = jobs.run_scan_job(job["id"], repository=repository)
     assert parent["status"] == "completed" and parent["counts"]["completed"] == 1
-    child = children[0]
-    marker = repository.read_document(subject)["content_screening"]
-    assert marker["scan_id"] == child["id"] and marker["state"] == "pending_scan"
-    assert repository.get_scan(scan["id"])["state"] == "cleared"
-    assert not runtime.notices
-    child_job = repository.query("job", filters={"status": "queued"})["items"][0]
-    completed_child = jobs.run_scan_job(child_job["id"], repository=repository)
-    assert completed_child["status"] == "completed"
-    assert repository.read_document(subject)["content_screening"]["scan_id"] == child["id"]
-    assert len(runtime.published) == 2 and len(runtime.notices) == len(children) == 1
-    assert runtime.notices[0]["metadata"]["screening_scan_id"] == child["id"]
-    assert repository.count("scan") == repository.count("job") == 2
+    document = repository.read_document(subject)
+    assert document["title"] == "Generated title" and document_is_available(document)
+    assert document["content_screening"]["scan_id"] == scan["id"]
+    assert document["content_screening"]["metadata_generated"] is True
+    access._require_release_proof(document, repository.container)
+    assert len(runtime.published) == len(runtime.notices) == 1
+    assert runtime.notices[0]["metadata"]["screening_scan_id"] == scan["id"]
+    assert repository.count("scan") == repository.count("job") == 1
     jobs.check_due_scan_jobs_once(repository=repository)
-    assert repository.read_document(subject)["content_screening"]["scan_id"] == child["id"]
+    assert repository.count("scan") == 1
     assert document_is_available(repository.read_document(subject))
 
 
-def test_metadata_enqueue_crash_recovers_parent_without_reholding_child(service_runtime):
+def test_crash_after_generated_metadata_recovers_without_a_new_hold(service_runtime):
     runtime = service_runtime
     repository = runtime.repository
     runtime.settings["enable_extract_meta_data"] = True
     subject, scan, job = stage_scan(runtime, trigger="upload")
-    children = []
 
     def extract_metadata(document_id, actor_id, **kwargs):
-        children.append(service.queue_metadata_rescan(
-            repository.read_document(subject), {"title": "Generated title"}, actor_id, repository=repository,
-        ))
-        raise SystemExit("simulated worker loss after metadata child enqueue")
+        document = repository.read_document(subject)
+        repository.update_document(subject, {"title": "Generated title"}, etag=document["_etag"])
+        raise SystemExit("simulated worker loss after generated metadata")
 
     runtime.helpers.process_metadata_extraction_background = extract_metadata
     with pytest.raises(SystemExit):
         jobs.run_scan_job(job["id"], repository=repository)
-    child_document = repository.read_document(subject)
-    assert child_document["content_screening"]["scan_id"] == children[0]["id"]
+    generated = repository.read_document(subject)
+    assert generated["title"] == "Generated title" and document_is_available(generated)
     assert repository.get_scan(scan["id"])["postprocess_pending"]
     runtime.clock["now"] += timedelta(seconds=jobs.LEASE_SECONDS + 1)
     runtime.settings["enable_content_screening"] = False
     jobs.check_due_scan_jobs_once(repository=repository)
     assert repository.get(job["id"], job["id"])["status"] == "completed"
-    assert repository.read_document(subject) == child_document
     assert repository.get_scan(scan["id"])["postprocess_pending"] is False
-    assert len(runtime.published) == 1 and not runtime.notices
-    assert repository.count("scan") == repository.count("job") == 2
+    current = repository.read_document(subject)
+    assert current["title"] == "Generated title" and document_is_available(current)
+    access._require_release_proof(current, repository.container)
+    assert len(runtime.published) == len(runtime.notices) == 1
+    assert repository.count("scan") == repository.count("job") == 1
 
 
 def test_approved_with_flags_completion_retries_without_reopening_review(service_runtime):

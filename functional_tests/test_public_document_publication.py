@@ -1,24 +1,25 @@
 #!/usr/bin/env python3
 """
 Functional tests for immutable-target public workspace generated-artifact decisions.
-Version: 0.261.183
+Version: 0.261.230
 Implemented in: 0.261.134
 Decision link opens the V2 public workspace route: 0.261.148
 A pending artifact is visible only to the hosting workspace's managers; a reader's review or cancel
 of one answers as a document that does not exist: 0.261.183
+Generated destinations need no screening reservation; a held legacy destination blocks approval: 0.261.230
 
 The scoped public collaboration routes, the public publication adapter, the
-shared canonical artifact-publication engine, the shared screening consume-latch
-and revision cleanup all run against conditional local stores and exact source
-bytes. The workspace is always taken from the path, so a stale active-workspace
-preference can never redirect a publication decision. No Azure, model, provider,
-or filesystem artifact processing occurs.
+shared canonical artifact-publication engine and revision cleanup all run
+against conditional local stores and exact source bytes. The workspace is
+always taken from the path, so a stale active-workspace preference can never
+redirect a publication decision. No Azure, model, provider, or filesystem
+artifact processing occurs.
 
 Coverage is deliberately focused on what the *public* wrapper owns: per-role and
 per-status authorization, requester-only cancel, receipt shaping
 (applied/queued/unchanged/partial), etag binding, current-revision-only
-enforcement, 400 on malformed input, cross-scope isolation, the public
-consume-latch identity rules (contract §5), and the read projector's inline
+enforcement, 400 on malformed input, cross-scope isolation, approval admission
+from the destination's own screening state, and the read projector's inline
 collaboration actions. The shared engine's own internals are exhaustively
 covered by the group publication suite and are not re-tested here.
 """
@@ -50,9 +51,6 @@ from test_support.agent_delegation import APP_ROOT, execute_functions, module_st
 from test_support.versioning import assert_app_version_at_least
 
 sys.path.insert(0, str(Path(APP_ROOT)))
-from functions_artifact_publication_readiness import (  # noqa: E402
-    PUBLICATION_SCREENING_CONSUMPTION as CONSUMPTION,
-)
 
 
 ROOT = "/api/public-workspaces/public-a/documents"
@@ -690,69 +688,31 @@ def test_pending_request_exposes_inline_collaboration_actions_but_no_management_
     assert not env.publication_calls["queue"]
 
 
-# --- Contract §5: the public consume-latch stores operation identity, not a
-# boolean, and a reserved scan_id is identity not admission evidence. These
-# exercise the real public predicate directly, independent of screening state.
+# --- Generated destinations carry no screening reservation. Approval admission
+# depends only on the destination's own screening state.
 
-def _executing_operation(**overrides):
-    operation = {
-        "schema_version": 1, "id": "op-1", "action": "approve_artifact", "phase": "executing",
-        "actor_user_id": REQUESTER, "actor_public_workspace_id": "public-a",
-        "source_public_workspace_id": "public-a", "document_id": "doc-1", "document_version": 3,
-        "execution_token": "token-1",
-    }
-    operation.update(overrides)
-    return operation
-
-
-def _latch_document(operation):
-    return {
-        "id": "doc-1", "version": 3, "public_workspace_id": "public-a",
-        OPERATION: operation,
-    }
-
-
-def _latch_receipt(**overrides):
-    consumption = {"operation_id": "op-1", "fingerprint": "fp"}
-    consumption.update(overrides.pop("consumption", {}))
-    receipt = {CONSUMPTION: consumption, "stages": {}}
-    receipt.update(overrides)
-    return receipt
-
-
-def test_consume_latch_returns_the_operation_id_when_identity_matches(publication):
+def test_public_approval_records_no_screening_reservation(publication):
     env = publication
-    retry = env.publication_module._bootstrap_retry_operation_id(
-        _latch_document(_executing_operation()), _latch_receipt(), REQUESTER,
-    )
-    assert retry == "op-1"
+    submit(env)
+    response = decide(env, "approve")
+    assert_receipt(response, env, "approve", "queued", "approved", 202)
+    saved = receipt(env)
+    assert not any(str(key).startswith("screening_") for key in saved)
+    assert "operation_id" not in saved["decision"]
+    assert not hasattr(env.publication_module, "_bootstrap_retry_operation_id")
+    assert len(env.publication_calls["queue"]) == 1
 
 
-@pytest.mark.parametrize("mutation", [
-    {"consumption": {"operation_id": "different-op"}},
-    {"consumption": {"scan_id": "reserved-scan"}},
-    {"stages": {"approval_queue": "started"}},
-])
-def test_consume_latch_rejects_non_identity_or_progressed_receipts(publication, mutation):
+@pytest.mark.parametrize("state_value", ["pending_scan", "pending_review", "scan_error"])
+def test_public_screening_hold_on_a_legacy_destination_blocks_approval(publication, state_value):
     env = publication
-    retry = env.publication_module._bootstrap_retry_operation_id(
-        _latch_document(_executing_operation()), _latch_receipt(**mutation), REQUESTER,
-    )
-    assert retry is None
-
-
-@pytest.mark.parametrize("operation_change", [
-    {"phase": "complete"},
-    {"actor_user_id": "someone-else"},
-    {"source_public_workspace_id": "other-public"},
-    {"action": "reject_artifact"},
-])
-def test_consume_latch_rejects_operations_that_are_not_the_executing_approval(publication, operation_change):
-    env = publication
-    retry = env.publication_module._bootstrap_retry_operation_id(
-        _latch_document(_executing_operation(**operation_change)), _latch_receipt(), REQUESTER,
-    )
-    assert retry is None
+    submit(env)
+    env.source.change(env.target, content_screening={"state": state_value, "scan_id": "legacy-scan"})
+    response = decide(env, "approve")
+    assert response.status_code == 409, response.get_json()
+    assert "request publication again" in response.get_json()["message"]
+    assert "decision" not in receipt(env)
+    assert not env.publication_calls["queue"]
 
 
 if __name__ == "__main__":

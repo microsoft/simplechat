@@ -2,6 +2,23 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.230)**
+
+#### Breaking Changes
+
+*   **Generated Documents Are No Longer Screened**
+    *   Content screening now checks only documents that enter a workspace by a user upload (personal, group or public, including a file attached in chat and saved to a workspace) or File Sync. Files the SimpleChat agent action saves to a workspace and artifacts published into a workspace get no screening marker, are processed normally while screening is on, and are skipped by scan jobs.
+    *   Each generated document version carries a server-managed `screening_exemption` field that is set when the version is created. Clients can't set it: the document APIs reject any `screening` field, no update path accepts one, and responses never include it. A document that already has a screening marker stays screened.
+    *   Publishing an artifact to a group or public workspace no longer reserves a screening scan for its destination, so approval hands it straight to processing. A destination that was held by screening before this version can't be approved; cancel the request and publish the artifact again.
+    *   **Migration**: None. Existing documents keep their screening state, and nothing already screened or held is released.
+    *   (Ref: #1621, `content_screening/contracts.py`, `content_screening/service.py`, `content_screening/jobs.py`, `functions_documents.py`, `functions_simplechat_operations.py`, `functions_artifact_publication.py`, `functions_artifact_publication_readiness.py`, [Upload-Only Screening Intake Fix](fixes/UPLOAD_ONLY_SCREENING_INTAKE_FIX.md))
+
+*   **Metadata Edits No Longer Hold Screened Documents Again**
+    *   Editing a released document's title, abstract, keywords, authors, classification or tags now applies directly. The document stays available and no new scan starts, so the group and public document metadata APIs return `updated` (200) instead of `queued` (202).
+    *   Metadata the model generates after a document is released also applies directly, without a new hold.
+    *   A rename still can't change a screened file's extension. Tag edits on a screened document update the document and its search chunks but no longer rewrite the released file's blob metadata, so downloads of that file keep working.
+    *   (Ref: #1621, `functions_documents.update_document`, `content_screening/access.py`, `functions_group_document_management.py`, `functions_public_document_management.py`, [Upload-Only Screening Intake Fix](fixes/UPLOAD_ONLY_SCREENING_INTAKE_FIX.md))
+
 ### **(v0.261.229)**
 
 #### Bug Fixes

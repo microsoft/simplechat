@@ -2,11 +2,10 @@
 """Scoped adapters for the existing durable artifact-publication lifecycle,
 targeting an explicit public workspace.
 
-Public workspaces reuse the same shared artifact-publication engine, screening
-bootstrap and consume-latch as groups; this module only substitutes the public
-workspace scope for the group scope. There is no public share relationship yet
-(that arrives with M3D), so this file carries only the generated-artifact
-decision surface.
+Public workspaces reuse the same shared artifact-publication engine as groups;
+this module only substitutes the public workspace scope for the group scope.
+There is no public share relationship yet (that arrives with M3D), so this file
+carries only the generated-artifact decision surface.
 """
 
 from urllib.parse import quote
@@ -17,8 +16,7 @@ from content_screening.contracts import ScreeningError
 from functions_appinsights import log_event
 import functions_artifact_publication as publication
 from functions_artifact_publication_readiness import (
-    PUBLICATION_SCREENING_CONSUMPTION, SCREENING_BOOTSTRAP_REMEDY,
-    publication_handoff_observed,
+    PUBLICATION_SCREENING_HOLD_MESSAGE, publication_handoff_observed,
 )
 from functions_documents import delete_document_revision, select_current_documents
 from functions_public_document_access import (
@@ -61,31 +59,9 @@ def _has_publication(document):
     return public_document_has_publication(document)
 
 
-def _bootstrap_retry_operation_id(document, receipt, user_id):
-    operation = document.get(PUBLIC_DOCUMENT_COLLABORATION_OPERATION) or {}
-    consumption = receipt.get(PUBLICATION_SCREENING_CONSUMPTION) or {}
-    if (
-        isinstance(operation, dict) and isinstance(consumption, dict)
-        and operation.get("schema_version") == 1 and operation.get("action") == "approve_artifact"
-        and operation.get("phase") in {"executing", "repair"}
-        and operation.get("actor_user_id") == user_id
-        and operation.get("actor_public_workspace_id") == operation.get("source_public_workspace_id") == document.get("public_workspace_id")
-        and operation.get("document_id") == document.get("id")
-        and operation.get("document_version") == document.get("version")
-        and isinstance(operation.get("id"), str) and operation["id"]
-        and isinstance(operation.get("execution_token"), str) and operation["execution_token"]
-        and consumption.get("operation_id") == operation["id"] and "scan_id" not in consumption
-        and "approval_queue" not in (receipt.get("stages") or {})
-    ):
-        return operation["id"]
-    return None
-
-
-def _approval_available(document, settings, *, operation_id=None):
+def _approval_available(document):
     try:
-        return publication.artifact_publication_approval_available(
-            document, settings=settings, operation_id=operation_id,
-        )
+        return publication.artifact_publication_approval_available(document)
     except ScreeningError as error:
         log_event(
             "[DOCUMENTS] Publication screening admission could not be established.",
@@ -98,7 +74,7 @@ def _approval_available(document, settings, *, operation_id=None):
 def public_publication_view(document, user_id, public_workspace_id, *, context):
     if not _has_publication(document):
         return None
-    _workspace, role, settings, supported = context
+    _workspace, role, _settings, supported = context
     status = "pending_approval" if public_document_approval_pending(document) else document.get("generated_artifact_promotion_status")
     if status not in {"pending_approval", "approved", "approval_failed", "rejected", "cancelled"}:
         status = "unavailable"
@@ -107,9 +83,8 @@ def public_publication_view(document, user_id, public_workspace_id, *, context):
     try:
         _artifact, receipt, _bound = publication.read_artifact_publication_request(document)
         requester = receipt["actor_user_id"]
-        retry_id = _bootstrap_retry_operation_id(document, receipt, user_id)
         operation = document.get(PUBLIC_DOCUMENT_COLLABORATION_OPERATION) or {}
-        can_approve = operation.get("phase") != "executing" or retry_id is not None
+        can_approve = operation.get("phase") != "executing"
         decision = (receipt.get("decision") or {}).get("choice")
         if decision == "approved":
             status = "approved" if (receipt.get("stages") or {}).get("approval_queue") == "complete" else "approval_failed"
@@ -123,7 +98,7 @@ def public_publication_view(document, user_id, public_workspace_id, *, context):
                     actions.append("reject_artifact")
                     if (
                         can_approve and is_current_public_document(document)
-                        and _approval_available(document, settings, operation_id=retry_id)
+                        and _approval_available(document)
                     ):
                         actions.append("approve_artifact")
                 if requester == user_id:
@@ -134,7 +109,7 @@ def public_publication_view(document, user_id, public_workspace_id, *, context):
                 if (
                     can_approve and role in PUBLIC_DOCUMENT_MANAGER_ROLES
                     and is_current_public_document(document)
-                    and _approval_available(document, settings, operation_id=retry_id)
+                    and _approval_available(document)
                 ):
                     actions.append("approve_artifact")
             elif decision == "rejected" and role in PUBLIC_DOCUMENT_MANAGER_ROLES:
@@ -181,7 +156,7 @@ def decide_public_document_publication(user_id, public_workspace_id, document_id
 
     require_payload(payload, {"expected_etag"}, {"expected_etag"})
     validate_public_document_id(document_id)
-    workspace, role, settings, supported = _context(user_id, public_workspace_id)
+    workspace, role, _settings, supported = _context(user_id, public_workspace_id)
     if action not in PUBLICATION_ACTIONS or action not in supported:
         raise PublicDocumentCollaborationError("publication_forbidden", "Your current workspace role or status cannot make this decision.", 403)
     document = read_public_document_record(document_id)
@@ -207,18 +182,17 @@ def decide_public_document_publication(user_id, public_workspace_id, document_id
         raise PublicDocumentCollaborationError("manager_required", "A hosting workspace document manager must make this decision.", 403)
     if choice == "approved" and not is_current_public_document(document):
         raise PublicDocumentCollaborationError("revision_unavailable", "A historical publication request cannot be approved.", 409)
-    retry_id = _bootstrap_retry_operation_id(document, receipt, user_id) if choice == "approved" else None
-    if choice == "approved" and not _approval_available(document, settings, operation_id=retry_id):
-        raise PublicDocumentCollaborationError("publication_unavailable", SCREENING_BOOTSTRAP_REMEDY, 409)
+    if choice == "approved" and not _approval_available(document):
+        raise PublicDocumentCollaborationError("publication_unavailable", PUBLICATION_SCREENING_HOLD_MESSAGE, 409)
     previous_operation = _operation(document)
     if (
         previous_operation and _unfinished(previous_operation)
-        and previous_operation.get("phase") in {"executing", "uncertain"} and not retry_id
+        and previous_operation.get("phase") in {"executing", "uncertain"}
     ):
         raise PublicDocumentCollaborationError("operation_busy", "Reconcile the existing document operation before making another decision.", 409)
     if previous_operation and previous_operation.get("phase") not in {"complete", None} and previous_operation.get("action") != action:
         raise PublicDocumentCollaborationError("operation_busy", "A different collaboration operation needs reconciliation.", 409)
-    operation_id = retry_id or str(uuid.uuid4())
+    operation_id = str(uuid.uuid4())
     execution_token = str(uuid.uuid4())
     operation = {
         "schema_version": 1, "id": operation_id, "document_id": document_id,
@@ -308,7 +282,6 @@ def decide_public_document_publication(user_id, public_workspace_id, document_id
             publication.decide_artifact_publication(
                 user_id, document, choice, operation_guard=guard, delete_destination=cleanup,
                 decision_link_url=f"/v2/public/{quote(public_workspace_id, safe='')}/documents?document_id={quote(document_id, safe='')}",
-                operation_id=operation_id,
             )
     except Exception as error:
         log_event(
