@@ -141,7 +141,14 @@ def workflow_loop_items_page(workflow, run_id, execution_id, *, reader_user_id, 
     items = []
     for index in range(offset, min(manifest["count"], offset + limit)):
         item = read_frozen_item(workflow, run_id, manifest, index)
-        current = load_frozen_item_value(workflow, run_id, manifest, item, reader_user_id=reader_user_id)
+        if item["kind"] == "document":
+            # A frozen document item is provenance in history; it is not re-checked against the document.
+            document = item.get("document") if isinstance(item.get("document"), dict) else {}
+            label = str(document.get("file_name") or f"Item {index + 1}")[:256]
+        else:
+            # Proves the frozen record still matches its saved source collection.
+            load_frozen_item_value(workflow, run_id, manifest, item, reader_user_id=reader_user_id)
+            label = f"Item {index + 1}"
         outcome = store.journal_read("iteration", [execution_id, item["item_id"]])
         payload = (outcome or {}).get("payload") or {}
         path = identity["iteration_path"] + [{
@@ -154,8 +161,7 @@ def workflow_loop_items_page(workflow, run_id, execution_id, *, reader_user_id, 
                 executions.append(child_id)
         projected = {
             "item_id": item["item_id"], "index": index, "iteration_path": path,
-            "label": str(current["value"].get("file_name") or f"Item {index + 1}")[:256]
-            if item["kind"] == "document" else f"Item {index + 1}",
+            "label": label,
             "state": payload.get("state", "queued"), "execution_ids": executions,
         }
         if len(json.dumps(items + [projected], ensure_ascii=True).encode("ascii")) > 240 * 1024:

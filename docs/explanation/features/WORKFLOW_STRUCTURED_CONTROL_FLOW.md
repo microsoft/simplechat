@@ -187,9 +187,10 @@ present null value. An unguarded missing field is an error; use an existence
 guard when absence is allowed. `all` and `any` evaluate in authored order and
 short-circuit.
 
-Authorization and output eligibility precede predicate evaluation. Revoked
-source access, invalid results, and pending producers cannot become optional
-absence. Partial data needs explicit acceptance and retains its limitations.
+Lineage verification and output eligibility precede predicate evaluation.
+Invalid results and pending producers cannot become optional absence, and
+neither can an uploaded input document that is held or no longer readable when
+the run reads it. Partial data needs explicit acceptance and retains its limitations.
 Human approval cannot make invalid or unfinished output eligible.
 
 Output schema validity is not factual correctness. Analyze producer validation
@@ -337,11 +338,12 @@ decisions, exact identities, selected joins, skip/routing behavior, more than
 consumption lineage beyond 256 ancestors.
 `functional_tests/test_workflow_structured_edges.py` covers real save
 round-trips, limits, missing/null predicates, frozen shared references, gate
-source checks, invalid-output inspection, and complete paged per-document
+input verification, invalid-output inspection, and complete paged per-document
 outputs retaining their `document_results` type in legacy and structured reads.
 `functional_tests/test_workflow_structured_publication.py` passes genuine native
 Analyze records through a saved join and the existing publication service,
-including restart without duplicate publication and later source revocation.
+including restart without duplicate publication and publishing again after a
+source document changes.
 
 M5B coverage objectives add shared-command and compiler parity in
 `functional_tests/test_workflow_flow_authoring_commands.js` and

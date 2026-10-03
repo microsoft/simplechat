@@ -770,7 +770,6 @@ function RepeatStatePages({ scope, workflowId, runId, executionId, iteration, ph
         {page.metadata?.partial ? <p className="rounded-lg bg-warn-soft p-3 text-xs text-warn">
             This state retains accepted partial data. Its coverage and limitations are not cleared by a later round or manual continuation.
         </p> : null}
-        {page.metadata?.sourceSnapshotChanged ? <p className="text-xs text-warn">Source snapshots have changed. These are retained saved versions, with access checked on every read.</p> : null}
         <ul className="space-y-3" aria-label={`Saved state ${phase} round ${iteration + 1}`}>
             {page.items.map((slot) => {
                 const source = slot.source;
@@ -852,7 +851,6 @@ function RepeatIterations({ scope, workflowId, runId, executionId, finalOutputAv
         <p className="text-xs text-text-3">Lifetime rounds never reset when a person grants another batch. At most 50 rounds per page; state and saved content are read separately.</p>
         {page.loading ? <p role="status" className="text-xs text-text-3">Loading Repeat rounds...</p> : null}
         {page.error ? <p role="alert" className="text-xs text-danger">{page.error}</p> : null}
-        {page.metadata?.sourceSnapshotChanged ? <p className="text-xs text-warn">Source snapshots have changed; these retained rounds are still subject to current read authorization.</p> : null}
         {!page.loading && !page.error && !page.items.length ? <p className="text-xs text-text-3">No rounds have been admitted for this Repeat execution.</p> : null}
         <ul className="space-y-3" aria-label="Repeat rounds">
             {page.items.map((round) => <RepeatRound key={round.iteration} round={round} scope={scope} workflowId={workflowId}

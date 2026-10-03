@@ -212,8 +212,10 @@ Manual continuation grants no publication permission or completion bypass.
 
 Source receipts, digests and artifact locators are not permissions. Current
 workflow/run ownership, group membership/status, conversation access,
-contributing sources, frozen input/iteration membership and artifact lifecycle
-or approval are rechecked at sensitive boundaries. The run's frozen definition
+frozen input/iteration membership and artifact lifecycle
+or approval are rechecked at sensitive boundaries. Since 0.261.231, the
+documents a saved output came from are provenance and aren't re-checked. The
+run's frozen definition
 and exact committed attempt are authoritative, not the currently edited
 workflow or a latest-task lookup.
 
@@ -237,8 +239,9 @@ file metadata rather than raw bindings, internal locators or Blob URLs.
 They identify a generic file export, not a native Analyze result.
 
 Already-published copies remain governed by their independent destination
-permissions. Source revocation prevents further private-source reads or
-republication; it does not delete completed copies or replace their ACLs.
+permissions. A later change to a document the run read doesn't block publishing
+the saved output again, and nothing is withdrawn from completed copies. A new
+run that reads the document checks it again as an input.
 
 ## Implementation files
 

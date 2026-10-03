@@ -1,7 +1,7 @@
 # test_v2_workflow_flow_authoring.py
 """
 Offline real-bundle browser regressions for M5B workflow Flow authoring.
-Version: 0.261.127
+Version: 0.261.231
 Implemented in: 0.261.122
 
 Uses the existing fictional, closed API harness and real Python compiler.
@@ -1131,7 +1131,7 @@ def test_read_only_access_boundaries_never_offer_flow_authoring(authoring_ui, re
 
 
 @pytest.mark.parametrize("status", [401, 403, 404])
-def test_authoring_source_access_loss_clears_projection_and_blocks_further_edits(authoring_ui, status):
+def test_authoring_access_loss_clears_projection_and_blocks_further_edits(authoring_ui, status):
     ui, page = authoring_ui, authoring_ui.page
     editor = open_editor(ui)
     view = switch_surface(editor, "Flow")
@@ -1144,7 +1144,7 @@ def test_authoring_source_access_loss_clears_projection_and_blocks_further_edits
     expect(view.locator(".workflow-flow-control-edge")).to_have_count(0)
     assert len(ui.held_flow_responses) == 1
     try:
-        ui.reject_next("POST", "/api/user/workflows/flow-preview", status=status, error="Workflow source access is no longer available.")
+        ui.reject_next("POST", "/api/user/workflows/flow-preview", status=status, error="Current access to this workflow could not be confirmed.")
         fields.get_by_label("Task name", exact=True).fill("Access check draft")
         expect(page.get_by_role("alert").filter(has_text=re.compile("access|available|permission|sign in", re.I)).first).to_be_visible()
         expect(page.locator("[data-workflow-node-id]")).to_have_count(0)
