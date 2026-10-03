@@ -12,8 +12,10 @@ for that exact revision and connection, and sends no notification. A revision so
 a later edit by someone else to the workflow or to an agent or action it runs, a missing
 ``modified_by``, or a changed Microsoft 365 connection still asks the Run as user. An audience
 change never asks again. A denial or cancellation recorded for a run still stops that run, and a
-revoked self-authored binding is never silently re-created. Every save path records the
-authenticated actor as ``modified_by``, never the payload, and a raw administrator edit names
+revoked self-authored binding is never silently re-created. A revocation also withdraws an
+approved copy of the revision that it missed, whether the copy raced the revocation or the
+revocation was interrupted, so only an approval granted after it stands. Every save path records
+the authenticated actor as ``modified_by``, never the payload, and a raw administrator edit names
 the administrator.
 
 The approval service and execution boundary are the real modules over the conditional Cosmos
@@ -448,6 +450,92 @@ def test_revoking_a_revision_revokes_every_approved_copy_of_it(harness):
     assert statuses == {"revoked"}
     _prepared, pending = harness.waits(workflow(), audience="audience-2")
     assert pending["id"] not in copies
+
+
+def test_a_revocation_racing_a_new_self_authored_binding_still_wins(harness):
+    stored = workflow()
+    first, _allowed = harness.run(stored)
+    harness.connection["generation"] = 2
+    harness.clock.advance(minutes=1)
+    write_binding = harness.service._create_self_authored_binding
+
+    def revoke_while_writing(*args):
+        # The run read the records before the user revoked, and writes its new binding after.
+        harness.service.revoke_workflow_binding(first.binding_id, RUN_AS)
+        return write_binding(*args)
+
+    with patch.object(harness.service, "_create_self_authored_binding", revoke_while_writing):
+        raced, pending = harness.waits(stored)
+    assert pending["status"] == "pending" and "self_authored" not in pending
+    assert raced.binding_id == pending["id"]
+    assert [item["status"] for item in harness.bindings(self_authored=True)] == ["revoked", "revoked"]
+    for _attempt in range(2):
+        _prepared, again = harness.waits(stored)
+        assert again["id"] == pending["id"]
+
+
+def test_a_self_authored_copy_an_interrupted_revocation_missed_is_withdrawn(harness):
+    stored = workflow()
+    first, _allowed = harness.run(stored)
+    harness.connection["generation"] = 2
+    second, _allowed = harness.run(stored)
+    harness.clock.advance(minutes=1)
+
+    with patch.object(harness.service, "_revoke_revision_copies", side_effect=RuntimeError("interrupted")):
+        with pytest.raises(RuntimeError):
+            harness.service.revoke_workflow_binding(first.binding_id, RUN_AS)
+    missed = harness.service.get_approval(second.binding_id, RUN_AS)
+    assert missed["status"] == "approved"
+
+    _prepared, pending = harness.waits(stored)
+    assert pending["status"] == "pending" and "self_authored" not in pending
+    assert [item["status"] for item in harness.bindings(self_authored=True)] == ["revoked", "revoked"]
+    with pytest.raises(approvals.M365PolicyError) as invalid:
+        harness.validate(second)
+    assert invalid.value.code == "m365_run_as_invalid"
+
+
+def test_only_an_approval_granted_after_a_revocation_outlives_it(harness):
+    stored = workflow(modified_by=EDITOR)
+    _prepared, before = harness.waits(stored)
+    harness.approve(before["id"])
+    harness.connection["generation"] = 2
+    _prepared, granted = harness.waits(stored)
+    harness.approve(granted["id"])
+    harness.clock.advance(minutes=1)
+
+    with patch.object(harness.service, "_revoke_revision_copies", side_effect=RuntimeError("interrupted")):
+        with pytest.raises(RuntimeError):
+            harness.service.revoke_workflow_binding(before["id"], RUN_AS)
+    # The copy approved before the revocation is withdrawn, not reused or returned as a renewal.
+    _prepared, renewed = harness.waits(stored)
+    withdrawn = harness.service.get_approval(granted["id"], RUN_AS)
+    assert renewed["id"] not in {before["id"], granted["id"]}
+    assert withdrawn["status"] == "revoked"
+
+    harness.clock.advance(minutes=1)
+    harness.approve(renewed["id"])
+    rerun, allowed = harness.run(stored)
+    assert rerun.binding_id == renewed["id"] and allowed["status"] == "approved"
+
+
+def test_revoking_retries_a_copy_that_changed_meanwhile(harness):
+    first, _allowed = harness.run(workflow())
+    harness.connection["generation"] = 2
+    second, _allowed = harness.run(workflow())
+    transition = harness.service._transition
+    attempts = []
+
+    def changed_once(approval, status, **fields):
+        attempts.append(approval["id"])
+        if approval["id"] == second.binding_id and attempts.count(second.binding_id) == 1:
+            raise approvals.M365ApprovalConflict()
+        return transition(approval, status, **fields)
+
+    with patch.object(harness.service, "_transition", changed_once):
+        harness.service.revoke_workflow_binding(first.binding_id, RUN_AS)
+    assert attempts.count(second.binding_id) == 2
+    assert [item["status"] for item in harness.bindings(self_authored=True)] == ["revoked", "revoked"]
 
 
 # ---------------------------------------------------------------------------------------------

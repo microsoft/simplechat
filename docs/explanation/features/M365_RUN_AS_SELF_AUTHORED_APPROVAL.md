@@ -162,13 +162,32 @@ that race to record the same revision converge on one record. The record's
 `reason` explains that the user saved the revision and that revoking it makes
 the revision wait for their approval.
 
+### Revocation
+
+`revoke_workflow_binding` revokes the chosen binding first, then every other
+approved binding with the same workflow id and fingerprint. Two checks keep the
+revocation in force when it overlaps a run:
+
+- `ensure_workflow_binding` reuses an approved binding of a revoked revision
+  only when it is an ordinary approval granted after the latest revocation. A
+  run that finds any other approved copy, such as one an interrupted revocation
+  missed, revokes it. The copy is then neither reused nor returned by
+  `_create_request` as an existing approval.
+- `_create_self_authored_binding` writes its record and then looks for a
+  revocation of the revision. Because a revocation also writes before it looks
+  for copies, either the revocation finds the new record or the new record finds
+  the revocation. When it finds one, it revokes its own record and the run
+  waits for an ordinary approval.
+
+Revoking a copy that changed after it was read is retried up to three times.
+
 ### Interfaces
 
 | Function | Change |
 | --- | --- |
 | `workflow_revision_self_authored(workflow, user_id, components)` | New, pure. Fails closed on missing or unreadable authorship. |
 | `workflow_saved_by_run_as(workflow, user_id)` | New, pure. The workflow-level check the proposal card uses. |
-| `M365ApprovalService.ensure_workflow_binding(..., self_authored=False)` | New keyword. Stops comparing `audience_version`, prefers an approved binding over a pending one, and creates the self-authored binding. |
+| `M365ApprovalService.ensure_workflow_binding(..., self_authored=False)` | New keyword. Stops comparing `audience_version`, prefers an approved binding over a pending one, creates the self-authored binding, and revokes approved copies a revocation missed. |
 | `M365ApprovalService.validate_workflow_binding` | Stops comparing `audience_version`. |
 | `M365ApprovalService.revoke_workflow_binding` | Also revokes the revision's other approved bindings. |
 | `prepare_m365_workflow_binding` | Decides `self_authored` from the stored workflow and its recorded authorship. |
@@ -209,7 +228,7 @@ There is nothing to turn on.
 
 | Test | Covers |
 | --- | --- |
-| `functional_tests/test_m365_run_as_self_authored.py` | A self-authored first run and the Run as user's own edits are approved, audited and silent; someone else's revision, a missing `modified_by`, a later edit by someone else, and agents or actions changed after the save ask; connection id and generation changes; audience changes; denials, cancellations and revocations; the runtime's authorship plumbing; save routes record the signed-in actor; raw edits name the administrator. |
+| `functional_tests/test_m365_run_as_self_authored.py` | A self-authored first run and the Run as user's own edits are approved, audited and silent; someone else's revision, a missing `modified_by`, a later edit by someone else, and agents or actions changed after the save ask; connection id and generation changes; audience changes; denials, cancellations and revocations, including a revocation that races a new binding or is interrupted; the runtime's authorship plumbing; save routes record the signed-in actor; raw edits name the administrator. |
 | `functional_tests/test_m365_approvals_execution.py` | An approved binding stays valid after an audience change. |
 | `functional_tests/test_orchestration_workflow_proposal_routes.py`, `test_orchestration_workflow_proposal_done_when.py` | `approval_state` before and after Create. |
 | `functional_tests/test_workflow_assist_scenarios.py`, `test_workflow_assist_dry_run_parity.py`, `test_workflow_assist_candidate_parity.py`, `test_v2_workflow_change_tracking.py` | The assistant's warning and the editor's note agree, for your own and someone else's Run as account. |
@@ -228,3 +247,6 @@ Known limitations:
   newer save time, but a component with no timestamp still asks.
 - Authorship times come from the app servers' clocks, so an agent edit within
   clock skew of the Run as user's save counts as reviewed by that save.
+- Revocation and approval times also come from those clocks. An approval
+  granted within clock skew after a revocation can count as granted before it,
+  and the run then asks once more.

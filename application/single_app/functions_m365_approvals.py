@@ -177,6 +177,43 @@ def _source_snapshot(sources, state):
     return snapshot
 
 
+def _revision_revocation(records, workflow_id, workflow_fingerprint):
+    """Whether a workflow revision's Run as was ever revoked, and the latest readable time it was."""
+    revoked = False
+    latest = None
+    for approval in records:
+        binding = approval.get("binding") or {}
+        if (
+            approval.get("status") != "revoked"
+            or binding.get("workflow_id") != workflow_id
+            or binding.get("workflow_fingerprint") != workflow_fingerprint
+        ):
+            continue
+        revoked = True
+        try:
+            revoked_at = utc_datetime(approval.get("resolved_at"))
+        except ValueError:
+            continue
+        latest = revoked_at if latest is None else max(latest, revoked_at)
+    return revoked, latest
+
+
+def _approved_after_revocation(approval, revoked_at):
+    """Whether an approved copy of a revoked revision is the user's explicit approval since then.
+
+    A revocation withdraws every approval of the revision that existed when it ran, so only an
+    approval the user granted afterwards stands. A self-authored approval never outlives one.
+    """
+    if approval.get("self_authored") is True:
+        return False
+    if revoked_at is None:
+        return True
+    try:
+        return utc_datetime(approval.get("approved_at")) > revoked_at
+    except ValueError:
+        return False
+
+
 def is_m365_approval(approval):
     return isinstance(approval, dict) and approval.get("request_type") in M365_APPROVAL_TYPES
 
@@ -880,6 +917,19 @@ class M365ApprovalService:
         current = self._read(approval_id, subject)
         if current is None or current.get("status") != "approved":
             return None
+        # The record is written before this check and a revocation before its fan-out, so a
+        # revocation of this revision that ran meanwhile is seen here or its fan-out sees the record.
+        revoked, _revoked_at = _revision_revocation(
+            self._records(subject, TYPE_WORKFLOW_RUN_AS, tenant_id=context.tenant_id, status="revoked"),
+            context.workflow_id, context.workflow_fingerprint,
+        )
+        if revoked:
+            self._revoke_revision_copy(current)
+            _log(
+                "Microsoft 365 Run as self-authored approval withdrawn for a revoked revision",
+                {"approval_id": approval_id, "workflow_id": context.workflow_id},
+            )
+            return None
         return current
 
     def ensure_workflow_binding(self, context, sources, connection, *, review=None, self_authored=False):
@@ -887,7 +937,8 @@ class M365ApprovalService:
 
         ``self_authored`` is the caller's finding, from stored records, that the Run as user saved
         this revision. That save stands in for their approval unless they revoked this revision.
-        An explicit denial or cancellation recorded for this run still stops it.
+        After a revocation only an approval the user granted since then is reused. An explicit
+        denial or cancellation recorded for this run still stops it.
         """
         sources = sorted({_source(source) for source in sources})
         records = list(self._records(
@@ -909,7 +960,9 @@ class M365ApprovalService:
             and connection.get("tenant_id") == context.tenant_id
             and connection.get("status") == "connected"
         )
-        revoked = False
+        revoked, revoked_at = _revision_revocation(
+            records, context.workflow_id, context.workflow_fingerprint,
+        )
         pending = None
         for approval in records:
             binding = approval.get("binding", {})
@@ -918,8 +971,13 @@ class M365ApprovalService:
                 or binding.get("workflow_fingerprint") != context.workflow_fingerprint
             ):
                 continue
-            if approval["status"] == "revoked":
-                revoked = True
+            if (
+                approval["status"] == "approved"
+                and revoked
+                and not _approved_after_revocation(approval, revoked_at)
+            ):
+                # A revocation that was interrupted, or that raced this copy's creation, missed it.
+                self._revoke_revision_copy(approval)
                 continue
             if (
                 approval["status"] not in {"approved", "pending"}
@@ -1009,12 +1067,19 @@ class M365ApprovalService:
             and (approval.get("binding") or {}).get("workflow_fingerprint") == binding.get("workflow_fingerprint")
         ]
         for approval in copies:
+            self._revoke_revision_copy(approval)
+
+    def _revoke_revision_copy(self, approval):
+        """Revoke one approved copy of a revoked revision, tolerating a concurrent change to it."""
+        for _attempt in range(3):
             try:
                 self._transition(approval, "revoked", terminal_reason="subject_revoked")
+                return
             except M365ApprovalConflict:
-                current = self._read(approval["id"], approval["group_id"])
-                if current is not None and current.get("status") == "approved":
-                    raise
+                approval = self._read(approval["id"], approval["group_id"])
+                if approval is None or approval.get("status") != "approved":
+                    return
+        raise M365ApprovalConflict()
 
     def claim_continuation(self, approval_id, subject_user_id, worker_id, lease_seconds=60):
         """Claim the decision outbox, not permission to bypass execution validation."""
