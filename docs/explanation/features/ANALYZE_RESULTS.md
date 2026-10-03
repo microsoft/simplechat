@@ -1,9 +1,13 @@
 # Saved Analyze results
 
-**Version: 0.261.191**
+**Version: 0.261.232**
 
 Implemented in version: **0.261.109**, recorded in
 `application/single_app/config.py`.
+
+Saved results take their access from their conversation or run, rather than from
+their source documents, in **0.261.232**. See
+[Upload-only content screening](UPLOAD_ONLY_CONTENT_SCREENING.md).
 
 Planning, download, and responsive stabilization updated in version:
 **0.261.115**. See [Analyze stabilization](../fixes/ANALYZE_STABILIZATION_FIX.md).
@@ -41,8 +45,8 @@ second workflow engine.
 | `functions_document_analysis_results.py` | Candidate identity, evidence binding, deterministic collection, source coverage, and readable report formatting. |
 | `functions_workflow_results.py` | Separate final outputs from presentation/diagnostics and identify the exact output consumed by a later task. |
 | `functions_workflow_result_store.py` | Immutable JSON sections using the existing Blob/Cosmos infrastructure and real workflow, chat, or orchestration identities. |
-| `functions_saved_analysis.py` | Authorized result reading, complete-record pages, saved-result explanations, and source-bound history. |
-| `functions_analysis_access.py` | Current access to every contributor, including large selections resolved in bounded source batches. |
+| `functions_saved_analysis.py` | Authorized result reading, complete-record pages, saved-result explanations, and conversation-bound history. |
+| `functions_analysis_access.py` | Source snapshots kept as provenance, and current access to every document an in-progress Analyze reads, including large selections resolved in bounded source batches. |
 | `functions_analysis_deliverables.py` and `functions_tabular_transformations.py` | Public output projection and explicitly declared deterministic calculations. |
 | `functions_artifact_publication.py` | Publish existing artifact bytes to an explicit destination, preserving approvals and retry receipts. |
 
@@ -107,9 +111,10 @@ partial findings retain partial completeness on every output; an explicit
 partial read does not make a downstream result complete.
 
 `SavedAnalysisInput.read_report_text()` reads the complete `text` section and
-checks its producer, contract, output name, and current source access. It never
-reads `presentation.summary`. The generic readers recheck source revisions,
-access and screening after restart as well as during consumption.
+checks its producer, contract and output name, and the conversation or run that
+holds it. It never reads `presentation.summary`. The generic readers recheck the
+producer, conversation, run and result integrity after restart as well as during
+consumption. They do not read the source documents again.
 
 The pure `functions_orchestration_execution_policy.py` module provides
 `orchestration_file_policy(allow_generated_files=False)` for Gather/Reason.
@@ -453,11 +458,15 @@ change its saved findings.
 
 ## Access and publication
 
-New reads and reuse require current access to every contributing source. If a
-source becomes unavailable to the reader, the entire original result and its
-derived explanations, evidence, and original exports become unavailable. This
-also applies to workflow result readers and mixed-source results. A conversation
-permission alone does not override that rule.
+A saved result takes its access from its container. A chat result belongs to its
+conversation, an orchestration result to its conversation and run, and a workflow
+result to its workflow and run. Anyone who can open the container can read the
+result, its evidence, explanations and original exports, even if a contributing
+document is later deleted, re-uploaded or held for content screening. The source
+list stored with the result is provenance, not an access check. Lineage and
+integrity failures still make the result unavailable. Reading a document again,
+for example in a new Analyze, is an input read: it requires current access, and
+the document must not be held.
 
 Workspace publication is separate from saving a result in its originating chat.
 Passing required checks makes a projection eligible; it does not authorize a
@@ -490,7 +499,7 @@ Previously delivered or downloaded bytes cannot be recalled.
 
 Original chat artifacts use their own authorized byte reader rather than the
 workspace-document citation reader. Conversation participation, generated-file
-approval, publication state, and saved-source access are checked before and
+approval, publication state, and the saved result's lineage are checked before and
 after reading the persisted blob reference. Changed identity, revision, or
 recorded content digest prevents delivery. Legacy artifacts without a saved
 analysis binding retain their existing authorization contract.
@@ -504,9 +513,10 @@ reuse after an authorization change.
 
 Functional coverage includes source fixtures at 1, 10, 100, 300, and 500 inputs,
 candidate conflicts and replay, exact result reload, declared calculation
-precision, complete-record paging, source revocation, and publication
-authorization/retry behavior. Scale fixtures use supported configured limits;
-they do not raise default limits for users.
+precision, complete-record paging, results that stay readable after their sources
+are deleted, re-uploaded or held, and publication authorization/retry behavior.
+Scale fixtures use supported configured limits; they do not raise default limits
+for users.
 
 The local browser tests exercise both chat interfaces and the classic
 workflow publication controls, including keyboard/mobile behavior and
@@ -518,16 +528,21 @@ unavailable results. Principal regression files include
 `test_orchestration_internal_analysis.py` exercises the real adapter, native
 producer, work-unit checkpoints, saved reader, and generic facade/store with
 external I/O doubles. It checks final-record/full-report survival after restart,
-zero managed uploads, heterogeneous and partial findings, report absence,
-source revocation/screening, cancellation and failed result commits.
+zero managed uploads, heterogeneous and partial findings, report absence, source
+changes during execution, results that keep their run's access after their
+sources change, follow-ups that read an earlier run's sources at their current
+version, cancellation and failed result commits.
+`test_saved_results_container_access_chat_orchestration.py` checks that saved and
+generated results survive deleted, re-uploaded and held sources while held
+uploads are still refused as inputs.
 `test_orchestration_file_policy.py` checks async/thread isolation and real
 managed-operation guards in fresh normal and optimized interpreters.
 `test_orchestration_publication_policy.py` covers direct publication, approval
 and reconciliation denial with zero side effects, read-only observation,
 default-allow compatibility, and real cold web/scheduler imports.
 `test_orchestration_artifact_publication.py` covers real retained-result rendering,
-upload, source authorization, manual promotion and workspace approval without
-workflow receipts, including retries and source revocation.
+upload, manual promotion and workspace approval without workflow receipts,
+including retries and a disabled render capability.
 `test_orchestration_external_configuration_capture.py` exercises real web and
 source-review engines with external I/O doubles, checking invocation-time capture,
 all producer identity fields, isolated execution settings, planner binding,

@@ -1,8 +1,9 @@
 # test_saved_analysis_diagnostics.py
 """
-Explicit, bounded, source-authorized saved Analyze diagnostic audit reads.
-Version: 0.261.109
+Explicit, bounded, conversation-authorized saved Analyze diagnostic audit reads.
+Version: 0.261.232
 Implemented in: 0.261.109
+Container-only saved-result access covered in: 0.261.232
 
 Use the real shared Cosmos/Blob store and saved readers with SDK doubles.
 Diagnostics remain separate from accepted values, reports and model input.
@@ -17,7 +18,7 @@ from types import SimpleNamespace
 import pytest
 
 from test_saved_analysis_store_integration import (
-    SOURCE, analysis_result, authorize_run, resolve_sources, save_chat,
+    analysis_result, authorize_run, resolve_sources, save_chat,
     save_orchestration, sdk_store, saved,
 )
 from test_workflow_result_contract import (
@@ -120,10 +121,38 @@ def test_unfinished_or_invalid_results_can_be_audited_without_becoming_final_dat
             saved.load_saved_analysis_input("owner", context, **options)
 
 
-def test_revocation_blocks_each_diagnostic_read_before_transport(sdk_store):
+def test_source_revocation_does_not_block_diagnostic_reads(sdk_store):
+    # 0.261.232: a saved result takes its access from its conversation; its sources are provenance.
     context, options = chat_diagnostics(sdk_store)
     calls = []
-    options["source_resolver"] = lambda *args, **kwargs: [{**SOURCE, "authorization_status": "unresolved"}]
+
+    def reread_sources(*args, **kwargs):
+        raise AssertionError("A saved result must not reread its source documents.")
+
+    options["source_resolver"] = reread_sources
+    audit = saved.read_saved_analysis_diagnostics(
+        "owner", context, page_reader=page_reader(sdk_store, calls), **options,
+    )
+    assert audit["audit_only"] is True and len(calls) == 1
+
+
+def _losable_conversation(options):
+    state = {"allowed": True}
+    load_message = options["message_loader"]
+
+    def message_loader(*args, **kwargs):
+        if not state["allowed"]:
+            raise PermissionError("Conversation access was removed.")
+        return load_message(*args, **kwargs)
+
+    options["message_loader"] = message_loader
+    return state
+
+
+def test_conversation_loss_blocks_each_diagnostic_read_before_transport(sdk_store):
+    context, options = chat_diagnostics(sdk_store)
+    calls = []
+    _losable_conversation(options)["allowed"] = False
     with pytest.raises(PermissionError):
         saved.read_saved_analysis_diagnostics(
             "owner", context, page_reader=page_reader(sdk_store, calls), **options,
@@ -131,12 +160,9 @@ def test_revocation_blocks_each_diagnostic_read_before_transport(sdk_store):
     assert calls == []
 
 
-def test_access_loss_during_transport_returns_no_diagnostic_page(sdk_store):
+def test_conversation_loss_during_transport_returns_no_diagnostic_page(sdk_store):
     context, options = chat_diagnostics(sdk_store)
-    state = {"allowed": True}
-    options["source_resolver"] = lambda *args, **kwargs: [{
-        **SOURCE, "authorization_status": "authorized" if state["allowed"] else "unresolved",
-    }]
+    state = _losable_conversation(options)
     with pytest.raises(PermissionError):
         saved.read_saved_analysis_diagnostics(
             "owner", context,

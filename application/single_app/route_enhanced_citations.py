@@ -93,12 +93,11 @@ def _get_authorized_chat_artifact_message(user_id, conversation_id, message_id):
     # unreachable for every caller, including the participant who requested it.
     assert_generated_file_approval_allows_download(user_id, message_item)
     assert_generated_chat_artifact_is_published_for_user(user_id, message_item)
-    # A workspace link names the active representation; its retained chat blob is not the source to read.
-    evidence = {
-        key: value for key, value in message_item.items()
-        if not message_item.get("workspace_document_id") or key not in {"blob_container", "blob_path"}
-    }
-    assert_evidence_available(evidence, user_id)
+    # A generated file takes its access from this conversation, so the documents it was
+    # made from are not rechecked. A workspace link names the active representation,
+    # and reading that workspace document is an input read.
+    if message_item.get("workspace_document_id"):
+        assert_document_available(message_item["workspace_document_id"], user_id, purpose="chat_file")
     return message_item
 
 
@@ -584,7 +583,10 @@ def register_enhanced_citations_routes(bp):
             # approver: a plain group User can create a group shared conversation while the
             # approvers are that group's Owner, Admin, and Document Manager roles.
             assert_generated_file_approval_allows_download(user_id, file_msg)
-            assert_evidence_available(file_msg, user_id)
+            if not (file_msg.get('metadata') or {}).get('is_generated_chat_artifact'):
+                # An uploaded chat file is an input read. A generated file takes its access
+                # from this conversation, so its sources are not rechecked.
+                assert_evidence_available(file_msg, user_id)
 
             if file_content_source != 'blob':
                 return jsonify({"error": "File is not stored in blob storage"}), 400
@@ -820,7 +822,7 @@ def register_enhanced_citations_routes(bp):
         except ScreeningError as exc:
             return jsonify({"error": exc.public_message, "error_code": exc.code}), exc.status_code
         except PermissionError:
-            return jsonify({"error": "You no longer have access to this artifact or its sources."}), 403
+            return jsonify({"error": "You no longer have access to this artifact."}), 403
         except (LookupError, ResourceNotFoundError):
             return jsonify({"error": "The artifact content is unavailable. Refresh the conversation and try again."}), 404
         except ValueError:

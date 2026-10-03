@@ -1,13 +1,15 @@
 # test_orchestration_source_access.py
 """
-Strict current-source authority errors for retained orchestration results.
-Version: 0.261.143
+Strict current-source authority errors for orchestration input reads.
+Version: 0.261.232
 Implemented in: 0.261.127
 Authority check reason codes added in: 0.261.141
 Revision conflict reason codes added in: 0.261.143
+Retained results limited to container access in: 0.261.232
 
 Exercise real screening, source resolution, retained facade and alias discovery.
-Only external storage, membership, model and telemetry I/O are doubled.
+Only external storage, membership, model and telemetry I/O are doubled. Input
+reads keep typed authority failures; retained results never call source authority.
 """
 
 from concurrent.futures import ThreadPoolExecutor
@@ -49,7 +51,7 @@ from functions_orchestration_source_access import (
     resolve_orchestration_source_manifest,
 )
 from test_content_screening_access import ScreeningAccessFixture, fake_module
-from test_support.orchestration_results import ResultFixture
+from test_support.orchestration_results import ResultFixture, source
 
 
 def no_network(*args, **kwargs):
@@ -601,24 +603,30 @@ def test_strict_manifest_cancellation_is_not_reclassified_as_authority_error():
 
 
 @pytest.mark.parametrize("failure_type", [SourceAuthorityUnavailableError, SourceAuthorityUnverifiedError])
-def test_real_retained_facade_and_root_discovery_propagate_operational_errors(monkeypatch, failure_type):
+def test_retained_facade_and_root_discovery_never_call_source_authority(monkeypatch, failure_type):
     fixture = ResultFixture()
     task = fixture.save()
     record = fixture.runs["run-1"]
     record["plan"]["planner_contract_version"] = 2
     record["task_results"] = {"analyze": task.to_dict()}
+    calls = []
 
-    def unavailable(**kwargs):
+    def unavailable(*args, **kwargs):
+        calls.append(args)
         raise failure_type()
 
     monkeypatch.setattr(fixture, "metadata", unavailable)
     reopened = fixture.restart()
+    discovered = discover_result_aliases([deepcopy(record)], reopened)
+    assert list(discovered["aliases"].values()) == [task.output("findings")]
+    assert discovered["unavailable_count"] == 0 and calls == []
     with pytest.raises(failure_type):
-        discover_result_aliases([deepcopy(record)], reopened)
+        reopened.access.authorize_input_sources([source()], require_snapshot=True)
+    assert calls
 
 
 @pytest.mark.parametrize("malformation", ["missing", "order", "scope", "status", "version"])
-def test_retained_facade_rejects_malformed_fresh_resolver_authority(monkeypatch, malformation):
+def test_input_reads_reject_malformed_fresh_resolver_authority(monkeypatch, malformation):
     fixture = ResultFixture()
     task = fixture.save()
     fresh = fixture.resolve(["document-1"])
@@ -635,26 +643,24 @@ def test_retained_facade_rejects_malformed_fresh_resolver_authority(monkeypatch,
     monkeypatch.setattr(fixture, "resolve", lambda *args, **kwargs: deepcopy(fresh))
     reopened = fixture.restart()
     with pytest.raises(SourceAuthorityUnverifiedError):
-        reopened.open_result(task.output("findings"))
+        reopened.access.authorize_input_sources([source()], require_snapshot=True)
+    assert len(list(reopened.open_result(task.output("findings")).iter_records())) == 3
 
 
-def test_retained_reader_rechecks_outage_then_recovers_without_overwriting_saved_result(monkeypatch):
+def test_retained_reader_ignores_a_metadata_outage_that_input_reads_report(monkeypatch):
     fixture = ResultFixture()
     task = fixture.save()
     stored = deepcopy(fixture.container.items)
-    original_metadata = fixture.metadata
 
-    def failed(**kwargs):
+    def failed(*args, **kwargs):
         raise CosmosHttpResponseError(status_code=503, message="PRIVATE metadata outage")
 
     monkeypatch.setattr(fixture, "metadata", failed)
     reader_service = fixture.restart()
-    with pytest.raises(SourceAuthorityUnavailableError):
-        reader_service.open_result(task.output("findings"))
-    monkeypatch.setattr(fixture, "metadata", original_metadata)
-    reader = fixture.restart().open_result(task.output("findings"))
-    rows = list(reader.iter_records())
+    rows = list(reader_service.open_result(task.output("findings")).iter_records())
     assert len(rows) == 3 and rows[-1]["id"] == "last" and fixture.container.items == stored
+    with pytest.raises(SourceAuthorityUnavailableError):
+        reader_service.access.authorize_input_sources([source()], require_snapshot=True)
 
 
 @pytest.mark.parametrize("first", ["content_screening.access", "functions_orchestration_source_access", "functions_orchestration_results"])

@@ -1,8 +1,9 @@
 # test_orchestration_result_imports.py
 """
 Real-module result-store cold imports and web/scheduler compatibility.
-Version: 0.261.125
+Version: 0.261.232
 Implemented in: 0.261.125
+Input-only source authorizer name updated in: 0.261.232
 
 Fresh normal/optimized interpreters block network access. Only external I/O is
 doubled; config, settings, app, scheduler and result modules are never replaced.
@@ -103,7 +104,7 @@ with patch.object(socket.socket, "connect", no_network), patch.object(builtins, 
             store=native.service.store, resume_run_id=previous,
             authorize=lambda: native.service.access.authorize_producer(producer, for_write=True),
             source_authorizer=lambda user_id, sources, require_snapshot: (
-                native.service.access.authorize_sources(sources, require_snapshot=require_snapshot)
+                native.service.access.authorize_input_sources(sources, require_snapshot=require_snapshot)
             ),
         )
     first = checkpoints(original)

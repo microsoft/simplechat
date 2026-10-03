@@ -1,8 +1,9 @@
 # test_orchestration_output_cleanup.py
 """
 Deletion-only cleanup against real output/transport code and storage I/O doubles.
-Version: 0.261.127
+Version: 0.261.232
 Implemented in: 0.261.127
+Container-only output history covered in: 0.261.232
 
 An owned conversation tombstone or a matching irreversible run deletion guard
 authorizes cleanup. A missing conversation alone is never deletion authority.
@@ -688,7 +689,7 @@ def test_late_staging_notification_never_advances_a_replacement_worker(cleanup_l
     assert after["lease"]["token"] == replacement.token and after["attempt_count"] == 1
 
 
-@pytest.mark.parametrize("condition", ["denied", "held", "deleted", "storage"])
+@pytest.mark.parametrize("condition", ["denied", "held", "capability", "deleted", "storage"])
 def test_nested_output_history_without_any_cards_uses_only_current_authority(cleanup_lifecycle, condition):
     fixture = cleanup_lifecycle
     completed = fixture.run(fixture.prepare())
@@ -702,6 +703,8 @@ def test_nested_output_history_without_any_cards_uses_only_current_authority(cle
         fixture.results.denied.add("document-1")
     elif condition == "held":
         fixture.results.held.add("document-1")
+    elif condition == "capability":
+        fixture.capabilities = False
     elif condition == "deleted":
         delete_conversation(fixture, "deleted")
     else:
@@ -715,6 +718,10 @@ def test_nested_output_history_without_any_cards_uses_only_current_authority(cle
             outputs = refreshed["metadata"]["orchestration"]["outputs"]
             if condition == "deleted":
                 assert outputs == []
+            elif condition in {"denied", "held"}:
+                # A retained result's source documents are provenance, not access.
+                assert len(outputs) == 1 and outputs[0]["available"] is True
+                assert outputs[0]["artifact_message_id"] == completed["artifact_message_id"]
             else:
                 assert len(outputs) == 1 and outputs[0]["available"] is False
                 assert outputs[0]["artifact_message_id"] is None and outputs[0]["can_retry"] is False

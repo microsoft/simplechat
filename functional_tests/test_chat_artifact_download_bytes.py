@@ -1,13 +1,16 @@
 # test_chat_artifact_download_bytes.py
 """
 Functional regressions for authorized generated artifact download bytes.
-Version: 0.261.127
+Version: 0.261.232
 Implemented in: 0.261.115
+Container-only generated-file access covered in: 0.261.232
 
 Production route, message/lifecycle authorization, internal blob reader, saved
-analysis/source reader, and response functions execute against isolated storage.
+analysis reader, and response functions execute against isolated storage.
 Workspace-document admission is deliberately unavailable: a standalone generated
-artifact must not be misidentified as an ID-less workspace source.
+artifact must not be misidentified as an ID-less workspace source. A generated
+file takes its access from its conversation, so its source documents are never
+reread; a workspace-linked artifact reads a workspace document and is checked.
 """
 
 import ast
@@ -136,6 +139,7 @@ def artifact_download(saved_chat):
         "assert_generated_file_approval_allows_download": approval,
         "assert_generated_chat_artifact_is_published_for_user": publication["assert_generated_chat_artifact_is_published_for_user"],
         "assert_evidence_available": screening_access.assert_evidence_available,
+        "assert_document_available": screening_access.assert_document_available,
         "assert_current_request_sources_available": screening_access.assert_current_request_sources_available,
         "read_available_document_bytes": screening_access.read_available_document_bytes,
         "get_current_user_id": lambda: identity["user_id"],
@@ -181,17 +185,15 @@ def test_download_returns_exact_bytes_and_server_owned_filename(artifact_downloa
     assert response.headers["Content-Disposition"].startswith("attachment;")
     assert "no-store" in response.headers["Cache-Control"]
     assert response.headers["X-Content-Type-Options"] == "nosniff"
-    assert fixture.saved["state"]["resolutions"] >= 2
+    assert fixture.saved["state"]["resolutions"] == 0
     assert fixture.reads == [("personal-chat", "owner/conversation-1/generated/review.csv")]
 
 
-@pytest.mark.parametrize("denial", ["conversation", "source", "approval", "staged", "deleted_parent"])
+@pytest.mark.parametrize("denial", ["conversation", "approval", "staged", "deleted_parent"])
 def test_denial_happens_before_blob_read(artifact_download, denial):
     fixture = artifact_download
     if denial == "conversation":
         fixture.identity["allowed"] = False
-    elif denial == "source":
-        fixture.saved["state"]["source_allowed"] = False
     elif denial == "approval":
         fixture.identity["approved"] = False
     elif denial == "staged":
@@ -204,14 +206,28 @@ def test_denial_happens_before_blob_read(artifact_download, denial):
     assert b"PRIVATE" not in response.data and CSV not in response.data
 
 
-@pytest.mark.parametrize("change", ["source", "membership", "approval", "reference", "revision"])
+@pytest.mark.parametrize("during_read", [False, True])
+def test_source_revocation_does_not_withhold_the_generated_file(artifact_download, during_read):
+    fixture = artifact_download
+
+    def revoke():
+        fixture.saved["state"]["source_allowed"] = False
+
+    if during_read:
+        fixture.state["after_read"] = revoke
+    else:
+        revoke()
+    response = fixture.client.get(DOWNLOAD)
+    assert response.status_code == 200 and response.data == CSV
+    assert fixture.saved["state"]["resolutions"] == 0
+
+
+@pytest.mark.parametrize("change", ["membership", "approval", "reference", "revision"])
 def test_access_or_identity_changes_during_read_never_release_bytes(artifact_download, change):
     fixture = artifact_download
 
     def change_during_read():
-        if change == "source":
-            fixture.saved["state"]["source_allowed"] = False
-        elif change == "membership":
+        if change == "membership":
             fixture.identity["allowed"] = False
         elif change == "approval":
             fixture.identity["approved"] = False
@@ -292,15 +308,31 @@ def test_cleared_source_artifact_uses_its_bound_chat_bytes(screened_download):
     fixture, screening = screened_download
     response = fixture.client.get(DOWNLOAD)
     assert response.status_code == 200 and response.data == CSV
-    assert screening.personal.reads["document-1"] >= 2
+    assert screening.personal.reads["document-1"] == 0
     assert screening.blob_requests == []
 
 
 @pytest.mark.parametrize("during_read", [False, True])
-def test_genuine_screening_hold_returns_explicit_409_without_artifact_bytes(screened_download, during_read):
+def test_screening_hold_on_a_source_does_not_withhold_the_generated_file(screened_download, during_read):
     fixture, screening = screened_download
     if during_read:
         fixture.state["after_read"] = screening.hold
+    else:
+        screening.hold()
+    response = fixture.client.get(DOWNLOAD)
+    assert response.status_code == 200 and response.data == CSV
+    assert response.headers["Content-Disposition"].startswith("attachment;")
+    assert screening.personal.reads["document-1"] == 0
+    assert len(fixture.reads) == 1
+
+
+@pytest.mark.parametrize("during_read", [False, True])
+def test_held_workspace_linked_artifact_returns_explicit_409(screened_download, during_read):
+    fixture, screening = screened_download
+    fixture.artifact["workspace_document_id"] = "document-1"
+    fixture.artifact["metadata"] = {"is_generated_chat_artifact": True}
+    if during_read:
+        screening.after_blob_read = screening.hold
     else:
         screening.hold()
     response = fixture.client.get(DOWNLOAD)
@@ -310,7 +342,7 @@ def test_genuine_screening_hold_returns_explicit_409_without_artifact_bytes(scre
     }
     assert "attachment" not in response.headers.get("Content-Disposition", "")
     assert "no-store" in response.headers["Cache-Control"]
-    assert len(fixture.reads) == int(during_read)
+    assert fixture.reads == []
 
 
 def test_workspace_linked_artifact_reads_the_admitted_copy_not_the_retained_original(screened_download):

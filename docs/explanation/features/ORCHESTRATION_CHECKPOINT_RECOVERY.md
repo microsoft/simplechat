@@ -1,9 +1,13 @@
 # Orchestration Checkpoint Recovery
 
-**Version: 0.261.139**
+**Version: 0.261.232**
 
 Implemented in version: **0.261.105**, recorded in
 `application/single_app/config.py`.
+
+Since **0.261.232**, restored retained references take their access from their
+conversation and run: their source documents are not reread. See
+[Upload-only content screening](UPLOAD_ONLY_CONTENT_SCREENING.md).
 
 Gather / Reason / Render retained-reference recovery implemented in version:
 **0.261.127** (Refs #1509). Same-attempt waiting claims and native/result
@@ -306,8 +310,9 @@ inputs against the saved digest before opening the original job.
 
 Recovery can reuse an independent successful producer after an earlier sibling
 failed; it no longer assumes that all successful work forms one linear prefix.
-Every restored reference is reauthorized against current ownership, sources,
-screening and producer state. The original actor, run and attempt on a result
+Every restored reference is reauthorized against current ownership, producer
+state and lineage integrity. The documents behind it are not reread; a resumed
+step that reads documents checks them as inputs when it runs. The original actor, run and attempt on a result
 are never rewritten. An old-attempt reference is admitted under an exact
 server-generated alias before a new-attempt consumer can read it.
 
@@ -558,7 +563,7 @@ exception remains server-side in `__cause__`.
 | `context_unavailable` | The conversation authorizer denied access, recovery data was deleted, or the inherited run is unavailable to the caller. |
 | `recovery_changed` | Approved inputs or checkpoint lineage no longer match. |
 | `ownership_lost` | The current execution no longer owns its guarded writes. |
-| `result_unavailable` | Retained source access was denied, integrity or ownership validation failed, or a definite screening hold applies; no preview may replace it. |
+| `result_unavailable` | Ownership, producer or integrity validation failed, or a document the step reads as an input is denied or held; no preview may replace it. |
 
 Since **0.261.209**, external-source identity comes from the signed-in session,
 which a scheduler continuation doesn't have. A step, saved wait or final-answer
@@ -698,12 +703,13 @@ saved StepResult passed to the single shared helper.
 Run-wide file aggregation retains the owning service's current public
 file-visibility contract; it is separate from the saved-step resumer.
 A completed file can be currently unavailable without changing its immutable
-commit. Genuine source
-denial or a screening hold retains its safe requested-file metadata, clears
-links and counts, and leaves accessible siblings visible. Restoring access
+commit. A file whose retained result, run or capability is unavailable retains
+its safe requested-file metadata, clears links and counts, and leaves accessible
+siblings visible. Changes to the documents behind its retained result do not make
+it unavailable. Restoring access
 reopens the same committed file without rendering or generating content again.
 Storage/network failures, screening-service or authority-configuration failures,
-and missing required source readers propagate instead of becoming denied-file
+and missing required readers propagate instead of becoming denied-file
 placeholders. The saved-step checkpoint and pending wait remain recoverable;
 observing a read failure does not spend another output attempt. Coverage is in
 `test_orchestration_render_read_failures.py`, implemented in **0.261.127** and
@@ -733,11 +739,12 @@ checkpoint, then inject initialized services, the actual owning guard and
 `input_fingerprint`, not a browser value or a fresh guess.
 
 This entrypoint compares current declared inputs with that saved fingerprint,
-rechecks capability admission, ownership, source access and the attempt
+rechecks capability admission, ownership, access to the documents the native job
+is still reading, and the attempt
 deadline, and opens the existing native handle once. It neither selects a
 model nor builds or submits another native request. Full readers are retained
 before a completed result is returned; changed sources, lost access, stale
-guards and incomplete results fail closed.
+guards and incomplete results fail closed because the read is still in progress.
 
 The entrypoint returns a typed `StepResult` for a verified native outcome; it
 does not mutate the caller's pending task map or commit orchestration
@@ -776,8 +783,8 @@ forbidden throughout the refresh.
 If a private complete or partial result committed before its completion
 checkpoint was saved, recovery opens the guarded input checkpoint and calls
 `recover_task_result(producer=..., input_fingerprint=...)` with its original
-identity. The facade verifies the exact receipt, current ownership/access,
-screening and the full retained output contents. Recovery reconstructs a
+identity. The facade verifies the exact receipt, current ownership and producer
+state, and the full retained output contents. Recovery reconstructs a
 reference-only completion payload without invoking an adapter or model.
 The active attempt commits that payload through its existing lease; child and
 chained retries retain the original producer and explicitly authorized aliases.
