@@ -5,9 +5,8 @@ import json
 import math
 import re
 
-from functions_analysis_access import (
-    AnalysisResultUnavailable, authorize_analysis_sources, resolve_analysis_source_manifest,
-)
+from content_screening.contracts import ScreeningError
+from functions_analysis_access import AnalysisResultUnavailable, resolve_analysis_source_manifest
 from functions_document_analysis_results import normalize_analysis_options
 from functions_workflow_bindings import WorkflowInputError, authorize_workflow_reference
 from functions_workflow_definitions import (
@@ -28,6 +27,10 @@ _PREVIEW_PRESERVED_FIELDS = frozenset({
     "metadata", "alerts", "alert_settings", "document_actions", "publication", "publication_options",
 })
 _DIGEST = re.compile(r"[a-f0-9]{64}\Z")
+# A missing, inaccessible or held authored source is marked, not raised.
+_UNAVAILABLE_SOURCE_ERRORS = (
+    AnalysisResultUnavailable, WorkflowInputError, PermissionError, LookupError, ValueError, ScreeningError,
+)
 
 
 class WorkflowFlowUnsupported(ValueError):
@@ -94,8 +97,12 @@ def _action(value):
     return result
 
 
-def _row(label, value):
-    return {"label": label, "value": value}
+def _row(label, value, source=None):
+    row = {"label": label, "value": value}
+    if source is not None:
+        # Internal only: removed before a page is returned.
+        row["_source"] = source
+    return row
 
 
 def _label(value, fallback):
@@ -309,18 +316,33 @@ def _selection(workflow, node, tasks):
         iterable = node["iterable"]
         rows = [_row("Iterable", {name: iterable[name] for name in ("kind", "name", "filters", "content", "selection")
                                  if name in iterable})]
-        rows.extend(_row("Document", value) for value in iterable.get("documents", []))
-        rows.extend(_row("Workspace", value) for value in iterable.get("scopes", []))
+        rows.extend(_row("Document", value, {
+            "kind": "document", "document_id": value["document_id"], "scope_type": value["scope_type"],
+            "scope_id": value.get("scope_id") or workflow["user_id"],
+        }) for value in iterable.get("documents", []))
+        rows.extend(_row("Workspace", value, {
+            "kind": "scope", "scope_type": value["scope_type"], "scope_id": value.get("scope_id") or workflow["user_id"],
+        }) for value in iterable.get("scopes", []))
         return rows
     if node["kind"] not in {"task", "region"}:
         return []
     if node["kind"] == "region" and node["id"] != workflow["flow"]["id"]:
         return []
     task = tasks[node["task_id"]] if node["kind"] == "task" else None
-    rows = [_row(reference["name"], reference) for reference in _references(workflow, task)]
+    rows = [
+        _row(reference["name"], reference, {"kind": "reference", "reference": reference})
+        for reference in _references(workflow, task)
+    ]
     action = (task if task is not None else workflow).get("document_action") or {}
     if not isinstance(action, dict):
         raise WorkflowDefinitionError("Document selection configuration must be an object.")
+    # Nothing is read for "none", and a current-item action reads its loop's frozen item.
+    reads_selection = action.get("type", "none") != "none" and action.get("target_mode") != "current_item"
+    selected = {
+        "kind": "selected_document", "doc_scope": action.get("doc_scope", "all"),
+        "active_group_ids": action.get("active_group_ids", []),
+        "active_public_workspace_ids": action.get("active_public_workspace_id", []),
+    }
     for name, label in (
         ("document_ids", "Selected document"), ("right_document_ids", "Comparison document"),
         ("active_group_ids", "Source group"), ("active_public_workspace_id", "Source public workspace"),
@@ -328,9 +350,21 @@ def _selection(workflow, node, tasks):
         values = action.get(name, [])
         if not isinstance(values, list) or len(values) > 5000:
             raise WorkflowDefinitionError("Document selections must be bounded identifier lists.")
-        rows.extend(_row(label, {name: _text(value)}) for value in values)
+        for value in values:
+            value = _text(value)
+            source = None
+            if reads_selection:
+                source = (
+                    {**selected, "document_id": value} if name.endswith("document_ids")
+                    else {"kind": "scope", "scope_type": "group" if name == "active_group_ids" else "public", "scope_id": value}
+                )
+            rows.append(_row(label, {name: value}, source))
     if action.get("left_document_id"):
-        rows.append(_row("Comparison source", {"document_id": _text(action["left_document_id"])}))
+        value = _text(action["left_document_id"])
+        rows.append(_row(
+            "Comparison source", {"document_id": value},
+            {**selected, "document_id": value} if reads_selection else None,
+        ))
     return rows
 
 
@@ -363,9 +397,95 @@ def _json_size(value):
         raise WorkflowDefinitionError("Workflow inspection requires bounded finite JSON.") from exc
 
 
+class _SourceAvailability:
+    """Marks authored sources this reader can't use right now; it never denies the definition.
+
+    A definition takes its access from its workflow, which the route already
+    checked. Only the source-selection rows on the requested page are looked up,
+    and a missing, inaccessible or held source gets ``"available": false`` on its
+    row. Storage failures still fail the request so an outage isn't shown as an
+    unavailable source.
+    """
+
+    def __init__(self, workflow, reader_user_id):
+        self.workflow = workflow
+        self.reader_user_id = reader_user_id
+
+    def _scope(self, source):
+        if source["scope_type"] == "personal":
+            return source["scope_id"] == self.reader_user_id
+        try:
+            return _default_authorize_scope(
+                {"scope_type": source["scope_type"], "scope_id": source["scope_id"]},
+                actor_user_id=self.reader_user_id,
+            ) is not False
+        except _UNAVAILABLE_SOURCE_ERRORS:
+            return False
+
+    def _reference(self, source):
+        try:
+            authorize_workflow_reference(self.workflow, source["reference"], actor_user_id=self.reader_user_id)
+        except _UNAVAILABLE_SOURCE_ERRORS:
+            return False
+        return True
+
+    def _documents(self, sources):
+        first = sources[0]
+        identifiers = list(dict.fromkeys(source["document_id"] for source in sources))
+        if first["kind"] == "document":
+            scope, scope_id = first["scope_type"], first["scope_id"]
+            arguments = {
+                "doc_scope": scope, "active_group_ids": [scope_id] if scope == "group" else [],
+                "active_public_workspace_ids": [scope_id] if scope == "public" else [],
+            }
+        else:
+            scope = scope_id = None
+            arguments = {name: first[name] for name in ("doc_scope", "active_group_ids", "active_public_workspace_ids")}
+        try:
+            manifest = resolve_analysis_source_manifest(identifiers, self.reader_user_id, **arguments)
+        except _UNAVAILABLE_SOURCE_ERRORS:
+            return {}
+        return {
+            entry.get("document_id"): entry.get("authorization_status") == "authorized" and (
+                scope is None or (entry.get("scope") == scope and entry.get("scope_id") == scope_id)
+            )
+            for entry in manifest if isinstance(entry, dict)
+        }
+
+    def annotate(self, rows, sources):
+        batches = {}
+        for index, source in enumerate(sources):
+            if source is not None and source["kind"] in {"document", "selected_document"}:
+                key = canonical_digest({name: value for name, value in source.items() if name != "document_id"})
+                batches.setdefault(key, []).append(index)
+        available = {}
+        for indices in batches.values():
+            found = self._documents([sources[index] for index in indices])
+            for index in indices:
+                available[index] = found.get(sources[index]["document_id"], False)
+        marked = []
+        for index, (row, source) in enumerate(zip(rows, sources)):
+            if source is not None:
+                usable = (
+                    self._scope(source) if source["kind"] == "scope"
+                    else self._reference(source) if source["kind"] == "reference"
+                    else available[index]
+                )
+                if not usable:
+                    row = {**row, "value": {**row["value"], "available": False}}
+            marked.append(row)
+        return marked
+
+
 def workflow_flow_inspection(workflow, *, source_kind="saved", run_id=None, snapshot_sha256=None,
-                             node_id=None, section=None, revision=None, cursor=None, limit=50):
-    """Pure projection. Callers must first authorize this exact definition source."""
+                             node_id=None, section=None, revision=None, cursor=None, limit=50,
+                             reader_user_id=None):
+    """Pure projection. Callers must first authorize this exact definition source.
+
+    With ``reader_user_id``, the source-selection rows on the returned page mark
+    authored sources that reader can't use right now as unavailable. A missing,
+    inaccessible or held source never denies the definition or its topology.
+    """
     if not isinstance(workflow, dict) or type(workflow.get("definition_version")) is not int or workflow["definition_version"] != 3:
         raise WorkflowFlowUnsupported()
     if source_kind not in {"saved", "draft", "run"} or (source_kind == "run") != (run_id is not None):
@@ -407,9 +527,13 @@ def workflow_flow_inspection(workflow, *, source_kind="saved", run_id=None, snap
     rows = _detail_rows(workflow, compiled, node_id, section)
     if offset > len(rows) or cursor and offset == len(rows):
         raise ValueError("The detail cursor exceeds this definition section.")
+    page = [dict(row) for row in rows[offset:offset + limit]]
+    sources = [row.pop("_source", None) for row in page]
+    if reader_user_id is not None and any(source is not None for source in sources):
+        page = _SourceAvailability(workflow, reader_user_id).annotate(page, sources)
     result = {**scope, "items": [], "total_count": len(rows), "next_cursor": None}
     used = _json_size(result) + 1024
-    for row in rows[offset:offset + limit]:
+    for row in page:
         size = _json_size(row) + 1
         if size + _json_size({**scope, "total_count": len(rows), "next_cursor": None, "items": []}) + 1024 > FLOW_DETAIL_MAX_BYTES:
             raise WorkflowFlowDetailTooLarge()
@@ -442,70 +566,6 @@ def preview_workflow_flow(definition, *, user_id, group_id=None, **selectors):
     return workflow_flow_inspection(workflow, source_kind="draft", **selectors)
 
 
-def authorize_workflow_flow_sources(workflow, *, reader_user_id):
-    """Recheck declared source metadata, without expanding queries or reading results.
-
-    Whole-run result authorization traverses all historical execution lineage.
-    Definition-only inspection instead checks its authored source boundaries;
-    execution overlays retain the existing exact payload/lineage authorization.
-    """
-    if not isinstance(workflow, dict) or type(workflow.get("definition_version")) is not int or workflow["definition_version"] != 3:
-        raise WorkflowFlowUnsupported()
-    compiled = compile_workflow_flow(workflow)
-    try:
-        for reference in _references(workflow):
-            authorize_workflow_reference(workflow, reference, actor_user_id=reader_user_id)
-        sources = {}
-        scopes = {}
-        for entry in compiled["nodes"].values():
-            node = entry["node"]
-            if node["kind"] != "for_each":
-                continue
-            iterable = node["iterable"]
-            for value in iterable.get("documents", []):
-                source = {
-                    "document_id": value["document_id"], "scope": value["scope_type"],
-                    "scope_id": value.get("scope_id") or workflow["user_id"],
-                }
-                sources[canonical_digest(source)] = source
-            for value in iterable.get("scopes", []):
-                scope = {"scope_type": value["scope_type"], "scope_id": value.get("scope_id") or workflow["user_id"]}
-                scopes[canonical_digest(scope)] = scope
-        for scope in scopes.values():
-            if scope["scope_type"] == "personal" and scope["scope_id"] != reader_user_id:
-                raise PermissionError
-            if _default_authorize_scope(scope, actor_user_id=reader_user_id) is False:
-                raise PermissionError
-        if sources:
-            authorize_analysis_sources(reader_user_id, list(sources.values()))
-        for task in [workflow, *compiled["tasks"]]:
-            action = task.get("document_action") or {}
-            if not isinstance(action, dict):
-                raise WorkflowDefinitionError("Document selection configuration must be an object.")
-            if action.get("type", "none") == "none" or action.get("target_mode") == "current_item":
-                continue
-            for scope_type, field in (("group", "active_group_ids"), ("public", "active_public_workspace_id")):
-                for scope_id in action.get(field, []):
-                    if _default_authorize_scope(
-                        {"scope_type": scope_type, "scope_id": scope_id}, actor_user_id=reader_user_id,
-                    ) is False:
-                        raise PermissionError
-            identifiers = list(dict.fromkeys([
-                *action.get("document_ids", []), *action.get("right_document_ids", []),
-                *([action["left_document_id"]] if action.get("left_document_id") else []),
-            ]))
-            if identifiers:
-                manifest = resolve_analysis_source_manifest(
-                    identifiers, reader_user_id, doc_scope=action.get("doc_scope", "all"),
-                    active_group_ids=action.get("active_group_ids", []),
-                    active_public_workspace_ids=action.get("active_public_workspace_id", []),
-                )
-                if any(source.get("authorization_status") != "authorized" for source in manifest):
-                    raise AnalysisResultUnavailable()
-    except (WorkflowInputError, PermissionError, LookupError) as exc:
-        raise AnalysisResultUnavailable() from exc
-
-
 def workflow_run_flow_inspection(workflow, run_id, *, reader_user_id, **selectors):
     """Read only after the route has proved current workflow/run/scope access."""
     store = workflow_runtime_store(workflow, run_id)
@@ -522,7 +582,7 @@ def workflow_run_flow_inspection(workflow, run_id, *, reader_user_id, **selector
         raise WorkflowRuntimeConflict("workflow_definition_changed")
     if type(snapshot.get("definition_version")) is not int or snapshot["definition_version"] != 3:
         raise WorkflowFlowUnsupported()
-    authorize_workflow_flow_sources(snapshot, reader_user_id=reader_user_id)
     return workflow_flow_inspection(
-        snapshot, source_kind="run", run_id=run_id, snapshot_sha256=control["snapshot_ref"]["sha256"], **selectors,
+        snapshot, source_kind="run", run_id=run_id, snapshot_sha256=control["snapshot_ref"]["sha256"],
+        reader_user_id=reader_user_id, **selectors,
     )

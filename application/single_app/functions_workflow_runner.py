@@ -27,6 +27,7 @@ from azure.identity import (
     get_bearer_token_provider,
 )
 from flask import Flask, g, has_request_context, session
+from content_screening.access import isolate_request_source_fence
 from functions_m365_approvals import M365ApprovalRequired, M365PolicyError
 from functions_workflow_alert_safety import sanitize_workflow_alert_decision
 from m365_interaction import M365_AUTH_INTERACTION_CODES, M365SignInRequired
@@ -10762,15 +10763,13 @@ def _execute_workflow_task_sequence(
             checkpoint_ref = summary.get('result_ref')
             if checkpoint_ref:
                 try:
-                    _, source_access = authorize_workflow_task_result_read(
+                    authorize_workflow_task_result_read(
                         workflow, run_id, task_id, checkpoint_ref, reader_user_id=actor_id,
                         **(durable.selectors(attempt=summary['producer']['attempt']) if structured_definition else {}),
                     )
                 except AnalysisResultUnavailable:
                     if not structured_definition:
                         raise
-                    durable._pause(task_unit_key, checkpoint_ref['sha256'])
-                if structured_definition and source_access.get('source_snapshot_changed'):
                     durable._pause(task_unit_key, checkpoint_ref['sha256'])
                 task_results.append(completed_task)
                 validation = saved_result.get('workflow_validation') or {
@@ -10827,6 +10826,9 @@ def _execute_workflow_task_sequence(
             raise_if_cancelled()
             attempt_count = attempt_index + 1
             task_stage = 'runner'
+            # Each attempt gets its own model fence: only the documents this task reads as
+            # inputs can block its model calls, never an earlier task's sources.
+            source_fence = isolate_request_source_fence()
             try:
                 if task.get('publication') is not None:
                     task_stage = 'publication'
@@ -11095,6 +11097,8 @@ def _execute_workflow_task_sequence(
                         title=str(task.get('name') or f"Task {task['order']}"),
                         status='running',
                     )
+            finally:
+                source_fence.restore()
 
         if task_result is not None:
             # Persistence is outside the invocation retry loop: a failed write
@@ -11243,7 +11247,12 @@ def _execute_workflow_task_sequence(
                     error=task_error,
                 )
             except AnalysisResultUnavailable as exc:
-                message = 'Saved task output was withheld because its source access could not be confirmed.'
+                # Raised when the task's own analysis could not confirm the sources it read
+                # while it ran, or its result provenance is malformed. Nothing was saved.
+                message = (
+                    'The analysis result was not saved because a document it read changed or became '
+                    'unavailable while it ran. Dependent tasks were not run.'
+                )
                 _save_workflow_task_run_item(
                     workflow, run_id, task, 'failed', attempt_count=attempt_count,
                     error=message, created_at=created_at, runner_audit=runner_audit,

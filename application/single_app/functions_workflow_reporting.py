@@ -646,8 +646,6 @@ class _WorkflowRecordReport:
         partial = any(reader.metadata()["accepted_subset_only"] for reader in self.inputs)
         if partial:
             reply += "\n\n**Partial saved result:** only the explicitly accepted subset is described; unresolved work remains."
-        if any(reader.access.get("source_snapshot_changed") for reader in self.inputs):
-            reply += "\n\n**Source snapshot changed:** this explanation describes the saved revisions, not current source contents."
         consumption = {
             "input_kind": "workflow_records", "version": WORKFLOW_RECORD_REPORT_VERSION,
             "mode": mode, "record_count": self.record_count, "page_count": page_count,
