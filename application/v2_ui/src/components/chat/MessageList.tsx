@@ -38,6 +38,8 @@ import { OrchestrationMessageRecovery } from './OrchestrationRecoveryNotice';
 import { OrchestrationOutputs } from './OrchestrationOutputs';
 import { WorkflowProposalCards } from './WorkflowProposalCard';
 import { WorkflowRunLinks } from './WorkflowRunLinks';
+import { WorkflowRunCard } from './WorkflowRunCard';
+import { WorkflowDeliveryFooter } from './WorkflowDeliveryFooter';
 import { MessageInspector, type InspectorSection } from './MessageInspector';
 import { ThoughtsList, ThoughtsProgressCard } from './ThoughtsList';
 import { OrchestrationPlanCard } from './OrchestrationPlanCard';
@@ -78,6 +80,8 @@ import { normalizeOrchestrationAttempt } from '../../lib/orchestration';
 import { isOrchestrationOutputArtifact } from '../../lib/orchestrationOutputs';
 import { orchestrationProposedWorkflow } from '../../lib/workflowProposals';
 import { orchestrationStartedWorkflow } from '../../lib/orchestrationWorkflowRuns';
+import { readWorkflowDelivery } from '../../lib/workflowDelivery';
+import { workflowRunTrackerShouldRun } from '../../lib/workflowRunTracker';
 import { analysisUnavailableMessage, readSavedAnalysis, sameAnalysis } from '../../lib/savedAnalysis';
 import { readMessagePrompt } from '../../lib/messagePrompt';
 import { PromptCard } from './PromptCard';
@@ -797,6 +801,10 @@ function MessageBubbleInner({
     const messages = useChatStore((state) => state.messages);
     const activeConversationId = useChatStore((state) => state.activeConversationId);
     const personalConversation = useChatStore((state) => state.activeConversationKind === 'personal');
+    // Live run status comes from the tab's workflow run tracker, which runs only while both flags are on.
+    const liveRunStatus = useBootstrapStore((state) => workflowRunTrackerShouldRun(state.data?.features));
+    // A result or note a chat-started workflow run posted back to this conversation.
+    const workflowDelivery = useMemo(() => readWorkflowDelivery(message), [message]);
     // the thread, which is often: the list re-renders on each streaming token.
     const masks = useMemo(() => readMaskState(message), [message]);
     // A stable list, so the image cards' shared scope is not rebuilt on every render.
@@ -1122,11 +1130,14 @@ function MessageBubbleInner({
                             && orchestrationProposedWorkflow(message.metadata?.orchestration) ? (
                             <WorkflowProposalCards conversationId={message.conversation_id} runId={orchestration.run_id} />
                         ) : null}
-                        {/* A started workflow's run links only for the person who asked, in their own conversation. */}
+                        {/* A started workflow's runs only for the person who asked, in their own conversation:
+                            live while the tab keeps a run tracker, else as they stood when the answer loaded. */}
                         {orchestration.run_id && masks.ranges.length === 0 && personalConversation
                             && message.conversation_id === activeConversationId
                             && orchestrationStartedWorkflow(message.metadata?.orchestration) ? (
-                            <WorkflowRunLinks conversationId={message.conversation_id} runId={orchestration.run_id} />
+                            liveRunStatus
+                                ? <WorkflowRunCard conversationId={message.conversation_id} runId={orchestration.run_id} />
+                                : <WorkflowRunLinks conversationId={message.conversation_id} runId={orchestration.run_id} />
                         ) : null}
                         {/* Inside the bubble, because a generated file belongs to the reply
                             that produced it rather than sitting loose in the thread. */}
@@ -1149,6 +1160,16 @@ function MessageBubbleInner({
                                 </details>
                             ) : artifactCards
                         )}
+                        {/* What the requester can do next with a result a workflow run posted back here. */}
+                        {workflowDelivery && message.role === 'assistant' && masks.ranges.length === 0
+                            && personalConversation && message.conversation_id === activeConversationId ? (
+                            <WorkflowDeliveryFooter
+                                messageId={message.id}
+                                conversationId={message.conversation_id}
+                                delivery={workflowDelivery}
+                                metadata={message.metadata}
+                            />
+                        ) : null}
                     </>
                 )}
             </div>

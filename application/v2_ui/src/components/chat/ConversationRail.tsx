@@ -49,6 +49,7 @@ import {
 import { ConfirmDialog } from '../ui/ConfirmDialog';
 import { Skeleton } from '../ui/primitives';
 import { ConversationExportDialog } from './ConversationExportDialog';
+import { WorkflowRunningTag } from './WorkflowRunningTag';
 import type { ReactNode } from 'react';
 import type { Conversation } from '../../lib/types';
 
@@ -309,6 +310,7 @@ function ConversationRow({
                         />
                     )}
                     <GeneratingImagesTag conversation={conversation} />
+                    <WorkflowRunningTag conversation={conversation} />
                 </button>
             </div>
 

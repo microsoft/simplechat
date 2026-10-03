@@ -13,6 +13,7 @@ import { Link } from 'react-router-dom';
 import { ConfirmDialog } from '../ui/ConfirmDialog';
 import { GlassButton } from '../ui/primitives';
 import { WorkflowEditorDialog } from '../workflows/WorkflowEditorDialog';
+import { WorkflowProposalRunSummary } from './WorkflowProposalRunSummary';
 import { ApiError } from '../../lib/apiClient';
 import { M365_CONNECT_HREF } from '../../lib/m365Links';
 import {
@@ -421,6 +422,7 @@ function ProposalCard({
             </div>
             <ProposalDetails proposal={proposal} />
             <p className="break-words text-text-2">{[stateNote(proposal), expiry].filter(Boolean).join(' ')}</p>
+            {isCreated && proposal.workflow ? <WorkflowProposalRunSummary workflowId={proposal.workflow.id} workflowName={name} /> : null}
             {proposal.state === 'creating' && pollingStopped ? (
                 <p className="break-words text-text-2">
                     This is taking longer than expected.{' '}

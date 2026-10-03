@@ -81,6 +81,17 @@ export function workflowRunningLabel(
     return runs.length === 1 ? `Running ${runs[0].row.workflow_name}` : `Running ${runs.length} workflows`;
 }
 
+/**
+ * The chat list tag's label: the running label while the tracker is reading, and empty once it has
+ * stopped or halted, when what it last knew may no longer be true.
+ */
+export function workflowRunningTagLabel(
+    snapshot: WorkflowRunTrackerSnapshot,
+    conversationId: string | null | undefined,
+): string {
+    return snapshot.running && !snapshot.halted ? workflowRunningLabel(snapshot, conversationId) : '';
+}
+
 /** The runs one plan answer started, oldest request first. */
 export function workflowRunsForAnswer(
     snapshot: WorkflowRunTrackerSnapshot,

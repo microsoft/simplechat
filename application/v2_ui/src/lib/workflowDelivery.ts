@@ -24,6 +24,9 @@ import type { TrackedWorkflowRun, WorkflowRunTrackerSnapshot } from './workflowR
 
 export const WORKFLOW_DELIVERY_VERSION = 1;
 
+/** Said when Follow up couldn't make a delivered result the composer's source. */
+export const WORKFLOW_DELIVERY_FOLLOW_UP_UNAVAILABLE_TEXT = 'This result can\'t be used as a source here right now.';
+
 /** The kinds of message the server posts. `expired` is only ever a bell notice, never a message. */
 export const WORKFLOW_DELIVERY_KINDS = [
     'result', 'analysis', 'failed', 'cancelled', 'skipped', 'status', 'content_blocked',
