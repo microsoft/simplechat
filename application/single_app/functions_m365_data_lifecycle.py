@@ -1,6 +1,8 @@
 # functions_m365_data_lifecycle.py
 """Exclude live delegated authority and retired actions from data transfers."""
 
+from datetime import timezone
+
 from functions_m365_action_cards import strip_pending_action_references
 from json_schema_validation import (
     ACTION_MIGRATION_ID_PREFIX,
@@ -57,6 +59,37 @@ def validate_m365_admin_record_edit(original, document):
             for key in ("plugins", "semantic_kernel_plugins")
         ):
             validate_legacy_plugin_settings_update(previous, incoming)
+
+
+# A workflow revision runs as its Run as user without a separate approval only when that user
+# saved it, judged from who last changed the workflow and the agents and actions it runs.
+M365_AUTHORED_RECORD_CONTAINERS = frozenset({
+    "personal_workflows", "group_workflows",
+    "personal_agents", "group_agents", "global_agents",
+    "personal_actions", "group_actions", "global_actions",
+})
+# Agent and action stores record naive UTC times; workflow stores record aware ones.
+_NAIVE_TIME_CONTAINERS = M365_AUTHORED_RECORD_CONTAINERS - {"personal_workflows", "group_workflows"}
+RAW_EDITOR_AUTHOR = "data-management-cosmos-editor"
+
+
+def attribute_raw_authored_record_edit(container_name, document, editor_id, edited_at):
+    """Name the administrator as the last author of a raw edit to an authored record.
+
+    Keeping the previous author would let edited content run as that person without asking
+    them, so a changed workflow, agent or action records who edited it and when. ``edited_at``
+    is an aware time, written in the format the record's own store uses.
+    """
+    if container_name not in M365_AUTHORED_RECORD_CONTAINERS or not isinstance(document, dict):
+        return document
+    edited_at = edited_at.astimezone(timezone.utc)
+    if container_name in _NAIVE_TIME_CONTAINERS:
+        edited_at = edited_at.replace(tzinfo=None)
+    return {
+        **document,
+        "modified_by": str(editor_id or "").strip() or RAW_EDITOR_AUTHOR,
+        "modified_at": edited_at.isoformat(),
+    }
 
 
 def strip_m365_runtime_references(document, *, log_event=None):

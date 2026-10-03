@@ -4,6 +4,7 @@
 import hashlib
 import json
 from collections.abc import Mapping
+from datetime import datetime, timezone
 from typing import Any
 
 
@@ -33,6 +34,83 @@ M365_WORKFLOW_FIELDS = (
     "model_endpoint_id",
     "model_id",
 )
+# Who last changed each agent and action a revision runs. It is recorded beside the execution
+# fingerprint, never hashed into it, so saving an agent without changing it asks nothing.
+M365_REVISION_AUTHORSHIP_FIELD = "m365_revision_authorship"
+_AUTHORSHIP_TIMESTAMP_FIELDS = ("modified_at", "updated_at", "last_updated", "created_at")
+
+
+def m365_revision_component(kind: str, record: Mapping[str, Any]) -> dict[str, Any]:
+    """Who last changed one agent or action a revision runs, and when; never its content."""
+    record = record if isinstance(record, Mapping) else {}
+    modified_by = record.get("modified_by")
+    component = {
+        "kind": kind,
+        "id": str(record.get("id") or record.get("name") or ""),
+        "modified_by": modified_by if isinstance(modified_by, str) else None,
+    }
+    for name in _AUTHORSHIP_TIMESTAMP_FIELDS:
+        if isinstance(record.get(name), str):
+            component[name] = record[name]
+    return component
+
+
+def _authorship_time(value: Any) -> datetime | None:
+    if not isinstance(value, str) or not value.strip():
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.strip())
+    except ValueError:
+        return None
+    # Agent and action stores write naive UTC times; workflow stores write aware ones.
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def workflow_saved_by_run_as(workflow: Mapping[str, Any], user_id: str | None) -> bool:
+    """Whether ``user_id`` is the workflow's Run as account and saved its stored revision.
+
+    Every save path stamps ``modified_by`` from the authenticated actor, so it names whoever
+    saved the workflow last. A missing ``modified_by`` never counts as the Run as user's save.
+    """
+    user = str(user_id or "").strip()
+    return bool(
+        user
+        and isinstance(workflow, Mapping)
+        and str(workflow.get("m365_run_as_user_id") or "").strip() == user
+        and workflow.get("modified_by") == user
+    )
+
+
+def workflow_revision_self_authored(
+    workflow: Mapping[str, Any],
+    user_id: str | None,
+    components: Any,
+) -> bool:
+    """Whether the Run as user saved the whole revision that is about to run as them.
+
+    Their save counts as their review of everything the workflow then contained, including
+    earlier edits by others. Agents and actions are saved on their own, so each one the revision
+    runs must be the Run as user's own latest edit or be older than their save. Missing or
+    unreadable authorship never counts as theirs.
+    """
+    if not workflow_saved_by_run_as(workflow, user_id) or not isinstance(components, (list, tuple)):
+        return False
+    user = str(user_id).strip()
+    saved_at = _authorship_time(workflow.get("modified_at"))
+    for component in components:
+        if not isinstance(component, Mapping):
+            return False
+        if component.get("modified_by") == user:
+            continue
+        changes = [
+            changed for changed in (_authorship_time(component.get(name)) for name in _AUTHORSHIP_TIMESTAMP_FIELDS)
+            if changed is not None
+        ]
+        if saved_at is None or not changes or max(changes) > saved_at:
+            return False
+    return True
 
 
 def workflow_execution_fingerprint(

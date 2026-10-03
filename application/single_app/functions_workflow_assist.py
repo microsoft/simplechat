@@ -909,9 +909,10 @@ def build_warnings(run, attempt, baseline_projection):
         return _advisory(check, *args) if run.remaining() >= ASSIST_MIN_WARNING_SECONDS else None
 
     run_as = str(attempt.projection.get('m365_run_as_user_id') or '').strip()
-    if run_as and workflow_execution_fingerprint(baseline_projection) != workflow_execution_fingerprint(
-        attempt.projection,
-    ):
+    # Saving as the Run as account is that person's own revision, which needs no new approval.
+    if run_as and run_as != run.user_id and workflow_execution_fingerprint(
+        baseline_projection,
+    ) != workflow_execution_fingerprint(attempt.projection):
         warnings.append({'code': 'run_as_reapproval', 'message': _WARNING_MESSAGES['run_as_reapproval']})
     tasks = {task.get('id'): task for task in candidate.get('tasks') or [] if isinstance(task, dict)}
     email_ids = email_task_ids(candidate, attempt.info or {})

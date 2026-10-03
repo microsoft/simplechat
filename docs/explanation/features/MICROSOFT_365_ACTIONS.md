@@ -249,9 +249,14 @@ their own approval flows.
 ## Workflows
 
 Manual and scheduled runs use an explicitly selected, consenting Run as user.
-The connection does not grant other workflows access automatically. Material
-instructions, agent/action capabilities, inputs, or destinations require new
-Run as approval. The full review is retained without truncating task or agent
+The connection does not grant other workflows access automatically. When
+someone else saved the current revision, a change to instructions, agent or
+action capabilities, inputs, or destinations requires new Run as approval. Since
+0.261.229, a revision the Run as user saved themselves, with no later change by
+anyone else to its agents and actions, is approved in their name without asking
+them, and an audience change never asks again. See
+[Run as approval for a revision you saved](M365_RUN_AS_SELF_AUTHORED_APPROVAL.md).
+The full review is retained without truncating task or agent
 instructions; reviews over 1.5 MB require splitting the workflow. A personal
 workflow uses its owner's account; group Run as accounts must be eligible group
 members.

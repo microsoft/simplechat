@@ -25,7 +25,7 @@ const RUNS_KINDS = ['manual', 'count', 'on_change'] as const;
 const ALERT_MODES = ['every_run', 'failures_only'] as const;
 const ALERT_SEVERITIES = ['info', 'low'] as const;
 const SIMILAR_REASONS = ['same_sources', 'same_schedule', 'similar_name'] as const;
-const APPROVAL_STATES = ['waiting', 'approved'] as const;
+const APPROVAL_STATES = ['waiting', 'approved', 'self_authored'] as const;
 
 export type WorkflowProposalTriggerType = typeof TRIGGER_TYPES[number];
 
@@ -67,6 +67,10 @@ export interface WorkflowProposalM365 {
     sources: string[];
     /** From the stored connection record only; null when it was not needed or could not be read. */
     connected: boolean | null;
+    /**
+     * Where Run as approval stands. `self_authored`: the requester saved (or, before Create, will
+     * save) the revision that runs as them, so it needs no separate approval.
+     */
     approval_state: typeof APPROVAL_STATES[number] | null;
 }
 

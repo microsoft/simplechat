@@ -52,6 +52,7 @@ from config import (
 )
 from functions_appinsights import log_event
 from functions_m365_data_lifecycle import (
+    attribute_raw_authored_record_edit,
     is_live_m365_authorization,
     strip_m365_runtime_references,
     validate_m365_admin_record_edit,
@@ -13225,6 +13226,12 @@ def save_data_management_cosmos_editor_document(container_name, document_id, par
         ) from error
     change_summary = _summarize_cosmos_editor_changes(original_document, document)
     clean_document = _strip_cosmos_system_fields(copy.deepcopy(document))
+    if change_summary["changed_count"]:
+        # The administrator, not the previous author, made this edit to what a workflow runs.
+        clean_document = attribute_raw_authored_record_edit(
+            container_metadata["logical_name"], clean_document, admin_user_id,
+            datetime.now(timezone.utc),
+        )
     replace_target = safe_document_id
     if isinstance(original_document, dict) and original_document.get("_self"):
         replace_target = original_document

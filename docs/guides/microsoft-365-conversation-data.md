@@ -31,7 +31,7 @@ walk; continuation and coverage results describe the available search window.
 | Microsoft Entra consent/sign-in | The application may call the selected Microsoft 365 APIs as the user. Source permissions still apply. |
 | Sharing acknowledgement | Retrieved answers and retained source evidence may be published to conversation participants. |
 | Extended analysis | The selected files may receive additional staged processing beyond the fast windows. |
-| Workflow Run as approval | A specific workflow revision may use the selected person's connected account. |
+| Workflow Run as approval | A specific workflow revision may use the selected person's connected account. A revision that person saved themselves needs no separate approval. |
 | Outgoing action review | The data owner may send the exact prepared email or invitation in manual mode, or stop a configured delayed delivery. |
 
 One decision does not substitute for another. An administrator who owns an
@@ -171,10 +171,33 @@ an outgoing message. Existing action limits, delivery review, and workflow
 Run as approval remain separate. Older read-only connections need an explicit
 reconnect before workflows can use newly requested write permissions.
 
-Select the **Microsoft 365 Run as** account on the workflow. That person must
-approve the workflow's sources, instructions, and destinations. Material edits
-require approval again. Disconnecting the account stops future credential use
-and pauses affected work; it does not remove conversation evidence.
+Select the **Microsoft 365 Run as** account on the workflow. Selecting an
+account never grants consent on its own.
+
+- **The Run as person saved it.** When the Run as person saved the workflow's
+  current revision, it runs as them without a separate approval. Their save
+  counts as their review of the whole workflow, including earlier edits by
+  others. SimpleChat records an approved authorization for that exact revision
+  and connection in their audit history, sends no notification, and never shows
+  it as pending. This includes the first run.
+- **Someone else saved it.** When someone else saved the current revision, or
+  changed an agent or action it uses after the Run as person's save, the Run as
+  person must approve the workflow's sources, instructions, and destinations
+  before it runs as them. A later edit by someone else asks again.
+- **The account changed.** Reconnecting or disconnecting the Run as account
+  needs a new authorization for that connection. A revision someone else saved
+  asks again; a revision the Run as person saved is authorized for the new
+  connection without asking.
+- **The audience changed.** Adding or removing conversation participants never
+  asks for Run as approval again. Source-sharing acknowledgements still apply
+  to shared conversations as described above.
+
+Explicit decisions still win. Denying or cancelling a run's request stops that
+run. Revoking an authorization in Profile revokes every approved authorization
+for that workflow revision, and that revision then waits for the Run as
+person's approval even if they saved it. A new revision they save runs without
+asking again. Disconnecting the account stops future credential use and pauses
+affected work; it does not remove conversation evidence.
 
 Outgoing mail and calendar review is separate from permission to access a source.
 Manual outgoing actions notify the Run as user and appear in workflow activity;

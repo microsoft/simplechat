@@ -18,6 +18,7 @@ import {
     WORKFLOW_REFERENCE_ORDER_KEY,
     type WorkflowAttribution, type WorkflowChange, type WorkflowChangeAuthor, type WorkflowChangeStamp,
 } from '../../lib/workflowChangeTracking';
+import { useBootstrapStore } from '../../stores/bootstrapStore';
 import type { WorkflowAuthoringSession, WorkflowSessionStep } from './WorkflowAuthoringHistory';
 
 type SessionSnapshot = ReturnType<WorkflowAuthoringSession['getSnapshot']>;
@@ -33,7 +34,10 @@ export interface WorkflowChangeTracking {
     readonly attribution: WorkflowAttribution;
     /** The draft changed format, so its changes can only be discarded together. */
     readonly converted: boolean;
-    /** Saving changes what the Run as account approved, so it has to be approved again. */
+    /**
+     * Saving changes what someone else's Run as account approved, so they have to approve it again.
+     * Never set when the signed-in user is the Run as account: their own save needs no approval.
+     */
     readonly runAsConsequence: boolean;
     /** The workflow has never been saved, so only AI assist changes are pointed out. */
     readonly isNew: boolean;
@@ -52,7 +56,11 @@ function aiAuthored(change: WorkflowChange, attribution: WorkflowAttribution): b
     return workflowChangeAuthors(change, attribution).some((stamp) => stamp.author === 'ai');
 }
 
-function buildTracking(session: WorkflowAuthoringSession, snapshot: SessionSnapshot): WorkflowChangeTracking {
+function buildTracking(
+    session: WorkflowAuthoringSession,
+    snapshot: SessionSnapshot,
+    currentUserId: string | undefined,
+): WorkflowChangeTracking {
     const all = diffWorkflowChanges(snapshot.baseline, snapshot.draft);
     const attribution = snapshot.attribution;
     const isNew = !snapshot.baseline.id;
@@ -71,7 +79,7 @@ function buildTracking(session: WorkflowAuthoringSession, snapshot: SessionSnaps
     }
     return {
         changes, byKey, added, byItem, attribution, converted: all.converted,
-        runAsConsequence: workflowRunAsConsequence(snapshot.baseline, snapshot.draft, all.changes),
+        runAsConsequence: workflowRunAsConsequence(snapshot.baseline, snapshot.draft, all.changes, currentUserId),
         isNew, steps: snapshot.steps, trimmed: snapshot.trimmed, session,
     };
 }
@@ -87,7 +95,11 @@ export function WorkflowChangeTrackingScope({ session, enabled, children }: {
 }) {
     const snapshot = useSyncExternalStore(session.subscribe, session.getSnapshot, session.getSnapshot);
     const deferred = useDeferredValue(snapshot);
-    const value = useMemo(() => (enabled ? buildTracking(session, deferred) : null), [session, deferred, enabled]);
+    const currentUserId = useBootstrapStore((state) => state.data?.user?.id);
+    const value = useMemo(
+        () => (enabled ? buildTracking(session, deferred, currentUserId) : null),
+        [session, deferred, enabled, currentUserId],
+    );
     return <WorkflowChangeContext.Provider value={value}>{children}</WorkflowChangeContext.Provider>;
 }
 

@@ -200,6 +200,16 @@ function attributionAndSave() {
     check('a schedule change re-approves Run as', workflowRunAsConsequence(runAs, rescheduled, diffWorkflowChanges(runAs, rescheduled).changes));
     const alerted = { ...runAs, description: 'x' } as WorkflowDefinition;
     check('a description change does not re-approve Run as', !workflowRunAsConsequence(runAs, alerted, diffWorkflowChanges(runAs, alerted).changes));
+    const taskChanges = diffWorkflowChanges(runAs, runAsTasks).changes;
+    check('the Run as account saving its own change does not re-approve Run as',
+        !workflowRunAsConsequence(runAs, runAsTasks, taskChanges, 'owner-oid')
+        && !workflowRunAsConsequence(runAs, runAsTasks, taskChanges, ' owner-oid '));
+    check('someone else saving a task change still re-approves Run as',
+        workflowRunAsConsequence(runAs, runAsTasks, taskChanges, 'group-editor-oid')
+        && workflowRunAsConsequence(runAs, runAsTasks, taskChanges, ''));
+    const handedOver = { ...runAsTasks, m365_run_as_user_id: 'group-editor-oid' } as WorkflowDefinition;
+    check('choosing someone else as Run as asks them, even when you saved it before',
+        workflowRunAsConsequence(runAs, handedOver, diffWorkflowChanges(runAs, handedOver).changes, 'owner-oid'));
 }
 
 export function runLibraryChecks() {

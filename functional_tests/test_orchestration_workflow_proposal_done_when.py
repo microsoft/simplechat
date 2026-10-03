@@ -220,7 +220,8 @@ def test_a_monday_email_request_becomes_a_monday_workflow_once_approved(modules,
     assert [task["instructions"] for task in summary["tasks"]] == [INSTRUCTIONS]
     assert summary["tasks"][0]["agent_name"] == "Mail helper"
     assert shown["m365"]["required"] is True and shown["m365"]["run_as"] == "self"
-    assert shown["m365"]["connected"] is True and shown["m365"]["approval_state"] is None
+    # The requester creates it, so a revision they saved needs no separate Run as approval.
+    assert shown["m365"]["connected"] is True and shown["m365"]["approval_state"] == "self_authored"
 
     # Create & start stores one enabled Monday 08:00 workflow in the request's zone.
     created = accept(h, run_id=RUN, conversation_id=CONVERSATION, mode="enabled")
@@ -271,6 +272,9 @@ def test_a_monday_email_request_becomes_a_monday_workflow_once_approved(modules,
     assert shown["workflow"] == {"id": workflow_id, "name": NAME, "is_enabled": True}
     assert shown["actions"] == {"accept": False, "edit": False, "deny": False, "create_again": False,
                                 "open_workflow": True}
+    # The created workflow names the requester as its Run as account and as the one who saved it.
+    assert workflow["modified_by"] == OWNER
+    assert shown["m365"]["approval_state"] == "self_authored"
 
 
 if __name__ == "__main__":

@@ -72,8 +72,9 @@ export function WorkflowMicrosoft365RunAs({
     const help = (
         <p id={helpId} className="text-xs text-text-3">
             Microsoft 365 actions use this account for manual and scheduled runs. The selected person
-            must connect Microsoft 365 and approve this workflow revision. Selecting an account does not grant
-            consent. Changes to instructions, capabilities, or destinations require approval again.
+            must connect Microsoft 365. Selecting an account does not grant consent: when someone else saves
+            the workflow or changes an agent or action it uses, the selected person approves that revision
+            before it runs as them. A revision they saved themselves needs no separate approval.
         </p>
     );
 

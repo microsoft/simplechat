@@ -44,6 +44,8 @@ interface RefusedCandidate {
 
 interface ParityCase {
     name: string;
+    /** The signed-in user who asked the assistant and would save the result. */
+    user_id: string;
     stored: Row | null;
     original: Row | null;
     draft: Row;
@@ -213,7 +215,7 @@ function checkCase(item: ParityCase, options: Row, turn: number) {
     const listed = difference(editorChanges(changes), serverChanges(item.changes));
     check(`${name}: the editor lists the changes and Jump to targets the server reports`, listed === null, listed);
 
-    const runAs = workflowRunAsConsequence(draft, candidate, changes);
+    const runAs = workflowRunAsConsequence(draft, candidate, changes, item.user_id);
     check(`${name}: the editor asks to re-approve Run as exactly when the server warns`,
         runAs === item.run_as_warning, { editor: runAs, server: item.run_as_warning });
 
