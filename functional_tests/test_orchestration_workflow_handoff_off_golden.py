@@ -105,6 +105,7 @@ from test_orchestration_workflow_setting_off_golden import (
     _Completions,
     _FrozenDatetime,
 )
+from test_support.orchestration_research import _definitions as _research_definitions
 from test_support.orchestration_revisions import AtomicMemoryContainer
 from test_support.versioning import assert_app_version_at_least
 
@@ -271,7 +272,14 @@ def _install_recorders(patch, planner):
 
     patch.setattr(planner, "normalize_plan", recording_normalize)
     patch.setattr(planner, "log_event", recording_log)
+    # An earlier suite in the same process may have imported the planner while a stand-in
+    # ``functions_appinsights`` was loaded; the logs are compared with the real correlation fields.
+    patch.setattr(planner, "workflow_log_context", _real_workflow_log_context())
     return recorder
+
+
+def _real_workflow_log_context():
+    return _research_definitions("functions_appinsights.py", names={"workflow_log_context"})["workflow_log_context"]
 
 
 def _plan(patch, recorder, settings, workflow_planning, replies, documents):

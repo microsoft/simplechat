@@ -47,18 +47,24 @@ from functions_orchestration_model_routing import (
     DEPENDENCY_ROUTING_INSTRUCTIONS, ROUTING_INSTRUCTIONS, assign_step_models, authorized_routing_candidates,
 )
 from functions_orchestration_registry import (
+    CAPABILITY_WORKFLOW_HANDOFF,
     CAPABILITY_WORKFLOW_PROPOSE,
     CAPABILITY_WORKFLOW_RESULTS,
     CAPABILITY_WORKFLOW_RUN,
     DEPENDENCY_PLAN_CONTRACT_VERSION,
     WORKFLOW_RESULTS_MAX_PER_PLAN,
     WORKFLOW_RUNS_MAX_PER_PLAN,
+    CapabilityResolutionError,
     build_planner_capability_projection,
+    get_capability_document_limit,
     required_capability_ids,
     resolve_available_capabilities,
 )
 from functions_orchestration_schema import (
+    PLAN_BUDGET_EXCEEDED_CODE,
+    PLAN_HARD_MAX_STEPS,
     WORKFLOW_BLUEPRINT_INVALID_CODE,
+    WORKFLOW_HANDOFF_INVALID_CODE,
     WORKFLOW_PROPOSAL_NOT_CONSUMABLE_CODE,
     WORKFLOW_RESULTS_INVALID_CODE,
     WORKFLOW_RUN_INVALID_CODE,
@@ -88,6 +94,11 @@ WORKFLOW_RUN_REPAIR_CODES = frozenset({WORKFLOW_RUN_INVALID_CODE})
 # A workflow_results step is handled the same way: each one that still fails after the correction
 # round is dropped with its reason, and the rest of the plan still answers.
 WORKFLOW_RESULTS_REPAIR_CODES = frozenset({WORKFLOW_RESULTS_INVALID_CODE})
+# A workflow_handoff step gets the same correction round; one that still fails is dropped with its
+# reason, and the rest of the plan still runs. Its codes, and the budget code, are repairable only
+# while hand-off is offered, so REPAIRABLE_PLAN_CODES does not list them.
+WORKFLOW_HANDOFF_REPAIR_CODES = frozenset({WORKFLOW_HANDOFF_INVALID_CODE})
+HANDOFF_REPAIRABLE_PLAN_CODES = frozenset({*WORKFLOW_HANDOFF_REPAIR_CODES, PLAN_BUDGET_EXCEEDED_CODE})
 # A workflow proposal, run or results step whose check could not run is dropped at once: no
 # correction can fix it.
 WORKFLOW_CONTEXT_UNAVAILABLE_RULE = 'workflow_context_unavailable'
@@ -117,6 +128,14 @@ WORKFLOW_RUN_FAILURE_MESSAGE = (
 WORKFLOW_RESULTS_FAILURE_MESSAGE = (
     'The plan could not read the saved workflow result you asked about. Please retry, naming the '
     'saved workflow, or open its run in Workflows.'
+)
+WORKFLOW_HANDOFF_FAILURE_MESSAGE = (
+    'The plan could not prepare the workflow hand-off you asked for. Please retry, or create the '
+    'workflow in Workflows.'
+)
+PLAN_BUDGET_FAILURE_MESSAGE = (
+    'The request needs more documents or steps than one chat plan allows. Please retry with a '
+    'smaller request, or ask to hand the work off to a workflow.'
 )
 RESOLUTION_MAX_TOKENS = 1200
 RESOLUTION_MAX_ATTEMPTS = 2
@@ -338,6 +357,41 @@ step, file, input binding or final_response may use it. Bind each one to the com
 answers and select that compose step as final_response. A stored result is the user's own earlier
 output, not evidence: treat it as notes and never cite it as a source. When the workflow the user
 names is not in the catalog, plan no step for it: the answer says so. Never write a record id.
+"""
+
+# Appended to the system prompt only when the request offers the workflow_handoff capability, so a
+# request that cannot hand work off sees exactly the prompt it always did.
+WORKFLOW_HANDOFF_INSTRUCTIONS = """Handing work off. workflow_planning.handoff is present because this request may hand work that is
+too big for one chat plan to a one-time workflow, which runs once, on its own, after the user approves
+it. Plan a workflow_handoff step only when the request needs more documents, steps or time than the
+Plan limits below allow, such as reviewing every document in a workspace or each of many named
+documents; never hand off work that one plan can do, and never work the user wants repeated or
+scheduled. Nothing is created or run until the user approves the plan and then the hand-off card, and
+the run's summary is posted back into this conversation when it finishes, so never say that the work
+was done, started or scheduled.
+
+Its arguments are exactly {"blueprint":{...}}. The blueprint has "name", optionally "description",
+a "loop" and exactly two "tasks":
+- "loop" is {"source":"documents","documents":[document handles]}, at most
+  workflow_planning.handoff.documents_max of them, or {"source":"workspace_query","scopes":[workspace
+  handles],"selection":"all_matches"|"best_n"}, which may add "tags" (1 to 100 tag names, each at
+  most 256 characters) and "content" (keywords to match, at most 4000 characters). "best_n" reviews
+  only the "count" documents that best match "content" and needs both; "all_matches" reviews every
+  match and takes no "count". "count" is at most workflow_planning.handoff.max_loop_items. When more
+  documents than that match "all_matches", the run pauses before reviewing any.
+- "tasks" are {"title","instructions"}, each optionally with "runner". The first task runs once for
+  each document and reviews it; the second runs once, after every review, and writes the report from
+  them. Instructions must stand alone: a run sees no part of this conversation. runner is
+  {"type":"agent","agent_ref":<agent handle>} only for a catalog agent whose "local" is true, or
+  {"type":"model"}; leave it out to use the default model.
+Refer to documents, workspaces and agents only by their workflow_planning.handoff.catalog handles,
+and never write a record id, model or endpoint into a blueprint.
+
+Plan at most one workflow_handoff step, and never in a plan with workflow_propose or workflow_run.
+Give it no "depends_on" and no "inputs", and let no other step, input binding or final_response name
+it or its output. A hand-off is not a deliverable, so declare none for it. When the request is only
+the hand-off, declare no deliverables, plan only the workflow_handoff step and set no final_response:
+the server writes the reply. Otherwise answer only the part the other steps can answer now.
 """
 
 PLANNER_SYSTEM_PROMPT = """Plan bounded work; do not execute or answer it. Return one JSON object.
@@ -583,12 +637,15 @@ truly cannot proceed; a reasonable assumption about what the user means, stated 
 
 def build_planner_messages(
     planner_context, replan_hint=None, edit_context=None, *, contract_version=DEPENDENCY_PLAN_CONTRACT_VERSION,
+    plan_limits=None,
 ):
     """The two messages the planner sees.
 
     The context is passed as JSON rather than prose because it is data the model has to
     read precisely -- document ids especially. A prose rendering invites paraphrase, and a
-    paraphrased document id is a plan step that fails validation.
+    paraphrased document id is a plan step that fails validation. ``plan_limits`` is the
+    rendered Plan limits section, passed only when the request may hand work off; without it the
+    system prompt is exactly what it always was.
     """
     payload = dict(planner_context or {})
     if edit_context is not None:
@@ -598,20 +655,24 @@ def build_planner_messages(
 
     workflow_instructions = ''
     if isinstance(payload.get('workflow_planning'), dict):
-        # Each workflow capability adds its own instructions. A context without the run or results
-        # capability keeps the proposal instructions it always had.
+        # Each workflow capability adds its own instructions. A context without the run, results or
+        # hand-off capability keeps the proposal instructions it always had.
         offered = {
             capability.get('id') for capability in payload.get('capabilities') or ()
             if isinstance(capability, dict)
         }
         if CAPABILITY_WORKFLOW_PROPOSE in offered or not offered & {
-            CAPABILITY_WORKFLOW_RUN, CAPABILITY_WORKFLOW_RESULTS,
+            CAPABILITY_WORKFLOW_RUN, CAPABILITY_WORKFLOW_RESULTS, CAPABILITY_WORKFLOW_HANDOFF,
         }:
             workflow_instructions += '\n\n' + WORKFLOW_PROPOSAL_INSTRUCTIONS
         if CAPABILITY_WORKFLOW_RUN in offered:
             workflow_instructions += '\n\n' + WORKFLOW_RUN_INSTRUCTIONS
         if CAPABILITY_WORKFLOW_RESULTS in offered:
             workflow_instructions += '\n\n' + WORKFLOW_RESULTS_INSTRUCTIONS
+        if CAPABILITY_WORKFLOW_HANDOFF in offered:
+            workflow_instructions += '\n\n' + WORKFLOW_HANDOFF_INSTRUCTIONS
+    if plan_limits:
+        workflow_instructions += '\n\n' + plan_limits
 
     if replan_hint:
         user_content += (
@@ -975,8 +1036,12 @@ def describe_planner_model(planner_model, deployment):
         **({'reasoning_effort': effort} if isinstance(effort, str) and effort else {}),
     }
 
-def plan_repair_message(error):
-    """The planner-facing correction request after the server rejected a plan's deliverables."""
+def plan_repair_message(error, *, handoff_present=False):
+    """The planner-facing correction request after the server rejected a plan's deliverables.
+
+    ``handoff_present`` says the rejected plan holds an enabled workflow_handoff step, so an answer
+    the plan was told to write is steered away from the handed-off part.
+    """
     if getattr(error, 'code', None) in WORKFLOW_REPAIR_CODES:
         return (
             f'The server rejected the workflow proposal in that plan: {error}\n'
@@ -1009,6 +1074,29 @@ def plan_repair_message(error):
             'for a workflow that is not in the catalog, and say why in the answer instead.\n'
             'Return the complete corrected plan as one JSON object for the same request.'
         )
+    if getattr(error, 'code', None) in WORKFLOW_HANDOFF_REPAIR_CODES:
+        return (
+            f'The server rejected the workflow_handoff step in that plan: {error}\n'
+            'Fix every rule listed, not just the first. Its arguments are exactly {"blueprint":{...}} with '
+            'a "loop" and exactly two tasks; name documents, workspaces and agents only by '
+            'workflow_planning.handoff.catalog handles, and run a task on an agent only when its "local" is '
+            'true. Plan at most one workflow_handoff step, never with workflow_propose or workflow_run, give '
+            'it no depends_on and no inputs, and let no other step, input binding or final_response name it.\n'
+            'Return the complete corrected plan as one JSON object for the same request.'
+        )
+    if getattr(error, 'code', None) == PLAN_BUDGET_EXCEEDED_CODE:
+        return (
+            f'The server rejected that plan: {error}\n'
+            'Reduce the plan to fit the Plan limits, or, when the work cannot fit them, hand it off with '
+            'one workflow_handoff step instead of the steps that do not fit.\n'
+            'Return the complete corrected plan as one JSON object for the same request.'
+        )
+    steer = ''
+    if handoff_present and getattr(error, 'rule', None) == 'missing_final_response':
+        steer = (
+            ' This plan hands work off: remove the answer deliverable, and do not answer the handed-off '
+            'part now.'
+        )
     return (
         f'The server rejected that plan: {error}\n'
         'The server reports the first validation failure. Recheck every deliverable\'s '
@@ -1017,32 +1105,103 @@ def plan_repair_message(error):
         'Return the complete corrected plan as one JSON object for the same request. Keep every '
         'deliverable the user asked for. When one cannot be produced, mark it unavailable with the '
         'exact unavailable_reason capability_availability.deliverables gives, instead of dropping '
-        'it or promising it.'
+        f'it or promising it.{steer}'
     )
+
+
+def _plan_duration_text(seconds):
+    """A whole-minute duration in minutes, any other in seconds."""
+    if seconds >= 60 and seconds % 60 == 0:
+        minutes = seconds // 60
+        return f'{minutes} minute' if minutes == 1 else f'{minutes} minutes'
+    return f'{seconds} second' if seconds == 1 else f'{seconds} seconds'
+
+
+def _plan_limits_section(settings, capabilities, handoff):
+    """The "Plan limits" prompt section for a request that may hand work off.
+
+    It states what one chat plan may do, the same budgets the validator enforces, so the planner can
+    tell when a request needs a workflow_handoff step instead: the step budget, the total run time,
+    each offered document action's per-step document limit, the hand-off's own bounds, and which
+    agents can run hand-off tasks. Called only when hand-off is offered. Never raises; a limit that
+    cannot be read is left out.
+    """
+    settings = settings if isinstance(settings, dict) else {}
+    handoff = handoff if isinstance(handoff, dict) else {}
+    try:
+        max_steps = min(PLAN_HARD_MAX_STEPS, max(1, int(settings.get('chat_orchestration_max_steps') or 8)))
+    except (TypeError, ValueError):
+        max_steps = 8
+    # The timing policy is pure; it is loaded only when hand-off is offered.
+    from functions_orchestration_timing import execution_timeout_seconds
+
+    lines = [
+        'Plan limits. One chat plan must fit all of these; a request that needs more is what a '
+        'workflow_handoff step is for.',
+        f'- At most {max_steps} steps in one plan.',
+        f'- At most {_plan_duration_text(execution_timeout_seconds(settings))} for the whole plan to run.',
+    ]
+    for capability in capabilities or ():
+        if not isinstance(capability, dict) or not capability.get('document_action_type'):
+            continue
+        try:
+            limit = int(get_capability_document_limit(capability, settings=settings) or 0)
+        except (CapabilityResolutionError, TypeError, ValueError):
+            continue
+        if limit > 0:
+            lines.append(f'- At most {limit} documents in one {capability.get("id")} step.')
+    documents_max, max_loop_items = handoff.get('documents_max'), handoff.get('max_loop_items')
+    if type(documents_max) is int and type(max_loop_items) is int:
+        lines.append(
+            f'- One workflow_handoff step reviews at most {documents_max} named documents, or at most '
+            f'{max_loop_items} documents from a workspace query.'
+        )
+    catalog = handoff.get('catalog') if isinstance(handoff.get('catalog'), dict) else {}
+    local = [
+        agent['handle'] for agent in catalog.get('agents') or ()
+        if isinstance(agent, dict) and agent.get('local') is True and isinstance(agent.get('handle'), str)
+    ]
+    if local:
+        lines.append(
+            '- Hand-off tasks can run only these agents: ' + ', '.join(local)
+            + '. Leave out "runner" to use the default model.'
+        )
+    else:
+        lines.append('- No catalog agent can run hand-off tasks, so leave out "runner".')
+    return '\n'.join(lines)
 
 
 def _workflow_planning_for(request_context, available_ids=()):
     """The turn's workflow planning context and what the planner may see of it.
 
-    Called only when workflow_propose, workflow_run or workflow_results is available, which requires
-    a ready context. With proposals, the planner sees the proposal projection, which holds the
-    workflows catalog and the user's local time as well; with results, the same workflows catalog
-    and the local time; with runs alone, only the workflows catalog. A context that still cannot be
-    projected comes back as an empty dict, which fails every workflow check closed instead of
-    letting a proposal, run or results step through without its catalog.
+    Called only when workflow_propose, workflow_run, workflow_results or workflow_handoff is
+    available, which requires a ready context. With proposals, the planner sees the proposal
+    projection, which holds the workflows catalog and the user's local time as well; with results,
+    the same workflows catalog and the local time; with runs, only the workflows catalog. With
+    hand-off, the hand-off's own part is added under ``handoff``; it stands alone, so a hand-off is
+    offered even when the other projections are not. A context that still cannot be projected comes
+    back as an empty dict, which fails every workflow check closed instead of letting a proposal,
+    run, results or hand-off step through without its catalog. Each step's own check still reads its
+    readiness from the stored context, so one part being ready never lets another through.
     """
     # The planning context module reads agents and sources; it is imported only when needed.
     from functions_orchestration_workflow_context import (
-        workflow_planner_projection, workflow_results_projection, workflow_run_projection,
+        workflow_handoff_projection, workflow_planner_projection, workflow_results_projection,
+        workflow_run_projection,
     )
 
     planning = request_context.get('workflow_planning') if isinstance(request_context, dict) else None
+    projection = None
     if CAPABILITY_WORKFLOW_PROPOSE in available_ids:
         projection = workflow_planner_projection(planning)
     elif CAPABILITY_WORKFLOW_RESULTS in available_ids:
         projection = workflow_results_projection(planning)
-    else:
+    elif CAPABILITY_WORKFLOW_RUN in available_ids:
         projection = workflow_run_projection(planning)
+    if CAPABILITY_WORKFLOW_HANDOFF in available_ids:
+        handoff = workflow_handoff_projection(planning)
+        if handoff is not None:
+            projection = {**(projection or {}), 'handoff': handoff}
     return (planning if projection is not None else {}), projection
 
 
@@ -1128,10 +1287,17 @@ def plan_request(
     context.pop('workflow_planning', None)
     if any(value in available_ids for value in (
         CAPABILITY_WORKFLOW_PROPOSE, CAPABILITY_WORKFLOW_RUN, CAPABILITY_WORKFLOW_RESULTS,
+        CAPABILITY_WORKFLOW_HANDOFF,
     )):
         workflow_planning, projection = _workflow_planning_for(request_context, available_ids)
         if projection is not None:
             context['workflow_planning'] = projection
+    # Hand-off is offered only with its own projection; a request without it plans exactly as before.
+    handoff_offered = (
+        CAPABILITY_WORKFLOW_HANDOFF in available_ids
+        and isinstance(context.get('workflow_planning'), dict)
+        and isinstance(context['workflow_planning'].get('handoff'), dict)
+    )
     image_selected = image_requested_by_user(seeds)
     if image_selected:
         context['user_selected'] = {**(context.get('user_selected') or {}), 'images': True}
@@ -1224,6 +1390,9 @@ def plan_request(
     messages = build_planner_messages(
         context, replan_hint=replan_hint, edit_context=edit_context,
         contract_version=contract_version,
+        **({'plan_limits': _plan_limits_section(
+            settings, capabilities, context['workflow_planning']['handoff'],
+        )} if handoff_offered else {}),
     )
     reasoning_metadata = build_model_reasoning_metadata(planner_model, 'planner')
     token_usage, usage_seen = {}, False
@@ -1245,6 +1414,7 @@ def plan_request(
         # Only the server reports why a workflow was not started or read; a model cannot write that report.
         parsed.pop('workflow_run_notes', None)
         parsed.pop('workflow_results_notes', None)
+        parsed.pop('workflow_handoff_notes', None)
 
         kind = str(parsed.get('kind') or ('plan' if isinstance(parsed.get('steps'), list) else '')).strip().lower()
         if kind not in ('plan', 'elicitation') and not (edit_context is not None and kind == 'message'):
@@ -1345,10 +1515,17 @@ def plan_request(
             workflow_error = workflow_planning is not None and exc.code in WORKFLOW_REPAIR_CODES
             run_error = workflow_planning is not None and exc.code in WORKFLOW_RUN_REPAIR_CODES
             results_error = workflow_planning is not None and exc.code in WORKFLOW_RESULTS_REPAIR_CODES
-            context_failed = (
-                (workflow_error or run_error or results_error) and exc.rule == WORKFLOW_CONTEXT_UNAVAILABLE_RULE
+            handoff_error = (
+                handoff_offered and workflow_planning is not None and exc.code in WORKFLOW_HANDOFF_REPAIR_CODES
             )
-            repairable = exc.code in REPAIRABLE_PLAN_CODES and not context_failed
+            context_failed = (
+                (workflow_error or run_error or results_error or handoff_error)
+                and exc.rule == WORKFLOW_CONTEXT_UNAVAILABLE_RULE
+            )
+            repairable = (
+                exc.code in REPAIRABLE_PLAN_CODES
+                or (handoff_offered and exc.code in HANDOFF_REPAIRABLE_PLAN_CODES)
+            ) and not context_failed
             if repairable and attempt <= PLAN_REPAIR_ATTEMPTS:
                 # One correction round: the planner sees exactly why the server refused the
                 # plan, such as a promised file no step renders, and answers the same request.
@@ -1360,13 +1537,20 @@ def plan_request(
                         'validation_rule': exc.rule,
                     },
                 )
+                if handoff_offered:
+                    # Loaded only when the request may hand work off.
+                    from functions_orchestration_workflow_handoffs import plan_has_workflow_handoff
+
+                    repair = plan_repair_message(exc, handoff_present=plan_has_workflow_handoff(pristine))
+                else:
+                    repair = plan_repair_message(exc)
                 messages = [
                     *messages,
                     {'role': 'assistant', 'content': reply},
-                    {'role': 'user', 'content': plan_repair_message(exc)},
+                    {'role': 'user', 'content': repair},
                 ]
                 continue
-            if not ((workflow_error or run_error or results_error) and edit_context is None):
+            if not ((workflow_error or run_error or results_error or handoff_error) and edit_context is None):
                 return _failure(
                     'invalid_plan_or_missing_requirement', exc, stage='plan_normalization',
                     message={
@@ -1376,16 +1560,21 @@ def plan_request(
                         **{code: WORKFLOW_FAILURE_MESSAGE for code in WORKFLOW_REPAIR_CODES},
                         **{code: WORKFLOW_RUN_FAILURE_MESSAGE for code in WORKFLOW_RUN_REPAIR_CODES},
                         **{code: WORKFLOW_RESULTS_FAILURE_MESSAGE for code in WORKFLOW_RESULTS_REPAIR_CODES},
+                        **({
+                            **{code: WORKFLOW_HANDOFF_FAILURE_MESSAGE for code in WORKFLOW_HANDOFF_REPAIR_CODES},
+                            PLAN_BUDGET_EXCEEDED_CODE: PLAN_BUDGET_FAILURE_MESSAGE,
+                        } if handoff_offered else {}),
                     }.get(exc.code),
                     attempt=attempt,
                 )
-            # A proposal, run or results step that still breaks the rules, or could not be checked,
-            # is dropped: the rest of the plan runs, a dropped proposal is reported as not
-            # delivered, and the reply says why each dropped workflow was not started or read. Each
-            # kind is dropped at most once. A plan edit never gets here; it fails and keeps the
-            # previous plan.
+            # A proposal, run, results or hand-off step that still breaks the rules, or could not be
+            # checked, is dropped: the rest of the plan runs, a dropped proposal is reported as not
+            # delivered, and the reply says why each dropped workflow was not started, read or
+            # handed off. Each kind is dropped at most once. A plan edit never gets here; it fails
+            # and keeps the previous plan.
             degraded, degraded_truth, degraded_ids = pristine, deliverable_truth, list(available_ids)
             error, proposal_error, run_drop, results_drop = exc, None, None, None
+            handoff_drop = None
             unavailable_reason = None
             while True:
                 context_unavailable = error.rule == WORKFLOW_CONTEXT_UNAVAILABLE_RULE
@@ -1428,6 +1617,22 @@ def plan_request(
                     }
                     if not results_remaining:
                         degraded_ids = [value for value in degraded_ids if value != CAPABILITY_WORKFLOW_RESULTS]
+                elif handoff_offered and error.code in WORKFLOW_HANDOFF_REPAIR_CODES and handoff_drop is None:
+                    from functions_orchestration_workflow_handoffs import (
+                        drop_workflow_handoffs, workflow_handoff_failure_message, workflow_handoff_repair_text,
+                    )
+
+                    degraded, handoff_notes, handoffs_remaining = drop_workflow_handoffs(
+                        degraded, workflow_planning=workflow_planning, settings=settings,
+                        drop_all=context_unavailable,
+                    )
+                    handoff_drop = {
+                        'error': error, 'notes': handoff_notes, 'remaining': handoffs_remaining,
+                        'failure_message': workflow_handoff_failure_message(handoff_notes),
+                        'repairs': [workflow_handoff_repair_text(note) for note in handoff_notes],
+                    }
+                    if not handoffs_remaining:
+                        degraded_ids = [value for value in degraded_ids if value != CAPABILITY_WORKFLOW_HANDOFF]
                 else:
                     return _failure(
                         'invalid_plan_or_missing_requirement', error, stage='plan_normalization',
@@ -1435,6 +1640,7 @@ def plan_request(
                             ([WORKFLOW_FAILURE_MESSAGE] if proposal_error is not None else [])
                             + ([run_drop['failure_message']] if run_drop is not None else [])
                             + ([results_drop['failure_message']] if results_drop is not None else [])
+                            + ([handoff_drop['failure_message']] if handoff_drop is not None else [])
                         ),
                         attempt=attempt,
                     )
@@ -1445,6 +1651,7 @@ def plan_request(
                         **({'workflow_planning': workflow_planning} if any(
                             value in degraded_ids for value in (
                                 CAPABILITY_WORKFLOW_PROPOSE, CAPABILITY_WORKFLOW_RUN, CAPABILITY_WORKFLOW_RESULTS,
+                                CAPABILITY_WORKFLOW_HANDOFF,
                             )
                         ) else {}),
                     )
@@ -1490,6 +1697,22 @@ def plan_request(
                 plan['workflow_results_notes'] = results_drop['notes']
                 repairs = plan.setdefault('validation', {}).setdefault('repairs', [])
                 for text in results_drop['repairs']:
+                    if text not in repairs:
+                        repairs.append(text)
+            if handoff_drop is not None:
+                log_event(
+                    '[ORCHESTRATION_PLANNER] Planning without a workflow hand-off that could not be prepared.',
+                    level=logging.WARNING, extra={
+                        **correlation, 'reason': 'workflow_handoff_dropped', 'attempt': attempt,
+                        'revision': revision, 'stage': 'plan_normalization',
+                        'validation_code': handoff_drop['error'].code, 'validation_rule': handoff_drop['error'].rule,
+                        'note_count': len(handoff_drop['notes']), 'remaining_count': handoff_drop['remaining'],
+                    },
+                )
+                # The reply reports this after the answer; the plan card lists it for review.
+                plan['workflow_handoff_notes'] = handoff_drop['notes']
+                repairs = plan.setdefault('validation', {}).setdefault('repairs', [])
+                for text in handoff_drop['repairs']:
                     if text not in repairs:
                         repairs.append(text)
         break
