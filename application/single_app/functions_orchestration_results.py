@@ -42,7 +42,7 @@ from functions_orchestration_result_contracts import (
     validate_record,
     validate_result_role,
 )
-from functions_orchestration_source_access import authorize_orchestration_sources
+from functions_orchestration_source_access import verify_orchestration_input_sources
 from functions_workflow_collections import (
     CollectionWriteBudget,
     RecordTreeWriter,
@@ -90,14 +90,16 @@ class NamedOutput:
 
 
 class OrchestrationResultAccess:
-    """Server-owned owner/run readers and authorized, screening-aware source I/O.
+    """Server-owned owner/run readers, plus screening-aware source I/O for input reads.
 
     ``read_conversation(conversation_id)`` and ``read_run(run_id)`` return current
-    server records, not request payloads. ``source_resolver(ids, **scope)`` has the
-    existing resolve_authorized_source_manifest protocol. ``source_metadata_reader``
-    has content_screening.access's metadata_reader protocol and must enforce the
-    current actor's document/workspace access. Source-free results need neither
-    source callback. Original-owner, same-conversation reuse is the v1 scope.
+    server records, not request payloads. A retained result takes its access from them
+    alone: the documents it was produced from are never rechecked when it is read.
+    ``source_resolver(ids, **scope)`` has the existing resolve_authorized_source_manifest
+    protocol. ``source_metadata_reader`` has content_screening.access's metadata_reader
+    protocol and must enforce the current actor's document/workspace access. Both are
+    used only by ``authorize_input_sources``, when a step reads uploaded documents
+    itself. Original-owner, same-conversation reuse is the v1 scope.
     """
 
     def __init__(
@@ -165,7 +167,11 @@ class OrchestrationResultAccess:
         ):
             raise ResultUnavailableError("result_attempt_stopped")
 
-    def authorize_sources(self, sources, *, require_snapshot):
+    def authorize_input_sources(self, sources, *, require_snapshot):
+        """Input reads only: check uploaded documents a step is about to read itself.
+
+        Retained results never call this; their access comes from ``authorize_producer``.
+        """
         if not sources:
             return {"source_count": 0, "source_snapshot_changed": False}
         if self.source_resolver is None or self.source_metadata_reader is None:
@@ -188,7 +194,7 @@ class OrchestrationResultAccess:
                             raise ResultUnavailableError("result_source_snapshot_changed")
             return fresh
 
-        checked = authorize_orchestration_sources(
+        checked = verify_orchestration_input_sources(
             self.user_id, sources, require_snapshot=require_snapshot, resolver=resolve,
             metadata_reader=self.source_metadata_reader,
         )
@@ -445,17 +451,22 @@ class OrchestrationResults:
         return manifest
 
     def _authorize_lineage(self, producer, lineage, *, for_write=False, force_current=False, active=None, visited=None):
+        """Check the producer chain and lineage integrity, never the source documents.
+
+        A retained result takes its access from its conversation and run. Its recorded
+        sources are provenance: they bound which source and evidence items its outputs
+        may name, but they are not read again. External (agent, action, memory and web)
+        sources keep their own current checks.
+        """
         self.access.authorize_producer(producer, for_write=for_write)
         parents = _lineage(lineage)
         current = force_current or lineage["source_policy"] == "current"
-        checked = self.access.authorize_sources(lineage["sources"], require_snapshot=current)
         source_snapshots = {
             _source_key(source): {canonical_bytes(source)} for source in lineage["sources"]
         }
-        external_changed, external_sources = self.access.authorize_external_sources(
+        changed, external_sources = self.access.authorize_external_sources(
             producer, lineage.get("external_sources", []), require_snapshot=current,
         )
-        changed = checked["source_snapshot_changed"] or external_changed
         active = set() if active is None else active
         visited = {} if visited is None else visited
         for parent in parents:
@@ -653,6 +664,11 @@ class OrchestrationResults:
         return task
 
     def open_result(self, reference, *, allow_partial=False, require_current_sources=False):
+        """Open a retained result after its producer and lineage checks.
+
+        ``require_current_sources`` applies the current-version rule to external sources
+        only. The documents a result was produced from are provenance and are not reread.
+        """
         if type(reference) is not ResultRef or type(require_current_sources) is not bool:
             raise ResultContractError("result_reference_untrusted")
         reference.completeness.require_readable(allow_partial=allow_partial)

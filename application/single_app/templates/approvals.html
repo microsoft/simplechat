@@ -15,12 +15,15 @@
                 </button>
             </div>
 
-            <!-- Approvals Controls -->
-            <div class="alert alert-info">
-                Workspace knowledge holds use protected evidence and revision-bound decisions.
-                <a class="alert-link" href="/content-review">Open Content review</a> to review or remediate screened documents,
-                including holds created before new scanning was disabled.
+            {% if settings.enable_content_screening %}
+            <!-- Content Screening Notice -->
+            <div class="alert alert-info" id="contentScreeningApprovalsNotice">
+                To review uploaded documents that content screening is holding, open
+                <a class="alert-link" href="/content-review">Content review</a>.
             </div>
+            {% endif %}
+
+            <!-- Approvals Controls -->
             <div class="row mb-3">
                 <div class="col-md-4">
                     <div class="input-group">

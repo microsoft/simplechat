@@ -1,14 +1,15 @@
 # test_orchestration_v2_plan_backend.py
 """Saved plan editing, restoration, and private admission-context persistence.
 
-Version: 0.261.200
+Version: 0.261.232
 Implemented in: 0.261.127
 Single orchestration contract updated in: 0.261.139
 Submission ids kept out of the planner prompt: 0.261.200
-Refs: microsoft/simplechat#1509, microsoft/simplechat#1552
+Retained result aliases take their run's access in: 0.261.232
+Refs: microsoft/simplechat#1509, microsoft/simplechat#1552, microsoft/simplechat#1621
 
 Exercise the real planner/compiler, revision/run stores, immutable result readers,
-and current source authorization. Replace only model, Cosmos, and unrelated
+and current container authorization. Replace only model, Cosmos, and unrelated
 catalog/memory I/O boundaries. Block network access. A saved plan from the removed
 earlier contract is refused, never edited, claimed or replanned.
 """
@@ -421,7 +422,9 @@ class V2PlanBackendTests(unittest.TestCase):
         self.assertEqual(checked['final_response'], original['plan']['final_response'])
         self.assertEqual(original, before)
         self.assertEqual(self.resolve_aliases.call_count, 1)
-        self.assertTrue(self.fixture.source_reads)
+        # 0.261.232: aliases name retained results, which take their conversation's and run's
+        # access; their source documents are provenance and are not reread.
+        self.assertEqual(self.fixture.source_reads, [])
 
     def test_legacy_saved_plan_without_top_level_admission_still_uses_its_v2_plan(self):
         record = self.save()
@@ -462,9 +465,20 @@ class V2PlanBackendTests(unittest.TestCase):
         current = self.read()
         self.assertEqual(current, record)
 
-    def test_revoked_source_access_rejects_edit_validation_and_claim(self):
+    def test_revoked_source_access_does_not_reject_retained_aliases(self):
+        # 0.261.232: an alias names a retained result, which takes its conversation's and
+        # run's access. A step that reads documents checks them as inputs when it runs.
         record = self.save()
         self.fixture.denied.add('document-1')
+        checked = self.validate(record)
+        self.assertEqual(checked['steps'], record['plan']['steps'])
+        self.assertEqual(self.fixture.source_reads, [])
+        self.assertEqual(self.model_calls, [])
+        self.assertEqual(self.read(), record)
+
+    def test_lost_conversation_rejects_edit_validation_and_claim(self):
+        record = self.save()
+        self.fixture.conversation['orchestration_deleted'] = True
         for operation in (
             lambda: self.validate(record),
             lambda: self.edit(record, self.reply(record)),
@@ -1325,10 +1339,11 @@ class V2PlanBackendTests(unittest.TestCase):
         self.assertEqual(restored['revision_origin'], 'restore')
         self.assertEqual(self.model_calls, [])
 
-    def test_restore_refuses_revoked_aliases_without_mutating_the_current_plan(self):
+    def test_restore_refuses_unavailable_aliases_without_mutating_the_current_plan(self):
         original = self.hold(self.save())
         newer = self.publish(original)
-        self.fixture.denied.add('document-1')
+        # 0.261.232: a revoked source no longer hides a retained alias; a lost conversation does.
+        self.fixture.conversation['orchestration_deleted'] = True
         with self.assertRaises(self.revisions.PlanRevisionError):
             self.editor.build_plan_edit_outcome(
                 newer, {'action': 'restore', 'source_run_id': original['id']}, 'owner', self.settings,

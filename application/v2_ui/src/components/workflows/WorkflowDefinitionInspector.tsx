@@ -17,6 +17,12 @@ const sectionLabels: Record<WorkflowInspectionSection, string> = {
     outputs: 'Declared outputs', state: 'Authored Repeat state', selection: 'Source selection',
 };
 
+/** The server marks an authored source this reader can't use now; the definition still opens. */
+function isUnavailableSource(value: InspectionJson): boolean {
+    return Boolean(value) && typeof value === 'object' && !Array.isArray(value) &&
+        (value as Record<string, InspectionJson>).available === false;
+}
+
 function DetailValue({ value, onSelectNode }: { value: InspectionJson; onSelectNode: (id: string) => void }) {
     if (isFlowBinding(value)) {
         const source = value.source;
@@ -140,7 +146,12 @@ export function WorkflowDefinitionInspector({
             <dl className="min-w-0 space-y-3">
                 {details.items.map((item, index) => <div key={`${cursor}:${index}`} className="min-w-0 rounded-lg border border-edge p-3">
                     <dt className="mb-1 break-words text-sm font-semibold text-text-1">{item.label}</dt>
-                    <dd className="min-w-0 text-sm text-text-2"><DetailValue value={item.value} onSelectNode={onSelectNode} /></dd>
+                    <dd className="min-w-0 space-y-1 text-sm text-text-2">
+                        {isUnavailableSource(item.value) ? <p className="text-xs text-warn">
+                            Not available to you right now. It may have been removed, be held for review, or be outside your access. The workflow definition is unchanged.
+                        </p> : null}
+                        <DetailValue value={item.value} onSelectNode={onSelectNode} />
+                    </dd>
                 </div>)}
             </dl>
             {!details.items.length ? <p className="text-sm text-text-3">No entries are declared in this section.</p> : null}

@@ -1,8 +1,9 @@
 # test_orchestration_dependency_citations.py
 """Functional tests for authorized citations from the selected retained answer.
 
-Version: 0.261.127
+Version: 0.261.232
 Implemented in: 0.261.127
+Container-only retained citations covered in: 0.261.232
 Real compiler, adapters, result storage, lineage checks, executor and recovery are
 used. Only search/model/network/storage transport is isolated.
 """
@@ -121,9 +122,11 @@ def test_reopened_exact_result_retains_citations_without_context_notes_or_genera
 
 
 @pytest.mark.parametrize('change', ['revoked', 'held', 'revision'])
-def test_citations_reauthorize_current_sources_after_a_restart(grounded, change):
+def test_citations_keep_the_answer_access_after_a_restart(grounded, change):
+    # 0.261.232: citations are provenance of the retained answer and take its conversation's
+    # and run's access. Opening a cited document is a separate input read.
     case = grounded.make()
-    execute(grounded.runtime, case)
+    result = execute(grounded.runtime, case)
     reference = case.context.task_results['answer'].output('answer')
     if change == 'revoked':
         case.fixture.denied.add('document-1')
@@ -131,10 +134,15 @@ def test_citations_reauthorize_current_sources_after_a_restart(grounded, change)
         case.fixture.held.add('document-1')
     else:
         case.fixture.sources['document-1']['source_revision'] = 'changed-since-generation'
+    reads = len(case.fixture.source_reads)
     fresh = SimpleNamespace(result_service=case.fixture.restart())
-    expected = grounded.runtime.composition.ScreeningError if change == 'held' else PermissionError
-    with pytest.raises(expected):
-        grounded.runtime.result_runtime.read_result_document_citations(fresh, reference)
+    citations = grounded.runtime.result_runtime.read_result_document_citations(fresh, reference)
+    assert citations == result['citations'] and citations
+    assert len(case.fixture.source_reads) == reads
+    case.fixture.conversation['orchestration_deleted'] = True
+    lost = SimpleNamespace(result_service=case.fixture.restart())
+    with pytest.raises(PermissionError):
+        grounded.runtime.result_runtime.read_result_document_citations(lost, reference)
     assert len(case.model.calls) == 1
 
 

@@ -38,6 +38,7 @@ from test_workflow_for_each_execution import execute_loop, loop_definition, loop
 from test_workflow_result_store import FakeBlobService
 from functions_analysis_access import AnalysisResultUnavailable
 from content_screening.contracts import DocumentHeldError
+from functions_temp_files import scratch_file_dir
 from functions_workflow_artifacts import (
     WorkflowRecordExportSource,
     authorize_workflow_saved_output_artifact,
@@ -129,6 +130,7 @@ def artifact_services(publication, monkeypatch):
     namespace = {
         "Any": Any, "Dict": Dict, "Optional": Optional, "hashlib": hashlib,
         "datetime": datetime, "timezone": timezone, "os": os, "uuid": uuid, "tempfile": tempfile,
+        "scratch_file_dir": scratch_file_dir,
         "ResourceExistsError": ResourceExistsError, "CosmosResourceExistsError": CosmosResourceExistsError,
         "CosmosResourceNotFoundError": CosmosResourceNotFoundError,
         "cosmos_conversations_container": services.conversations, "cosmos_messages_container": services.messages,

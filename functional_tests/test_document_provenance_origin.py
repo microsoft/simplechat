@@ -1,15 +1,17 @@
 # test_document_provenance_origin.py
 """
 Functional tests for server-owned document provenance (origin).
-Version: 0.261.194
+Version: 0.261.231
 Implemented in: 0.261.194
+Run links stopped re-checking the run's saved results in: 0.261.231
 
 This test ensures that document origins are derived only from server-held
 workflow, orchestration, and chat bindings; that only workflow-saved documents
 receive the removable ``workflow`` tag and only when the actor may manage tags;
 that clients can never name an origin field; that origin summaries are resolved
-per reader with a plain-text fallback that discloses no names or ids; and that
-origin list filters are parameterized and access checked.
+per reader with a plain-text fallback that discloses no names or ids; that a run
+link takes its access from its workflow; and that origin list filters are
+parameterized and access checked.
 
 Exercises the real functions_document_provenance module against in-memory
 conversation, workflow, run, collaboration, and tag stores. No Azure resources,
@@ -661,16 +663,27 @@ def test_the_workflow_owner_sees_the_workflow_and_run(world):
     }
 
 
-def test_an_unreadable_or_foreign_run_links_only_the_workflow(world):
+def test_a_missing_or_foreign_run_links_only_the_workflow(world):
     personal_workflow(world)
-    world.personal_runs[("actor", RUN_ID)] = {"id": RUN_ID, "workflow_id": WORKFLOW_ID, "started_at": "2026-01-02T03:04:05Z"}
-    unreadable = summary_for("actor", workflow_document(), world)
-    assert unreadable["href"] == f"/workspace/workflows?workflow_id={WORKFLOW_ID}"
-    assert "run_started_at" not in unreadable
-    world.run_readers.add(("actor", RUN_ID))
-    world.personal_runs[("actor", RUN_ID)]["workflow_id"] = "another-workflow"
+    missing = summary_for("actor", workflow_document(), world)
+    assert missing["href"] == f"/workspace/workflows?workflow_id={WORKFLOW_ID}"
+    assert "run_started_at" not in missing
+    world.personal_runs[("actor", RUN_ID)] = {
+        "id": RUN_ID, "workflow_id": "another-workflow", "started_at": "2026-01-02T03:04:05Z",
+    }
     foreign = summary_for("actor", workflow_document(), world)
     assert "run_id" not in foreign["href"]
+    assert "run_started_at" not in foreign
+
+
+def test_the_run_link_takes_its_access_from_the_workflow_not_the_runs_results(world):
+    personal_workflow(world)
+    world.personal_runs[("actor", RUN_ID)] = {"id": RUN_ID, "workflow_id": WORKFLOW_ID, "started_at": "2026-01-02T03:04:05Z"}
+    # No run-read grant is recorded: the run's saved results and their sources are not re-checked.
+    assert ("actor", RUN_ID) not in world.run_readers
+    summary = summary_for("actor", workflow_document(), world)
+    assert summary["href"] == f"/workspace/workflows?workflow_id={WORKFLOW_ID}&run_id={RUN_ID}"
+    assert summary["run_started_at"] == "2026-01-02T03:04:05Z"
 
 
 def test_a_reader_without_access_gets_plain_text_with_no_names_or_ids(world):
@@ -822,13 +835,16 @@ def test_workflow_filters_are_parameterized_and_scoped_to_the_readers_workflow(w
     assert all(condition.startswith(("c.origin.", "(c.origin.", "c.is_current_version")) for condition in conditions)
 
 
-def test_run_filters_require_a_readable_run_of_that_workflow(world):
+def test_run_filters_require_a_run_of_that_workflow(world):
     personal_workflow(world)
-    world.personal_runs[("actor", RUN_ID)] = {"id": RUN_ID, "workflow_id": WORKFLOW_ID}
     with pytest.raises(provenance.DocumentOriginFilterError) as raised:
         filter_for("actor", world, origin_workflow_id=WORKFLOW_ID, origin_run_id=RUN_ID)
     assert raised.value.status_code == 404
-    world.run_readers.add(("actor", RUN_ID))
+    world.personal_runs[("actor", RUN_ID)] = {"id": RUN_ID, "workflow_id": "another-workflow"}
+    with pytest.raises(provenance.DocumentOriginFilterError) as foreign:
+        filter_for("actor", world, origin_workflow_id=WORKFLOW_ID, origin_run_id=RUN_ID)
+    assert foreign.value.status_code == 404
+    world.personal_runs[("actor", RUN_ID)]["workflow_id"] = WORKFLOW_ID
     conditions, parameters = filter_for("actor", world, origin_workflow_id=WORKFLOW_ID, origin_run_id=RUN_ID)
     assert "c.origin.run_id = @origin_run_id" in conditions
     assert {"name": "@origin_run_id", "value": RUN_ID} in parameters

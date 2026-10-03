@@ -72,9 +72,12 @@ not introduced here.
 ## Outcomes and recovery
 
 Metadata requests contain only changed allowed fields and are validated before
-side effects. Scope-bound receipts distinguish an applied update from an
-accepted screening rescan. A queued update is not described as immediately
-available content.
+side effects. From version **0.261.230**, a metadata edit applies directly,
+including on a screened document, because metadata edits are not screened. The
+only receipt that confirms a save is `updated` with HTTP 200, and the edited
+document stays listed and available. Any other receipt, including the `queued`
+(202) receipt screened documents used to get, leaves the save unconfirmed and
+keeps the draft.
 
 Strict writes claim the source conditionally before downstream projection
 changes. A conflict or disappeared source does not recreate a deleted record or
@@ -150,8 +153,8 @@ On compact screens, Upload stays primary while the **Actions** picker exposes
 the other eligible commands without shrinking the document viewport. Filters
 and details retain the existing compact dialogs.
 
-Use the metadata editor for changed fields, review its queued or applied result,
-and keep the draft if saving fails. For bulk work, review the per-item outcome
+Use the metadata editor for changed fields. A confirmed save applies at once,
+and a failed or unconfirmed save keeps the draft. For bulk work, review the per-item outcome
 before retrying: successful items are not automatically submitted again.
 Tag rename/delete can retain old vocabulary until unresolved documents or a
 definition conflict are reconciled.

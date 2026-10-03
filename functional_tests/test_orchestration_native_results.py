@@ -1,13 +1,16 @@
 # test_orchestration_native_results.py
 """
 Native computation, retained results and authorized export-source integration.
-Version: 0.261.141
+Version: 0.261.232
 Implemented in: 0.261.127
 Replay-location identity failure mapping added in: 0.261.141
+Retained native results limited to container access in: 0.261.232
 
 Only external storage, document metadata, model and telemetry I/O are doubled.
 The native engine, RunContext, bridge, result store, readers and export bridge
 execute for real. No Flask route, paid provider or user publication is invoked.
+A running native step still checks the tabular file it reads; its retained
+result is not rechecked against that file afterwards.
 """
 
 from contextlib import contextmanager
@@ -509,8 +512,8 @@ def test_snapshot_policy_is_explicit_and_retains_original_values(monkeypatch):
         coverage = runtime.service.open_result(result["task_result"].output("coverage")).read_value()
         assert coverage["sources"][0]["source_version"] == 1
         runtime.native.state["allowed"] = False
-        with pytest.raises(PermissionError):
-            runtime.service.open_result(result["task_result"].output("records"))
+        retained = list(runtime.service.open_result(result["task_result"].output("records")).iter_records())
+        assert retained == rows
 
 
 @pytest.mark.parametrize("fault", [

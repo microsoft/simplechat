@@ -13,7 +13,7 @@ from azure.core import MatchConditions
 from azure.core.exceptions import AzureError
 from azure.cosmos.exceptions import CosmosHttpResponseError, CosmosResourceNotFoundError
 
-from functions_analysis_access import AnalysisResultUnavailable, authorize_analysis_sources
+from functions_analysis_access import AnalysisResultUnavailable, analysis_source_snapshot
 from functions_appinsights import log_event
 from functions_generated_file_exports import build_saved_analysis_export
 from functions_workflow_context import WorkflowContextBudgetError, calculate_workflow_context_budget
@@ -40,6 +40,7 @@ MAX_ANALYSIS_PAGE_RECORDS = 100
 MAX_ANALYSIS_PAGE_BYTES = 256 * 1024
 MAX_ANALYSIS_DIAGNOSTIC_PAGE_BYTES = 65536
 UNAVAILABLE_ANALYSIS_MESSAGE = "This saved analysis is unavailable because its access could not be confirmed."
+UNVERIFIED_WORKFLOW_OUTPUT_MESSAGE = "This saved task output is unavailable because it could not be read or verified."
 
 
 def _authorize_conversation(user_id, conversation_id):
@@ -259,11 +260,30 @@ def _orchestration_load(user_id, conversation_id, run_id, step_id, reference):
     return load_orchestration_analysis_result(user_id, conversation_id, run_id, step_id, reference)
 
 
+def _saved_source_provenance(sources):
+    """Describe a saved result's recorded sources. Provenance only, never an access check.
+
+    A saved result takes its access from its conversation or orchestration run, so its
+    source documents are not read again. A result without a valid source list is a
+    lineage failure.
+    """
+    snapshots = analysis_source_snapshot(sources)
+    if not snapshots:
+        raise AnalysisResultUnavailable("analysis_source_manifest_missing")
+    return {"source_count": len(snapshots), "source_snapshot_changed": False}
+
+
 def save_orchestration_analysis(
     result, *, user_id, conversation_id, run_id, step_id, settings=None,
     authorize_run=None, save_result=None, source_resolver=None, guard_token=None,
 ):
-    """Persist a step result before terminal chat presentation is generated."""
+    """Persist a step result before terminal chat presentation is generated.
+
+    The run is the container: its producer is checked before and after the write. The
+    documents the analysis read are recorded as provenance and are not checked again.
+    ``source_resolver`` is accepted for older callers and is not used.
+    """
+    del source_resolver
     if settings is None and save_result is None:
         from functions_settings import get_settings
         settings = get_settings()
@@ -273,9 +293,7 @@ def save_orchestration_analysis(
     binding = envelope["identity"]
     authorize = authorize_run or _authorize_orchestration_producer
     authorize(user_id, binding)
-    access = authorize_analysis_sources(
-        user_id, envelope["analysis_access"]["sources"], require_snapshot=True, resolver=source_resolver,
-    )
+    access = _saved_source_provenance(envelope["analysis_access"]["sources"])
     save = save_result or _orchestration_save
     manifest, reference = persist_result_sections(
         envelope,
@@ -286,9 +304,6 @@ def save_orchestration_analysis(
         max_result_bytes=_quota_bytes(settings or {}),
     )
     authorize(user_id, binding)
-    authorize_analysis_sources(
-        user_id, envelope["analysis_access"]["sources"], require_snapshot=True, resolver=source_resolver,
-    )
     return {
         "version": SAVED_ANALYSIS_VERSION, "result_ref": reference, "result_sha256": reference["sha256"],
         "binding": dict(binding), "conversation_id": conversation_id,
@@ -302,7 +317,13 @@ def save_chat_analysis(
     result, *, user_id, conversation_id, message_id, settings=None,
     authorize_conversation=None, save_result=None, source_resolver=None, guard_token=None,
 ):
-    """Save final sections once, then advertise only their committed manifest."""
+    """Save final sections once, then advertise only their committed manifest.
+
+    The conversation is the container: it is checked before and after the write. The
+    documents the analysis read are recorded as provenance and are not checked again.
+    ``source_resolver`` is accepted for older callers and is not used.
+    """
+    del source_resolver
     if settings is None and save_result is None:
         from functions_settings import get_settings
         settings = get_settings()
@@ -311,9 +332,7 @@ def save_chat_analysis(
     envelope = build_chat_analysis_result(
         result, user_id=user_id, conversation_id=conversation_id, message_id=message_id,
     )
-    access = authorize_analysis_sources(
-        user_id, envelope["analysis_access"]["sources"], require_snapshot=True, resolver=source_resolver,
-    )
+    access = _saved_source_provenance(envelope["analysis_access"]["sources"])
     save = save_result or _chat_save
     manifest, reference = persist_result_sections(
         envelope,
@@ -324,9 +343,6 @@ def save_chat_analysis(
         max_result_bytes=_quota_bytes(settings or {}),
     )
     authorize(user_id, conversation_id)
-    authorize_analysis_sources(
-        user_id, envelope["analysis_access"]["sources"], require_snapshot=True, resolver=source_resolver,
-    )
     return {
         "version": SAVED_ANALYSIS_VERSION,
         "conversation_id": conversation_id,
@@ -798,7 +814,12 @@ def load_saved_analysis(
     workflow_getter=None, workflow_loader=None, source_resolver=None,
     orchestration_authorizer=None, orchestration_loader=None,
 ):
-    """Authorize the displayed message, its original producer, and all sources."""
+    """Authorize the displayed message and its original producer, then read the result.
+
+    Access comes from the container: the conversation, workflow or orchestration run.
+    The source documents are provenance and are not checked again; lineage and integrity
+    failures still refuse the read.
+    """
     context = saved_analysis_context(context)
     load_message = message_loader or _load_authorized_message
     message = load_message(user_id, context["conversation_id"], context["message_id"])
@@ -854,9 +875,7 @@ def load_saved_analysis(
         access = manifest.get("analysis_access") or {}
         if not isinstance(access, Mapping) or access.get("version") != ANALYSIS_SOURCE_ACCESS_VERSION:
             raise AnalysisResultUnavailable("analysis_lineage_invalid")
-        checked = authorize_analysis_sources(
-            user_id, access.get("sources"), resolver=source_resolver,
-        )
+        checked = _saved_source_provenance(access.get("sources"))
     elif binding.get("kind") == "workflow":
         try:
             producer = analysis_artifact_metadata(binding)["analysis_producer"]
@@ -874,6 +893,8 @@ def load_saved_analysis(
         else:
             loader = workflow_loader or _workflow_load
         load = lambda ref: loader(workflow, binding["run_id"], binding["task_id"], ref, **selectors)
+        # A workflow result takes its access from its workflow and run (checked above);
+        # this proves its lineage and returns its sources as provenance only.
         manifest, checked = authorize_workflow_task_result_read(
             workflow, binding["run_id"], binding["task_id"], reference,
             reader_user_id=user_id, load_result=loader, source_resolver=source_resolver,
@@ -898,7 +919,7 @@ def load_saved_analysis(
         access = manifest.get("analysis_access") or {}
         if not isinstance(access, Mapping) or access.get("version") != ANALYSIS_SOURCE_ACCESS_VERSION:
             raise AnalysisResultUnavailable("analysis_lineage_invalid")
-        checked = authorize_analysis_sources(user_id, access.get("sources"), resolver=source_resolver)
+        checked = _saved_source_provenance(access.get("sources"))
     else:
         raise AnalysisResultUnavailable("analysis_lineage_invalid")
     public_descriptor = {**deepcopy(descriptor), **context}
@@ -980,7 +1001,12 @@ def load_orchestration_analysis_input(
     user_id, descriptor, *, authorize_run=None, load_result=None, source_resolver=None, bounded=False,
     authorize_only=False,
 ):
-    """Read a real run/step result before a terminal assistant message exists."""
+    """Read a real run/step result before a terminal assistant message exists.
+
+    The run is the container and is rechecked on every bounded read. Source documents are
+    provenance only. ``source_resolver`` is accepted for older callers and is not used.
+    """
+    del source_resolver
     if not isinstance(descriptor, Mapping) or descriptor.get("version") != SAVED_ANALYSIS_VERSION:
         raise AnalysisResultUnavailable("analysis_lineage_invalid")
     binding = descriptor.get("binding")
@@ -1007,14 +1033,14 @@ def load_orchestration_analysis_input(
     policy = manifest.get("analysis_access") or {}
     if not isinstance(policy, Mapping) or policy.get("version") != ANALYSIS_SOURCE_ACCESS_VERSION:
         raise AnalysisResultUnavailable("analysis_lineage_invalid")
-    access = authorize_analysis_sources(user_id, policy.get("sources"), resolver=source_resolver)
+    access = _saved_source_provenance(policy.get("sources"))
     context = {"producer": dict(binding), "result_sha256": reference["sha256"]}
     if authorize_only:
         return None, deepcopy(descriptor)
     if bounded:
         def reauthorize():
             (authorize_run or _authorize_orchestration_producer)(user_id, binding)
-            return authorize_analysis_sources(user_id, policy.get("sources"), resolver=source_resolver)
+            return access
 
         return SavedAnalysisInput(manifest, load, access, context, reauthorize=reauthorize), deepcopy(descriptor)
     return _analysis_explanation_input(manifest, load, access, context), deepcopy(descriptor)
@@ -1695,7 +1721,7 @@ def read_saved_analysis_diagnostics(
         or (end < page["total_bytes"] and not content_bytes)
     ):
         raise ValueError("The diagnostic transport range is incomplete or invalid.")
-    # Close source/masking/deletion changes during a storage read before returning bytes.
+    # Close masking, deletion and conversation-access changes during a storage read before returning bytes.
     load_saved_analysis(user_id, context, **read_options)
     response = {
         **page,
@@ -1786,7 +1812,11 @@ def read_saved_analysis_page(
 def sanitize_saved_analysis_messages(
     messages, user_id, *, result_reader=None, workflow_result_reader=None, conversation_reader=None,
 ):
-    """Withhold result-derived content on new reads after source access is lost."""
+    """Withhold result-derived content when the saved result's container or lineage fails.
+
+    Source documents are not rechecked: a result stays readable in its conversation after
+    the documents it came from change, are deleted or are held.
+    """
     read = result_reader or load_saved_analysis
     lineage = None
     sanitized = []
@@ -1844,7 +1874,13 @@ def sanitize_saved_analysis_messages(
 
 
 def sanitize_workflow_analysis_history(workflow, run_record, user_id, *, items=None, result_reader=None):
-    """Keep task previews and activity from bypassing the workflow result reader."""
+    """Keep task previews and activity from bypassing the workflow result reader.
+
+    Previews take their access from the workflow and run the caller already read.
+    Each stored result is still checked for identity, lineage and integrity; a
+    result that fails that check, or can't be read from storage, is withheld.
+    Its contributing documents are never re-checked.
+    """
     if not isinstance(run_record, Mapping):
         return run_record, items, True
     read = result_reader or authorize_workflow_task_result_read
@@ -1907,17 +1943,17 @@ def sanitize_workflow_analysis_history(workflow, run_record, user_id, *, items=N
         redacted = deepcopy(task)
         for field in ("output_summary", "response_preview", "reply"):
             if field in redacted:
-                redacted[field] = UNAVAILABLE_ANALYSIS_MESSAGE
+                redacted[field] = UNVERIFIED_WORKFLOW_OUTPUT_MESSAGE
         if redacted.get("error"):
-            redacted["error"] = UNAVAILABLE_ANALYSIS_MESSAGE
+            redacted["error"] = UNVERIFIED_WORKFLOW_OUTPUT_MESSAGE
         redacted["analysis_access_available"] = False
         return redacted
 
     run = deepcopy(run_record)
-    run["response_preview"] = UNAVAILABLE_ANALYSIS_MESSAGE
+    run["response_preview"] = UNVERIFIED_WORKFLOW_OUTPUT_MESSAGE
     run["analysis_access_available"] = False
     if run.get("error"):
-        run["error"] = UNAVAILABLE_ANALYSIS_MESSAGE
+        run["error"] = UNVERIFIED_WORKFLOW_OUTPUT_MESSAGE
     for field in ("reply", "analysis_result", "analysis_coverage", "generated_analysis_artifacts", "generated_tabular_outputs"):
         run.pop(field, None)
     run["task_results"] = [redact(task) for task in run.get("task_results") or []]

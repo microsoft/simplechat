@@ -1,14 +1,16 @@
 # test_analyze_orchestration_saved_integration.py
 """
 Behavioral tests for saved Analyze references through orchestration.
-Version: 0.261.139
+Version: 0.261.232
 Implemented in: 0.261.109
 Single orchestration contract updated in: 0.261.139
+Container-only retained-result access covered in: 0.261.232
 
 Adapters, collection, section persistence/readers and checkpoint codecs are
 production functions. Only provider, storage and source-access boundaries are
 offline doubles; saved Analyze results are consumed through retained result
-bindings instead of the removed legacy response path.
+bindings instead of the removed legacy response path. A retained result takes
+its access from its conversation and run, not from the documents it read.
 """
 
 import hashlib
@@ -260,23 +262,29 @@ def test_orchestration_keeps_full_data_in_saved_sections_not_evidence_or_checkpo
     assert len(fixture.state["producer_calls"]) == 1
 
 
-def test_orchestration_source_revocation_blocks_saved_compose(orchestration):
+@pytest.mark.parametrize("change", ["revoked", "held"])
+def test_orchestration_saved_compose_keeps_run_access_after_source_changes(orchestration, change):
+    # 0.261.232: a retained Analyze result takes its access from its conversation and run.
     fixture = orchestration
     bind_result(fixture, analyze(fixture))
-    fixture.state["allowed"] = False
+    if change == "revoked":
+        fixture.state["allowed"] = False
+    else:
+        fixture.state["screening_held"] = True
+    answer = compose(fixture)
+    assert answer["status"] == "completed", answer
+    submitted = json.dumps(fixture.state["model_calls"][0][0])
+    assert "finding-059" in submitted and "Complete finding 059" in submitted
+    assert len(fixture.state["producer_calls"]) == 1
+
+
+def test_orchestration_saved_compose_still_requires_its_conversation(orchestration):
+    fixture = orchestration
+    bind_result(fixture, analyze(fixture))
+    fixture.results.conversation["orchestration_deleted"] = True
     with pytest.raises(Exception) as failure:
         compose(fixture)
     assert type(failure.value).__name__ in {"AnalysisResultUnavailable", "ResultUnavailableError"}
-    assert fixture.state["model_calls"] == []
-
-
-def test_orchestration_new_screening_hold_blocks_saved_compose(orchestration):
-    fixture = orchestration
-    bind_result(fixture, analyze(fixture))
-    fixture.state["screening_held"] = True
-    with pytest.raises(Exception) as failure:
-        compose(fixture)
-    assert type(failure.value).__name__ in {"DocumentHeldError", "ResultUnavailableError"}
     assert fixture.state["model_calls"] == []
 
 

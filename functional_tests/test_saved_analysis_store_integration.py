@@ -1,11 +1,13 @@
 # test_saved_analysis_store_integration.py
 """
 Functional tests for saved Analyze helpers with the real shared result store.
-Version: 0.261.109
+Version: 0.261.232
 Implemented in: 0.261.109
+Container-only saved-result access covered in: 0.261.232
 
-Cosmos/Blob SDK doubles verify pre-message orchestration loading, source access,
+Cosmos/Blob SDK doubles verify pre-message orchestration loading, run access,
 snapshot integrity, and public record/evidence projections without live services.
+A saved result takes its access from its run; its sources are not reread.
 """
 
 from copy import deepcopy
@@ -138,7 +140,7 @@ def test_orchestration_identity_cannot_retarget_saved_bytes(sdk_store, field, va
         )
 
 
-def test_orchestration_source_revocation_blocks_pre_message_reuse(sdk_store):
+def test_orchestration_source_revocation_does_not_block_pre_message_reuse(sdk_store):
     descriptor = save_orchestration(sdk_store)
     reads = []
 
@@ -146,12 +148,28 @@ def test_orchestration_source_revocation_blocks_pre_message_reuse(sdk_store):
         reads.append(args[-1]["sha256"])
         return sdk_store.load_orchestration(*args)
 
+    text, consumed = saved.load_orchestration_analysis_input(
+        "owner", descriptor, authorize_run=authorize_run, load_result=load,
+        source_resolver=lambda *args, **kwargs: pytest.fail("A saved result must not reread its sources."),
+    )
+    payload = json.loads(text)
+    assert len(payload["records"]) == 121
+    assert payload["source_snapshot_changed"] is False
+    assert consumed == descriptor
+    assert reads[0] == descriptor["result_sha256"]
+
+
+def test_orchestration_run_loss_still_blocks_pre_message_reuse(sdk_store):
+    descriptor = save_orchestration(sdk_store)
+
+    def lost_run(*args):
+        raise PermissionError("The run is no longer available.")
+
     with pytest.raises(PermissionError):
         saved.load_orchestration_analysis_input(
-            "owner", descriptor, authorize_run=authorize_run, load_result=load,
-            source_resolver=lambda *args, **kwargs: [{**SOURCE, "authorization_status": "unresolved"}],
+            "owner", descriptor, authorize_run=lost_run,
+            load_result=lambda *args: pytest.fail("Unauthorized result read."),
         )
-    assert reads == [descriptor["result_sha256"]]
 
 
 def test_evidence_projection_preserves_the_canonical_nested_evidence(sdk_store):

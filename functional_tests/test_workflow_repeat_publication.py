@@ -1,8 +1,9 @@
 # test_workflow_repeat_publication.py
 """
 Functional tests for mixed Repeat native Analyze and exact saved-output publication.
-Version: 0.261.120
+Version: 0.261.231
 Implemented in: 0.261.120
+Saved records and exports stopped re-checking their sources in: 0.261.231
 
 The production task dispatcher, native checkpoints, shared JSON renderer and sole
 publication ledger use existing closed fictional source, Blob and Cosmos fixtures.
@@ -18,7 +19,6 @@ import test_workflow_loop_native_analysis as native_loops
 from test_analyze_native_saved_integration import native_run  # noqa: F401
 from test_analysis_artifact_publication import publication, normalizers  # noqa: F401
 from test_workflow_saved_output_artifacts import artifact_services  # noqa: F401
-from functions_analysis_access import AnalysisResultUnavailable
 from functions_workflow_node_results import open_workflow_record_input
 
 
@@ -119,9 +119,11 @@ def test_native_analyze_keeps_exact_mixed_producers_and_original_records(native_
     before = len(fixture["native_run"].reads)
     fixture["execute"]()
     assert len(fixture["calls"]) == 4 and len(fixture["native_run"].reads) == before
+    # Saved Repeat records are generated output: a later change to an analyzed
+    # document doesn't hide them, and each page still re-verifies lineage.
     fixture["allowed"]["native-source-a"] = False
-    with pytest.raises(AnalysisResultUnavailable):
-        reader.read_records(offset=0, limit=1)
+    page, total = reader.read_records(offset=0, limit=1)
+    assert total == 300 and page[0]["values"] == fixture["native_run"].rows[0]
 
 
 @pytest.mark.parametrize("native_repeat_flow", [
@@ -157,9 +159,14 @@ def test_repeat_final_records_use_unchanged_shared_export_and_destination_ledger
     assert fixture["execute"]()["publication"] == completed["publication"]
     assert services.publication.calls["create"] == before["create"] and services.publication.calls["queue"] == before["queue"]
     assert services.blobs.writes == 1 and len(fixture["calls"]) == 4
+    # The export is generated output: a later change to an analyzed document
+    # neither withdraws it nor blocks downloading it.
     fixture["allowed"]["native-source-b"] = False
-    with pytest.raises((PermissionError, AnalysisResultUnavailable, ValueError)):
-        services.download("owner", "conversation-1", card["artifact_message_id"])
+    response = services.download("owner", "conversation-1", card["artifact_message_id"])
+    try:
+        assert response.get_data() == content
+    finally:
+        response.close()
 
 
 @pytest.mark.parametrize("native_repeat_flow", [
