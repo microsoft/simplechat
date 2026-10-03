@@ -1,8 +1,9 @@
 # test_workflow_structured_edges.py
 """
 Regression coverage for M4A schema, limits, source snapshots and exact gates.
-Version: 0.261.116
+Version: 0.261.231
 Implemented in: 0.261.116
+History stopped re-checking shared reference sources in: 0.261.231
 
 Exercises production code through isolated existing storage and dispatcher
 fixtures. No workflow, document, model or publication service is invoked live.
@@ -140,8 +141,8 @@ def test_shared_reference_snapshot_is_run_scoped_and_reauthorized_after_restart(
                 controller.freeze_reference(reference, read)
 
 
-def test_approval_history_rechecks_predicate_and_shared_reference_sources(runtime, monkeypatch):
-    workflow, store, _, _ = runtime
+def test_approval_history_verifies_inputs_and_keeps_shared_references_as_provenance(runtime, monkeypatch):
+    workflow, store, container, _ = runtime
     with pytest.raises(SystemExit):
         run_flow(workflow, store, crash_after_choice=True)
     producer = next(item for item in store.journal_page("execution")["items"] if item["node_id"] == "classify-node")["workflow_result"]
@@ -165,9 +166,26 @@ def test_approval_history_rechecks_predicate_and_shared_reference_sources(runtim
     assert execution["consumed_inputs"] == [receipt]
     assert execution["reference_sources"][0]["document_id"] == "criteria"
     monkeypatch.setattr("functions_workflow_execution_history.workflow_runtime_store", lambda *_: store)
-    monkeypatch.setattr("functions_workflow_execution_history.authorize_analysis_sources", lambda *args, **kwargs: (_ for _ in ()).throw(AnalysisResultUnavailable()))
+    lookups = []
+
+    def unavailable(document_ids, **kwargs):
+        lookups.append(list(document_ids))
+        raise AnalysisResultUnavailable()
+
+    # The shared reference is provenance: losing it does not hide the pending approval.
+    monkeypatch.setattr("functions_analysis_access.resolve_authorized_source_manifest", unavailable)
+    history = workflow_execution_history(workflow, "run", reader_user_id="owner")
+    assert gate["execution_id"] in {item["execution_id"] for item in history["executions"]}
+    assert lookups == []
+    # The consumed input is still verified against the result that produced it.
+    row = next(
+        value for value in container.items.values()
+        if value.get("record_kind") == "execution" and value["payload"].get("execution_id") == gate["execution_id"]
+    )
+    row["payload"]["consumed_inputs"][0]["output_ref"] = {**receipt["output_ref"], "sha256": "0" * 64}
     with pytest.raises(AnalysisResultUnavailable):
         workflow_execution_history(workflow, "run", reader_user_id="owner")
+    assert lookups == []
 
 
 def test_invalid_selected_output_is_visible_in_exact_attempt_history(runtime):

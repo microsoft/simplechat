@@ -371,8 +371,9 @@ A delivered result answer and an analysis note carry the same lineage keys as a
 
 Those keys make later chat turns inherit the result lineage and make shared
 sanitizers withhold the delivered content when the run is gone, the result
-changed, source access is lost, storage cannot confirm access, or the chat is no
-longer private. Status, failed, cancelled, skipped and content-blocked notes
+changed, storage cannot confirm access, or the chat is no longer private. Since
+0.261.231, losing access to a document the run's tasks read doesn't withhold
+it. Status, failed, cancelled, skipped and content-blocked notes
 carry no result text and no 6a lineage keys.
 
 Every delivered message carries `metadata.workflow_delivery`, described in the

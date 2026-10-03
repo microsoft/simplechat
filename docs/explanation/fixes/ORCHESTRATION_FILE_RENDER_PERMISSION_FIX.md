@@ -1,8 +1,8 @@
 # Orchestration File Render Permission Fix
 
-**Version: 0.261.229**
+**Version: 0.261.232**
 
-Fixed in version: **0.261.229**, recorded in
+Fixed in version: **0.261.232**, recorded in
 `application/single_app/config.py`.
 
 Issue: [#1623](https://github.com/microsoft/simplechat/issues/1623). This affects

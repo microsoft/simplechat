@@ -14,12 +14,14 @@ from flask import make_response
 from azure.core import MatchConditions
 from azure.core.exceptions import AzureError, ResourceExistsError
 from content_screening.contracts import (
+    SCREENING_EXEMPTION_FIELD,
     SCREENING_FIELD,
     DocumentHeldError,
     ScreeningConflictError,
     ScreeningError,
     ScreeningValidationError,
     document_is_available,
+    is_generated_screening_exempt,
     require_document_available,
     subject_from_document,
 )
@@ -30,7 +32,6 @@ from content_screening.access import (
     read_available_document_bytes,
 )
 from content_screening.extraction import (
-    CONTENT_METADATA_FIELDS,
     current_extraction,
     is_publication,
 )
@@ -40,8 +41,8 @@ from content_screening.service import (
     prepare_document_deletion,
     prepare_document_upload,
     process_screened_upload,
-    queue_metadata_rescan,
     reprocess_document,
+    validate_screened_metadata_update,
 )
 from config import *
 from functions_appinsights import log_event
@@ -2047,16 +2048,22 @@ def create_document(
     allow_deferred_xsd_source=False,
     origin=None,
     server_tags=None,
+    screening_exemption=None,
 ):
     """Create or version a document record.
 
-    ``origin`` and ``server_tags`` are server-only: callers pass them only from server-held
-    workflow or chat bindings, never from client input. Each version stores only its own origin.
+    ``origin``, ``server_tags`` and ``screening_exemption`` are server-only: callers pass them only
+    from server-held workflow, chat, or generated-content bindings, never from client input. Each
+    version stores only its own origin and exemption.
     """
     if origin is not None:
         # Validated before any earlier revision is archived, so a malformed origin can never
         # leave the document family without a current version.
         origin = validate_origin(origin)
+    if screening_exemption is not None and not is_generated_screening_exempt(
+        {SCREENING_EXEMPTION_FIELD: screening_exemption}
+    ):
+        raise ScreeningValidationError("The screening exemption is invalid.")
     current_time = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
     is_group = group_id is not None
     is_public_workspace = public_workspace_id is not None
@@ -2364,6 +2371,9 @@ def create_document(
                     "xsd_blob_etag": staged_xsd_source.get("blob_etag"),
                 })
         apply_document_provenance(document_metadata, origin=origin, server_tags=server_tags)
+        if screening_exemption is not None:
+            # Stored before the marker is chosen, so a generated version is never enrolled.
+            document_metadata[SCREENING_EXEMPTION_FIELD] = dict(screening_exemption)
         screening_marker = initial_document_marker(document_metadata)
         if screening_marker is not None:
             document_metadata[SCREENING_FIELD] = screening_marker
@@ -3532,7 +3542,9 @@ def calculate_processing_percentage(doc_metadata):
     return max(final_pct, current_pct)
 
 def update_document(**kwargs):
-    if SCREENING_FIELD in kwargs:
+    # Screening state and every screening_* field, including the generated-content
+    # exemption, are server-managed and set only when a version is created.
+    if SCREENING_FIELD in kwargs or any(str(name).startswith("screening_") for name in kwargs):
         raise ScreeningValidationError("Screening state is managed by the review workflow.")
     if any(field_name in kwargs for field_name in ORIGIN_FIELD_NAMES):
         # Origin is written only when a version is created; no update path may set or change it.
@@ -3652,29 +3664,13 @@ def update_document(**kwargs):
                 kwargs["status"] = "Content review required" if marker.get("review_required") else "Content screening pending"
             if kwargs.get("percentage_complete") == 100:
                 kwargs["percentage_complete"] = 99
-        content_changed = any(
-            key in kwargs and kwargs[key] is not None and kwargs[key] != existing_document.get(key)
-            for key in CONTENT_METADATA_FIELDS
-        )
         if (
-            marker is not None and content_changed and capture is None
+            marker is not None and capture is None
             and not is_publication(subject_from_document(existing_document), marker.get("scan_id"))
         ):
-            metadata_updates = {
-                key: value for key, value in kwargs.items()
-                if key not in {"document_id", "user_id", "group_id", "public_workspace_id"}
-                and value is not None
-            }
-            if operation_guard is not None:
-                operation_guard()
-            queue_metadata_rescan(existing_document, metadata_updates, user_id)
-            if strict:
-                saved_document = cosmos_container.read_item(item=document_id, partition_key=document_id)
-                projection = sync_document_access_index_for_document_fail_open(saved_document, operation="document_updated")
-                if not projection.get("success"):
-                    raise DocumentMutationPropagationError("Document saved, but its access projection could not be updated.")
-                return saved_document
-            return
+            # Metadata edits, including model-generated metadata, apply directly and never
+            # start a new hold. Only the inspected source format of the file stays fixed.
+            validate_screened_metadata_update(existing_document, kwargs)
         original_percentage = existing_document.get('percentage_complete', 0) # Store for comparison
 
         # 2. Apply updates from kwargs
@@ -3753,7 +3749,11 @@ def update_document(**kwargs):
         # This happens regardless of 'update_occurred' flag because the *intent* from kwargs might trigger it,
         # even if the main doc update didn't happen (e.g., only percentage changed).
         # However, it's better to only do this if the relevant fields *actually* changed.
-        if (update_occurred or strict) and updated_fields_requiring_chunk_sync and marker is None:
+        # A held screened document has no released chunks; publication rebuilds them.
+        if (
+            (update_occurred or strict) and updated_fields_requiring_chunk_sync
+            and (marker is None or document_is_available(existing_document))
+        ):
             try:
                 chunks_to_update = get_all_chunks(
                     document_id,
@@ -13249,6 +13249,10 @@ def propagate_tags_to_blob_metadata(
             or (public_workspace_id is not None and doc_item.get("public_workspace_id") != public_workspace_id)
         ):
             raise ScreeningConflictError()
+        if SCREENING_FIELD in doc_item:
+            # A screened release pins its blob by ETag and content hash. Rewriting the blob's
+            # metadata would make the released file unreadable, so tags stay in Cosmos and Search.
+            return
         if strict and not _has_persisted_blob_reference(doc_item) and not doc_item.get("enhanced_citations"):
             return
         storage_account_container_name, blob_path = get_document_blob_storage_info(

@@ -1,10 +1,14 @@
 # functions_workflow_execution_history.py
-"""Authorized safe projections of the schema-2 execution journal."""
+"""Authorized safe projections of the schema-2 execution journal.
 
-from functions_analysis_access import AnalysisResultUnavailable, authorize_analysis_sources, build_analysis_access
+The caller has already authorized the workflow and run. Projections prove the
+identity and lineage of what they show; the documents an execution read are
+provenance and are not re-checked here.
+"""
+
+from functions_analysis_access import build_analysis_access
 from functions_workflow_flow import compile_workflow_flow
 from functions_workflow_identity import normalize_workflow_iteration_path, workflow_execution_id, workflow_node_identity
-from functions_workflow_inspection import authorize_workflow_flow_sources
 from functions_workflow_journal import public_workflow_journal_entry
 from functions_workflow_limits import WORKFLOW_MAX_EXECUTION_ADMISSIONS
 from functions_workflow_node_results import (
@@ -35,8 +39,8 @@ def authorize_execution_payload(workflow, run_id, payload, *, reader_user_id, au
             authorization.authorize_repeat(head["identity"], reference)
     references = payload.get("reference_sources") or []
     if references:
-        policy = build_analysis_access(references)
-        authorize_analysis_sources(reader_user_id, policy["sources"])
+        # Validate the stored reference receipts' shape; the references themselves are provenance.
+        build_analysis_access(references)
     summary = payload.get("workflow_result") or {}
     if summary.get("result_ref"):
         authorization.authorize_result(summary["producer"], summary["result_ref"])
@@ -69,14 +73,11 @@ def workflow_execution_history(workflow, run_id, *, reader_user_id, kind="execut
         selected_id = workflow_execution_id(workflow, run_id, node_id, path)
         row = store.journal_read("execution", selected_id)
         if row is None:
-            authorize_workflow_flow_sources(workflow, reader_user_id=reader_user_id)
             # No payload exists to supply receipts: prove membership from the
             # frozen items and sealed admissions, never from the requested path alone.
             authorization.walk([("path", {
                 "node_id": node_id, "execution_id": selected_id, "iteration_path": path,
             }, None)])
-            if authorization.access()["source_snapshot_changed"]:
-                raise AnalysisResultUnavailable("analysis_source_snapshot_changed")
             return {"executions": [], "next_cursor": None, "total_count": 0}
         payload = row["payload"]
         expected = {

@@ -4,8 +4,9 @@ Private, immutable persistence for workflow, chat, and orchestration results.
 Version: 0.261.127
 Implemented in: 0.261.106
 
-Callers must authorize the current workflow/chat/orchestration context and
-contributing sources before using this module. Storage additionally binds every
+Callers must authorize the current workflow/chat/orchestration context before
+using this module; a saved workflow result takes its access from its workflow and
+run, not from its contributing sources. Storage additionally binds every
 object to its personal user/group, workflow, run, and task; its original chat owner,
 conversation, and real assistant message; or its original owner, conversation,
 real orchestration run, and step. It does not interpret the result contract or

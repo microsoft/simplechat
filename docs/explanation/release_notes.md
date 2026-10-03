@@ -2,7 +2,7 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
-### **(v0.261.229)**
+### **(v0.261.232)**
 
 #### Bug Fixes
 
@@ -12,6 +12,67 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
     *   Scratch files now go to `/sc-temp-files` when it's writable, and otherwise to the platform temp directory, never to the working directory. The image creates `/app` for the runtime user again. The OneNote extractor binary is added after that and stays root-owned.
     *   For a failed attempt, the `[ORCHESTRATION_EXECUTOR] A file render attempt finished.` event now also records `sc_error_type`, `sc_error_cause_type` and `sc_error_errno`, so a file-system error can be told apart from a source-access refusal. Messages and paths aren't logged.
     *   (Ref: #1623, `functions_temp_files.py`, `functions_structured_file_renderers.py`, `functions_simplechat_operations.py`, `functions_orchestration_rendering.py`, `Dockerfile`, [Orchestration File Render Permission Fix](fixes/ORCHESTRATION_FILE_RENDER_PERMISSION_FIX.md))
+
+### **(v0.261.231)**
+
+#### Breaking Changes
+
+*   **Saved Workflow Results No Longer Re-check Their Source Documents**
+    *   Saved and generated workflow results now take their access from the workflow, run and group they belong to. Deleting, re-uploading or holding a document a run used no longer hides or fails its task results, node results, structured execution history, For each and Repeat history, run history previews, or chat answers about a workflow result.
+    *   A later task can read an earlier task's output after that output's source changed. Runs no longer pause with "A collected source changed." or "The Repeat state's original sources are no longer available." for generated output.
+    *   Checks that stay: a workflow still refuses a held or inaccessible uploaded document when it reads it as an input (For each document items, document selections, reference inputs, File Sync and other configured sources), and that held input still blocks its own task's model call. Each task now gets its own model fence, so a held input can't block a later task. Container checks are unchanged: you need access to the workflow, group results stay limited to group members, and someone else's run still answers like a missing one. Forged or mismatched results are still refused.
+    *   Opening a saved workflow's Flow no longer fails when one referenced document is missing, held or outside your access. That source is marked "Not available to you right now" on its own row, and the rest of the definition shows.
+    *   API changes: a result that fails its lineage or hash check now answers 409 instead of 403 on task result pages ("The saved result or requested page is unavailable.") and execution history ("This saved execution record could not be verified."). Flow and execution history 403 messages no longer mention sources. Activity streams end with `activity_unavailable` instead of `source_access_denied`. Chat follow-ups report a lineage failure as `workflow_result_invalid`. `source_snapshot_changed` is always `false` and kept for older clients.
+    *   **Migration**: none. Nothing is migrated or withdrawn; results saved before this version are read the same way.
+    *   (Ref: #1621, `functions_workflow_node_results.py`, `functions_workflow_results.py`, `functions_workflow_inspection.py`, `functions_workflow_result_reader.py`, `functions_saved_analysis.py`, `functions_workflow_runner.py`, `content_screening/access.py`, `route_backend_workflows.py`, `WorkflowDefinitionInspector.tsx`, [Workflow Saved Result Source Re-check Fix](fixes/WORKFLOW_SAVED_RESULT_SOURCE_RECHECK_FIX.md))
+
+### **(v0.261.230)**
+
+#### Bug Fixes
+
+*   **Workflow Run History No Longer Fails When A Source Document Changes**
+    *   A workflow's run history no longer returns "Run history is unavailable because source access could not be confirmed." when one of its runs used a document that was later deleted or re-uploaded. The run list, a run's task results, the live run activity view and the last-run preview in the workflow list now take their access from the workflow, not from the documents each run used.
+    *   A task no longer fails right after saving its output with "Saved task output was withheld because its source access could not be confirmed."
+    *   Container checks are unchanged: you still need access to the workflow, group runs still require group membership, and a run from another workflow still answers as not found.
+    *   This is the first step of limiting content screening to uploaded documents. Some per-task previews and structured workflow execution history still re-check sources until the next step.
+    *   (Ref: #1613, #1621, `route_backend_workflows.py`, `functions_workflow_runner.py`, [Workflow Run History Source Re-check Fix](fixes/WORKFLOW_RUN_HISTORY_SOURCE_RECHECK_FIX.md))
+
+#### User Interface Enhancements
+
+*   **Approvals Page Screening Notice Only When Screening Is On**
+    *   The content screening notice at the top of **Approval Requests** now appears only while content screening is enabled, and reads in plain language: "To review uploaded documents that content screening is holding, open Content review."
+    *   Each content screening request still has its own **Open content review** link, so documents held before screening was turned off stay reachable.
+    *   (Ref: `templates/approvals.html`, `test_content_screening_classic.py`)
+
+#### Breaking Changes
+
+*   **Generated Documents Are No Longer Screened**
+    *   Content screening now checks only documents that enter a workspace by a user upload (personal, group or public, including a file attached in chat and saved to a workspace) or File Sync. Files the SimpleChat agent action saves to a workspace and artifacts published into a workspace get no screening marker, are processed normally while screening is on, and are skipped by scan jobs.
+    *   Each generated document version carries a server-managed `screening_exemption` field that is set when the version is created. Clients can't set it: the document APIs reject any `screening` field, no update path accepts one, and responses never include it. A document that already has a screening marker stays screened.
+    *   Publishing an artifact to a group or public workspace no longer reserves a screening scan for its destination, so approval hands it straight to processing. A destination that was held by screening before this version can't be approved; cancel the request and publish the artifact again.
+    *   **Migration**: None. Existing documents keep their screening state, and nothing already screened or held is released.
+    *   (Ref: #1621, `content_screening/contracts.py`, `content_screening/service.py`, `content_screening/jobs.py`, `functions_documents.py`, `functions_simplechat_operations.py`, `functions_artifact_publication.py`, `functions_artifact_publication_readiness.py`, [Upload-Only Screening Intake Fix](fixes/UPLOAD_ONLY_SCREENING_INTAKE_FIX.md))
+
+*   **Metadata Edits No Longer Hold Screened Documents Again**
+    *   Editing a released document's title, abstract, keywords, authors, classification or tags now applies directly. The document stays available and no new scan starts, so the group and public document metadata APIs return `updated` (200) instead of `queued` (202).
+    *   Metadata the model generates after a document is released also applies directly, without a new hold.
+    *   A rename still can't change a screened file's extension. Tag edits on a screened document update the document and its search chunks but no longer rewrite the released file's blob metadata, so downloads of that file keep working.
+    *   In the V2 Documents explorer, saving a screened document's metadata now shows **Metadata saved.**, and the document stays in the list with the edit shown. The explorer no longer removes it with "Screening is queued". A save is confirmed only by an `updated` 200 receipt; any other receipt, including a `queued` 202 one, keeps the draft.
+    *   (Ref: #1621, `functions_documents.update_document`, `content_screening/access.py`, `functions_group_document_management.py`, `functions_public_document_management.py`, `route_backend_group_documents.py`, `route_backend_public_document_management.py`, `documentOperations.ts`, `DocumentExplorer.tsx`, [Upload-Only Screening Intake Fix](fixes/UPLOAD_ONLY_SCREENING_INTAKE_FIX.md))
+
+### **(v0.261.229)**
+
+#### Breaking Changes
+
+*   **Microsoft 365 Workflow Run As Approval Only When Someone Else Authored The Revision**
+    *   A workflow revision saved by its own Run as user now runs as them without a separate approval, including on its first run. SimpleChat records an approved, audited Run as authorization for that exact revision and connection, sends no notification, and never shows it as pending. Before, every edit asked the Run as user to approve again, even their own.
+    *   Approval is still required when someone else is responsible for what runs: someone else saved the current revision, `modified_by` is missing, or someone else changed an agent or action the workflow uses after the Run as user's save. A new connection or connection generation asks again for a revision someone else saved.
+    *   Conversation audience changes no longer ask for Run as approval again; the authorization still records the audience. Source-sharing approvals and the runtime checks that guard runs and deliveries already in progress are unchanged.
+    *   Explicit decisions still win. A denial or cancellation recorded for a run still stops that run. Revoking a Run as authorization in Profile revokes every approved authorization for that revision, which then waits for approval even if its Run as user saved it. That holds when the revocation overlaps a run recording a new authorization, or is interrupted: a run that finds an authorization the revocation missed revokes it instead of using it.
+    *   Raw edits of workflows, agents and actions in the Data Management Cosmos DB editor now record the administrator as the last author, so an edited record can't run as someone else without asking them.
+    *   The V2 workflow proposal card, the editor's **Saving requires re-approving Run as** note, the AI assistant's `run_as_reapproval` warning, the Run as help text in both editors, and the classic Profile and Approvals labels follow the new rule.
+    *   **Migration**: None. Existing approvals keep working. A workflow its Run as user saved last is authorized automatically the next time it needs a new authorization. To require approval for such a revision, revoke its authorization in Profile. An authorization revoked before this release still withdraws only itself, so other approvals of that revision keep working, but that revision is never authorized automatically.
+    *   (Ref: #1621, `functions_m365_approvals.py`, `functions_m365_execution.py`, `functions_m365_workflow_binding.py`, `functions_m365_runtime.py`, `functions_m365_data_lifecycle.py`, `functions_data_management.py`, `functions_orchestration_workflow_proposals.py`, `functions_workflow_assist.py`, `WorkflowProposalCard.tsx`, `WorkflowChangeTracking.tsx`, [Run as approval for a revision you saved](features/M365_RUN_AS_SELF_AUTHORED_APPROVAL.md))
 
 ### **(v0.261.228)**
 

@@ -291,8 +291,8 @@ class StructuredWorkflowExecution(DurableWorkflowExecution):
                 )
             except AnalysisResultUnavailable:
                 self.pause_input(
-                    "The Repeat state's original sources are no longer available. Saved originals are retained.",
-                    code="workflow_repeat_source_unavailable",
+                    "This Repeat round's saved state could not be verified. Saved originals are retained.",
+                    code="workflow_repeat_state_invalid",
                 )
 
     def _attempt(self, attempt, **fields):

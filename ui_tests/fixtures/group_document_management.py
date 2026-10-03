@@ -1,7 +1,7 @@
 # group_document_management.py
 """
 Closed M2B group document management responses for the real production V2 SPA.
-Version: 0.261.195
+Version: 0.261.230
 Implemented in: 0.261.129
 Every receipt builder, an Owner's rows and the tag list are the real management routes', held to
 them by functional_tests/test_group_document_fixture_parity.py.
@@ -9,6 +9,7 @@ A tag vocabulary conflict refusal carries its code (`tag_vocabulary_refusal`): 0
 The refusal also answers a bulk tagging batch and, naming the document, a metadata save: 0.261.168
 The group-scoped content screening routes, modelled in group_screening.py: 0.261.174
 The V2 notification bell's unread count is an expected shell read: 0.261.195
+Metadata edits apply directly and are never screened, so every metadata receipt is `updated`: 0.261.230
 
 Reuse M2A reads, local production assets, request recording, response gates and
 Azure Playwright connection options. Every management request must consume an
@@ -73,7 +74,6 @@ def operation_path(resource, group_id="group-a"):
 # any other refusal carries its sentence in `error`, and a tag vocabulary conflict also names its
 # code in `error_code`.
 METADATA_UPDATED_MESSAGE = "Group document metadata updated."
-METADATA_QUEUED_MESSAGE = "Metadata saved and queued for content screening."
 DOCUMENT_DELETED_MESSAGE = "Group document deleted."
 TAG_CREATED_MESSAGE = "Group tag created."
 TAG_MESSAGES = {
@@ -106,12 +106,13 @@ SYNCED_DELETE_OPTIONS = (
 )
 
 
-def metadata_result(document_id, changes, *, group_id="group-a", queued=False):
-    """The server names the fields in the order the request sent them."""
+def metadata_result(document_id, changes, *, group_id="group-a"):
+    """The server names the fields in the order the request sent them. Metadata edits apply directly,
+    including on a screened document, so the receipt is always `updated`."""
     return {
-        "message": METADATA_QUEUED_MESSAGE if queued else METADATA_UPDATED_MESSAGE,
+        "message": METADATA_UPDATED_MESSAGE,
         "document_id": document_id, "group_id": group_id,
-        "updated_fields": list(changes), "status": "queued" if queued else "updated",
+        "updated_fields": list(changes), "status": "updated",
     }
 
 

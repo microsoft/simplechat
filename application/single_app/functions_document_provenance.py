@@ -622,8 +622,11 @@ def _authorized_workflow(user_id, scope_type, scope_id, workflow_id, settings, u
     return _load_scope_workflow(scope_type, scope_id, workflow_id)
 
 
-def _authorized_run(user_id, scope_type, scope_id, workflow, workflow_id, run_id):
-    """Return the origin run only when it belongs to the workflow and this reader may read it."""
+def _authorized_run(scope_type, scope_id, workflow, workflow_id, run_id):
+    """Return the origin run only when it belongs to the workflow this reader may open.
+
+    A run takes its access from its workflow; the documents it used are not re-checked.
+    """
     if not run_id or not isinstance(workflow, Mapping):
         return None
     try:
@@ -633,9 +636,6 @@ def _authorized_run(user_id, scope_type, scope_id, workflow, workflow_id, run_id
             run = import_module("functions_personal_workflows").get_personal_workflow_run(scope_id, run_id)
         if not isinstance(run, Mapping) or run.get("workflow_id") != workflow_id:
             return None
-        import_module("functions_workflow_results").authorize_workflow_run_read(
-            workflow, run_id, reader_user_id=user_id,
-        )
     except _EXPECTED_ACCESS_ERRORS:
         return None
     except Exception as exc:
@@ -660,7 +660,7 @@ def _workflow_origin_summary(user_id, origin, settings, user_roles):
         "href": workflow_origin_href(scope["type"], scope["id"], workflow_id),
     }
     run_id = origin.get("run_id")
-    run = _authorized_run(user_id, scope["type"], scope["id"], workflow, workflow_id, run_id)
+    run = _authorized_run(scope["type"], scope["id"], workflow, workflow_id, run_id)
     if run is not None:
         summary["href"] = workflow_origin_href(scope["type"], scope["id"], workflow_id, run_id)
         started_at = run.get("started_at")
@@ -812,7 +812,7 @@ def _workflow_filter(user_id, workflow_id, run_id, group_id, settings, user_role
             scope = ("group", group_id)
     if scope is None:
         raise DocumentOriginFilterError(ORIGIN_NOT_FOUND_MESSAGE, 404)
-    if run_id is not None and _authorized_run(user_id, scope[0], scope[1], workflow, workflow_id, run_id) is None:
+    if run_id is not None and _authorized_run(scope[0], scope[1], workflow, workflow_id, run_id) is None:
         raise DocumentOriginFilterError(ORIGIN_NOT_FOUND_MESSAGE, 404)
     conditions = [
         "c.origin.kind = @origin_kind",

@@ -1,8 +1,9 @@
 # test_v2_workflow_repeat_until.py
 """
 Local closed-browser regressions for typed Repeat until and manual continuation.
-Version: 0.261.127
+Version: 0.261.231
 Implemented in: 0.261.120
+source_snapshot_changed stopped being authoritative in: 0.261.231
 
 Exercises the actual built V2 SPA, strict guards, scoped API requests and production
 definition normalization. Fixtures intercept every request; no live workflow runs.
@@ -470,7 +471,7 @@ def test_lifetime_round_1001_remains_distinct_and_uncommitted_after_state_is_not
 
 @pytest.mark.parametrize("malformed", [
     "hybrid_path", "predicate_string", "batch_reset", "private_ref", "too_many",
-    "summary_state", "state_array", "missing_snapshot_flag",
+    "summary_state", "state_array",
 ])
 def test_repeat_iteration_metadata_is_strict_and_never_loads_saved_values_on_failure(workflow_repeat_ui, malformed):
     ui, page = workflow_repeat_ui, workflow_repeat_ui.page
@@ -489,13 +490,6 @@ def test_repeat_iteration_metadata_is_strict_and_never_loads_saved_values_on_fai
         rows[0]["state"] = "waiting_manual_continue"
     elif malformed == "state_array":
         rows[0]["state"] = ["completed"]
-    elif malformed == "missing_snapshot_flag":
-        ui.repeat_iterations_override = {
-            "repeat_execution_id": REPEAT_EXECUTION_ID,
-            "repeat": copy.deepcopy(ui.workflow_runtimes[runtime_key()]["repeat_progress"]),
-            "iterations": copy.deepcopy(rows), "next_cursor": pages[""]["next_cursor"],
-            "total_count": sum(len(value["items"]) for value in pages.values()),
-        }
     else:
         rows.extend(copy.deepcopy(rows[0]) for _ in range(50))
     open_repeat_run(ui)
@@ -507,7 +501,7 @@ def test_repeat_iteration_metadata_is_strict_and_never_loads_saved_values_on_fai
 
 @pytest.mark.parametrize("malformed", [
     "phase", "execution", "private_ref", "any_kind", "validation", "prior_coverage", "duplicate",
-    "missing_partial_flag", "missing_snapshot_flag", "per_slot_partial", "unavailable_before",
+    "missing_partial_flag", "per_slot_partial", "unavailable_before",
 ])
 def test_state_slot_metadata_rejects_wrong_selectors_and_unsupported_shapes(workflow_repeat_ui, malformed):
     ui, page = workflow_repeat_ui, workflow_repeat_ui.page
@@ -531,8 +525,6 @@ def test_state_slot_metadata_rejects_wrong_selectors_and_unsupported_shapes(work
         states[0]["prior_coverage"] = {"result_ref": {"id": "private-result-reference"}}
     elif malformed == "missing_partial_flag":
         response.pop("partial")
-    elif malformed == "missing_snapshot_flag":
-        response.pop("source_snapshot_changed")
     elif malformed == "per_slot_partial":
         states[0]["partial"] = True
     elif malformed == "unavailable_before":
@@ -551,13 +543,12 @@ def test_state_slot_metadata_rejects_wrong_selectors_and_unsupported_shapes(work
     assert not any(request.path.endswith(("/result", "/records")) for request in ui.requests)
 
 
-@pytest.mark.parametrize("flag", ["partial", "source_snapshot_changed"])
-def test_uncommitted_after_state_rejects_committed_only_flags(workflow_repeat_ui, flag):
+def test_uncommitted_after_state_rejects_committed_only_flags(workflow_repeat_ui):
     ui, page = workflow_repeat_ui, workflow_repeat_ui.page
     ui._seed_repeat_run("user", completed_count=1, batch_size=2, running_round=True)
     ui.repeat_state_override = {
         "repeat_execution_id": REPEAT_EXECUTION_ID, "iteration": 1, "phase": "after",
-        "available": False, "states": [], "next_cursor": None, "total_count": 0, flag: False,
+        "available": False, "states": [], "next_cursor": None, "total_count": 0, "partial": False,
     }
     open_repeat_run(ui)
     rounds = open_rounds(ui)
@@ -567,6 +558,38 @@ def test_uncommitted_after_state_rejects_committed_only_flags(workflow_repeat_ui
     expect(state.get_by_role("alert").filter(has_text="unsupported response")).to_be_visible()
     expect(state.get_by_role("button", name=re.compile("^Load .* output excerpt$"))).to_have_count(0)
     assert not any(request.path.endswith(("/result", "/records")) for request in ui.requests)
+
+
+@pytest.mark.parametrize("flag", ["missing", True])
+def test_source_snapshot_flag_never_blocks_or_warns_on_rounds_or_state(workflow_repeat_ui, flag):
+    # Repeat state is generated output that takes its access from the run, so the
+    # retained source_snapshot_changed flag is ignored whatever an older server sends.
+    ui, page = workflow_repeat_ui, workflow_repeat_ui.page
+    pages = ui.repeat_iteration_pages[runtime_key()]
+    rounds_response = {
+        "repeat_execution_id": REPEAT_EXECUTION_ID,
+        "repeat": copy.deepcopy(ui.workflow_runtimes[runtime_key()]["repeat_progress"]),
+        "iterations": copy.deepcopy(pages[""]["items"]), "next_cursor": pages[""]["next_cursor"],
+        "total_count": sum(len(value["items"]) for value in pages.values()),
+    }
+    state_response = {
+        "iteration": 0, "phase": "before", "repeat_execution_id": REPEAT_EXECUTION_ID,
+        "available": True, "total_count": 4, "states": ui._state_slots(0, "before", False)[:2],
+        "next_cursor": "offset-2", "partial": False,
+    }
+    if flag != "missing":
+        rounds_response["source_snapshot_changed"] = flag
+        state_response["source_snapshot_changed"] = flag
+    ui.repeat_iterations_override = rounds_response
+    ui.repeat_state_override = state_response
+    open_repeat_run(ui)
+    rounds = open_rounds(ui)
+    expect(rounds.get_by_role("list", name="Repeat rounds", exact=True)).to_contain_text("Round 1")
+    rounds.get_by_role("button", name="State before round 1", exact=True).click()
+    state = page.get_by_role("region", name="State before round 1", exact=True)
+    expect(state.get_by_role("list", name="Saved state before round 1", exact=True).get_by_role("listitem")).to_have_count(2)
+    expect(rounds.get_by_role("alert")).to_have_count(0)
+    expect(page.get_by_text(re.compile("Source snapshots", re.IGNORECASE))).to_have_count(0)
 
 
 def test_revoked_repeat_state_refresh_clears_cached_metadata_and_content(workflow_repeat_ui):

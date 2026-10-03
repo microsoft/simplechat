@@ -168,6 +168,10 @@ SCENARIOS = [
         {"op": "move_task", "task": "task_2", "after": "start"},
         {"op": "set_task_inputs", "task": "new_1", "mode": "tasks", "from": ["task_1"]},
     ], stored=_with_run_as()),
+    # Saving as your own Run as account is your own revision: neither layer asks to re-approve it.
+    _scenario("rewritten task with my own Run as", [
+        {"op": "set_task_instructions", "task": "task_2", "instructions": "Check each document.\nList every problem."},
+    ], stored=wa.stored_workflow(m365_run_as_user_id=wa.USER_ID)),
     _scenario("removed task", [{"op": "remove_task", "task": "task_3"}], stored=_review_workflow()),
     _scenario("workflow and task runners", [
         {"op": "set_workflow_runner", "runner": "agent", "agent": "agent_1"},
@@ -250,6 +254,7 @@ def _run_case(scenario):
     checked = [payload for _user_id, payload in bundle.recorder.named("dry_run")]
     return {
         "name": scenario["name"],
+        "user_id": wa.USER_ID,
         "stored": stored,
         "original": editor.strip_undefined(original) if original is not None else None,
         "draft": body["draft"],

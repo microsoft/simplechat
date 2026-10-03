@@ -1,15 +1,18 @@
 # test_workflow_result_reader.py
 """
 Functional test for the workflow result reader behind chat Follow up.
-Version: 0.261.214
+Version: 0.261.231
 Implemented in: 0.261.214
+Results stopped re-checking their sources in: 0.261.231
 
 This test ensures that the reader point-reads a personal workflow and run as the
 requester, answers someone else's run exactly like a missing one, reads only
-finished runs, authorizes the whole run with the real run-history guard, binds the
-result to a digest of its included outputs, and returns bounded excerpts that
-never carry store references. It uses fake containers and an in-memory canonical
-result store; the result contract, the authorizer and the Analyze reader are real.
+finished runs, verifies the whole run's lineage with the real run-history guard,
+binds the result to a digest of its included outputs, and returns bounded
+excerpts that never carry store references. The documents a run read are
+provenance and are not re-checked. It uses fake containers and an in-memory
+canonical result store; the result contract, the authorizer and the Analyze
+reader are real.
 """
 
 import json
@@ -342,8 +345,8 @@ def test_the_items_query_is_the_exact_projection_and_the_real_authorizer_accepts
         "workflow_id", "run_id", "task_id", "task_order", "status", "item_type", "label", "workflow_result",
     ]
     assert result["descriptor"]["available"] is True
-    # The real run guard re-authorized the Analyze sources as the requester.
-    assert fixture.sources.readers and set(fixture.sources.readers) == {USER}
+    # The real run guard verified lineage only; the Analyze sources are provenance and aren't re-resolved.
+    assert fixture.sources.readers == []
     assert analysis_ref["sha256"] in fixture.store.loads
 
 
@@ -437,7 +440,7 @@ def test_the_excerpt_budget_is_bounded(budget):
 
 
 @pytest.mark.parametrize("where", ["included_output", "failed_task_outside_the_result"])
-def test_lost_source_access_anywhere_in_the_run_denies_the_result(where):
+def test_lost_source_access_anywhere_in_the_run_keeps_the_result_readable(where):
     fixture = RunFixture()
     status = "succeeded" if where == "included_output" else "failed"
     fixture.add_task("task-analyze-74", analysis_result(), order=1, status=status)
@@ -446,9 +449,12 @@ def test_lost_source_access_anywhere_in_the_run_denies_the_result(where):
     assert readable["descriptor"]["available"] is True
 
     fixture.sources.allowed = False
-    error = closed(fixture.read)
+    after = fixture.read(include_excerpts=True)
 
-    assert error.code == "workflow_result_access_denied" and error.status == 403
+    # The result takes its access from its workflow and run, not from the documents it read.
+    assert after["descriptor"]["available"] is True
+    assert after["descriptor"]["result_sha256"] == readable["descriptor"]["result_sha256"]
+    assert fixture.sources.readers == []
 
 
 def test_a_row_that_points_at_another_tasks_result_is_refused():
@@ -456,7 +462,8 @@ def test_a_row_that_points_at_another_tasks_result_is_refused():
     two_text_tasks(fixture)
     fixture.items[1]["workflow_result"]["result_ref"] = deepcopy(fixture.items[0]["workflow_result"]["result_ref"])
     pointed = closed(fixture.read)
-    assert pointed.code == "workflow_result_access_denied"
+    # A lineage failure is an invalid result, not an access denial.
+    assert pointed.code == "workflow_result_invalid" and pointed.status == 409
 
     other = RunFixture()
     two_text_tasks(other)
