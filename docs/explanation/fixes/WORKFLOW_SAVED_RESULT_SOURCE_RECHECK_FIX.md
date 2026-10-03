@@ -141,9 +141,26 @@ Tests that asserted source re-checks were rewritten to assert the container and 
 `test_workflow_structured_publication.py`, `test_workflow_named_result_inputs.py`, `test_workflow_result_reader.py`,
 `test_workflow_result_routes.py`, `test_workflow_result_followup.py`, `test_workflow_loop_reporting.py`,
 `test_workflow_collect_publication.py`, `test_workflow_repeat_publication.py`, `test_workflow_data_flow_execution.py`,
-`test_document_provenance_origin.py`, and the V2 tests `ui_tests/test_v2_workflow_repeat_until.py`,
-`ui_tests/test_v2_workflow_flow_authoring.py` and `ui_tests/test_v2_workflow_flow_inspection.py` (new check that
-an unavailable source is marked on its own row).
+`test_analyze_workflow_publication_integration.py`, `test_document_provenance_origin.py`, and the V2 tests
+`ui_tests/test_v2_workflow_repeat_until.py`, `ui_tests/test_v2_workflow_flow_authoring.py` and
+`ui_tests/test_v2_workflow_flow_inspection.py` (new check that an unavailable source is marked on its own row).
+
+Two of these files don't run on the base branch either, because of stale harnesses that this change doesn't repair:
+
+- `test_analyze_workflow_publication_integration.py` errors at setup. Its `sequence` fixture patches
+  `functions_workflow_context.resolve_model_token_limits`, which no longer exists. Its model fake also expects all
+  150 records in one prompt, but saved reports now page.
+- `test_workflow_data_flow_execution.py`'s inventory harness lacks `generated_file_publication_allowed`.
+
+With throwaway pytest plugins that supply only the missing helper:
+
+- `test_native_source_revocation_does_not_block_the_saved_report` revokes the source after the Analyze result is
+  saved. On this branch it reaches the model call and then stops at the same stale paging assertion as the file's
+  happy-path test. On the base branch the Explain task is refused before the model call with "A required source
+  is no longer available for this workflow run."
+- `test_shared_reference_lineage_survives_reload_and_saved_outputs_stay_reusable` passes on this branch. On the
+  base branch it fails, because reusing the saved output re-checks the revoked reference. The old revocation
+  version passes on the base branch.
 
 Before-and-after runs, on a shared and heavily loaded test host, compared every FAILED/ERROR test id:
 
@@ -151,10 +168,9 @@ Before-and-after runs, on a shared and heavily loaded test host, compared every 
   Analyze and saved-analysis tests, `route_tests/test_workflow_*_policy.py` and the three route policy tests,
   plus the new file. Baseline 4,449 passed with 1,589 failures and errors; after 4,479 passed with 1,580, all
   of which also fail on the base branch (stale harnesses and tests that need Azure configuration). No new
-  failures. The only differences are `test_workflow_data_flow_execution.py`, whose whole file fails on the base
-  branch for an unrelated harness reason and where one test was renamed, and
-  `test_orchestration_workflow_results_imports.py`, an import-order test that stalls under this host's load
-  inside the batch runner; run directly it passes, 26 of 26.
+  failures. The only differences are the two renamed tests above, whose files fail on the base branch for the
+  harness reasons described, and `test_orchestration_workflow_results_imports.py`, an import-order test that
+  stalls under this host's load inside the batch runner; run directly it passes, 26 of 26.
 - **V2 browser tests:** 11 files (Repeat until, Flow authoring and inspection, loops, authoring history, control
   runtime and flow, durable runtime, chat workflow results, document provenance, orchestration workflow results
   input). 339 passed before and after; the same 4 errors in `test_v2_orchestration_workflow_results_input.py`
