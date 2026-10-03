@@ -1,7 +1,7 @@
 # test_workflow_repeat_editor_options.py
 """
 Functional tests for Repeat administration and non-secret editor capabilities.
-Version: 0.261.120
+Version: 0.261.221
 Implemented in: 0.261.120
 
 Exercises real registry normalization, Classic POST validation, editor projection,
@@ -191,9 +191,15 @@ class WorkflowRepeatEditorOptionsTests(unittest.TestCase):
         personal_workflows.get_workflow_max_tasks = Mock(return_value=50)
         settings_module = ModuleType("functions_settings")
         settings_module.get_group_workflow_management_roles = Mock(return_value=["Owner", "Admin"])
+        # The Merge files task's availability and file limit come from the document-action settings.
+        document_actions = ModuleType("functions_document_actions")
+        document_actions.DOCUMENT_ACTION_CONTEXT_WORKFLOW = "workflow"
+        document_actions.DOCUMENT_ACTION_TYPE_MERGE = "merge"
+        document_actions.is_document_action_enabled = Mock(return_value=True)
+        document_actions.get_document_action_max_documents = Mock(return_value=100)
         modules = {
             module.__name__: module
-            for module in (group, group_workflows, personal_workflows, settings_module)
+            for module in (group, group_workflows, personal_workflows, settings_module, document_actions)
         }
         settings = {
             WORKFLOW_REPEAT_LIMIT_SETTING: 750, "workflow_max_loop_items": 1700,
@@ -208,6 +214,9 @@ class WorkflowRepeatEditorOptionsTests(unittest.TestCase):
                     self.assertEqual(result["flow_limits"]["max_loop_items"], 1700)
                     self.assertEqual(result["scope"]["id"], group_id or "fictional-owner")
                     self.assertEqual(result["can_manage"], not group_id)
+                    self.assertEqual(
+                        result["document_actions"], {"merge": {"enabled": True, "workflow_max_documents": 100}},
+                    )
                     self.assertNotIn("PRIVATE", json.dumps(result))
             group.assert_group_role.assert_called_once_with(
                 "fictional-owner", "fictional-group",

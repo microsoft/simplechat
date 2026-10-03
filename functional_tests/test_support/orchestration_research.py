@@ -2,7 +2,7 @@
 """
 Offline source loading and synthetic inputs for research-planner evaluation.
 
-Version: 0.261.140
+Version: 0.261.221
 Implemented in: 0.261.099
 Single orchestration contract updated in: 0.261.139
 
@@ -134,12 +134,14 @@ def _assignment(tree, name):
 def _definitions(filename, seed=None, names=None):
     """Load real functions/constants with only explicitly supplied, offline dependencies."""
     if filename == REGISTRY_FILE:
-        # The registry's table reads two constants from the pure result-contract module.
+        # The registry's table reads constants from the pure result-contract and merge modules.
         contracts = _definitions(
             RESULT_CONTRACTS_FILE, names={"IMAGE_ASSET_KIND", "RESULT_KINDS"},
         )
+        merge = _definitions("functions_tabular_merge.py", names={"TABULAR_COLUMN_MAPPING_PROFILE"})
         seed = {
             "IMAGE_ASSET_KIND": contracts["IMAGE_ASSET_KIND"], "RESULT_KINDS": contracts["RESULT_KINDS"],
+            "TABULAR_COLUMN_MAPPING_PROFILE": merge["TABULAR_COLUMN_MAPPING_PROFILE"],
             "deepcopy": copy.deepcopy, **(seed or {}),
         }
     elif filename == "functions_orchestration_schema.py":

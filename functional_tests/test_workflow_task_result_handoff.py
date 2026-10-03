@@ -1,7 +1,7 @@
 # test_workflow_task_result_handoff.py
 """
 Functional regression for workflow result production, persistence, and handoff.
-Version: 0.261.122
+Version: 0.261.221
 Implemented in: 0.261.106
 
 Fictional inventory records pass through the production document analysis,
@@ -201,6 +201,7 @@ def build_inventory_run(record_count=1, note_size=0, *, blob=True):
         "DOCUMENT_ACTION_TYPE_ANALYZE": "analyze",
         "DOCUMENT_ACTION_TYPE_COMPARISON": "compare",
         "DOCUMENT_ACTION_TYPE_SEARCH": "search",
+        "DOCUMENT_ACTION_TYPE_MERGE": "merge",
         "DOCUMENT_ACTION_CONTEXT_WORKFLOW": "workflow",
         "DOCUMENT_ACTION_ANALYSIS_MODE_PER_DOCUMENT": "per_document",
         "normalize_document_action_analysis_mode": lambda value: value or "combined",
