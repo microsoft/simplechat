@@ -79,8 +79,8 @@ interface WorkflowAlertState {
     dismissEntry: () => Promise<void>;
     markAllRead: () => Promise<void>;
     /**
-     * Follow a link or an open action from the card. The entry's lead alert -- the one the
-     * card was showing -- is marked read, and the card closes.
+     * Follow a link or an open action from the card. Every alert in the entry shown is marked
+     * read, as Mark read did before Open replaced it, and the card closes.
      */
     openFromCard: (target: NotificationTarget, context: NotificationNavigationContext) => Promise<void>;
 }
@@ -395,10 +395,10 @@ export const useWorkflowAlertStore = create<WorkflowAlertState>((set, get) => {
             if (state.phase !== 'card' || !entry || state.busy) {
                 return;
             }
-            const leadId = entry.lead.id;
-            settled.add(leadId);
+            const ids = workflowAlertEntryIds(entry);
+            ids.forEach((id) => settled.add(id));
             finish();
-            const read = actions.markRead([leadId]).catch(() => [] as string[]);
+            const read = actions.markRead(ids).catch(() => [] as string[]);
             // A full page load would cancel a request still on its way, so a link that leaves
             // the application waits for the read first. Inside it the read carries on regardless.
             if (target.kind === 'classic') {
