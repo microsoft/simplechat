@@ -210,6 +210,10 @@ function Microsoft365({ proposal }: { proposal: WorkflowProposal }) {
                             <> A run is waiting for your approval. <a href={M365_APPROVALS_HREF}
                                 className="font-medium text-accent underline underline-offset-2">Review Run as approval</a></>
                         )
+                        : m365.approval_state === 'self_authored' ? (
+                            `${created ? ' You saved it' : ' You create it'}, so it needs no separate Run as approval. `
+                            + 'If someone else changes it or an agent it uses, its next run waits for your approval.'
+                        )
                         : created ? ' The first run will wait for you to approve Run as.'
                         : ' Before its first run, you approve Run as.'
                 ) : null}

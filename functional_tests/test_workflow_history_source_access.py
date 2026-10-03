@@ -3,7 +3,7 @@
 Functional tests for workflow history, preview, and activity source inheritance.
 Version: 0.261.231
 Implemented in: 0.261.108
-Definition previews stopped re-checking run sources in: 0.261.229
+Definition previews stopped re-checking run sources in: 0.261.230
 History stopped re-checking task result sources in: 0.261.231
 
 History verification follows real stored producer receipts and does not rely on

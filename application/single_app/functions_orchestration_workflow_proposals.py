@@ -38,7 +38,7 @@ from azure.cosmos import exceptions
 
 import functions_personal_workflows
 from functions_appinsights import log_event, workflow_log_context
-from functions_m365_workflow_binding import M365_WAITING_STATES
+from functions_m365_workflow_binding import M365_WAITING_STATES, workflow_saved_by_run_as
 from functions_orchestration_registry import CAPABILITY_WORKFLOW_PROPOSE
 from functions_orchestration_result_contracts import canonical_digest
 from functions_orchestration_runs import (
@@ -531,16 +531,23 @@ def _m365(proposal, workflow, identity):
     summary = proposal.sidecar.get('summary') if isinstance(proposal.sidecar.get('summary'), dict) else {}
     source = summary.get('m365') if isinstance(summary.get('m365'), dict) else {}
     required = source.get('required') is True
+    run_as = source.get('run_as') if source.get('run_as') in _RUN_AS_VALUES else 'none'
     approval_state = None
     if isinstance(workflow, dict):
         if workflow.get('m365_binding_approval_id'):
             approval_state = 'approved'
         elif workflow.get('last_run_status') in M365_WAITING_STATES:
             approval_state = 'waiting'
+        elif workflow_saved_by_run_as(workflow, identity.get('user_id')):
+            # The requester saved the revision their account runs, so it needs no separate approval.
+            approval_state = 'self_authored'
+    elif run_as == 'self':
+        # Accepting creates the workflow in the requester's name, so it is their own revision.
+        approval_state = 'self_authored'
     return {
         'required': required,
         'can_send': source.get('can_send') is True,
-        'run_as': source.get('run_as') if source.get('run_as') in _RUN_AS_VALUES else 'none',
+        'run_as': run_as,
         'sources': [value for value in source.get('sources') or () if isinstance(value, str)],
         'connected': _m365_connected(identity.get('user_id'), identity.get('tenant_id')) if required else None,
         'approval_state': approval_state,
@@ -788,9 +795,10 @@ def accept_proposal(run, conversation, proposal_id, body, *, identity, settings,
     ``body`` is the request: ``mode`` (``paused`` or ``enabled``), and for a proposal the
     requester changed in the workflow editor, ``workflow``, the editor's draft. ``create_again``
     creates the workflow again after the requester deleted the one this proposal created.
-    Accepting an accepted proposal returns its workflow with status 200. Run as is never approved
-    here: a Microsoft 365 workflow still asks for approval before it first runs as the user. The
-    caller records the workflow creation activity when a workflow is returned as created.
+    Accepting an accepted proposal returns its workflow with status 200. Accept records no Run as
+    approval: the requester saves the workflow it creates, so a revision they saved runs as them
+    without one, and a later change by someone else asks them first. The caller records the
+    workflow creation activity when a workflow is returned as created.
     """
     user_id = identity.get('user_id')
     mode, create_again, payload = _accept_request(body)

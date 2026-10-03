@@ -1067,7 +1067,9 @@ Phase 3 ships as three PRs. 3a needs nothing else, 3b needs Phase 2 and A2, and 
     File Sync now, including on structured (v3) drafts (gotcha 58).
 - **Follow-ups** from #1580:
   - URL Access for workflows created from chat (v1 refuses it and explains), and a pre-run Run as approval route, so
-    the card can approve before the first run.
+    the card can approve before the first run. Since 0.261.229 a workflow the requester creates runs as them without
+    a separate approval ([Run as approval for a revision you saved](M365_RUN_AS_SELF_AUTHORED_APPROVAL.md)), so the
+    route matters only when someone else later changes the workflow or an agent it uses.
   - The per-user cap is soft when different proposals are accepted at the same time.
   - A conversation-level status route, if per-run reads prove chatty.
   - V2-native Microsoft 365 connection and approvals pages, to replace the card's classic links.

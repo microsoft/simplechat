@@ -3,7 +3,7 @@
 Fixed in version: **0.261.231**
 
 Related issues: [#1621](https://github.com/microsoft/simplechat/issues/1621) (layer 3a). Follows
-[Workflow Run History Source Re-check Fix](WORKFLOW_RUN_HISTORY_SOURCE_RECHECK_FIX.md) (0.261.229).
+[Workflow Run History Source Re-check Fix](WORKFLOW_RUN_HISTORY_SOURCE_RECHECK_FIX.md) (0.261.230).
 
 ## Issue
 
