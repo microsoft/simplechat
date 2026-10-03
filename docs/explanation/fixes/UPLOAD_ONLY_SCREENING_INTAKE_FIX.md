@@ -39,13 +39,23 @@ Files modified:
 - `application/single_app/functions_public_document_publication.py`
 - `application/single_app/functions_group_document_management.py`
 - `application/single_app/functions_public_document_management.py`
+- `application/single_app/route_backend_group_documents.py`
+- `application/single_app/route_backend_public_document_management.py`
 - `application/single_app/config.py`
+- `application/v2_ui/src/lib/documentOperations.ts`
+- `application/v2_ui/src/components/documents/DocumentExplorer.tsx`
 - `functional_tests/test_content_screening_upload_only_intake.py` (new)
 - `functional_tests/test_content_screening_jobs.py`
 - `functional_tests/test_content_screening_pipeline.py`
+- `functional_tests/test_content_screening_history.py`
 - `functional_tests/test_group_document_management.py`
 - `functional_tests/test_public_document_publication.py`
+- `functional_tests/test_group_document_fixture_parity.py`
+- `functional_tests/test_public_document_fixture_parity.py`
 - `functional_tests/test_group_document_publication_screening_bootstrap.py` (removed)
+- `ui_tests/fixtures/group_document_management.py`
+- `ui_tests/fixtures/public_document_management.py`
+- `ui_tests/test_v2_group_document_management.py`
 
 ### Marking generated documents
 
@@ -71,7 +81,13 @@ Files modified:
 - Chunk metadata (title, authors, file name, classification and tags) is now propagated for a screened document while its release is available. Held documents have no released chunks; publication rebuilds them.
 - `propagate_tags_to_blob_metadata` no longer writes to a screened document's blob. The release pins that blob by ETag and content hash, so rewriting its metadata would have made the released file unreadable.
 - `_require_release_proof`, `finalize_publication_checkpoint` and `_publication_matches_document` no longer compare the metadata fingerprint. The release still records it. The scan-job reconciliation no longer has a special case for metadata-triggered child scans, because there are none.
-- `update_group_document_metadata` and `update_public_document_metadata` always return `updated`, so their routes answer 200.
+- `update_group_document_metadata` and `update_public_document_metadata` always return `updated`, and their routes always answer 200. The routes no longer have a 202 branch for a `queued` receipt.
+
+### V2 Documents explorer
+
+- `documentOperations.ts` accepts a metadata save only when the receipt is `updated` with HTTP 200. Any other receipt is unconfirmed, including the `queued` (202) receipt screened documents used to get, and the dialog keeps the draft.
+- `DocumentExplorer.tsx` has one outcome for a confirmed save: it shows **Metadata saved.** and refreshes the list and details, and the document stays listed and available. Before, a `queued` receipt removed the document from the list and showed "Metadata saved. Screening is queued; the document remains unavailable until released."
+- The group and public UI test fixtures no longer build a `queued` metadata receipt.
 
 ### Impact
 
@@ -82,7 +98,6 @@ Files modified:
 ### Known limitations
 
 - Release publishes the metadata captured from the inspected copy. A metadata edit made through the API while a document is still held is replaced by that copy when the document is released. The workspace interfaces don't offer metadata edits on held documents.
-- The V2 explorer still has an unused branch for a `queued` metadata receipt. It is no longer reachable.
 
 ## Validation
 
@@ -107,6 +122,12 @@ Existing tests that asserted the removed behavior were rewritten:
 - `test_public_document_publication.py`: approval records no screening reservation, and a held legacy destination blocks approval.
 - `test_content_screening_history.py`: a release proof that doesn't match the content still leaves only the screening status, and metadata edited after a release stays available.
 - `test_group_document_fixture_parity.py` and `test_public_document_fixture_parity.py`: a released screened document's metadata change returns the ordinary `updated` receipt (200), not `queued` (202).
+- `ui_tests/test_v2_group_document_management.py`: `test_queued_metadata_acknowledgement_keeps_saved_content_held_for_screening` became `test_screened_metadata_edit_applies_directly_and_keeps_the_document_available`. After a released screened document's metadata is saved, the explorer shows **Metadata saved.**, the details show the edit, and Chat, Tag, Extract, Download, Delete and Edit stay enabled. `test_malformed_metadata_success_never_discards_the_draft` gained a `legacy-queued-202` case. With the V2 explorer change reverted and the SPA rebuilt, that case fails, because the old explorer accepted the receipt and closed the dialog.
 - `test_group_document_publication_screening_bootstrap.py` tested only the removed reservation and was removed. Its import check moved to the new file.
 
 The 258 functional test files present on both branches were run on the base branch and with this change. No test that passes on the base branch fails with this change; the remaining failures already fail on the base branch for unrelated reasons, such as harnesses that need Azure configuration.
+
+The V2 change was checked with `npm run typecheck` and `npm run build` in `application/v2_ui`, then with the V2 browser suites against the built SPA and local Playwright:
+
+- All tests pass in `test_v2_group_document_management.py`, `test_v2_public_documents.py`, `test_v2_personal_document_scope.py`, `test_v2_group_document_collaboration.py` and `test_v2_group_documents.py`.
+- `test_v2_content_screening.py` passes except `test_admin_policy_is_discoverable_and_editable_before_citations_are_enabled`, which fails the same way against a build of the base branch's V2 source.

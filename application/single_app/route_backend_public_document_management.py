@@ -113,7 +113,7 @@ def register_route_backend_public_document_management(bp):
         _public_management_query()
         changes = validate_metadata_changes(request.get_json(silent=True))
         receipt = update_public_document_metadata(get_current_user_id(), workspace_id, document_id, changes)
-        return jsonify(receipt), 202 if receipt["status"] == "queued" else 200
+        return jsonify(receipt), 200
 
     @bp.route('/api/public-workspaces/<workspace_id>/documents/<document_id>', methods=['DELETE'])
     @swagger_route(security=get_auth_security())

@@ -17,7 +17,8 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
     *   Editing a released document's title, abstract, keywords, authors, classification or tags now applies directly. The document stays available and no new scan starts, so the group and public document metadata APIs return `updated` (200) instead of `queued` (202).
     *   Metadata the model generates after a document is released also applies directly, without a new hold.
     *   A rename still can't change a screened file's extension. Tag edits on a screened document update the document and its search chunks but no longer rewrite the released file's blob metadata, so downloads of that file keep working.
-    *   (Ref: #1621, `functions_documents.update_document`, `content_screening/access.py`, `functions_group_document_management.py`, `functions_public_document_management.py`, [Upload-Only Screening Intake Fix](fixes/UPLOAD_ONLY_SCREENING_INTAKE_FIX.md))
+    *   In the V2 Documents explorer, saving a screened document's metadata now shows **Metadata saved.**, and the document stays in the list with the edit shown. The explorer no longer removes it with "Screening is queued". A save is confirmed only by an `updated` 200 receipt; any other receipt, including a `queued` 202 one, keeps the draft.
+    *   (Ref: #1621, `functions_documents.update_document`, `content_screening/access.py`, `functions_group_document_management.py`, `functions_public_document_management.py`, `route_backend_group_documents.py`, `route_backend_public_document_management.py`, `documentOperations.ts`, `DocumentExplorer.tsx`, [Upload-Only Screening Intake Fix](fixes/UPLOAD_ONLY_SCREENING_INTAKE_FIX.md))
 
 ### **(v0.261.229)**
 

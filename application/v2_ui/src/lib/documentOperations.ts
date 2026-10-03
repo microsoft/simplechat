@@ -82,7 +82,7 @@ export interface DocumentOperationAdapter {
     advertised: boolean;
     allows: (operation: DocumentOperation, documents?: readonly WorkspaceDocument[]) => boolean;
     upload: (files: File[]) => Promise<DocumentUploadOutcome>;
-    editMetadata: (document: WorkspaceDocument, changes: DocumentMetadataUpdate) => Promise<'updated' | 'queued'>;
+    editMetadata: (document: WorkspaceDocument, changes: DocumentMetadataUpdate) => Promise<void>;
     tagDocuments: (documents: WorkspaceDocument[], action: BulkTagAction, tags: string[]) => Promise<DocumentBatchOutcome>;
     deleteDocuments: (documents: WorkspaceDocument[], options: DocumentDeleteOptions) => Promise<DocumentBatchOutcome>;
     download: (documents: WorkspaceDocument[]) => Promise<DocumentDownload>;
@@ -429,21 +429,21 @@ function createOperations(
                 const response = await requestWithStatus<unknown>(`${base}/${encodeURIComponent(documentId(document))}`, { method: 'PATCH', body: changes });
                 const result = response.data;
                 const fields = Object.keys(changes);
+                // Metadata edits apply directly and are never screened, so only an `updated` 200 confirms one.
                 if (!isRecord(result) || result.document_id !== documentId(document) || result[scopeField] !== scope.id
                     || typeof result.message !== 'string' || result.error
                     || !Array.isArray(result.updated_fields) || result.updated_fields.length !== fields.length
                     || !fields.every((field) => Array.isArray(result.updated_fields) && result.updated_fields.includes(field))
-                    || (result.status === 'updated' ? response.status !== 200 : result.status === 'queued' ? response.status !== 202 : true)
+                    || result.status !== 'updated' || response.status !== 200
                     || (result.errors !== undefined && (!Array.isArray(result.errors) || result.errors.length > 0))) {
                     throw new Error('The server did not confirm the metadata change for this document. Your draft is kept; refresh before retrying.');
                 }
-                return result.status === 'queued' ? 'queued' : 'updated';
+                return;
             }
             const result = await updatePersonalDocumentMetadata(documentId(document), changes);
             if (isRecord(result) && (result.success === false || (Array.isArray(result.errors) && result.errors.length))) {
                 throw new Error('Metadata was not fully saved. Your draft has been kept; refresh before retrying.');
             }
-            return 'updated';
         },
         tagDocuments: async (documents, action, tags) => {
             const ids = idsFor('tag_documents', documents);
