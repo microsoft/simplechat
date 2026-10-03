@@ -536,7 +536,8 @@ only while the bootstrap flag is on. Group alerts, alerts without a run, and
 failed or cancelled runs get no button. An alert doesn't record the workflow's
 definition version, so a structured workflow's alert still offers it, and the
 descriptor read then refuses the run with `workflow_result_unsupported`.
-Choosing it closes the alert and leaves it unread.
+Choosing it closes the alert and leaves it unread. Since 0.261.228 it sits under the
+alert's **Show more**, with the alert's other secondary actions.
 
 ### Errors
 

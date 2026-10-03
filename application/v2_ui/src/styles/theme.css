@@ -87,6 +87,10 @@ html[data-font-size='xl'] {
     --warn-soft: rgb(217 119 6 / 0.12);
     --ok: #059669;
     --ok-soft: rgb(5 150 105 / 0.12);
+    /* A solid green that keeps text on it at 4.5:1 or better. */
+    --ok-strong: #047857;
+    --ok-strong-hover: #065f46;
+    --on-ok: #ffffff;
     /* Informational, used for the group workspace badge. Distinct from --accent so a
        group badge is not mistaken for a selected control. */
     --info: #0e7490;
@@ -142,6 +146,9 @@ html[data-font-size='xl'] {
     --warn-soft: rgb(251 191 36 / 0.16);
     --ok: #34d399;
     --ok-soft: rgb(52 211 153 / 0.16);
+    --ok-strong: #34d399;
+    --ok-strong-hover: #6ee7b7;
+    --on-ok: #022c22;
     --info: #22d3ee;
     --info-soft: rgb(34 211 238 / 0.16);
     --change-ai: #bfdbfe;
@@ -182,6 +189,9 @@ html[data-font-size='xl'] {
     --color-warn-soft: var(--warn-soft);
     --color-ok: var(--ok);
     --color-ok-soft: var(--ok-soft);
+    --color-ok-strong: var(--ok-strong);
+    --color-ok-strong-hover: var(--ok-strong-hover);
+    --color-on-ok: var(--on-ok);
     --color-info: var(--info);
     --color-info-soft: var(--info-soft);
     --color-change-ai: var(--change-ai);
