@@ -22,13 +22,12 @@ from config import (
     cosmos_user_documents_container,
 )
 from content_screening.access import public_document_payload
-from content_screening.contracts import SCREENING_FIELD, ScreeningError, hash_payload, subject_from_document
+from content_screening.contracts import SCREENING_FIELD, ScreeningError, generated_screening_exemption
 from functions_appinsights import log_event
 from functions_artifact_publication_readiness import (
-    PUBLICATION_BINDING, PUBLICATION_SCREENING_CONSUMPTION, PUBLICATION_SCREENING_RESERVATION,
-    SCREENING_BOOTSTRAP_REMEDY, inspect_publication_readiness, publication_binding_matches,
-    publication_handoff_observed, publication_processing_observation, public_publication_status,
-    publication_screening_reservation,
+    PUBLICATION_BINDING, PUBLICATION_SCREENING_HOLD_MESSAGE, inspect_publication_readiness,
+    publication_binding_matches, publication_handoff_observed, publication_processing_observation,
+    public_publication_status,
 )
 from functions_collaboration import build_conversation_participation_context
 from functions_document_provenance import publication_origin_fields
@@ -234,135 +233,27 @@ def _destination_document(container, receipt):
     return document
 
 
-def _reservation_has_screening_history(document):
-    # Screening clients are resolved only for an enrolled publication operation.
-    from content_screening.repository import get_repository
+def _publication_destination_admits_approval(document):
+    """Approval never overrides a screening hold on the destination itself.
 
-    repository = get_repository()
-    subject = subject_from_document(document)
-    if repository.get_scan(document[SCREENING_FIELD]["scan_id"]) is not None:
-        return True
-    return any(
-        repository.query(
-            kind, subject.scope_key, filters={"document_id": subject.document_id}, page_size=1,
-        )["items"]
-        for kind in ("scan", "review", "finding", "model_window", "event", "audit", "checkpoint", "work_item")
-    )
-
-
-def _enroll_screening_reservation(artifact, receipt, container):
-    """Capture proof only while preparing a new canonical, stored destination."""
-    def enroll(current):
-        document = _destination_document(container, current)
-        proof = publication_screening_reservation(document) if document else None
-        if (
-            proof is None or current.get("decision")
-            or PUBLICATION_SCREENING_CONSUMPTION in current
-            or "approval_queue" in (current.get("stages") or {})
-            or _reservation_has_screening_history(document)
-        ):
-            raise ValueError(SCREENING_BOOTSTRAP_REMEDY)
-        if PUBLICATION_SCREENING_RESERVATION in current:
-            if current[PUBLICATION_SCREENING_RESERVATION] != proof:
-                raise ValueError(SCREENING_BOOTSTRAP_REMEDY)
-            return None
-        current[PUBLICATION_SCREENING_RESERVATION] = proof
-        return current
-
-    return _receipt_change(artifact, receipt["id"], enroll)[0]
-
-
-def _publication_approval_screening(receipt, document, *, settings=None, operation_id=None, queue_claimed=False):
-    """The bootstrap result admits only this receipt's approval-to-scan handoff."""
-    if SCREENING_FIELD in document:
-        if (public_document_payload(document).get(SCREENING_FIELD) or {}).get("available") is True:
-            return "available"
-    elif PUBLICATION_SCREENING_RESERVATION in receipt or PUBLICATION_SCREENING_CONSUMPTION in receipt:
-        return None
-    if settings is None:
-        # Do not introduce settings/bootstrap initialization into readiness imports.
-        from functions_settings import get_settings
-
-        settings = get_settings()
+    Generated destinations carry no screening marker, so approval proceeds. A destination
+    enrolled before generated content was exempt is approved only once its release is
+    available; otherwise the requester cancels and requests publication again.
+    """
     if SCREENING_FIELD not in document:
-        if settings.get("enable_content_screening") is not True:
-            return "available"
-        from content_screening.service import document_requires_screening
-
-        return None if document_requires_screening(document, settings) else "available"
-    if settings.get("enable_content_screening") is not True:
-        return None
-    proof = publication_screening_reservation(document)
-    stages = receipt.get("stages") or {}
-    if (
-        proof is None or receipt.get(PUBLICATION_SCREENING_RESERVATION) != proof
-        or stages.get("create") != "complete" or stages.get("prepare") != "complete"
-        or "queue" in stages
-        or "approval_queue" in stages and not (queue_claimed and stages["approval_queue"] == "started")
-    ):
-        return None
-    consumption = receipt.get(PUBLICATION_SCREENING_CONSUMPTION)
-    decision = receipt.get("decision")
-    if PUBLICATION_SCREENING_CONSUMPTION in receipt:
-        if (
-            not isinstance(consumption, dict) or not operation_id
-            or consumption.get("operation_id") != operation_id
-            or consumption.get("fingerprint") != proof["fingerprint"]
-            or "scan_id" in consumption
-            or decision and (
-                decision.get("choice") != "approved" or decision.get("operation_id") != operation_id
-            )
-        ):
-            return None
-    elif decision or queue_claimed:
-        return None
-    if _reservation_has_screening_history(document):
-        return None
-    return "bootstrap"
+        return True
+    return (public_document_payload(document).get(SCREENING_FIELD) or {}).get("available") is True
 
 
-def artifact_publication_approval_available(document, *, settings=None, operation_id=None):
-    """Read fresh receipt and destination evidence without consuming the latch."""
+def artifact_publication_approval_available(document):
+    """Read fresh receipt and destination evidence before offering an approval."""
     _artifact, receipt, _bound = read_artifact_publication_request(document)
     container = cosmos_group_documents_container if document.get("group_id") else cosmos_public_documents_container
     current = _destination_document(container, receipt)
     if current is None or current.get("_etag") != document.get("_etag"):
         return False
-    return _publication_approval_screening(
-        receipt, current, settings=settings, operation_id=operation_id,
-    ) is not None
+    return _publication_destination_admits_approval(current)
 
-
-def consume_artifact_publication_screening_scan(document, scan_id):
-    """Write ahead of every scan entry; neither errors nor deletion unlatch it.
-
-    A scan that races initial receipt preparation consumes an unverified
-    reservation too. Preparation cannot subsequently manufacture positive proof.
-    """
-    artifact, receipt, _bound = read_artifact_publication_request(document)
-    subject = subject_from_document(document).to_dict()
-
-    def consume(current):
-        proof = current.get(PUBLICATION_SCREENING_RESERVATION)
-        if proof is not None and (not isinstance(proof, dict) or proof.get("subject") != subject):
-            raise ValueError(SCREENING_BOOTSTRAP_REMEDY)
-        fingerprint = proof["fingerprint"] if proof else hash_payload({
-            "subject": subject, "marker": document.get(SCREENING_FIELD),
-        })
-        consumption = current.get(PUBLICATION_SCREENING_CONSUMPTION)
-        if PUBLICATION_SCREENING_CONSUMPTION in current:
-            if not isinstance(consumption, dict) or not consumption.get("operation_id"):
-                raise ValueError(SCREENING_BOOTSTRAP_REMEDY)
-            if proof and consumption.get("fingerprint") != fingerprint:
-                raise ValueError(SCREENING_BOOTSTRAP_REMEDY)
-            if "scan_id" in consumption:
-                return None
-        else:
-            consumption = {"operation_id": f"scan:{scan_id}", "fingerprint": fingerprint}
-        current[PUBLICATION_SCREENING_CONSUMPTION] = {**consumption, "scan_id": scan_id}
-        return current
-
-    _receipt_change(artifact, receipt["id"], consume)
 
 
 def _log_uncertain(stage, exc):
@@ -627,7 +518,7 @@ def _publish_generated_chat_artifact_for_user(
     if len(metadata.get(RECEIPTS_FIELD) or {}) >= MAX_ARTIFACT_PUBLICATION_REQUESTS and key not in metadata[RECEIPTS_FIELD]:
         raise ValueError("This artifact has reached its publication request limit.")
     reauthorize()
-    receipt, new_request = _receipt_change(artifact, key, lambda current: None if current else receipt)
+    receipt, _new_request = _receipt_change(artifact, key, lambda current: None if current else receipt)
     if receipt.get("completion_policy") != completion_policy or completion_policy is not None and receipt.get("source_receipt") != source_receipt:
         raise ValueError("The publication request is already bound to different inputs or a different policy.")
     document = _destination_document(container, receipt)
@@ -635,7 +526,6 @@ def _publish_generated_chat_artifact_for_user(
         return _completion_response(receipt, document)
     scope_args = {field: value for field, value in destination.items() if field != "workspace_scope"}
     scope = destination["workspace_scope"]
-    created_destination = False
     if document is None:
         reauthorize()
     if document is None and _stage(artifact, receipt, "create"):
@@ -657,10 +547,12 @@ def _publish_generated_chat_artifact_for_user(
                 origin_fields = publication_origin_fields(
                     user_id, artifact, source_receipt=source_receipt, destination=destination,
                 )
+                # A published artifact is generated content, so its destination is never screened.
                 create_document(
                     file_name=name, user_id=user_id, document_id=receipt["document_id"], num_file_chunks=0,
                     status="Queued for processing" if scope == "personal" else "Pending approval",
                     source_file_path=source_file_path, allow_deferred_xsd_source=scope != "personal",
+                    screening_exemption=generated_screening_exemption(),
                     **scope_args, **origin_fields,
                 )
         except OrchestrationFilePolicyError:
@@ -668,7 +560,6 @@ def _publish_generated_chat_artifact_for_user(
         except (AzureError, OSError, RuntimeError) as exc:
             _log_uncertain("create", exc)
         document = _destination_document(container, receipt)
-        created_destination = document is not None
     if document is None:
         return _publication_response(artifact, receipt, container)
     _stage(artifact, receipt, "create", complete=True)
@@ -716,12 +607,6 @@ def _publish_generated_chat_artifact_for_user(
         except (AzureError, OSError, RuntimeError) as exc:
             _log_uncertain("prepare", exc)
         document = _destination_document(container, receipt)
-        if (
-            new_request and created_destination and scope == "group" and document
-            and document.get("generated_artifact_publication_receipt_id") == key
-            and SCREENING_FIELD in document
-        ):
-            receipt = _enroll_screening_reservation(artifact, receipt, container)
     if not document or document.get("generated_artifact_publication_receipt_id") != key:
         return _publication_response(artifact, receipt, container)
     _stage(artifact, receipt, "prepare", complete=True)
@@ -1079,14 +964,13 @@ def enroll_legacy_artifact_publication(document, *, operation_guard, cleanup_onl
 
 def decide_artifact_publication(
     user_id, document, choice, *, operation_guard=None, delete_destination=None, decision_link_url=None,
-    operation_id=None,
 ):
     """Use the destination's existing review role, while retaining a durable receipt outcome."""
     require_generated_file_publication_allowed()
     try:
         return _decide_artifact_publication(
             user_id, document, choice, operation_guard=operation_guard,
-            delete_destination=delete_destination, decision_link_url=decision_link_url, operation_id=operation_id,
+            delete_destination=delete_destination, decision_link_url=decision_link_url,
         )
     except OrchestrationFilePolicyError:
         raise
@@ -1100,19 +984,17 @@ def decide_artifact_publication(
 
 def _decide_artifact_publication(
     user_id, document, choice, *, operation_guard=None, delete_destination=None, decision_link_url=None,
-    operation_id=None,
 ):
     require_generated_file_publication_allowed()
     with ExitStack() as resources:
         return _decide_artifact_publication_with_content(
             user_id, document, choice, resources=resources, operation_guard=operation_guard,
-            delete_destination=delete_destination, decision_link_url=decision_link_url, operation_id=operation_id,
+            delete_destination=delete_destination, decision_link_url=decision_link_url,
         )
 
 
 def _decide_artifact_publication_with_content(
     user_id, document, choice, *, resources, operation_guard=None, delete_destination=None, decision_link_url=None,
-    operation_id=None,
 ):
     require_generated_file_publication_allowed()
     if choice not in {"approved", "rejected", "cancelled"}:
@@ -1133,7 +1015,6 @@ def _decide_artifact_publication_with_content(
     receipt, _ = _receipt_change(artifact, binding["receipt_id"], lambda current: None)
     if not receipt or not publication_binding_matches(receipt, document):
         raise ValueError("The publication decision does not match its destination.")
-    operation_id = operation_id or (receipt.get("decision") or {}).get("operation_id") or str(uuid.uuid4())
     destination = receipt["destination"]
     scope = destination["workspace_scope"]
     if scope not in {"group", "public"}:
@@ -1189,24 +1070,13 @@ def _decide_artifact_publication_with_content(
         previous = current.get("decision")
         if previous and previous.get("choice") != choice:
             raise ValueError("A different publication decision already committed.")
-        bootstrap = False
-        if choice == "approved":
-            admission = _publication_approval_screening(current, current_document, operation_id=operation_id)
-            if admission is None:
-                raise ValueError(SCREENING_BOOTSTRAP_REMEDY)
-            bootstrap = admission == "bootstrap"
-            if bootstrap and PUBLICATION_SCREENING_CONSUMPTION not in current:
-                current[PUBLICATION_SCREENING_CONSUMPTION] = {
-                    "operation_id": operation_id,
-                    "fingerprint": current[PUBLICATION_SCREENING_RESERVATION]["fingerprint"],
-                }
+        if choice == "approved" and not _publication_destination_admits_approval(current_document):
+            raise ValueError(PUBLICATION_SCREENING_HOLD_MESSAGE)
         if previous:
             return None
         current["decision"] = {
             "choice": choice, "actor_user_id": user_id, "decided_at": datetime.now(timezone.utc).isoformat(),
         }
-        if bootstrap:
-            current["decision"]["operation_id"] = operation_id
         return current
 
     receipt, _ = _receipt_change(artifact, receipt["id"], record_decision)
@@ -1227,10 +1097,8 @@ def _decide_artifact_publication_with_content(
                 _authorize_destination(receipt["actor_user_id"], destination)
                 receipt, _ = _receipt_change(artifact, receipt["id"], lambda saved: None)
                 current = authorize_decision()
-                if _publication_approval_screening(
-                    receipt, current, operation_id=operation_id, queue_claimed=True,
-                ) is None:
-                    raise ValueError(SCREENING_BOOTSTRAP_REMEDY)
+                if not _publication_destination_admits_approval(current):
+                    raise ValueError(PUBLICATION_SCREENING_HOLD_MESSAGE)
                 queue_generated_document_processing(
                     document_id=receipt["document_id"], owner_user_id=receipt["actor_user_id"],
                     normalized_file_name=receipt["file_name"], file_content_bytes=source_bytes, **scope_args,

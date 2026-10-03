@@ -1,11 +1,12 @@
 # public_document_management.py
 """
 Closed M3B public document management responses for the real production V2 SPA.
-Version: 0.261.179
+Version: 0.261.230
 Implemented in: 0.261.133
 Server-verbatim propagation failure (`propagation_incomplete`): 0.261.164
 Every receipt builder, a manager's rows, the tag list and the download headers are the real
 management routes', held to them by functional_tests/test_public_document_fixture_parity.py: 0.261.179
+Metadata edits apply directly and are never screened, so every metadata receipt is `updated`: 0.261.230
 
 Reuse M3A public reads, local production assets, request recording, response gates
 and Azure Playwright connection options. Reads and operations share the immutable
@@ -62,7 +63,6 @@ def operation_path(resource, workspace_id="pub-a"):
 # any other refusal carries its sentence in `error`, and a tag vocabulary conflict also names its code
 # in `error_code`.
 METADATA_UPDATED_MESSAGE = "Public document metadata updated."
-METADATA_QUEUED_MESSAGE = "Metadata saved and queued for content screening."
 DOCUMENT_DELETED_MESSAGE = "Public document deleted."
 TAG_CREATED_MESSAGE = "Public tag created."
 TAG_MESSAGES = {
@@ -86,12 +86,13 @@ OPERATION_UNAVAILABLE_ERROR = "This operation is unavailable for the selected pu
 DOWNLOADS_UNAVAILABLE_ERROR = "Downloads are unavailable for the selected public workspace."
 
 
-def metadata_result(document_id, changes, *, public_workspace_id="pub-a", queued=False):
-    """The server names the fields in the order the request sent them."""
+def metadata_result(document_id, changes, *, public_workspace_id="pub-a"):
+    """The server names the fields in the order the request sent them. Metadata edits apply directly,
+    including on a screened document, so the receipt is always `updated`."""
     return {
-        "message": METADATA_QUEUED_MESSAGE if queued else METADATA_UPDATED_MESSAGE,
+        "message": METADATA_UPDATED_MESSAGE,
         "document_id": document_id, "public_workspace_id": public_workspace_id,
-        "updated_fields": list(changes), "status": "queued" if queued else "updated",
+        "updated_fields": list(changes), "status": "updated",
     }
 
 

@@ -11,8 +11,7 @@ from content_screening.contracts import ScreeningError
 from functions_appinsights import log_event
 import functions_artifact_publication as publication
 from functions_artifact_publication_readiness import (
-    PUBLICATION_BINDING, PUBLICATION_SCREENING_CONSUMPTION, SCREENING_BOOTSTRAP_REMEDY,
-    publication_handoff_observed,
+    PUBLICATION_BINDING, PUBLICATION_SCREENING_HOLD_MESSAGE, publication_handoff_observed,
 )
 from functions_documents import delete_document_revision, select_current_documents
 from functions_group_document_access import (
@@ -53,31 +52,9 @@ def _has_publication(document):
     )
 
 
-def _bootstrap_retry_operation_id(document, receipt, user_id):
-    operation = document.get(GROUP_DOCUMENT_COLLABORATION_OPERATION) or {}
-    consumption = receipt.get(PUBLICATION_SCREENING_CONSUMPTION) or {}
-    if (
-        isinstance(operation, dict) and isinstance(consumption, dict)
-        and operation.get("schema_version") == 1 and operation.get("action") == "approve_artifact"
-        and operation.get("phase") in {"executing", "repair"}
-        and operation.get("actor_user_id") == user_id
-        and operation.get("actor_group_id") == operation.get("source_group_id") == document.get("group_id")
-        and operation.get("document_id") == document.get("id")
-        and operation.get("document_version") == document.get("version")
-        and isinstance(operation.get("id"), str) and operation["id"]
-        and isinstance(operation.get("execution_token"), str) and operation["execution_token"]
-        and consumption.get("operation_id") == operation["id"] and "scan_id" not in consumption
-        and "approval_queue" not in (receipt.get("stages") or {})
-    ):
-        return operation["id"]
-    return None
-
-
-def _approval_available(document, settings, *, operation_id=None):
+def _approval_available(document):
     try:
-        return publication.artifact_publication_approval_available(
-            document, settings=settings, operation_id=operation_id,
-        )
+        return publication.artifact_publication_approval_available(document)
     except ScreeningError as error:
         log_event(
             "[DOCUMENTS] Publication screening admission could not be established.",
@@ -90,7 +67,7 @@ def _approval_available(document, settings, *, operation_id=None):
 def group_publication_view(document, user_id, group_id, *, context):
     if not _has_publication(document):
         return None
-    _group, role, settings, supported = context
+    _group, role, _settings, supported = context
     status = "pending_approval" if group_document_approval_pending(document) else document.get("generated_artifact_promotion_status")
     if status not in {"pending_approval", "approved", "approval_failed", "rejected", "cancelled"}:
         status = "unavailable"
@@ -99,9 +76,8 @@ def group_publication_view(document, user_id, group_id, *, context):
     try:
         _artifact, receipt, _bound = publication.read_artifact_publication_request(document)
         requester = receipt["actor_user_id"]
-        retry_id = _bootstrap_retry_operation_id(document, receipt, user_id)
         operation = document.get(GROUP_DOCUMENT_COLLABORATION_OPERATION) or {}
-        can_approve = operation.get("phase") != "executing" or retry_id is not None
+        can_approve = operation.get("phase") != "executing"
         decision = (receipt.get("decision") or {}).get("choice")
         if decision == "approved":
             status = "approved" if (receipt.get("stages") or {}).get("approval_queue") == "complete" else "approval_failed"
@@ -115,7 +91,7 @@ def group_publication_view(document, user_id, group_id, *, context):
                     actions.append("reject_artifact")
                     if (
                         can_approve and is_current_group_document(document)
-                        and _approval_available(document, settings, operation_id=retry_id)
+                        and _approval_available(document)
                     ):
                         actions.append("approve_artifact")
                 if requester == user_id:
@@ -126,7 +102,7 @@ def group_publication_view(document, user_id, group_id, *, context):
                 if (
                     can_approve and role in GROUP_DOCUMENT_MANAGER_ROLES
                     and is_current_group_document(document)
-                    and _approval_available(document, settings, operation_id=retry_id)
+                    and _approval_available(document)
                 ):
                     actions.append("approve_artifact")
             elif decision == "rejected" and role in GROUP_DOCUMENT_MANAGER_ROLES:
@@ -173,7 +149,7 @@ def decide_group_document_publication(user_id, group_id, document_id, action, pa
 
     require_payload(payload, {"expected_etag"}, {"expected_etag"})
     validate_group_document_id(document_id)
-    group, role, settings, supported = _context(user_id, group_id)
+    group, role, _settings, supported = _context(user_id, group_id)
     if action not in PUBLICATION_ACTIONS or action not in supported:
         raise GroupDocumentCollaborationError("publication_forbidden", "Your current group role or status cannot make this decision.", 403)
     document = read_group_document_record(document_id)
@@ -196,18 +172,17 @@ def decide_group_document_publication(user_id, group_id, document_id, action, pa
         raise GroupDocumentCollaborationError("manager_required", "A destination document manager must make this decision.", 403)
     if choice == "approved" and not is_current_group_document(document):
         raise GroupDocumentCollaborationError("revision_unavailable", "A historical publication request cannot be approved.", 409)
-    retry_id = _bootstrap_retry_operation_id(document, receipt, user_id) if choice == "approved" else None
-    if choice == "approved" and not _approval_available(document, settings, operation_id=retry_id):
-        raise GroupDocumentCollaborationError("publication_unavailable", SCREENING_BOOTSTRAP_REMEDY, 409)
+    if choice == "approved" and not _approval_available(document):
+        raise GroupDocumentCollaborationError("publication_unavailable", PUBLICATION_SCREENING_HOLD_MESSAGE, 409)
     previous_operation = _operation(document)
     if (
         previous_operation and _unfinished(previous_operation)
-        and previous_operation.get("phase") in {"executing", "uncertain"} and not retry_id
+        and previous_operation.get("phase") in {"executing", "uncertain"}
     ):
         raise GroupDocumentCollaborationError("operation_busy", "Reconcile the existing document operation before making another decision.", 409)
     if previous_operation and previous_operation.get("phase") not in {"complete", None} and previous_operation.get("action") != action:
         raise GroupDocumentCollaborationError("operation_busy", "A different collaboration operation needs reconciliation.", 409)
-    operation_id = retry_id or str(uuid.uuid4())
+    operation_id = str(uuid.uuid4())
     execution_token = str(uuid.uuid4())
     operation = {
         "schema_version": 1, "id": operation_id, "document_id": document_id,
@@ -297,7 +272,6 @@ def decide_group_document_publication(user_id, group_id, document_id, action, pa
             publication.decide_artifact_publication(
                 user_id, document, choice, operation_guard=guard, delete_destination=cleanup,
                 decision_link_url=f"/v2/groups/{quote(group_id, safe='')}/documents?document_id={quote(document_id, safe='')}",
-                operation_id=operation_id,
             )
     except Exception as error:
         log_event(

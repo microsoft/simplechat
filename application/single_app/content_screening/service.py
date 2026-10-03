@@ -26,11 +26,13 @@ from content_screening.contracts import (
     ScreeningConfigurationError,
     ScreeningConflictError,
     ScreeningError,
+    ScreeningNotRequiredError,
     ScreeningPolicyRequiredError,
     ScreeningValidationError,
     Subject,
     content_fingerprint,
     hash_payload,
+    is_generated_screening_exempt,
     metadata_fingerprint,
     normalize_units,
     subject_from_document,
@@ -138,11 +140,16 @@ def get_effective_policy(subject, *, repository=None, require_active=True):
 
 
 def document_requires_screening(document, settings=None, *, repository=None):
-    """Persisted enrollment always wins over the absence of checks for new uploads."""
+    """Persisted enrollment always wins over the absence of checks for new uploads.
+
+    A generated document carries a server-written exemption and is never enrolled.
+    """
     if not isinstance(document, dict):
         raise ScreeningValidationError("The document metadata is unavailable.")
     if SCREENING_FIELD in document:
         return True
+    if is_generated_screening_exempt(document):
+        return False
     settings = _settings(settings)
     if (
         settings.get("enable_content_screening") is not True
@@ -229,19 +236,12 @@ def _set_document_state(repository, scan, state, **updates):
     )
 
 
-def _consume_publication_reservation(document, scan_id):
-    if document.get("group_id") and document.get("generated_artifact_publication_receipt_id"):
-        # Publication imports ingestion; resolve the receipt owner only at scan
-        # execution, never during service/configuration bootstrap.
-        from functions_artifact_publication import consume_artifact_publication_screening_scan
-
-        consume_artifact_publication_screening_scan(document, scan_id)
-
-
 def begin_scan(subject, actor_id, *, repository=None, storage=None, job_id=None, scan_id=None,
                expected_document_etag=None, parent_scan_id=None):
     repository = _repository(repository)
     document = repository.read_document(subject)
+    if SCREENING_FIELD not in document and is_generated_screening_exempt(document):
+        raise ScreeningNotRequiredError()
     settings = _settings()
     if settings.get("enable_content_screening") is not True:
         raise ScreeningConfigurationError("Enable content screening before rescanning inspected content.")
@@ -257,7 +257,6 @@ def begin_scan(subject, actor_id, *, repository=None, storage=None, job_id=None,
     ):
         raise ScreeningConflictError()
     scan_id = scan_id or uuid.uuid4().hex
-    _consume_publication_reservation(document, scan_id)
     existing = repository.get_scan(scan_id)
     if existing:
         if (
@@ -547,7 +546,6 @@ def inspect_scan(scan_id, units, actor_id, *, repository=None, storage=None, eng
     units = normalize_units(units)
     scan = _read_scan(repository, scan_id)
     subject = Subject.from_dict(scan["subject"])
-    _consume_publication_reservation(repository.read_document(subject), scan_id)
     fingerprint = content_fingerprint(units)
     if scan.get("content_fingerprint") not in (None, fingerprint):
         raise ScreeningConflictError("A source change requires a new scan.")
@@ -760,7 +758,6 @@ def finalize_publication_checkpoint(scan_id, *, repository=None):
         or marker.get("canonical_ref") != scan.get("units_ref")
         or marker.get("active_blob") != publication.get("active_blob")
         or publication.get("content_fingerprint") != scan.get("content_fingerprint")
-        or publication.get("metadata_fingerprint") != metadata_fingerprint(document)
     ):
         raise ScreeningConflictError()
     job_id = marker.get("job_id") or scan.get("job_id")
@@ -774,7 +771,7 @@ def finalize_publication_checkpoint(scan_id, *, repository=None):
         published_at=scan.get("published_at") or _timestamp(), postprocess_pending=True,
     )
     current = repository.read_document(subject)
-    if current.get(SCREENING_FIELD) != marker or metadata_fingerprint(current) != publication["metadata_fingerprint"]:
+    if current.get(SCREENING_FIELD) != marker:
         raise ScreeningConflictError()
     _log("publication_checkpoint_finalized", scan_id=scan_id, document_id=subject.document_id)
     return scan
@@ -852,6 +849,8 @@ def publish_scan(scan_id, actor_id, *, repository=None, storage=None, publisher=
         latest_scan = _read_scan(repository, scan_id)
         scan = _save_scan(repository, latest_scan, publication={
             "active_blob": marker["active_blob"],
+            # Records the metadata released with this scan. Later metadata
+            # edits apply directly and do not revoke the release.
             "metadata_fingerprint": metadata_fingerprint({**current, **updates}),
             "content_fingerprint": scan["content_fingerprint"],
         })
@@ -1003,30 +1002,13 @@ def scan_existing_document(subject, actor_id, job_id=None, *, repository=None, s
     return inspect_scan(scan["id"], units, actor_id, repository=repository, storage=storage)
 
 
-def queue_metadata_rescan(document, updates, actor_id, *, repository=None):
-    repository = _repository(repository)
-    if "file_name" in updates and Path(str(updates["file_name"])).suffix.lower() != Path(document["file_name"]).suffix.lower():
-        raise ScreeningValidationError("Renaming a screened file cannot change its source format.")
-    subject = subject_from_document(document)
-    marker = document.get(SCREENING_FIELD) or {}
+def validate_screened_metadata_update(document, updates):
+    """Metadata edits apply directly; a screened file keeps the source format it was inspected as."""
     if (
-        marker.get("state") == "pending_scan" and marker.get("origin_upload") is True
-        and marker.get("scan_id") and repository.get_scan(marker["scan_id"]) is None
+        SCREENING_FIELD in document and updates.get("file_name") is not None
+        and Path(str(updates["file_name"])).suffix.lower() != Path(str(document.get("file_name") or "")).suffix.lower()
     ):
-        repository.update_document(subject, updates, etag=document["_etag"])
-        return None
-    scan = begin_scan(
-        subject, actor_id, repository=repository,
-        expected_document_etag=document["_etag"],
-        parent_scan_id=(document.get(SCREENING_FIELD) or {}).get("scan_id"),
-    )
-    scan = _save_scan(repository, scan, trigger="metadata")
-    current = repository.read_document(subject)
-    repository.update_document(subject, updates, etag=current["_etag"])
-    from content_screening.jobs import enqueue_document_scan
-
-    enqueue_document_scan(subject, actor_id, scan_id=scan["id"], repository=repository)
-    return scan
+        raise ScreeningValidationError("Renaming a screened file cannot change its source format.")
 
 
 def reprocess_document(subject, actor_id, extraction_mode, *, repository=None, storage=None):

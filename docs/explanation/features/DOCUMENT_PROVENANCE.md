@@ -152,10 +152,15 @@ values aren't valid, the document is saved without one and a warning is logged
 with `log_event`.
 
 Publication stamps the origin when it creates the destination document.
-Approval, content screening, and `queue_generated_document_processing` all work
-on that same document and never re-create it, so the origin survives them. The
-create stage runs once per publication receipt, so a replayed publication
-doesn't restamp the origin or add the tag twice.
+Approval and `queue_generated_document_processing` work on that same document
+and never re-create it, so the origin survives them. Since 0.261.230 the
+destination also gets the server-managed `screening_exemption` field, so content
+screening doesn't run on it. The create stage runs once per publication receipt,
+so a replayed publication doesn't restamp the origin or add the tag twice.
+
+The `origin` field is not what exempts a document from screening. A `chat`
+origin also marks a file a user attached in chat and saved to a workspace,
+which is an upload and is still screened.
 
 The chat upload route builds its origin only from the conversation it has
 already authorized and the file message ID it generates. It never reads origin

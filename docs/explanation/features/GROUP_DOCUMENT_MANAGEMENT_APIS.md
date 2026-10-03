@@ -118,10 +118,10 @@ Successful PATCH returns only a scope-bound receipt:
 {"message":"Group document metadata updated.","document_id":"D","group_id":"G","updated_fields":["title"],"status":"updated"}
 ```
 
-Immediate saves return HTTP 200 and `updated`. Accepted enrolled metadata rescans
-return HTTP 202 and `queued`; saved metadata remains unavailable until screening
-completes. Clients must validate the receipt instead of accepting arbitrary
-successful HTML, objects, or message-only responses.
+Saves return HTTP 200 and `updated`. Since 0.261.230 this includes screened
+documents: a metadata edit applies directly and never starts a new screening
+hold, so a metadata receipt is never `queued`. Clients must validate the receipt
+instead of accepting arbitrary successful HTML, objects, or message-only responses.
 
 Strict writes conditionally persist the source before changing downstream
 projections. An ETag conflict or disappeared expected-ETag source cannot mutate

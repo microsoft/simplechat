@@ -6,7 +6,7 @@ Content screening creates an admission checkpoint between document extraction an
 
 **Implemented in version: 0.261.106.** The application version is managed in `application\single_app\config.py`.
 
-**Current documentation version: 0.261.139.** Gather / Reason / Render orchestration integration with chat checkpoints was implemented in 0.261.131 and remains the current orchestration path as of 0.261.139. Chat checkpoints and strict retained-result source-authority errors were implemented in 0.261.127; enabled-empty policy configuration was implemented in 0.261.114; classic/V2 policy-editor alignment was implemented in 0.261.108; the original framework implementation remains 0.261.106.
+**Current documentation version: 0.261.230.** Upload-only intake was implemented in 0.261.230: documents SimpleChat generates are never screened, and metadata edits, including model-generated metadata, apply without a new hold. Gather / Reason / Render orchestration integration with chat checkpoints was implemented in 0.261.131. Chat checkpoints and strict retained-result source-authority errors were implemented in 0.261.127; enabled-empty policy configuration was implemented in 0.261.114; classic/V2 policy-editor alignment was implemented in 0.261.108; the original framework implementation remains 0.261.106.
 
 **Dependencies:** Enhanced Citations and its configured storage account, the existing Cosmos DB and workspace knowledge services, and an approved model connection when a policy includes model evaluation.
 
@@ -18,13 +18,19 @@ The motivating case is text that is easy to miss in a visual document, such as w
 
 The reusable `application\single_app\content_screening\` package separates policy/evaluation from the workspace-document adapter. Its contracts describe a subject, source revision, canonical content units, effective policy, grounded findings, and coverage.
 
+### What gets screened
+
+Since **0.261.230**, screening checks only documents that enter a workspace from outside SimpleChat: a user upload to a personal, group or public workspace (including a file attached in chat and saved to a workspace) or File Sync. Any other way a document reaches a workspace stays screened unless it is explicitly marked as generated.
+
+Documents that SimpleChat generates are never screened, neither when they are created nor later. That covers documents the SimpleChat agent action saves to a workspace, such as Markdown, Word and PowerPoint files, and chat or workflow artifacts published into a workspace. The code that creates them stores a server-managed `screening_exemption` field (`{"reason": "generated", "version": 1}`) on the new document version before the initial screening marker is chosen, so the version gets no marker. The exemption belongs to that one version: a later user upload of the same file is screened. Clients cannot set or change the field. The document API guards reject any request key that starts with `screening`, `update_document` refuses every `screening_*` field, and document responses never include it. A document that already carries a screening marker stays screened even if it also has the exemption. Scan jobs skip generated documents and record them as skipped with `screening_not_required`.
+
 New enrolled documents are held before ordinary processing is queued. Their source and extracted content are retained privately. The existing processors supply canonical pages, text, table cells, and transcript segments without embedding or publishing early chunks. Publication happens only after the complete verdict and any required human decision.
 
 The document record contains a small screening marker. Detailed evidence and canonical content live in private artifacts in the Enhanced Citations storage account; policy, scan, job, and audit metadata live in the screening repository. Normal application settings do not contain the detailed finding payload.
 
 Cosmos state is authoritative. Search projections, cached results, native table reads, source previews, historical citations, and repeated source-context use must honor the current document decision. A stale index entry or cached snippet is not permission to use the document.
 
-Release also records the exact approved Blob and content-derived metadata fingerprints. Restoring a document marker without its completed scan, or changing an abstract or tag after inspection, does not create a valid clearance. Ordinary lists return status-only metadata when that proof is unavailable.
+Release also records the exact approved Blob and content fingerprints. Restoring a document marker without its completed scan does not create a valid clearance. Since **0.261.230**, editing a released document's title, abstract, tags or other metadata keeps its clearance: the edit applies directly, is not screened, and does not start a new hold. A rename still cannot change a screened file's extension, and tag edits never rewrite the released Blob's metadata, because the release is bound to that Blob's ETag and content hash. Ordinary lists return status-only metadata when release proof is unavailable.
 
 ## Policies and evaluators
 
@@ -104,7 +110,9 @@ Cancellation does not release a document already being inspected. Concurrent sou
 
 Source-bound conversation history and exports withhold unavailable attachments and tool evidence. Remediated workspace attachments are refreshed from the current clean representation. Legacy native tool results that have no matching revision proof must be regenerated rather than borrowing a later approval.
 
-Automatic metadata generation uses admitted source content. New metadata changes are held and inspected before they replace the knowledge projection.
+Automatic metadata generation uses admitted source content. Since **0.261.230**, the metadata it generates is applied to the released document directly, the same way as a user's metadata edit, without a new hold or scan.
+
+Publishing a generated artifact to a group or public workspace no longer reserves a screening scan for its destination. The destination is generated content, so it has no screening marker and its approval hands it straight to ordinary processing. A destination that was already held by screening before 0.261.230 cannot be approved; cancel that request and request publication again.
 
 ## Configuration and usage
 
@@ -135,6 +143,8 @@ Functional coverage lives in `functional_tests\test_content_screening_*.py`, wit
 Enabled-empty policy coverage also exercises first activation, save/reload without checks, later starter-pack insertion, clearing the last check, draft preservation, and concurrency. Backend coverage distinguishes unmarked new uploads with no applicable checks from previously enrolled or held documents; empty policies do not bypass review or publication proof.
 
 The core cases include a last-page finding, complete window coverage, regex deadlines, strict model responses, sticky review holds, authorization, revision conflicts, safe derivatives, and recovery from partial publication.
+
+`functional_tests\test_content_screening_upload_only_intake.py` covers upload-only intake: generated and published documents get no marker while user uploads, chat uploads and File Sync do; clients cannot set the exemption through any guarded document route; scan jobs skip generated documents; metadata edits keep a release; and model-generated metadata applies without a hold.
 
 `functional_tests\test_orchestration_source_access.py` exercises strict metadata and scope-service failures, the real mixed-source/search resolver, retained-result discovery and reopen, unchanged legacy defaults, caught-error model fences, concurrent scope isolation and network-blocked cold imports in normal and optimized Python. `test_content_screening_access.py` continues to cover the original default-mode sanitization and model-fallback fence.
 

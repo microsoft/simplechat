@@ -56,7 +56,6 @@ from content_screening.contracts import (
     HELD_STATES,
     content_fingerprint,
     hash_payload,
-    metadata_fingerprint,
     normalize_units,
     public_screening_summary,
     require_document_available,
@@ -321,7 +320,7 @@ def _read_authorized_document(
 
 
 def _require_release_proof(document, container):
-    """A restored marker or stale metadata write cannot create a clearance."""
+    """A restored marker cannot create a clearance; later metadata edits do not revoke one."""
     _require_available_metadata(document)
     marker = document[SCREENING_FIELD]
     try:
@@ -346,7 +345,6 @@ def _require_release_proof(document, container):
         or not isinstance(publication, Mapping)
         or publication.get("active_blob") != marker.get("active_blob")
         or publication.get("content_fingerprint") != marker.get("content_fingerprint")
-        or publication.get("metadata_fingerprint") != metadata_fingerprint(document)
     ):
         raise DocumentHeldError()
 
