@@ -17,6 +17,9 @@ Implemented in version: **0.261.199**, tracked in
 
 Open and Dismiss up front, with everything else under Show more, since version: **0.261.228** (#1624).
 
+**Open run** in Open workflow's place, for an alert that names its run, since version: **0.261.230**
+(Phase 6b-2, #1546).
+
 Dependencies:
 
 - The V2 bell ([V2 Notification Bell and Desktop Notifications](V2_NOTIFICATIONS_BELL.md)).
@@ -28,7 +31,7 @@ Dependencies:
 
 No setting and no container are added. The alerts route gains one optional query
 parameter, `since_hours`. The workflow runner now records where each workflow
-lives on the alerts it creates, so **Open workflow** can find it.
+lives on the alerts it creates, so **Open run** and **Open workflow** can find it.
 
 ## When a notice appears
 
@@ -180,23 +183,27 @@ button under a dozen chips and links:
 - **Chips** for the alert's enrichments and its trigger, runner and agent.
 - **The other links** the alert carries, checked by the bell's resolver. Classic
   labels the link to the conversation a workflow posts into "Open workflow"; V2
-  names it **Open workflow conversation**, because the card's own **Open workflow**
-  goes to the workflow. A link to another site isn't offered; a note says so.
-- **Open workflow**, which goes to the workflows list of the workspace the workflow
+  names it **Open workflow conversation**, because the card's own **Open run** and
+  **Open workflow** go to the workflow. A link to another site isn't offered; a note says so.
+- **Open run**, which goes to the workflows list of the workspace the workflow
   lives in and opens the run that raised the alert:
   `/workspace/workflows?workflow_id=<id>&run_id=<id>`, or
   `/groups/<group id>/workflows?workflow_id=<id>&run_id=<id>` for a group workflow.
+  Until 0.261.230 this button was labeled **Open workflow**; the address is unchanged.
   It works when that list is already open, too. The workflows section acts on each
-  navigation that names a workflow once, so choosing Open workflow again, even for
+  navigation that names a workflow once, so choosing Open run again, even for
   the same run, opens the run again. Anything else that later changes the list, such
   as running another workflow, doesn't reopen a run it has already opened.
   When the open list doesn't have the workflow, as when it was created in another tab
   after the list was read, the section reads the list once more for that navigation.
   If the workflow still isn't there, as when it was deleted after the run, nothing
-  opens and the list isn't read again until Open workflow is chosen again.
-  Alerts from before this release have no recorded scope. For those, it is taken
-  from the workspace named on their **Open workflow** conversation link, and when
-  that doesn't name one the button isn't shown rather than guessing.
+  opens and the list isn't read again until Open run is chosen again.
+- **Open workflow**, in Open run's place for an alert that names no run. It goes to the
+  same workflows list naming the workflow alone, `/workspace/workflows?workflow_id=<id>`
+  (or the group's), which opens that workflow in the editor.
+- Alerts from before 0.261.199 have no recorded scope. For those, the workspace is taken
+  from the one named on their **Open workflow conversation** link, and when that doesn't
+  name one, neither Open run nor Open workflow is shown rather than guessing.
 - **Ask about this**, when the alert offers it.
 
 Below the card's body:
@@ -211,7 +218,7 @@ Below the card's body:
 | Open, Dismiss | Every alert in the entry shown, so a grouped workflow's alerts are handled together. Open marks them read and goes to its destination. The button's tooltip says how many, for example "Acts on all 2 alerts from this workflow." |
 | Mark read | Shown in Open's place only when the alert has nothing to open. Every alert in the entry shown. |
 | Mark all read | Every alert the card holds, one request each. It never calls the bell's own `mark-all-read`, which would also clear notices the card never showed. |
-| Another link, Open workflow | Opens the page and marks every alert in the entry read, as Open does |
+| Another link, Open run, Open workflow | Opens the page and marks every alert in the entry read, as Open does |
 | Ask about this | Opens a new chat that answers from the run's stored result ([Phase 6a](CHAT_WORKFLOW_RESULTS_FOLLOW_UP.md)). Nothing is marked, as with Close: the alert stays unread in the bell. |
 | Close (×, Escape, backdrop) | Nothing is marked. The alerts stay unread in the bell and don't pop up again. |
 
@@ -220,10 +227,11 @@ keyboard user doesn't lose their place.
 
 ### Hooks for later phases
 
-- **Open run.** `workflowAlertOpenRunPath` calls `v2WorkflowRunPath` from
-  `lib/notificationLinks.ts`, which returns `null` until Phase 6b adds a V2 run page.
-  While it does, the card offers Open workflow, whose `run_id` already opens the
-  run's history. Once it returns a path, **Open run** takes Open workflow's place.
+- **Open run** (filled in by Phase 6b-2, 0.261.230). `workflowAlertOpenRunPath` calls
+  `v2WorkflowRunPath(scope, workflowId, runId)` from `lib/notificationLinks.ts`. There's
+  no separate run page: it returns the run's address in its workflow's run history, the
+  same address Open workflow named before. It returns `null` when the alert names no run
+  or can't be placed, and the card then offers Open workflow, or neither.
 - **Ask about this.** Phase 6a (0.261.214) fills in `workflowAlertFollowUpAction`.
   It returns `{ label: 'Ask about this', run }` for a personal workflow's alert that
   names a run which had finished (`completed` or `completed_partial`, read from the
@@ -328,7 +336,7 @@ still gets the empty list.
 
 The workflow runner now records `workflow_scope` (`personal` or `group`) and
 `workflow_group_id` (empty for a personal workflow) in the metadata of the alerts it
-creates, which is how Open workflow finds the right workflows list. The key isn't
+creates, which is how Open run and Open workflow find the right workflows list. The key isn't
 `group_id`. When a notification is opened, classic makes `link_context.group_id` or
 `metadata.group_id` the active group. So a `group_id` in the metadata would switch
 groups whenever a group workflow's alert opens a link that names no group, such as a
@@ -411,8 +419,8 @@ as Flask does in production. Before, it answered those with Vite's "did you mean
 - The count is polled every 30 seconds, doubling while nothing changes, up to five
   minutes. So in a tab that has been quiet for a while an alert can take up to five
   minutes to appear. Focusing the window or returning to the tab reads it at once.
-- Open run arrives with Phase 6b. Ask about this (Phase 6a) is offered for personal
-  workflows only, and only while **Use Workflow Results In Chat** is on.
+- Ask about this (Phase 6a) is offered for personal workflows only, and only while
+  **Use Workflow Results In Chat** is on.
 - The card's **Open** button uses `--ok-strong` with `--on-ok`, a green chosen to keep
   its text at 5.5:1 in the light theme and 7.9:1 in the dark theme. **Mark read**,
   shown only when there is nothing to open, pairs `--accent` with `--on-accent` at
@@ -427,8 +435,8 @@ as Flask does in production. Before, it answered those with Vite's "did you mean
 | `functional_tests/route_tests/test_workflow_alert_since_hours_policy.py` | 8 functions | The route keeps its Blueprint, Swagger and authentication policy; classic's request is unchanged; V2's window is validated and passed through; out-of-range limits fall back as before; invalid windows are refused without reading; a reader failure keeps the existing error shape; through the real reader with a failing Cosmos query, V2's read answers `500` and classic's still answers an empty list |
 | `functional_tests/test_v2_alert_lab_excluded_from_build.py` | 4 | The lab's markers exist only in lab code; the reference scanner recognizes every import form; the only reference to the lab is App.tsx's lazy import inside the `import.meta.env.DEV` branch; an existing production build has no file named for the lab and no lab marker (skipped without a build) |
 | `functional_tests/test_workflow_priority_alerts.py` | Existing | Classic's workflow alert contract, with the new signature |
-| `ui_tests/test_v2_workflow_alert_notices.py` | 29 | Pop-up versus notify-only and the 24-hour window against a server that leaves both filters out; one claim across two tabs of one browser, and a tab opened later; waiting behind a dialog, the bell's panel and a hidden tab; only a successful read retiring an alert, through a failed read on return and a zero count whose confirming read fails; a rise on return read behind a read already on its way; the eight-second tuck, its hover and focus pause, and high and critical staying; storm grouping; every card action; only Close, Show more, Dismiss and the green Open shown up front, with Open going to the created conversation and settling every alert of the entry, and the detail, chips and other actions under Show more; keyboard focus, Escape and the tuck on covering focus; motion with and without reduced motion, including the Web Animations' properties and every `wf-*` keyframe; the rail expanded, collapsed and on a 360 px phone in both themes; text contrast for every priority and category in both themes, with and without reduced transparency; hostile text rendered as text; refused off-site links; and Open workflow's personal, group and unplaceable cases |
-| `ui_tests/test_v2_document_provenance.py` | 6 added | Against the real workflows section, personal and group: Open workflow while the list is open expands the run; a second Open workflow for the same run opens it again; running another workflow afterwards doesn't reopen it; a workflow created after the list was read is found with exactly one more list read, which opens its run; a workflow missing from that read too costs one list read per navigation and no more, opens nothing, shows no error and leaves the list usable |
+| `ui_tests/test_v2_workflow_alert_notices.py` | 29 | Pop-up versus notify-only and the 24-hour window against a server that leaves both filters out; one claim across two tabs of one browser, and a tab opened later; waiting behind a dialog, the bell's panel and a hidden tab; only a successful read retiring an alert, through a failed read on return and a zero count whose confirming read fails; a rise on return read behind a read already on its way; the eight-second tuck, its hover and focus pause, and high and critical staying; storm grouping; every card action; only Close, Show more, Dismiss and the green Open shown up front, with Open going to the created conversation and settling every alert of the entry, and the detail, chips and other actions under Show more; keyboard focus, Escape and the tuck on covering focus; motion with and without reduced motion, including the Web Animations' properties and every `wf-*` keyframe; the rail expanded, collapsed and on a 360 px phone in both themes; text contrast for every priority and category in both themes, with and without reduced transparency; hostile text rendered as text; refused off-site links; and Open run's personal and group cases, Open workflow for an alert that names no run, and neither for an alert that can't be placed |
+| `ui_tests/test_v2_document_provenance.py` | 6 added | Against the real workflows section, personal and group: Open run while the list is open expands the run; a second Open run for the same run opens it again; running another workflow afterwards doesn't reopen it; a workflow created after the list was read is found with exactly one more list read, which opens its run; a workflow missing from that read too costs one list read per navigation and no more, opens nothing, shows no error and leaves the list usable |
 
 The UI suite mounts the real V2 frame in a harness build, following
 `ui_tests/test_v2_notifications_bell.py`. It stubs HTTP with `page.route` and fakes

@@ -167,19 +167,35 @@ leaves the open conversation alone.
 
 ### The seams for Phase 6b
 
-- **Run pages.** `v2WorkflowRunPath(workflowId, runId)` in `lib/notificationLinks.ts`
-  returns the V2 route for a workflow run. It returns `null` until Phase 6b adds the
-  run page, so `/workflow-activity` links keep opening classic. Filling it in is
-  the whole change needed to move those links, and workflow notices that carry a
-  run but no link, into V2.
-- **Delivered results.** When 6b posts a result back into a chat, announcing it
-  through `announceCompletedReply` in `lib/replyEvents.ts` with
-  `source: 'workflow'` raises the desktop notification under the same rules and
+Phase 6b-2 (0.261.230) filled in all three; see
+[Chat Workflow Result Delivery](CHAT_WORKFLOW_RESULT_DELIVERY.md) for the V2 side.
+
+- **Run pages.** `v2WorkflowRunPath(scope, workflowId, runId)` in
+  `lib/notificationLinks.ts` returns the V2 address of a workflow run. There's no
+  separate run page: it's the Workflows section of the workspace the workflow lives
+  in, with that workflow's run history open on the run,
+  `/workspace/workflows?workflow_id=<id>&run_id=<id>` or
+  `/groups/<group id>/workflows?workflow_id=<id>&run_id=<id>`. It returns `null` when
+  the workspace, the workflow or the run is unknown.
+  - A `/workflow-activity` link opens there only when the link's `scope` (and
+    `groupId`) agree with the notice's `workflow_scope` (and `workflow_group_id`) and
+    its `workflowId` and `runId` agree with the ids the notice wrote. Anything else,
+    including a link the notice doesn't place, keeps opening classic.
+  - A workflow notice with no link of its own (`workflow_priority_alert` or
+    `workflow_chat_delivery`) opens its run when its metadata names the workspace,
+    workflow and run. Any other notice without a link gets none.
+  - A Microsoft 365 notice, one with `m365_pending_action_id` in its metadata or link
+    context, always stays classic, which is the only interface that renders the
+    pending action.
+  - The workspace is never read from `metadata.group_id`, which classic treats as the
+    group to make active.
+- **Delivered results.** When 6b-1 posts a result back into a chat, V2's app-shell
+  workflow run tracker settles it through `settleCompletedReply` with
+  `source: 'workflow'`, so the desktop notification follows the same rules and
   deduplication as a chat reply, and clicking it opens that chat.
-- **Undeliverable results.** A notice about a result that couldn't be delivered is
-  listed in the panel like any other. If 6b adds a notification type for it, it is
-  labeled "Notification" until it is given a label in `describeType` in
-  `lib/notifications.ts`.
+- **Undeliverable results.** 6b-1's notice about a result that couldn't be posted has
+  the type `workflow_chat_delivery`. `describeType` in `lib/notifications.ts` labels it
+  **Workflow results**, with the workflow icon.
 
 ## Desktop notifications
 

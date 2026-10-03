@@ -180,6 +180,10 @@ function describeType(type: string, category: string | undefined): Omit<Notifica
             label: category === 'failure' ? 'Workflow run failed' : 'Workflow alert',
         };
     }
+    // A chat-started run whose results could not be posted to its chat (functions_workflow_chat_delivery.py).
+    if (type === 'workflow_chat_delivery') {
+        return { kind: 'workflow', label: 'Workflow results' };
+    }
     if (type.startsWith('m365_approval_')) {
         return { kind: 'approval', label: 'Microsoft 365 approval' };
     }

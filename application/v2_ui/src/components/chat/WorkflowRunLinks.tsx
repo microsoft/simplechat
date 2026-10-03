@@ -5,6 +5,9 @@
 // run, which opens the run in Workflows with its run history open. Nothing polls: a reload reads
 // the status again, and the run page shows live progress and results. A run that cannot be
 // opened says why instead. Workflow names are the requester's own text, rendered as plain text.
+//
+// This is what shows while live run status is off. With it on, WorkflowRunCard shows the same
+// runs with their live status, and reuses the list read and the static link from here.
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { clsx } from 'clsx';
@@ -31,7 +34,7 @@ function stateTone(state: WorkflowRunLinkState): string {
     return 'bg-surface-3 text-text-2';
 }
 
-function RunLink({ item }: { item: WorkflowRunLinkItem }) {
+export function RunLink({ item }: { item: WorkflowRunLinkItem }) {
     const name = workflowRunDisplayName(item);
     return (
         <li className="min-w-0 space-y-1 rounded-xl border border-edge bg-surface-2 p-3 text-xs">
@@ -57,13 +60,17 @@ function RunLink({ item }: { item: WorkflowRunLinkItem }) {
     );
 }
 
-/**
- * The saved workflow runs an answer's plan started, for its requester, in a personal conversation.
- *
- * The caller mounts this only when the answer's run completed a workflow_run step. The link route
- * decides what each link may show; a run the reader cannot open renders nothing.
- */
-export function WorkflowRunLinks({ conversationId, runId }: { conversationId: string; runId: string }) {
+export interface WorkflowRunLinkListState {
+    /** The runs the plan started, or null until the first read succeeds. */
+    items: WorkflowRunLinkItem[] | null;
+    loadError: string;
+    /** The plan's run is gone, or isn't the reader's: nothing to show. */
+    missing: boolean;
+    reload: () => Promise<void>;
+}
+
+/** Read, once per answer, the runs its plan started. */
+export function useWorkflowRunLinkList(conversationId: string, runId: string): WorkflowRunLinkListState {
     const [items, setItems] = useState<WorkflowRunLinkItem[] | null>(null);
     const [loadError, setLoadError] = useState('');
     const [missing, setMissing] = useState(false);
@@ -94,6 +101,18 @@ export function WorkflowRunLinks({ conversationId, runId }: { conversationId: st
         void load();
         return () => request.current?.abort();
     }, [load]);
+
+    return { items, loadError, missing, reload: load };
+}
+
+/**
+ * The saved workflow runs an answer's plan started, for its requester, in a personal conversation.
+ *
+ * The caller mounts this only when the answer's run completed a workflow_run step. The link route
+ * decides what each link may show; a run the reader cannot open renders nothing.
+ */
+export function WorkflowRunLinks({ conversationId, runId }: { conversationId: string; runId: string }) {
+    const { items, loadError, missing, reload: load } = useWorkflowRunLinkList(conversationId, runId);
 
     if (missing || (!loadError && !items?.length)) return null;
     return (

@@ -19,9 +19,11 @@
 // read back before it is used, and read back again just before the page is left.
 
 import type { AppNotification } from './notifications';
+import type { WorkflowScope } from './workflowEditor';
 import { readConversationParam } from './conversationUrl';
 import { groupWorkspaceDocumentPath, groupWorkspacePath } from './groupWorkspaceNavigation';
 import { publicWorkspacePath } from './publicWorkspaceNavigation';
+import { workflowRunHref } from './workflowRunLink';
 import { requireWorkspaceId } from './workspaceContext';
 
 export type NotificationTarget =
@@ -69,17 +71,120 @@ function route(path: string): ResolvedNotificationLink {
 }
 
 /**
- * The V2 route for one workflow run, once there is one.
+ * The V2 route for one workflow run: the Workflows section of the workspace the workflow lives
+ * in, with that workflow's run history open and the run expanded (workflowRunLink.ts). There
+ * is no separate `/runs/:runId` route; the section reads the run from its query, in personal
+ * and group workspaces alike.
  *
- * Phase 6b adds the run page at `/workspace/workflows/:workflowId/runs/:runId`. Until then
- * this returns null and a workflow-activity link keeps opening the classic page. Filling
- * this in is the whole change needed to move those links, and a workflow notice with a run
- * but no link at all, into V2.
+ * Null when the workspace, the workflow or the run is unknown, or an id is one a link must not
+ * carry. The caller then keeps the classic link, or offers none, rather than guessing where
+ * the run lives.
  */
-export function v2WorkflowRunPath(workflowId: string | null, runId: string | null): string | null {
-    void workflowId;
-    void runId;
+export function v2WorkflowRunPath(
+    scope: WorkflowScope | null,
+    workflowId: string | null,
+    runId: string | null,
+): string | null {
+    const workflow = safeId(workflowId);
+    const run = safeId(runId);
+    if (!scope || !workflow || !run) {
+        return null;
+    }
+    try {
+        return workflowRunHref(workflow, run, scope);
+    } catch {
+        return null;
+    }
+}
+
+/**
+ * The notice types written about one workflow run: a workflow's own alerts
+ * (functions_workflow_runner.py) and the notices about a chat-started run whose results could
+ * not be posted to its chat (functions_workflow_chat_delivery.py). Only these open the run when
+ * they carry no link of their own; any other notice that happens to name a run does not.
+ */
+const WORKFLOW_NOTIFICATION_TYPES: ReadonlySet<string> = new Set([
+    'workflow_priority_alert',
+    'workflow_chat_delivery',
+]);
+
+/**
+ * Whether the notice is about a Microsoft 365 action. Those are resolved on classic pages,
+ * which are the only ones that render the pending action, wherever the action id was written.
+ */
+function isMicrosoft365Notice(notification: AppNotification): boolean {
+    return 'm365_pending_action_id' in notification.metadata
+        || 'm365_pending_action_id' in notification.link_context;
+}
+
+function scopeOf(type: unknown, groupId: unknown): WorkflowScope | null {
+    if (type === 'personal') {
+        return { type: 'personal' };
+    }
+    if (type === 'group') {
+        const id = safeId(groupId);
+        return id ? { type: 'group', groupId: id } : null;
+    }
     return null;
+}
+
+/**
+ * The workspace the notice says its workflow lives in (`workflow_scope` and
+ * `workflow_group_id`). Never `group_id`: that is the group classic makes active when the
+ * notice opens, not a claim about where the workflow lives.
+ */
+function noticeWorkflowScope(notification: AppNotification): WorkflowScope | null {
+    return scopeOf(notification.metadata.workflow_scope, notification.metadata.workflow_group_id);
+}
+
+function linkWorkflowScope(url: URL): WorkflowScope | null {
+    return scopeOf(url.searchParams.get('scope'), url.searchParams.get('groupId'));
+}
+
+function sameScope(left: WorkflowScope, right: WorkflowScope): boolean {
+    if (left.type === 'group' || right.type === 'group') {
+        return left.type === 'group' && right.type === 'group' && left.groupId === right.groupId;
+    }
+    return true;
+}
+
+/** Whether the notice's own id, when it wrote one, agrees with the id its link names. */
+function agreesWithNotice(written: unknown, linked: string): boolean {
+    return written === undefined || written === null || written === '' || written === linked;
+}
+
+/**
+ * The V2 run a classic workflow-activity link names, or null to keep the classic page.
+ *
+ * Opened in V2 only when the link and the notice agree on everything: the workspace the
+ * workflow lives in, the workflow and the run. A Microsoft 365 notice stays classic.
+ */
+function workflowActivityRunPath(url: URL, notification: AppNotification): string | null {
+    if (isMicrosoft365Notice(notification)) {
+        return null;
+    }
+    const linked = linkWorkflowScope(url);
+    const written = noticeWorkflowScope(notification);
+    const workflowId = safeId(url.searchParams.get('workflowId'));
+    const runId = safeId(url.searchParams.get('runId'));
+    if (!linked || !written || !sameScope(linked, written) || !workflowId || !runId
+        || !agreesWithNotice(notification.metadata.workflow_id, workflowId)
+        || !agreesWithNotice(notification.metadata.run_id, runId)) {
+        return null;
+    }
+    return v2WorkflowRunPath(linked, workflowId, runId);
+}
+
+/** The run a workflow notice without a link of its own is about, or null for no link. */
+function unlinkedRunPath(notification: AppNotification): string | null {
+    if (!WORKFLOW_NOTIFICATION_TYPES.has(notification.notification_type) || isMicrosoft365Notice(notification)) {
+        return null;
+    }
+    return v2WorkflowRunPath(
+        noticeWorkflowScope(notification),
+        safeId(notification.metadata.workflow_id),
+        safeId(notification.metadata.run_id),
+    );
 }
 
 function groupIdFor(notification: AppNotification): string | null {
@@ -222,10 +327,7 @@ export function resolveNotificationLink(
 ): ResolvedNotificationLink {
     const raw = notification.link_url;
     if (!raw) {
-        const runPath = v2WorkflowRunPath(
-            safeId(notification.metadata.workflow_id),
-            safeId(notification.metadata.run_id),
-        );
+        const runPath = unlinkedRunPath(notification);
         return runPath ? route(runPath) : NO_LINK;
     }
     if (!raw.trim()) {
@@ -269,10 +371,7 @@ export function resolveNotificationLink(
     }
 
     if (path === '/workflow-activity') {
-        const runPath = v2WorkflowRunPath(
-            safeId(url.searchParams.get('workflowId')),
-            safeId(url.searchParams.get('runId')),
-        );
+        const runPath = workflowActivityRunPath(url, notification);
         return runPath ? route(runPath) : classic(linkHref(url), notification, origin);
     }
 

@@ -1,9 +1,10 @@
 # test_v2_workflow_alert_notices.py
 """
 Browser regressions for the V2 workflow alert notice, its alert card and their runtime.
-Version: 0.261.228
+Version: 0.261.230
 Implemented in: 0.261.199
 Open and Dismiss up front, everything else under Show more: 0.261.228
+Open run in Open workflow's place for an alert that names its run: 0.261.230
 
 Exercises the real rail, bell, notice, card, live region, stores and both notification
 runtimes, bundled by fixtures/workflow_alerts. Only HTTP answers and the browser APIs a
@@ -1368,7 +1369,9 @@ def test_open_is_the_one_big_action_and_the_rest_waits_under_show_more(tab, serv
     expect(card.locator("[data-workflow-alert-chip]").filter(has_text="Word file: Initial Briefing.docx")).to_be_visible()
     others = card.locator("[data-workflow-alert-links]")
     expect(others.locator("[data-workflow-alert-link]")).to_have_text(["Open workflow conversation"])
-    expect(others.locator("[data-workflow-alert-open-workflow]")).to_have_text("Open workflow")
+    # The alert names its run, so the route action is Open run, in Open workflow's place.
+    expect(others.locator("[data-workflow-alert-open-run]")).to_have_text("Open run")
+    expect(others.locator("[data-workflow-alert-open-workflow]")).to_have_count(0)
 
     # Open settles every alert of the entry and goes to the conversation the workflow created.
     primary.click()
@@ -1608,7 +1611,7 @@ def test_alert_text_is_plain_text_and_links_stay_on_this_site(tab, server, alert
     assert tab.js("() => window.__xss") is None
 
 
-def test_open_workflow_goes_to_the_run_in_its_workspace(tab, server, alert):
+def test_open_run_goes_to_the_run_in_its_workspace(tab, server, alert):
     tab.open()
 
     def open_card(notice_id, **fields):
@@ -1616,39 +1619,54 @@ def test_open_workflow_goes_to_the_run_in_its_workspace(tab, server, alert):
         tab.poll()
         tab.open_button.click()
         expect(tab.card).to_be_visible()
-        # Open run arrives with the run page. Ask about this needs Use Workflow Results
-        # In Chat, which this bootstrap leaves off (ui_tests/test_chat_workflow_results.py).
-        expect(tab.card.locator("[data-workflow-alert-open-run]")).to_have_count(0)
+        # Ask about this needs Use Workflow Results In Chat, which this bootstrap leaves off
+        # (ui_tests/test_chat_workflow_results.py).
         expect(tab.card.locator("[data-workflow-alert-follow-up]")).to_have_count(0)
-        # Open goes to the conversation; Open workflow waits under Show more.
+        # Open goes to the conversation; Open run or Open workflow waits under Show more.
         show_more = tab.card.locator("[data-workflow-alert-show-more]")
         if show_more.count():
             show_more.click()
-        return tab.card.locator("[data-workflow-alert-open-workflow]")
+        return tab.card
 
+    # An alert that names its run offers Open run in Open workflow's place, at the same address.
     personal = open_card("o1", workflow_id="wf-nightly", title="Deploy gate is red")
-    expect(personal).to_have_text("Open workflow")
-    personal.click()
+    expect(personal.locator("[data-workflow-alert-open-workflow]")).to_have_count(0)
+    open_run = personal.locator("[data-workflow-alert-open-run]")
+    expect(open_run).to_have_text("Open run")
+    open_run.click()
     tab.wait_for(
         lambda: tab.route_text() == "/workspace/workflows?workflow_id=wf-nightly&run_id=run-1",
-        f"Open workflow went to {tab.route_text()}.",
+        f"Open run went to {tab.route_text()}.",
     )
     expect(tab.page.get_by_text("Your workflows", exact=True)).to_be_visible()
     tab.wait_for(lambda: server.read_calls == ["o1"], f"Opening marked {server.read_calls} as read.")
 
     group = open_card("o2", workflow_id="wf-team", scope="group", group_id="grp-7", title="Team budget is over")
-    group.click()
+    group.locator("[data-workflow-alert-open-run]").click()
     tab.wait_for(
         lambda: tab.route_text() == "/groups/grp-7/workflows?workflow_id=wf-team&run_id=run-1",
-        f"Open workflow went to {tab.route_text()}.",
+        f"Open run went to {tab.route_text()}.",
     )
     expect(tab.page.get_by_text("Workflows of group grp-7", exact=True)).to_be_visible()
     tab.wait_for(lambda: server.read_calls == ["o1", "o2"], f"Opening marked {server.read_calls} as read.")
 
+    # An alert without a run keeps Open workflow, which names the workflow alone.
+    no_run = open_card("o4", workflow_id="wf-weekly", run_id="", title="Weekly check needs a look")
+    expect(no_run.locator("[data-workflow-alert-open-run]")).to_have_count(0)
+    open_workflow = no_run.locator("[data-workflow-alert-open-workflow]")
+    expect(open_workflow).to_have_text("Open workflow")
+    open_workflow.click()
+    tab.wait_for(
+        lambda: tab.route_text() == "/workspace/workflows?workflow_id=wf-weekly",
+        f"Open workflow went to {tab.route_text()}.",
+    )
+    tab.wait_for(lambda: server.read_calls == ["o1", "o2", "o4"], f"Opening marked {server.read_calls} as read.")
+
     # An alert that cannot be placed offers no guess at where its workflow lives.
     nowhere = open_card("o3", workflow_id="wf-lost", scope=None, link_targets=[], title="Nobody knows where")
-    expect(nowhere).to_have_count(0)
+    expect(nowhere.locator("[data-workflow-alert-open-run]")).to_have_count(0)
+    expect(nowhere.locator("[data-workflow-alert-open-workflow]")).to_have_count(0)
     expect(tab.card.locator("[data-workflow-alert-links]")).to_have_count(0)
     tab.page.keyboard.press("Escape")
     expect(tab.card).to_have_count(0)
-    assert server.read_calls == ["o1", "o2"]
+    assert server.read_calls == ["o1", "o2", "o4"]

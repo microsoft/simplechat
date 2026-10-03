@@ -134,7 +134,7 @@ import {
     retryOrchestrationPlanning,
 } from '../lib/orchestrationController';
 import { foundryAuthUrl } from '../lib/foundryAuth';
-import { announceCompletedReply } from '../lib/replyEvents';
+import { announceCompletedReply, type CompletedReply } from '../lib/replyEvents';
 import { getAppNavigator, subscribeRouteChanges, type AppRoute } from '../lib/appNavigation';
 import { readConversationParam } from '../lib/conversationUrl';
 import { refreshNotificationCount } from './notificationStore';
@@ -1143,23 +1143,19 @@ function deferReplyRead(conversationId: string): void {
 /**
  * Act on a finished reply for the reader: announce it to the desktop notifier, whether or
  * not it is on screen, and settle the unread marker the server gave it.
+ *
+ * `current` is whether the reply landed in the open conversation, and `serverMarksUnread`
+ * whether the server marked that conversation unread for it. Exported for replies that
+ * arrive without a stream: a saved workflow's results, which the server posts back to the
+ * chat that started the run, are settled exactly as a streamed reply is.
  */
-function settleFinishedReply(
-    conversationId: string,
-    kind: ConversationKind,
-    event: ChatStreamEvent,
-    current: boolean,
-    getState: () => ChatState,
+export function settleCompletedReply(
+    reply: CompletedReply,
+    { current, serverMarksUnread }: { current: boolean; serverMarksUnread: boolean },
 ): void {
-    const listed = getState().conversations.find((item) => item.id === conversationId);
-    announceCompletedReply({
-        conversationId,
-        messageId: typeof event.message_id === 'string' && event.message_id ? event.message_id : null,
-        conversationTitle: event.conversation_title || listed?.title || null,
-        blocked: event.blocked === true || event.role === 'safety',
-        source: 'chat',
-    });
-    if (!serverMarksReplyUnread(kind, event)) {
+    const { conversationId } = reply;
+    announceCompletedReply(reply);
+    if (!serverMarksUnread) {
         return;
     }
     if (current && replyIsWatched()) {
@@ -1176,6 +1172,27 @@ function settleFinishedReply(
     // The reply's notice is already in the bell's count; show it now rather than at the
     // next poll.
     void refreshNotificationCount('action');
+}
+
+/** Settle a reply that finished streaming. */
+function settleFinishedReply(
+    conversationId: string,
+    kind: ConversationKind,
+    event: ChatStreamEvent,
+    current: boolean,
+    getState: () => ChatState,
+): void {
+    const listed = getState().conversations.find((item) => item.id === conversationId);
+    settleCompletedReply(
+        {
+            conversationId,
+            messageId: typeof event.message_id === 'string' && event.message_id ? event.message_id : null,
+            conversationTitle: event.conversation_title || listed?.title || null,
+            blocked: event.blocked === true || event.role === 'safety',
+            source: 'chat',
+        },
+        { current, serverMarksUnread: serverMarksReplyUnread(kind, event) },
+    );
 }
 
 /**

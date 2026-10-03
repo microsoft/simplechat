@@ -21,6 +21,7 @@ import { v2WorkflowRunPath } from './notificationLinks';
 import { groupWorkspacePath } from './groupWorkspaceNavigation';
 import { requireWorkspaceId } from './workspaceContext';
 import { WORKFLOW_ALERT_SEVERITIES, type WorkflowAlertSeverity } from './workflowAlerts';
+import type { WorkflowScope } from './workflowEditor';
 import { WORKFLOW_LINK_PARAM, WORKFLOW_RUN_LINK_PARAM } from './workflowRunLink';
 import { isWorkflowResultIdentifier, isWorkflowResultReadableStatus } from './workflowResults';
 
@@ -294,7 +295,7 @@ function readLinks(metadata: Record<string, unknown>, notification: AppNotificat
  * `workflow_group_id` for a group workflow. It is never read from `metadata.group_id`, which
  * classic takes as the group to make active when a notification opens. An alert from before
  * the runner wrote them is placed by the conversation it posted into, and one that cannot be
- * placed offers no Open workflow rather than a guess.
+ * placed offers neither Open run nor Open workflow rather than a guess.
  */
 function readScope(metadata: Record<string, unknown>): WorkflowAlertScope | null {
     const written = oneLine(metadata.workflow_scope).toLowerCase();
@@ -523,13 +524,16 @@ export function workflowAlertWorkflowPath(alert: WorkflowAlert): string | null {
 }
 
 /**
- * The run the alert is about, once runs have a V2 page.
- *
- * Null until the run deep link lands; the card then offers Open run in place of Open
- * workflow without any change here beyond the shared helper it calls.
+ * Where Open run goes: the run that raised the alert, opened in its workflow's run history in
+ * the workspace the workflow lives in (notificationLinks.ts v2WorkflowRunPath). It is the same
+ * address Open workflow names for an alert with a run. Null when the alert names no run or
+ * cannot be placed, and the card then offers Open workflow, or neither.
  */
 export function workflowAlertOpenRunPath(alert: WorkflowAlert): string | null {
-    return v2WorkflowRunPath(alert.workflowId, alert.runId);
+    const scope: WorkflowScope | null = alert.scope
+        ? (alert.scope.kind === 'group' ? { type: 'group', groupId: alert.scope.groupId } : { type: 'personal' })
+        : null;
+    return v2WorkflowRunPath(scope, alert.workflowId, alert.runId);
 }
 
 export interface WorkflowAlertFollowUp {

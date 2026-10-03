@@ -830,6 +830,12 @@ function taskIdFallback(): string {
     return `${hex.slice(0, 4).join('')}-${hex.slice(4, 6).join('')}-${hex.slice(6, 8).join('')}-${hex.slice(8, 10).join('')}-${hex.slice(10).join('')}`;
 }
 
+// A fresh UUID for one runtime request. Each attempt gets its own, so a retry is never mistaken
+// for a replay of an earlier one.
+export function newWorkflowRequestId(): string {
+    return taskIdFallback();
+}
+
 export function createWorkflowTask(index: number): WorkflowTask {
     return {
         id: taskIdFallback(),
@@ -2004,6 +2010,10 @@ export const startScopedWorkflowRun = (scope: WorkflowScope, workflowId: string)
 
 export const cancelScopedWorkflow = (scope: WorkflowScope, workflowId: string) =>
     api.post<unknown>(workflowUrl(scope, workflowId, '/cancel'));
+
+// Asks one run to stop. The workflow-level cancel above stops whichever run is active instead.
+export const cancelScopedWorkflowRun = (scope: WorkflowScope, workflowId: string, runId: string) =>
+    api.post<unknown>(workflowUrl(scope, workflowId, `/runs/${encodeURIComponent(runId)}/cancel`));
 
 export const deleteScopedWorkflow = (scope: WorkflowScope, workflowId: string) =>
     api.delete<{ success?: boolean }>(workflowUrl(scope, workflowId));
