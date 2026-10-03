@@ -2,6 +2,16 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.253)**
+
+#### Bug Fixes
+
+*   **Workflow Reply Shown Once in the Conversation It Created**
+    *   An agent workflow that creates a conversation and posts its opening message there through the Simple Chat action no longer shows the same findings twice. Once the run's full reply, with its maps and sources, is mirrored into that conversation, the run's own post (labelled "posted through an agent") is left out of the thread in the classic and V2 chat views. The post stays stored and stays in the conversation's AI history.
+    *   The workflow's own conversation, **Workflow: *name***, is hidden from the chat list the first time a run delivers its result into a conversation it created. It still records every run, and opens from the workflow alert's **Show more** links or the "show hidden conversations" toggle. If you show it again, later runs leave it visible.
+    *   Messages people write are never hidden, and agent posts made outside a workflow run are unaffected. Conversations created before this version keep both messages until a new run delivers into them.
+    *   (Ref: `functions_workflow_runner.py`, `sharedMessage.ts`, `MessageList.tsx`, `chat-messages.js`, `chat-collaboration.js`, `test_workflow_reply_replaces_agent_posted_message.py`, [Workflow Reply Replaces the Agent-Posted Message Fix](fixes/WORKFLOW_REPLY_REPLACES_AGENT_POSTED_MESSAGE_FIX.md))
+
 ### **(v0.261.252)**
 
 #### Bug Fixes

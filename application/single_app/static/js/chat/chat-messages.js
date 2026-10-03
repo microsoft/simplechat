@@ -2223,6 +2223,10 @@ export function loadMessages(conversationId) {
           console.log(`Skipping deleted message: ${msg.id}`);
           return;
         }
+        // A workflow run's own post is replaced by its mirrored reply, which says the same.
+        if (msg.metadata && msg.metadata.superseded_by_workflow_reply) {
+          return;
+        }
         console.log(`[loadMessages Loop] -------- START Message ID: ${msg.id} --------`);
         console.log(`[loadMessages Loop] Role: ${msg.role}`);
         if (msg.role === "user") {
