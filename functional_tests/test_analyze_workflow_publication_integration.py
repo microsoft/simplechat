@@ -1,9 +1,10 @@
 # test_analyze_workflow_publication_integration.py
 """
 Analyze -> save -> reload -> explain -> optional publish in one workflow run.
-Version: 0.261.231
+Version: 0.261.233
 Implemented in: 0.261.109
 Saved results stopped re-checking their sources in: 0.261.231
+Model limit patch retargeted in: 0.261.233
 
 The native adapter, section contract, task sequence, model consumer, artifact
 authorization and publication receipt service are production code. Only native
@@ -19,7 +20,7 @@ from types import SimpleNamespace
 import pytest
 
 from test_analysis_artifact_publication import publication
-from test_analyze_backend_saved_integration import budget, load_functions, saved
+from test_analyze_backend_saved_integration import budget, load_functions, model_budget, saved
 from test_analyze_native_saved_integration import adapt, native_run
 from test_support.app_stubs import import_app_module
 from test_support.document_analysis import USER_ID
@@ -69,10 +70,11 @@ def sequence(native_run, publication, monkeypatch):
         )
 
     model = SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=completion)))
-    monkeypatch.setattr(budget, "resolve_model_token_limits", lambda *args, **kwargs: {
+    # The workflow context resolves each request's limits through resolve_model_token_budget.
+    monkeypatch.setattr(budget, "resolve_model_token_budget", lambda *args, **kwargs: model_budget({
         "context_window_tokens": 1000000, "max_input_tokens": 1000000, "max_output_tokens": 2048,
         "tokenizer": None, "source": "configured", "model_id": "task-selected-model", "status": "known",
-    })
+    }))
 
     def dispatch(workflow, settings, conversation_id, run_id, thought_tracker, url_access_context, **kwargs):
         if workflow["active_task"]["id"] == "analyze":
@@ -280,10 +282,10 @@ def test_format_then_publish_a_selected_existing_format_uses_zero_model_calls(se
 def test_large_workflow_report_pages_records_but_publication_only_reads_manifests(sequence, monkeypatch):
     fixture = sequence
     seen = []
-    monkeypatch.setattr(budget, "resolve_model_token_limits", lambda *args, **kwargs: {
+    monkeypatch.setattr(budget, "resolve_model_token_budget", lambda *args, **kwargs: model_budget({
         "context_window_tokens": 16000, "max_input_tokens": 16000, "max_output_tokens": 2048,
         "tokenizer": None, "source": "configured", "model_id": "small-selected-model", "status": "known",
-    })
+    }))
 
     def complete(**kwargs):
         fixture.model_calls.append(deepcopy(kwargs))

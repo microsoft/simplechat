@@ -2,8 +2,9 @@
 # test_analyze_artifact_phase7_rollout_rollback.py
 """
 Functional test for Analyze artifact Phase 7 rollout rollback controls.
-Version: 0.250.177
+Version: 0.261.233
 Implemented in: 0.250.177
+Planner stubs scoped to this module in: 0.261.233
 
 This test ensures Phase 7 can stop new shared tabular parity assignments
 through a backend-only rollback state without exposing prompts, filenames,
@@ -11,10 +12,14 @@ storage locators, or breaking already-persisted run readers.
 """
 
 import ast
+import importlib
 import sys
 import traceback
 import types
+from contextlib import contextmanager
 from pathlib import Path
+
+import pytest
 
 from test_support.versioning import assert_app_version_at_least
 
@@ -24,10 +29,11 @@ APP_ROOT = REPO_ROOT / "application" / "single_app"
 EXPORT_MODULE = APP_ROOT / "functions_tabular_generated_exports.py"
 SETTINGS_MODULE = APP_ROOT / "functions_settings.py"
 IMPLEMENTED_VERSION = "0.250.177"
+PLANNER_MODULE = "functions_tabular_orchestration"
 sys.path.insert(0, str(APP_ROOT))
 
 
-def install_lightweight_planner_dependency_stubs():
+def lightweight_planner_dependency_stubs():
     assistant_exports_module = types.ModuleType("functions_assistant_table_exports")
     assistant_exports_module.assistant_table_export_requested = (
         lambda prompt: "csv" in str(prompt or "").lower()
@@ -43,17 +49,39 @@ def install_lightweight_planner_dependency_stubs():
         lambda prompt: next(iter(get_requested_artifact_formats(prompt)), None)
     )
     generated_exports_module.get_requested_structured_artifact_formats = get_requested_artifact_formats
-    sys.modules.setdefault("functions_assistant_table_exports", assistant_exports_module)
-    sys.modules.setdefault("functions_generated_file_exports", generated_exports_module)
+    return {
+        "functions_assistant_table_exports": assistant_exports_module,
+        "functions_generated_file_exports": generated_exports_module,
+    }
 
 
-install_lightweight_planner_dependency_stubs()
+@contextmanager
+def lightweight_tabular_planner():
+    """Import the planner, stubbing only dependencies that aren't imported yet.
 
-from functions_tabular_orchestration import (  # noqa: E402
-    build_tabular_parity_rollout_assignment,
-    normalize_tabular_parity_rollout_state,
-    orchestrate_tabular_request,
-)
+    The stubs, and a planner bound to them, are removed from sys.modules on exit, so a later
+    test in the same process imports the real modules.
+    """
+    stubs = {
+        name: module for name, module in lightweight_planner_dependency_stubs().items()
+        if name not in sys.modules
+    }
+    with pytest.MonkeyPatch.context() as patch:
+        for name, module in stubs.items():
+            patch.setitem(sys.modules, name, module)
+        already_loaded = PLANNER_MODULE in sys.modules
+        planner = importlib.import_module(PLANNER_MODULE)
+        try:
+            yield planner
+        finally:
+            if stubs and not already_loaded:
+                sys.modules.pop(PLANNER_MODULE, None)
+
+
+@pytest.fixture(scope="module")
+def planner():
+    with lightweight_tabular_planner() as module:
+        yield module
 
 
 def assert_equal(actual, expected, label):
@@ -110,10 +138,12 @@ def load_public_rollout_normalizer():
     return namespace["_normalize_tabular_run_rollout_assignment"]
 
 
-def test_rollout_state_normalization_and_assignment_reasons():
+def test_rollout_state_normalization_and_assignment_reasons(planner):
     """Rollout states must be deterministic, safe, and assignment-gating."""
     print("Testing Phase 7 rollout state assignment gates...")
     assert_app_version_at_least(IMPLEMENTED_VERSION)
+    build_tabular_parity_rollout_assignment = planner.build_tabular_parity_rollout_assignment
+    normalize_tabular_parity_rollout_state = planner.normalize_tabular_parity_rollout_state
 
     base_settings = {
         "tabular_request_planner_mode": "active",
@@ -163,7 +193,7 @@ def test_rollout_state_normalization_and_assignment_reasons():
     assert_false("blob_path" in serialized_assignment, "no blob paths in assignment")
 
 
-def test_rollback_state_declines_new_execution_without_calling_executor():
+def test_rollback_state_declines_new_execution_without_calling_executor(planner):
     """Rollback must stop new durable assignment before side effects."""
     print("Testing Phase 7 rollback execution gate...")
     calls = []
@@ -176,7 +206,7 @@ def test_rollback_state_declines_new_execution_without_calling_executor():
             "task_type": plan["durable_task_type"],
         }
 
-    result = orchestrate_tabular_request(
+    result = planner.orchestrate_tabular_request(
         "Analyze every row and create a CSV file with one output row per source row.",
         [build_context()],
         action_mode="analyze",
@@ -244,22 +274,22 @@ def test_rollout_state_is_backend_only_and_status_safe():
 
 
 def run_tests():
-    tests = [
-        test_rollout_state_normalization_and_assignment_reasons,
-        test_rollback_state_declines_new_execution_without_calling_executor,
-        test_rollout_state_is_backend_only_and_status_safe,
-    ]
     results = []
-    for test in tests:
-        print(f"\nRunning {test.__name__}...")
-        try:
-            test()
-            results.append(True)
-            print(f"PASS {test.__name__}")
-        except Exception as exc:
-            print(f"FAIL {test.__name__}: {exc}")
-            traceback.print_exc()
-            results.append(False)
+    with lightweight_tabular_planner() as planner_module:
+        for test, arguments in (
+            (test_rollout_state_normalization_and_assignment_reasons, (planner_module,)),
+            (test_rollback_state_declines_new_execution_without_calling_executor, (planner_module,)),
+            (test_rollout_state_is_backend_only_and_status_safe, ()),
+        ):
+            print(f"\nRunning {test.__name__}...")
+            try:
+                test(*arguments)
+                results.append(True)
+                print(f"PASS {test.__name__}")
+            except Exception as exc:
+                print(f"FAIL {test.__name__}: {exc}")
+                traceback.print_exc()
+                results.append(False)
     print(f"\nResults: {sum(results)}/{len(results)} tests passed")
     return all(results)
 

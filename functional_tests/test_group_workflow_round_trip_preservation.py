@@ -2,8 +2,9 @@
 #!/usr/bin/env python3
 """
 Functional test for group workflow save round-trip preservation.
-Version: 0.261.178
+Version: 0.261.233
 Implemented in: 0.261.141
+Chat delivery contract loaded by the harness in: 0.261.233
 
 This test ensures that existing group workflow definitions survive load, edit and save. A group
 workflow carrying alert rules, URL access, a Monitor File Sync trigger and a document action is
@@ -298,11 +299,13 @@ class GroupWorkflowStore:
             "functions_workflow_runtime_store": _module("functions_workflow_runtime_store"),
             **_document_analysis_seams(),
         }
-        # Load order follows the import graph: the alert normalizer imports the definitions module, and
+        # Load order follows the import graph: the alert normalizer imports the definitions module, the
+        # personal store imports the chat delivery contract, which imports the Microsoft 365 binding, and
         # the group store takes its member roles from the pure workflow policy module.
         real = (
             "functions_workflow_alert_safety", "functions_workflow_definitions", "functions_workflow_alerts",
-            "functions_m365_workflow_binding", "functions_workflow_definition_store", "functions_document_actions",
+            "functions_m365_workflow_binding", "functions_workflow_chat_delivery",
+            "functions_workflow_definition_store", "functions_document_actions",
             "functions_workflow_limits", "functions_workflow_schedules",
             "functions_personal_workflows", "functions_group_workflow_policy", "functions_group_workflows",
         )

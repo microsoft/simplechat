@@ -1,9 +1,10 @@
 # test_workflow_data_flow_execution.py
 """
 Functional tests for native data-flow execution through real workflow functions.
-Version: 0.261.231
+Version: 0.261.233
 Implemented in: 0.261.108
 Saved outputs stopped re-checking their sources in: 0.261.231
+Run entrypoint harness restored in: 0.261.233
 
 Production Analyze, dispatch, immutable persistence/reload, binding, validation
 and source-lineage readers run together; only provider and source I/O are faked.
@@ -163,13 +164,33 @@ def test_real_run_entrypoint_persists_the_deliverable_outcome(expected_count, al
     }
     saved_runs = []
     activity = []
+
+    def unexpected_owner_lookup(*args, **kwargs):
+        raise AssertionError("The signed-in owner's request context is reused, not rebuilt from a profile lookup.")
+
+    def read_saved_run(user_id, run_id):
+        # The run store returns exactly what the entrypoint saved for this owner, if anything.
+        return next((
+            json.loads(json.dumps(record)) for record in reversed(saved_runs)
+            if record["id"] == run_id and record["user_id"] == user_id
+        ), None)
+
     runner.update({
+        # The owner starts this run from a signed-in request, so the entrypoint reuses that context.
+        "session": {"user": {"oid": "owner", "roles": ["User"], "name": "Owner"}},
+        "read_user_settings_snapshot": unexpected_owner_lookup,
+        # The inventory workflow selects no agent, so it has no Microsoft 365 actions to authorize.
+        "workflow_m365_manifests": lambda workflow: ([], dict(workflow)),
+        "get_personal_workflow_run": read_saved_run,
         "WorkflowRunCancelledError": type("WorkflowRunCancelledError", (BaseException,), {}),
         "_save_workflow_run_record": lambda workflow, record: saved_runs.append(json.loads(json.dumps(record))) or record,
         "_execute_workflow_file_sync": lambda *args: None,
         "_ensure_workflow_conversation": lambda workflow: {"id": "conversation-inventory", "user_id": "owner"},
         "_create_user_message": lambda *args: {"id": "user-message"},
-        "_initialize_workflow_assistant_tracking": lambda *args: ("assistant-message", None),
+        # Like the real helper, a stored assistant message id is reused; a new run gets its own.
+        "_initialize_workflow_assistant_tracking": lambda *args, assistant_message_id=None: (
+            assistant_message_id or "assistant-message", None,
+        ),
         "_prepare_workflow_url_access_context": lambda *args, **kwargs: {},
         "_attach_workflow_url_access_result": lambda result, context: result,
         "_create_assistant_message": lambda *args, **kwargs: {"id": "assistant-message"},
