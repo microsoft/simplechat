@@ -1,8 +1,9 @@
 # test_analyze_workflow_publication_integration.py
 """
 Analyze -> save -> reload -> explain -> optional publish in one workflow run.
-Version: 0.261.116
+Version: 0.261.231
 Implemented in: 0.261.109
+Saved results stopped re-checking their sources in: 0.261.231
 
 The native adapter, section contract, task sequence, model consumer, artifact
 authorization and publication receipt service are production code. Only native
@@ -154,9 +155,7 @@ def execute(fixture):
     )
 
 
-def test_publish_uses_real_prior_manifest_before_final_assistant_and_skips_model_budget(sequence):
-    fixture = sequence
-    result = execute(fixture)
+def assert_saved_report_published_once(fixture, result):
     assert result["task_error_count"] == 0
     assert result["publication"]["state"] == "queued"
     assert len(fixture.model_calls) == 1
@@ -172,6 +171,12 @@ def test_publish_uses_real_prior_manifest_before_final_assistant_and_skips_model
     )
     assert repeated["publication"] == result["publication"]
     assert len(fixture.publishing.calls["create"]) == 1
+
+
+def test_publish_uses_real_prior_manifest_before_final_assistant_and_skips_model_budget(sequence):
+    fixture = sequence
+    result = execute(fixture)
+    assert_saved_report_published_once(fixture, result)
 
 
 def test_absent_publication_request_has_zero_workspace_side_effects(sequence):
@@ -201,12 +206,23 @@ def test_unknown_publication_acknowledgement_is_explicit_and_not_recreated(seque
     assert len(sequence.publishing.calls["create"]) == 1
 
 
-def test_native_source_revocation_blocks_saved_report_and_publication(sequence):
-    sequence.native.state["allowed"] = False
-    with pytest.raises(RuntimeError, match="source access could not be confirmed"):
-        execute(sequence)
-    assert sequence.model_calls == []
-    assert all(not values for values in sequence.publishing.calls.values())
+def test_native_source_revocation_does_not_block_the_saved_report(sequence):
+    # The saved Analyze result is generated output that takes its access from its
+    # workflow and run. Revoking the native source after that result is saved
+    # doesn't block the report that reads it or the publication of its artifact.
+    fixture = sequence
+    persist = fixture.runner["persist_workflow_task_result"]
+
+    def persist_then_revoke(envelope, **kwargs):
+        saved_result = persist(envelope, **kwargs)
+        if kwargs.get("task_id") == "analyze":
+            fixture.native.state["allowed"] = False
+        return saved_result
+
+    fixture.runner["persist_workflow_task_result"] = persist_then_revoke
+    result = execute(fixture)
+    assert fixture.native.state["allowed"] is False
+    assert_saved_report_published_once(fixture, result)
 
 
 def test_report_of_a_report_reloads_original_records_instead_of_using_summary_as_data(sequence):

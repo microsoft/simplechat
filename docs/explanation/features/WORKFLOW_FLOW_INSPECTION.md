@@ -4,6 +4,12 @@ Implemented in version: **0.261.121**
 
 Updated in version: **0.261.122** for the separate authoring surface.
 
+Updated in version: **0.261.231**. A definition takes its access from its
+workflow: a referenced document, workspace or selected document the reader
+can't use right now is marked unavailable on its own selection row instead of
+denying the whole definition, and run evidence no longer re-checks the
+documents a run read.
+
 Application version tracking: `application/single_app/config.py`.
 
 ## Purpose and boundaries
@@ -83,8 +89,11 @@ Personal and group workflows expose the same operations:
 Every group request carries an explicit authorized `group_id`. Saved/run
 inspection uses existing reader access; preview uses authoring access. Swagger,
 Blueprint login policy, feature gates, and object-level workflow/run/scope
-checks remain in effect. Run evidence reuses current source, contributor,
-attempt, and frozen/admitted path authorization.
+checks remain in effect. Run evidence verifies each result's lineage, attempt,
+and frozen/admitted path. Neither the definition nor run evidence re-checks the
+documents it names: a missing, held or inaccessible authored source only gets
+`"available": false` on its row in the `selection` section, and only for the
+rows on the requested page. A preview never looks sources up.
 
 The topology DTO contains canonical IDs, labels, kinds, nesting/order,
 connection labels, input/output counts, finite loop maxima, and run limits.
@@ -116,7 +125,10 @@ or empty success.
 2. Select a node and choose its inspection section. Instructions, contracts,
    conditions, references, and source selections load only when requested.
    **Source selection** describes authored selection; it does not rerun a query
-   or enumerate its current matches.
+   or enumerate its current matches. A source you can't use right now shows
+   "Not available to you right now. It may have been removed, be held for
+   review, or be outside your access. The workflow definition is unchanged."
+   The rest of the definition still shows.
 3. Read solid arrows as control flow. Dashed arrows describe declared typed
    connections for the selected detail page, including join exports, Repeat
    state receipts, and Collect's frozen-item source. They are not additional
@@ -200,7 +212,7 @@ original admission budget, and elapsed deadline do not reset; lifetime round
 86,400-second bounds include waits. A cumulative run-token/spend cap remains
 deferred.
 
-Typed state, source authorization, locally metered loops/reports, native
+Typed state, input-time source checks, locally metered loops/reports, native
 Analyze identities, exact Collect order/lineage, and shared `exact_records_v1`
 JSON export are unchanged. Publication still distinguishes submission,
 approval, and indexed readiness. Refreshing inspection displays saved

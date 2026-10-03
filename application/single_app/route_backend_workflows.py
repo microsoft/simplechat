@@ -111,7 +111,7 @@ from functions_workflow_runtime import (
 from functions_workflow_runtime_store import RuntimeUnavailable, WorkflowRuntimeConflict
 from functions_workflow_execution_history import workflow_execution_history, workflow_execution_result_page
 from functions_workflow_inspection import (
-    WorkflowFlowDetailTooLarge, WorkflowFlowUnsupported, authorize_workflow_flow_sources, preview_workflow_flow,
+    WorkflowFlowDetailTooLarge, WorkflowFlowUnsupported, preview_workflow_flow,
     workflow_flow_inspection, workflow_run_flow_inspection,
 )
 from functions_workflow_node_results import WorkflowRecordPageTooLarge
@@ -209,6 +209,9 @@ def _workflow_task_result_page_response(workflow, run_record, task_id, get_item)
             workflow, run_id, task_id, result_ref, offset=offset, limit=limit,
         )
         return jsonify({**page, 'output_name': output_name})
+    except AnalysisResultUnavailable:
+        # Lineage or integrity; the result takes its access from the workflow and run above.
+        return jsonify({'error': 'The saved result or requested page is unavailable.'}), 409
     except PermissionError:
         return jsonify({'error': 'Access to this task result is not allowed.'}), 403
     except LookupError:
@@ -418,8 +421,9 @@ def _workflow_flow_response(workflow_id=None, run_id=None, *, group=False, previ
                     raise WorkflowFlowUnsupported()
                 response = workflow_run_flow_inspection(workflow, run_id, reader_user_id=user_id, **selectors)
             else:
-                authorize_workflow_flow_sources(workflow, reader_user_id=user_id)
-                response = workflow_flow_inspection(workflow, **selectors)
+                # The definition takes its access from the workflow; an unavailable
+                # authored source is marked on its own row instead of denying the definition.
+                response = workflow_flow_inspection(workflow, reader_user_id=user_id, **selectors)
         return jsonify(response)
     except WorkflowFlowDetailTooLarge as exc:
         return jsonify({'error': exc.public_message, 'code': exc.code}), 413
@@ -431,8 +435,8 @@ def _workflow_flow_response(workflow_id=None, run_id=None, *, group=False, previ
         return jsonify({'error': exc.public_message, 'code': 'invalid_workflow_definition'}), 400
     except WorkflowRuntimeConflict as exc:
         return jsonify({'error': exc.public_message, 'code': exc.code}), 409
-    except (PermissionError, AnalysisResultUnavailable):
-        return jsonify({'error': 'Current access to this workflow definition or its sources could not be confirmed.'}), 403
+    except PermissionError:
+        return jsonify({'error': 'Current access to this workflow could not be confirmed.'}), 403
     except (LookupError, CosmosResourceNotFoundError):
         return jsonify({'error': 'The selected workflow definition, run or structural node was not found.'}), 404
     except (ValueError, TypeError, RecursionError):
@@ -517,8 +521,11 @@ def _workflow_execution_history_response(workflow_id, run_id, *, group=False, ki
         return jsonify(response)
     except WorkflowRuntimeConflict as exc:
         return jsonify({'error': exc.public_message, 'code': exc.code}), 409
-    except (PermissionError, AnalysisResultUnavailable):
-        return jsonify({'error': 'Current access to this execution or its contributing sources could not be confirmed.'}), 403
+    except AnalysisResultUnavailable:
+        # Lineage or integrity: a saved record doesn't check out. Sources are never re-checked here.
+        return jsonify({'error': 'This saved execution record could not be verified.'}), 409
+    except PermissionError:
+        return jsonify({'error': 'Current access to this execution could not be confirmed.'}), 403
     except (LookupError, CosmosResourceNotFoundError):
         return jsonify({'error': 'Workflow execution or attempt not found.'}), 404
     except WorkflowRecordPageTooLarge as exc:
@@ -1133,7 +1140,8 @@ def _stream_workflow_activity(user_id, conversation_id='', workflow_id='', run_i
                 user_id, conversation_id=conversation_id, workflow_id=workflow_id, run_id=run_id,
             )
         except AnalysisResultUnavailable:
-            yield 'event: error\ndata: {"error":"Workflow source access is no longer available.","code":"source_access_denied"}\n\n'
+            # A saved record that fails its lineage check; source documents are never re-checked here.
+            yield 'event: error\ndata: {"error":"Workflow activity is no longer available.","code":"activity_unavailable"}\n\n'
             return
         payload = json.dumps(snapshot, default=str, sort_keys=True)
 
@@ -1166,7 +1174,8 @@ def _stream_group_workflow_activity(user_id, group_id, conversation_id='', workf
                 user_id, group_id, conversation_id=conversation_id, workflow_id=workflow_id, run_id=run_id,
             )
         except AnalysisResultUnavailable:
-            yield 'event: error\ndata: {"error":"Workflow source access is no longer available.","code":"source_access_denied"}\n\n'
+            # A saved record that fails its lineage check; source documents are never re-checked here.
+            yield 'event: error\ndata: {"error":"Workflow activity is no longer available.","code":"activity_unavailable"}\n\n'
             return
         payload = json.dumps(snapshot, default=str, sort_keys=True)
 
