@@ -14,9 +14,10 @@ a later edit by someone else to the workflow or to an agent or action it runs, a
 change never asks again. A denial or cancellation recorded for a run still stops that run, and a
 revoked self-authored binding is never silently re-created. A revocation also withdraws an
 approved copy of the revision that it missed, whether the copy raced the revocation or the
-revocation was interrupted, so only an approval granted after it stands. Every save path records
-the authenticated actor as ``modified_by``, never the payload, and a raw administrator edit names
-the administrator.
+revocation was interrupted, so only an approval granted after it stands. A revocation made before
+this release withdrew one binding, so other approvals of its revision keep working. Every save
+path records the authenticated actor as ``modified_by``, never the payload, and a raw
+administrator edit names the administrator.
 
 The approval service and execution boundary are the real modules over the conditional Cosmos
 fakes in ``test_support.m365``. The runtime manifest test loads the real
@@ -536,6 +537,106 @@ def test_revoking_retries_a_copy_that_changed_meanwhile(harness):
         harness.service.revoke_workflow_binding(first.binding_id, RUN_AS)
     assert attempts.count(second.binding_id) == 2
     assert [item["status"] for item in harness.bindings(self_authored=True)] == ["revoked", "revoked"]
+    assert all(item.get("revision_wide") is True for item in harness.bindings(self_authored=True))
+
+
+def test_only_the_users_revocation_marks_the_revision_wide_cut_off(harness):
+    stored = workflow()
+    first, _allowed = harness.run(stored)
+    harness.connection["generation"] = 2
+    write_binding = harness.service._create_self_authored_binding
+
+    def revoke_while_writing(*args):
+        harness.service.revoke_workflow_binding(first.binding_id, RUN_AS)
+        return write_binding(*args)
+
+    with patch.object(harness.service, "_create_self_authored_binding", revoke_while_writing):
+        harness.waits(stored)
+    marks = {item["id"]: item.get("revision_wide") for item in harness.bindings(self_authored=True)}
+    assert marks[first.binding_id] is True
+    assert [mark for key, mark in marks.items() if key != first.binding_id] == [None]
+
+
+def test_a_revocation_from_before_this_release_keeps_other_approvals_working(harness):
+    stored = workflow(modified_by=EDITOR)
+    fingerprint = workflow_execution_fingerprint(stored, [manifest()])
+    copies = []
+    for audience in ("audience-1", "audience-2"):
+        context = replace(
+            harness.context(f"legacy-{audience}", audience),
+            workflow_fingerprint=fingerprint, connection_id="connection-a",
+        )
+        binding = harness.service.create_workflow_binding(
+            context, ["email"], copy.deepcopy(harness.connection), review=WORKFLOW_REVIEW,
+        )
+        harness.approve(binding["id"])
+        copies.append(binding["id"])
+        harness.clock.advance(minutes=1)
+    # Before this release revoking withdrew one binding, and other copies stayed in use.
+    legacy = harness.service.get_approval(copies[0], RUN_AS)
+    harness.service._transition(legacy, "revoked", terminal_reason="subject_revoked")
+    harness.clock.advance(minutes=1)
+
+    kept, allowed = harness.run(stored, audience="audience-2")
+    still = harness.service.get_approval(copies[1], RUN_AS)
+    assert kept.binding_id == copies[1] and allowed["status"] == "approved"
+    assert still["status"] == "approved"
+    # The revision it revoked is still never self-authored.
+    harness.connection["generation"] = 2
+    _prepared, pending = harness.waits(workflow())
+    assert pending["status"] == "pending" and "self_authored" not in pending
+
+
+def test_a_run_withdrawing_a_late_copy_never_cancels_a_later_approval(harness):
+    stored = workflow()
+    first, _allowed = harness.run(stored)
+    harness.clock.advance(minutes=1)
+    harness.service.revoke_workflow_binding(first.binding_id, RUN_AS)
+    harness.connection["generation"] = 2
+    harness.clock.advance(minutes=1)
+    _prepared, pending = harness.waits(stored)
+    harness.approve(pending["id"])
+    harness.clock.advance(minutes=1)
+
+    # A run that read the records before the revocation withdraws the binding it then records.
+    stale_run = replace(
+        harness.context("stale-run", "audience-1"),
+        workflow_fingerprint=first.workflow_fingerprint, connection_id="connection-a",
+    )
+    withdrawn = harness.service._create_self_authored_binding(
+        stale_run, ["email"], copy.deepcopy(harness.connection), WORKFLOW_REVIEW,
+    )
+    harness.clock.advance(minutes=1)
+    rerun, allowed = harness.run(stored)
+    assert withdrawn is None
+    assert rerun.binding_id == pending["id"] and allowed["status"] == "approved"
+
+
+def test_only_a_revision_wide_revocation_sets_the_cut_off():
+    def revoked(resolved_at, fingerprint="revision-a", **fields):
+        return {
+            "status": "revoked", "resolved_at": resolved_at,
+            "binding": {"workflow_id": WORKFLOW_ID, "workflow_fingerprint": fingerprint}, **fields,
+        }
+
+    marked = revoked("2026-03-08T05:00:00+00:00", revision_wide=True)
+    later = revoked("2026-03-08T07:00:00+00:00")
+    unreadable = revoked("not a time", revision_wide=True)
+    elsewhere = revoked("2026-03-08T09:00:00+00:00", fingerprint="revision-b", revision_wide=True)
+    cut_off = datetime(2026, 3, 8, 5, tzinfo=timezone.utc)
+    approved = {"status": "approved", "approved_at": "2026-03-08T06:00:00+00:00"}
+
+    found = approvals._revision_revocation([later, marked, unreadable, elsewhere], WORKFLOW_ID, "revision-a")
+    legacy = approvals._revision_revocation([later], WORKFLOW_ID, "revision-a")
+    untouched = approvals._revision_revocation([elsewhere], WORKFLOW_ID, "revision-a")
+    assert found == (True, cut_off)
+    assert legacy == (True, None)
+    assert untouched == (False, None)
+    assert approvals._approved_after_revocation(approved, cut_off) is True
+    assert approvals._approved_after_revocation(approved, None) is True
+    assert approvals._approved_after_revocation({**approved, "approved_at": "2026-03-08T05:00:00+00:00"}, cut_off) is False
+    assert approvals._approved_after_revocation({**approved, "approved_at": None}, cut_off) is False
+    assert approvals._approved_after_revocation({**approved, "self_authored": True}, None) is False
 
 
 # ---------------------------------------------------------------------------------------------
