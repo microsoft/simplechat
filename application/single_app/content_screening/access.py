@@ -919,6 +919,54 @@ def current_request_source_provenance():
     return deepcopy(list(sources.values()))
 
 
+class _IsolatedSourceFence:
+    """The caller's request-local fence, set aside until ``restore`` puts it back."""
+
+    def __init__(self):
+        current = _SOURCE_AUTHORITY_SCOPE.get()
+        self._token = _SOURCE_AUTHORITY_SCOPE.set({"failure": None}) if current is not None else None
+        flask = import_module("flask")
+        self._previous = None
+        if flask.has_request_context():
+            self._previous = (
+                getattr(flask.g, "content_screening_error", None),
+                dict(getattr(flask.g, "content_screening_sources", {}) or {}),
+            )
+            flask.g.content_screening_error = None
+            flask.g.content_screening_sources = {}
+        self._restored = False
+
+    def restore(self):
+        if self._restored:
+            return
+        self._restored = True
+        flask = import_module("flask")
+        if self._previous is not None and flask.has_request_context():
+            flask.g.content_screening_error, flask.g.content_screening_sources = self._previous
+        if self._token is not None:
+            _SOURCE_AUTHORITY_SCOPE.reset(self._token)
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_exc_info):
+        self.restore()
+        return False
+
+
+def isolate_request_source_fence():
+    """Start an operation with an empty model fence; ``restore()`` returns the caller's.
+
+    The fence keeps the first source failure and every document read during a
+    request, and a guarded model call raises that failure or re-checks those
+    documents first. A workflow run executes all of its tasks in one request
+    context, so without this a task's input reads would block, or be re-checked
+    before, a later task that only reads saved results. Inside the isolated span
+    the operation's own input reads still block its own model calls.
+    """
+    return _IsolatedSourceFence()
+
+
 def guard_chat_service(service, *, source_validator=None):
     """Guard each SK provider call, including automatic tool-call continuations.
 

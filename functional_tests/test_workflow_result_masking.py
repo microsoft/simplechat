@@ -2,15 +2,18 @@
 # test_workflow_result_masking.py
 """
 Functional test for withholding chat answers built from workflow results.
-Version: 0.261.214
+Version: 0.261.231
 Implemented in: 0.261.214
+Source access stopped withholding answers in: 0.261.231
 
 This test ensures that an answer relying on a workflow result is withheld on every
 new read once that result is unavailable to its owner (a deleted run, a changed
-result, lost source access or a storage failure) or once the chat isn't the reader's
-own private chat; that the question keeps its text; that a failed check never raises;
-and that one read costs one authorization per distinct result and one conversation
-read per distinct chat, with nothing read for messages that don't use a result.
+result or a storage failure) or once the chat isn't the reader's own private chat;
+that losing access to a document the run used never withholds it, because the
+result takes its access from the run; that the question keeps its text; that a
+failed check never raises; and that one read costs one authorization per distinct
+result and one conversation read per distinct chat, with nothing read for messages
+that don't use a result.
 """
 
 import json
@@ -276,15 +279,17 @@ def test_a_changed_result_is_withheld_until_it_matches_again():
     assert restored == before
 
 
-def test_lost_source_access_withholds_an_answer_that_used_an_analysis_output():
+def test_lost_source_access_never_withholds_an_answer_that_used_an_analysis_output():
     world = World(with_analysis=True)
     answer = world.answer()
     readable = world.sanitize([answer])
     assert readable == [answer]
 
     world.fixture.sources.allowed = False
+    world.fixture.reset_counters()
 
-    assert_withheld(world.sanitize([answer])[0], answer)
+    assert world.sanitize([answer]) == [answer]
+    assert world.fixture.sources.readers == []
 
 
 @pytest.mark.parametrize("failure", [

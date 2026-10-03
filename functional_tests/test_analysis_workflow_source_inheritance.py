@@ -1,11 +1,14 @@
 # test_analysis_workflow_source_inheritance.py
 """
-Functional tests for Analyze source access inherited by workflow results.
-Version: 0.261.109
+Functional tests for Analyze source provenance inherited by workflow results.
+Version: 0.261.231
 Implemented in: 0.261.109
+Saved results stopped re-checking their sources in: 0.261.231
 
-Saved explanations must not bypass contributor permissions, and workflow
-materialization must authorize before reading final record values.
+A saved workflow result takes its access from its workflow and run. Its Analyze
+sources travel with it as provenance and are never re-resolved for a reader, so a
+changed or revoked source no longer withholds the result or a later explanation.
+Lineage, producer identity and hash integrity are still enforced on every read.
 """
 
 import json
@@ -14,6 +17,7 @@ from copy import deepcopy
 import pytest
 
 from test_support.app_stubs import import_app_module
+from test_support.versioning import assert_app_version_at_least
 from test_workflow_result_contract import RUN_ID, WORKFLOW, SerializedSections
 
 
@@ -90,19 +94,23 @@ def test_new_analyze_separates_evidence_and_preserves_validation():
     assert results.workflow_result_summary(manifest, reference)["analysis_result"] is True
 
 
-def test_revoked_source_blocks_before_final_records_are_loaded():
+def test_revoked_source_no_longer_blocks_the_saved_records():
     store = SerializedSections()
     manifest, reference = save(store, build_analysis(), "analyze")
-    with pytest.raises(access.AnalysisResultUnavailable):
-        results.load_workflow_task_input(
-            WORKFLOW, RUN_ID, "analyze", reference,
-            load_result=store.load, source_resolver=current_sources(False),
-        )
-    assert store.reads == [reference["sha256"]]
-    assert manifest["outputs"]["records"]["result_ref"]["sha256"] not in store.reads
+    calls = []
+    prompt, consumed = results.load_workflow_task_input(
+        WORKFLOW, RUN_ID, "analyze", reference, allow_partial=True,
+        load_result=store.load, source_resolver=current_sources(False, calls),
+    )
+    payload = json.loads(prompt)
+    assert payload["value"][0]["values"] == {"finding": "An owner is not assigned."}
+    assert payload["source_snapshot_changed"] is False
+    assert consumed["analysis_result"] is True
+    assert calls == []
+    assert manifest["outputs"]["records"]["result_ref"]["sha256"] in store.reads
 
 
-def test_saved_explanation_inherits_transitive_source_access():
+def test_saved_explanation_inherits_transitive_source_provenance():
     store = SerializedSections()
     _, analysis_ref = save(store, build_analysis(), "analyze")
     _, consumed = results.load_workflow_task_input(
@@ -116,22 +124,30 @@ def test_saved_explanation_inherits_transitive_source_access():
     )
     assert explanation_consumed["analysis_result"] is True
     _, final_ref = save(store, {"reply": "Another explanation."}, "explain-again", [explanation_consumed])
-    with pytest.raises(access.AnalysisResultUnavailable):
-        results.load_workflow_task_input(
-            WORKFLOW, RUN_ID, "explain-again", final_ref,
-            load_result=store.load, source_resolver=current_sources(False),
-        )
+    calls = []
+    prompt, _ = results.load_workflow_task_input(
+        WORKFLOW, RUN_ID, "explain-again", final_ref,
+        load_result=store.load, source_resolver=current_sources(False, calls),
+    )
+    assert json.loads(prompt)["value"] == "Another explanation."
+    _, provenance = results.authorize_workflow_task_result_read(
+        WORKFLOW, RUN_ID, "explain-again", final_ref,
+        load_result=store.load, source_resolver=current_sources(False, calls),
+    )
+    assert [source["document_id"] for source in provenance["sources"]] == ["source-1"]
+    assert calls == []
 
 
-def test_group_reader_is_authorized_as_the_actual_reader_not_workflow_owner():
+def test_another_reader_reads_the_result_without_a_source_lookup():
     store = SerializedSections()
     _, reference = save(store, build_analysis(), "analyze")
     calls = []
-    results.load_workflow_task_input(
+    _, provenance = results.authorize_workflow_task_result_read(
         WORKFLOW, RUN_ID, "analyze", reference, reader_user_id="another-member",
-        load_result=store.load, source_resolver=current_sources(calls=calls), allow_partial=True,
+        load_result=store.load, source_resolver=current_sources(calls=calls),
     )
-    assert calls[0]["user_id"] == "another-member"
+    assert provenance["source_count"] == 1 and provenance["source_snapshot_changed"] is False
+    assert calls == []
 
 
 @pytest.mark.parametrize("changed", ["producer", "output_ref"])
@@ -187,7 +203,7 @@ def test_shared_ancestors_are_loaded_once_per_authorized_traversal():
     assert store.reads.count(root_ref["sha256"]) == 1
 
 
-def test_ordinary_ancestor_flags_cannot_hide_analyze_lineage():
+def test_ordinary_ancestor_flags_cannot_hide_analyze_provenance():
     store = SerializedSections()
     _, root_ref = save(store, build_analysis(), "analyze")
     _, consumed = results.load_workflow_task_input(
@@ -196,8 +212,12 @@ def test_ordinary_ancestor_flags_cannot_hide_analyze_lineage():
     )
     consumed.pop("analysis_result")
     _, child_ref = save(store, {"reply": "A saved explanation."}, "explain", [consumed])
-    with pytest.raises(access.AnalysisResultUnavailable):
-        results.authorize_workflow_task_result_read(
-            WORKFLOW, RUN_ID, "explain", child_ref,
-            load_result=store.load, source_resolver=current_sources(False),
-        )
+    _, provenance = results.authorize_workflow_task_result_read(
+        WORKFLOW, RUN_ID, "explain", child_ref,
+        load_result=store.load, source_resolver=current_sources(False),
+    )
+    assert [source["document_id"] for source in provenance["sources"]] == ["source-1"]
+
+
+def test_version_is_at_least_the_container_access_release():
+    assert_app_version_at_least("0.261.231")

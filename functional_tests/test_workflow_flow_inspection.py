@@ -1,11 +1,14 @@
 # test_workflow_flow_inspection.py
 """
 Offline tests for compiler-derived Flow inspection and exact frozen executions.
-Version: 0.261.121
+Version: 0.261.231
 Implemented in: 0.261.121
+Definitions stopped denying inspection for an unavailable source in: 0.261.231
 
 Production compilers, identity, snapshot, journal and lineage readers use only
 fictional transactional stores. No model, source query or publication is invoked.
+An authored source the reader can't use is marked on its own selection row; the
+documents an execution read are provenance and are never re-checked.
 """
 
 import base64
@@ -41,6 +44,12 @@ from test_workflow_structured_flow import binding, create_structured_runtime, de
 
 def forbidden(*args, **kwargs):
     raise AssertionError("Inspection crossed a forbidden read, scan, or mutation boundary.")
+
+
+def forbid_source_lookups(monkeypatch):
+    """A preview or draft never looks up the sources it names."""
+    for name in ("authorize_workflow_reference", "resolve_analysis_source_manifest", "_default_authorize_scope"):
+        monkeypatch.setattr(inspection, name, forbidden)
 
 
 def details(workflow, node_id, section, **options):
@@ -282,7 +291,7 @@ def test_preview_is_pure_scope_bound_and_does_not_replace_editor_cas(monkeypatch
     workflow.update(id="foreign-stored-id", user_id="foreign", group_id="foreign-group", definition_revision="original-cas")
     original = copy.deepcopy(workflow)
     monkeypatch.setattr(inspection, "workflow_runtime_store", forbidden)
-    monkeypatch.setattr(inspection, "authorize_workflow_flow_sources", forbidden)
+    forbid_source_lookups(monkeypatch)
     monkeypatch.setattr("functions_workflow_runtime.queue_durable_workflow_run", forbidden)
     monkeypatch.setattr("functions_workflow_loop_inputs.iter_workflow_loop_documents", forbidden)
     monkeypatch.setattr("functions_workflow_iterations.freeze_workflow_loop", forbidden)
@@ -307,7 +316,7 @@ def test_preview_is_pure_scope_bound_and_does_not_replace_editor_cas(monkeypatch
         preview_workflow_flow(workflow, user_id="owner")
 
 
-def test_declared_query_sources_are_authorized_without_enumeration(monkeypatch):
+def test_declared_query_sources_are_marked_without_enumeration(monkeypatch):
     workflow = loop_definition()
     loop = workflow["flow"]["nodes"][1]
     loop["inputs"] = []
@@ -322,14 +331,24 @@ def test_declared_query_sources_are_authorized_without_enumeration(monkeypatch):
         checked.append((scope, actor_user_id))
         return allowed["value"]
 
+    def workspaces(page):
+        return [row["value"] for row in page["items"] if row["label"] == "Workspace"]
+
     monkeypatch.setattr(inspection, "_default_authorize_scope", authorize_scope)
     monkeypatch.setattr("functions_workflow_loop_inputs.iter_workflow_loop_documents", forbidden)
     monkeypatch.setattr("functions_workflow_iterations.freeze_workflow_loop", forbidden)
-    inspection.authorize_workflow_flow_sources(workflow, reader_user_id="owner")
+    page = details(workflow, "each", "selection", reader_user_id="owner")
     assert checked == [({"scope_type": "group", "scope_id": "fictional-group"}, "owner")]
+    assert workspaces(page) == [{"scope_type": "group", "scope_id": "fictional-group"}]
+    # An inaccessible source is marked on its own row; the definition stays inspectable.
     allowed["value"] = False
-    with pytest.raises(AnalysisResultUnavailable):
-        inspection.authorize_workflow_flow_sources(workflow, reader_user_id="owner")
+    assert workspaces(details(workflow, "each", "selection", reader_user_id="owner")) == [
+        {"scope_type": "group", "scope_id": "fictional-group", "available": False},
+    ]
+    assert workflow_flow_inspection(workflow)["nodes"]
+    checked.clear()
+    assert "available" not in workspaces(details(workflow, "each", "selection"))[0]
+    assert checked == []
 
 
 def test_preview_keeps_known_list_metadata_without_relaxing_executable_validation(monkeypatch):
@@ -340,7 +359,7 @@ def test_preview_keeps_known_list_metadata_without_relaxing_executable_validatio
         workflow[field] = {"legacy": {"retained": False, "provider_url": "PRIVATE_METADATA", "count": 0}}
     before = copy.deepcopy(workflow)
     monkeypatch.setattr(inspection, "workflow_runtime_store", forbidden)
-    monkeypatch.setattr(inspection, "authorize_workflow_flow_sources", forbidden)
+    forbid_source_lookups(monkeypatch)
     monkeypatch.setattr(WorkflowResultStore, "save", forbidden)
     preview = preview_workflow_flow(workflow, user_id="owner")
     assert preview == baseline and workflow == before
@@ -584,28 +603,26 @@ def test_exact_repeat_round_1001_is_lifetime_not_current_batch_or_live_revision(
     ) == {"executions": [], "next_cursor": None, "total_count": 0}
 
 
-def test_exact_payload_reuses_source_authorization_and_private_projection(monkeypatch):
+def test_exact_payload_keeps_reference_sources_private_and_never_rechecks_them(monkeypatch):
     workflow, store, container, _ = create_structured_runtime(definition(), monkeypatch)
     run_flow(workflow, store)
     monkeypatch.setattr("functions_workflow_execution_history.workflow_runtime_store", lambda *args: store)
     identifier = workflow_execution_id(workflow, "run", "classify-node")
     row = store.journal_read("execution", identifier)
     payload = container.items["run", row["id"]]["payload"]
-    payload["reference_sources"] = [{"document_id": "source", "scope": "personal", "scope_id": "owner"}]
+    receipts = [{"document_id": "source", "scope_type": "personal", "scope_id": "owner", "source_version": "1"}]
+    payload["reference_sources"] = copy.deepcopy(receipts)
     payload["lease"] = {"token": "PRIVATE"}
-    access = {"allowed": True}
-
-    def authorize(user, sources):
-        assert user == "owner" and sources[0]["document_id"] == "source"
-        if not access["allowed"]:
-            raise AnalysisResultUnavailable()
-
-    monkeypatch.setattr("functions_workflow_execution_history.authorize_analysis_sources", authorize)
+    # The references an execution read are provenance: history never looks them up again.
+    monkeypatch.setattr("functions_analysis_access.resolve_authorized_source_manifest", forbidden)
     result = workflow_execution_history(workflow, "run", reader_user_id="owner", node_id="classify-node", iteration_path=[])
     assert "PRIVATE" not in json.dumps(result) and "reference_sources" not in json.dumps(result)
-    access["allowed"] = False
+    assert result["total_count"] == 1
+    # A malformed stored receipt is still refused.
+    payload["reference_sources"] = [{"document_id": "source"}]
     with pytest.raises(AnalysisResultUnavailable):
         workflow_execution_history(workflow, "run", reader_user_id="owner", node_id="classify-node", iteration_path=[])
+    payload["reference_sources"] = copy.deepcopy(receipts)
     payload["node_id"] = "foreign-node"
     with pytest.raises(ValueError):
         workflow_execution_history(workflow, "run", reader_user_id="owner", node_id="classify-node", iteration_path=[])

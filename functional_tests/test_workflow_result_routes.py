@@ -1,11 +1,14 @@
 # test_workflow_result_routes.py
 """
 Functional tests for scoped workflow task-result page endpoints.
-Version: 0.261.109
+Version: 0.261.231
 Implemented in: 0.261.106
+Results stopped re-checking their sources in: 0.261.231
 
 Production route bodies and the response helper run in a Flask test client.
 The existing route policy suite independently covers authentication decorators.
+A saved result takes its access from its workflow, run and group membership; the
+documents it read are provenance and are never re-checked.
 """
 
 import ast
@@ -113,6 +116,7 @@ def result_client():
         "uuid": uuid,
         "logging": logging,
         "AzureError": AzureError,
+        "AnalysisResultUnavailable": AnalysisResultUnavailable,
         "WorkflowResultStorageUnavailableError": WorkflowResultStorageUnavailableError,
         "jsonify": jsonify,
         "request": request,
@@ -171,12 +175,13 @@ def test_other_user_cannot_read_workflow_result(result_client):
 
 
 @pytest.mark.parametrize("scope", ["user", "group"])
-def test_revoked_contributor_blocks_the_page_before_any_content_read(result_client, scope):
+def test_an_unverifiable_result_is_refused_before_any_content_read(result_client, scope):
     client, state, workflow, run, item, reads = result_client
-    state["authorization_error"] = AnalysisResultUnavailable()
+    state["authorization_error"] = AnalysisResultUnavailable("analysis_lineage_invalid")
     response = client.get(f"/{scope}/workflow-1/run-1/extract?output=authoritative")
-    assert response.status_code == 403
+    assert response.status_code == 409
     assert "content" not in response.json
+    assert "source" not in response.json["error"].lower()
     assert reads == []
 
 
@@ -253,19 +258,25 @@ def test_legacy_preview_is_not_substituted_for_a_saved_result(result_client):
 
 
 @pytest.mark.parametrize("output", ["manifest", "authoritative", "diagnostics"])
-def test_source_revocation_blocks_every_saved_representation(result_client, output):
+def test_lost_source_access_does_not_block_any_saved_representation(result_client, output):
     client, state, workflow, run, item, reads = result_client
     state["analysis_result"] = True
     state["source_allowed"] = False
     response = client.get(f"/user/workflow-1/run-1/extract?output={output}")
-    assert response.status_code == 403
-    assert "content" not in response.json
-    assert reads == []
+    # The result takes its access from its workflow and run, not from the documents it read.
+    assert response.status_code == 200
+    assert response.json["content"] == '{"inventory_id":"fictional-1"}'
+    assert len(reads) == 1
+    assert state["source_readers"] == []
 
 
-def test_group_result_source_access_uses_current_reader(result_client):
+def test_group_results_check_current_membership_not_sources(result_client):
     client, state, workflow, run, item, reads = result_client
     state["analysis_result"] = True
+    state["source_allowed"] = False
     state["actor"] = "viewing-member"
     assert client.get("/group/workflow-1/run-1/extract").status_code == 200
-    assert state["source_readers"] == ["viewing-member"]
+    assert state["source_readers"] == []
+    state["group_allowed"] = False
+    assert client.get("/group/workflow-1/run-1/extract").status_code == 403
+    assert len(reads) == 1

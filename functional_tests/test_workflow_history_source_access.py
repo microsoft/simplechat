@@ -1,12 +1,14 @@
 # test_workflow_history_source_access.py
 """
 Functional tests for workflow history, preview, and activity source inheritance.
-Version: 0.261.229
+Version: 0.261.231
 Implemented in: 0.261.108
 Definition previews stopped re-checking run sources in: 0.261.229
+History stopped re-checking task result sources in: 0.261.231
 
-History authorization follows real stored producer receipts and does not rely on
-the workflow owner's old permissions or the visible UI's item limit. A workflow
+History verification follows real stored producer receipts and does not rely on
+the visible UI's item limit. It proves each result's lineage; the documents a run
+used are provenance and are never re-checked for the reader. A workflow
 definition's last-run preview takes its access from the workflow itself.
 """
 
@@ -72,30 +74,27 @@ def history():
     return store, state, sources, items
 
 
-def test_history_rechecks_transitive_sources_as_the_current_reader():
+def test_history_reads_transitive_results_without_rechecking_their_sources():
     store, state, sources, items = history()
+    state["readers"].clear()
+    state["allowed"] = False
     authorize_workflow_run_read(
         WORKFLOW, RUN_ID, result_items=[items[1]], reader_user_id="current-reader",
         load_result=store.load, source_resolver=sources,
     )
-    assert state["readers"][-1] == "current-reader"
-    state["allowed"] = False
-    with pytest.raises(AnalysisResultUnavailable):
-        authorize_workflow_run_read(
-            WORKFLOW, RUN_ID, result_items=[items[1]], reader_user_id="current-reader",
-            load_result=store.load, source_resolver=sources,
-        )
+    assert state["readers"] == []
 
 
-def test_history_authorization_does_not_stop_at_the_old_thousand_item_limit():
+def test_history_verification_does_not_stop_at_the_old_thousand_item_limit():
     store, state, sources, items = history()
-    state["allowed"] = False
+    forged = {**items[1], "workflow_id": "another-workflow"}
     pending = [{"item_type": "task", "workflow_result": {}} for _ in range(1000)]
-    with pytest.raises(AnalysisResultUnavailable):
+    with pytest.raises(AnalysisResultUnavailable) as refused:
         authorize_workflow_run_read(
-            WORKFLOW, RUN_ID, result_items=iter([*pending, items[1]]),
+            WORKFLOW, RUN_ID, result_items=iter([*pending, forged]),
             reader_user_id="current-reader", load_result=store.load, source_resolver=sources,
         )
+    assert refused.value.code == "analysis_lineage_invalid"
 
 
 def test_definition_catalog_keeps_a_run_preview_without_rechecking_its_sources():
@@ -117,13 +116,13 @@ def test_definition_catalog_keeps_a_run_preview_without_rechecking_its_sources()
 
 
 @pytest.mark.parametrize("group", [False, True])
-def test_activity_stream_stops_before_emitting_revoked_source_content(group):
+def test_activity_stream_stops_on_an_unverifiable_record_without_blaming_sources(group):
     calls = []
 
     def snapshot(*args, **kwargs):
         calls.append(1)
         if len(calls) > 1:
-            raise AnalysisResultUnavailable()
+            raise AnalysisResultUnavailable("analysis_lineage_invalid")
         return {"run": {"status": "running"}, "activities": [{"title": "Authorized first update"}]}
 
     name = "_stream_group_workflow_activity" if group else "_stream_workflow_activity"
@@ -141,4 +140,5 @@ def test_activity_stream_stops_before_emitting_revoked_source_content(group):
     frames = list(namespace[name](*args, run_id=RUN_ID))
     assert len(calls) == 2
     assert frames[-1].startswith("event: error")
-    assert "source_access_denied" in frames[-1]
+    assert "activity_unavailable" in frames[-1]
+    assert "source" not in frames[-1].lower()

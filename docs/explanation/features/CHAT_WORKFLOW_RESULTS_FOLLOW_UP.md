@@ -144,9 +144,13 @@ can be injected.
    match gives 409 `workflow_result_changed`.
 6. **Authorization.** `authorize_workflow_run_read(workflow, run_id,
    reader_user_id=user_id, result_items=<the same rows>, load_result=<a
-   memoizing loader>)` checks the whole run the way run history does, including
-   every stored task result and its analysis sources. Each eligible task's
-   manifest must then name the same workflow, run, task and authoritative
+   memoizing loader>)` verifies the whole run the way run history does: every
+   stored task result and the results it consumed must belong to this workflow,
+   run and task, with matching contract versions and hashes. Since
+   **0.261.231**, the documents the run's tasks read are provenance only and
+   aren't looked up again: the result takes its access from its workflow and
+   run, so losing access to such a document doesn't withhold it. Each eligible
+   task's manifest must then name the same workflow, run, task and authoritative
    output, and pass the runner's own completion rule
    (`_require_completed_result`), which accepts a partial result only in a
    `completed_partial` run.
@@ -445,9 +449,11 @@ match uses a workflow result, as it does for saved analyses, so a cached
 snippet can't outlive access. A few older reads that only the chat's owner can
 reach don't run the sanitizer yet; see [Known limitations](#known-limitations).
 
-Masking re-checks access to the result, not the feature entitlement. Turning the
-setting off, or losing the `WorkflowUser` role, stops new questions but doesn't
-hide earlier answers, as with saved analyses that workflows produce.
+Masking re-checks access to the result, not the feature entitlement and not the
+documents the run's tasks read. Turning the setting off, or losing the
+`WorkflowUser` role, stops new questions but doesn't hide earlier answers, as
+with saved analyses that workflows produce. Since **0.261.231**, losing access
+to a document a task read doesn't hide them either.
 
 ### Privacy
 
@@ -550,13 +556,13 @@ alert's **Show more**, with the alert's other secondary actions.
 | `workflow_result_context_conflict` | 400 | The request carries a saved analysis and a workflow result. | Kept |
 | `workflow_result_private_only` | 403 | The chat is shared, collaborative, converted, or someone else's. | Removed |
 | `workflow_result_not_found` | 404 | The workflow or run is missing, deleted or someone else's. | Removed |
-| `workflow_result_access_denied` | 403 | Run authorization failed, for example a source the owner can no longer read. | Removed |
+| `workflow_result_access_denied` | 403 | Access to the result couldn't be confirmed, for example a storage permission failure. The documents the run's tasks read are never re-checked. | Removed |
 | `workflow_result_changed` | 409 | The result's digest differs from the selected one. | Removed |
 | `workflow_result_in_progress` | 409 | The run hasn't finished. | Removed |
 | `workflow_result_not_finished` | 409 | The run failed, was cancelled, or ended without completing. | Removed |
 | `workflow_result_preview_only` | 409 | No task stored a durable result (older runs). | Removed |
 | `workflow_result_unsupported` | 409 | A structured (version 3) run, or a result made only of combined reports. | Removed |
-| `workflow_result_invalid` | 409 | The stored result is inconsistent, or the run has more than 200 task rows. | Removed |
+| `workflow_result_invalid` | 409 | The stored result is inconsistent, a stored result or receipt fails its lineage or hash check, or the run has more than 200 task rows. | Removed |
 | `workflow_result_conversation_unavailable` | 404 | The chat no longer exists or was deleted. | Removed |
 | `workflow_result_retry_unsupported` | 400 | A Follow up request also carries a retry or edit id, or the retry or edit route is asked to replay a Follow up turn. | Kept |
 | `workflow_result_too_large` | 400 | The result and history don't fit the model even at a 6 KB excerpt. | Kept |
@@ -633,7 +639,8 @@ the controls are listed in
 | `functional_tests/test_workflow_result_followup.py` | One turn with the real reader and fake route helpers: private chats only on every turn, the digest binding, no sources whatever the request says, the fixed system message and fence, the per-request fence code (a forged, full-width or zero-width-split end marker stays inside the data, and the code differs per request), the disclosure, input and output screening, agents, the descriptor and inherited contexts on the answer, the re-check before saving, budget steps, mixed runs and the refusal payload. |
 | `functional_tests/test_workflow_result_chat_routes.py` | Dispatch at every chat entry point and the stream prechecks, then an offline boot of the real application answering through the real JSON, SSE and history routes. |
 | `functional_tests/test_workflow_result_review_paths.py` | An offline boot of the real application, through `functional_tests/test_support/workflow_result_offline_app.py`. Converting a chat to a collaboration stores its Follow up answers and inherited answers withheld and keeps each question's text without the keys; the preview, a pending invitee's metadata and history, the summary input, MCP collaboration reads, mirrored messages and the M365 publication see only the withheld form; and both summaries stay empty after the source and sync calls, even when the hidden source's summary is regenerated. The group route's conversion of a group-classified private chat does the same, and a group-classified chat without workflow results keeps its summary on both chats. The Word, PowerPoint and email exports of a single message refuse a converted chat and a lost result and still export a normal message. Retry and edit refuse Follow up turns before any content check or write and still replay ordinary turns. A search whose matches use a workflow result is never written to the cache. |
-| `functional_tests/test_workflow_result_masking.py` | Withholding on read for a deleted run, a changed result, lost source access, a storage failure, another reader and a chat that isn't private; the masked shape; the question's text kept; the read sites; and the per-call cost. |
+| `functional_tests/test_workflow_result_masking.py` | Withholding on read for a deleted run, a changed result, a storage failure, another reader and a chat that isn't private, and keeping an answer after access to a document its result read is lost; the masked shape; the question's text kept; the read sites; and the per-call cost. |
+| `functional_tests/test_workflow_saved_results_container_access.py` | Since 0.261.231: saved results, history and Follow up keep working after a source document is deleted, re-uploaded or held, while container, lineage and input-time checks still refuse. |
 | `functional_tests/test_workflow_result_orchestration_lineage.py` | Orchestration history skipping workflow-result answers and later answers that inherited them, while keeping the questions. |
 | `functional_tests/test_workflow_result_privacy_import_cycle.py` | Saved analysis and Follow up import the privacy check lazily from the memory module and never from the workflow planning context, the planning context reuses that one definition, and the memory module imports none of the modules that ask it. Each module loads cold in either order, with and without `-O`, with no network access. |
 | `functional_tests/test_chat_workflow_results_admin.py`, `functional_tests/test_v2_admin_workflow_parity.py` | The default, the guard, the classic and V2 admin switches, the gate and decorator, and the bootstrap flag. |
@@ -645,10 +652,10 @@ the controls are listed in
 
 - **One check of a result** (the descriptor route, each Follow up read, the
   re-check before saving, and masking) costs 2 point reads (the workflow and the
-  run), 1 single-partition query on the run items, one manifest load per
+  run), 1 single-partition query on the run items, and one manifest load per
   eligible task plus the consumed-ancestor loads of run authorization, shared
-  through one memoizing loader, and source authorization for any Analyze
-  lineage. There's no history paging, because structured runs are closed.
+  through one memoizing loader. Since 0.261.231 it looks up no source documents.
+  There's no history paging, because structured runs are closed.
 - **A Follow up turn** reads the result once with excerpts, and again for each
   budget step it needs, then re-checks the current and every inherited context
   before saving.

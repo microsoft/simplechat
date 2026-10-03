@@ -174,7 +174,8 @@ The run inspector shows the current gate, checkpoint units/attempts, progress,
 and decision history. **Run memory** is a read-only projection of durable state,
 not an editable Markdown file and not an authority for validation or approval.
 
-Full task results continue to use their scoped, source-authorized readers.
+Full task results continue to use their scoped, lineage-verified readers. Since
+0.261.231 those readers don't re-check the documents a run read.
 Internal journal rows, lease tokens, request payloads, and checkpoint control
 records are excluded from ordinary task-item lists.
 

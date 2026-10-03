@@ -6,7 +6,7 @@ from collections import OrderedDict
 from collections.abc import Mapping
 from copy import deepcopy
 
-from functions_analysis_access import AnalysisResultUnavailable, analysis_source_snapshot, authorize_analysis_sources
+from functions_analysis_access import AnalysisResultUnavailable, analysis_source_snapshot
 from functions_workflow_bindings import WorkflowInputError
 from functions_workflow_identity import canonical_digest, workflow_node_identity
 from functions_workflow_limits import WORKFLOW_MAX_EXECUTION_ADMISSIONS
@@ -59,24 +59,32 @@ def read_consumed_inputs(manifest, load_section):
 
 
 class WorkflowLineageAuthorization:
-    """One bounded iterative graph for results, mixed paths and temporal state proofs."""
+    """One bounded iterative graph for results, mixed paths and temporal state proofs.
+
+    The walk proves identity, lineage and integrity: each result belongs to this
+    workflow and run, its hashes and references match, and its consumed-input
+    receipts chain correctly. A saved result takes its access from its workflow
+    and run, so contributing sources are collected as provenance and are never
+    re-resolved for the reader. Frozen document items are provenance here too;
+    reading one as an input checks it (``load_frozen_item_value``).
+    ``source_resolver`` is accepted for existing callers and is not used.
+    """
 
     def __init__(self, workflow, run_id, *, reader_user_id=None, load_result=load_workflow_node_result,
                  source_resolver=None, include_sources=True, source_callback=None, store=None):
         self.workflow, self.run_id = workflow, run_id
         self.reader_user_id = reader_user_id or workflow["user_id"]
-        self.load_result, self.source_resolver = load_result, source_resolver
+        self.load_result = load_result
         self.include_sources, self.source_callback = include_sources, source_callback
         self._store = store
         self._compiled = None
         self.loaded = OrderedDict()
         self.active, self.visited = set(), set()
-        self.sources, self.source_ids, self.source_batch = {}, set(), []
-        self.changed = False
+        self.sources, self.source_ids = {}, set()
         self._recording = None
         self._proof_cache = None
         # Reuse immutable graph structure only within this active worker request;
-        # source, document and publication authority is never cached.
+        # publication destination authority is never cached.
         from functions_workflow_execution import current_workflow_execution
 
         execution = current_workflow_execution()
@@ -115,16 +123,6 @@ class WorkflowLineageAuthorization:
         self.loaded.move_to_end(key)
         return self.loaded[key]
 
-    def _flush_sources(self):
-        if not self.source_batch:
-            return
-        checked = authorize_analysis_sources(self.reader_user_id, self.source_batch, resolver=self.source_resolver)
-        self.changed |= checked["source_snapshot_changed"]
-        if self.source_callback is not None:
-            for source in self.source_batch:
-                self.source_callback(source)
-        self.source_batch.clear()
-
     def source_seen(self, source):
         source = analysis_source_snapshot([source])[0]
         if self._recording is not None:
@@ -135,16 +133,8 @@ class WorkflowLineageAuthorization:
         self.source_ids.add(digest)
         if self.include_sources:
             self.sources[digest] = source
-        self.source_batch.append(source)
-        if len(self.source_batch) >= 100:
-            self._flush_sources()
-
-    def _document_access(self, item):
-        from functions_workflow_iterations import _authorize_frozen_document
-
-        _authorize_frozen_document(self.workflow, item, self.reader_user_id)
-        if self._recording is not None:
-            self._recording["documents"].append(item)
+        if self.source_callback is not None:
+            self.source_callback(source)
 
     def _publication_access(self, publication):
         from functions_artifact_publication import authorize_publication_status_read
@@ -163,13 +153,11 @@ class WorkflowLineageAuthorization:
             entry, _ = cached
             for source in entry["sources"]:
                 self.source_seen(source)
-            for item in entry["documents"]:
-                self._document_access(item)
             for publication in entry["publications"]:
                 self._publication_access(publication)
             yield from entry["dependencies"]
             return
-        entry = {"dependencies": [], "sources": [], "documents": [], "publications": []}
+        entry = {"dependencies": [], "sources": [], "publications": []}
         children = iter(self._children(proof))
         while True:
             self._recording = entry if cache is not None else None
@@ -192,9 +180,10 @@ class WorkflowLineageAuthorization:
                     cache["bytes"] -= removed_size
 
     def access(self):
-        self._flush_sources()
+        # source_snapshot_changed stays in the shape shared with saved analysis
+        # readers; a saved result is never compared with its sources' current versions.
         return {
-            "source_count": len(self.source_ids), "source_snapshot_changed": self.changed,
+            "source_count": len(self.source_ids), "source_snapshot_changed": False,
             "sources": list(self.sources.values()) if self.include_sources else None,
         }
 
@@ -218,7 +207,6 @@ class WorkflowLineageAuthorization:
                 continue
             self.active.add(child_key)
             pending.append((child_key, iter(self._cached_children(child_key, proof))))
-        self._flush_sources()
 
     def _children(self, proof):
         kind, *arguments = proof
@@ -359,7 +347,7 @@ class WorkflowLineageAuthorization:
                 if kind == "frozen_item" and item["item_id"] != arguments[2]:
                     raise AnalysisResultUnavailable("workflow_loop_item_invalid")
                 if item["kind"] == "document":
-                    self._document_access(item)
+                    # The frozen item is provenance; a body that reads it as input checks it then.
                     self.source_seen(item["source"])
                 elif kind == "frozen_item":
                     receipt = manifest["source_receipt"]
@@ -426,7 +414,7 @@ def authorize_workflow_node_result_read(
 
 
 class AuthorizedWorkflowRecordInput:
-    """A source-authorized immutable record range, not a preview or access token."""
+    """A lineage-verified immutable record range, not a preview or access token."""
 
     def __init__(self, workflow, run_id, identity, reference, *, output_name="authoritative",
                  reader_user_id=None, allow_partial=False, load_result=load_workflow_node_result,
@@ -506,8 +494,6 @@ class AuthorizedWorkflowRecordInput:
         if getattr(self, "receipt", {}).get("repeat_state"):
             authorization.walk([("receipt", self.receipt)])
             access = authorization.access()
-        if access["source_snapshot_changed"] and not self.inspection:
-            raise AnalysisResultUnavailable("analysis_source_snapshot_changed")
         return manifest, access
 
     def _load(self, reference):
@@ -586,8 +572,6 @@ def load_workflow_node_input(
         load_result=load_result, source_resolver=source_resolver,
     )
     _require_completed_result(manifest, allow_partial=allow_partial)
-    if access["source_snapshot_changed"]:
-        raise AnalysisResultUnavailable("analysis_source_snapshot_changed")
     validation = manifest.get("workflow_validation") or {}
     if validation.get("eligible") is not True:
         raise ValueError("The producer's output contract is not eligible.")
@@ -648,5 +632,6 @@ def load_workflow_node_input(
         "consumed_result": value_receipt, "provenance": manifest.get("provenance") or {},
         "coverage": manifest.get("coverage") or {}, "validation": manifest.get("validation") or {},
         "kind": output["kind"], "value": output["value"],
-        "source_snapshot_changed": access["source_snapshot_changed"],
+        # A fixed field keeps saved input digests stable; sources are not re-checked.
+        "source_snapshot_changed": False,
     }, ensure_ascii=False, allow_nan=False, sort_keys=True), receipt

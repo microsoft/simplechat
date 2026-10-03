@@ -182,13 +182,11 @@ class WorkflowFlowRunner:
                     self.partial |= (summary.get("workflow_validation") or {}).get("status") == "accepted_partial"
                     continue
                 if metadata_only:
-                    manifest, access = authorize_workflow_node_result_read(
+                    manifest, _ = authorize_workflow_node_result_read(
                         self.workflow, self.run_id, summary["producer"], summary["result_ref"],
                         reader_user_id=self.actor_user_id, load_result=self.execution.load_result,
                     )
                     _require_completed_result(manifest, allow_partial=binding["allow_partial"])
-                    if access["source_snapshot_changed"]:
-                        raise AnalysisResultUnavailable("analysis_source_snapshot_changed")
                     if (manifest.get("workflow_validation") or {}).get("eligible") is not True:
                         raise WorkflowInputError("The selected output is not eligible.")
                     descriptor = manifest.get("outputs", {}).get(name)
@@ -417,7 +415,10 @@ class WorkflowFlowRunner:
         except WorkflowLoopInputError as exc:
             self.execution.pause_input(exc.public_message, code=getattr(exc, "code", "workflow_loop_input_unavailable"))
         except AnalysisResultUnavailable:
-            self.execution.pause_input("The loop's original input sources are no longer available.", code="workflow_loop_source_unavailable")
+            self.execution.pause_input(
+                "The loop's input is no longer available or could not be verified.",
+                code="workflow_loop_source_unavailable",
+            )
         for index in range(state["next_index"], manifest["count"]):
             self.execution.set_node(node, region_id, iteration_path=parent_path, iteration_inputs=parent_receipts)
             self.execution.check()
@@ -537,12 +538,10 @@ class WorkflowFlowRunner:
             "collect", write, inputs={"source": identity, "manifest_ref": reference, "contract": node["output_contract"]},
             replay_safe=True,
         )
-        manifest, access = authorize_workflow_node_result_read(
+        manifest, _ = authorize_workflow_node_result_read(
             self.workflow, self.run_id, summary["producer"], summary["result_ref"],
             reader_user_id=self.actor_user_id, load_result=self.execution.load_result,
         )
-        if access["source_snapshot_changed"]:
-            self.execution.pause_input("A collected source changed. The saved records were retained.", code="workflow_loop_source_changed")
         validation = manifest["workflow_validation"]
         state = "completed" if validation["eligible"] else validation["status"]
         self.partial |= validation["status"] == "accepted_partial"

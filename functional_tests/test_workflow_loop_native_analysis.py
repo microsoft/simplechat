@@ -1,8 +1,9 @@
 # test_workflow_loop_native_analysis.py
 """
 Functional regression for current-document native Analyze in serial loops.
-Version: 0.261.119
+Version: 0.261.231
 Implemented in: 0.261.117
+Collected results stopped re-checking their sources in: 0.261.231
 
 Production task dispatch, native checkpoint adaptation, result transport and
 Collect execute over fictional native/source boundaries. No document is uploaded,
@@ -13,6 +14,7 @@ import copy
 import sys
 
 import pytest
+from azure.cosmos.exceptions import CosmosResourceNotFoundError
 
 from test_analyze_native_saved_integration import native, native_run  # noqa: F401
 from test_analyze_backend_saved_integration import saved
@@ -122,7 +124,6 @@ def native_loop_flow(native_run, monkeypatch, request):
 
     monkeypatch.setattr("functions_workflow_loop_inputs.iter_workflow_loop_documents", documents)
     monkeypatch.setattr("functions_workflow_loop_inputs.reauthorize_workflow_loop_document", reauthorize)
-    monkeypatch.setattr("functions_workflow_node_results.authorize_analysis_sources", source_authorizer)
     native_module = sys.modules["functions_tabular_generated_exports"]
 
     def read_native(user_id, run_id):
@@ -230,5 +231,14 @@ def test_each_document_uses_its_exact_native_producer_and_collects_complete_resu
     execute()
     assert len(calls) == 2 and len(native_run.reads) == 6
     allowed[identifiers[1]] = False
-    with pytest.raises(AnalysisResultUnavailable):
-        reader.read_records(offset=0, limit=1)
+    # Collected records are generated output. A later change to a document the
+    # loop analyzed does not hide them; each page still re-verifies lineage.
+    page, total = reader.read_records(offset=150, limit=1)
+    assert total == 300 and page[0]["document_id"] == identifiers[1]
+    forged = copy.deepcopy(receipt["result_ref"])
+    forged["sha256"] = "0" * 64
+    # A forged hash names no stored result, or one whose lineage doesn't match.
+    with pytest.raises((AnalysisResultUnavailable, CosmosResourceNotFoundError)):
+        open_workflow_record_input(
+            workflow, "run", receipt["producer"], forged, output_name="records", source_resolver=source_resolver,
+        )

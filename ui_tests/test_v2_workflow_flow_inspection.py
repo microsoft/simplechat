@@ -1,9 +1,10 @@
 # test_v2_workflow_flow_inspection.py
 """
 Offline browser regressions for approved M5A read-only workflow Flow inspection.
-Version: 0.261.178
+Version: 0.261.231
 Implemented in: 0.261.121
 Group saved Flow opens through the group route only: 0.261.178
+An unavailable authored source is marked on its own row: 0.261.231
 
 Uses the real local SPA, compiler-derived projections and closed fictional APIs.
 Run with PLAYWRIGHT_SERVICE_URL='' in this same pytest process. No live app,
@@ -1005,6 +1006,28 @@ def test_root_and_task_source_selection_show_only_their_bounded_references(workf
     assert all(entry.query["limit"] == ["50"] for entry in requests)
     expect(view.locator(".workflow-flow-data-edge")).to_have_count(0)
     assert not ui.evidence_requests and not ui.exact_requests
+
+
+def test_an_unavailable_source_is_marked_on_its_own_row_and_the_definition_stays_open(workflow_flow_ui):
+    ui = workflow_flow_ui
+    definition = ui.personal_workflows[FLOW_WORKFLOW_ID]
+    definition["reference_inputs"] = [{
+        "id": f"ref-{index}", "name": f"reference_{index}", "document_id": f"reference-document-{index}",
+        "scope_type": "personal",
+    } for index in range(2)]
+    definition["definition_revision"] = workflow_definition_revision(definition)
+    ui.unavailable_source_ids = {"reference-document-1"}
+    view = open_saved(ui)
+    inspector = select_node(view, "root")
+    inspector.get_by_label("Inspection section", exact=True).select_option(label="Source selection")
+    expect(inspector).to_contain_text("Showing 2 of 2 source selection entries")
+    rows = inspector.locator("dl > div")
+    note = "Not available to you right now."
+    expect(rows.filter(has_text="reference_1")).to_contain_text(note)
+    expect(rows.filter(has_text="reference_1")).to_contain_text("The workflow definition is unchanged.")
+    expect(rows.filter(has_text="reference_0")).not_to_contain_text(note)
+    expect(inspector.get_by_role("alert")).to_have_count(0)
+    expect(view.locator("[data-workflow-node-id]").first).to_be_visible()
 
 
 def test_for_each_source_selection_accepts_5001_entries_without_expanding_instances(workflow_flow_ui):

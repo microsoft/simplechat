@@ -78,6 +78,8 @@ Bootstrap owners bind `resolve_orchestration_source_manifest(requested_sources, 
 
 The additive `assert_document_available(..., strict_errors=True)` and `assert_evidence_available(..., strict_errors=True)` APIs are server-only choices, not request settings. A headless owner that catches source errors must wrap its entire source decision/model phase in `with strict_source_authority():`; nested checks retain the first failure until that operation ends. Flask requests additionally retain the existing request-local model fence. Independent operations do not share a global failure flag.
 
+A workflow run executes all its tasks inside one request context. Since **0.261.231**, each task attempt starts with an empty fence from `isolate_request_source_fence()` and restores the caller's state afterwards, so a held input blocks only its own task's model call, never a later task that reads generated output.
+
 Only `public_message`, `code`, `retryable` and `status_code` are suitable for public error responses. Do not serialize exception strings, causes or SDK diagnostics. Legacy screening/search callers outside this explicit path keep their existing fail-closed behavior.
 
 Importing the source-access contracts does not import telemetry, settings or configuration owners. Runtime failure reporting resolves `log_event` only after recording the model fence; import-order checks cover both normal and optimized Python without provider access.

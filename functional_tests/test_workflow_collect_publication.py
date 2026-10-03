@@ -1,8 +1,9 @@
 # test_workflow_collect_publication.py
 """
 Functional tests for real Collect-to-shared-export-to-publication execution.
-Version: 0.261.119
+Version: 0.261.231
 Implemented in: 0.261.119
+Saved exports stopped re-checking their sources in: 0.261.231
 
 Native per-document results, frozen iteration, schema-2 replay, both result
 backends, shared JSON rendering and the existing destination ledger execute
@@ -90,9 +91,14 @@ def test_reloaded_native_collect_publishes_without_reanalysis(artifact_services,
     assert services.blobs.writes == 1
     assert len(fixture["calls"]) == 2 and len(fixture["native_run"].reads) == 6
 
+    # The export is generated output: a later change to a document the loop analyzed
+    # neither withdraws it nor blocks downloading it.
     fixture["allowed"]["native-source-b"] = False
-    with pytest.raises((PermissionError, AnalysisResultUnavailable, ValueError)):
-        services.download("owner", "conversation-1", file_card["artifact_message_id"])
+    response = services.download("owner", "conversation-1", file_card["artifact_message_id"])
+    try:
+        assert response.get_data() == content
+    finally:
+        response.close()
     assert len(services.publication.calls["create"]) == 1
 
 

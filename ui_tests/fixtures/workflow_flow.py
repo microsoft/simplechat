@@ -1,7 +1,7 @@
 # workflow_flow.py
 """
 Closed production-bundle fixtures for read-only M5A Flow inspection.
-Version: 0.261.127
+Version: 0.261.231
 Implemented in: 0.261.121
 
 The shared fixture serves only local static assets and fictional API responses.
@@ -150,6 +150,8 @@ class WorkflowFlowFixture(WorkflowRepeatFixture):
         self.flow_payloads = []
         self.held_flow_responses = []
         self.flow_response_gates = []
+        # Document ids the server would mark unavailable to this reader on selection rows.
+        self.unavailable_source_ids = set()
         self.group_can_manage = True
         self.legacy_workflow = workflow_record(
             "flow-legacy-v1", name="Legacy version one", definition_version=1,
@@ -445,6 +447,12 @@ class WorkflowFlowFixture(WorkflowRepeatFixture):
                     workflows = self.group_workflows[group_id] if group_id else self.personal_workflows
                     assert workflow_id in workflows, entry
                     payload = self.inspection.workflow_flow_inspection(workflows[workflow_id], **selectors)
+                if self.unavailable_source_ids and selectors.get("section") == "selection":
+                    payload = copy.deepcopy(payload)
+                    for item in payload["items"]:
+                        value = item.get("value")
+                        if isinstance(value, dict) and value.get("document_id") in self.unavailable_source_ids:
+                            item["value"] = {**value, "available": False}
             self._json(route, payload)
         except WorkflowDefinitionConflict as error:
             self._json(route, {"error": error.public_message, "code": "workflow_flow_revision_changed"}, 409)

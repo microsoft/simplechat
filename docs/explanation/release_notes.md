@@ -2,6 +2,19 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.231)**
+
+#### Breaking Changes
+
+*   **Saved Workflow Results No Longer Re-check Their Source Documents**
+    *   Saved and generated workflow results now take their access from the workflow, run and group they belong to. Deleting, re-uploading or holding a document a run used no longer hides or fails its task results, node results, structured execution history, For each and Repeat history, run history previews, or chat answers about a workflow result.
+    *   A later task can read an earlier task's output after that output's source changed. Runs no longer pause with "A collected source changed." or "The Repeat state's original sources are no longer available." for generated output.
+    *   Checks that stay: a workflow still refuses a held or inaccessible uploaded document when it reads it as an input (For each document items, document selections, reference inputs, File Sync and other configured sources), and that held input still blocks its own task's model call. Each task now gets its own model fence, so a held input can't block a later task. Container checks are unchanged: you need access to the workflow, group results stay limited to group members, and someone else's run still answers like a missing one. Forged or mismatched results are still refused.
+    *   Opening a saved workflow's Flow no longer fails when one referenced document is missing, held or outside your access. That source is marked "Not available to you right now" on its own row, and the rest of the definition shows.
+    *   API changes: a result that fails its lineage or hash check now answers 409 instead of 403 on task result pages ("The saved result or requested page is unavailable.") and execution history ("This saved execution record could not be verified."). Flow and execution history 403 messages no longer mention sources. Activity streams end with `activity_unavailable` instead of `source_access_denied`. Chat follow-ups report a lineage failure as `workflow_result_invalid`. `source_snapshot_changed` is always `false` and kept for older clients.
+    *   **Migration**: none. Nothing is migrated or withdrawn; results saved before this version are read the same way.
+    *   (Ref: #1621, `functions_workflow_node_results.py`, `functions_workflow_results.py`, `functions_workflow_inspection.py`, `functions_workflow_result_reader.py`, `functions_saved_analysis.py`, `functions_workflow_runner.py`, `content_screening/access.py`, `route_backend_workflows.py`, `WorkflowDefinitionInspector.tsx`, [Workflow Saved Result Source Re-check Fix](fixes/WORKFLOW_SAVED_RESULT_SOURCE_RECHECK_FIX.md))
+
 ### **(v0.261.229)**
 
 #### Bug Fixes

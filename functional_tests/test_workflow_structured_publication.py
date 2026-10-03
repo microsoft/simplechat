@@ -1,11 +1,12 @@
 # test_workflow_structured_publication.py
 """
 Native Analyze and publication service integration for structured workflows.
-Version: 0.261.118
+Version: 0.261.231
 Implemented in: 0.261.116
 Publication completion implemented in: 0.261.118
+Saved results stopped re-checking their sources in: 0.261.231
 
-Actual final-checkpoint adaptation, result persistence, source-authorized joins,
+Actual final-checkpoint adaptation, result persistence, lineage-verified joins,
 task dispatch and publication receipts operate over fictional service doubles.
 No Analyze origin flags are fabricated and no live document is published.
 """
@@ -22,7 +23,6 @@ from test_analyze_native_saved_integration import native, native_run  # noqa: F4
 from test_analyze_backend_saved_integration import saved
 from test_workflow_structured_flow import create_structured_runtime, definition
 from test_workflow_task_result_handoff import build_inventory_run
-from functions_analysis_access import AnalysisResultUnavailable
 from functions_workflow_execution import workflow_execution_scope
 from functions_workflow_execution import WorkflowSuspended
 from functions_workflow_runtime_store import WorkflowRuntimeLease
@@ -124,9 +124,6 @@ def publication_flow(native_run, publication, monkeypatch, request):
     monkeypatch.setattr("functions_workflow_runtime_store.workflow_runtime_store", lambda *args: store)
     monkeypatch.setattr(saved, "authorize_workflow_task_result_read", authorize)
     monkeypatch.setattr(publication.module, "authorize_analysis_artifact", saved.authorize_analysis_artifact)
-    monkeypatch.setattr("functions_workflow_node_results.authorize_analysis_sources", lambda user, sources, **kwargs: (
-        saved.authorize_analysis_sources(user, sources, resolver=source_resolver)
-    ))
     runner.update(
         _execute_workflow_dispatch=dispatch,
         authorize_workflow_task_result_read=authorize,
@@ -166,17 +163,36 @@ def test_actual_native_result_publishes_once_through_an_explicit_join(publicatio
     assert replay["publication"] == result["publication"]
     assert calls == ["classify", "yes"] and len(publication.calls["create"]) == 1
 
+    # The saved result takes its access from its workflow and run, so a later
+    # change to the document it analyzed does not block publishing it again.
     native_run.state["allowed"] = False
-    before = copy.deepcopy(publication.calls)
-    with pytest.raises(AnalysisResultUnavailable):
-        publication.module.publish_workflow_analysis_artifact(
-            "owner", publication=workflow["tasks"][0]["publication"],
+    created = len(publication.calls["create"])
+    plain = {key: value for key, value in workflow["tasks"][0]["publication"].items() if key != "completion_policy"}
+    publication.module.publish_workflow_analysis_artifact(
+        "owner", publication=plain,
+        artifact_reference={
+            "conversation_id": "conversation-1", "artifact_message_id": "artifact-1",
+            "producer": {"kind": "workflow", **producer},
+        }, request_id="new-copy-after-source-change",
+    )
+    assert len(publication.calls["create"]) == created + 1
+
+
+def test_a_forged_producer_still_cannot_publish(publication_flow):
+    fixture = publication_flow
+    result = fixture.execute()
+    producer = result["task_results"][1]["workflow_result"]["producer"]
+    before = copy.deepcopy(fixture.publication.calls)
+    # The artifact is bound to its exact producer, so a forged one is refused before any copy.
+    with pytest.raises(ValueError, match="different analysis result"):
+        fixture.publication.module.publish_workflow_analysis_artifact(
+            "owner", publication=fixture.workflow["tasks"][0]["publication"],
             artifact_reference={
                 "conversation_id": "conversation-1", "artifact_message_id": "artifact-1",
-                "producer": {"kind": "workflow", **producer},
-            }, request_id="forbidden-new-copy",
+                "producer": {"kind": "workflow", **producer, "attempt": producer["attempt"] + 1},
+            }, request_id="forged-producer-copy",
         )
-    assert publication.calls == before
+    assert fixture.publication.calls == before
 
 
 @pytest.mark.parametrize("publication_flow", [

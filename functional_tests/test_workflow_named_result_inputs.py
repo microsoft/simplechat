@@ -1,11 +1,13 @@
 # test_workflow_named_result_inputs.py
 """
-Functional tests for source-authorized named workflow result inputs.
-Version: 0.261.111
+Functional tests for lineage-verified named workflow result inputs.
+Version: 0.261.231
 Implemented in: 0.261.107
+Named outputs stopped re-checking their sources in: 0.261.231
 
 Final representations retain exact receipts. Partial data requires an explicit
 opt-in, and no caller can bind pending output or diagnostics as final task data.
+The documents a saved output read are provenance and are never re-checked.
 """
 
 import json
@@ -101,22 +103,36 @@ def test_nonfinal_or_unknown_bindings_are_rejected(output_name):
 
 
 @pytest.mark.parametrize("output_name", ["authoritative", "records", "text", "json", "documents"])
-def test_every_named_output_requires_current_reference_source_access(output_name):
+def test_named_outputs_are_never_rechecked_against_their_reference_sources(output_name):
     store = SerializedSections()
     source = {
         "document_id": "reference", "scope_type": "group", "scope_id": "group-1",
         "source_version": "1", "content_sha256": "a" * 64,
     }
-    _, reference = saved(store, sources=[source])
-    with pytest.raises(AnalysisResultUnavailable):
-        load_workflow_task_input(
-            WORKFLOW, RUN_ID, TASK["id"], reference, output_name=output_name, load_result=store.load,
-            source_resolver=lambda ids, **kwargs: [{
-                "document_id": "reference", "scope": "group", "scope_id": "group-1",
-                "authorization_status": "unresolved",
-            }],
-        )
-    assert store.reads == [reference["sha256"]]
+    manifest, reference = saved(store, sources=[source])
+    lookups = []
+
+    def unavailable(ids, **kwargs):
+        lookups.append(list(ids))
+        return [{
+            "document_id": "reference", "scope": "group", "scope_id": "group-1",
+            "authorization_status": "unresolved",
+        }]
+
+    load = lambda: load_workflow_task_input(
+        WORKFLOW, RUN_ID, TASK["id"], reference, output_name=output_name, load_result=store.load,
+        source_resolver=unavailable,
+    )
+    if output_name in manifest["outputs"] or output_name == "authoritative":
+        # A saved output takes its access from its run; the reference it read is provenance.
+        prompt, receipt = load()
+        assert json.loads(prompt)["consumed_result"] == receipt
+        assert receipt["result_ref"] == reference
+    else:
+        # A representation the result doesn't store is refused for that reason alone.
+        with pytest.raises(ValueError):
+            load()
+    assert lookups == []
 
 
 def test_source_bound_raw_model_output_is_not_an_original_analyze_run():

@@ -361,18 +361,16 @@ def _project_runtime_run(services, workflow, run_id, control, *, result=None, at
 
 
 def workflow_runtime_status(workflow, run_id, *, reader_user_id):
-    from functions_workflow_results import authorize_workflow_run_read
-
     services = _services(workflow)
     run = services["runs"].read_item(item=run_id, partition_key=services["partition"])
     if run.get("workflow_id") != workflow["id"] or run.get("durable_execution") is not True:
         raise LookupError("Durable workflow run not found.")
-    authorize_workflow_run_read(workflow, run_id, reader_user_id=reader_user_id)
+    # The run takes its access from the workflow the caller already read; its sources are not re-checked.
     store = workflow_runtime_store(workflow, run_id)
     control = store.read()
     gate = control.get("gate") or {}
     if gate.get("publication"):
-        # Polling UI has the same source and destination boundary as exact result inspection.
+        # Polling UI has the same lineage and destination boundary as exact result inspection.
         from functions_artifact_publication import authorize_publication_status_read
         from functions_workflow_execution_history import authorize_execution_payload
 

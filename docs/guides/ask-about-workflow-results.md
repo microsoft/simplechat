@@ -123,9 +123,10 @@ chat that used it is opened in V2.
   you selected, you're told "This workflow run's result has changed since it was
   selected. Select the run again to ask about its current result." Nothing is
   answered from the new result until you select the run again.
-- **The run is gone, or you lost access.** If the run was deleted, or you can no
-  longer open a document its tasks used, the notice is removed and a message
-  says the result is unavailable.
+- **The run is gone.** If the run or its workflow was deleted, the notice is
+  removed and a message says the result is unavailable. Losing access to a
+  document the run's tasks read doesn't do this: a saved result takes its
+  access from its workflow and run, not from the documents it came from.
 - **Earlier answers are hidden too.** Once the result is unavailable to you,
   every answer that used it shows "This answer is unavailable because access to
   the workflow result it used could not be confirmed." Your questions stay. Later
@@ -271,7 +272,7 @@ new request.
 | "No matching finished workflow run was found." | No finished run of that workflow matches the day or status you asked for | Check the workflow's run history, then ask for the latest run or another day. |
 | "A matching workflow run is still in progress." | The run you asked about hasn't finished | Ask again when the run finishes. |
 | "This run's stored result cannot be read from a plan yet." | The run belongs to a structured workflow, or its stored result is of a kind a plan can't read yet | Read the run's result in its run history. |
-| "The saved workflow result is no longer available." | The workflow or run was removed, you can no longer open a source its tasks used, or the run is an older one that kept previews only | Check the workflow's run history, then ask about another run. |
+| "The saved workflow result is no longer available." | The workflow or run was removed, or the run is an older one that kept previews only | Check the workflow's run history, then ask about another run. |
 | "This run saved an analysis that a plan can't read yet." | The run's result is a saved analysis | Choose **Ask in chat** on the run in its workflow's run history, and ask there. |
 | "This workflow run didn't complete with a readable result." | The run failed, was cancelled or was skipped | Check the run in its run history, then ask about a completed run. |
 | "A workflow result this answer used changed or is no longer available, so the answer was not saved." | The run's result changed, the run was deleted, or you lost access while the answer was written | Ask again in a new message. |

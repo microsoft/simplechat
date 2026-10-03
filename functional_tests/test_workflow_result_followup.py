@@ -1,17 +1,19 @@
 # test_workflow_result_followup.py
 """
 Functional test for chat Follow up on a stored workflow result.
-Version: 0.261.214
+Version: 0.261.231
 Implemented in: 0.261.214
+Results stopped re-checking their sources in: 0.261.231
 
 This test ensures that Follow up answers only from the selected run's stored
 result, reads and binds it again on every turn, refuses shared, collaborative
 and converted chats, fences the run output as untrusted data, ends every answer
 with the fixed disclosure, carries the public descriptor and the accumulated
 contexts on the answer, and never keeps an answer whose result, lineage or
-conversation changed. The reader, the result contract, the Analyze reader and
-the privacy rule are real; the chat route's persistence, screening and model
-helpers are recording fakes.
+conversation changed. A result takes its access from its workflow and run, so
+losing access to a document an Analyze task read does not refuse it. The reader,
+the result contract, the Analyze reader and the privacy rule are real; the chat
+route's persistence, screening and model helpers are recording fakes.
 """
 
 import dataclasses
@@ -590,7 +592,7 @@ def test_every_closed_reason_of_the_reader_is_returned_with_its_fixed_payload(ch
     assert "SECRET" not in json.dumps(payload)
 
 
-def test_lost_source_access_to_an_analyze_task_denies_the_result():
+def test_lost_source_access_to_an_analyze_task_still_answers_from_the_saved_result():
     fixture = RunFixture()
     fixture.add_task("task-analyze-74", analysis_result(), order=1, label="Analyze reports")
     harness = Harness(fixture)
@@ -598,8 +600,15 @@ def test_lost_source_access_to_an_analyze_task_denies_the_result():
 
     payload, status = harness.ask()
 
-    assert_refused(harness, payload, status, "workflow_result_access_denied")
-    assert harness.invocations == []
+    # The result takes its access from its workflow and run, not from the documents it read.
+    assert status == 200
+    (invocation,) = harness.invocations
+    (saved_input,) = invocation["saved_inputs"]
+    assert isinstance(saved_input, SavedAnalysisInput)
+    assert payload["reply"] == f"{REPLY}\n\n{DISCLOSURE_NY}"
+    (answer,) = harness.messages.of_role("assistant")
+    assert answer["metadata"]["workflow_result"]["available"] is True
+    assert fixture.sources.readers == []
 
 
 @pytest.mark.parametrize(("change", "code"), [

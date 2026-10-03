@@ -247,6 +247,7 @@ def frozen_item_receipt(manifest, reference, item):
 
 
 def _authorize_frozen_document(workflow, item, reader_user_id):
+    """Input check for a document item read as a loop input: access, not held, same frozen version."""
     from functions_workflow_loop_inputs import WorkflowLoopInputError, reauthorize_workflow_loop_document
 
     try:
@@ -343,6 +344,4 @@ def authorize_iteration_path(workflow, run_id, identity, *, reader_user_id, rece
         source_resolver=source_resolver, store=store,
     )
     authorization.walk(dependencies)
-    if authorization.access()["source_snapshot_changed"]:
-        raise AnalysisResultUnavailable("analysis_source_snapshot_changed")
     return verified

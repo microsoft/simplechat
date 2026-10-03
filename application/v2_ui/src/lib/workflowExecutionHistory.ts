@@ -133,7 +133,6 @@ export interface WorkflowExecutionPage<T> {
         repeat?: WorkflowRepeatProgress;
         stateAvailable?: boolean;
         partial?: boolean;
-        sourceSnapshotChanged?: boolean;
     };
 }
 
@@ -492,11 +491,12 @@ export async function fetchWorkflowRepeatIterationsPage(
     const response = await api.get<unknown>(workflowUrl(scope, workflowId,
         `/runs/${encodeURIComponent(runId)}/executions/${encodeURIComponent(executionId)}/iterations`,
         pageParams(cursor, limit)), signal);
+    // source_snapshot_changed is no longer authoritative: saved rounds take their
+    // access from the run and are never compared with their sources' current versions.
     if (!isRecord(response) || response.repeat_execution_id !== executionId ||
         !isWorkflowRepeatProgress(response.repeat) || response.repeat.execution_id !== executionId ||
         !Number.isSafeInteger(response.total_count) || Number(response.total_count) < 0 ||
-        Number(response.total_count) > DEFAULT_FLOW_LIMITS.max_executions ||
-        typeof response.source_snapshot_changed !== 'boolean') {
+        Number(response.total_count) > DEFAULT_FLOW_LIMITS.max_executions) {
         throw new Error('The Repeat rounds returned an unsupported response.');
     }
     const repeat = response.repeat;
@@ -523,7 +523,7 @@ export async function fetchWorkflowRepeatIterationsPage(
         index > 0 && item.iteration <= page.items[index - 1].iteration)) {
         throw new Error('The Repeat round page contains conflicting lifetime identities.');
     }
-    return { ...page, metadata: { repeat, sourceSnapshotChanged: response.source_snapshot_changed === true } };
+    return { ...page, metadata: { repeat } };
 }
 
 function isRepeatValidation(value: unknown): value is WorkflowValidationResult {
@@ -581,8 +581,8 @@ export async function fetchWorkflowRepeatStatePage(
     if (!isRecord(response) || response.repeat_execution_id !== executionId || response.iteration !== iteration ||
         response.phase !== phase || typeof response.available !== 'boolean' ||
         !Number.isSafeInteger(response.total_count) || Number(response.total_count) < 0 || Number(response.total_count) > 100 ||
-        response.available && (typeof response.partial !== 'boolean' || typeof response.source_snapshot_changed !== 'boolean') ||
-        !response.available && (phase !== 'after' || response.partial !== undefined || response.source_snapshot_changed !== undefined)) {
+        response.available && typeof response.partial !== 'boolean' ||
+        !response.available && (phase !== 'after' || response.partial !== undefined)) {
         throw new Error('The Repeat state returned an unsupported response.');
     }
     const page = pageFromResponse(response, 'states', isRepeatStateRecord, (item) => item.name, limit);
@@ -592,7 +592,6 @@ export async function fetchWorkflowRepeatStatePage(
     }
     return { ...page, metadata: {
         stateAvailable: response.available, partial: response.partial === true,
-        sourceSnapshotChanged: response.source_snapshot_changed === true,
     } };
 }
 

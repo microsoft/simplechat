@@ -334,6 +334,10 @@ with the full state content.
 | State entry | `name`, `kind`, `workflow_validation`, `coverage`, `limitations`, optional `prior_coverage`, and `source` |
 | State source selector | `node_id`, `execution_id`, optional `task_id`, `iteration_path`, `attempt`, `output_name` |
 
+Since 0.261.231, `source_snapshot_changed` is always `false`. It is kept for
+older clients: Repeat state is generated output, so a change to a document an
+earlier task read is never reported on, or checked for, these pages.
+
 Round `state` is `running`, `completed`, `completed_partial`, or `cancelled`.
 `condition_result` is a Boolean or null. A completed round whose condition is
 false is still completed; the Repeat head/gate, not that round status alone,

@@ -10,6 +10,7 @@ import json
 import logging
 
 from azure.core.exceptions import AzureError
+from content_screening.access import isolate_request_source_fence
 from functions_m365_approvals import M365ApprovalRequired
 from functions_m365_workflow_checkpoints import (
     m365_workflow_task_context,
@@ -131,6 +132,7 @@ def workflow_result_helpers():
         ),
         "save_workflow_task_result": save_result,
         "load_workflow_task_result": load_result,
+        "isolate_request_source_fence": isolate_request_source_fence,
         "logging": logging,
         "log_event": lambda *args, **kwargs: None,
     }

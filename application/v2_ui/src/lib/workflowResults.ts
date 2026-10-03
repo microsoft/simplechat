@@ -3,8 +3,9 @@
 //
 // The browser only ever holds the public descriptor: the run's ids, its result digest and
 // a display name. Store references and result content never reach it. The server re-reads
-// and re-authorizes the run with the selected digest on every turn, so a result that
-// changed, was deleted or lost a source's access is refused rather than answered.
+// the run with the selected digest on every turn, so a result that changed or was deleted
+// is refused rather than answered. The documents the run used are never re-checked: the
+// result takes its access from the run.
 //
 // Everything here is pure, so it is checked in isolation by
 // functional_tests/test_workflow_results_clients.mjs.
@@ -46,7 +47,7 @@ const REASON_MESSAGES: Record<string, string> = {
     workflow_result_private_only: 'Workflow results can only be used in your own private chats.',
     workflow_result_not_found: 'This workflow result is unavailable. The run may have been removed.',
     workflow_result_access_denied:
-        'This workflow result is unavailable because access to one of its sources could not be confirmed.',
+        'This workflow result is unavailable because access to it could not be confirmed.',
     workflow_result_changed:
         "This workflow run's result has changed since it was selected. "
         + 'Select the run again to ask about its current result.',

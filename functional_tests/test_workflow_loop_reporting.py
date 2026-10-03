@@ -1,12 +1,14 @@
 # test_workflow_loop_reporting.py
 """
 Functional tests for exact, bounded saved workflow record reporting.
-Version: 0.261.122
+Version: 0.261.231
 Implemented in: 0.261.117
+Saved records stopped re-checking their sources in: 0.261.231
 
 The production compiler, record-tree writer, private result transport, authorized
 reader and durable execution journal run against serialized offline storage.
-Provider callbacks and original-source authorization I/O are closed doubles.
+Provider callbacks and original-source authorization I/O are closed doubles; the
+saved records are generated output, so their sources are never looked up again.
 No Azure resource, live model, publication or fact-memory service is used.
 """
 
@@ -295,9 +297,10 @@ def test_adapter_pages_and_reloads_exact_original_records_without_a_global_offse
     bad = {**units[0]["record"]["record_ref"], "record_id": units[0]["record"]["record_id"] + "00"}
     with pytest.raises(reporting.WorkflowRecordReportingError):
         reader.read_support(bad)
+    # The saved records are generated output: reading them never re-checks their source.
     fixture.state["allowed"] = False
-    with pytest.raises(AnalysisResultUnavailable):
-        reader.read_support(units[0]["record"]["record_ref"])
+    assert reader.read_support(units[1]["record"]["record_ref"]) == units[1]
+    assert fixture.state["source_checks"] == 0
 
 
 @pytest.mark.parametrize("count,width", [(3, 40), (1, 18000)])
@@ -445,18 +448,19 @@ def test_nonshrinking_reduction_stops_with_all_data_retained(monkeypatch):
     assert fixture.manifest == fixture.before_manifest
 
 
-def test_revocation_blocks_new_and_checkpointed_report_work(monkeypatch):
+def test_a_source_change_never_stops_or_reruns_report_work(monkeypatch):
+    # The saved records are generated output, so a report over them takes its access from
+    # the run: a change to the document they came from neither stops nor reruns the report.
     fixture = make_input(monkeypatch)
     invoke, calls, _ = oracle(fixture, revoke=True)
-    with pytest.raises(AnalysisResultUnavailable):
-        explain(fixture, invoke)
-    assert len(calls) == 1
-    fixture.state["allowed"] = True
-    complete, _, _ = oracle(fixture)
-    explain(fixture, complete)
-    fixture.state["allowed"] = False
-    with pytest.raises(AnalysisResultUnavailable):
-        explain(fixture, lambda *args, **kwargs: pytest.fail("Cached notes cannot grant access."))
+    result = explain(fixture, invoke)
+    assert result["reply"] and len(calls) > 1
+    assert fixture.state["allowed"] is False
+    fixture.clock.advance()
+    replay = explain(fixture, lambda *args, **kwargs: pytest.fail("Checkpointed notes are reused, not asked again."))
+    assert replay["reply"] == result["reply"]
+    assert replay["analysis_consumption"]["model_calls"] == 0
+    assert fixture.state["source_checks"] == 0
 
 
 def test_restart_replays_completed_page_and_reduction_checkpoints(monkeypatch):

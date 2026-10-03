@@ -3,10 +3,12 @@
 
 The reader is Flask-free. It point-reads the workflow and the run in the
 requester's own partition, so someone else's run reads exactly like a missing
-one. It authorizes the whole run the way run history does, binds the result to
-a digest over its included outputs, and returns a public descriptor. Follow up
-also asks for bounded excerpts; those carry only a task label, a kind and text,
-never store references or identifiers.
+one. It verifies the identity and lineage of every stored task result, binds the
+result to a digest over its included outputs, and returns a public descriptor.
+A stored result takes its access from that workflow and run: the documents its
+tasks used are provenance and are never re-checked. Follow up also asks for
+bounded excerpts; those carry only a task label, a kind and text, never store
+references or identifiers.
 
 Structured (v3) runs are closed for now: their outputs need an exact node,
 execution and attempt selector.
@@ -26,6 +28,7 @@ from zoneinfo import ZoneInfo
 from azure.core.exceptions import AzureError, ResourceNotFoundError
 from content_screening.contracts import ScreeningError
 
+from functions_analysis_access import AnalysisResultUnavailable
 from functions_appinsights import log_event
 from functions_workflow_result_masking import WORKFLOW_RESULT_VERSION
 from functions_workflow_result_store import (
@@ -80,7 +83,7 @@ _REASONS = {
     "workflow_result_private_only": (403, "Workflow results can only be used in your own private chats."),
     "workflow_result_not_found": (404, "This workflow result is unavailable. The run may have been removed."),
     "workflow_result_access_denied": (
-        403, "This workflow result is unavailable because access to one of its sources could not be confirmed.",
+        403, "This workflow result is unavailable because access to it could not be confirmed.",
     ),
     "workflow_result_changed": (
         409,
@@ -424,6 +427,9 @@ def workflow_result_digest(workflow_id, run_id, status, eligible_rows):
 def _authorization_code(error):
     if isinstance(error, WorkflowResultUnavailable):
         return error.code
+    if isinstance(error, AnalysisResultUnavailable):
+        # Lineage or integrity: the stored result itself doesn't check out.
+        return "workflow_result_invalid"
     if isinstance(error, ScreeningError):
         return "workflow_result_storage_unavailable" if getattr(error, "retryable", False) else "workflow_result_access_denied"
     if isinstance(error, PermissionError):
@@ -734,8 +740,8 @@ def read_workflow_result(
     if expected_sha256 is not None and expected_sha256 != digest:
         raise _closed("workflow_result_changed", "digest")
 
-    # The whole run, including every stored task result and its analysis sources,
-    # is authorized exactly as run history is. The rows are the digest's rows.
+    # Every stored task result in the run is verified for identity and lineage, and
+    # the run takes its access from the point reads above. The rows are the digest's rows.
     _guarded("authorize", lambda: authorize_workflow_run_read(
         workflow, run_id, reader_user_id=user_id, result_items=rows,
         load_result=loader, source_resolver=source_resolver,
@@ -803,7 +809,7 @@ def _build_excerpts(result, workflow, run_id, eligible, manifests, loader, page_
             source_resolver=source_resolver, bounded=True, allow_partial=allow_partial,
         ))
         if not isinstance(saved_input, SavedAnalysisInput):
-            # No analysis sources to verify against: read it like any other output.
+            # Not a saved analysis to explain: read it like any other output.
             plain_rows.append(row)
             continue
         key = saved_input.context.get("result_sha256")

@@ -316,8 +316,6 @@ def current_repeat_state(workflow, run_id, path, source, *, reader_user_id, stor
         workflow, run_id, reader_user_id=reader_user_id, load_result=load_result, store=store,
     )
     state = authorization.authorize_repeat(identity, admission["before_state_ref"])
-    if authorization.access()["source_snapshot_changed"]:
-        raise AnalysisResultUnavailable("analysis_source_snapshot_changed")
     slot = state["slots"].get(source["state_name"])
     if slot is None:
         raise WorkflowInputError("The requested Repeat state slot is not declared.")
@@ -384,13 +382,11 @@ def prepare_repeat_state(flow, node, identity, *, previous=None, previous_ref=No
             receipt = deepcopy(outputs.get(declaration["next"]))
             if receipt is None:
                 raise WorkflowInputError("A required next-state output did not finish.")
-        manifest, access = authorize_workflow_node_result_read(
+        manifest, _ = authorize_workflow_node_result_read(
             flow.workflow, flow.run_id, receipt["producer"], receipt["result_ref"],
             reader_user_id=flow.actor_user_id, load_result=execution.load_result,
         )
         _require_completed_result(manifest, allow_partial=contract["allow_partial"])
-        if access["source_snapshot_changed"]:
-            raise AnalysisResultUnavailable("analysis_source_snapshot_changed")
         descriptor = manifest["outputs"].get(receipt["output_name"]) or {}
         if descriptor.get("result_ref") != receipt["output_ref"] or descriptor.get("kind") != contract["kind"]:
             raise WorkflowInputError("Repeat state must preserve its exact declared output kind.")
@@ -494,8 +490,6 @@ def prepare_repeat_grant(store, control, gate, *, actor_user_id):
             workflow, store.identity["run_id"], reader_user_id=reader, store=store,
         )
         authorization.authorize_repeat(identity, head["current_state_ref"])
-        if authorization.access()["source_snapshot_changed"]:
-            raise AnalysisResultUnavailable("analysis_source_snapshot_changed")
     return row, {
         **head, "state": "running", "batch_number": head["batch_number"] + 1,
         "batch_start_iteration": head["next_iteration"], "batch_usage": 0,
