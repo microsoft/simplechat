@@ -32,6 +32,12 @@ lives on the alerts it creates, so **Open workflow** can find it.
 
 ## When a notice appears
 
+From **0.261.234**, an alert whose rule requires acknowledgment is an exception to
+several rules below. It skips the one-tab claim and the 24-hour window, pops up again
+after every reload until someone acknowledges it, and is never tucked into the bell.
+It can also sound, and open as a larger dialog or a full-screen takeover. See
+[Workflow Alert Acknowledgment](WORKFLOW_ALERT_ACKNOWLEDGMENT.md).
+
 An alert pops up only when all of these hold:
 
 - **Its delivery is pop-up.** The server settles delivery when the alert is raised.

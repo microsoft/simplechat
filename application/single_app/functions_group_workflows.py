@@ -588,6 +588,7 @@ def build_group_workflow_document(group_id, workflow_data, actor_user_id, user_i
         workflow_data,
         existing_workflow=existing_workflow,
         task_ids=[task.get('id') for task in tasks],
+        workflow_scope='group',
     )
     alert_priority = alert_settings['alert_priority']
     error_handling = _normalize_workflow_error_handling(workflow_data, existing_workflow=existing_workflow)

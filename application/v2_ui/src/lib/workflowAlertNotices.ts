@@ -43,6 +43,10 @@ const MAX_CHIPS = 8;
 
 export type WorkflowAlertCategory = 'alert' | 'failure';
 export type WorkflowAlertDelivery = 'popup' | 'notify_only';
+export type WorkflowAlertSound = 'off' | 'once' | 'repeat';
+export type WorkflowAlertSize = 'small' | 'medium' | 'large';
+export type WorkflowAlertAudience = 'owner' | 'group';
+export type WorkflowAlertContentScope = 'full' | 'member';
 
 export interface WorkflowAlertRuleMatch {
     name: string;
@@ -69,6 +73,14 @@ export interface WorkflowAlert {
     priority: WorkflowAlertSeverity;
     category: WorkflowAlertCategory;
     delivery: WorkflowAlertDelivery;
+    requireAcknowledgment: boolean;
+    sound: WorkflowAlertSound;
+    size: WorkflowAlertSize;
+    audience: WorkflowAlertAudience;
+    acknowledged: boolean;
+    acknowledgedAt: string | null;
+    acknowledgedByName: string | null;
+    contentScope: WorkflowAlertContentScope;
     createdAt: string;
     /** Null when the server wrote a date that does not parse. */
     createdMs: number | null;
@@ -104,6 +116,10 @@ export interface WorkflowAlertEntry {
     /** The one the entry shows: the loudest, and the newest of those. */
     lead: WorkflowAlert;
     priority: WorkflowAlertSeverity;
+    requireAcknowledgment: boolean;
+    sound: WorkflowAlertSound;
+    size: WorkflowAlertSize;
+    audience: WorkflowAlertAudience;
     count: number;
     /** When the earliest alert in the entry arrived. */
     sinceMs: number | null;
@@ -116,6 +132,8 @@ const PRIORITY_RANK: Record<WorkflowAlertSeverity, number> = {
     high: 3,
     critical: 4,
 };
+const SOUND_RANK: Record<WorkflowAlertSound, number> = { off: 0, once: 1, repeat: 2 };
+const SIZE_RANK: Record<WorkflowAlertSize, number> = { small: 0, medium: 1, large: 2 };
 
 export const WORKFLOW_ALERT_PRIORITY_LABELS: Record<WorkflowAlertSeverity, string> = {
     info: 'Info',
@@ -188,6 +206,24 @@ function readCategory(metadata: Record<string, unknown>, notification: AppNotifi
  */
 function readDelivery(metadata: Record<string, unknown>, topLevel: unknown): WorkflowAlertDelivery {
     return oneLine(metadata.delivery || topLevel || '').toLowerCase() === 'notify_only' ? 'notify_only' : 'popup';
+}
+
+function readSound(metadata: Record<string, unknown>, topLevel: unknown): WorkflowAlertSound {
+    const value = oneLine(topLevel || metadata.sound || 'off').toLowerCase();
+    return value === 'once' || value === 'repeat' ? value : 'off';
+}
+
+function readSize(metadata: Record<string, unknown>, topLevel: unknown): WorkflowAlertSize {
+    const value = oneLine(topLevel || metadata.size || 'small').toLowerCase();
+    return value === 'medium' || value === 'large' ? value : 'small';
+}
+
+function readAudience(metadata: Record<string, unknown>, topLevel: unknown): WorkflowAlertAudience {
+    return oneLine(topLevel || metadata.audience || 'owner').toLowerCase() === 'group' ? 'group' : 'owner';
+}
+
+function readContentScope(topLevel: unknown): WorkflowAlertContentScope {
+    return oneLine(topLevel || 'full').toLowerCase() === 'member' ? 'member' : 'full';
 }
 
 function readTitle(metadata: Record<string, unknown>, notification: AppNotification, workflowName: string): string {
@@ -367,6 +403,16 @@ export function readWorkflowAlert(raw: unknown): WorkflowAlert | null {
         priority: readPriority(metadata, notification),
         category: readCategory(metadata, notification),
         delivery: readDelivery(metadata, isRecord(raw) ? raw.delivery : undefined),
+        requireAcknowledgment: (isRecord(raw) && raw.require_acknowledgment === true)
+            || metadata.require_acknowledgment === true,
+        sound: readSound(metadata, isRecord(raw) ? raw.sound : undefined),
+        size: readSize(metadata, isRecord(raw) ? raw.size : undefined),
+        audience: readAudience(metadata, isRecord(raw) ? raw.audience : undefined),
+        acknowledged: (isRecord(raw) && raw.acknowledged === true)
+            || Boolean(isRecord(raw) && raw.acknowledged_at),
+        acknowledgedAt: isRecord(raw) ? text(raw.acknowledged_at) || null : null,
+        acknowledgedByName: isRecord(raw) ? text(raw.acknowledged_by_name) || null : null,
+        contentScope: readContentScope(isRecord(raw) ? raw.content_scope : undefined),
         createdAt: notification.created_at,
         createdMs: parseTime(notification.created_at),
         workflowId: safeId(metadata.workflow_id),
@@ -393,6 +439,9 @@ export function readWorkflowAlert(raw: unknown): WorkflowAlert | null {
  * An alert with a date that does not parse is left in the bell, where its age does not matter.
  */
 export function isWorkflowAlertPopupEligible(alert: WorkflowAlert, now: number = Date.now()): boolean {
+    if (alert.requireAcknowledgment && !alert.acknowledged && alert.delivery === 'popup') {
+        return true;
+    }
     if (alert.delivery !== 'popup' || alert.notification.is_read || alert.createdMs === null) {
         return false;
     }
@@ -431,12 +480,18 @@ export function groupWorkflowAlerts(alerts: WorkflowAlert[]): WorkflowAlertEntry
     for (const [key, members] of groups) {
         const newestFirst = [...members].sort((left, right) => (right.createdMs ?? 0) - (left.createdMs ?? 0));
         const lead = [...members].sort(compareAlerts)[0];
+        const strongestSound = [...members].sort((left, right) => SOUND_RANK[right.sound] - SOUND_RANK[left.sound])[0].sound;
+        const strongestSize = [...members].sort((left, right) => SIZE_RANK[right.size] - SIZE_RANK[left.size])[0].size;
         const times = members.map((member) => member.createdMs).filter((ms): ms is number => ms !== null);
         entries.push({
             key,
             alerts: newestFirst,
             lead,
             priority: lead.priority,
+            requireAcknowledgment: members.some((member) => member.requireAcknowledgment && !member.acknowledged),
+            sound: strongestSound,
+            size: strongestSize,
+            audience: members.some((member) => member.audience === 'group') ? 'group' : 'owner',
             count: members.length,
             sinceMs: times.length ? Math.min(...times) : null,
         });
@@ -575,7 +630,7 @@ export function workflowAlertFollowUpAction(
  * failed storage read with a 500 rather than an empty list, and anything that is not a
  * successful answer is thrown here. The caller then keeps the alerts it already has.
  */
-export async function fetchWorkflowAlerts(signal?: AbortSignal): Promise<{ alerts: WorkflowAlert[]; complete: boolean }> {
+export async function fetchWorkflowAlerts(signal?: AbortSignal): Promise<{ alerts: WorkflowAlert[]; complete: boolean; soundsEnabled: boolean | null }> {
     const params = new URLSearchParams({
         limit: String(WORKFLOW_ALERT_FETCH_LIMIT),
         since_hours: String(WORKFLOW_ALERT_POPUP_WINDOW_HOURS),
@@ -590,6 +645,9 @@ export async function fetchWorkflowAlerts(signal?: AbortSignal): Promise<{ alert
     return {
         alerts,
         // A full page may have left older alerts out; a shorter one is everything there is.
-        complete: payload.notifications.length < WORKFLOW_ALERT_FETCH_LIMIT,
+        complete: typeof payload.complete === 'boolean'
+            ? payload.complete
+            : payload.notifications.length < WORKFLOW_ALERT_FETCH_LIMIT,
+        soundsEnabled: typeof payload.sounds_enabled === 'boolean' ? payload.sounds_enabled : null,
     };
 }

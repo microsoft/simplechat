@@ -488,6 +488,7 @@ class WorkflowEditorFixture(WorkspaceAuthoringFixture):
         self.classic_visits = []
         self.alert_refusals = []
         self.settings_refusals = []
+        self.workflow_alert_sounds_enabled = True
         # The administrator's Workflow Minimum Schedule Interval; one second is the setting's default.
         self.min_schedule_interval_seconds = 1
         # Zones left out of the editor options' list, as when the browser reports a zone newer than
@@ -725,6 +726,7 @@ class WorkflowEditorFixture(WorkspaceAuthoringFixture):
             "group": "automation",
         }
         payload["features"]["enable_group_workspaces"] = True
+        payload["features"]["enable_workflow_alert_sounds"] = self.workflow_alert_sounds_enabled
         payload["scope"]["active_group_id"] = self.active_group_id
         payload["scope"]["groups"] = [
             {"id": GROUP_ID, "name": "Alpha Group"},
@@ -959,6 +961,7 @@ class WorkflowEditorFixture(WorkspaceAuthoringFixture):
             alerts = normalize_workflow_alert_settings(
                 entry.body, existing_workflow=existing,
                 task_ids=[task.get("id") for task in definition["tasks"]],
+                workflow_scope=scope_type,
             )
         except WorkflowPublicValidationError as exc:
             self.alert_refusals.append(exc.public_message)

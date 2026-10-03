@@ -41,6 +41,12 @@ export function WorkflowAlertSummary({ workflow }: { workflow: WorkflowDefinitio
                     <dt className="text-xs text-text-3">Alert rules</dt>
                     <dd className="text-text-1">{summary.ruleCount === 1 ? '1 rule' : `${summary.ruleCount} rules`}</dd>
                 </div>
+                {summary.optionSummary.length ? (
+                    <div className="sm:col-span-3">
+                        <dt className="text-xs text-text-3">Pop-up options</dt>
+                        <dd className="text-text-1">{summary.optionSummary.join(' · ')}</dd>
+                    </div>
+                ) : null}
             </dl>
         </section>
     );

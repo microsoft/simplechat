@@ -116,6 +116,16 @@
     border-right-width: 0;
 }
 
+[data-workflow-alert-notice][data-compact='true'] {
+    max-width: 18rem;
+}
+
+[data-workflow-alert-notice][data-compact='true'] [data-workflow-alert-workflow],
+[data-workflow-alert-notice][data-compact='true'] [data-workflow-alert-group],
+[data-workflow-alert-notice][data-compact='true'] [data-workflow-alert-team] {
+    display: none;
+}
+
 @media (prefers-reduced-transparency: reduce) {
     .wf-alert-notch {
         background-color: var(--surface-solid);

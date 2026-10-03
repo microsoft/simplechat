@@ -38,6 +38,11 @@ import {
     type VisualStyle,
     type VisualStyleKind,
 } from '../../lib/visualPalettes';
+import {
+    setWorkflowAlertMonitorEnabled,
+    setWorkflowAlertSoundsDeviceEnabled,
+    useWorkflowAlertDevicePreference,
+} from '../../lib/workflowAlertDevicePreferences';
 
 /** Voices offered for spoken replies, matching what the speech endpoint accepts. */
 const TTS_VOICES = [
@@ -229,6 +234,8 @@ export function PreferencesTab() {
     const desktopNotificationsOn = readDesktopNotificationPreference(
         settings[DESKTOP_NOTIFICATIONS_SETTING],
     );
+    const workflowAlertSoundsOn = useWorkflowAlertDevicePreference('sound');
+    const workflowAlertMonitorOn = useWorkflowAlertDevicePreference('monitor');
 
     const fontSize = (settings.fontSizePreference as FontSizePreference) || 'm';
 
@@ -290,6 +297,26 @@ export function PreferencesTab() {
                     label="Show workspace tags"
                     description="Label conversations that belong to a group or public workspace, or that are shared with other people. Personal conversations stay unlabelled."
                 />
+            </SettingsSection>
+
+            <SettingsSection
+                title="Workflow alerts on this device"
+                description="Browser-only controls for urgent workflow alerts on this computer."
+            >
+                <div className="space-y-3">
+                    <Toggle
+                        checked={workflowAlertSoundsOn}
+                        onChange={setWorkflowAlertSoundsDeviceEnabled}
+                        label="Play alert sounds"
+                        description="Applies to this browser only. Administrators can still turn workflow alert sounds off for everyone."
+                    />
+                    <Toggle
+                        checked={workflowAlertMonitorOn}
+                        onChange={setWorkflowAlertMonitorEnabled}
+                        label="Alert monitor"
+                        description="For operations screens: checks for workflow alerts every 30 seconds, even in a background tab."
+                    />
+                </div>
             </SettingsSection>
 
             <SettingsSection

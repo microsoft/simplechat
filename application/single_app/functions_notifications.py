@@ -12,20 +12,29 @@ Implemented in: 0.234.032
 """
 
 # Imports (grouped after docstring)
+import copy
 import hashlib
 import json
 import uuid
 from datetime import datetime, timedelta, timezone
 from urllib.parse import urlencode
+from azure.core import MatchConditions
 from azure.cosmos import exceptions
 from flask import current_app
 import logging
 from config import cosmos_notifications_container
 from functions_appinsights import log_event
-from functions_group import find_group_by_id
+from functions_group import assert_group_role, find_group_by_id, get_user_groups
+from functions_group_workflow_policy import GROUP_WORKFLOW_MEMBER_ROLES
 from functions_debug import debug_print
 from functions_public_workspaces import find_public_workspace_by_id, get_user_public_workspaces
 from functions_workflow_alert_safety import sanitize_workflow_alert_record
+from functions_workflow_alerts import (
+    WORKFLOW_ALERT_SIZE_ORDER,
+    WORKFLOW_ALERT_SOUND_ORDER,
+    normalize_alert_flag,
+    resolve_alert_option,
+)
 
 # Constants
 TTL_60_DAYS = 60 * 24 * 60 * 60  # 60 days in seconds (5184000)
@@ -65,6 +74,35 @@ WORKFLOW_ALERT_PRIORITY_CONFIG = {
 WORKFLOW_ALERT_FAILURE_CATEGORY = 'failure'
 WORKFLOW_ALERT_FAILURE_ICON = 'bi-x-octagon'
 WORKFLOW_ALERT_DELIVERY_NOTIFY_ONLY = 'notify_only'
+# Shared notifications are written by many readers, so read, dismiss and acknowledgment writes
+# are conditional on the stored version and retried this many times on a conflict.
+NOTIFICATION_WRITE_ATTEMPTS = 3
+WORKFLOW_ALERT_ACKNOWLEDGER_NAME_MAX_LENGTH = 200
+# What a group member other than the workflow's owner may read from a team alert. The rest of an
+# alert describes the owner's side of the run: its summary and detail can quote conversations and
+# actions in the owner's own space, and its links include the owner's workflow conversation and
+# private conversations. Members get the alert's facts and links to what the run created in the
+# group; the run's output stays in the group's workflow run history.
+WORKFLOW_ALERT_MEMBER_METADATA_KEYS = (
+    'workflow_id',
+    'workflow_name',
+    'workflow_scope',
+    'workflow_group_id',
+    'priority',
+    'category',
+    'delivery',
+    'require_acknowledgment',
+    'sound',
+    'size',
+    'audience',
+    'alert_mode',
+    'trigger_reason',
+    'trigger_source',
+    'run_id',
+    'runner_type',
+    'status',
+)
+WORKFLOW_ALERT_MEMBER_RULE_KEYS = ('rule_id', 'rule_name', 'severity', 'condition_type')
 
 # Notification type registry for extensibility
 NOTIFICATION_TYPES = {
@@ -320,6 +358,143 @@ def _get_workflow_alert_delivery(notification):
     metadata = notification.get('metadata') or {}
     delivery = str(metadata.get('delivery') or '').strip().lower()
     return delivery if delivery in {'notify_only', 'popup'} else 'popup'
+
+
+def _get_workflow_alert_metadata(notification):
+    metadata = notification.get('metadata')
+    return metadata if isinstance(metadata, dict) else {}
+
+
+def _workflow_alert_requires_acknowledgment(notification):
+    return normalize_alert_flag(_get_workflow_alert_metadata(notification).get('require_acknowledgment', False))
+
+
+def _is_workflow_alert_acknowledged(notification):
+    return bool(str(notification.get('acknowledged_at') or '').strip())
+
+
+def _is_team_workflow_alert(notification):
+    return notification.get('scope') == 'group' and bool(str(notification.get('group_id') or '').strip())
+
+
+def _reads_team_workflow_alert_as_member(notification, reader_user_id):
+    """Return True when a team alert must be reduced for this reader.
+
+    Only the workflow's owner reads a team alert in full. A team alert without a recorded owner
+    is reduced for everyone, so a damaged record can't widen what members see.
+    """
+    if not _is_team_workflow_alert(notification):
+        return False
+    owner_user_id = str(_get_workflow_alert_metadata(notification).get('owner_user_id') or '').strip()
+    return not owner_user_id or owner_user_id != reader_user_id
+
+
+def _join_rule_names(names):
+    if len(names) <= 1:
+        return ''.join(names)
+    return f"{', '.join(names[:-1])} and {names[-1]}"
+
+
+def _member_workflow_alert_links(notification, metadata):
+    """Keep only links a member can follow: group conversations the run created in this group.
+
+    The workflow's own conversation belongs to its owner, and a personal conversation the agent
+    created is private, so neither is offered to the rest of the group.
+    """
+    group_id = str(notification.get('group_id') or '').strip()
+    workflow_conversation_id = str(metadata.get('conversation_id') or '').strip()
+    links = []
+    for target in metadata.get('link_targets') or []:
+        if not isinstance(target, dict):
+            continue
+        link_context = target.get('link_context') if isinstance(target.get('link_context'), dict) else {}
+        chat_type = str(link_context.get('chat_type') or '').strip().lower()
+        conversation_id = str(target.get('conversation_id') or link_context.get('conversation_id') or '').strip()
+        if (
+            chat_type.startswith('group')
+            and str(link_context.get('group_id') or '').strip() == group_id
+            and conversation_id
+            and conversation_id != workflow_conversation_id
+        ):
+            links.append(copy.deepcopy(target))
+    return links
+
+
+def _project_workflow_alert_for_member(notification):
+    """Return the reduced team alert a group member other than the owner reads."""
+    metadata = _get_workflow_alert_metadata(notification)
+    member_metadata = {
+        key: copy.deepcopy(metadata[key])
+        for key in WORKFLOW_ALERT_MEMBER_METADATA_KEYS
+        if key in metadata
+    }
+    member_metadata['matched_rules'] = [
+        {key: match[key] for key in WORKFLOW_ALERT_MEMBER_RULE_KEYS if key in match}
+        for match in metadata.get('matched_rules') or []
+        if isinstance(match, dict)
+    ]
+    links = _member_workflow_alert_links(notification, metadata)
+    member_metadata['link_targets'] = links
+
+    priority = _get_workflow_alert_priority(notification)
+    workflow_name = str(metadata.get('workflow_name') or '').strip() or 'Workflow'
+    rule_names = [
+        str(match.get('rule_name') or '').strip()
+        for match in member_metadata['matched_rules']
+    ]
+    rule_names = [name for name in rule_names if name]
+
+    projected = dict(notification)
+    projected['title'] = f'{priority.capitalize()} priority workflow alert: {workflow_name}'
+    projected['message'] = (
+        f'Matched {_join_rule_names(rule_names)}. Open it for details.'
+        if rule_names
+        else 'Open the workflow run for details.'
+    )
+    projected['metadata'] = member_metadata
+    first_link = links[0] if links else {}
+    projected['link_url'] = first_link.get('link_url') or ''
+    projected['link_context'] = copy.deepcopy(first_link.get('link_context') or {})
+    return projected
+
+
+def _decorate_workflow_alert(notification, reader_user_id):
+    """Return a workflow alert as this reader may see it, with its display fields added.
+
+    A team alert is reduced for group members other than the workflow's owner, and every shared
+    alert reports only the reader's own read and dismissed state, never other members' ids.
+    """
+    if _reads_team_workflow_alert_as_member(notification, reader_user_id):
+        notification = _project_workflow_alert_for_member(notification)
+        content_scope = 'member'
+    else:
+        notification = dict(notification)
+        content_scope = 'full'
+
+    metadata = _get_workflow_alert_metadata(notification)
+    acknowledged_by = notification.get('acknowledged_by') if isinstance(notification.get('acknowledged_by'), dict) else {}
+    acknowledged = _is_workflow_alert_acknowledged(notification)
+
+    notification['priority'] = _get_workflow_alert_priority(notification)
+    notification['category'] = _get_workflow_alert_category(notification)
+    notification['delivery'] = _get_workflow_alert_delivery(notification)
+    notification['require_acknowledgment'] = normalize_alert_flag(metadata.get('require_acknowledgment', False))
+    notification['sound'] = resolve_alert_option(metadata.get('sound'), WORKFLOW_ALERT_SOUND_ORDER)
+    notification['size'] = resolve_alert_option(metadata.get('size'), WORKFLOW_ALERT_SIZE_ORDER)
+    notification['audience'] = 'group' if _is_team_workflow_alert(notification) else 'owner'
+    notification['acknowledged'] = acknowledged
+    notification['acknowledged_at'] = str(notification.get('acknowledged_at') or '').strip() or None
+    notification['acknowledged_by_name'] = (
+        str(acknowledged_by.get('display_name') or '').strip() or None
+    ) if acknowledged else None
+    notification.pop('acknowledged_by', None)
+    notification['content_scope'] = content_scope
+    if notification.get('scope') == 'group':
+        notification['read_by'] = [reader_user_id] if reader_user_id in (notification.get('read_by') or []) else []
+        notification['dismissed_by'] = (
+            [reader_user_id] if reader_user_id in (notification.get('dismissed_by') or []) else []
+        )
+    return notification
 
 
 def _get_notification_type_config(notification):
@@ -818,8 +993,14 @@ def create_workflow_priority_notification(
     link_url='',
     link_context=None,
     metadata=None,
+    group_id=None,
 ):
-    """Create a personal workflow alert notification with a priority-aware display."""
+    """Create a workflow alert notification with a priority-aware display.
+
+    The alert is personal to ``user_id`` unless ``group_id`` is given, in which case one shared
+    group-scoped alert reaches every member of that group. ``metadata['owner_user_id']`` then
+    names the workflow's owner, the only member who reads the alert in full.
+    """
     normalized_priority = str(priority or 'medium').strip().lower()
     if normalized_priority not in WORKFLOW_ALERT_PRIORITY_CONFIG:
         normalized_priority = 'medium'
@@ -828,6 +1009,20 @@ def create_workflow_priority_notification(
     alert_metadata.setdefault('priority', normalized_priority)
     alert_metadata.setdefault('workflow_id', workflow_id)
     alert_metadata.setdefault('workflow_name', workflow_name)
+
+    normalized_group_id = str(group_id or '').strip()
+    if normalized_group_id:
+        alert_metadata['audience'] = 'group'
+        alert_metadata.setdefault('owner_user_id', user_id)
+        return create_notification(
+            group_id=normalized_group_id,
+            notification_type=WORKFLOW_ALERT_NOTIFICATION_TYPE,
+            title=title,
+            message=message,
+            link_url=link_url,
+            link_context=link_context or {},
+            metadata=alert_metadata,
+        )
 
     return create_notification(
         user_id=user_id,
@@ -959,16 +1154,15 @@ def get_user_notifications(user_id, page=1, per_page=20, include_read=True, incl
                 continue
             if not include_read and user_id in read_by:
                 continue
-            
+
+            if notif.get('notification_type') == WORKFLOW_ALERT_NOTIFICATION_TYPE:
+                notif = _decorate_workflow_alert(notif, user_id)
+
             # Add UI metadata
             notif['message'] = _get_notification_display_message(notif)
             notif['is_read'] = user_id in read_by
             notif['is_dismissed'] = user_id in dismissed_by
             notif['type_config'] = _get_notification_type_config(notif)
-            if notif.get('notification_type') == WORKFLOW_ALERT_NOTIFICATION_TYPE:
-                notif['priority'] = _get_workflow_alert_priority(notif)
-                notif['category'] = _get_workflow_alert_category(notif)
-                notif['delivery'] = _get_workflow_alert_delivery(notif)
             
             filtered_notifications.append(notif)
         
@@ -1151,14 +1345,7 @@ def get_unread_workflow_priority_notifications(user_id, limit=5, since_hours=Non
             if _get_workflow_alert_delivery(notification) == WORKFLOW_ALERT_DELIVERY_NOTIFY_ONLY:
                 continue
 
-            notification['message'] = _get_notification_display_message(notification)
-            notification['is_read'] = False
-            notification['is_dismissed'] = False
-            notification['priority'] = _get_workflow_alert_priority(notification)
-            notification['category'] = _get_workflow_alert_category(notification)
-            notification['delivery'] = _get_workflow_alert_delivery(notification)
-            notification['type_config'] = _get_notification_type_config(notification)
-            unread_notifications.append(notification)
+            unread_notifications.append(_present_workflow_alert_popup(notification, user_id))
 
             if len(unread_notifications) >= normalized_limit:
                 break
@@ -1171,9 +1358,315 @@ def get_unread_workflow_priority_notifications(user_id, limit=5, since_hours=Non
         return []
 
 
+def _normalize_workflow_alert_limit(limit):
+    try:
+        return max(1, min(int(limit or 5), 10))
+    except (TypeError, ValueError):
+        return 5
+
+
+def _present_workflow_alert_popup(notification, user_id):
+    """Decorate one workflow alert for a pop-up reader, reporting only that reader's state."""
+    read_by = notification.get('read_by') or []
+    dismissed_by = notification.get('dismissed_by') or []
+    is_read = user_id in read_by
+    is_dismissed = user_id in dismissed_by
+    notification = _decorate_workflow_alert(notification, user_id)
+    notification['message'] = _get_notification_display_message(notification)
+    notification['is_read'] = is_read
+    notification['is_dismissed'] = is_dismissed
+    notification['type_config'] = _get_notification_type_config(notification)
+    return notification
+
+
+def _get_user_group_ids(user_id):
+    """Return the ids of the groups the user belongs to now, read from the groups store."""
+    return sorted({
+        str(group.get('id') or '').strip()
+        for group in get_user_groups(user_id) or []
+        if isinstance(group, dict) and str(group.get('id') or '').strip()
+    })
+
+
+def _read_workflow_alert_page(query_parts, parameters, partition_key=None):
+    query = ' '.join(query_parts)
+    if partition_key is not None:
+        return list(cosmos_notifications_container.query_items(
+            query=query,
+            parameters=parameters,
+            partition_key=partition_key,
+        ))
+    return list(cosmos_notifications_container.query_items(
+        query=query,
+        parameters=parameters,
+        enable_cross_partition_query=True,
+    ))
+
+
+# Must-acknowledge alerts keep popping up until acknowledged, whatever their age or the reader's
+# read state, so they are read separately and can't be crowded out of TOP by newer alerts.
+_WORKFLOW_ALERT_UNACKNOWLEDGED_FILTERS = [
+    'AND c.notification_type = @notification_type',
+    'AND c.metadata.require_acknowledgment = true',
+    "AND (NOT IS_DEFINED(c.acknowledged_at) OR IS_NULL(c.acknowledged_at) OR c.acknowledged_at = '')",
+    'AND (NOT IS_STRING(c.metadata.delivery) OR LOWER(TRIM(c.metadata.delivery)) != @notify_only)',
+]
+
+
+def _is_pending_acknowledgment_popup(notification):
+    return (
+        _workflow_alert_requires_acknowledgment(notification)
+        and not _is_workflow_alert_acknowledged(notification)
+        and _get_workflow_alert_delivery(notification) != WORKFLOW_ALERT_DELIVERY_NOTIFY_ONLY
+    )
+
+
+def get_workflow_alert_popups(user_id, limit=5, since_hours=None, raise_on_error=False):
+    """Return every workflow alert that should pop up for a user, and whether that list is whole.
+
+    Four bounded reads, each capped at ``limit``:
+
+    - the user's unread pop-up alerts (``get_unread_workflow_priority_notifications``);
+    - the user's must-acknowledge alerts nobody has acknowledged, whatever their age or read state;
+    - unread pop-up team alerts from the groups the user belongs to now;
+    - unacknowledged must-acknowledge team alerts from those groups.
+
+    ``since_hours`` narrows only the unread reads. ``complete`` is False when any read came back
+    full, so a client can't take a capped answer for every alert there is. Team alerts are reduced
+    for members other than the workflow's owner (``_decorate_workflow_alert``).
+
+    Returns ``{'notifications': [...], 'complete': bool}``, newest first.
+    """
+    normalized_limit = _normalize_workflow_alert_limit(limit)
+    normalized_since_hours = parse_workflow_alert_since_hours(since_hours)
+    popups = {}
+    complete = True
+
+    def keep(notifications):
+        for notification in notifications:
+            popups.setdefault(notification.get('id'), notification)
+
+    unread = get_unread_workflow_priority_notifications(
+        user_id,
+        limit=normalized_limit,
+        since_hours=normalized_since_hours,
+        raise_on_error=raise_on_error,
+    )
+    complete = len(unread) < normalized_limit
+    keep(unread)
+
+    base_parameters = [
+        {'name': '@limit', 'value': normalized_limit},
+        {'name': '@user_id', 'value': user_id},
+        {'name': '@notification_type', 'value': WORKFLOW_ALERT_NOTIFICATION_TYPE},
+        {'name': '@notify_only', 'value': WORKFLOW_ALERT_DELIVERY_NOTIFY_ONLY},
+    ]
+    try:
+        pending = _read_workflow_alert_page(
+            ['SELECT TOP @limit * FROM c', 'WHERE c.user_id = @user_id', *_WORKFLOW_ALERT_UNACKNOWLEDGED_FILTERS,
+             'ORDER BY c.created_at DESC'],
+            base_parameters,
+            partition_key=user_id,
+        )
+        complete = complete and len(pending) < normalized_limit
+        keep(
+            _present_workflow_alert_popup(notification, user_id)
+            for notification in (sanitize_workflow_alert_record(item) for item in pending)
+            if notification.get('user_id') == user_id and _is_pending_acknowledgment_popup(notification)
+        )
+
+        group_ids = _get_user_group_ids(user_id)
+        if group_ids:
+            team_parameters = [*base_parameters, {'name': '@group_ids', 'value': group_ids}]
+            team_unread_parts = [
+                'SELECT TOP @limit * FROM c',
+                'WHERE ARRAY_CONTAINS(@group_ids, c.group_id)',
+                "AND c.scope = 'group'",
+                'AND c.notification_type = @notification_type',
+                'AND (NOT IS_ARRAY(c.read_by) OR NOT ARRAY_CONTAINS(c.read_by, @user_id))',
+                'AND (NOT IS_ARRAY(c.dismissed_by) OR NOT ARRAY_CONTAINS(c.dismissed_by, @user_id))',
+                'AND (NOT IS_STRING(c.metadata.delivery) OR LOWER(TRIM(c.metadata.delivery)) != @notify_only)',
+                'AND (NOT IS_DEFINED(c.metadata.require_acknowledgment) OR c.metadata.require_acknowledgment != true)',
+            ]
+            team_unread_parameters = list(team_parameters)
+            if normalized_since_hours is not None:
+                created_after = (datetime.now(timezone.utc) - timedelta(hours=normalized_since_hours)).isoformat()
+                team_unread_parts.append('AND c.created_at >= @created_after')
+                team_unread_parameters.append({'name': '@created_after', 'value': created_after})
+            team_unread_parts.append('ORDER BY c.created_at DESC')
+
+            team_unread = _read_workflow_alert_page(team_unread_parts, team_unread_parameters)
+            complete = complete and len(team_unread) < normalized_limit
+            keep(
+                _present_workflow_alert_popup(notification, user_id)
+                for notification in (sanitize_workflow_alert_record(item) for item in team_unread)
+                if _is_team_workflow_alert(notification)
+                and notification.get('group_id') in group_ids
+                and user_id not in (notification.get('read_by') or [])
+                and user_id not in (notification.get('dismissed_by') or [])
+                and _get_workflow_alert_delivery(notification) != WORKFLOW_ALERT_DELIVERY_NOTIFY_ONLY
+                and not _workflow_alert_requires_acknowledgment(notification)
+            )
+
+            team_pending = _read_workflow_alert_page(
+                ['SELECT TOP @limit * FROM c', 'WHERE ARRAY_CONTAINS(@group_ids, c.group_id)', "AND c.scope = 'group'",
+                 *_WORKFLOW_ALERT_UNACKNOWLEDGED_FILTERS, 'ORDER BY c.created_at DESC'],
+                [parameter for parameter in team_parameters if parameter['name'] != '@user_id'],
+            )
+            complete = complete and len(team_pending) < normalized_limit
+            keep(
+                _present_workflow_alert_popup(notification, user_id)
+                for notification in (sanitize_workflow_alert_record(item) for item in team_pending)
+                if _is_team_workflow_alert(notification)
+                and notification.get('group_id') in group_ids
+                and _is_pending_acknowledgment_popup(notification)
+            )
+    except Exception as e:
+        log_event(
+            '[NOTIFICATIONS] Workflow alert pop-up read failed.',
+            extra={'user_id': user_id, 'error_type': type(e).__name__},
+            level=logging.WARNING,
+        )
+        if raise_on_error:
+            raise
+        complete = False
+
+    ordered = sorted(popups.values(), key=lambda item: str(item.get('created_at') or ''), reverse=True)
+    return {'notifications': ordered, 'complete': complete}
+
+
+def _read_notification_by_id(notification_id):
+    """Find a notification by id across every scope's partition."""
+    notifications = list(cosmos_notifications_container.query_items(
+        query='SELECT * FROM c WHERE c.id = @notification_id',
+        parameters=[{'name': '@notification_id', 'value': notification_id}],
+        enable_cross_partition_query=True,
+    ))
+    return notifications[0] if notifications else None
+
+
+def _write_notification_change(notification_id, change):
+    """Apply ``change`` to a stored notification, writing only if nobody changed it meanwhile.
+
+    ``change(notification)`` edits the document in place and returns True when it changed
+    anything. Group and workspace notifications are shared by many readers, so writing a stale
+    copy unconditionally could drop another reader's read or dismissal, or undo a workflow
+    alert's acknowledgment. The write is conditional on the stored ETag and retried on a conflict.
+
+    Returns the stored notification, or None when it doesn't exist or has no partition key.
+    """
+    for _attempt in range(NOTIFICATION_WRITE_ATTEMPTS):
+        notification = _read_notification_by_id(notification_id)
+        if not notification or not _get_notification_partition_key(notification):
+            return None
+        if not change(notification):
+            return notification
+        etag = notification.get('_etag')
+        if not etag:
+            return cosmos_notifications_container.upsert_item(notification)
+        try:
+            return cosmos_notifications_container.replace_item(
+                item=notification['id'],
+                body=notification,
+                etag=etag,
+                match_condition=MatchConditions.IfNotModified,
+            )
+        except exceptions.CosmosAccessConditionFailedError:
+            continue
+    raise exceptions.CosmosAccessConditionFailedError(status_code=412, message='Notification changed.')
+
+
+def _can_receive_workflow_alert(notification, user_id):
+    """Return True when this user is one of the alert's recipients right now.
+
+    A personal alert belongs to its owner. A team alert belongs to the current members of its
+    group, re-checked against the groups store rather than taken from the request.
+    """
+    if not user_id:
+        return False
+    if _is_team_workflow_alert(notification):
+        try:
+            assert_group_role(
+                user_id,
+                str(notification.get('group_id') or '').strip(),
+                allowed_roles=GROUP_WORKFLOW_MEMBER_ROLES,
+            )
+        except (LookupError, PermissionError):
+            return False
+        return True
+    return notification.get('scope') in (None, 'personal') and notification.get('user_id') == user_id
+
+
+def acknowledge_workflow_alert(notification_id, user_id, display_name=''):
+    """Acknowledge a must-acknowledge workflow alert for everyone who receives it.
+
+    The caller must be a recipient: the owner of a personal alert, or a current member of a team
+    alert's group. Anything else is answered as ``not_found``, so the response never confirms an
+    alert the caller can't see. The first acknowledgment wins: the write is conditional on the
+    stored ETag, and an alert someone already acknowledged keeps that acknowledgment. The
+    caller's own read state is set either way.
+
+    Returns ``(status, notification)``. ``status`` is ``acknowledged``, ``already_acknowledged``,
+    ``not_found`` or ``not_required``; ``notification`` is the alert decorated for the caller,
+    or None.
+    """
+    normalized_id = str(notification_id or '').strip()
+    if not normalized_id or not user_id:
+        return 'not_found', None
+
+    outcome = {'status': 'not_found'}
+    acknowledger_name = ' '.join(str(display_name or '').split())[:WORKFLOW_ALERT_ACKNOWLEDGER_NAME_MAX_LENGTH]
+
+    def acknowledge(notification):
+        if (
+            notification.get('notification_type') != WORKFLOW_ALERT_NOTIFICATION_TYPE
+            or not _can_receive_workflow_alert(notification, user_id)
+        ):
+            outcome['status'] = 'not_found'
+            return False
+        if not _workflow_alert_requires_acknowledgment(notification):
+            outcome['status'] = 'not_required'
+            return False
+
+        changed = False
+        if _is_workflow_alert_acknowledged(notification):
+            outcome['status'] = 'already_acknowledged'
+        else:
+            outcome['status'] = 'acknowledged'
+            notification['acknowledged_at'] = datetime.now(timezone.utc).isoformat()
+            notification['acknowledged_by'] = {'user_id': user_id, 'display_name': acknowledger_name}
+            changed = True
+        read_by = list(notification.get('read_by') or [])
+        if user_id not in read_by:
+            read_by.append(user_id)
+            notification['read_by'] = read_by
+            changed = True
+        return changed
+
+    stored = _write_notification_change(normalized_id, acknowledge)
+    if stored is None or outcome['status'] in ('not_found', 'not_required'):
+        return outcome['status'], None
+
+    if outcome['status'] == 'acknowledged':
+        log_event(
+            '[NOTIFICATIONS] Workflow alert acknowledged.',
+            extra={
+                'notification_id': normalized_id,
+                'user_id': user_id,
+                'scope': stored.get('scope'),
+                'group_id': stored.get('group_id'),
+                'workflow_id': _get_workflow_alert_metadata(stored).get('workflow_id'),
+                'run_id': _get_workflow_alert_metadata(stored).get('run_id'),
+            },
+        )
+    return outcome['status'], _present_workflow_alert_popup(sanitize_workflow_alert_record(stored), user_id)
+
+
 def mark_notification_read(notification_id, user_id):
     """
     Mark a notification as read by a specific user.
+
+    Reading never acknowledges a workflow alert that must be acknowledged.
     
     Args:
         notification_id (str): Notification ID
@@ -1183,38 +1676,20 @@ def mark_notification_read(notification_id, user_id):
         bool: True if successful, False otherwise
     """
     try:
-        # First, find the notification across all partition keys
-        query = "SELECT * FROM c WHERE c.id = @notification_id"
-        params = [{"name": "@notification_id", "value": notification_id}]
-        
-        notifications = list(cosmos_notifications_container.query_items(
-            query=query,
-            parameters=params,
-            enable_cross_partition_query=True
-        ))
-        
-        if not notifications:
-            debug_print(f"Notification {notification_id} not found")
-            return False
-        
-        notification = notifications[0]
-        
-        # Determine partition key
-        partition_key = _get_notification_partition_key(notification)
-        
-        if not partition_key:
-            debug_print(f"No partition key found for notification {notification_id}")
-            return False
-        
-        # Add user to read_by if not already present
-        read_by = notification.get('read_by', [])
-        if user_id not in read_by:
+        def mark_read(notification):
+            read_by = list(notification.get('read_by') or [])
+            if user_id in read_by:
+                return False
             read_by.append(user_id)
             notification['read_by'] = read_by
-            
-            cosmos_notifications_container.upsert_item(notification)
-            debug_print(f"Notification {notification_id} marked read by {user_id}")
-        
+            return True
+
+        stored = _write_notification_change(notification_id, mark_read)
+        if stored is None:
+            debug_print(f"Notification {notification_id} not found")
+            return False
+
+        debug_print(f"Notification {notification_id} marked read by {user_id}")
         return True
         
     except Exception as e:
@@ -1305,6 +1780,8 @@ def mark_collaboration_message_notifications_read_for_conversation(user_id, conv
 def dismiss_notification(notification_id, user_id):
     """
     Dismiss a notification for a specific user (adds to dismissed_by).
+
+    Dismissing never acknowledges a workflow alert that must be acknowledged.
     
     Args:
         notification_id (str): Notification ID
@@ -1314,38 +1791,20 @@ def dismiss_notification(notification_id, user_id):
         bool: True if successful, False otherwise
     """
     try:
-        # Find notification across all partitions
-        query = "SELECT * FROM c WHERE c.id = @notification_id"
-        params = [{"name": "@notification_id", "value": notification_id}]
-        
-        notifications = list(cosmos_notifications_container.query_items(
-            query=query,
-            parameters=params,
-            enable_cross_partition_query=True
-        ))
-        
-        if not notifications:
-            debug_print(f"Notification {notification_id} not found")
-            return False
-        
-        notification = notifications[0]
-        
-        # Determine partition key
-        partition_key = _get_notification_partition_key(notification)
-        
-        if not partition_key:
-            debug_print(f"No partition key found for notification {notification_id}")
-            return False
-        
-        # Add user to dismissed_by
-        dismissed_by = notification.get('dismissed_by', [])
-        if user_id not in dismissed_by:
+        def dismiss(notification):
+            dismissed_by = list(notification.get('dismissed_by') or [])
+            if user_id in dismissed_by:
+                return False
             dismissed_by.append(user_id)
             notification['dismissed_by'] = dismissed_by
-            
-            cosmos_notifications_container.upsert_item(notification)
-            debug_print(f"Notification {notification_id} dismissed by {user_id}")
-        
+            return True
+
+        stored = _write_notification_change(notification_id, dismiss)
+        if stored is None:
+            debug_print(f"Notification {notification_id} not found")
+            return False
+
+        debug_print(f"Notification {notification_id} dismissed by {user_id}")
         return True
         
     except Exception as e:

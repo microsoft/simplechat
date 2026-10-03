@@ -27,6 +27,7 @@ import {
     type WorkflowAlertEntry,
 } from '../../lib/workflowAlertNotices';
 import { useReducedMotion } from '../../lib/workflowAlertMotion';
+import { retryWorkflowAlertSound, useWorkflowAlertSoundBlocked } from '../../lib/workflowAlertSound';
 import {
     useWorkflowAlertStore,
     workflowAlertReturnFocusTarget,
@@ -108,6 +109,8 @@ function NoticeBody({
     const rootRef = useRef<HTMLDivElement>(null);
     const [hovered, setHovered] = useState(false);
     const [focused, setFocused] = useState(false);
+    const [compact, setCompact] = useState(false);
+    const soundBlocked = useWorkflowAlertSoundBlocked();
 
     // Hidden while something else has the page, the pointer and focus cannot be said to have
     // left it; they start fresh when it is back.
@@ -119,7 +122,7 @@ function NoticeBody({
     }, [suspended]);
 
     useTuckTimer(
-        phase === 'notice' && !workflowAlertStays(entry.priority),
+        phase === 'notice' && !entry.requireAcknowledgment && !workflowAlertStays(entry.priority),
         hovered || focused || suspended,
         `${entry.key}:${entry.priority}:${batchToken}`,
         () => void tuck(),
@@ -145,7 +148,11 @@ function NoticeBody({
                 && landed.left < notice.right && notice.left < landed.right
                 && landed.top < notice.bottom && notice.top < landed.bottom;
             if (covered) {
-                void tuck();
+                if (entry.requireAcknowledgment) {
+                    setCompact(true);
+                } else {
+                    void tuck();
+                }
             }
         };
         document.addEventListener('focusin', onFocusIn);
@@ -164,7 +171,9 @@ function NoticeBody({
     const onKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
         if (event.key === 'Escape') {
             event.stopPropagation();
-            void close();
+            if (!entry.requireAcknowledgment) {
+                void close();
+            }
         }
     };
 
@@ -177,6 +186,7 @@ function NoticeBody({
         `Open ${label.toLowerCase()} priority ${kind}: ${alert.title}, from ${alert.workflowName}.`,
         group ? `${group}.` : '',
         more > 0 ? `${more} more waiting.` : '',
+        entry.requireAcknowledgment ? 'Needs acknowledgment.' : '',
     ].filter(Boolean).join(' ');
 
     return (
@@ -191,6 +201,8 @@ function NoticeBody({
             data-category={alert.category}
             data-state={phase}
             data-count={entry.count}
+            data-requires-acknowledgment={entry.requireAcknowledgment ? 'true' : 'false'}
+            data-compact={compact ? 'true' : 'false'}
             onPointerEnter={() => setHovered(true)}
             onPointerLeave={() => setHovered(false)}
             onFocus={() => setFocused(true)}
@@ -238,6 +250,14 @@ function NoticeBody({
                         {alert.category === 'failure' && (
                             <span className="shrink-0 text-[11px] font-semibold text-text-2">Run failed</span>
                         )}
+                        {entry.requireAcknowledgment && (
+                            <span
+                                data-workflow-alert-ack-tag=""
+                                className="shrink-0 rounded bg-danger-soft px-1.5 py-0.5 text-[11px] font-semibold text-danger"
+                            >
+                                Needs acknowledgment
+                            </span>
+                        )}
                         <span
                             data-workflow-alert-workflow=""
                             title={alert.workflowName}
@@ -249,9 +269,10 @@ function NoticeBody({
                     <span className="mt-1 line-clamp-2 block text-sm font-medium break-words text-text-1">
                         {alert.title}
                     </span>
-                    {(group || more > 0) && (
+                    {(group || more > 0 || entry.audience === 'group') && (
                         <span className="mt-0.5 flex flex-wrap gap-x-2 text-xs text-text-3">
                             {group && <span data-workflow-alert-group="">{group}</span>}
+                            {entry.audience === 'group' && <span data-workflow-alert-team="">Sent to everyone in the group</span>}
                             {more > 0 && (
                                 <span data-workflow-alert-more="" className="font-semibold text-text-2">
                                     +{more} more
@@ -260,16 +281,29 @@ function NoticeBody({
                         </span>
                     )}
                 </button>
-                <button
-                    type="button"
-                    data-workflow-alert-close=""
-                    onClick={() => void close()}
-                    aria-label="Close alert notice"
-                    title="Close"
-                    className="shrink-0 rounded-lg p-1 text-text-3 transition-colors hover:bg-surface-2 hover:text-text-1"
-                >
-                    <X size={15} aria-hidden="true" />
-                </button>
+                {/* A control of its own beside the notice, never nested in the notice's button. */}
+                {soundBlocked && (
+                    <button
+                        type="button"
+                        data-workflow-alert-enable-sound=""
+                        onClick={retryWorkflowAlertSound}
+                        className="shrink-0 rounded-lg px-1.5 py-1 text-xs font-semibold text-accent underline transition-colors hover:bg-surface-2"
+                    >
+                        Enable sound
+                    </button>
+                )}
+                {!entry.requireAcknowledgment && (
+                    <button
+                        type="button"
+                        data-workflow-alert-close=""
+                        onClick={() => void close()}
+                        aria-label="Close alert notice"
+                        title="Close"
+                        className="shrink-0 rounded-lg p-1 text-text-3 transition-colors hover:bg-surface-2 hover:text-text-1"
+                    >
+                        <X size={15} aria-hidden="true" />
+                    </button>
+                )}
             </div>
         </div>
     );

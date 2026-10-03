@@ -32,15 +32,17 @@ import type { MutableRefObject, ReactNode, Ref } from 'react';
  * `md` is a confirmation or a short form. `lg` is a form long enough to scroll. `xl` is for a
  * surface that puts two panes side by side, where a narrower dialog would leave each half too
  * cramped to be worth splitting. `2xl` is for an `xl` surface that opens a side panel beside
- * its panes, such as the workflow editor's Changes panel.
+ * its panes, such as the workflow editor's Changes panel. `full` is a full-screen takeover
+ * for operational alerts that still keep the same Escape and backdrop-close semantics.
  */
-export type ModalSize = 'md' | 'lg' | 'xl' | '2xl';
+export type ModalSize = 'md' | 'lg' | 'xl' | '2xl' | 'full';
 
 const SIZE_CLASS: Record<ModalSize, string> = {
     md: 'max-w-lg',
     lg: 'max-w-2xl',
     xl: 'max-w-5xl',
     '2xl': 'max-w-7xl',
+    full: 'h-[calc(100vh_-_2rem)] max-w-[calc(100vw_-_2rem)]',
 };
 
 // What Tab can reach: enabled, shown, and not taken out of the tab order.

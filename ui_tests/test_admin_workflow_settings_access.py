@@ -8,11 +8,13 @@ Updated in: 0.241.179
 Updated in: 0.241.193
 Updated in: 0.241.194
 Updated in: 0.250.129
+Updated in: 0.261.234
 
 This test ensures admins can see the dedicated Workspace settings sections with
 consistent app-role labels for workflow, group workflow assignment, group creation,
 public workspace creation, chat file uploads, workflow action limits, and workflow
-task limits. It also verifies capacity guidance for higher workflow action limits.
+task limits, and workflow alert sounds. It also verifies capacity guidance for
+higher workflow action limits.
 """
 
 import os
@@ -71,12 +73,14 @@ def test_admin_workflow_settings_section():
         expect(workflow_section).to_contain_text("Enable Cosmos DB Throughput automation in SimpleChat")
         expect(workflow_section).to_contain_text("Workflow Task Limit")
         expect(workflow_section).to_contain_text("Default is 50; supported range is 1-100")
+        expect(workflow_section).to_contain_text("Enable Workflow Alert Sounds")
         expect(workflow_section).to_contain_text("Enable Group Workflows")
         expect(workflow_section).to_contain_text("Require Group Assignment to Use Workflow")
         expect(workflow_section).to_contain_text("Group Workflow Assignments")
         expect(workflow_section).to_contain_text("Require Owner to Manage Group Agents, Actions and Workflows")
         expect(page.locator("#allow_user_workflows")).to_have_count(1)
         expect(page.locator("#require_member_of_workflow_user")).to_have_count(1)
+        expect(page.locator("#enable_workflow_alert_sounds")).to_have_count(1)
         workflow_action_limit = page.locator("#workflow_max_auto_invoke_attempts")
         expect(workflow_action_limit).to_have_count(1)
         expect(workflow_action_limit).to_have_attribute("type", "number")

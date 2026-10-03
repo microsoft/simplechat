@@ -1,7 +1,7 @@
 # test_workflow_alert_since_hours_policy.py
 """
 Functional policy tests for the workflow alert pop-up route's since_hours window.
-Version: 0.261.199
+Version: 0.261.234
 Implemented in: 0.261.199
 
 The real route body runs on a closed Flask app with the real since_hours parser, and with
@@ -56,7 +56,11 @@ def load_notifications_module(query_items=None):
         "config": {"cosmos_notifications_container": container},
         "functions_appinsights": {"log_event": Mock()},
         "functions_debug": {"debug_print": Mock()},
-        "functions_group": {"find_group_by_id": Mock(), "get_user_groups": lambda user: []},
+        "functions_group": {
+            "assert_group_role": Mock(),
+            "find_group_by_id": Mock(),
+            "get_user_groups": lambda user: [],
+        },
         "functions_public_workspaces": {
             "find_public_workspace_by_id": Mock(),
             "get_user_public_workspaces": lambda user: [],
@@ -72,13 +76,14 @@ def load_notifications_module(query_items=None):
     return module
 
 
-def route_client(reader, parser):
+def route_client(reader, parser, sounds_enabled=True):
     """The real route body, without its decorators, on a closed Flask app."""
     namespace = {
         "request": request,
         "jsonify": jsonify,
         "get_current_user_id": lambda: "owner",
-        "get_unread_workflow_priority_notifications": reader,
+        "get_workflow_alert_popups": reader,
+        "get_settings": lambda: {"enable_workflow_alert_sounds": sounds_enabled},
         "parse_workflow_alert_since_hours": parser,
         "debug_print": Mock(),
     }
@@ -114,7 +119,7 @@ def alerts_api():
         })
         if state["fail"]:
             raise RuntimeError("storage unavailable")
-        return [{"id": "alert-1", "priority": "high", "delivery": "popup"}]
+        return {"notifications": [{"id": "alert-1", "priority": "high", "delivery": "popup"}], "complete": True}
 
     parser = load_notifications_module().parse_workflow_alert_since_hours
     return route_client(reader, parser), calls, state
@@ -131,7 +136,7 @@ def failing_storage_api():
 
     notifications = load_notifications_module(query_items)
     client = route_client(
-        notifications.get_unread_workflow_priority_notifications,
+        notifications.get_workflow_alert_popups,
         notifications.parse_workflow_alert_since_hours,
     )
     return client, attempts
@@ -146,6 +151,8 @@ def test_classic_request_is_unchanged(alerts_api):
     assert response.json == {
         "success": True,
         "notifications": [{"id": "alert-1", "priority": "high", "delivery": "popup"}],
+        "complete": True,
+        "sounds_enabled": True,
     }
     assert calls == [{"user_id": "owner", "limit": 5, "since_hours": None, "raise_on_error": False}]
 
@@ -156,8 +163,24 @@ def test_v2_request_passes_a_validated_window(alerts_api):
     response = client.get(ROUTE_PATH, query_string={"limit": 10, "since_hours": 24})
 
     assert response.status_code == 200
-    assert set(response.json) == {"success", "notifications"}
+    assert set(response.json) == {"success", "notifications", "complete", "sounds_enabled"}
     assert calls == [{"user_id": "owner", "limit": 10, "since_hours": 24, "raise_on_error": True}]
+
+
+def test_sounds_enabled_follows_the_admin_setting():
+    """Clients silence workflow alert sounds when the administrator turns them off."""
+    assert_app_version_at_least("0.261.234")
+    parser = load_notifications_module().parse_workflow_alert_since_hours
+    client = route_client(
+        lambda user_id, **kwargs: {"notifications": [], "complete": True},
+        parser,
+        sounds_enabled=False,
+    )
+
+    response = client.get(ROUTE_PATH, query_string={"limit": 5})
+
+    assert response.status_code == 200
+    assert response.json["sounds_enabled"] is False
 
 
 @pytest.mark.parametrize(("limit", "expected"), [("0", 5), ("11", 5), ("1", 1), ("10", 10)])
@@ -206,14 +229,15 @@ def test_a_failed_storage_read_is_a_500_for_v2(failing_storage_api):
 
 
 def test_a_failed_storage_read_is_still_an_empty_list_for_classic(failing_storage_api):
-    """Classic has always shown nothing for a failed read, and still does."""
+    """Classic has always shown nothing for a failed read, and still does; the list says it's partial."""
     client, attempts = failing_storage_api
 
     response = client.get(ROUTE_PATH, query_string={"limit": 5})
 
     assert response.status_code == 200
-    assert response.json == {"success": True, "notifications": []}
-    assert attempts == ["owner"]
+    assert response.json == {"success": True, "notifications": [], "complete": False, "sounds_enabled": True}
+    # The unread read and the must-acknowledge read both stay in the caller's own partition.
+    assert attempts == ["owner", "owner"]
 
 
 if __name__ == "__main__":

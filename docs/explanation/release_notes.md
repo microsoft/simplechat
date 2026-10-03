@@ -2,6 +2,21 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.234)**
+
+#### New Features
+
+*   **Must-Acknowledge Workflow Alerts, Alert Sounds, Sizes And Team Delivery**
+    *   Each workflow alert rule can now require acknowledgment. Such an alert keeps coming back after a refresh, in every tab and on every device, whatever its age, until someone selects **Acknowledge** or opens it. Closing it only shrinks it: V2 keeps its notice under **My Workspace**, and classic keeps a banner with **Review**. Mark read, Dismiss and **Mark all read** never acknowledge an alert.
+    *   A rule can play a sound once, or repeat it every five seconds until the alert is acknowledged. Three tones, chosen by severity, were synthesized for SimpleChat and are served locally. One tab per browser plays, shared between classic and V2. When the browser blocks sound, the alert offers **Enable sound**.
+    *   A rule can choose a size: small (the usual pop-up), medium (the full alert opens straight away) or large (full screen, for wall displays).
+    *   In a group workflow, a rule can alert everyone in the group. The run raises one shared alert, and any current member can acknowledge it for everyone; the bell then shows "Acknowledged by *name* at *time*". Members other than the owner see a simpler alert with the severity, workflow, matched rules and **Open** to what the run created in the group.
+    *   When several rules match, each option takes the strongest value any matched rule asked for. A model-evaluated rule that asks for a stronger option is still evaluated when a deterministic rule matched at a higher severity.
+    *   New admin setting **Enable Workflow Alert Sounds** (`enable_workflow_alert_sounds`, on by default). Each device has its own **Play alert sounds** switch, and V2 **Preferences** adds an **Alert monitor** switch that checks for workflow alerts every 30 seconds, even in a background tab, for operations screens.
+    *   New route `POST /api/notifications/<notification_id>/acknowledge`, open only to the alert's recipients. `GET /api/notifications/workflow-alerts` now also returns pending alerts that need acknowledgment and team alerts from the user's groups, with `complete` and `sounds_enabled`. Read, dismiss and acknowledge writes are now conditional on the stored version, so concurrent writes to a shared alert can't drop each other.
+    *   Both the V2 and classic workflow editors have the new options, and both mirror the server's reviewed validation messages.
+    *   (Ref: #1634, `functions_workflow_alerts.py`, `functions_notifications.py`, `route_backend_notifications.py`, `functions_workflow_runner.py`, `WorkflowAlertEditor.tsx`, `workflowAlertStore.ts`, `workflowAlertSound.ts`, `PreferencesTab.tsx`, `notifications.js`, `workflow-alert-sound.js`, `workspace_workflows.js`, [Workflow Alert Acknowledgment](features/WORKFLOW_ALERT_ACKNOWLEDGMENT.md))
+
 ### **(v0.261.233)**
 
 #### Bug Fixes

@@ -1053,6 +1053,10 @@ export interface PublicWorkspaceLabels {
     max_length: number;
 }
 
+export interface BootstrapFeatures extends Record<string, boolean | undefined> {
+    enable_workflow_alert_sounds?: boolean;
+}
+
 export interface BootstrapPayload {
     version: string;
     user: {
@@ -1092,7 +1096,7 @@ export interface BootstrapPayload {
         custom_pages: NavGroup<CustomPageNavItem>;
         external_links: NavGroup<ExternalLinkNavItem>;
     };
-    features: Record<string, boolean>;
+    features: BootstrapFeatures;
     /**
      * What the deployment can do, where the answer is not an `enable_*` settings flag.
      *

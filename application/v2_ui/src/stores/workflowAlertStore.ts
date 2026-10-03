@@ -25,6 +25,7 @@ import type { NotificationTarget } from '../lib/notificationLinks';
 import type { NotificationNavigationContext } from '../lib/notificationNavigation';
 import { claimWorkflowAlerts, resetWorkflowAlertClaims } from '../lib/workflowAlertClaims';
 import { tuckIntoTarget } from '../lib/workflowAlertMotion';
+import { startWorkflowAlertSoundForEntries, stopWorkflowAlertSound } from '../lib/workflowAlertSound';
 import {
     WORKFLOW_ALERT_PRIORITY_LABELS,
     describeWorkflowAlertGroup,
@@ -77,6 +78,7 @@ interface WorkflowAlertState {
     nextEntry: () => void;
     markEntryRead: () => Promise<void>;
     dismissEntry: () => Promise<void>;
+    acknowledgeEntry: () => Promise<void>;
     markAllRead: () => Promise<void>;
     /**
      * Follow a link or an open action from the card. Every alert in the entry shown is marked
@@ -136,6 +138,9 @@ function announcementFor(entries: WorkflowAlertEntry[]): WorkflowAlertAnnounceme
     const alert = head.lead;
     const kind = alert.category === 'failure' ? 'workflow run failed' : 'workflow alert';
     const parts = [`${WORKFLOW_ALERT_PRIORITY_LABELS[head.priority]} priority ${kind}: ${alert.title}, from ${alert.workflowName}.`];
+    if (head.requireAcknowledgment) {
+        parts.push('Needs acknowledgment.');
+    }
     const group = describeWorkflowAlertGroup(head);
     if (group) {
         parts.push(`${group}.`);
@@ -144,7 +149,7 @@ function announcementFor(entries: WorkflowAlertEntry[]): WorkflowAlertAnnounceme
         parts.push(`${entries.length - 1} more waiting.`);
     }
     announcementToken += 1;
-    return { text: parts.join(' '), assertive: head.priority === 'critical', token: announcementToken };
+    return { text: parts.join(' '), assertive: head.priority === 'critical' || head.requireAcknowledgment, token: announcementToken };
 }
 
 function withoutIds(entries: WorkflowAlertEntry[], ids: Set<string>): WorkflowAlertEntry[] {
@@ -166,12 +171,13 @@ export const useWorkflowAlertStore = create<WorkflowAlertState>((set, get) => {
     const present = (winners: WorkflowAlert[], queue: WorkflowAlert[]): void => {
         const current = get();
         const entries = groupWorkflowAlerts([...current.entries.flatMap((entry) => entry.alerts), ...winners]);
+        startWorkflowAlertSoundForEntries(groupWorkflowAlerts(winners.filter((alert) => alert.sound !== 'off' && !alert.requireAcknowledgment)));
         if (current.phase === 'idle') {
             announceWhenShown = current.suspended;
             set({
                 queue,
                 entries,
-                phase: 'notice',
+                phase: entries[0]?.size === 'medium' || entries[0]?.size === 'large' ? 'card' : 'notice',
                 cardIndex: 0,
                 batchToken: current.batchToken + 1,
                 announcement: current.suspended ? null : announcementFor(entries),
@@ -200,7 +206,12 @@ export const useWorkflowAlertStore = create<WorkflowAlertState>((set, get) => {
             return;
         }
         const now = Date.now();
-        const candidates = state.queue.filter((alert) => !settled.has(alert.id) && isWorkflowAlertPopupEligible(alert, now));
+        // An alert that needs acknowledgment is offered by every read until someone acknowledges it.
+        // One already on screen stays as it is, rather than being presented, and announced, again.
+        const showing = new Set(state.entries.flatMap((entry) => entry.alerts.map((alert) => alert.id)));
+        const candidates = state.queue.filter((alert) =>
+            (alert.requireAcknowledgment && !alert.acknowledged ? !showing.has(alert.id) : !settled.has(alert.id))
+            && isWorkflowAlertPopupEligible(alert, now));
         if (!candidates.length) {
             if (state.queue.length) {
                 set({ queue: [] });
@@ -209,7 +220,9 @@ export const useWorkflowAlertStore = create<WorkflowAlertState>((set, get) => {
         }
         claiming = true;
         const claimEpoch = epoch;
-        const ids = candidates.map((alert) => alert.id);
+        const mustAck = candidates.filter((alert) => alert.requireAcknowledgment && !alert.acknowledged);
+        const claimable = candidates.filter((alert) => !alert.requireAcknowledgment || alert.acknowledged);
+        const ids = claimable.map((alert) => alert.id);
         void claimWorkflowAlerts(ids)
             .catch(() => [] as string[])
             .then((won) => {
@@ -221,9 +234,10 @@ export const useWorkflowAlertStore = create<WorkflowAlertState>((set, get) => {
                     settled.add(id);
                 }
                 const current = get();
-                const queue = current.queue.filter((alert) => !settled.has(alert.id));
+                const presentedIds = new Set([...won, ...mustAck.map((alert) => alert.id)]);
+                const queue = current.queue.filter((alert) => !presentedIds.has(alert.id) && !settled.has(alert.id));
                 const wonIds = new Set(won);
-                const winners = candidates.filter((alert) => wonIds.has(alert.id));
+                const winners = candidates.filter((alert) => wonIds.has(alert.id) || mustAck.some((must) => must.id === alert.id));
                 if (!winners.length) {
                     set({ queue });
                 } else if (current.phase === 'tucking') {
@@ -258,6 +272,7 @@ export const useWorkflowAlertStore = create<WorkflowAlertState>((set, get) => {
         for (const id of gone) {
             settled.add(id);
         }
+        stopWorkflowAlertSound(gone);
         const state = get();
         heldWinners = heldWinners.filter((alert) => !gone.has(alert.id));
         const queue = state.queue.filter((alert) => !gone.has(alert.id));
@@ -307,7 +322,14 @@ export const useWorkflowAlertStore = create<WorkflowAlertState>((set, get) => {
 
         receiveAlerts: (alerts, { complete = false } = {}) => {
             const now = Date.now();
-            const queue = alerts.filter((alert) => !settled.has(alert.id) && isWorkflowAlertPopupEligible(alert, now));
+            const queue = alerts.filter((alert) =>
+                (!settled.has(alert.id) || (alert.requireAcknowledgment && !alert.acknowledged))
+                && isWorkflowAlertPopupEligible(alert, now));
+            const mustAckSound = alerts.filter((alert) =>
+                alert.requireAcknowledgment && !alert.acknowledged && alert.sound !== 'off' && alert.delivery === 'popup');
+            if (mustAckSound.length) {
+                startWorkflowAlertSoundForEntries(groupWorkflowAlerts(mustAckSound), { mustOnly: true });
+            }
             set({ queue });
             if (complete) {
                 // A short answer is every unread pop-up alert there is, so one missing from it
@@ -346,12 +368,20 @@ export const useWorkflowAlertStore = create<WorkflowAlertState>((set, get) => {
 
         closeCard: () => {
             if (get().phase === 'card') {
-                finish();
+                const state = get();
+                if (state.entries.some((entry) => entry.requireAcknowledgment)) {
+                    set({ phase: 'notice', growFrom: null, busy: false });
+                } else {
+                    finish();
+                }
             }
         },
 
         tuck: async () => {
             if (get().phase !== 'notice') {
+                return;
+            }
+            if (get().entries.some((entry) => entry.requireAcknowledgment)) {
                 return;
             }
             set({ phase: 'tucking' });
@@ -374,7 +404,10 @@ export const useWorkflowAlertStore = create<WorkflowAlertState>((set, get) => {
         markEntryRead: async () => {
             const entry = get().entries[get().cardIndex];
             if (entry) {
-                await act(workflowAlertEntryIds(entry), (ids) => actions.markRead(ids));
+                await act(
+                    entry.alerts.filter((alert) => !alert.requireAcknowledgment).map((alert) => alert.id),
+                    (ids) => actions.markRead(ids),
+                );
             }
         },
 
@@ -385,8 +418,23 @@ export const useWorkflowAlertStore = create<WorkflowAlertState>((set, get) => {
             }
         },
 
+        acknowledgeEntry: async () => {
+            const entry = get().entries[get().cardIndex];
+            if (entry) {
+                await act(
+                    entry.alerts.filter((alert) => alert.requireAcknowledgment && !alert.acknowledged).map((alert) => alert.id),
+                    (ids) => actions.acknowledge(ids),
+                );
+            }
+        },
+
         markAllRead: async () => {
-            await act(get().entries.flatMap(workflowAlertEntryIds), (ids) => actions.markRead(ids));
+            await act(
+                get().entries.flatMap((entry) => entry.alerts)
+                    .filter((alert) => !alert.requireAcknowledgment)
+                    .map((alert) => alert.id),
+                (ids) => actions.markRead(ids),
+            );
         },
 
         openFromCard: async (target, context) => {
@@ -396,9 +444,17 @@ export const useWorkflowAlertStore = create<WorkflowAlertState>((set, get) => {
                 return;
             }
             const ids = workflowAlertEntryIds(entry);
+            const mustAck = entry.alerts.filter((alert) => alert.requireAcknowledgment && !alert.acknowledged).map((alert) => alert.id);
+            const ordinary = entry.alerts.filter((alert) => !alert.requireAcknowledgment).map((alert) => alert.id);
+            set({ busy: true });
+            const acknowledged = mustAck.length ? await actions.acknowledge(mustAck).catch(() => [] as string[]) : [];
+            if (mustAck.length && acknowledged.length !== mustAck.length) {
+                set({ busy: false });
+                return;
+            }
+            const read = ordinary.length ? actions.markRead(ordinary).catch(() => [] as string[]) : Promise.resolve([] as string[]);
             ids.forEach((id) => settled.add(id));
             finish();
-            const read = actions.markRead(ids).catch(() => [] as string[]);
             // A full page load would cancel a request still on its way, so a link that leaves
             // the application waits for the read first. Inside it the read carries on regardless.
             if (target.kind === 'classic') {
@@ -408,6 +464,22 @@ export const useWorkflowAlertStore = create<WorkflowAlertState>((set, get) => {
         },
     };
 });
+
+if (typeof BroadcastChannel !== 'undefined') {
+    try {
+        const channel = new BroadcastChannel('simplechat.workflowAlerts');
+        channel.addEventListener('message', (event) => {
+            const data = event.data;
+            if (data && data.type === 'acknowledged' && Array.isArray(data.ids)) {
+                useWorkflowAlertStore.getState().removeAlerts(
+                    data.ids.filter((id: unknown): id is string => typeof id === 'string'),
+                );
+            }
+        });
+    } catch {
+        /* Cross-tab acknowledgment is best-effort. */
+    }
+}
 
 /** Back to a clean slate: nothing waiting, nothing claimed. Only the alert lab and tests call this. */
 export function resetWorkflowAlertsForLab(): void {
