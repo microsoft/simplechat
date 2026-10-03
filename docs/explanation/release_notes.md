@@ -2,6 +2,18 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.222)**
+
+#### New Features
+
+*   **Merge Word Documents In Workflows**
+    *   A workflow **Merge files** task can use **Combine Word documents** as its **Merge type**: Word documents are appended, in order, into one Word document with code and no model, choosing files the same four ways as every merge.
+    *   **Word formatting** keeps each document's look, copying a style that shares a name but looks different under a new name, or uses the first document's styles for all of them. **Page break between documents** and **Add source headings** are optional. Styles, numbering, images, tables, footnotes and shapes come along; comments don't, and the merged document uses the first document's headers, footers and page setup.
+    *   The same documents always produce the same bytes, so a retried task reuses the file it attached. A Word merge reads at most 300 MB of documents; encrypted, damaged and macro-enabled files are refused, and errors name only the file.
+    *   Chat can propose Word merges (blueprint `merge.kind` `docx`, with `formatting`, `page_breaks` and `source_headings`), and the `merge_options_invalid` repair hint now lists the options each kind takes.
+    *   Adds the `docxcompose` 2.2.0 dependency (MIT).
+    *   (Ref: #1619, `functions_document_merge_docx.py`, `functions_document_merge.py`, `functions_document_actions.py`, `functions_workflow_drafts.py`, `functions_orchestration_planner.py`, `requirements.txt`, [Phase 5](features/V2_FILE_MERGE_PHASE_5_WORD.md), [Create a workflow](../guides/create-a-workflow.md#merge-files-in-a-workflow))
+
 ### **(v0.261.221)**
 
 #### New Features

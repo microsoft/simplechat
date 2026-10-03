@@ -2,7 +2,7 @@
 # test_workflow_merge_task.py
 """
 Functional test for workflow Merge tasks.
-Version: 0.261.221
+Version: 0.261.222
 Implemented in: 0.261.220
 Refs: microsoft/simplechat#1619
 
@@ -249,7 +249,7 @@ def test_files_found_at_run_time_are_never_stored_with_the_task(app, target_mode
 
 @pytest.mark.parametrize(("changes", "message"), [
     ({"document_ids": ["north"]}, "Select at least two files to merge."),
-    ({"merge_kind": "docx"}, "Merging Word files is not available yet."),
+    ({"merge_kind": "pptx"}, "Merging PowerPoint files is not available yet."),
     ({"merge_kind": "zip"}, "Merge kind must be one of: tabular, workbook, pdf, docx, pptx."),
     ({"target_mode": "current_item"}, "Merge files must be one of: selected, all, recent, changed."),
     ({"doc_scope": "tenant"}, "The merge workspace scope must be all, personal, group or public."),
@@ -501,8 +501,8 @@ def test_merge_failures_name_what_to_fix(app):
             world().run(app, normalize(app, merge_action()), render=failing(error))
         assert str(caught.value) == message
 
-    with pytest.raises(app.merge.WorkflowMergeError, match="Merging Word files is not available yet."):
-        world().run(app, {"type": "merge", "merge_kind": "docx", "document_ids": ["a", "b"]})
+    with pytest.raises(app.merge.WorkflowMergeError, match="Merging PowerPoint files is not available yet."):
+        world().run(app, {"type": "merge", "merge_kind": "pptx", "document_ids": ["a", "b"]})
     with pytest.raises(ValueError, match="unexpected"):
         world().run(app, normalize(app, merge_action()), render=failing(ValueError("unexpected")))
 
@@ -847,7 +847,7 @@ def test_a_refused_merge_save_says_why_without_repeating_the_task_name(app):
     assert not isinstance(private.value, WorkflowInputError)
     assert str(private.value).startswith("Workflow task 1 (Merge <b>secret</b> sales): ")
 
-    for changes in ({"merge_kind": "docx"}, {"output_file_name": "a/b"}, {"merge_options": {"bookmarks": True}}):
+    for changes in ({"merge_kind": "pptx"}, {"output_file_name": "a/b"}, {"merge_options": {"bookmarks": True}}):
         with pytest.raises(app.actions.MergeActionError):
             normalize(app, merge_action(**changes))
     with pytest.raises(app.actions.MergeActionError, match="File merging is turned off"):

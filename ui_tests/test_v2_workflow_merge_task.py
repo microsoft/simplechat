@@ -1,8 +1,8 @@
 # test_v2_workflow_merge_task.py
 """
 UI test for the V2 workflow editor Merge files document action.
-Version: 0.261.221
-Implemented in: 0.261.220; PDF merge authoring added in 0.261.221
+Version: 0.261.222
+Implemented in: 0.261.220; PDF merge authoring added in 0.261.221; Word in 0.261.222
 
 This test ensures the workflow editor can author a merge task, keep the user's selected file
 order after reordering, and save the backend document_action shape, and that it doesn't offer
@@ -136,3 +136,42 @@ def test_v2_workflow_merge_task_assembles_pdfs_without_bookmarks(workflow_ui):
     assert (action["type"], action["merge_kind"], action["output_format"]) == ("merge", "pdf", "pdf")
     assert action["document_ids"] == ["personal-brief", "personal-second"]
     assert action["merge_options"] == {"bookmarks": False}
+
+
+def test_v2_workflow_merge_task_appends_word_documents_with_their_options(workflow_ui):
+    assert_app_version_at_least("0.261.222")
+    ui, page = workflow_ui, workflow_ui.page
+    ui.open("/workspace/workflows")
+
+    page.get_by_role("button", name="Create workflow", exact=True).click()
+    expect(page.get_by_role("dialog", name="Create workflow", exact=True)).to_be_visible()
+    labelled(page, "Workflow name").fill("Minutes book")
+    labelled(page, "Description").first.fill("Appends the meeting minutes into one Word document.")
+    labelled(page, "Runner type").select_option("agent")
+    labelled(page, "Agent").select_option(label="Workspace reviewer")
+    labelled(page, "Task name").fill("Append the minutes")
+    labelled(page, "Instructions").fill("Append the minutes, in order, into one Word document.")
+
+    open_task_details(page, 0)
+    labelled(page, "Document action").select_option("merge")
+    merge_type = labelled(page, "Merge type")
+    expect(merge_type.locator("option", has_text="Combine Word documents")).to_have_count(1)
+    # PowerPoint isn't enabled yet, so a new task isn't offered it.
+    expect(merge_type.locator("option", has_text="PowerPoint")).to_have_count(0)
+    merge_type.select_option("docx")
+    expect(page.get_by_text("Inputs: .docx", exact=True)).to_be_visible()
+    expect(page.get_by_text("Output format: DOCX", exact=False)).to_be_visible()
+    available = page.get_by_role("list", name="Available merge files for Append the minutes")
+    available.locator("li").filter(has_text="Second brief").get_by_role("button", name="Add").click()
+    available.locator("li").filter(has_text="Private brief").get_by_role("button", name="Add").click()
+    page.get_by_text("More merge options", exact=True).click()
+    labelled(page, "Word formatting").select_option("use_first")
+    page.get_by_role("checkbox", name=re.compile("^Page break between documents")).uncheck(force=True)
+    page.get_by_role("checkbox", name=re.compile("^Add source headings")).check(force=True)
+
+    page.get_by_role("button", name="Save workflow", exact=True).click()
+    expect(page.get_by_role("dialog", name="Create workflow", exact=True)).to_have_count(0)
+    action = workflow_post(ui).body["tasks"][0]["document_action"]
+    assert (action["type"], action["merge_kind"], action["output_format"]) == ("merge", "docx", "docx")
+    assert action["document_ids"] == ["personal-second", "personal-brief"]
+    assert action["merge_options"] == {"formatting": "use_first", "page_breaks": False, "source_headings": True}

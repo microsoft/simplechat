@@ -1,6 +1,6 @@
 // test_v2_workflow_proposal_merge.mjs
-// Version: 0.261.221
-// Implemented in: 0.261.220; merge kinds added in 0.261.221
+// Version: 0.261.222
+// Implemented in: 0.261.220; merge kinds added in 0.261.221; Word in 0.261.222
 // Checks that the workflow proposal card's response parser accepts a proposed merge task, fails
 // closed on a merge it cannot describe, and words each merge as code that runs no model.
 
@@ -71,6 +71,10 @@ test('a proposed merge task keeps which files it merges and what it creates', ()
         statusResponse({ ...baseTask, merge: { kind: 'pdf', files: 'all', output_format: 'pdf' } }), 'run-1',
     );
     assert.deepEqual(pdf.proposals[0].summary.tasks[0].merge, { kind: 'pdf', files: 'all', output_format: 'pdf' });
+    const word = parseWorkflowProposalList(
+        statusResponse({ ...baseTask, merge: { kind: 'docx', files: 'inputs', output_format: 'docx' } }), 'run-1',
+    );
+    assert.deepEqual(word.proposals[0].summary.tasks[0].merge, { kind: 'docx', files: 'inputs', output_format: 'docx' });
 });
 
 test('a task without a merge is parsed exactly as before', () => {
@@ -83,7 +87,7 @@ test('a merge the card cannot describe fails closed', () => {
     for (const merge of [
         'inputs',
         { files: 'everything', output_format: 'csv' },
-        { files: 'all', output_format: 'docx' },
+        { files: 'all', output_format: 'zip' },
         { files: 'all' },
         { kind: 'zip', files: 'all', output_format: 'csv' },
     ]) {
@@ -120,6 +124,11 @@ test('each merge is described as code that runs no model', () => {
         workflowProposalMergeText({ merge: { kind: 'workbook', files: 'changed', output_format: 'xlsx' } }),
         'Merges the files each sync adds or changes into one Excel workbook, a sheet per file, with code. '
             + 'No model runs.',
+    );
+    assert.equal(
+        workflowProposalMergeText({ merge: { kind: 'docx', files: 'recent', output_format: 'docx' } }),
+        'Merges the Word documents added or changed recently in your personal workspace into one Word document '
+            + 'with code. No model runs.',
     );
     assert.equal(workflowProposalMergeText({}), '');
 });

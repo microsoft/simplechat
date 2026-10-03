@@ -1,8 +1,8 @@
 # test_v2_orchestration_workflow_proposal_card.py
 """
 Real-component browser tests for the workflow proposal card under an orchestration answer.
-Version: 0.261.221
-Implemented in: 0.261.207; merge task wording added in 0.261.220; merge kinds in 0.261.221
+Version: 0.261.222
+Implemented in: 0.261.207; merge task wording added in 0.261.220; merge kinds in 0.261.221; Word in 0.261.222
 Refs: microsoft/simplechat#1547, microsoft/simplechat#1619
 
 The production MessageList, WorkflowProposalCards, ConfirmDialog and WorkflowEditorDialog run in
@@ -547,6 +547,9 @@ def merge_proposal(files, output_format, kind=None):
         "with code. No model runs."
     )),
     ("all", "pdf", "pdf", "Merges every PDF in your personal workspace into one PDF with code. No model runs."),
+    ("all", "docx", "docx", (
+        "Merges every Word document in your personal workspace into one Word document with code. No model runs."
+    )),
 ])
 def test_a_merge_task_says_code_merges_the_files_instead_of_a_model(card_ui, files, output_format, kind, text):
     page, api = card_ui

@@ -1,7 +1,7 @@
 # functions_document_merge.py
-"""Ordered assembly of several PDF or spreadsheet files into one file.
+"""Ordered assembly of several PDF, Word or spreadsheet files into one file.
 
-Version: 0.261.221
+Version: 0.261.222
 
 The engine is pure: it receives already-authorized byte loaders, never resolves
 documents, settings, storage or routes, and performs no model work. Each assembler reads
@@ -24,8 +24,8 @@ MERGE_KIND_PDF = "pdf"
 MERGE_KIND_DOCX = "docx"
 MERGE_KIND_PPTX = "pptx"
 MERGE_KIND_WORKBOOK = "workbook"
-# The kinds that have an assembler. Word and PowerPoint join with their assemblers.
-DOCUMENT_MERGE_KINDS = (MERGE_KIND_PDF, MERGE_KIND_WORKBOOK)
+# The kinds that have an assembler. PowerPoint joins with its assembler.
+DOCUMENT_MERGE_KINDS = (MERGE_KIND_PDF, MERGE_KIND_DOCX, MERGE_KIND_WORKBOOK)
 
 DOCUMENT_MERGE_SOURCE_EXTENSIONS = {
     MERGE_KIND_PDF: (".pdf",),
@@ -411,9 +411,11 @@ def merge_documents(
     parts = list(parts or ())
     _validate_parts(kind, parts, limits, min_parts)
     context = MergeContext(kind, parts, options, limits, cancel_requested, on_progress)
-    # Each assembler loads only when its kind is merged.
+    # Each assembler loads only when its kind is merged; the Office stacks are large.
     if kind == MERGE_KIND_PDF:
         from functions_document_merge_pdf import assemble_pdf as assemble
+    elif kind == MERGE_KIND_DOCX:
+        from functions_document_merge_docx import assemble_docx as assemble
     else:
         from functions_document_merge_workbook import assemble_workbook as assemble
     try:

@@ -46,8 +46,8 @@ export interface WorkflowProposalTask {
 }
 
 export const MERGE_FILES = ['inputs', 'changed', 'all', 'recent'] as const;
-export const MERGE_OUTPUT_FORMATS = ['csv', 'xlsx', 'pdf'] as const;
-export const MERGE_KINDS = ['tabular', 'workbook', 'pdf'] as const;
+export const MERGE_OUTPUT_FORMATS = ['csv', 'xlsx', 'pdf', 'docx'] as const;
+export const MERGE_KINDS = ['tabular', 'workbook', 'pdf', 'docx'] as const;
 
 export interface WorkflowProposalMerge {
     /** Older proposals were all row merges, so a missing kind reads as tabular. */
@@ -60,6 +60,7 @@ const MERGE_FILE_NOUNS: Record<WorkflowProposalMerge['kind'], [string, string]> 
     tabular: ['CSV and Excel file', 'CSV and Excel files'],
     workbook: ['CSV and Excel file', 'CSV and Excel files'],
     pdf: ['PDF', 'PDFs'],
+    docx: ['Word document', 'Word documents'],
 };
 
 /** How a proposed merge task runs: code merges files into one file, with no model or agent. */
@@ -75,7 +76,8 @@ export function workflowProposalMergeText(task: Pick<WorkflowProposalTask, 'merg
     }[merge.files];
     const output = merge.kind === 'workbook' ? 'one Excel workbook, a sheet per file,'
         : merge.kind === 'pdf' ? 'one PDF'
-            : `one ${merge.output_format === 'xlsx' ? 'Excel' : 'CSV'} file`;
+            : merge.kind === 'docx' ? 'one Word document'
+                : `one ${merge.output_format === 'xlsx' ? 'Excel' : 'CSV'} file`;
     return `Merges ${files} into ${output} with code. No model runs.`;
 }
 

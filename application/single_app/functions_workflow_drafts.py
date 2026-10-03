@@ -39,6 +39,7 @@ from functions_appinsights import log_event
 from functions_document_actions import (
     DOCUMENT_ACTION_TYPE_ANALYZE,
     DOCUMENT_ACTION_TYPE_MERGE,
+    MERGE_KIND_OPTION_KEYS,
     MERGE_KIND_OUTPUT_FORMATS,
     MERGE_KIND_TABULAR,
     MERGE_KINDS_AVAILABLE,
@@ -147,8 +148,13 @@ DRAFT_ERROR_MESSAGES = {
     'merge_trigger_required': 'Merging the files a sync changed needs a File Sync trigger.',
     'merge_runner_invalid': 'A merge task merges files with code, so it has no agent runner. Remove the runner.',
     'merge_options_invalid': (
-        'These merge options cannot be used together: mapped needs columns, key_columns needs '
-        'dedupe_columns, a sheet name cannot be combined with all sheets, and a column is named once.'
+        'These merge options cannot be used: each kind takes only its own options ('
+        + '; '.join(
+            f"{kind} takes {', '.join(MERGE_KIND_OPTION_KEYS[kind])}"
+            for kind in MERGE_KINDS_AVAILABLE if kind != MERGE_KIND_TABULAR
+        )
+        + '), mapped needs columns, key_columns needs dedupe_columns, a sheet name cannot be combined '
+        'with all sheets, and a column is named once.'
     ),
     'merge_format_invalid': 'Choose an output_format this merge kind creates: ' + '; '.join(
         f"{kind} creates {' or '.join(MERGE_KIND_OUTPUT_FORMATS[kind])}" for kind in MERGE_KINDS_AVAILABLE
@@ -472,7 +478,8 @@ def _merge_schema():
         'description': (
             'Makes this task merge files with code instead of running a model. kind tabular appends the '
             'rows of CSV and Excel files into one CSV or Excel file; workbook puts each CSV or Excel file '
-            'on its own sheet of one Excel workbook; pdf joins PDFs, in order, into one PDF. files: inputs '
+            'on its own sheet of one Excel workbook; pdf joins PDFs, in order, into one PDF; docx appends '
+            'Word documents, in order, into one Word document. files: inputs '
             "merges the task's inputs (two or more document handles) in order; changed merges the files a "
             "File Sync trigger added or changed; all merges every matching file in the user's personal "
             'workspace; recent merges those added in the last recent_window_minutes. Rows are appended; '
@@ -499,10 +506,14 @@ def _merge_options_schema():
         'additionalProperties': False,
         'description': (
             'The same column, sheet, duplicate and sort settings a chat merge accepts, for kind tabular. '
-            'kind workbook takes only sheets and sheet; kind pdf takes only bookmarks.'
+            'kind workbook takes only sheets and sheet; kind pdf takes only bookmarks; kind docx takes only '
+            'formatting, page_breaks and source_headings.'
         ),
         'properties': {
             'bookmarks': {'type': 'boolean'},
+            'formatting': {'enum': ['keep_source', 'use_first']},
+            'page_breaks': {'type': 'boolean'},
+            'source_headings': {'type': 'boolean'},
             'schema_policy': {'enum': ['by_name', 'exact_order', 'union', 'mapped']},
             'columns': {**names, 'maxItems': 255},
             # A list of closed objects rather than a map, so every object in the blueprint stays closed.
