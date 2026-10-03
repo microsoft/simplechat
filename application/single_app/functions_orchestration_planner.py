@@ -1109,12 +1109,16 @@ def plan_repair_message(error, *, handoff_present=False):
     )
 
 
+def _count_text(count, noun):
+    """``count`` with ``noun``, which takes an "s" for any count but one."""
+    return f'{count} {noun}' if count == 1 else f'{count} {noun}s'
+
+
 def _plan_duration_text(seconds):
     """A whole-minute duration in minutes, any other in seconds."""
     if seconds >= 60 and seconds % 60 == 0:
-        minutes = seconds // 60
-        return f'{minutes} minute' if minutes == 1 else f'{minutes} minutes'
-    return f'{seconds} second' if seconds == 1 else f'{seconds} seconds'
+        return _count_text(seconds // 60, 'minute')
+    return _count_text(seconds, 'second')
 
 
 def _plan_limits_section(settings, capabilities, handoff):
@@ -1138,7 +1142,7 @@ def _plan_limits_section(settings, capabilities, handoff):
     lines = [
         'Plan limits. One chat plan must fit all of these; a request that needs more is what a '
         'workflow_handoff step is for.',
-        f'- At most {max_steps} steps in one plan.',
+        f'- At most {_count_text(max_steps, "step")} in one plan.',
         f'- At most {_plan_duration_text(execution_timeout_seconds(settings))} for the whole plan to run.',
     ]
     for capability in capabilities or ():
@@ -1149,12 +1153,12 @@ def _plan_limits_section(settings, capabilities, handoff):
         except (CapabilityResolutionError, TypeError, ValueError):
             continue
         if limit > 0:
-            lines.append(f'- At most {limit} documents in one {capability.get("id")} step.')
+            lines.append(f'- At most {_count_text(limit, "document")} in one {capability.get("id")} step.')
     documents_max, max_loop_items = handoff.get('documents_max'), handoff.get('max_loop_items')
     if type(documents_max) is int and type(max_loop_items) is int:
         lines.append(
-            f'- One workflow_handoff step reviews at most {documents_max} named documents, or at most '
-            f'{max_loop_items} documents from a workspace query.'
+            f'- One workflow_handoff step reviews at most {_count_text(documents_max, "named document")}, '
+            f'or at most {_count_text(max_loop_items, "document")} from a workspace query.'
         )
     catalog = handoff.get('catalog') if isinstance(handoff.get('catalog'), dict) else {}
     local = [
