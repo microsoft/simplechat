@@ -180,7 +180,8 @@ A must-acknowledge alert:
   close button and doesn't time out. In the full rail it takes its own room below
   **My Workspace**, pushing the items under it down, rather than covering them as an ordinary
   notice does for a few seconds. As a flyout beside the collapsed rail it steps aside, invisible,
-  while focus is on something it covers, and comes back when focus moves on. Classic keeps a slim
+  when focus moves onto something it covers, and comes back when focus moves on. A new alert that
+  takes the lead is shown whatever focus did before it arrived. Classic keeps a slim
   banner at the bottom of the page, "*N* workflow alerts need acknowledgment", with **Review**;
 - shows **Acknowledge** in place of **Dismiss**, or in place of **Mark read** when there is nothing
   to open. With somewhere to open, **Open** stays the one green button, since it acknowledges too.
@@ -208,7 +209,8 @@ uses only the Python standard library and is deterministic. The tones are served
 | `alarm.wav` | Critical |
 
 - **Play once** chimes once per browser: when the alert is shown, or for a must-acknowledge alert,
-  when the browser first receives it. The browser records each chime in `localStorage`
+  when the browser first receives it. Alerts that arrive together chime once, in the tone of the
+  loudest of them. The browser records each chime in `localStorage`
   (`simplechat.workflowAlerts.soundedOnce`, kept 25 hours, at most 500 alerts), checked and
   written while holding the lock, so another tab, classic or V2, doesn't chime again for the same
   alert, and neither does a reload. A chime never plays over a repeating sound.
@@ -285,9 +287,9 @@ and doesn't check while the tab is hidden.
 | `functional_tests/test_workflow_alert_sounds_setting.py`, `test_workflow_alert_sound_assets.py` | The admin setting end to end; the tones, their format and the generator's determinism |
 | `functional_tests/test_workflow_alert_sound_parity.py` | Classic and V2 share the lock, storage keys, limits, timing, channel and tones |
 | `ui_tests/test_v2_workflow_alerts.py`, `ui_tests/test_workspace_workflow_alert_rules.py` | Both editors |
-| `ui_tests/test_v2_workflow_alert_notices.py` | V2: bypassing claims and the 24-hour window, no tuck, Escape minimizing, Acknowledge and Open acknowledging, Mark all read skipping, medium and large sizes and the large dialog's height, large type, the sound's once, repeat, blocked and gated paths, no extra beeps on clicks or key presses, Play once playing once across reads and once between two tabs, a showing alert not presented again, Enable sound as its own control, re-reads every 20 seconds, broadcast retirement, a waiting alert acknowledged elsewhere going quiet, no retry for a refused alert acknowledged elsewhere, Open and Acknowledge leaving the next pending alert up and sounding in its tone, pending alerts leading, the notice taking its own room in the full rail and stepping aside as a flyout, the member view, the Preferences switches, the Alert monitor while hidden, and the bell's Acknowledge, read and open |
+| `ui_tests/test_v2_workflow_alert_notices.py` | V2: bypassing claims and the 24-hour window, no tuck, Escape minimizing, Acknowledge and Open acknowledging, Mark all read skipping, medium and large sizes and the large dialog's height, large type, the sound's once, repeat, blocked and gated paths, no extra beeps on clicks or key presses, Play once playing once across reads and once between two tabs, alerts arriving together chiming once in the loudest tone, Enable sound retrying refused chimes as one, a showing alert not presented again, Enable sound as its own control, re-reads every 20 seconds, broadcast retirement, a waiting alert acknowledged elsewhere going quiet, no retry for a refused alert acknowledged elsewhere, Open and Acknowledge leaving the next pending alert up and sounding in its tone, pending alerts leading, the notice taking its own room in the full rail and stepping aside as a flyout, a flyout that stepped aside showing the next alert that leads, the member view, the Preferences switches, the Alert monitor while hidden, and the bell's Acknowledge, read and open |
 | `ui_tests/test_v2_notifications_bell.py` | The bell's Acknowledge and "Acknowledged by" |
-| `ui_tests/test_workflow_alert_classic_acknowledgment.py` | The real classic scripts on an offline page: a must-acknowledge alert returning after a reload while an ordinary one stays suppressed, Acknowledge, the banner and **Review**, staying in the banner across polls, acknowledgment elsewhere by poll or broadcast, a capped read not retiring an alert, the repeat interval and every sound gate, resuming sound when it is turned back on, **Play once** playing once, **Enable sound** in the dialog and banner, a refused sound giving up the lock, **Enable sound** retrying a refused chime once, a chime another tab played not repeated, **Mark as read** for an alert without links, sizes, the team line, and polls skipping the alerts read when nothing needs it |
+| `ui_tests/test_workflow_alert_classic_acknowledgment.py` | The real classic scripts on an offline page: a must-acknowledge alert returning after a reload while an ordinary one stays suppressed, Acknowledge, the banner and **Review**, staying in the banner across polls, acknowledgment elsewhere by poll or broadcast, a capped read not retiring an alert, the repeat interval and every sound gate, resuming sound when it is turned back on, **Play once** playing once, **Enable sound** in the dialog and banner, a refused sound giving up the lock, **Enable sound** retrying a refused chime once, alerts arriving together chiming once in the loudest tone, refused chimes retried as one, a chime another tab played not repeated, **Mark as read** for an alert without links, sizes, the team line, and polls skipping the alerts read when nothing needs it |
 
 ## Known limitations
 

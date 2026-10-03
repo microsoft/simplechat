@@ -756,3 +756,51 @@ def test_mark_as_read_is_offered_for_an_ordinary_alert_without_links():
         mark_read.click()
         page.wait_for_function("document.querySelector('#workflowAlertModal').classList.contains('show') === false")
         assert harness.read_ids == ["no-links"]
+
+
+@pytest.mark.ui
+def test_alerts_that_arrive_together_chime_once_in_the_loudest_tone():
+    playwright_sync = _require_playwright()
+    # Newest first, as the server lists them: the quiet alert would otherwise ask first.
+    low_alert = _alert("together-low", require_acknowledgment=True, sound="once", priority="low")
+    critical_alert = _alert("together-critical", require_acknowledgment=True, sound="once", priority="critical")
+
+    with OfflineWorkflowAlertHarness(
+        None, playwright_sync, [low_alert, critical_alert], realistic_locks=True
+    ) as harness:
+        page = harness.page
+        expect = playwright_sync.expect
+
+        expect(page.locator("#workflowAlertModal")).to_be_visible()
+        page.wait_for_function("window.__workflowAlertPlayed.length >= 1", timeout=3000)
+        page.wait_for_timeout(300)
+        played = page.evaluate("window.__workflowAlertPlayed")
+        assert len(played) == 1 and played[0].endswith("/alarm.wav"), played
+        sounded = json.loads(page.evaluate("localStorage.getItem('simplechat.workflowAlerts.soundedOnce')"))
+        assert {"together-low", "together-critical"} <= set(sounded), sounded
+
+
+@pytest.mark.ui
+def test_enable_sound_retries_refused_chimes_as_one_in_the_loudest_tone():
+    playwright_sync = _require_playwright()
+    low_alert = _alert("refused-low", require_acknowledgment=True, sound="once", priority="low")
+    critical_alert = _alert("refused-critical", require_acknowledgment=True, sound="once", priority="critical")
+
+    with OfflineWorkflowAlertHarness(
+        None, playwright_sync, [low_alert, critical_alert], reject_play=True, realistic_locks=True
+    ) as harness:
+        page = harness.page
+        expect = playwright_sync.expect
+
+        expect(page.locator("#workflowAlertModal")).to_be_visible()
+        page.wait_for_function("window.__workflowAlertPlayed.length >= 1", timeout=3000)
+        enable = page.locator("#workflow-alert-modal-enable-sound-btn")
+        expect(enable).to_be_visible()
+
+        page.evaluate("window.__rejectWorkflowAlertPlay = false; window.__workflowAlertPlayed = []")
+        enable.click()
+        page.wait_for_function("window.__workflowAlertPlayed.length >= 1", timeout=3000)
+        page.wait_for_timeout(300)
+        played = page.evaluate("window.__workflowAlertPlayed")
+        assert len(played) == 1 and played[0].endswith("/alarm.wav"), played
+        expect(enable).not_to_be_visible()

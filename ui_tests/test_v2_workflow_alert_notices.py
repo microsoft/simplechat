@@ -2239,3 +2239,84 @@ def test_a_flyout_waiting_for_acknowledgment_steps_aside_from_focus_it_covers(ta
     tab.my_workspace.focus()
     expect(tab.notice).to_have_attribute("data-stepped-aside", "false")
     expect(tab.notice).to_be_visible()
+
+
+def test_a_flyout_that_stepped_aside_shows_the_next_alert_that_needs_acknowledgment(tab, server, alert):
+    tab.open(rail_collapsed=True)
+    server.add(
+        must_ack_alert(alert, "first-ack", workflow_id="wf-a", priority="high", title="First alarm"),
+        alert("ordinary", workflow_id="wf-b", priority="critical", title="Ordinary critical alert"),
+    )
+    tab.poll()
+    expect(tab.notice).to_contain_text("First alarm")
+    tab.js(PLACE_UNDER_NOTICE)
+    tab.focus("#under-the-notice")
+    expect(tab.notice).to_have_attribute("data-stepped-aside", "true")
+
+    # Acknowledged in another tab: the ordinary alert leads, and focus moves somewhere it doesn't cover.
+    server.acknowledge("first-ack", name="Morgan Lee")
+    tab.js(BROADCAST_ACKNOWLEDGED, ["first-ack"])
+    expect(tab.notice).to_contain_text("Ordinary critical alert")
+    tab.poll()
+    tab.my_workspace.focus()
+    tab.page.wait_for_timeout(200)
+
+    # The next alert that needs acknowledgment is in plain sight, not hidden by what focus did before.
+    server.add(must_ack_alert(alert, "second-ack", workflow_id="wf-c", priority="high", title="Second alarm"))
+    tab.poll()
+    expect(tab.notice).to_contain_text("Second alarm")
+    expect(tab.notice).to_have_attribute("data-stepped-aside", "false")
+    expect(tab.notice).to_be_visible()
+
+    # It steps aside when focus moves under it; a new alert taking the lead is shown all the same.
+    tab.focus("#under-the-notice")
+    expect(tab.notice).to_have_attribute("data-stepped-aside", "true")
+    server.add(must_ack_alert(alert, "third-ack", workflow_id="wf-d", priority="critical", title="Third alarm"))
+    tab.poll()
+    expect(tab.notice).to_contain_text("Third alarm")
+    expect(tab.notice).to_have_attribute("data-stepped-aside", "false")
+    expect(tab.notice).to_be_visible()
+
+
+@pytest.mark.parametrize("must_acknowledge", [False, True], ids=["ordinary", "must-acknowledge"])
+def test_alerts_that_arrive_together_chime_once_in_the_loudest_tone(tab, server, alert, now, must_acknowledge):
+    tab.open(clock=now)
+    install_audio_stub(tab)
+
+    def make(notice_id, **fields):
+        return must_ack_alert(alert, notice_id, **fields) if must_acknowledge else alert(notice_id, **fields)
+
+    # Newest first, as the server lists them: the quiet alert would otherwise ask first.
+    server.add(
+        make("older-critical", workflow_id="wf-a", priority="critical", title="Critical chime", sound="once",
+             minutes_ago=5),
+        make("newer-low", workflow_id="wf-b", priority="low", title="Low chime", sound="once", minutes_ago=1),
+    )
+    tab.poll()
+    expect(tab.notice).to_contain_text("Critical chime")
+    tab.wait_for(lambda: plays(tab) >= 1, "Neither alert chimed.")
+    tab.page.wait_for_timeout(300)
+    assert len(sources(tab)) == 1 and sources(tab)[0].endswith("/alarm.wav"), sources(tab)
+    sounded = tab.js("() => JSON.parse(localStorage.getItem('simplechat.workflowAlerts.soundedOnce') || '{}')")
+    assert {"older-critical", "newer-low"} <= set(sounded), sounded
+
+
+def test_enable_sound_retries_refused_chimes_as_one_in_the_loudest_tone(tab, server, alert):
+    tab.open()
+    install_audio_stub(tab, reject=True)
+    server.add(
+        must_ack_alert(alert, "refused-critical", workflow_id="wf-a", priority="critical", title="Refused critical",
+                       sound="once", minutes_ago=5),
+        must_ack_alert(alert, "refused-low", workflow_id="wf-b", priority="low", title="Refused low", sound="once",
+                       minutes_ago=1),
+    )
+    tab.poll()
+    enable = tab.notice.locator("[data-workflow-alert-enable-sound]")
+    expect(enable).to_be_visible()
+
+    install_audio_stub(tab)
+    enable.click()
+    tab.wait_for(lambda: plays(tab) >= 1, "Enable sound did not retry the refused chimes.")
+    tab.page.wait_for_timeout(300)
+    assert len(sources(tab)) == 1 and sources(tab)[0].endswith("/alarm.wav"), sources(tab)
+    expect(enable).to_have_count(0)

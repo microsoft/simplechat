@@ -169,7 +169,7 @@ An alert that needs acknowledgment is marked **Needs acknowledgment**, and:
   five seconds until someone acknowledges the alert. Only one tab in your browser plays
   it, and when several alerts repeat you hear one tone, the most urgent one's. An alert
   set to **Play once** chimes once in your browser, not again in another tab or after a
-  refresh.
+  refresh, and alerts that arrive together chime once, in the most urgent tone.
 - **It may be larger.** A medium alert opens in full straight away. A large alert fills
   the screen.
 

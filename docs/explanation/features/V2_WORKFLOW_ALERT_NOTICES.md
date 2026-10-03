@@ -148,7 +148,8 @@ stays unread in the bell and, having been claimed, doesn't pop up again.
 - Moving focus onto something the notice covers, such as the rail items under it,
   tucks the notice, so it never hides what has focus. A notice that needs
   acknowledgment can't tuck. In the full rail it covers nothing, and as a flyout it
-  steps aside, invisible, until focus moves somewhere it doesn't cover.
+  steps aside, invisible, until focus moves somewhere it doesn't cover. A new alert
+  that takes the lead is shown whatever focus did before it arrived.
 - Each new notice is announced once through a live region. The announcement is
   polite, or assertive when the loudest alert is critical. For example:
   "Critical priority workflow alert: Ledger totals do not match, from Payments

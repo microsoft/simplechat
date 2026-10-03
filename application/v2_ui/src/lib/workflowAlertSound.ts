@@ -10,8 +10,9 @@
 //   `simplechat.workflowAlertSound`, which classic shares, so another tab waits its turn and
 //   takes over only when this one stops. Each tick checks the administrator's and the device's
 //   switches, so turning sound off silences it at once and turning it on resumes it.
-// - "Play once" is a one-off. It never interrupts the loop, skips while another sound holds the
-//   lock, and is recorded for the whole browser, so another tab doesn't chime for the same alert.
+// - "Play once" is a one-off. Alerts asked for together chime once, in the tone of the loudest of
+//   them. A chime never interrupts the loop, skips while another sound holds the lock, and is
+//   recorded for the whole browser, so another tab doesn't chime for the same alert.
 // - A sound the browser refuses (autoplay) is kept, and the next click or key press, or Enable
 //   sound, tries it again. A refused loop gives up the lock, so a tab that may play takes over.
 //   A sound that is playing is never restarted by a click.
@@ -43,6 +44,9 @@ let retryingOnce = false;
 const triedOnce = new Set<string>();
 /** One-off sounds the browser refused, tried again on the next click or key press. */
 const refusedOnce = new Map<string, WorkflowAlert>();
+/** One-off sounds asked for in this task, which chime together once it ends. */
+const pendingOnce = new Map<string, WorkflowAlert>();
+let chimeQueued = false;
 
 function emit(): void {
     for (const listener of [...listeners]) {
@@ -124,53 +128,92 @@ function soundedOnce(id: string): boolean {
     return typeof at === 'number' && Date.now() - at < SOUNDED_ONCE_TTL_MS;
 }
 
-function markSoundedOnce(id: string): void {
+function markSoundedOnce(ids: string[]): void {
     try {
         const now = Date.now();
+        const marking = new Set(ids);
         const kept = Object.entries(readSoundedOnce())
-            .filter(([, at]) => typeof at === 'number' && now - at < SOUNDED_ONCE_TTL_MS)
+            .filter(([id, at]) => !marking.has(id) && typeof at === 'number' && now - at < SOUNDED_ONCE_TTL_MS)
             .sort((left, right) => right[1] - left[1])
-            .slice(0, SOUNDED_ONCE_MAX - 1);
-        localStorage.setItem(SOUNDED_ONCE_KEY, JSON.stringify(Object.fromEntries([[id, now], ...kept])));
+            .slice(0, Math.max(0, SOUNDED_ONCE_MAX - marking.size));
+        const marked = [...marking].map((id) => [id, now] as const);
+        localStorage.setItem(SOUNDED_ONCE_KEY, JSON.stringify(Object.fromEntries([...marked, ...kept])));
     } catch {
         /* Without storage, this page's own record still keeps it to one chime here. */
     }
 }
 
-async function playOnce(alert: WorkflowAlert): Promise<void> {
-    if (!canPlay()) {
+/**
+ * Chime once for alerts asked for together: in the tone of the loudest that hasn't chimed in this
+ * browser yet, recording every one of them. One lock request for the whole batch, so the batch
+ * makes one sound, rather than whichever alert asked first winning and the rest being dropped.
+ */
+async function chime(batch: WorkflowAlert[]): Promise<void> {
+    if (!batch.length || !canPlay()) {
         return;
     }
-    const run = async (): Promise<void> => {
-        if (soundedOnce(alert.id)) {
-            // Another tab chimed it, so there is nothing left here to enable.
-            refusedOnce.delete(alert.id);
+    // Refusals the batch no longer needs: chimed in another tab, or covered by another sound.
+    const forget = (alerts: WorkflowAlert[]): void => {
+        let changed = false;
+        for (const alert of alerts) {
+            changed = refusedOnce.delete(alert.id) || changed;
+        }
+        if (changed) {
             emit();
+        }
+    };
+    const run = async (): Promise<void> => {
+        const fresh = batch.filter((alert) => !soundedOnce(alert.id));
+        forget(batch.filter((alert) => !fresh.includes(alert)));
+        if (!fresh.length) {
             return;
         }
         try {
-            await startPlayback(soundUrl(alert));
-            markSoundedOnce(alert.id);
-            refusedOnce.delete(alert.id);
+            await startPlayback(soundUrl(loudest(fresh)));
         } catch {
-            refusedOnce.set(alert.id, alert);
+            fresh.forEach((alert) => refusedOnce.set(alert.id, alert));
+            emit();
+            return;
         }
-        emit();
+        markSoundedOnce(fresh.map((alert) => alert.id));
+        forget(fresh);
     };
     const locks = lockManager();
     if (!locks) {
         await run();
         return;
     }
-    // Checked and recorded under the lock, so two tabs can't both decide to chime.
+    // Checked and recorded under the lock, so two tabs can't both decide to chime. While another
+    // sound holds it the browser is already sounding, and a chime would only talk over it.
     await locks.request(LOCK_NAME, { ifAvailable: true }, async (lock) => {
         if (lock) {
             await run();
-        } else if (refusedOnce.delete(alert.id)) {
-            // Another sound is playing, so the browser may sound and this one would only talk over it.
-            emit();
+        } else {
+            forget(batch);
         }
     });
+}
+
+/** Chime for these alerts, together with any others asked for before this task ends. */
+function queueChime(alerts: WorkflowAlert[]): void {
+    for (const alert of alerts) {
+        if (!triedOnce.has(alert.id)) {
+            triedOnce.add(alert.id);
+            pendingOnce.set(alert.id, alert);
+        }
+    }
+    if (!pendingOnce.size || chimeQueued) {
+        return;
+    }
+    chimeQueued = true;
+    void Promise.resolve()
+        .then(() => {
+            chimeQueued = false;
+            const batch = [...pendingOnce.values()];
+            pendingOnce.clear();
+            return chime(batch);
+        })
+        .catch(() => undefined);
 }
 
 async function runLoop(url: string, signal: AbortSignal): Promise<void> {
@@ -260,23 +303,13 @@ export function syncWorkflowAlertSound(alerts: WorkflowAlert[]): void {
         startLoop(url, refused);
     }
 
-    for (const alert of waiting) {
-        if (alert.sound === 'once' && !triedOnce.has(alert.id)) {
-            triedOnce.add(alert.id);
-            void playOnce(alert);
-        }
-    }
+    queueChime(waiting.filter((alert) => alert.sound === 'once'));
     emit();
 }
 
 /** Chime once for alerts this tab has just shown that don't need acknowledgment. */
 export function playWorkflowAlertOnce(alerts: WorkflowAlert[]): void {
-    for (const alert of alerts) {
-        if (alert.sound === 'once' && !needsAcknowledgment(alert) && !triedOnce.has(alert.id)) {
-            triedOnce.add(alert.id);
-            void playOnce(alert);
-        }
-    }
+    queueChime(alerts.filter((alert) => alert.sound === 'once' && !needsAcknowledgment(alert)));
 }
 
 /** The administrator's setting, from the latest alerts read; null falls back to the bootstrap. */
@@ -300,9 +333,12 @@ export function retryWorkflowAlertSound(): void {
     }
     if (refusedOnce.size && !retryingOnce) {
         retryingOnce = true;
-        void Promise.allSettled([...refusedOnce.values()].map((alert) => playOnce(alert))).finally(() => {
-            retryingOnce = false;
-        });
+        // The refused chimes are tried again together, as one, in the loudest tone.
+        void chime([...refusedOnce.values()])
+            .catch(() => undefined)
+            .finally(() => {
+                retryingOnce = false;
+            });
     }
 }
 
@@ -329,6 +365,7 @@ export function resetWorkflowAlertSoundForLab(): void {
     stopLoop();
     triedOnce.clear();
     refusedOnce.clear();
+    pendingOnce.clear();
     retryingOnce = false;
     try {
         localStorage.removeItem(SOUNDED_ONCE_KEY);

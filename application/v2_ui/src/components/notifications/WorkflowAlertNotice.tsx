@@ -17,8 +17,9 @@
 //
 // An alert that needs acknowledgment never tucks away, so it must never cover anything for
 // long: in the full rail it takes its own room below My Workspace, pushing the items under it
-// down, and as a flyout it steps aside -- invisible, out of the pointer's way -- while focus is
-// on something it would cover, and comes back when focus moves on.
+// down, and as a flyout it steps aside -- invisible, out of the pointer's way -- when focus moves
+// onto something it would cover, and comes back when focus moves on. A new alert taking the lead
+// is shown, whatever focus did before it arrived.
 //
 // Everything shown is the alert's own text, rendered as text.
 
@@ -62,6 +63,15 @@ function useNoticeShown(): boolean {
     return useWorkflowAlertStore(
         (state) => state.entries.length > 0 && (state.phase === 'notice' || state.phase === 'tucking'),
     );
+}
+
+/** Whether `notice` lies over `target`, so that focus on `target` would be hidden under it. */
+function liesOver(notice: Element, target: Element): boolean {
+    const box = notice.getBoundingClientRect();
+    const landed = target.getBoundingClientRect();
+    return landed.width > 0 && landed.height > 0
+        && landed.left < box.right && box.left < landed.right
+        && landed.top < box.bottom && box.top < landed.bottom;
 }
 
 /**
@@ -114,7 +124,9 @@ function NoticeBody({
     const rootRef = useRef<HTMLDivElement>(null);
     const [hovered, setHovered] = useState(false);
     const [focused, setFocused] = useState(false);
-    const [steppedAside, setSteppedAside] = useState(false);
+    // Whether focus last landed on something the notice lies over, measured for one lead in one
+    // placement. A new lead, or the rail changing shape, starts it shown until focus next moves.
+    const [focusCover, setFocusCover] = useState<{ key: string; covered: boolean } | null>(null);
     const soundBlocked = useWorkflowAlertSoundBlocked();
 
     // Hidden while something else has the page, the pointer and focus cannot be said to have
@@ -123,7 +135,7 @@ function NoticeBody({
         if (suspended) {
             setHovered(false);
             setFocused(false);
-            setSteppedAside(false);
+            setFocusCover(null);
         }
     }, [suspended]);
 
@@ -138,8 +150,10 @@ function NoticeBody({
     // tabbing on from it lands on something it covers. Focus must never sit hidden under it
     // (WCAG 2.2, 2.4.11), so it tucks into the bell and leaves focus where it went. The alert
     // stays unread there, like any other tuck. One that needs acknowledgment can't tuck away,
-    // so it steps aside instead, until focus is somewhere it doesn't cover.
+    // so as a flyout it steps aside instead, until focus is somewhere it doesn't cover. Every
+    // move is measured, whatever leads, so the record never outlives the focus it describes.
     const mustAcknowledge = entry.requireAcknowledgment;
+    const coverKey = `${entry.key}:${placement}`;
     useEffect(() => {
         if (phase !== 'notice' || suspended) {
             return undefined;
@@ -150,25 +164,16 @@ function NoticeBody({
             if (!root || !(target instanceof Element)) {
                 return;
             }
-            if (root.contains(target)) {
-                setSteppedAside(false);
-                return;
-            }
-            const notice = root.getBoundingClientRect();
-            const landed = target.getBoundingClientRect();
-            const covered = landed.width > 0 && landed.height > 0
-                && landed.left < notice.right && notice.left < landed.right
-                && landed.top < notice.bottom && notice.top < landed.bottom;
-            if (mustAcknowledge) {
-                setSteppedAside(covered);
-            } else if (covered) {
+            const covered = !root.contains(target) && liesOver(root, target);
+            setFocusCover({ key: coverKey, covered });
+            if (covered && !mustAcknowledge) {
                 void tuck();
             }
         };
         // Focus that goes nowhere -- a click on the page's background -- covers nothing.
         const onFocusOut = (event: FocusEvent) => {
             if (event.relatedTarget === null) {
-                setSteppedAside(false);
+                setFocusCover({ key: coverKey, covered: false });
             }
         };
         document.addEventListener('focusin', onFocusIn);
@@ -177,8 +182,10 @@ function NoticeBody({
             document.removeEventListener('focusin', onFocusIn);
             document.removeEventListener('focusout', onFocusOut);
         };
-    }, [phase, suspended, tuck, mustAcknowledge]);
-    const asideNow = steppedAside && mustAcknowledge;
+    }, [phase, suspended, tuck, mustAcknowledge, coverKey]);
+    // In the full rail it has room of its own and covers nothing, so only the flyout steps aside.
+    const asideNow = mustAcknowledge && placement === 'flyout'
+        && focusCover?.key === coverKey && focusCover.covered;
 
     const close = async () => {
         const hadFocus = rootRef.current?.contains(document.activeElement) ?? false;

@@ -7,8 +7,9 @@
 //   tone of the loudest of them, until none is left. The loop holds the lock while it sounds, so
 //   another tab stays quiet. Each tick checks the administrator's and the device's switches, so
 //   turning sound off silences it at once and turning it back on resumes it.
-// - "Play once" is a one-off. It is checked and recorded for the whole browser under the lock,
-//   so another tab doesn't chime for the same alert, and it skips while another sound holds it.
+// - "Play once" is a one-off. Alerts asked for together chime once, in the tone of the loudest of
+//   them. A chime is checked and recorded for the whole browser under the lock, so another tab
+//   doesn't chime for the same alert, and it skips while another sound holds the lock.
 // - A sound the browser refuses (autoplay) is kept, and the next click or key press, or Enable
 //   sound, tries it again. A refused loop gives up the lock, so a tab that may play takes over.
 
@@ -29,6 +30,9 @@
     const refusedOnceAlerts = new Map();
     // One-off sounds this page has started, so an alert read again doesn't chime again.
     const triedOnceIds = new Set();
+    // One-off sounds asked for in this task, which chime together once it ends.
+    const pendingOnceAlerts = new Map();
+    let pendingChime = null;
     let adminSoundsEnabled = true;
     let loopTimer = null;
     // The browser refused the loop's tone, and it hasn't played since.
@@ -154,57 +158,81 @@
         return typeof soundedAt === 'number' && Date.now() - soundedAt < soundedOnceTtlMs;
     }
 
-    function markSoundedOnce(notificationId) {
+    function markSoundedOnce(notificationIds) {
         try {
             const now = Date.now();
+            const marking = new Set(notificationIds);
             const kept = Object.entries(readSoundedOnce())
-                .filter(([, soundedAt]) => typeof soundedAt === 'number' && now - soundedAt < soundedOnceTtlMs)
+                .filter(([notificationId, soundedAt]) => (
+                    !marking.has(notificationId)
+                    && typeof soundedAt === 'number'
+                    && now - soundedAt < soundedOnceTtlMs
+                ))
                 .sort((left, right) => right[1] - left[1])
-                .slice(0, soundedOnceMax - 1);
+                .slice(0, Math.max(0, soundedOnceMax - marking.size));
+            const marked = Array.from(marking).map(notificationId => [notificationId, now]);
             localStorage.setItem(
                 soundedOnceStorageKey,
-                JSON.stringify(Object.fromEntries([[notificationId, now], ...kept]))
+                JSON.stringify(Object.fromEntries([...marked, ...kept]))
             );
         } catch (error) {
             console.warn('Unable to record a workflow alert sound:', error);
         }
     }
 
-    // Checked and recorded under the lock, so two tabs can't both decide to chime. A one-off never
+    function loudestPriority(notifications) {
+        let loudest = null;
+        notifications.forEach(notification => {
+            const priority = getNotificationPriority(notification);
+            if (loudest === null || priorityRank[priority] > priorityRank[loudest]) {
+                loudest = priority;
+            }
+        });
+        return loudest;
+    }
+
+    // Chime once for alerts asked for together: in the tone of the loudest that hasn't chimed in this
+    // browser yet, recording every one of them. One lock request for the whole batch, so the batch
+    // makes one sound, rather than whichever alert asked first winning and the rest being dropped.
+    // Checked and recorded under the lock, so two tabs can't both decide to chime. A chime never
     // interrupts a loop: while this tab's loop, or another tab's sound, holds the lock it skips.
-    function playOnce(notification) {
-        const notificationId = normalizeId(notification?.id);
-        if (!notificationId || !canPlay()) {
+    function chime(batch) {
+        const notifications = batch.filter(notification => normalizeId(notification?.id));
+        if (!notifications.length || !canPlay()) {
             return Promise.resolve(false);
         }
 
+        // Refusals the batch no longer needs: chimed in another tab, or covered by another sound.
+        const forget = settledNotifications => {
+            let changed = false;
+            settledNotifications.forEach(notification => {
+                changed = refusedOnceAlerts.delete(normalizeId(notification.id)) || changed;
+            });
+            if (changed) {
+                announceState();
+            }
+            return false;
+        };
         const run = () => {
-            if (hasSoundedOnce(notificationId)) {
-                // Another tab chimed it, so there is nothing left here to enable.
-                if (refusedOnceAlerts.delete(notificationId)) {
-                    announceState();
-                }
+            const fresh = notifications.filter(notification => !hasSoundedOnce(normalizeId(notification.id)));
+            forget(notifications.filter(notification => !fresh.includes(notification)));
+            if (!fresh.length) {
                 return false;
             }
-            return startPlayback(getNotificationPriority(notification))
+            return startPlayback(loudestPriority(fresh))
                 .then(() => {
-                    markSoundedOnce(notificationId);
-                    refusedOnceAlerts.delete(notificationId);
+                    markSoundedOnce(fresh.map(notification => normalizeId(notification.id)));
+                    forget(fresh);
                     return true;
                 })
                 .catch(error => {
                     console.warn('Workflow alert sound playback was blocked:', error);
-                    refusedOnceAlerts.set(notificationId, notification);
+                    fresh.forEach(notification => {
+                        refusedOnceAlerts.set(normalizeId(notification.id), notification);
+                    });
+                    announceState();
                     return false;
-                })
-                .finally(announceState);
-        };
-        // Another sound holds the lock, so the browser may sound and this one would only talk over it.
-        const skip = () => {
-            if (refusedOnceAlerts.delete(notificationId)) {
-                announceState();
-            }
-            return false;
+                });
         };
 
         const lockManager = getLockManager();
@@ -212,13 +240,33 @@
             return Promise.resolve().then(run);
         }
         if (loopReleaseLock) {
-            return Promise.resolve().then(skip);
+            return Promise.resolve().then(() => forget(notifications));
         }
-        return lockManager.request(lockName, { ifAvailable: true }, lock => (lock ? run() : skip()))
+        return lockManager.request(lockName, { ifAvailable: true }, lock => (lock ? run() : forget(notifications)))
             .catch(error => {
                 console.warn('Unable to acquire workflow alert sound lock:', error);
                 return false;
             });
+    }
+
+    // Chime for this alert, together with any others asked for before this task ends.
+    function queueChime(notification) {
+        const notificationId = normalizeId(notification?.id);
+        if (!notificationId || triedOnceIds.has(notificationId)) {
+            return Promise.resolve(false);
+        }
+
+        triedOnceIds.add(notificationId);
+        pendingOnceAlerts.set(notificationId, notification);
+        if (!pendingChime) {
+            pendingChime = Promise.resolve().then(() => {
+                pendingChime = null;
+                const batch = Array.from(pendingOnceAlerts.values());
+                pendingOnceAlerts.clear();
+                return chime(batch);
+            });
+        }
+        return pendingChime;
     }
 
     function acquireLoopLock() {
@@ -261,14 +309,7 @@
     }
 
     function loudestRepeatingPriority() {
-        let loudest = null;
-        repeatingAlerts.forEach(notification => {
-            const priority = getNotificationPriority(notification);
-            if (loudest === null || priorityRank[priority] > priorityRank[loudest]) {
-                loudest = priority;
-            }
-        });
-        return loudest;
+        return loudestPriority(Array.from(repeatingAlerts.values()));
     }
 
     function playLoopTone() {
@@ -350,9 +391,8 @@
             startLoop();
             return Promise.resolve(true);
         }
-        if (mode === 'once' && !triedOnceIds.has(notificationId)) {
-            triedOnceIds.add(notificationId);
-            return playOnce(notification);
+        if (mode === 'once') {
+            return queueChime(notification);
         }
         return Promise.resolve(false);
     }
@@ -365,6 +405,7 @@
 
         repeatingAlerts.delete(normalizedId);
         refusedOnceAlerts.delete(normalizedId);
+        pendingOnceAlerts.delete(normalizedId);
         if (!repeatingAlerts.size) {
             stopLoop();
         }
@@ -374,6 +415,7 @@
     function stopAll() {
         repeatingAlerts.clear();
         refusedOnceAlerts.clear();
+        pendingOnceAlerts.clear();
         stopLoop();
         announceState();
     }
@@ -391,9 +433,10 @@
         if (loopRefused && repeatingAlerts.size && !loopTickPending) {
             attempts.push(playLoopTone());
         }
-        Array.from(refusedOnceAlerts.values()).forEach(notification => {
-            attempts.push(playOnce(notification));
-        });
+        if (refusedOnceAlerts.size) {
+            // The refused chimes are tried again together, as one, in the loudest tone.
+            attempts.push(chime(Array.from(refusedOnceAlerts.values())));
+        }
         Promise.allSettled(attempts).finally(() => {
             retryInFlight = false;
         });
