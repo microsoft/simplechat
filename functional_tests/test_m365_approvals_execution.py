@@ -734,9 +734,18 @@ class M365ApprovalTests(unittest.TestCase):
             ["email"], connection,
         )
         self.assertEqual(reused["id"], binding["id"])
+        # An audience change never asks for Run as again (0.261.229); the binding keeps its record of it.
+        moved = replace(authorized_context, audience_version="changed-audience")
+        moved_allowed = self.service.validate_workflow_binding(moved, connection, "email")
+        moved_reused = self.service.ensure_workflow_binding(
+            replace(moved, run_id="moved-run", request_id="moved-request", binding_id=None),
+            ["email"], connection,
+        )
+        self.assertEqual(moved_allowed["status"], "approved")
+        self.assertEqual(moved_allowed["binding"]["audience_version"], "audience-1")
+        self.assertEqual(moved_reused["id"], binding["id"])
         for changed_context, changed_connection in (
             (replace(authorized_context, workflow_fingerprint="changed"), connection),
-            (replace(authorized_context, audience_version="changed-audience"), connection),
             (replace(authorized_context, conversation_id="different-conversation"), connection),
             (authorized_context, {**connection, "generation": 4}),
             (authorized_context, {**connection, "status": "disconnected"}),
