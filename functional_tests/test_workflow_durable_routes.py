@@ -1,9 +1,9 @@
 # test_workflow_durable_routes.py
 """
 Functional tests for durable workflow HTTP control boundaries.
-Version: 0.261.233
+Version: 0.261.234
 Implemented in: 0.261.111
-Saved-record refusal wording covered in: 0.261.233
+Saved-record refusal wording covered in: 0.261.234
 
 Production route helpers run in Flask with isolated runtime services. Decisions
 are scope-authorized and version/request-bound; native runs return queued202.

@@ -1,6 +1,6 @@
 # Workflow Test Harness Repair Fix
 
-Fixed in version: **0.261.233**
+Fixed in version: **0.261.234**
 
 Related issue: [#1621](https://github.com/microsoft/simplechat/issues/1621) (follow-up). This change touches only functional tests.
 

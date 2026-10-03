@@ -1,10 +1,10 @@
 # test_workflow_data_flow_execution.py
 """
 Functional tests for native data-flow execution through real workflow functions.
-Version: 0.261.233
+Version: 0.261.234
 Implemented in: 0.261.108
 Saved outputs stopped re-checking their sources in: 0.261.231
-Run entrypoint harness restored in: 0.261.233
+Run entrypoint harness restored in: 0.261.234
 
 Production Analyze, dispatch, immutable persistence/reload, binding, validation
 and source-lineage readers run together; only provider and source I/O are faked.

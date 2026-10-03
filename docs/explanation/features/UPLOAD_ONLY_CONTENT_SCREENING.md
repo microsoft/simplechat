@@ -6,7 +6,7 @@ Content screening checks a document when it enters a workspace, and then trusts 
 
 Earlier versions also re-checked every result produced from a screened document against that document, both when the result was saved and each time it was read. These results included saved Analyze results, orchestration and workflow outputs, generated files, chat replies and their citations, history and exports. A single deleted, re-uploaded or re-screened document, an access change, or even a failed lookup could hide a result that had already been produced. This happened even when screening was off. Chat history replaced a whole AI reply with "Source content is unavailable pending document screening and review." Saved Analyze results and orchestration files were withheld.
 
-**Implemented in version: 0.261.232.** This version completes a stack of changes that began in 0.261.230. Version 0.261.233 rewords the errors that saved results raise (see [Public messages](#public-messages)). Application version tracking remains in `application\single_app\config.py`.
+**Implemented in version: 0.261.232.** This version completes a stack of changes that began in 0.261.230. Version 0.261.234 rewords the errors that saved results raise (see [Public messages](#public-messages)). Application version tracking remains in `application\single_app\config.py`.
 
 **Related issue:** [#1621](https://github.com/microsoft/simplechat/issues/1621). Layer 1 also fixes [#1613](https://github.com/microsoft/simplechat/issues/1613).
 
@@ -102,7 +102,7 @@ The same rule applies when a chat request or an orchestration run publishes its 
 | A generated orchestration file cannot be opened | "This file is unavailable because access to its conversation could not be confirmed." |
 | A chat artifact download is refused | "You no longer have access to this artifact." |
 
-Since 0.261.233, `AnalysisResultUnavailable` picks its message by family: a source document, the container that holds the result, or the saved result itself. The [Saved-Result Error Messages Fix](../fixes/ANALYSIS_RESULT_UNAVAILABLE_MESSAGES_FIX.md) lists every code's family and the messages workflows show.
+Since 0.261.234, `AnalysisResultUnavailable` picks its message by family: a source document, the container that holds the result, or the saved result itself. The [Saved-Result Error Messages Fix](../fixes/ANALYSIS_RESULT_UNAVAILABLE_MESSAGES_FIX.md) lists every code's family and the messages workflows show.
 
 ### Configuration
 
@@ -137,7 +137,7 @@ Layers 2 and 3a merged into layer 1's branch, `paullizer-workspace-knowledge-hol
 | 3a | 0.261.231 | Workflow saved results take their access from the workflow and run. | [#1631](https://github.com/microsoft/simplechat/pull/1631) |
 | 3b | 0.261.232 | Chat, Analyze, orchestration, generated files, history and exports (this document). | [#1632](https://github.com/microsoft/simplechat/pull/1632) |
 
-Shared source-check helpers that are still used for input reads, such as `authorize_analysis_sources`, stay in place. Version 0.261.233 rewords `AnalysisResultUnavailable`, which no longer means a source re-check failed for saved results, in the [Saved-Result Error Messages Fix](../fixes/ANALYSIS_RESULT_UNAVAILABLE_MESSAGES_FIX.md).
+Shared source-check helpers that are still used for input reads, such as `authorize_analysis_sources`, stay in place. Version 0.261.234 rewords `AnalysisResultUnavailable`, which no longer means a source re-check failed for saved results, in the [Saved-Result Error Messages Fix](../fixes/ANALYSIS_RESULT_UNAVAILABLE_MESSAGES_FIX.md).
 
 ## Testing and validation
 

@@ -2,9 +2,9 @@
 #!/usr/bin/env python3
 """
 Functional test for group workflow save round-trip preservation.
-Version: 0.261.233
+Version: 0.261.234
 Implemented in: 0.261.141
-Chat delivery contract loaded by the harness in: 0.261.233
+Chat delivery contract loaded by the harness in: 0.261.234
 
 This test ensures that existing group workflow definitions survive load, edit and save. A group
 workflow carrying alert rules, URL access, a Monitor File Sync trigger and a document action is

@@ -2,9 +2,9 @@
 #!/usr/bin/env python3
 """
 Functional test for workflow save parity across the workflow draft service refactor.
-Version: 0.261.233
+Version: 0.261.234
 Implemented in: 0.261.202
-Chat delivery contract loaded by the harness in: 0.261.233
+Chat delivery contract loaded by the harness in: 0.261.234
 
 This test ensures that ``save_personal_workflow`` and ``save_group_workflow`` behave byte for byte
 as they did before each save was split into a write-free build step and a persist step.

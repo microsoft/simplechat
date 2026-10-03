@@ -2,9 +2,9 @@
 # test_analyze_artifact_phase7_rollout_rollback.py
 """
 Functional test for Analyze artifact Phase 7 rollout rollback controls.
-Version: 0.261.233
+Version: 0.261.234
 Implemented in: 0.250.177
-Planner stubs scoped to this module in: 0.261.233
+Planner stubs scoped to this module in: 0.261.234
 
 This test ensures Phase 7 can stop new shared tabular parity assignments
 through a backend-only rollback state without exposing prompts, filenames,

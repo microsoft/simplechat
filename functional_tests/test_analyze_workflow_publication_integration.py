@@ -1,10 +1,10 @@
 # test_analyze_workflow_publication_integration.py
 """
 Analyze -> save -> reload -> explain -> optional publish in one workflow run.
-Version: 0.261.233
+Version: 0.261.234
 Implemented in: 0.261.109
 Saved results stopped re-checking their sources in: 0.261.231
-Model limit patch retargeted in: 0.261.233
+Model limit patch retargeted in: 0.261.234
 
 The native adapter, section contract, task sequence, model consumer, artifact
 authorization and publication receipt service are production code. Only native
