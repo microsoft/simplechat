@@ -1,0 +1,332 @@
+{
+ "answer_and_run": {
+  "first_write": [
+   {
+    "chat_invocation": {
+     "attempt_root_run_id": "run-1",
+     "conversation_id": "conversation-1",
+     "orchestration_run_id": "run-1",
+     "requested_at": "<requested_at>",
+     "requested_by": "owner",
+     "source": "chat_orchestration",
+     "step_id": "run_digest",
+     "user_message_id": "user-turn-1",
+     "version": 1
+    },
+    "completed_at": null,
+    "definition_revision": "46952c927c274ab52531aef33c39968964a4d3f59e24760654aac131ebf651cf",
+    "definition_version": 1,
+    "durable_execution": true,
+    "group_id": null,
+    "id": "88417c5f-aa7b-5964-a897-cba2212302ec",
+    "started_at": "2026-09-29T12:19:00+00:00",
+    "status": "queued",
+    "success": false,
+    "trigger_source": "chat_orchestration",
+    "triggered_by": "owner",
+    "user_id": "owner",
+    "workflow_id": "6d2e8c20-3f4a-4b5c-8d6e-000000000001",
+    "workflow_name": "Weekly digest",
+    "workspace_type": "personal"
+   }
+  ],
+  "message": {
+   "_etag": "<_etag>",
+   "agent_citations": [],
+   "augmented": false,
+   "content": "Your priorities.\n\nSaved workflows:\n- Started `Weekly digest`.\n\nFollow the run's progress and results in the workflow's run history in Workflows. Results also appear wherever the workflow already sends them, such as its conversation or alerts.",
+   "conversation_id": "conversation-1",
+   "generated_artifacts": [],
+   "hybrid_citations": [],
+   "id": "assistant_orchestration_e4eec6448d10579e9dc3ef181f1393b1db184560",
+   "metadata": {
+    "orchestration": {
+     "attempt_index": 1,
+     "failure": null,
+     "failures": [],
+     "finalization_status": "saved",
+     "message_saved": true,
+     "outcome": "completed",
+     "outputs": [],
+     "plan_summary": {
+      "capabilities_used": [
+       "compose",
+       "workflow_run"
+      ],
+      "intent_summary": "",
+      "plan_id": "plan-1",
+      "run_id": "run-1",
+      "status": "completed",
+      "step_count": 2,
+      "turn_id": "turn-1"
+     },
+     "recovery": {
+      "eligible": false,
+      "expected_version": "<expected_version>",
+      "message": "This request is already complete.",
+      "reason_code": "already_completed",
+      "requires_confirmation": false,
+      "retry_step_ids": [],
+      "reused_step_ids": [
+       "answer",
+       "run_digest"
+      ],
+      "source_run_id": "run-1"
+     },
+     "retry_of_run_id": null,
+     "run_id": "run-1",
+     "status": "completed",
+     "turn_id": "turn-1"
+    },
+    "reasoning_adjustments": [],
+    "reasoning_effort": null,
+    "reasoning_mode": "model_default",
+    "requested_reasoning_effort": null,
+    "token_usage": {
+     "completion_tokens": 3,
+     "prompt_tokens": 7,
+     "total_tokens": 10
+    }
+   },
+   "model_deployment_name": "gpt-4o",
+   "model_provider": "aoai",
+   "reasoning_adjustments": [],
+   "reasoning_effort": null,
+   "reasoning_mode": "model_default",
+   "requested_reasoning_effort": null,
+   "role": "assistant",
+   "timestamp": "<timestamp>",
+   "web_search_citations": []
+  },
+  "notes": {
+   "one": "Saved workflows:\n- Started `Weekly digest`.\n\nFollow the run's progress and results in the workflow's run history in Workflows. Results also appear wherever the workflow already sends them, such as its conversation or alerts.",
+   "stopped": "Saved workflows:\n- Started `Weekly digest`.\n\nFollow the run's progress and results in the workflow's run history in Workflows. Results also appear wherever the workflow already sends them, such as its conversation or alerts.\n\nStopping this plan doesn't stop a workflow it already started. Cancel the run in Workflows if you need to.",
+   "two": "Saved workflows:\n- Started `Weekly digest`.\n- Started `Other digest`.\n\nFollow each run's progress and results in that workflow's run history in Workflows. Results also appear wherever each workflow already sends them, such as its conversation or alerts."
+  },
+  "queued": [
+   {
+    "actor_user_id": "owner",
+    "chat_invocation": {
+     "attempt_root_run_id": "run-1",
+     "conversation_id": "conversation-1",
+     "orchestration_run_id": "run-1",
+     "requested_at": "<requested_at>",
+     "requested_by": "owner",
+     "source": "chat_orchestration",
+     "step_id": "run_digest",
+     "user_message_id": "user-turn-1",
+     "version": 1
+    },
+    "request_id": "023264b5-a9ca-5c85-a03e-f351f8b7f984",
+    "trigger_source": "chat_orchestration"
+   }
+  ],
+  "sidecar": {
+   "attempt_root_run_id": "run-1",
+   "conversation_id": "conversation-1",
+   "handle": "workflow-weekly-digest-702b6c",
+   "name": "Weekly digest",
+   "orchestration_run_id": "run-1",
+   "reason": null,
+   "requested_by": "owner",
+   "run_id": "88417c5f-aa7b-5964-a897-cba2212302ec",
+   "status": "queued",
+   "step_id": "run_digest",
+   "version": 1,
+   "workflow_id": "6d2e8c20-3f4a-4b5c-8d6e-000000000001"
+  },
+  "step_summary": "Started the saved workflow.",
+  "stored_run": {
+   "chat_invocation": {
+    "attempt_root_run_id": "run-1",
+    "conversation_id": "conversation-1",
+    "orchestration_run_id": "run-1",
+    "requested_at": "<requested_at>",
+    "requested_by": "owner",
+    "source": "chat_orchestration",
+    "step_id": "run_digest",
+    "user_message_id": "user-turn-1",
+    "version": 1
+   },
+   "completed_at": null,
+   "definition_revision": "46952c927c274ab52531aef33c39968964a4d3f59e24760654aac131ebf651cf",
+   "definition_version": 1,
+   "durable_execution": true,
+   "group_id": null,
+   "id": "88417c5f-aa7b-5964-a897-cba2212302ec",
+   "started_at": "2026-09-29T12:19:00+00:00",
+   "status": "queued",
+   "success": false,
+   "trigger_source": "chat_orchestration",
+   "triggered_by": "owner",
+   "user_id": "owner",
+   "workflow_id": "6d2e8c20-3f4a-4b5c-8d6e-000000000001",
+   "workflow_name": "Weekly digest",
+   "workspace_type": "personal"
+  }
+ },
+ "run_only": {
+  "first_write": [
+   {
+    "chat_invocation": {
+     "attempt_root_run_id": "run-1",
+     "conversation_id": "conversation-1",
+     "orchestration_run_id": "run-1",
+     "requested_at": "<requested_at>",
+     "requested_by": "owner",
+     "source": "chat_orchestration",
+     "step_id": "run_digest",
+     "user_message_id": "user-turn-1",
+     "version": 1
+    },
+    "completed_at": null,
+    "definition_revision": "46952c927c274ab52531aef33c39968964a4d3f59e24760654aac131ebf651cf",
+    "definition_version": 1,
+    "durable_execution": true,
+    "group_id": null,
+    "id": "88417c5f-aa7b-5964-a897-cba2212302ec",
+    "started_at": "2026-09-29T12:19:00+00:00",
+    "status": "queued",
+    "success": false,
+    "trigger_source": "chat_orchestration",
+    "triggered_by": "owner",
+    "user_id": "owner",
+    "workflow_id": "6d2e8c20-3f4a-4b5c-8d6e-000000000001",
+    "workflow_name": "Weekly digest",
+    "workspace_type": "personal"
+   }
+  ],
+  "message": {
+   "_etag": "<_etag>",
+   "agent_citations": [],
+   "augmented": false,
+   "content": "Saved workflows:\n- Started `Weekly digest`.\n\nFollow the run's progress and results in the workflow's run history in Workflows. Results also appear wherever the workflow already sends them, such as its conversation or alerts.",
+   "conversation_id": "conversation-1",
+   "generated_artifacts": [],
+   "hybrid_citations": [],
+   "id": "assistant_orchestration_e4eec6448d10579e9dc3ef181f1393b1db184560",
+   "metadata": {
+    "orchestration": {
+     "attempt_index": 1,
+     "failure": null,
+     "failures": [],
+     "finalization_status": "saved",
+     "message_saved": true,
+     "outcome": "completed",
+     "outputs": [],
+     "plan_summary": {
+      "capabilities_used": [
+       "workflow_run"
+      ],
+      "intent_summary": "",
+      "plan_id": "plan-1",
+      "run_id": "run-1",
+      "status": "completed",
+      "step_count": 1,
+      "turn_id": "turn-1"
+     },
+     "recovery": {
+      "eligible": false,
+      "expected_version": "<expected_version>",
+      "message": "This request is already complete.",
+      "reason_code": "already_completed",
+      "requires_confirmation": false,
+      "retry_step_ids": [],
+      "reused_step_ids": [
+       "run_digest"
+      ],
+      "source_run_id": "run-1"
+     },
+     "retry_of_run_id": null,
+     "run_id": "run-1",
+     "status": "completed",
+     "turn_id": "turn-1"
+    },
+    "reasoning_adjustments": [],
+    "reasoning_effort": null,
+    "reasoning_mode": "model_default",
+    "requested_reasoning_effort": null,
+    "token_usage": {
+     "completion_tokens": 0,
+     "prompt_tokens": 0,
+     "total_tokens": 0
+    }
+   },
+   "model_deployment_name": "gpt-4o",
+   "model_provider": "aoai",
+   "reasoning_adjustments": [],
+   "reasoning_effort": null,
+   "reasoning_mode": "model_default",
+   "requested_reasoning_effort": null,
+   "role": "assistant",
+   "timestamp": "<timestamp>",
+   "web_search_citations": []
+  },
+  "notes": {
+   "one": "Saved workflows:\n- Started `Weekly digest`.\n\nFollow the run's progress and results in the workflow's run history in Workflows. Results also appear wherever the workflow already sends them, such as its conversation or alerts.",
+   "stopped": "Saved workflows:\n- Started `Weekly digest`.\n\nFollow the run's progress and results in the workflow's run history in Workflows. Results also appear wherever the workflow already sends them, such as its conversation or alerts.\n\nStopping this plan doesn't stop a workflow it already started. Cancel the run in Workflows if you need to.",
+   "two": "Saved workflows:\n- Started `Weekly digest`.\n- Started `Other digest`.\n\nFollow each run's progress and results in that workflow's run history in Workflows. Results also appear wherever each workflow already sends them, such as its conversation or alerts."
+  },
+  "queued": [
+   {
+    "actor_user_id": "owner",
+    "chat_invocation": {
+     "attempt_root_run_id": "run-1",
+     "conversation_id": "conversation-1",
+     "orchestration_run_id": "run-1",
+     "requested_at": "<requested_at>",
+     "requested_by": "owner",
+     "source": "chat_orchestration",
+     "step_id": "run_digest",
+     "user_message_id": "user-turn-1",
+     "version": 1
+    },
+    "request_id": "023264b5-a9ca-5c85-a03e-f351f8b7f984",
+    "trigger_source": "chat_orchestration"
+   }
+  ],
+  "sidecar": {
+   "attempt_root_run_id": "run-1",
+   "conversation_id": "conversation-1",
+   "handle": "workflow-weekly-digest-702b6c",
+   "name": "Weekly digest",
+   "orchestration_run_id": "run-1",
+   "reason": null,
+   "requested_by": "owner",
+   "run_id": "88417c5f-aa7b-5964-a897-cba2212302ec",
+   "status": "queued",
+   "step_id": "run_digest",
+   "version": 1,
+   "workflow_id": "6d2e8c20-3f4a-4b5c-8d6e-000000000001"
+  },
+  "step_summary": "Started the saved workflow.",
+  "stored_run": {
+   "chat_invocation": {
+    "attempt_root_run_id": "run-1",
+    "conversation_id": "conversation-1",
+    "orchestration_run_id": "run-1",
+    "requested_at": "<requested_at>",
+    "requested_by": "owner",
+    "source": "chat_orchestration",
+    "step_id": "run_digest",
+    "user_message_id": "user-turn-1",
+    "version": 1
+   },
+   "completed_at": null,
+   "definition_revision": "46952c927c274ab52531aef33c39968964a4d3f59e24760654aac131ebf651cf",
+   "definition_version": 1,
+   "durable_execution": true,
+   "group_id": null,
+   "id": "88417c5f-aa7b-5964-a897-cba2212302ec",
+   "started_at": "2026-09-29T12:19:00+00:00",
+   "status": "queued",
+   "success": false,
+   "trigger_source": "chat_orchestration",
+   "triggered_by": "owner",
+   "user_id": "owner",
+   "workflow_id": "6d2e8c20-3f4a-4b5c-8d6e-000000000001",
+   "workflow_name": "Weekly digest",
+   "workspace_type": "personal"
+  }
+ }
+}

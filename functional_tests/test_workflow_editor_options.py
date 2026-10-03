@@ -1,9 +1,9 @@
 # test_workflow_editor_options.py
 """
 Functional tests for authorized, non-secret workflow editor choices.
-Version: 0.261.220
+Version: 0.261.235
 Implemented in: 0.261.108
-Merge availability and workflow file limit added in: 0.261.220
+Merge availability and workflow file limit added in: 0.261.235
 """
 
 import json

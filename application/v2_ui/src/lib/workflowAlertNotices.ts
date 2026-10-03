@@ -231,6 +231,9 @@ function readLabels(value: unknown): string[] {
     return labels.slice(0, MAX_CHIPS);
 }
 
+/** The link to a conversation the workflow created: where the card's Open button goes first. */
+export const WORKFLOW_ALERT_CREATED_LINK_LABEL = 'Open created conversation';
+
 /**
  * What a link button says.
  *
@@ -245,7 +248,7 @@ function linkLabel(raw: unknown): string {
         return 'Open workflow conversation';
     }
     if (lower.startsWith('open created')) {
-        return 'Open created conversation';
+        return WORKFLOW_ALERT_CREATED_LINK_LABEL;
     }
     if (lower.startsWith('open updated')) {
         return 'Open conversation';

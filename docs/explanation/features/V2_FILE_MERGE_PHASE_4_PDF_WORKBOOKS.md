@@ -1,8 +1,8 @@
 # V2 File Merge — Phase 4: PDF and Workbook Merges
 
-Version: **0.261.221**
+Version: **0.261.236**
 
-Implemented in version: **0.261.221**, recorded in `application/single_app/config.py`.
+Implemented in version: **0.261.236**, recorded in `application/single_app/config.py`.
 
 GitHub issue: [#1619](https://github.com/microsoft/simplechat/issues/1619). Umbrella document:
 [V2 File Merge](V2_FILE_MERGE.md). Builds on
@@ -28,7 +28,7 @@ again, runs with code and no model, and attaches one file to the run.
 Chat can propose a workflow with any of these kinds. Merging PDFs and workbooks directly in
 a chat turn, without a workflow, was scheduled for Phase 7 together with Word and
 PowerPoint, so that every document kind reaches chat through one shared Render path; it
-arrived in **0.261.224** ([Phase 7](V2_FILE_MERGE_PHASE_7_CHAT_DOCUMENTS.md)).
+arrived in **0.261.239** ([Phase 7](V2_FILE_MERGE_PHASE_7_CHAT_DOCUMENTS.md)).
 
 ## Technical specifications
 
@@ -171,7 +171,7 @@ bookmarks** for PDFs and **Sheets** for workbooks. See
 ## Known limitations
 
 - In this phase PDF and workbook merges ran only in workflows, and chat proposed a workflow
-  that did it. Since **0.261.224** a chat turn merges them directly
+  that did it. Since **0.261.239** a chat turn merges them directly
   ([Phase 7](V2_FILE_MERGE_PHASE_7_CHAT_DOCUMENTS.md)).
 - Page ranges are supported by the engine but not yet offered in the workflow editor.
 - A workbook merge copies values and number formats, not styles, charts or images.

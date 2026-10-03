@@ -228,12 +228,12 @@ use personal workflows, in their own private conversations. Reading a result
 changes nothing, so it never makes a plan wait for approval. Clearing it keeps
 saved results out of plans; **Ask in chat** on a run is not affected.
 
-Since **0.261.218**, **Merge spreadsheets** (`tabular_merge`) combines the rows
+Since **0.261.233**, **Merge spreadsheets** (`tabular_merge`) combines the rows
 of two or more CSV or Excel files into one table, which the plan then delivers as
 a CSV or Excel file through **Create a file**. Code appends every row exactly, in
 the order the files are listed, and adds a **Source File** column by default; no
 model reads or rewrites the rows, so codes such as `007` keep their leading
-zeros. Columns may appear in any order. Since **0.261.219**, a merge can also
+zeros. Columns may appear in any order. Since **0.261.234**, a merge can also
 reconcile files whose columns differ: keep every column, treat differently named
 headers as one column, keep only listed columns, leave out files or sheets that
 don't fit, read headers below a title row, merge every sheet of a workbook,
@@ -241,14 +241,14 @@ remove duplicate rows and sort. Without one of those choices, files whose
 columns differ are not merged: the run says so and nothing is created. Merge
 never matches rows on a key column the way a lookup or join would.
 
-**Inspect spreadsheets** (`tabular_inspect`), since **0.261.219**, reads the
+**Inspect spreadsheets** (`tabular_inspect`), since **0.261.234**, reads the
 sheet names, headers, row counts and a few sample rows of CSV or Excel files and
 reports how their columns line up, without changing anything. Plans use it to
 answer questions about files' structure, and before a merge whose columns may
 differ, so **Prepare content** can line up the columns as a column mapping that
 the merge checks and applies with code.
 
-**Merge documents** (`document_merge`), since **0.261.224**, joins two or more
+**Merge documents** (`document_merge`), since **0.261.239**, joins two or more
 PDFs into one PDF, Word documents into one Word document or PowerPoint decks into
 one deck, or puts CSV and Excel files on separate sheets of one workbook, which
 the plan then delivers through **Create a file**. Code copies the files in the
@@ -259,7 +259,7 @@ in between is never delivered. Word documents whose fields start other programs
 are refused, and PowerPoint actions that start programs or run macros are
 removed.
 
-Since **0.261.225**, while both **Merge spreadsheets** and **Merge documents** are
+Since **0.261.240**, while both **Merge spreadsheets** and **Merge documents** are
 offered, a plan asks whether spreadsheets merged into one Excel file should share
 one sheet or keep a sheet each, unless the request already says. Clearing **Merge
 documents** keeps that question out of plans, and merged rows always share one
@@ -338,6 +338,13 @@ not claim that research verified the requested details.
 | Propose Workflows From Chat | Lets a plan turn a request for recurring or automated work, such as "email me a summary of my week every Monday", into a personal workflow proposal. The proposal appears as a card in the conversation, and no workflow exists until the user approves it there. Proposals are offered only in the user's own private conversations, and only to users who may already create personal workflows. | Off | `enable_chat_orchestration_workflows`; requires Chat Orchestration and personal workflows (`allow_user_workflows`), and the **Propose workflows** capability when the Capabilities list is narrowed. Since **0.261.207** |
 | Run Workflows From Chat | Lets a plan start one of the user's saved personal workflows when the user asks for it, such as "run my weekly digest now". A plan that starts a workflow always waits for the user to run it, even when the approval mode would run it automatically or after a countdown, and approving it starts each named workflow once. Runs are offered only in the user's own private conversations, only to users who may already create personal workflows, and only for workflows with durable execution on. It is independent of Propose Workflows From Chat, so either can be on without the other. | Off | `enable_chat_orchestration_workflow_runs`; requires Chat Orchestration and personal workflows (`allow_user_workflows`), and the **Run workflows** capability when the Capabilities list is narrowed. Since **0.261.212** |
 | Capabilities | Restricts which capabilities a plan may use. An empty selection means every capability the other settings already permit. | All | `chat_orchestration_enabled_capabilities` |
+
+When **Run Workflows From Chat** starts a durable personal workflow, the plan
+still ends right away. If **Use Workflow Results In Chat** is also on in
+Workflow settings, the server records enough context to post the run's eventual
+outcome back to the same private chat later, mark it unread and send one bell
+notification. If the chat can no longer take the result, the server posts
+nothing and sends one workflow notification instead.
 
 ### Actions and agents
 
@@ -609,6 +616,7 @@ then report a rejected proposal.
 | A step says "Your workflow results couldn't be read right now. Try again in a moment." | Workflow storage could not be read when the step ran. The step is retried once automatically. | Once storage is reachable, the user can select **Retry from failed step** or ask again. Reading a result changes nothing, so trying again is safe. |
 | An answer says a workflow result it used changed or is no longer available, so it was not saved | A run the plan read was deleted or changed, or its owner lost access to a source it used, while the answer was being written. | Expected. Ask again in a new message to read the current result. |
 | A saved run cannot be resumed | Checkpoints are absent or invalid, relevant context/access changed, or a newer/live attempt exists. | Follow the recovery explanation. Open the current attempt or create a new plan as appropriate; do not infer results from old summaries. |
+| A chat-started workflow finishes but no result appears in the chat | The workflow settings gate for result post-back is off, the chat was deleted or shared after the run started, access to personal workflows was lost, the workflow was deleted, or the delivery worker deferred or closed the generation after retryable storage/notification failures. | Check **Use Workflow Results In Chat** under Workflow settings, keep the request in the user's private chat, and open the run from Workflows or the workflow notification. The plan itself is already complete and does not wait for delivery. |
 
 ## Related
 

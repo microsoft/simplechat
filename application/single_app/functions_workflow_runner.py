@@ -27,6 +27,7 @@ from azure.identity import (
     get_bearer_token_provider,
 )
 from flask import Flask, g, has_request_context, session
+from content_screening.access import isolate_request_source_fence
 from functions_m365_approvals import M365ApprovalRequired, M365PolicyError
 from functions_workflow_alert_safety import sanitize_workflow_alert_decision
 from m365_interaction import M365_AUTH_INTERACTION_CODES, M365SignInRequired
@@ -301,6 +302,7 @@ from functions_settings import (
     is_cross_format_compare_one_to_many_enabled,
     is_tabular_processing_enabled,
     normalize_model_endpoints,
+    read_user_settings_snapshot,
     resolve_model_endpoint_foundry_scope,
 )
 from functions_tabular_parity_contract import (
@@ -5911,6 +5913,27 @@ def _get_workflow_runner_app():
     return _workflow_runner_app
 
 
+def _workflow_owner_identity(user_id):
+    """Return the owner's stored display name and email for a run without a signed-in session.
+
+    Without them a background run acts as the bare object ID, which then shows as the name
+    on the groups and messages it creates and is written back over the stored display name.
+    """
+    if not user_id:
+        return '', ''
+    try:
+        # The run acts as this owner, whose id comes from the stored workflow rather than a caller.
+        user_doc = read_user_settings_snapshot(user_id, allow_cross_user=True)
+    except AzureError as exc:
+        log_event(
+            '[WorkflowRunner] Owner profile unavailable for a background run',
+            extra={'user_id': user_id, 'error_type': type(exc).__name__},
+            level=logging.WARNING,
+        )
+        return '', ''
+    return str(user_doc.get('display_name') or '').strip(), str(user_doc.get('email') or '').strip()
+
+
 @contextmanager
 def _ensure_execution_context(user_id):
     created_context = None
@@ -5922,13 +5945,14 @@ def _ensure_execution_context(user_id):
         reuse_existing = session_user_id == str(user_id or '').strip()
 
     if not reuse_existing:
+        display_name, email = _workflow_owner_identity(str(user_id or '').strip())
         created_context = _get_workflow_runner_app().test_request_context('/api/internal/workflows/run')
         created_context.push()
         session['user'] = {
             'oid': user_id,
             'roles': ['User'],
-            'preferred_username': '',
-            'name': user_id,
+            'preferred_username': email,
+            'name': display_name or user_id,
         }
 
     try:
@@ -10958,15 +10982,13 @@ def _execute_workflow_task_sequence(
             checkpoint_ref = summary.get('result_ref')
             if checkpoint_ref:
                 try:
-                    _, source_access = authorize_workflow_task_result_read(
+                    authorize_workflow_task_result_read(
                         workflow, run_id, task_id, checkpoint_ref, reader_user_id=actor_id,
                         **(durable.selectors(attempt=summary['producer']['attempt']) if structured_definition else {}),
                     )
                 except AnalysisResultUnavailable:
                     if not structured_definition:
                         raise
-                    durable._pause(task_unit_key, checkpoint_ref['sha256'])
-                if structured_definition and source_access.get('source_snapshot_changed'):
                     durable._pause(task_unit_key, checkpoint_ref['sha256'])
                 task_results.append(completed_task)
                 validation = saved_result.get('workflow_validation') or {
@@ -11023,6 +11045,9 @@ def _execute_workflow_task_sequence(
             raise_if_cancelled()
             attempt_count = attempt_index + 1
             task_stage = 'runner'
+            # Each attempt gets its own model fence: only the documents this task reads as
+            # inputs can block its model calls, never an earlier task's sources.
+            source_fence = isolate_request_source_fence()
             try:
                 if task.get('publication') is not None:
                     task_stage = 'publication'
@@ -11293,6 +11318,8 @@ def _execute_workflow_task_sequence(
                         title=str(task.get('name') or f"Task {task['order']}"),
                         status='running',
                     )
+            finally:
+                source_fence.restore()
 
         if task_result is not None:
             # Persistence is outside the invocation retry loop: a failed write
@@ -11427,10 +11454,6 @@ def _execute_workflow_task_sequence(
                     **persistence_options,
                 )
                 result_summary = workflow_result_summary(manifest, result_ref)
-                authorize_workflow_task_result_read(
-                    workflow, run_id, task_id, result_ref, manifest=manifest, reader_user_id=actor_id,
-                    **(durable.selectors(attempt=attempt_count) if structured_definition else {}),
-                )
                 task_result['workflow_result'] = result_summary
                 task_result['context_budget'] = context_budget
                 _save_workflow_task_run_item(
@@ -11445,7 +11468,12 @@ def _execute_workflow_task_sequence(
                     error=task_error,
                 )
             except AnalysisResultUnavailable as exc:
-                message = 'Saved task output was withheld because its source access could not be confirmed.'
+                # Raised when the task's own analysis could not confirm the sources it read
+                # while it ran, or its result provenance is malformed. Nothing was saved.
+                message = (
+                    'The analysis result was not saved because a document it read changed or became '
+                    'unavailable while it ran. Dependent tasks were not run.'
+                )
                 _save_workflow_task_run_item(
                     workflow, run_id, task, 'failed', attempt_count=attempt_count,
                     error=message, created_at=created_at, runner_audit=runner_audit,

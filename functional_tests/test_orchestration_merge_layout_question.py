@@ -2,8 +2,8 @@
 # test_orchestration_merge_layout_question.py
 """
 Functional test for the question chat asks before merging spreadsheets into one Excel file.
-Version: 0.261.225
-Implemented in: 0.261.225
+Version: 0.261.240
+Implemented in: 0.261.240
 Refs: microsoft/simplechat#1619
 
 Several CSV or Excel files merged into one Excel file can mean every row on one sheet
@@ -122,7 +122,7 @@ def _merge_plan(layout):
 
 
 def test_version_includes_the_merge_layout_question():
-    assert_app_version_at_least("0.261.225")
+    assert_app_version_at_least("0.261.240")
 
 
 def test_the_question_is_offered_only_when_both_layouts_can_be_delivered(harness):

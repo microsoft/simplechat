@@ -4,7 +4,7 @@ title: "Merge files in chat"
 description: "Combine several CSV or Excel files into one table, or several PDFs, Word documents or PowerPoint decks into one file."
 section: "Guides"
 audience: user
-version: "0.261.225"
+version: "0.261.240"
 ---
 
 ## What this does
@@ -77,7 +77,7 @@ Merging spreadsheets into one Excel file can mean two different things:
   single workbook. See [Merge PDFs, Word documents, decks or
   workbooks](#merge-pdfs-word-documents-decks-or-workbooks).
 
-From version **0.261.225**, when you ask to merge or combine spreadsheets into one Excel
+From version **0.261.240**, when you ask to merge or combine spreadsheets into one Excel
 file, or don't name a format, and your request doesn't say which you want, chat asks
 before it plans the merge. Pick **All rows on one sheet** or **Each file on its own
 sheet**. If you choose **Decline**, chat doesn't ask again: it puts every row on one sheet
@@ -211,7 +211,7 @@ more files match than the workflow limit allows, the task fails and says which.
 
 ## Merge PDFs, Word documents, decks or workbooks
 
-From version **0.261.224**, chat joins whole documents as well as rows. Select the files in
+From version **0.261.239**, chat joins whole documents as well as rows. Select the files in
 the order you want them, then ask, for example:
 
 > Combine these three signed contracts into one PDF.
@@ -256,10 +256,10 @@ left out:
 | The merged file would be larger than chat allows | Merge fewer or smaller files, or use a workflow. |
 
 To merge documents on a schedule, whenever a synced folder gets new files, or more files
-than chat allows, use a workflow task. Since **0.261.221** a workflow merge task has a
+than chat allows, use a workflow task. Since **0.261.236** a workflow merge task has a
 **Merge type**: besides combining rows, it can join PDFs into one PDF or put each CSV or
-Excel file on its own sheet of one workbook. Since **0.261.222** it can append Word
-documents, and since **0.261.223** PowerPoint decks. Choose the type after choosing
+Excel file on its own sheet of one workbook. Since **0.261.237** it can append Word
+documents, and since **0.261.238** PowerPoint decks. Choose the type after choosing
 **Merge files**; the rest works the same way. You can also ask chat, for example "every
 month, combine the signed contracts into one PDF", and it proposes a workflow that does it.
 See [Create a workflow]({{ '/guides/create-a-workflow/' | relative_url }}#merge-files-in-a-workflow).

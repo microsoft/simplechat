@@ -117,3 +117,20 @@ export function buildReplyPreview(message: ChatMessage): string {
 export function isAiRequest(message: ChatMessage | undefined): boolean {
     return asShared(message)?.message_kind === 'ai_request';
 }
+
+/**
+ * Whether an agent wrote this message through an action, on its sender's behalf.
+ *
+ * `add_conversation_message_for_current_user` (functions_simplechat_operations.py) stores such
+ * messages as the user's own, since they are sent with the user's permissions, and marks them
+ * with `posted_via: 'agent_action'` and `content_format: 'markdown'`. They are rendered as
+ * markdown, like the agent's replies; messages people type stay plain text.
+ */
+export function isAgentPostedMessage(message: ChatMessage | undefined): boolean {
+    const metadata = message?.metadata as { posted_via?: unknown; content_format?: unknown } | undefined;
+    return (
+        message?.role === 'user' &&
+        metadata?.posted_via === 'agent_action' &&
+        metadata?.content_format === 'markdown'
+    );
+}

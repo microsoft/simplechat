@@ -110,8 +110,11 @@ these reads.
 
 This is not a new group-only retrieval mode. The existing chat request mapping
 (`chat_type=user`, `doc_scope=all`, and the established active-group union)
-remains unchanged. Existing conversation scope locks are not cleared or
-retargeted; incompatible requests retain the conversation and show its error.
+remains unchanged. From version 0.261.226, choosing **Chat** always starts a
+brand-new conversation, so the selection is never added to whichever
+conversation happened to be open. That conversation's scope lock is not cleared
+or retargeted, and a reply still being written there finishes in the
+background ([V2_NEW_CHAT_RESET_FIX.md](../fixes/V2_NEW_CHAT_RESET_FIX.md)).
 
 ## File structure
 

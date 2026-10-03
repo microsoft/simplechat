@@ -894,6 +894,7 @@ def test_ask_about_this_on_a_personal_alert_opens_a_chat_about_its_run(tab, serv
     assert shown == 1
     expect(tab.alert_card).to_have_count(1)
     expect(tab.follow_up).to_have_text("Ask about this")
+    tab.alert_card.locator("[data-workflow-alert-show-more]").click()
     tab.follow_up.click()
     expect(tab.chip).to_have_attribute("data-workflow-result-chip", "selected")
     expect(tab.chip_text).to_have_text(CHIP)

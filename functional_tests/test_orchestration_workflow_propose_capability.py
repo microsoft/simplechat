@@ -2,9 +2,9 @@
 # test_orchestration_workflow_propose_capability.py
 """
 Functional test for the workflow_propose orchestration capability.
-Version: 0.261.221
+Version: 0.261.236
 Implemented in: 0.261.207
-Merge tasks added in: 0.261.220
+Merge tasks added in: 0.261.235
 
 This test ensures that chat orchestration offers workflow_propose only when workflow proposals
 are turned on and available to the requester, and checks each proposal against the draft rules

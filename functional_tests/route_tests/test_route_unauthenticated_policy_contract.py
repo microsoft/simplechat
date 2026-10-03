@@ -2,9 +2,10 @@
 # test_route_unauthenticated_policy_contract.py
 """
 Functional test for route unauthenticated access policy contract.
-Version: 0.261.214
+Version: 0.261.227
 Implemented in: 0.242.069
 Workflow result context coverage: 0.261.214
+Workflow run status coverage: 0.261.227
 
 This test ensures every SimpleChat route has an explicit expected unauthenticated
 access behavior: public, browser-session authenticated, admin-only, or external
@@ -276,6 +277,25 @@ def test_workflow_result_context_requires_a_signed_in_user_session() -> None:
     assert {"login_required", "user_required"} <= set(matches[0].decorator_names)
 
 
+def test_workflow_run_status_requires_a_signed_in_user_session() -> None:
+    """The run card's status rows are never public or bearer-only.
+
+    Explicit raises keep this check under ``python -O``.
+    """
+    path = "/api/v2/orchestration/workflow-runs/status"
+    matches = [route for route in iter_route_functions() if route.path == path]
+
+    if [route.function_name for route in matches] != ["orchestration_workflow_run_status"]:
+        raise AssertionError(f"Unexpected status route functions: {[route.function_name for route in matches]}.")
+    if expected_policy(path) != "session_user_401_or_redirect":
+        raise AssertionError(f"Status route policy changed: {expected_policy(path)}.")
+    required = {"login_required", "user_required", "enabled_required", "workflow_user_required"}
+    if not required <= set(matches[0].decorator_names):
+        raise AssertionError(f"Status route is missing guards: {sorted(required - set(matches[0].decorator_names))}.")
+    if "accesstoken_required" in matches[0].decorator_names:
+        raise AssertionError("Status route must not accept bearer tokens.")
+
+
 if __name__ == "__main__":
     tests = [
         test_every_route_has_unauthenticated_access_policy,
@@ -283,6 +303,7 @@ if __name__ == "__main__":
         test_external_routes_use_bearer_auth_decorator,
         test_sensitive_admin_routes_have_admin_or_specialized_route_decorator,
         test_workflow_result_context_requires_a_signed_in_user_session,
+        test_workflow_run_status_requires_a_signed_in_user_session,
     ]
     results = []
     for test in tests:

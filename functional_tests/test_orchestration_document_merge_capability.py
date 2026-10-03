@@ -2,8 +2,8 @@
 # test_orchestration_document_merge_capability.py
 """
 Functional test for the document_merge chat orchestration capability.
-Version: 0.261.224
-Implemented in: 0.261.224
+Version: 0.261.239
+Implemented in: 0.261.239
 
 This test ensures that document_merge is a gated Reason capability beside tabular_merge:
 plans must name the kind and may only use that kind's settings, sources are named
@@ -167,7 +167,7 @@ def original_reader(document_id):
 
 
 def test_version_includes_document_merge():
-    assert_app_version_at_least('0.261.224')
+    assert_app_version_at_least('0.261.239')
 
 
 def test_document_merge_is_a_gated_reason_capability(runtime):

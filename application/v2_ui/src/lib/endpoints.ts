@@ -708,6 +708,19 @@ export const fetchMessageThoughts = (
         signal,
     );
 
+/**
+ * The full record of one tool call whose result was moved out of the message.
+ *
+ * Works for personal and collaborative conversations. Any Azure Maps tile token in the
+ * result is reissued by the server, so a map from an old reply still loads its tiles.
+ */
+export const fetchAgentCitation = (conversationId: string, artifactId: string, signal?: AbortSignal) =>
+    api.get<{ citation?: unknown }>(
+        `/api/conversation/${encodeURIComponent(conversationId)}` +
+            `/agent-citation/${encodeURIComponent(artifactId)}`,
+        signal,
+    );
+
 export const submitFeedback = (
     messageId: string,
     conversationId: string,

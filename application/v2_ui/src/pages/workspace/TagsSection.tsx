@@ -29,6 +29,7 @@ import {
 import type { GroupWorkspaceContext } from '../../lib/workspaceContext';
 import { groupWorkspacePath } from '../../lib/groupWorkspaceNavigation';
 import { useBootstrapStore } from '../../stores/bootstrapStore';
+import { useChatStore } from '../../stores/chatStore';
 import { GlassButton, EmptyState, Skeleton } from '../../components/ui/primitives';
 import { SectionError, SectionIntro, SectionSearch } from '../../components/workspace/primitives';
 import { errorMessage } from '../../components/workspace/useSectionResource';
@@ -405,6 +406,9 @@ function ScopedTagsSection({
         const state: ContextHandoffState = {
             contextTags: [{ name: tag.name, scope }],
         };
+        // A brand-new chat, for the same reason the documents hand-off starts one: otherwise
+        // the tag lands in whichever conversation was last open.
+        useChatStore.getState().startNewConversation();
         navigate(`/chat?${query}`, { state });
     };
 

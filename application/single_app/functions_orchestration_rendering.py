@@ -74,7 +74,7 @@ from functions_workflow_result_store import AnalysisWorkUnitConflictError, Workf
 
 
 MAX_OUTPUT_BYTES = 500 * 1024 * 1024
-# A render re-proves its claim, run state, capability admission and source access on this
+# A render re-proves its claim, run state, capability admission and result lineage on this
 # cadence rather than on every block it writes. Publication boundaries still check in full.
 RENDER_FULL_CHECK_INTERVAL_SECONDS = 5.0
 _REQUEST_FIELDS = frozenset({"output_format", "profile", "columns", "title", "sheet_name"})
@@ -653,8 +653,11 @@ class OrchestrationRenderingService:
     def _document_reader_for(self, record):
         """Read only the original files a merged file was assembled from, as they are now.
 
-        The merge result's own lineage names them. Each read re-authorizes the result and its
-        sources, and the renderer delivers the file only if it assembles to the checked bytes.
+        The merge result's own lineage names them, and any other document is refused. A retained
+        result takes its access from its conversation and run, but a merged file is assembled from
+        these files when it renders, so each one is read through the owner's reader with the
+        actor's current access, and the result's producer chain is checked again after every read.
+        The renderer delivers the file only if it assembles to the checked bytes.
         """
         if self.document_bytes_reader is None or record["render_spec"].get("profile") != ASSEMBLED_DOCUMENT_PROFILE:
             return None
@@ -797,7 +800,7 @@ class OrchestrationRenderingService:
                 yield public_output(record), record
 
     def list_public_outputs(self, run_id):
-        """Current per-file visibility; a source denial cannot hide its siblings."""
+        """Current per-file state; one unavailable file cannot hide its siblings."""
         return [projection for projection, _ in self._public_records(run_id)]
 
     def claim_due(self, output_id, *, worker_id=None):

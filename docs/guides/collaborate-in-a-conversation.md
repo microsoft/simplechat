@@ -70,6 +70,10 @@ The same shared conversations work in the V2 interface, with the controls in dif
 
 Retry, edit, attempt navigation, and fork are not offered in a shared conversation in either interface; those actions have no shared-conversation equivalent.
 
+### Messages an agent posts for you
+
+An agent with the Simple Chat action can post into a conversation on your behalf, for example a workflow that opens a group conversation and writes the first briefing. The message is sent with your permissions, so it appears under your name, with **posted through an agent** beside it. Unlike a message you type, it is rendered as formatted text: headings, tables, links, images, and audio or video players appear the way they do in the agent's own replies.
+
 ## Verify it worked
 
 The conversation appears with a shared or collaborative indicator, the participant list shows accepted or pending members, and new shared messages appear for each accepted participant. A completed `@` mention appears in the message text. A participant-generated file stays unavailable while approval is pending and becomes downloadable only after an authorized approver approves it.

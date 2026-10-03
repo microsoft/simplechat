@@ -2,8 +2,8 @@
 # test_orchestration_tabular_reconciliation.py
 """
 Functional test for reconciling differently structured spreadsheets in chat orchestration.
-Version: 0.261.219
-Implemented in: 0.261.219
+Version: 0.261.234
+Implemented in: 0.261.234
 
 This test ensures that tabular_inspect is a gated Gather capability that retains a bounded
 inspection without a model, that tabular_merge plans accept union, aliases, exclusion,
@@ -106,7 +106,7 @@ def make_plan(runtime, steps, **kwargs):
 
 
 def test_version_includes_reconciliation():
-    assert_app_version_at_least('0.261.219')
+    assert_app_version_at_least('0.261.234')
 
 
 def test_tabular_inspect_is_a_gated_gather_capability(runtime):

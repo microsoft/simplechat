@@ -64,12 +64,19 @@ for workspace boundaries, context sharing, and nested-call limits.
 
 The action appears in the Actions list or card view. When you create or edit an agent, it is available on the agent **Actions** step.
 
+## Media an action returns
+
+When an agent's reply links to an audio or video file, such as a recording or a camera clip an action returned, the V2 chat plays it in place: audio as a compact player with play, pause, stop, seek, volume, and speed, and video as a card with the browser's own controls. Images in a reply appear as captioned cards that open full size. Only one recording or clip plays at a time.
+
+The browser only plays media from hosts the page's Content-Security-Policy allows. Media served by SimpleChat itself always plays. For media an action serves from its own host, an administrator adds that host to the `CSP_MEDIA_SRC_ORIGINS` app setting as a comma-separated list of `https://` origins, for example `https://media.contoso.com` or `https://*.contoso-env.westus3.azurecontainerapps.io`. Entries that are not bare `https://` origins are ignored. Until a host is allowed, its links show a short notice with a link that opens the file in a new tab.
+
 ## Troubleshooting
 
 | Symptom | Likely cause | Fix |
 | --- | --- | --- |
 | The Actions tab is missing | Actions are disabled for your workspace or account | Ask an admin to enable `enable_semantic_kernel` and the matching action scope. |
 | **Test Connection** fails | The endpoint, identity, or credential cannot reach the target service | Fix the connection details and test again before saving. |
+| A recording or clip the action returned does not play | Its host is not in `CSP_MEDIA_SRC_ORIGINS`, or the action's signed link has expired | Add the host's `https://` origin to `CSP_MEDIA_SRC_ORIGINS` and restart the app, or ask the agent to fetch the record again for a fresh link. |
 
 ## Related
 

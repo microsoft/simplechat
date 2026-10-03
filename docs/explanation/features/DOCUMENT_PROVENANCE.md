@@ -2,6 +2,8 @@
 
 Implemented in version: **0.261.194**.
 
+Provenance described as record-keeping only, never access, in version: **0.261.232**.
+
 Application version tracking: `application\single_app\config.py`.
 
 Tracking: issue #1555, Track P of the
@@ -152,10 +154,15 @@ values aren't valid, the document is saved without one and a warning is logged
 with `log_event`.
 
 Publication stamps the origin when it creates the destination document.
-Approval, content screening, and `queue_generated_document_processing` all work
-on that same document and never re-create it, so the origin survives them. The
-create stage runs once per publication receipt, so a replayed publication
-doesn't restamp the origin or add the tag twice.
+Approval and `queue_generated_document_processing` work on that same document
+and never re-create it, so the origin survives them. Since 0.261.230 the
+destination also gets the server-managed `screening_exemption` field, so content
+screening doesn't run on it. The create stage runs once per publication receipt,
+so a replayed publication doesn't restamp the origin or add the tag twice.
+
+The `origin` field is not what exempts a document from screening. A `chat`
+origin also marks a file a user attached in chat and saved to a workspace,
+which is an upload and is still screened.
 
 The chat upload route builds its origin only from the conversation it has
 already authorized and the file message ID it generates. It never reads origin
@@ -239,6 +246,21 @@ cap. A missing name shows as "Untitled workflow" or "Untitled conversation".
 The links are V2 routes: `/workspace/workflows?workflow_id=...&run_id=...`,
 `/groups/<group_id>/workflows?workflow_id=...&run_id=...`, and
 `/chat?conversationId=...`.
+
+### Provenance is not access
+
+Since **0.261.232**, provenance describes where content came from. It never
+decides who can read that content. Two kinds of provenance are kept for display,
+filtering and audit: a document's `origin` record, and the source lists stored
+with saved Analyze, orchestration and workflow results.
+
+- A saved result takes its access from its conversation, orchestration run or
+  workflow.
+- A published document takes its access from its destination workspace.
+- Reading a source document again, for example to open a citation or run a new
+  Analyze, is an input read. It has its own access and screening check.
+
+See [Upload-only content screening](UPLOAD_ONLY_CONTENT_SCREENING.md).
 
 ### Origin filters on list routes
 

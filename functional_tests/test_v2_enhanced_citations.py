@@ -2,7 +2,7 @@
 """
 Functional test for V2 enhanced citations.
 
-Version: 0.261.010
+Version: 0.261.223
 Implemented in: 0.261.010
 
 This test ensures the V2 enhanced citation viewers agree with the endpoints they call and
@@ -19,6 +19,7 @@ Two behaviours are easy to get wrong and are asserted directly:
   Ignoring the header opens every PDF citation on the wrong page.
 """
 
+import importlib.util
 import re
 import sys
 from pathlib import Path
@@ -179,8 +180,19 @@ def test_pdf_needs_no_vendored_engine():
     assert "frame-src 'self' blob:" in config, (
         "The CSP must allow blob: frames for the PDF viewer"
     )
-    assert "media-src 'self' blob:" in config, (
-        "The CSP must allow blob: media"
+    # media-src is built by csp_media_sources so administrators can add media hosts; whatever
+    # they add, it always starts with same-origin and blob: media.
+    spec = importlib.util.spec_from_file_location(
+        "csp_media_sources_under_test", APP_DIR / "csp_media_sources.py"
+    )
+    media_sources = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(media_sources)
+    for origins in ([], ["https://media.example.test"]):
+        assert media_sources.build_media_src_directive(origins).startswith("media-src 'self' blob:"), (
+            "The CSP must allow blob: media"
+        )
+    assert 'f"{MEDIA_SRC_DIRECTIVE}; "' in config, (
+        "config.py must put the built media-src directive into the CSP"
     )
 
     print("PDF rendering approach test passed!")

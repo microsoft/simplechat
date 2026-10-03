@@ -1,9 +1,9 @@
 # test_workflow_classic_advanced_guard.py
 """
 Source-backed browser coverage for the Classic advanced-workflow edit guard.
-Version: 0.261.220
+Version: 0.261.235
 Implemented in: 0.261.116; calendar schedule routing and labels added in 0.261.193;
-Merge files tasks routed to V2 in 0.261.220
+Merge files tasks routed to V2 in 0.261.235
 
 The actual local edit function must stop before loading runners or resetting a
 draft for advanced definitions, for calendar schedules, and for Merge files

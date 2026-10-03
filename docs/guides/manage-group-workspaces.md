@@ -78,10 +78,13 @@ whose scan was rejected or failed; chat, download, tagging, editing and sharing
 wait until a reviewer resolves the hold in Content review. On narrow screens,
 use **Filters** and the details toggle to open the same controls in dialogs.
 
-Select eligible documents and choose **Chat** to carry their group/document
-context into the existing chat experience. Current access is checked again
-before those sources are adopted. This does not create a group-only retrieval
-mode or override an existing conversation's workspace lock.
+Select eligible documents and choose **Chat** to start a new conversation with
+their group/document context attached. From version **0.261.226**, this always
+opens a new conversation rather than adding the documents to whichever
+conversation was open, and a reply still being written there keeps going.
+Current access is checked again before those sources are adopted. This does not
+create a group-only retrieval mode or change an existing conversation's
+workspace lock.
 
 ### Manage group files and tags
 

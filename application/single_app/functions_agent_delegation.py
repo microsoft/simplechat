@@ -23,7 +23,7 @@ AGENT_SCOPES = frozenset({"personal", "group", "global"})
 _MANIFEST_FIELDS = frozenset({
     "id", "name", "displayName", "type", "description", "is_enabled", "identity_id",
     "endpoint", "auth", "metadata", "additionalFields", "user_id", "group_id",
-    "is_global", "is_group", "scope", "created_at", "created_by", "modified_at",
+    "is_global", "is_group", "scope", "scope_id", "created_at", "created_by", "modified_at",
     "modified_by", "updated_at", "last_updated", "_attachments", "_etag", "_rid",
     "_self", "_ts", "_delegation_scope_type", "_delegation_scope_id",
 })

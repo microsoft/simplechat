@@ -135,7 +135,7 @@ export function WorkflowFlowView({
         knownNodes.current = new Set();
         sourceRef.current = null;
         setLoading(false);
-        setError(status === 401 || status === 403 ? 'Current access to this workflow or its contributing sources could not be confirmed. Cached Flow details were removed.'
+        setError(status === 401 || status === 403 ? 'Current access to this workflow could not be confirmed. Cached Flow details were removed.'
             : status === 404 ? 'This workflow inspection is no longer available. Cached Flow details were removed.'
                 : 'The definition or frozen inspection source changed. Refresh Flow before inspecting it again.');
         if (status === 401 || status === 403 || status === 404) onAccessLost?.(status);

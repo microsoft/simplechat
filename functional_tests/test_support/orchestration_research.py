@@ -2,7 +2,7 @@
 """
 Offline source loading and synthetic inputs for research-planner evaluation.
 
-Version: 0.261.221
+Version: 0.261.236
 Implemented in: 0.261.099
 Single orchestration contract updated in: 0.261.139
 

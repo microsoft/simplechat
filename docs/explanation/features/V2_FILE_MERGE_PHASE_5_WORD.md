@@ -1,8 +1,8 @@
 # V2 File Merge — Phase 5: Word Merges
 
-Version: **0.261.222**
+Version: **0.261.237**
 
-Implemented in version: **0.261.222**, recorded in `application/single_app/config.py`.
+Implemented in version: **0.261.237**, recorded in `application/single_app/config.py`.
 
 GitHub issue: [#1619](https://github.com/microsoft/simplechat/issues/1619). Umbrella document:
 [V2 File Merge](V2_FILE_MERGE.md). Builds on
@@ -43,7 +43,7 @@ it, for example "every Friday, combine this week's status notes into one Word do
   appended documents and the report says which documents had comments.
 - The merged file carries a fixed modified date and fixed package metadata, so the same
   documents always give the same bytes and a replayed task reuses the file it attached.
-  Until **0.261.224**, a list copied from a later document got a random list ID from
+  Until **0.261.239**, a list copied from a later document got a random list ID from
   docxcompose, so such merges differed each run; the ID is now derived
   ([Phase 7](V2_FILE_MERGE_PHASE_7_CHAT_DOCUMENTS.md)).
 - The result is opened again with `python-docx` before it is delivered, so a malformed
@@ -120,8 +120,8 @@ then choose **Combine Word documents** as the **Merge type**. Choose the files, 
 - Comments are not carried over.
 - Fields, links and embedded objects are copied as they are. Word opens downloaded files in
   Protected View and asks before it updates links or fields from other sources. Since
-  **0.261.224**, a document with fields that start other programs (DDE) is refused and the
+  **0.261.239**, a document with fields that start other programs (DDE) is refused and the
   first document's template link is removed
   ([Phase 7](V2_FILE_MERGE_PHASE_7_CHAT_DOCUMENTS.md#hardening)).
-- In this phase Word merges ran only in workflows. Since **0.261.224** a chat turn merges
+- In this phase Word merges ran only in workflows. Since **0.261.239** a chat turn merges
   Word documents directly ([Phase 7](V2_FILE_MERGE_PHASE_7_CHAT_DOCUMENTS.md)).

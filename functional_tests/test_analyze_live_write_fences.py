@@ -66,7 +66,7 @@ def fenced(saved_chat, monkeypatch):
     def factory(*args, **kwargs):
         return checkpoints_module.analysis_checkpoints_for_chat(
             *args, store=store,
-            source_authorizer=lambda user, sources, **options: saved.authorize_analysis_sources(
+            source_authorizer=lambda user, sources, **options: access.authorize_analysis_sources(
                 user, sources, resolver=saved_chat["source_resolver"], **options,
             ),
             **kwargs,
@@ -260,7 +260,7 @@ def test_live_runner_forwards_work_units_and_reuses_the_guarded_final_checkpoint
     store = storage.WorkflowResultStore(AnalysisMemoryContainer(), None, "private-results")
 
     def source_authorizer(user, sources, **kwargs):
-        return saved.authorize_analysis_sources(
+        return access.authorize_analysis_sources(
             user, sources, resolver=lambda ids, **context: deepcopy(manifest), **kwargs,
         )
 
@@ -360,7 +360,7 @@ def test_workflow_task_retry_reuses_its_real_checkpointed_producer(monkeypatch):
     def factory(*args, **kwargs):
         result = original_factory(
             *args, **kwargs, store=store,
-            source_authorizer=lambda user, sources, **options: saved.authorize_analysis_sources(
+            source_authorizer=lambda user, sources, **options: access.authorize_analysis_sources(
                 user, sources, resolver=lambda ids, **context: deepcopy(manifest), **options,
             ),
         )

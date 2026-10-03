@@ -5,6 +5,7 @@ import json
 import logging
 import re
 from typing import Any, Dict, List, Optional, Sequence, Tuple
+from urllib.parse import urlparse
 
 from semantic_kernel.functions import kernel_function
 
@@ -22,6 +23,14 @@ from functions_azure_maps import (
 )
 from semantic_kernel_plugins.base_plugin import BasePlugin
 from semantic_kernel_plugins.plugin_invocation_logger import plugin_function_logger
+
+
+MARKER_IMAGE_URL_MAX_LENGTH = 2048
+MARKER_IMAGE_CAPTION_MAX_LENGTH = 200
+MARKER_FIELD_LIMIT = 12
+MARKER_FIELD_LABEL_MAX_LENGTH = 60
+MARKER_FIELD_VALUE_MAX_LENGTH = 300
+UNSAFE_URL_CHARACTERS = re.compile(r"[\s\"'<>\\]")
 
 
 class AzureMapsOpenLayersPlugin(BasePlugin):
@@ -62,7 +71,11 @@ class AzureMapsOpenLayersPlugin(BasePlugin):
                         {
                             "name": "locations_json",
                             "type": "str",
-                            "description": "JSON array of point objects. Each item should include longitude and latitude, plus optional label, description, color, and icon_name.",
+                            "description": (
+                                "JSON array of point objects. Each item should include longitude and latitude, plus optional label, "
+                                "description, color, icon_name, image_url (an https link to a photo of the place, shown with the marker), "
+                                "image_caption, and fields (a list of {label, value} pairs such as a reading's time or a transponder ID)."
+                            ),
                             "required": False,
                         },
                         {
@@ -131,7 +144,7 @@ class AzureMapsOpenLayersPlugin(BasePlugin):
         if latitude is None or longitude is None:
             raise ValueError(f"locations_json[{index}] must include latitude and longitude.")
 
-        return {
+        normalized_marker = {
             "id": str(marker.get("id") or f"marker-{index + 1}"),
             "label": self._normalize_label(
                 marker.get("label") or marker.get("title") or marker.get("name"),
@@ -145,6 +158,80 @@ class AzureMapsOpenLayersPlugin(BasePlugin):
             "color": str(marker.get("color") or "#0d6efd").strip() or "#0d6efd",
             "icon_name": str(marker.get("icon_name") or marker.get("icon") or "").strip(),
         }
+        image_url, image_caption = self._normalize_marker_image(marker)
+        if image_url:
+            normalized_marker["image_url"] = image_url
+            if image_caption:
+                normalized_marker["image_caption"] = image_caption
+        fields = self._normalize_fields(marker.get("fields"))
+        if fields:
+            normalized_marker["fields"] = fields
+        return normalized_marker
+
+    def _raw_marker_image(self, marker: Dict[str, Any]) -> Tuple[Any, Any]:
+        raw_image = marker.get("image")
+        image_object = raw_image if isinstance(raw_image, dict) else {}
+        raw_url = (
+            marker.get("image_url")
+            or marker.get("imageUrl")
+            or image_object.get("url")
+            or (raw_image if isinstance(raw_image, str) else "")
+        )
+        raw_caption = (
+            marker.get("image_caption")
+            or marker.get("imageCaption")
+            or image_object.get("caption")
+            or image_object.get("label")
+            or ""
+        )
+        return raw_url, raw_caption
+
+    def _normalize_image_url(self, raw_value: Any) -> str:
+        """An https link the chat can load as an image, or an empty string."""
+        candidate = str(raw_value or "").strip()
+        if not candidate or len(candidate) > MARKER_IMAGE_URL_MAX_LENGTH or UNSAFE_URL_CHARACTERS.search(candidate):
+            return ""
+        try:
+            parsed_url = urlparse(candidate)
+            host = parsed_url.hostname
+        except ValueError:
+            return ""
+        if parsed_url.scheme.lower() != "https" or not host:
+            return ""
+        return candidate
+
+    def _normalize_marker_image(self, marker: Dict[str, Any]) -> Tuple[str, str]:
+        raw_url, raw_caption = self._raw_marker_image(marker)
+        image_url = self._normalize_image_url(raw_url)
+        if not image_url:
+            return "", ""
+        return image_url, str(raw_caption).strip()[:MARKER_IMAGE_CAPTION_MAX_LENGTH]
+
+    def _normalize_fields(self, raw_fields: Any) -> List[Dict[str, str]]:
+        if isinstance(raw_fields, dict):
+            pairs = list(raw_fields.items())
+        elif isinstance(raw_fields, list):
+            pairs = [
+                (item.get("label") or item.get("name"), item.get("value"))
+                for item in raw_fields
+                if isinstance(item, dict)
+            ]
+        else:
+            return []
+
+        fields: List[Dict[str, str]] = []
+        for raw_label, raw_value in pairs:
+            if isinstance(raw_value, bool):
+                raw_value = "Yes" if raw_value else "No"
+            if not isinstance(raw_value, (str, int, float)):
+                continue
+            label = str(raw_label or "").strip()[:MARKER_FIELD_LABEL_MAX_LENGTH]
+            value = str(raw_value).strip()[:MARKER_FIELD_VALUE_MAX_LENGTH]
+            if label and value:
+                fields.append({"label": label, "value": value})
+            if len(fields) == MARKER_FIELD_LIMIT:
+                break
+        return fields
 
     def _normalize_area_ring(self, coordinates: Any, index: int) -> List[List[float]]:
         if not isinstance(coordinates, list) or not coordinates:
@@ -305,7 +392,9 @@ class AzureMapsOpenLayersPlugin(BasePlugin):
         description=(
             "Create an inline Azure Maps visualization for chat using OpenLayers. "
             "Provide locations_json as a JSON array with longitude and latitude for each point, "
-            "and optionally provide polygon areas_json or ordered paths_json using longitude/latitude coordinate pairs."
+            "and optionally provide polygon areas_json or ordered paths_json using longitude/latitude coordinate pairs. "
+            "A point can also carry image_url (an https link to a photo of the place), image_caption, and fields, "
+            "a list of {label, value} pairs such as a reading's time or a transponder ID, which the chat shows with the marker."
         )
     )
     def create_map_visualization(
@@ -372,10 +461,21 @@ class AzureMapsOpenLayersPlugin(BasePlugin):
             if area_count:
                 feature_counts.append(f"{area_count} area{'s' if area_count != 1 else ''}")
             feature_summary = ', '.join(feature_counts) if feature_counts else '0 features'
+            summary_text = f"Prepared an interactive Azure Maps view with {feature_summary}."
+            ignored_images = sum(
+                1
+                for raw_marker, marker in zip(raw_locations, markers)
+                if self._raw_marker_image(raw_marker)[0] and "image_url" not in marker
+            )
+            if ignored_images:
+                summary_text += (
+                    f" Left out {ignored_images} image link{'s' if ignored_images != 1 else ''} "
+                    f"that {'were' if ignored_images != 1 else 'was'} not an https URL."
+                )
             return {
                 "success": True,
                 "render_type": AZURE_MAPS_RENDER_TYPE,
-                "summary": f"Prepared an interactive Azure Maps view with {feature_summary}.",
+                "summary": summary_text,
                 "map_payload": map_payload,
             }
         except ValueError as exc:

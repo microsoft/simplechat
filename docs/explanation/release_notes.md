@@ -2,7 +2,7 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
-### **(v0.261.225)**
+### **(v0.261.240)**
 
 #### User Interface Enhancements
 
@@ -13,7 +13,7 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
     *   The planner's general rule to prefer a stated assumption over a question now names its exceptions: capability guidance, deliverables facts and workflow instructions that say to ask.
     *   (Ref: #1619, `functions_orchestration_deliverables.py`, `functions_orchestration_planner.py`, [Phase 7](features/V2_FILE_MERGE_PHASE_7_CHAT_DOCUMENTS.md#one-sheet-or-a-sheet-per-file), [Merge files](../guides/merge-files.md#one-sheet-or-a-sheet-per-file))
 
-### **(v0.261.224)**
+### **(v0.261.239)**
 
 #### New Features
 
@@ -38,7 +38,7 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
     *   docxcompose gave every list it copied from a later document a random ID, so a Word merge whose later documents had ordinary bulleted or numbered lists produced different bytes on each run. A retried workflow Word merge could attach a second copy, and a chat merge of such documents could never be delivered. The ID is now derived and unique within the document, so each document's list still restarts and the same documents always give the same file.
     *   (Ref: #1619, `functions_document_merge_docx.py`, [Phase 5](features/V2_FILE_MERGE_PHASE_5_WORD.md))
 
-### **(v0.261.223)**
+### **(v0.261.238)**
 
 #### New Features
 
@@ -50,7 +50,7 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
     *   Chat can propose PowerPoint merges (blueprint `merge.kind` `pptx`, with `formatting` and `sections`).
     *   (Ref: #1619, `functions_document_merge_pptx.py`, `functions_document_merge.py`, `functions_document_actions.py`, `functions_workflow_drafts.py`, `functions_orchestration_planner.py`, [Phase 6](features/V2_FILE_MERGE_PHASE_6_POWERPOINT.md), [Create a workflow](../guides/create-a-workflow.md#merge-files-in-a-workflow))
 
-### **(v0.261.222)**
+### **(v0.261.237)**
 
 #### New Features
 
@@ -62,7 +62,7 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
     *   Adds the `docxcompose` 2.2.0 dependency (MIT).
     *   (Ref: #1619, `functions_document_merge_docx.py`, `functions_document_merge.py`, `functions_document_actions.py`, `functions_workflow_drafts.py`, `functions_orchestration_planner.py`, `requirements.txt`, [Phase 5](features/V2_FILE_MERGE_PHASE_5_WORD.md), [Create a workflow](../guides/create-a-workflow.md#merge-files-in-a-workflow))
 
-### **(v0.261.221)**
+### **(v0.261.236)**
 
 #### New Features
 
@@ -74,7 +74,7 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
     *   Merging PDFs or workbooks directly in a chat turn, without a workflow, is planned with Word and PowerPoint for a later release.
     *   (Ref: #1619, `functions_document_merge.py`, `functions_document_merge_pdf.py`, `functions_document_merge_workbook.py`, `functions_workflow_merge.py`, `functions_document_actions.py`, `functions_workflow_drafts.py`, [Phase 4](features/V2_FILE_MERGE_PHASE_4_PDF_WORKBOOKS.md), [Create a workflow](../guides/create-a-workflow.md#merge-files-in-a-workflow))
 
-### **(v0.261.220)**
+### **(v0.261.235)**
 
 #### New Features
 
@@ -95,7 +95,7 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
     *   The classic workflow editor doesn't open a workflow with a Merge files task, which it can't represent, and points to V2 instead; Run and Cancel still work there.
     *   (Ref: `application/v2_ui/src/lib/workflowEditor.ts`, `WorkflowTaskFields.tsx`, `WorkflowFileSyncFields.tsx`, `workflowProposals.ts`, `WorkflowProposalCard.tsx`, `static/js/workspace/workspace_workflows.js`)
 
-### **(v0.261.219)**
+### **(v0.261.234)**
 
 #### New Features
 
@@ -118,7 +118,7 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
     *   The V2 plan review now states merge and inspection settings in plain words, such as "Keep every column from every file" or "Remove rows with the same Customer ID, keeping the last", leaves out values that only repeat a default, and shows column and sheet names as plain text.
     *   (Ref: `application/v2_ui/src/lib/orchestrationMerge.ts`, `OrchestrationRunView.tsx`)
 
-### **(v0.261.218)**
+### **(v0.261.233)**
 
 #### New Features
 
@@ -134,6 +134,222 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
     *   Two new generated-file profiles, `exact_tabular_records_v1` (CSV) and `exact_tabular_workbook_v1` (XLSX, optional sheet name), export every retained column in its retained order. They let a plan deliver a table whose columns are only known when it runs, such as a merge of files a search found, without the planner having to name the columns.
     *   (Ref: `functions_generated_export_registry.py`, `functions_structured_file_renderers.py`, `functions_generated_office_adapters.py`, [Generated File Export Framework](features/GENERATED_FILE_EXPORT_FRAMEWORK.md))
 
+### **(v0.261.232)**
+
+#### Breaking Changes
+
+*   **Saved Chat, Analyze And Orchestration Results Take Their Container's Access**
+    *   Results built from documents are no longer checked against those documents again. This covers chat AI replies and their stored citations, tool results in history, saved Analyze results, orchestration files and results, generated chat files, and conversation and tabular exports. They stay available to everyone who can open their conversation or orchestration run, even after a source document is deleted, re-uploaded or held for content screening.
+    *   Chat history no longer replaces a whole AI reply with "Source content is unavailable pending document screening and review." when a document it cited changes. A workspace attachment shown in history is still replaced while its document is held or unavailable.
+    *   One input check stays. Search retrieval, document selection (including chat uploads), file bytes and previews, opening a cited document, and orchestration or Analyze steps that read documents still need current access to an uploaded document, and the document must not be held. After such a read is refused, the model fence still blocks later model calls in that request or step.
+    *   A follow-up orchestration step that reads documents named by an earlier run reads their current version instead of failing. Version checks still protect a read in progress, such as a resumed Analyze checkpoint.
+    *   Container, lineage and integrity checks are unchanged. Nothing is withdrawn after the fact, and no data migration runs: results that earlier versions withheld when they were read become visible again. Error messages now name the conversation or saved result instead of source access.
+    *   **Migration**: none. Deployments that relied on source re-checks to hide existing results from people who can open their conversation should review shared conversations; opening the full cited document still requires access.
+    *   (Ref: #1621, `content_screening/access.py`, `functions_saved_analysis.py`, `functions_orchestration_results.py`, `functions_orchestration_source_access.py`, `functions_orchestration_executor.py`, `route_backend_chats.py`, `route_enhanced_citations.py`, `functions_tabular_generated_exports.py`, `OrchestrationOutputs.tsx`, `test_saved_results_container_access_chat_orchestration.py`, [Upload-Only Content Screening](features/UPLOAD_ONLY_CONTENT_SCREENING.md))
+
+### **(v0.261.231)**
+
+#### Breaking Changes
+
+*   **Saved Workflow Results No Longer Re-check Their Source Documents**
+    *   Saved and generated workflow results now take their access from the workflow, run and group they belong to. Deleting, re-uploading or holding a document a run used no longer hides or fails its task results, node results, structured execution history, For each and Repeat history, run history previews, or chat answers about a workflow result.
+    *   A later task can read an earlier task's output after that output's source changed. Runs no longer pause with "A collected source changed." or "The Repeat state's original sources are no longer available." for generated output.
+    *   Checks that stay: a workflow still refuses a held or inaccessible uploaded document when it reads it as an input (For each document items, document selections, reference inputs, File Sync and other configured sources), and that held input still blocks its own task's model call. Each task now gets its own model fence, so a held input can't block a later task. Container checks are unchanged: you need access to the workflow, group results stay limited to group members, and someone else's run still answers like a missing one. Forged or mismatched results are still refused.
+    *   Opening a saved workflow's Flow no longer fails when one referenced document is missing, held or outside your access. That source is marked "Not available to you right now" on its own row, and the rest of the definition shows.
+    *   API changes: a result that fails its lineage or hash check now answers 409 instead of 403 on task result pages ("The saved result or requested page is unavailable.") and execution history ("This saved execution record could not be verified."). Flow and execution history 403 messages no longer mention sources. Activity streams end with `activity_unavailable` instead of `source_access_denied`. Chat follow-ups report a lineage failure as `workflow_result_invalid`. `source_snapshot_changed` is always `false` and kept for older clients.
+    *   **Migration**: none. Nothing is migrated or withdrawn; results saved before this version are read the same way.
+    *   (Ref: #1621, `functions_workflow_node_results.py`, `functions_workflow_results.py`, `functions_workflow_inspection.py`, `functions_workflow_result_reader.py`, `functions_saved_analysis.py`, `functions_workflow_runner.py`, `content_screening/access.py`, `route_backend_workflows.py`, `WorkflowDefinitionInspector.tsx`, [Workflow Saved Result Source Re-check Fix](fixes/WORKFLOW_SAVED_RESULT_SOURCE_RECHECK_FIX.md))
+
+### **(v0.261.230)**
+
+#### Bug Fixes
+
+*   **Workflow Run History No Longer Fails When A Source Document Changes**
+    *   A workflow's run history no longer returns "Run history is unavailable because source access could not be confirmed." when one of its runs used a document that was later deleted or re-uploaded. The run list, a run's task results, the live run activity view and the last-run preview in the workflow list now take their access from the workflow, not from the documents each run used.
+    *   A task no longer fails right after saving its output with "Saved task output was withheld because its source access could not be confirmed."
+    *   Container checks are unchanged: you still need access to the workflow, group runs still require group membership, and a run from another workflow still answers as not found.
+    *   This is the first step of limiting content screening to uploaded documents. Some per-task previews and structured workflow execution history still re-check sources until the next step.
+    *   (Ref: #1613, #1621, `route_backend_workflows.py`, `functions_workflow_runner.py`, [Workflow Run History Source Re-check Fix](fixes/WORKFLOW_RUN_HISTORY_SOURCE_RECHECK_FIX.md))
+
+#### User Interface Enhancements
+
+*   **Approvals Page Screening Notice Only When Screening Is On**
+    *   The content screening notice at the top of **Approval Requests** now appears only while content screening is enabled, and reads in plain language: "To review uploaded documents that content screening is holding, open Content review."
+    *   Each content screening request still has its own **Open content review** link, so documents held before screening was turned off stay reachable.
+    *   (Ref: `templates/approvals.html`, `test_content_screening_classic.py`)
+
+#### Breaking Changes
+
+*   **Generated Documents Are No Longer Screened**
+    *   Content screening now checks only documents that enter a workspace by a user upload (personal, group or public, including a file attached in chat and saved to a workspace) or File Sync. Files the SimpleChat agent action saves to a workspace and artifacts published into a workspace get no screening marker, are processed normally while screening is on, and are skipped by scan jobs.
+    *   Each generated document version carries a server-managed `screening_exemption` field that is set when the version is created. Clients can't set it: the document APIs reject any `screening` field, no update path accepts one, and responses never include it. A document that already has a screening marker stays screened.
+    *   Publishing an artifact to a group or public workspace no longer reserves a screening scan for its destination, so approval hands it straight to processing. A destination that was held by screening before this version can't be approved; cancel the request and publish the artifact again.
+    *   **Migration**: None. Existing documents keep their screening state, and nothing already screened or held is released.
+    *   (Ref: #1621, `content_screening/contracts.py`, `content_screening/service.py`, `content_screening/jobs.py`, `functions_documents.py`, `functions_simplechat_operations.py`, `functions_artifact_publication.py`, `functions_artifact_publication_readiness.py`, [Upload-Only Screening Intake Fix](fixes/UPLOAD_ONLY_SCREENING_INTAKE_FIX.md))
+
+*   **Metadata Edits No Longer Hold Screened Documents Again**
+    *   Editing a released document's title, abstract, keywords, authors, classification or tags now applies directly. The document stays available and no new scan starts, so the group and public document metadata APIs return `updated` (200) instead of `queued` (202).
+    *   Metadata the model generates after a document is released also applies directly, without a new hold.
+    *   A rename still can't change a screened file's extension. Tag edits on a screened document update the document and its search chunks but no longer rewrite the released file's blob metadata, so downloads of that file keep working.
+    *   In the V2 Documents explorer, saving a screened document's metadata now shows **Metadata saved.**, and the document stays in the list with the edit shown. The explorer no longer removes it with "Screening is queued". A save is confirmed only by an `updated` 200 receipt; any other receipt, including a `queued` 202 one, keeps the draft.
+    *   (Ref: #1621, `functions_documents.update_document`, `content_screening/access.py`, `functions_group_document_management.py`, `functions_public_document_management.py`, `route_backend_group_documents.py`, `route_backend_public_document_management.py`, `documentOperations.ts`, `DocumentExplorer.tsx`, [Upload-Only Screening Intake Fix](fixes/UPLOAD_ONLY_SCREENING_INTAKE_FIX.md))
+
+### **(v0.261.229)**
+
+#### Breaking Changes
+
+*   **Microsoft 365 Workflow Run As Approval Only When Someone Else Authored The Revision**
+    *   A workflow revision saved by its own Run as user now runs as them without a separate approval, including on its first run. SimpleChat records an approved, audited Run as authorization for that exact revision and connection, sends no notification, and never shows it as pending. Before, every edit asked the Run as user to approve again, even their own.
+    *   Approval is still required when someone else is responsible for what runs: someone else saved the current revision, `modified_by` is missing, or someone else changed an agent or action the workflow uses after the Run as user's save. A new connection or connection generation asks again for a revision someone else saved.
+    *   Conversation audience changes no longer ask for Run as approval again; the authorization still records the audience. Source-sharing approvals and the runtime checks that guard runs and deliveries already in progress are unchanged.
+    *   Explicit decisions still win. A denial or cancellation recorded for a run still stops that run. Revoking a Run as authorization in Profile revokes every approved authorization for that revision, which then waits for approval even if its Run as user saved it. That holds when the revocation overlaps a run recording a new authorization, or is interrupted: a run that finds an authorization the revocation missed revokes it instead of using it.
+    *   Raw edits of workflows, agents and actions in the Data Management Cosmos DB editor now record the administrator as the last author, so an edited record can't run as someone else without asking them.
+    *   The V2 workflow proposal card, the editor's **Saving requires re-approving Run as** note, the AI assistant's `run_as_reapproval` warning, the Run as help text in both editors, and the classic Profile and Approvals labels follow the new rule.
+    *   **Migration**: None. Existing approvals keep working. A workflow its Run as user saved last is authorized automatically the next time it needs a new authorization. To require approval for such a revision, revoke its authorization in Profile. An authorization revoked before this release still withdraws only itself, so other approvals of that revision keep working, but that revision is never authorized automatically.
+    *   (Ref: #1621, `functions_m365_approvals.py`, `functions_m365_execution.py`, `functions_m365_workflow_binding.py`, `functions_m365_runtime.py`, `functions_m365_data_lifecycle.py`, `functions_data_management.py`, `functions_orchestration_workflow_proposals.py`, `functions_workflow_assist.py`, `WorkflowProposalCard.tsx`, `WorkflowChangeTracking.tsx`, [Run as approval for a revision you saved](features/M365_RUN_AS_SELF_AUTHORED_APPROVAL.md))
+
+### **(v0.261.228)**
+
+#### User Interface Enhancements
+
+*   **V2 Workflow Alerts Lead With One Open Button**
+    *   The full workflow alert now shows just what's needed to act: why it came, its summary, and a large green **Open** button next to **Dismiss**. Open goes to the conversation the workflow created, or else to the conversation it posted into, its run or the workflow, and marks the alert read.
+    *   **Mark read** is gone from alerts that have somewhere to open, because Open marks the alert read and takes you there. When one workflow raised several alerts together, Open and Dismiss act on all of them. An alert with nothing to open still offers Mark read.
+    *   The detail, the pills for the alert's enrichments, trigger, runner and agent, and the other ways in (other links, **Open workflow** and **Ask about this**) are under **Show more**.
+    *   Open's green keeps its text at 4.5:1 contrast or better in the light and dark themes.
+    *   (Ref: #1624, `WorkflowAlertCard.tsx`, `workflowAlertStore.ts`, `theme.css`, [V2 Workflow Alert Notices](features/V2_WORKFLOW_ALERT_NOTICES.md))
+
+### **(v0.261.227)**
+
+#### New Features
+
+*   **Workflow results posted back to chat**
+    *   When a chat orchestration plan starts one of the user's saved durable personal workflows, the server can now post the run's terminal outcome back into the same private chat after the run finishes, even hours later.
+    *   The behavior is gated by **Use Workflow Results In Chat** (`enable_chat_workflow_results`), checked when the run starts and again when delivery happens, in addition to the existing Run Workflows From Chat gates.
+    *   Delivery is exactly once per durable runtime generation: one deterministic chat message, one unread mark, and one bell notification. If the chat can no longer receive the post, the server posts nothing and sends one workflow notification with a run link instead.
+    *   A new owner-only status route, `GET /api/v2/orchestration/workflow-runs/status`, gives 6b-2 the batched run-card contract. Retry/Edit on delivery messages are refused with fixed 400 codes.
+    *   (Ref: #1546, #1543, `functions_workflow_chat_delivery.py`, `functions_workflow_chat_delivery_worker.py`, `functions_workflow_chat_delivery_status.py`, `functions_orchestration_workflow_runs.py`, `functions_workflow_runtime.py`, `route_backend_orchestration.py`, `route_backend_conversations.py`, [Workflow result delivery to chat](features/CHAT_WORKFLOW_RESULT_DELIVERY.md))
+
+### **(v0.261.226)**
+
+#### Bug Fixes
+
+*   **V2 New Chat Always Starts A Clean Conversation**
+    *   Clicking **New chat** while chat orchestration was planning or running no longer carries the old turn into the new chat. Before, the new chat kept the previous turn's **Thinking** bubble and a **Stop** button that did nothing. Its empty state never appeared and it wouldn't send until the page was reloaded.
+    *   The previous conversation's plan, run or reply keeps going in the background and is there when you reopen it. If you reopen it while its turn is still running, it shows as working, with **Stop**.
+    *   Clicking **New chat** while the first message of a new chat is still creating its conversation no longer lets that message take over the new chat. The message is still sent, and its conversation appears in the list. Clicking **New chat** while a conversation is loading now shows the empty state instead of loading placeholders.
+    *   **Chat** on selected workspace documents or on a tag, and **Start chatting** on the home page, now always open a brand-new conversation, as the classic interface does. The documents or tag arrive as context in the new chat instead of being added to whichever conversation was last open. Text you've typed but not sent stays in the message box.
+    *   (Ref: #1617, `chatStore.ts`, `orchestrationController.ts`, `DocumentExplorer.tsx`, `TagsSection.tsx`, `HomePage.tsx`, [V2 New Chat Reset Fix](fixes/V2_NEW_CHAT_RESET_FIX.md))
+
+### **(v0.261.225)**
+
+#### New Features
+
+*   **Photos and Facts on V2 Map Points**
+    *   A point an agent puts on a map can now carry a photo of the place and labelled facts about it, such as a reading's time, a transponder ID or a lane. Hovering the point in the V2 chat shows the photo, its caption and the facts with the point's label and description. Clicking keeps them open, and clicking the photo opens it full size in the image viewer.
+    *   A point without a photo shows its facts on their own, so a reading with no camera image still shows when and where it was taken.
+    *   **List what the map shows** includes each point's facts and a thumbnail of its photo, for keyboard and screen reader users.
+    *   The details open on whichever side of the point has room, and pinned details move the map so all of them are visible.
+    *   Agents send `image_url`, `image_caption` and `fields` with each point in `locations_json`. Only `https` photo links are kept; any other link is left out, and the action tells the agent how many it dropped. Photos load without a referrer, and captions and facts are only ever written as text. The classic chat still shows a point's label and description only.
+    *   (Ref: #1609, `azure_maps_openlayers_plugin.py`, `InlineMapCard.tsx`, `lib/inlineMaps.ts`, [V2 Interactive Maps](features/V2_INTERACTIVE_MAPS.md))
+
+### **(v0.261.224)**
+
+#### Bug Fixes
+
+*   **Maps From Agents Load Their Tiles Again**
+    *   Tool results are redacted before they are stored with a reply, and the redaction treated the Azure Maps tile proxy token as a secret. Every stored map lost its token, so maps drew their markers and paths on blank tiles in both the classic and the V2 chat.
+    *   The token in SimpleChat's own tile template is now kept. It is encrypted with the app's secret key, expires, and only works on SimpleChat's signed-in tile proxy. Every other `token=` value and every other secret in a tool result is still redacted.
+    *   Maps stored before this fix keep the redacted token and still show no tiles. Run the request again to get a map with tiles.
+    *   (Ref: #1609, `plugin_invocation_logger.py`, [Azure Maps Tile Token Redaction Fix](fixes/AZURE_MAPS_TILE_TOKEN_REDACTION_FIX.md))
+
+### **(v0.261.223)**
+
+#### New Features
+
+*   **Interactive Maps in the V2 Chat**
+    *   A reply that used the Azure Maps action now shows its map under the text in the V2 chat, as the classic chat does. It opens fitted to every marker, path and area, and can be panned, zoomed and expanded to full screen.
+    *   Hovering a marker, path or area shows its label and description; clicking keeps them open until you click elsewhere or press Escape. **List what the map shows** lists everything on the map as text for keyboard and screen reader users.
+    *   The mouse wheel zooms only with Ctrl (Cmd on a Mac), so scrolling a conversation never zooms a map by accident.
+    *   OpenLayers 10.6.1, the build the classic chat already uses, is vendored into the V2 app and loaded only when a reply has a map. No CDN assets are added and the Content-Security-Policy is unchanged.
+    *   Map text is only ever written as text, and tiles are only loaded through SimpleChat's tile proxy.
+    *   (Ref: #1609, `InlineMapCard.tsx`, `lib/inlineMaps.ts`, `vendorAssets.ts`, [V2 Interactive Maps](features/V2_INTERACTIVE_MAPS.md))
+
+#### Bug Fixes
+
+*   **Maps in Older Replies and Group Conversations Load Their Tiles**
+    *   The message endpoints the V2 chat reads, including the one for group conversations, returned maps with their original tile token, which expires after four hours. Older maps drew their points on blank tiles.
+    *   Both endpoints now reissue the token when the conversation is opened, as the classic route already did.
+    *   (Ref: #1609, `functions_azure_maps.py`, `route_backend_conversations.py`, `route_backend_collaboration.py`)
+
+*   **Legacy Map Blocks Hidden From V2 Replies**
+    *   Older replies that stored a `{{map:...}}` block in their text showed it as raw JSON in the V2 chat. The block is now hidden, as in the classic chat, and the map is drawn from the tool result.
+    *   (Ref: #1609, `stripLegacyMapBlocks` in `lib/inlineMaps.ts`, `MessageList.tsx`)
+
+### **(v0.261.222)**
+
+#### New Features
+
+*   **Inline Audio and Video Players in the V2 Chat**
+    *   A link to an audio file in a reply, such as a recording an action returned, now plays in place as a compact player. Collapsed, it shows play/pause, the title and elapsed and total time; expanded, it adds a seek slider, stop, volume and mute, playback speed and an open-in-new-tab link.
+    *   A link to a video file renders as a card with the browser's own controls, including fullscreen. Starting one recording or clip pauses any other.
+    *   Media that cannot play, for example an expired signed link or a host the page does not allow, shows a short notice and a link instead of a broken player.
+    *   (Ref: #1611, `InlineAudioPlayer.tsx`, `InlineVideoCard.tsx`, `lib/inlineMedia.ts`, [V2 Inline Media and Agent-Posted Messages](features/V2_INLINE_MEDIA_AND_AGENT_MESSAGES.md))
+
+*   **External Media Sources in the Content-Security-Policy**
+    *   The new `CSP_MEDIA_SRC_ORIGINS` app setting lets administrators list the `https://` origins whose audio and video may play inline, for example an action's media host. The origins are added to `media-src`.
+    *   Only bare `https://` origins (with an optional leading `*.` label and port) are accepted. Anything else is ignored and logged, so the setting cannot widen the policy beyond media. Empty by default, which keeps media same-origin.
+    *   (Ref: #1611, `csp_media_sources.py`, `config.py`)
+
+#### User Interface Enhancements
+
+*   **Image Cards in Chat Replies**
+    *   Images in a reply's markdown appear as captioned cards with a bounded height. Selecting one opens the image viewer for the full-size view, saving and opening in a new tab.
+    *   (Ref: #1611, `InlineImageCard.tsx`, `AssistantMarkdown.tsx`)
+
+*   **Agent-Posted Messages Render as Formatted Text**
+    *   A message an agent posts into a personal or shared conversation through the Simple Chat action is now marked as agent-authored markdown. The V2 chat renders it like the agent's own replies, with headings, tables, links, images and players, in the neutral bubble and labeled "posted through an agent". Messages people type are unchanged.
+    *   (Ref: #1611, `functions_simplechat_operations.py`, `MessageList.tsx`, `sharedMessage.ts`)
+
+### **(v0.261.221)**
+
+#### Bug Fixes
+
+*   **GPT-6 Sol Agents With Actions Send Reasoning Effort None**
+    *   Agents with actions on `gpt-6-sol` failed unless their Reasoning Effort was set to None by hand. Chat Completions accepts function tools for this model only with `reasoning_effort: none`, and with no effort set the model applied its own default and rejected the tools.
+    *   `gpt-6-sol` is now in the model catalog with a Chat Completions tool rule for Azure and direct OpenAI. An agent with tools and no effort set now sends `none`. Another explicit effort fails before the request with "This model's Chat Completions tools require Reasoning Effort None." instead of a provider error.
+    *   The record also carries the verified limits (1,050,000 context, 922,000 input, 128,000 output, counting reasoning tokens) and the reasoning efforts none, low, medium, high and xhigh.
+    *   (Ref: #1606, `model_capabilities.json`, [GPT-6 Sol Chat Completions Tools Fix](fixes/GPT6_SOL_CHAT_COMPLETIONS_TOOLS_FIX.md))
+
+### **(v0.261.220)**
+
+#### Bug Fixes
+
+*   **GPT-6 Astra Limits And Reasoning Efforts In The Model Catalog**
+    *   `gpt-6-astra` now has verified token limits for Azure and direct OpenAI: 1,050,000 context, 922,000 input and 128,000 output, counting reasoning tokens. File evidence and workflow budgets work without limits entered in Model Endpoints, and limits entered there still take precedence.
+    *   Its reasoning efforts are low, medium, high and xhigh. Chat now sends the selected effort; before, with no policy, it sent no effort and the model used its default. None and other unsupported selections are sent as Low. Agents still send their saved effort as is.
+    *   Azure Chat Completions rejects function tools for this model at every effort it accepts, so agents with actions can't run on it yet. The catalog records this in its notes. #1606 tracks a Responses API path and an early, clear error.
+    *   (Ref: #1606, `model_capabilities.json`, [GPT-6 Astra Model Catalog Fix](fixes/GPT6_ASTRA_MODEL_CATALOG_FIX.md))
+
+### **(v0.261.219)**
+
+#### Bug Fixes
+
+*   **GPT-6 Models Use Reasoning Model Request Parameters**
+    *   Requests to GPT-6 deployments failed whenever a response length was set: "Unsupported parameter: 'max_tokens' is not supported with this model. Use 'max_completion_tokens' instead." Every workflow run on a GPT-6 agent failed on its first model call once token limits were configured.
+    *   GPT-6 is now recognized alongside GPT-5, by name prefix and as a family name anywhere in a deployment or display name. Response length is sent as `max_completion_tokens`, and no temperature is sent. Workflow budgets, chat, prompt variables, content screening and orchestration all follow the shared policy.
+    *   (Ref: #1605, `model_endpoint_clients.py`, [GPT-6 Reasoning Model Parameters Fix](fixes/GPT6_REASONING_MODEL_PARAMETERS_FIX.md))
+
+### **(v0.261.218)**
+
+#### Bug Fixes
+
+*   **Scheduled Workflow Runs Act As Their Owner**
+    *   A scheduled run had no signed-in session, so the runner created one that held only the owner's object ID. Groups and conversation messages the run created showed that ID instead of the owner's name, and the run then wrote the ID over the owner's stored display name. The runner now uses the owner's stored display name and email. A manual run keeps the signed-in session, as before.
+    *   The SimpleChat action's `add_user_to_group` now accepts `user_id`. Given with an email or display name, it adds the user without a directory lookup, as the REST members route already does. Scheduled runs have no delegated token for Microsoft Graph, so they couldn't add members before.
+    *   Group conversation invites first match each identifier against the group's current owner and members, by user ID, email or display name. An identifier that matches no member, or more than one, still goes to the directory lookup.
+    *   (Ref: `functions_workflow_runner.py`, `functions_simplechat_operations.py`, `simplechat_plugin.py`, [Workflow Background Identity Fix](fixes/WORKFLOW_BACKGROUND_IDENTITY_FIX.md), [SimpleChat action](../reference/actions/simplechat.md))
+
 ### **(v0.261.217)**
 
 #### New Features
@@ -146,6 +362,18 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
     *   Later turns never reuse a read: result aliases skip any run whose plan reads a workflow result, and a new attempt or revised plan runs its reads and the steps built on them again instead of reusing an earlier answer. A plan edit that breaks a results rule is refused, and the previous plan stays.
     *   Admins can keep it out of plans by clearing **Read workflow results** in the orchestration Capabilities list. Group workflows, structured (version 3) runs and runs that saved an analysis can't be read from a plan, and a plan never waits for a run it starts to finish.
     *   (Ref: #1546, #1543, `functions_orchestration_workflow_results.py`, `functions_orchestration_registry.py`, `functions_orchestration_workflow_context.py`, `functions_orchestration_planner.py`, `functions_orchestration_schema.py`, `functions_orchestration_execution.py`, `functions_orchestration_executor.py`, `functions_orchestration_composition.py`, `functions_orchestration_services.py`, `functions_orchestration_recovery.py`, `route_backend_orchestration.py`, [Chat Orchestration Workflow Results](features/CHAT_ORCHESTRATION_WORKFLOW_RESULTS.md), [Ask about workflow results](../guides/ask-about-workflow-results.md#ask-orchestrate-about-workflow-results))
+
+#### Bug Fixes
+
+*   **Group Document Uploads With Enhanced Citations**
+    *   With Enhanced Citations on, every document uploaded to a group workspace failed with "Document processing failed." That included Word and Markdown documents an agent or workflow saved to a group. The upload's own status update changed the document record's etag between the read and the guarded write, so the write always saw a conflict.
+    *   The status is now posted before the record is read. A change made by anyone else during the upload is still rejected.
+    *   (Ref: `functions_documents.py`, [Group Document Blob Upload Etag Fix](fixes/GROUP_DOCUMENT_BLOB_UPLOAD_ETAG_FIX.md))
+
+*   **Call Agent Actions Save Again**
+    *   Saving any Call agent action, whether personal, group or global, failed with "Invalid plugin configuration." The manifest check rejected the server-owned `scope_id` field that binding to a collection adds, so agents couldn't delegate to other agents.
+    *   `scope_id` is now accepted. The server always sets it from the authorized collection, and every other extra field is still rejected.
+    *   (Ref: `functions_agent_delegation.py`, [Call Agent Action Save Fix](fixes/CALL_AGENT_ACTION_SAVE_FIX.md))
 
 #### User Interface Enhancements
 

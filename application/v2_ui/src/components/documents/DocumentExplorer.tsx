@@ -71,6 +71,7 @@ import {
     upsertSavedView,
 } from '../../lib/documentSavedViews';
 import { useBootstrapStore } from '../../stores/bootstrapStore';
+import { useChatStore } from '../../stores/chatStore';
 import { useUserSettingsStore } from '../../stores/userSettingsStore';
 import { toast } from '../../stores/toastStore';
 import { EmptyState, GlassButton, Skeleton } from '../ui/primitives';
@@ -1098,6 +1099,12 @@ function ScopedDocumentExplorer({
                     contextDocuments: documents.map((document) => ({ document, scope })),
                     contextTags: tags.map((name) => ({ name, scope })),
                 };
+                // Always a brand-new chat, as the classic interface's page load into chat is.
+                // The chat store outlives a route change, so navigating alone opened whichever
+                // conversation was last open -- busy or not -- and attached these documents to
+                // it. Leaving it detaches rather than cancels, so an answer still being written
+                // there finishes and is saved.
+                useChatStore.getState().startNewConversation();
                 navigate(`/chat?${handoff}`, { state });
             } catch (cause) {
                 if (!controller.signal.aborted && mounted.current) toast.error(errorMessage(cause, 'Could not confirm the selected documents for chat.'));
@@ -1133,14 +1140,10 @@ function ScopedDocumentExplorer({
             const changes = changedDocumentMetadata(target, draft);
             beginMutation('Saving metadata', 1);
             try {
-                const status = await captured.adapter.editMetadata(captured.targets[0], changes);
+                await captured.adapter.editMetadata(captured.targets[0], changes);
                 if (!mounted.current) return;
                 setDialog(null);
-                if (status === 'queued') {
-                    setDocuments((current) => current.filter((document) => documentId(document) !== documentId(target)));
-                    setInspectedId(null);
-                    toast.info('Metadata saved. Screening is queued; the document remains unavailable until released.');
-                } else toast.success('Metadata saved.');
+                toast.success('Metadata saved.');
                 await refreshAll();
             } catch (saveError) {
                 if (mounted.current) {

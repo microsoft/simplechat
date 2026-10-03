@@ -2,8 +2,8 @@
 # test_tabular_merge_engine.py
 """
 Functional test for the deterministic tabular merge engine.
-Version: 0.261.218
-Implemented in: 0.261.218
+Version: 0.261.233
+Implemented in: 0.261.233
 
 This test ensures that functions_tabular_merge appends the rows of same-structure
 CSV and Excel files exactly: values stay text (leading zeros, codes and Unicode
@@ -67,7 +67,7 @@ def records(result):
 
 
 def test_version_includes_the_merge_engine():
-    assert_app_version_at_least("0.261.218")
+    assert_app_version_at_least("0.261.233")
 
 
 def test_appends_rows_in_file_order_with_a_source_column():

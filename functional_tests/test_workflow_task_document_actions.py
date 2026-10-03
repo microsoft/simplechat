@@ -2,9 +2,9 @@
 # test_workflow_task_document_actions.py
 """
 Functional test for per-task workflow workspace documents and the document picker fix.
-Version: 0.261.220
+Version: 0.261.235
 Implemented in: 0.250.225
-Stub namespace extended for workflow Merge tasks in: 0.261.220
+Stub namespace extended for workflow Merge tasks in: 0.261.235
 
 This test ensures that:
   1. The workflow builder loads the workspace document picker whenever the document

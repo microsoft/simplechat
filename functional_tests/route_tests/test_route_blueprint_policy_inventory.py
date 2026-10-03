@@ -2,7 +2,7 @@
 #!/usr/bin/env python3
 """
 Functional test for route blueprint policy inventory.
-Version: 0.261.214
+Version: 0.261.227
 Implemented in: 0.242.069
 Plan editor policy coverage: 0.261.102
 Selected-group context policy coverage: 0.261.126
@@ -12,6 +12,7 @@ Group membership policy coverage: 0.261.151
 Workflow proposal policy coverage: 0.261.207
 Workflow assistant policy coverage: 0.261.208
 Workflow result context policy coverage: 0.261.214
+Workflow run status policy coverage: 0.261.227
 
 This test ensures every SimpleChat route is assigned to a Blueprint-based
 security policy or an explicit reviewed route exemption.
@@ -537,6 +538,29 @@ def test_workflow_run_link_route_keeps_the_orchestration_security_policy() -> No
     assert {"swagger_route", "login_required", "user_required"} <= set(route.decorator_names)
 
 
+def test_workflow_run_status_route_keeps_the_personal_workflow_security_policy() -> None:
+    """The run status rows stay owner-only, behind the same gates as the personal runtime routes.
+
+    Explicit raises keep this check under ``python -O``.
+    """
+    path = "/api/v2/orchestration/workflow-runs/status"
+    routes = [
+        route for route in iter_route_functions()
+        if route.file_name == "route_backend_orchestration.py" and route.path == path
+    ]
+    if len(routes) != 1:
+        raise AssertionError(f"Expected one status route, found {len(routes)}.")
+    route = routes[0]
+    if route.function_name != "orchestration_workflow_run_status" or route.route_target != "bp":
+        raise AssertionError(f"Unexpected status route registration: {route.function_name} on {route.route_target}.")
+    expected = (
+        "bp.route", "swagger_route", "login_required", "user_required",
+        "enabled_required", "workflow_user_required",
+    )
+    if route.decorator_names != expected:
+        raise AssertionError(f"Status route decorators changed: {route.decorator_names}.")
+
+
 def test_content_screening_routes_keep_authenticated_blueprint_guards() -> None:
     """Evidence and decisions never become public, even while enrollment is off."""
     routes = [
@@ -571,6 +595,7 @@ if __name__ == "__main__":
         test_plan_editor_routes_keep_the_orchestration_security_policy,
         test_workflow_proposal_routes_keep_the_orchestration_security_policy,
         test_workflow_run_link_route_keeps_the_orchestration_security_policy,
+        test_workflow_run_status_route_keeps_the_personal_workflow_security_policy,
         test_content_screening_routes_keep_authenticated_blueprint_guards,
     ]
     results = []

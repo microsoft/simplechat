@@ -1,8 +1,9 @@
 # test_workflow_flow_inspection_policy.py
 """
 Offline route policy tests for saved, draft and frozen-run Flow inspection.
-Version: 0.261.121
+Version: 0.261.231
 Implemented in: 0.261.121
+Definitions stopped denying inspection for an unavailable source in: 0.261.231
 
 Real route helpers, compiler and snapshot readers use closed Flask/WSGI fixtures
 and fictional stores. No application clients, credentials or live work are used.
@@ -33,7 +34,7 @@ from functions_workflow_definitions import WorkflowDefinitionConflict, WorkflowD
 from functions_workflow_execution_history import workflow_execution_history, workflow_execution_result_page
 from functions_workflow_identity import workflow_execution_id
 from functions_workflow_inspection import (
-    WorkflowFlowDetailTooLarge, WorkflowFlowUnsupported, authorize_workflow_flow_sources, preview_workflow_flow,
+    WorkflowFlowDetailTooLarge, WorkflowFlowUnsupported, preview_workflow_flow,
     workflow_flow_inspection, workflow_run_flow_inspection,
 )
 from functions_workflow_journal import journal_record_id
@@ -162,7 +163,6 @@ def api(monkeypatch):
         "get_group_workflow": lambda group, key: read(group, "workflow", key),
         "get_personal_workflow_run": lambda user, key: read(None, "run", key, user),
         "get_group_workflow_run": lambda group, key: read(group, "run", key),
-        "authorize_workflow_flow_sources": authorize_workflow_flow_sources,
         "workflow_flow_inspection": workflow_flow_inspection,
         "workflow_run_flow_inspection": workflow_run_flow_inspection,
         "preview_workflow_flow": preview_workflow_flow,
@@ -273,7 +273,7 @@ def test_workflow_run_and_scope_ids_are_not_authorization(api):
 
 
 @pytest.mark.parametrize("scope", ["user", "group"])
-def test_saved_and_frozen_source_revocation_clears_topology_and_details(api, scope):
+def test_saved_and_frozen_definitions_stay_inspectable_and_mark_a_revoked_source(api, scope):
     client, state, _ = api
     if scope == "group":
         state["user"] = "member"
@@ -282,21 +282,45 @@ def test_saved_and_frozen_source_revocation_clears_topology_and_details(api, sco
     paths = [f"{base}/flow", f"{base}/runs/run/flow"]
     sources = {}
     for path in paths:
+        state["reads"].clear()
         response = client.get(path, query_string=query)
         assert response.status_code == 200 and response.cache_control.no_store
+        # Topology takes its access from the workflow; it reads no source.
+        assert all(read[0] != "source" for read in state["reads"])
         sources[path] = response.json["source"]
-    assert ("source", "fictional-document") in state["reads"]
     state["source"] = False
     for path in paths:
-        for selectors in ({}, {
-            "node_id": "report-node", "section": "configuration",
-            "revision": sources[path]["definition_revision"],
-        }):
-            state["reads"].clear()
+        revision = sources[path]["definition_revision"]
+        for section, selectors in (("topology", {}), ("configuration", {
+            "node_id": "report-node", "section": "configuration", "revision": revision,
+        })):
             response = client.get(path, query_string={**query, **selectors})
-            assert response.status_code == 403 and "nodes" not in response.json and "items" not in response.json
+            assert response.status_code == 200, section
+            assert ("nodes" if section == "topology" else "items") in response.json
             assert response.cache_control.no_store and response.cache_control.private
-            assert ("source", "fictional-document") in state["reads"]
+        state["reads"].clear()
+        selection = client.get(path, query_string={
+            **query, "node_id": "root", "section": "selection", "revision": revision,
+        })
+        assert selection.status_code == 200
+        assert selection.json["items"][0]["label"] == "context"
+        assert selection.json["items"][0]["value"]["available"] is False
+        assert ("source", "fictional-document") in state["reads"]
+        state["source"] = True
+        restored = client.get(path, query_string={
+            **query, "node_id": "root", "section": "selection", "revision": revision,
+        })
+        assert "available" not in restored.json["items"][0]["value"]
+        state["source"] = False
+
+
+def test_a_route_denial_no_longer_mentions_sources(api):
+    client, state, _ = api
+    state["user"] = "member"
+    state["group_role"] = None
+    response = client.get("/api/group/workflows/workflow/flow", query_string={"group_id": "fictional-group"})
+    assert response.status_code == 403
+    assert "source" not in response.json["error"].lower()
 
 
 def test_detail_revision_bounds_conflicts_and_unsupported_snapshots(api, monkeypatch):
@@ -399,15 +423,18 @@ def test_missing_exact_record_is_metadata_not_a_missing_resource_or_result(api, 
     workspace["workflow"]["reference_inputs"] = []
     monkeypatch.setattr(workspace["container"], "query_items", lambda **kwargs: pytest.fail("Exact lookup scanned history"))
     for node_id in ("root", "report-node"):
+        state["reads"].clear()
         response = client.get(base, query_string={**query, "node_id": node_id, "iteration_path": "[]"})
         assert response.status_code == 200
         assert response.json == {"executions": [], "next_cursor": None, "total_count": 0}
         assert response.cache_control.no_store and response.cache_control.private
-        assert ("source", "fictional-document") in state["reads"]
+        # The run decides access; its frozen sources are provenance and are not re-read.
+        assert all(read[0] != "source" for read in state["reads"])
     state["source"] = False
     selectors = {**query, "node_id": "report-node", "iteration_path": "[]"}
     response = client.get(base, query_string=selectors)
-    assert response.status_code == 403 and "executions" not in response.json
+    assert response.status_code == 200
+    assert response.json == {"executions": [], "next_cursor": None, "total_count": 0}
     state["source"] = True
     assert client.get(base.replace("/runs/run/", "/runs/foreign/"), query_string=selectors).status_code == 404
     assert client.get(base, query_string={**selectors, "node_id": "foreign-node"}).status_code == 400

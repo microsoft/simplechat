@@ -1150,6 +1150,8 @@ def test_the_run_module_writes_only_through_the_queue_and_never_imports_flask():
             "RUNTIME_TERMINAL_STATES", "queue_durable_workflow_run", "workflow_run_id_for_request",
         },
         "functions_workflow_runtime_store": {"RuntimeUnavailable", "WorkflowRuntimeConflict"},
+        # Use Workflow Results In Chat's role-aware gate, read only when a run is about to start.
+        "functions_settings": {"is_chat_workflow_results_enabled_for_user"},
     }
     calls = _calls_by_function(tree)
     writes = {"create_item", "upsert_item", "replace_item", "delete_item", "patch_item", "execute_item_batch"}

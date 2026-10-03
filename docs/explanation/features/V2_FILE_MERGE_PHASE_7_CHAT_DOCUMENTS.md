@@ -1,9 +1,9 @@
 # V2 File Merge — Phase 7: Document Merges in Chat and Hardening
 
-Version: **0.261.225**
+Version: **0.261.240**
 
-Implemented in version: **0.261.224**, recorded in `application/single_app/config.py`.
-The one-sheet or sheet-per-file question was added in **0.261.225**.
+Implemented in version: **0.261.239**, recorded in `application/single_app/config.py`.
+The one-sheet or sheet-per-file question was added in **0.261.240**.
 
 GitHub issue: [#1619](https://github.com/microsoft/simplechat/issues/1619). Umbrella document:
 [V2 File Merge](V2_FILE_MERGE.md). Builds on [Phase 4](V2_FILE_MERGE_PHASE_4_PDF_WORKBOOKS.md),
@@ -46,17 +46,24 @@ merged bytes would store a second copy of every file in the result store. Instea
 retains a description and Render assembles the file from the originals, under a strict
 contract:
 
-- Only the merge result's own lineage is read. The rendering service opens the result with
-  current source checks, takes its lineage sources, and gives the renderer a reader that
-  refuses any other document. It rechecks access after every read. A storage fault while a
-  file is read again stays retryable, the same as for any other source Render reads; a file
-  that is held for screening or no longer accessible is not.
+- Only the merge result's own lineage is read. The rendering service takes the result's
+  lineage sources and gives the renderer a reader that refuses any other document.
+- Since **0.261.232**, a retained result takes its access from its conversation and run, and
+  the documents behind it aren't reread
+  ([Durable orchestration file outputs](ORCHESTRATION_OUTPUT_LIFECYCLE.md)). A merged file is
+  the exception, because it is assembled from the original files when it renders. Each file
+  is read through the screening-aware reader with the user's current access, so a file the
+  user can no longer open, or one held for screening, fails the render and isn't retried. A
+  storage fault while a file is read stays retryable, the same as for any other source
+  Render reads. The result's producer chain is checked again after every read. Once the
+  file is created, it follows the general rule: changes to the documents never hide it.
 - The assemblers are deterministic: fixed ZIP dates, derived section IDs, derived Word list
   IDs and fixed document dates mean the same files always give the same bytes, in any
   process. A test re-assembles every kind in fresh processes with different hash seeds.
 - The file is delivered only if its size and SHA-256 match the description. A file that
   changed, or no longer opens, fails the render as `output_source_changed`, which can't be
-  retried; nothing is uploaded.
+  retried; nothing is uploaded. Only the bytes decide: a document with a new version number
+  but the same bytes still assembles into the checked file.
 
 ### The `document_merge` capability
 
@@ -100,13 +107,13 @@ contract:
 
 ### One sheet or a sheet per file
 
-Added in **0.261.225**.
+Added in **0.261.240**.
 
 Merging several spreadsheets into one Excel file can mean every row on one sheet
 (`tabular_merge`, rendered with `exact_tabular_workbook_v1`) or each file on its own sheet
 (`document_merge` with kind `workbook`, rendered with `assembled_document_v1`). Requests such
 as "merge these files into one Excel file" don't say which, and the planner used to assume
-one sheet. Since **0.261.225** it asks instead:
+one sheet. Since **0.261.240** it asks instead:
 
 - `build_deliverable_availability` adds `MERGE_LAYOUT_FACT` to
   `capability_availability.deliverables.facts` only when `tabular_merge`, `document_merge`
@@ -168,7 +175,7 @@ Workflow merges keep naming the file, because the owner needs to know which one 
 | `functions_orchestration_document_merge.py` | New. Chat glue: limits, the authorized manifest check, persistence of `assembly` and `report`, step summaries and failure codes. |
 | `functions_ooxml_package_guard.py` | New. The XML prolog check shared by the document and spreadsheet engines, and the content-type lookup PowerPoint stripping uses. |
 | `functions_orchestration_registry.py`, `functions_orchestration_adapters.py`, `functions_orchestration_executor.py`, `functions_orchestration_result_contracts.py` | The `document_merge` descriptor, adapter and named-source handling. |
-| `functions_orchestration_schema.py`, `functions_orchestration_deliverables.py`, `functions_orchestration_planner.py` | Plan rules, failure messages, recipes and planner guidance, and (0.261.225) the one-sheet or sheet-per-file question. |
+| `functions_orchestration_schema.py`, `functions_orchestration_deliverables.py`, `functions_orchestration_planner.py` | Plan rules, failure messages, recipes and planner guidance, and (0.261.240) the one-sheet or sheet-per-file question. |
 | `functions_generated_export_registry.py`, `functions_generated_office_adapters.py`, `functions_generated_file_exports.py` | The `assembled_document_v1` profile on the PDF, Word, PowerPoint and Excel formats, and the assembled renderer. |
 | `functions_orchestration_rendering.py`, `functions_orchestration_services.py`, `functions_orchestration_bootstrap.py`, `functions_orchestration_results.py` | The lineage-bound document reader, `ResultReader.lineage_sources()`, and one shared translation of source read failures for the reader and every other source Render opens. |
 | `functions_document_merge.py`, `functions_document_merge_docx.py`, `functions_document_merge_pptx.py`, `functions_document_merge_workbook.py`, `functions_tabular_merge.py` | The hardening above, and derived Word list IDs. |
@@ -200,12 +207,12 @@ the default, followed by the file to create. See
 | --- | --- |
 | `functional_tests/test_orchestration_document_merge_capability.py` | Registry and gating, kind-specific settings, source binding, the chat limit, source kinds, render admission by format, the real executor for every kind without model calls, step summaries, render re-assembly with the checked bytes, changed and unreadable sources, access failures passing through, format and size refusals, and application-owned failure messages. |
 | `functional_tests/test_document_merge_assembly.py` | Option parsing, the description contract and its refusals, byte-identical re-assembly for every kind in this process and in fresh processes with different hash seeds, limits checked before any read, caller failures passing through, and cold imports with and without `-O`. |
-| `functional_tests/test_orchestration_output_lifecycle.py` | The real rendering service: a merged PDF downloads with the checked SHA-256 after reading only its own files, a changed file is never uploaded, and revoked access or a missing reader fails before any read. |
+| `functional_tests/test_orchestration_output_lifecycle.py` | The real rendering service: a merged PDF downloads with the checked SHA-256 after reading only its own files; a changed file is never uploaded; a file the user can no longer open, or a missing reader, fails the render; a new version with the same bytes is still delivered; and a storage fault while reading a file is retried. |
 | `functional_tests/test_file_merge_hardening.py` | DDE refusal and its evasions, template removal, linked content, PowerPoint program actions in UTF-16 slides and slides renamed `.dat`, `.vml` or `.rels`, XML document type declarations and XML written or declared in other encodings, selection by declared content type, the prolog reader and its reading budget, failing checks passing through, and declared and understated ZIP sizes. |
 | `functional_tests/test_document_merge_docx.py` | Lists copied from later documents keep restarting and give the same bytes on every run. |
 | `functional_tests/test_workflow_merge_task.py` | 100 files of 1,000 rows in one workflow run, and CSV and Excel output without live formulas. |
 | `functional_tests/test_v2_orchestration_merge_arguments.mjs`, `ui_tests/test_v2_orchestration_merge_arguments.py` | The plan card's wording for document merges. |
-| `functional_tests/test_orchestration_merge_layout_question.py` | The one-sheet or sheet-per-file fact is offered only when both layouts and a file can be delivered; the clarification rule names its exceptions; workflow merge proposals ask the same question; the real planner sees the fact and returns a question the server accepts, with both choices and Decline handled; each answer plans to a valid merge (0.261.225). |
+| `functional_tests/test_orchestration_merge_layout_question.py` | The one-sheet or sheet-per-file fact is offered only when both layouts and a file can be delivered; the clarification rule names its exceptions; workflow merge proposals ask the same question; the real planner sees the fact and returns a question the server accepts, with both choices and Decline handled; each answer plans to a valid merge (0.261.240). |
 
 ## Known limitations
 
