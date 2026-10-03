@@ -86,6 +86,7 @@ from functions_orchestration_registry import (
     CAPABILITY_DEEP_RESEARCH,
     CAPABILITY_DOCUMENT_ANALYZE,
     CAPABILITY_DOCUMENT_COMPARE,
+    CAPABILITY_DOCUMENT_MERGE,
     CAPABILITY_DOCUMENT_SEARCH,
     CAPABILITY_TABULAR_ANALYZE,
     CAPABILITY_TABULAR_INSPECT,
@@ -938,11 +939,12 @@ def run_document_compare(step, context, *, settings, user_id, emit, cancel_reque
 # tabular_inspect and tabular_merge -> functions_tabular_merge through functions_orchestration_merge
 # --------------------------------------------------------------------------------------
 
-def _tabular_step_failure(exc, step, user_id, *, failure_code, label):
-    """The result for a refused or failed spreadsheet step; only catalog text reaches the user."""
-    from functions_tabular_merge import TabularMergeError
+def _tabular_step_failure(exc, step, user_id, *, failure_code, label, error_type=None):
+    """The result for a refused or failed merge step; only catalog text reaches the user."""
+    if error_type is None:
+        from functions_tabular_merge import TabularMergeError as error_type
 
-    if isinstance(exc, TabularMergeError):
+    if isinstance(exc, error_type):
         failure = build_failure(failure_code(exc))
         log_event(
             f'{_LOG_PREFIX} {label} was refused.',
@@ -1099,6 +1101,71 @@ def run_tabular_merge(step, context, *, settings, user_id, emit, cancel_requeste
         from functions_orchestration_merge import merge_failure_code
 
         return _tabular_step_failure(exc, step, user_id, failure_code=merge_failure_code, label='Spreadsheet merge')
+    return build_step_result(status=STEP_STATUS_COMPLETED, summary=summary, task_result=task_result)
+
+
+def run_document_merge(step, context, *, settings, user_id, emit, cancel_requested):
+    """Assemble authorized documents once to check them; no model and no file.
+
+    The retained ``assembly`` output names the files, every option and the checked file's
+    size and SHA-256. ``render_file`` assembles the same files again with the
+    ``assembled_document_v1`` profile and delivers the file only when it is identical.
+    """
+    arguments = _arguments(step)
+    # The merge engine is standard-library only; each assembler loads only when its kind runs.
+    from functions_document_merge import DocumentMergeCancelled, DocumentMergeError
+
+    try:
+        raise_if_mixed_source_cancelled(cancel_requested, 'orchestration_document_merge')
+        input_fingerprint = _internal_result_input_fingerprint(step, context)
+        from functions_document_merge import merge_documents
+        from functions_orchestration_document_merge import (
+            document_merge_limits,
+            document_merge_options_from_arguments,
+            document_merge_step_summary,
+            persist_document_merge_result,
+            require_document_merge_manifest,
+        )
+        from functions_orchestration_merge import build_document_merge_parts
+
+        with orchestration_file_policy(allow_generated_files=False):
+            document_ids = _string_list(arguments.get('document_ids'))
+            limits = document_merge_limits(settings)
+            if len(document_ids) > limits.max_parts:
+                # A bound source set is checked here; explicit IDs were checked at planning.
+                raise DocumentMergeError('too_many_sources', 'Too many files were selected to merge here.')
+            kind, options = document_merge_options_from_arguments(arguments)
+            service, producer, token, input_fingerprint = _internal_result_context(
+                step, context, user_id, CAPABILITY_DOCUMENT_MERGE, input_fingerprint=input_fingerprint,
+            )
+            manifest = resolve_context_source_manifest(
+                context, document_ids, settings=settings, user_id=user_id, cancel_requested=cancel_requested,
+            )
+            require_document_merge_manifest(manifest, document_ids, kind)
+            _emit(emit, _progress(step, CAPABILITY_DOCUMENT_MERGE, 'Merging documents'))
+            parts = build_document_merge_parts(
+                manifest, user_id, byte_reader=_ctx(context, 'merge_source_reader', None),
+            )
+            with merge_documents(
+                kind, parts, options=options, limits=limits,
+                cancel_requested=lambda: _is_cancelled(cancel_requested),
+            ) as merged:
+                raise_if_mixed_source_cancelled(cancel_requested, 'orchestration_document_merge_saving')
+                task_result = persist_document_merge_result(
+                    service=service, producer=producer, kind=kind, options=options, parts=parts,
+                    merge_result=merged, sources=manifest, guard_token=token, input_fingerprint=input_fingerprint,
+                )
+                summary = document_merge_step_summary(kind, merged.report)
+            raise_if_mixed_source_cancelled(cancel_requested, 'orchestration_document_merge_finalization')
+    except (MixedSourceCancellationError, DocumentMergeCancelled):
+        return _cancelled_result('Merging documents was cancelled.')
+    except Exception as exc:
+        from functions_orchestration_document_merge import document_merge_failure_code
+
+        return _tabular_step_failure(
+            exc, step, user_id, failure_code=document_merge_failure_code, label='Document merge',
+            error_type=DocumentMergeError,
+        )
     return build_step_result(status=STEP_STATUS_COMPLETED, summary=summary, task_result=task_result)
 
 
@@ -2063,6 +2130,7 @@ ADAPTER_REGISTRY = {
     CAPABILITY_TABULAR_ANALYZE: run_tabular_analyze,
     CAPABILITY_TABULAR_INSPECT: run_tabular_inspect,
     CAPABILITY_TABULAR_MERGE: run_tabular_merge,
+    CAPABILITY_DOCUMENT_MERGE: run_document_merge,
     CAPABILITY_WEB_SEARCH: run_web_search,
     CAPABILITY_URL_FETCH: run_url_fetch,
     CAPABILITY_DEEP_RESEARCH: run_deep_research,

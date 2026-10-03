@@ -26,8 +26,9 @@ order, every matching file, recent files, or the files File Sync changed), autho
 again, runs with code and no model, and attaches one file to the run.
 
 Chat can propose a workflow with any of these kinds. Merging PDFs and workbooks directly in
-a chat turn, without a workflow, is scheduled for Phase 7 together with Word and
-PowerPoint, so that every document kind reaches chat through one shared Render path.
+a chat turn, without a workflow, was scheduled for Phase 7 together with Word and
+PowerPoint, so that every document kind reaches chat through one shared Render path; it
+arrived in **0.261.224** ([Phase 7](V2_FILE_MERGE_PHASE_7_CHAT_DOCUMENTS.md)).
 
 ## Technical specifications
 
@@ -169,8 +170,9 @@ bookmarks** for PDFs and **Sheets** for workbooks. See
 
 ## Known limitations
 
-- PDF and workbook merges run in workflows. Asking a chat turn to merge PDFs or workbooks
-  arrives in Phase 7; until then chat can propose a workflow that does it.
+- In this phase PDF and workbook merges ran only in workflows, and chat proposed a workflow
+  that did it. Since **0.261.224** a chat turn merges them directly
+  ([Phase 7](V2_FILE_MERGE_PHASE_7_CHAT_DOCUMENTS.md)).
 - Page ranges are supported by the engine but not yet offered in the workflow editor.
 - A workbook merge copies values and number formats, not styles, charts or images.
 - A PDF merge reads at most 300 MB of PDFs in total, whatever the generated-file limit,

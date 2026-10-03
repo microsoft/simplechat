@@ -1,17 +1,19 @@
 ---
 layout: page
 title: "Merge files in chat"
-description: "Combine several CSV or Excel files into one CSV or Excel file, even when their columns differ."
+description: "Combine several CSV or Excel files into one table, or several PDFs, Word documents or PowerPoint decks into one file."
 section: "Guides"
 audience: user
-version: "0.261.223"
+version: "0.261.224"
 ---
 
 ## What this does
 
 Merging takes several spreadsheets, such as one sales export per region or one timesheet
 per month, and stacks their rows into a single table. The chat then gives you that table
-as a downloadable CSV or Excel file.
+as a downloadable CSV or Excel file. It can also join whole documents: several PDFs into
+one PDF, Word documents into one Word document, PowerPoint decks into one deck, or
+spreadsheets onto the separate sheets of one Excel workbook.
 
 Code does the merge, not a model. Every row is copied exactly, in the order you list the
 files, so codes such as `007` keep their leading zeros, and nothing is summarized,
@@ -35,13 +37,14 @@ for that work separately.
 ## Before you start
 
 - Use the V2 chat with **Orchestrate** on. An administrator must enable Chat
-  Orchestration and leave **Merge spreadsheets**, **Inspect spreadsheets** and **Enable
-  Merge** on; all are on by default. See
+  Orchestration and leave **Merge spreadsheets**, **Inspect spreadsheets**, **Merge
+  documents** and **Enable Merge** on; all are on by default. See
   [orchestration settings]({{ '/admin/orchestration/' | relative_url }}).
-- The files must be CSV (`.csv`) or Excel (`.xlsx`, `.xlsm`, `.xls`) documents you can
-  open in SimpleChat, in a personal, group or public workspace.
-- Chat merges up to 10 files and 250,000 rows by default. Your administrator may set
-  different limits.
+- The files must be documents you can open in SimpleChat, in a personal, group or public
+  workspace: CSV (`.csv`) or Excel (`.xlsx`, `.xlsm`, `.xls`) files to combine rows, or
+  PDFs, Word documents (`.docx`) or PowerPoint decks (`.pptx`) to join documents.
+- Chat merges up to 10 files, and 250,000 rows when combining spreadsheets, by default.
+  Your administrator may set different limits.
 
 ## Merge files
 
@@ -141,7 +144,7 @@ how many were left out. The merged rows are still complete for the files that we
 | This merge's settings can't be used together | Ask again with fewer instructions at once, for example keep every column or list the columns to keep, not both. |
 | The column mapping prepared for this merge isn't valid | Ask again, or name the columns to treat as the same yourself. |
 | The merge is larger than chat allows | Merge fewer or smaller files at a time, or ask your administrator about the Merge limits. |
-| Merging needs at least two different CSV or Excel files | Select at least two spreadsheets. Word, PDF and other documents can't be merged as tables. |
+| Merging needs at least two different CSV or Excel files | Select at least two spreadsheets. To join PDFs, Word documents or decks, ask for one PDF, Word document or deck instead. |
 
 Nothing is created when a merge stops, so there is never a partial file to clean up.
 
@@ -180,17 +183,58 @@ more files match than the workflow limit allows, the task fails and says which.
 
 ## Merge PDFs, Word documents, decks or workbooks
 
-From version **0.261.221**, a workflow merge task has a **Merge type**. Besides combining
-rows, it can join PDFs into one PDF, with a bookmark for each file, or put each CSV or
-Excel file on its own sheet of one Excel workbook, so the tables stay separate but travel
-as one file. From **0.261.222** it can also append Word documents into one Word document,
-keeping each document's styles or using the first document's, and from **0.261.223**
-append PowerPoint decks into one deck, keeping each deck's look or the first deck's theme.
-Choose the type after choosing **Merge files**; the rest works the same way. You can also
-ask chat, for example "every month, combine the signed contracts into one PDF", and it
-proposes a workflow that does it. Merging PDFs, Word documents or decks inside a chat turn,
-without a workflow, is planned for a later release. See
-[Create a workflow]({{ '/guides/create-a-workflow/' | relative_url }}#merge-files-in-a-workflow).
+From version **0.261.224**, chat joins whole documents as well as rows. Select the files in
+the order you want them, then ask, for example:
+
+> Combine these three signed contracts into one PDF.
+
+> Put these two Word reports together, using the first one's styles.
+
+> Merge the selected decks into one presentation without sections.
+
+> Keep each of these CSV files as its own sheet in one Excel workbook.
+
+The plan shows a **Merge documents** task that says what it creates and any setting you
+asked to change, followed by the file to create. Every file must be the kind being merged.
+Code copies the files exactly: nothing is summarized, translated or rewritten.
+
+| You get | What it contains | You can ask to |
+| --- | --- | --- |
+| One PDF | Every page of each file, in order. Each file starts with a bookmark named after it, with its own bookmarks beneath it. | Leave out the bookmarks. |
+| One Word document | Each document in order, each starting on a new page. Each keeps its own look: styles that share a name but look different are kept as separate copies. The first document's page setup, headers and footers apply throughout. | Use the first document's styles for all of them, not start each on a new page, or put each file's name as a heading before it. |
+| One PowerPoint deck | Each deck's slides in order, in a section named after the file. Slides keep their layouts, masters and themes, and the first deck decides the slide size. | Use the first deck's theme for all slides, or leave out the sections. |
+| One Excel workbook | A sheet per file, named after it. Values and number formats are copied; styles, charts and images are not. | Copy every visible sheet of each workbook, or one named sheet from each. |
+
+Chat checks the merged file when the merge task runs, then creates it from the same files.
+If one of them changes in between, no file is created; ask again to merge the current
+versions.
+
+Some content never reaches a merged file, and the merge report says when something was
+left out:
+
+- A Word document with fields that start other programs (DDE fields) can't be merged.
+- The first Word document's link to its template is removed, so Word doesn't fetch it.
+- PowerPoint actions that start a program or run a macro are removed; web links stay.
+- PDF scripts, form actions and links that open files or programs are removed; links to
+  pages, websites and email addresses stay.
+- Comments in the Word documents and decks after the first, and fonts embedded in later
+  decks, are not carried over.
+
+| Message | What to do |
+| --- | --- |
+| Merging needs at least two different files of the kind being merged | Select at least two files of one kind, such as two PDFs. To combine spreadsheet rows instead, ask for one CSV or Excel table. |
+| A selected file couldn't be read | The file may be damaged, password-protected or macro-enabled. Open it and save it again as a regular, unprotected file. |
+| A selected Word document has fields that start other programs | Remove the DDE fields from the document, or merge it without that document. |
+| The merged file would be larger than chat allows | Merge fewer or smaller files, or use a workflow. |
+
+To merge documents on a schedule, whenever a synced folder gets new files, or more files
+than chat allows, use a workflow task. Since **0.261.221** a workflow merge task has a
+**Merge type**: besides combining rows, it can join PDFs into one PDF or put each CSV or
+Excel file on its own sheet of one workbook. Since **0.261.222** it can append Word
+documents, and since **0.261.223** PowerPoint decks. Choose the type after choosing
+**Merge files**; the rest works the same way. You can also ask chat, for example "every
+month, combine the signed contracts into one PDF", and it proposes a workflow that does it.
+See [Create a workflow]({{ '/guides/create-a-workflow/' | relative_url }}#merge-files-in-a-workflow).
 
 ## Related
 

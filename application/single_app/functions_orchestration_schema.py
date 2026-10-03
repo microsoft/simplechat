@@ -54,6 +54,7 @@ from functions_orchestration_registry import (
     APPROVAL_FLOOR_MANUAL,
     CAPABILITY_ACTION_INVOKE,
     CAPABILITY_COMPOSE,
+    CAPABILITY_DOCUMENT_MERGE,
     CAPABILITY_GENERATE_IMAGE,
     CAPABILITY_TABULAR_ANALYZE,
     CAPABILITY_TABULAR_INSPECT,
@@ -608,6 +609,54 @@ def _require_merge_mapping_producers(steps):
                 )
 
 
+def _require_assembled_render_sources(steps, existing_results):
+    """A merged file renders only from a document merge's assembly, in that merge's format.
+
+    A retained assembly named by alias is checked against its format when the file renders.
+    """
+    # The profile and format names are plain constants; the export stack stays unloaded.
+    from functions_document_merge_assembly import ASSEMBLED_OUTPUT_FORMATS
+    from functions_generated_export_registry import ASSEMBLED_DOCUMENT_PROFILE
+
+    by_id = {step['step_id']: step for step in steps}
+    for step in steps:
+        if step['capability_id'] != 'render_file' or step['arguments'].get('profile') != ASSEMBLED_DOCUMENT_PROFILE:
+            continue
+        sources = [spec.binding for spec in step_input_specs(step) if spec.name == 'source']
+        if not sources:
+            # A missing source input is reported by the binding validation that follows.
+            continue
+        source = sources[0]
+        if source.existing_result is not None:
+            reference = (existing_results or {}).get(source.existing_result)
+            producer = getattr(getattr(reference, 'producer', None), 'capability_id', None)
+            if producer == CAPABILITY_DOCUMENT_MERGE and getattr(reference, 'output_name', None) == 'assembly':
+                continue
+            producer_step = None
+        else:
+            if source.step_id not in by_id:
+                # A missing producer is reported by the binding validation that follows.
+                continue
+            producer_step = by_id[source.step_id]
+        if (
+            producer_step is None or producer_step['capability_id'] != CAPABILITY_DOCUMENT_MERGE
+            or source.output_name != 'assembly'
+        ):
+            raise PlanValidationError(
+                f'Step "{step["step_id"]}" renders a merged file but does not bind the "assembly" output of '
+                'a document_merge step. Bind that output, or use a profile that fits the bound source.',
+                code='result_kind_incompatible', rule='assembled_render_source',
+            )
+        kind = producer_step['arguments'].get('kind')
+        expected = ASSEMBLED_OUTPUT_FORMATS.get(kind)
+        if step['arguments'].get('output_format') != expected:
+            raise PlanValidationError(
+                f'Step "{step["step_id"]}" renders a {kind} merge in another format. Use output_format '
+                f'{expected} for a {kind} merge.',
+                code='result_kind_incompatible', rule='assembled_render_format',
+            )
+
+
 def _reject_workflow_proposal_consumers(steps, final_response):
     """A workflow proposal is reviewed on its own card, so no step and no answer may read it."""
     producers = {step['step_id'] for step in steps if step['capability_id'] == CAPABILITY_WORKFLOW_PROPOSE}
@@ -926,6 +975,27 @@ def validate_dependency_plan(
                         f'{exc.message}',
                         code='merge_options_invalid', rule='merge_options_invalid',
                     ) from exc
+            if capability_id == CAPABILITY_DOCUMENT_MERGE:
+                if not arguments.get('document_ids') and 'sources' not in step['inputs']:
+                    raise PlanValidationError(
+                        'Merge documents requires arguments.document_ids naming at least two files in merge '
+                        'order, or an inputs.sources source-set binding.',
+                        code='source_binding_required', rule='merge_sources_required',
+                    )
+                if arguments.get('document_ids') and 'sources' in step['inputs']:
+                    raise PlanValidationError('Use either explicit document IDs or a named source-set input.')
+                # The document merge engine and its option rules are standard-library only.
+                from functions_document_merge import DocumentMergeError
+                from functions_document_merge_assembly import document_merge_options_from_arguments
+
+                try:
+                    document_merge_options_from_arguments(arguments)
+                except DocumentMergeError as exc:
+                    raise PlanValidationError(
+                        f'Step "{step["step_id"]}" has merge settings that cannot be used together: '
+                        f'{exc.message}',
+                        code='merge_options_invalid', rule='merge_options_invalid',
+                    ) from exc
             if capability_id == CAPABILITY_TABULAR_INSPECT:
                 if not arguments.get('document_ids') and 'sources' not in step['inputs']:
                     raise PlanValidationError(
@@ -947,6 +1017,7 @@ def validate_dependency_plan(
         if not any(step['enabled'] for step in accepted):
             raise PlanValidationError('The plan contains no enabled work.')
         _require_merge_mapping_producers(accepted)
+        _require_assembled_render_sources(accepted, existing_results)
         _apply_image_input_policy(accepted, existing_results)
         _reject_workflow_proposal_consumers(accepted, plan.get('final_response'))
         _reject_workflow_run_consumers(accepted, plan.get('final_response'))
@@ -1093,6 +1164,25 @@ def validate_plan_document_source_kinds(plan, document_source_kinds):
                     'another kind of document. Use only the tabular sources there, or prepare the others '
                     'with compatible offered capabilities. Keep every selected source.',
                     code='source_kind_invalid', rule='tabular_source_required',
+                )
+            continue
+        if step.get('enabled', True) and step.get('capability_id') == CAPABILITY_DOCUMENT_MERGE:
+            workbook = (step.get('arguments') or {}).get('kind') == 'workbook'
+            kinds = [
+                document_source_kinds.get(document_id) for document_id in plan_document_ids({'steps': [step]})
+            ]
+            if workbook and any(kind not in (None, 'tabular') for kind in kinds):
+                raise PlanValidationError(
+                    f'Step "{step["step_id"]}" puts CSV or Excel files on the sheets of one workbook, and a '
+                    'selected source is another kind of document. Keep every selected source.',
+                    code='source_kind_invalid', rule='tabular_source_required',
+                )
+            if not workbook and 'tabular' in kinds:
+                raise PlanValidationError(
+                    f'Step "{step["step_id"]}" merges documents, and a selected source is a CSV or Excel '
+                    'file. Use tabular_merge to append spreadsheet rows, or kind workbook to keep each '
+                    'one as a sheet. Keep every selected source.',
+                    code='source_kind_invalid', rule='document_source_required',
                 )
             continue
         if not step.get('enabled', True) or step.get('capability_id') not in (
@@ -1635,6 +1725,22 @@ FAILURE_MESSAGES = {
         'The selected files have too many sheets or columns to inspect here. Inspect fewer files at '
         'a time.'
     ),
+    'document_merge_sources_invalid': (
+        'Merging needs at least two different files of the kind being merged: PDFs (.pdf), Word '
+        'documents (.docx), PowerPoint decks (.pptx), or CSV and Excel files for a workbook.'
+    ),
+    'document_merge_source_unreadable': (
+        "A selected file couldn't be read. It may be damaged, password-protected or macro-enabled, so "
+        'nothing was merged.'
+    ),
+    'document_merge_active_content': (
+        'A selected Word document has fields that start other programs (DDE), so nothing was merged.'
+    ),
+    'document_merge_limit_exceeded': (
+        'The merged file would be larger than chat allows. Merge fewer or smaller files, or ask for a '
+        'workflow to merge them.'
+    ),
+    'document_merge_failed': "The selected files couldn't be merged into one file.",
     'step_failed': 'This operation could not complete.',
     'message_not_saved': 'The explanation could not be saved. Reload this run to check its durable status.',
     LEGACY_PLAN_CODE: LEGACY_PLAN_MESSAGE,

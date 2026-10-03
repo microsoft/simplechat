@@ -2,16 +2,18 @@
 # test_document_merge_docx.py
 """
 Functional test for Word assembly in V2 file merge.
-Version: 0.261.222
+Version: 0.261.224
 Implemented in: 0.261.222
+Derived list IDs added in: 0.261.224
 
 This test ensures that functions_document_merge appends Word documents in order with
 docxcompose: keep_source formatting keeps a differently styled document's look by
 copying clashing styles under new names, use_first maps them to the first document's
 styles, page breaks and file-name headings are optional, tables, numbered lists and
 images survive, comment anchors that would be orphaned are removed, damaged, encrypted
-or macro-enabled files are refused, the same documents always give the same bytes,
-library failures name only the file, and host failures pass through unchanged.
+or macro-enabled files are refused, the same documents always give the same bytes, even
+when later documents bring lists of their own, library failures name only the file, and
+host failures pass through unchanged.
 """
 
 import io
@@ -178,6 +180,69 @@ def test_the_same_documents_always_give_the_same_bytes():
     with zipfile.ZipFile(io.BytesIO(content)) as package:
         assert {entry.date_time for entry in package.infolist()} == {(2000, 1, 1, 0, 0, 0)}
         assert "2000-01-01T00:00:00Z" in package.read("docProps/core.xml").decode("utf-8")
+
+
+def listed_docx_bytes(label, items=2):
+    """A document whose paragraphs are numbered directly, the way Word writes an ordinary list."""
+    from docx import Document
+
+    document = Document()
+    document.add_paragraph(f"{label} intro")
+    for number in range(items):
+        paragraph = document.add_paragraph(f"{label} item {number + 1}")
+        numbering = paragraph._p.get_or_add_pPr().get_or_add_numPr()
+        numbering.get_or_add_ilvl().val = 0
+        numbering.get_or_add_numId().val = 1
+    buffer = io.BytesIO()
+    document.save(buffer)
+    return buffer.getvalue()
+
+
+def list_identities(content):
+    """For each numbered paragraph, the ID of its list definition (w:nsid)."""
+    from lxml import etree
+
+    with zipfile.ZipFile(io.BytesIO(content)) as package:
+        body = etree.fromstring(package.read("word/document.xml"))
+        numbering = etree.fromstring(package.read("word/numbering.xml"))
+    nsids = {
+        element.get(f"{W}abstractNumId"): element.find(f"{W}nsid").get(f"{W}val")
+        for element in numbering.iter(f"{W}abstractNum") if element.find(f"{W}nsid") is not None
+    }
+    definitions = {
+        element.get(f"{W}numId"): element.find(f"{W}abstractNumId").get(f"{W}val")
+        for element in numbering.iter(f"{W}num")
+    }
+    identities = {}
+    for paragraph in body.iter(f"{W}p"):
+        number = paragraph.find(f"{W}pPr/{W}numPr/{W}numId")
+        if number is not None:
+            text = "".join(paragraph.itertext())
+            identities[text] = nsids[definitions[number.get(f"{W}val")]]
+    return identities, list(nsids.values())
+
+
+def test_lists_copied_from_later_documents_restart_and_give_the_same_bytes():
+    parts = [
+        part("a", "Alpha.docx", listed_docx_bytes("Alpha")),
+        part("b", "Beta.docx", listed_docx_bytes("Beta")),
+        part("c", "Gamma.docx", listed_docx_bytes("Gamma")),
+    ]
+    merged = []
+    for _ in range(3):
+        with merge_documents("docx", parts) as result:
+            merged.append(result.read_bytes())
+    # docxcompose picks a random ID for each list it copies; the merge derives it instead.
+    assert merged[0] == merged[1] == merged[2]
+    identities, every_id = list_identities(merged[0])
+    assert len(every_id) == len(set(every_id))
+    # Each document's list keeps one ID of its own, so its numbering restarts at 1.
+    assert identities["Alpha item 1"] == identities["Alpha item 2"]
+    assert identities["Beta item 1"] == identities["Beta item 2"]
+    assert len({identities["Alpha item 1"], identities["Beta item 1"], identities["Gamma item 1"]}) == 3
+    # The first document's own list keeps the ID it had.
+    original, _ = list_identities(listed_docx_bytes("Alpha"))
+    assert identities["Alpha item 1"] == original["Alpha item 1"]
 
 
 def test_library_failures_name_only_the_file_and_host_failures_pass_through(monkeypatch):

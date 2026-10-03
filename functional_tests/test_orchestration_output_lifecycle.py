@@ -1,8 +1,9 @@
 # test_orchestration_output_lifecycle.py
 """
 Real retained-result/render/transport/commit/download lifecycle integration.
-Version: 0.261.127
+Version: 0.261.224
 Implemented in: 0.261.127
+Merged documents rendered from their own lineage added in: 0.261.224
 
 Production modules (including the complete upload and download modules) run with
 external Azure I/O doubled. No AST-extracted service, model call, or provider is
@@ -263,6 +264,8 @@ class Lifecycle:
         monkeypatch.setattr(modules.operations, "storage_account_personal_chat_container_name", "chat")
         monkeypatch.setattr(modules.operations, "log_event", lambda *args, **kwargs: None)
         monkeypatch.setattr(modules.sources, "log_event", lambda *args, **kwargs: None)
+        # A merged file's original files are read through this owner-supplied reader.
+        self.document_bytes_reader = None
         self.service = self.restart()
         monkeypatch.setattr(
             importlib.import_module("functions_orchestration_artifacts"), "_service_factory", self.factory,
@@ -319,6 +322,7 @@ class Lifecycle:
         service = OrchestrationRenderingService(
             store, result_service, transport, authorize_execution=self.authorize,
             max_output_bytes=max_output_bytes, renderer=self.render, jitter=lambda: 0.5,
+            document_bytes_reader=self.document_bytes_reader,
         )
         self.service = service
         return service
@@ -1874,6 +1878,162 @@ def test_real_step_result_marks_retries_waiting_and_only_committed_artifacts(lif
     )
     assert complete_result["status"] == "completed" and len(complete_result["artifacts"]) == 1
     assert complete_result["artifacts"][0]["artifact_message_id"]
+
+
+def _merged_pdf_pages(pages):
+    from pypdf import PdfWriter
+
+    writer = PdfWriter()
+    for _ in range(pages):
+        writer.add_blank_page(width=200, height=200)
+    buffer = io.BytesIO()
+    writer.write(buffer)
+    return buffer.getvalue()
+
+
+def _retain_document_merge(lifecycle, files):
+    """Assemble two workspace PDFs once and retain the description, as a chat document_merge does."""
+    from functions_document_merge import DocumentMergeOptions, DocumentMergePart, merge_documents
+    from functions_orchestration_document_merge import persist_document_merge_result
+    from test_support.orchestration_results import source
+
+    producer = replace(
+        lifecycle.results.producer, run_id="merge-run", step_id="merge", capability_id="document_merge",
+        contract_version="document-merge-v1",
+    )
+    lifecycle.results.add_producer(producer)
+    lifecycle.runs.create_item({**lifecycle.results.runs["merge-run"], "record_type": "run"})
+    for document_id in files:
+        lifecycle.results.sources[document_id] = source(document_id)
+    parts = [
+        DocumentMergePart(document_id, f"{document_id}.pdf", lambda content=content: content)
+        for document_id, content in files.items()
+    ]
+    with merge_documents("pdf", parts) as merged:
+        saved = persist_document_merge_result(
+            service=lifecycle.results.service, producer=producer, kind="pdf", options=DocumentMergeOptions(),
+            parts=parts, merge_result=merged, sources=[source(document_id) for document_id in files],
+            guard_token="server-attempt-token", input_fingerprint=None,
+        )
+    return saved.output("assembly")
+
+
+def _merge_reader(lifecycle, files, reads):
+    def read(snapshot):
+        reads.append(deepcopy(snapshot))
+        return files[snapshot["document_id"]]
+
+    lifecycle.document_bytes_reader = read
+    lifecycle.restart()
+
+
+def test_a_merged_document_renders_from_its_own_files_with_the_checked_bytes(lifecycle):
+    import hashlib
+
+    files = {"report-a": _merged_pdf_pages(2), "report-b": _merged_pdf_pages(1)}
+    assembly = _retain_document_merge(lifecycle, files)
+    described = lifecycle.results.service.open_result(assembly).read_value()
+    reads = []
+    _merge_reader(lifecycle, files, reads)
+
+    output = lifecycle.prepare(
+        "pdf", step_id="merged_pdf", reference=assembly, profile="assembled_document_v1", file_name="merged.pdf",
+    )
+    completed = lifecycle.run(output)
+    assert completed["state"] == "completed", completed
+    content = lifecycle.download(completed)
+    assert hashlib.sha256(content).hexdigest() == described["output"]["content_sha256"]
+    assert len(content) == described["output"]["size_bytes"]
+    # Only the merge result's own lineage is read, in order, as current source snapshots.
+    assert [snapshot["document_id"] for snapshot in reads] == ["report-a", "report-b"]
+    assert all(snapshot["scope"] == "personal" and snapshot["scope_id"] == "owner" for snapshot in reads)
+    assert lifecycle.render_calls == [("pdf", "assembled_document_v1")]
+    assert lifecycle.blobs.uploads == 1
+
+
+def test_a_merged_document_whose_file_changed_is_never_delivered(lifecycle):
+    files = {"report-a": _merged_pdf_pages(2), "report-b": _merged_pdf_pages(1)}
+    assembly = _retain_document_merge(lifecycle, files)
+    reads = []
+    _merge_reader(lifecycle, {**files, "report-b": _merged_pdf_pages(3)}, reads)
+
+    output = lifecycle.prepare(
+        "pdf", step_id="merged_pdf", reference=assembly, profile="assembled_document_v1", file_name="merged.pdf",
+    )
+    failed = lifecycle.run(output)
+    assert failed["state"] == "failed" and failed["can_retry"] is False
+    assert failed["error_code"] == "output_source_changed"
+    assert lifecycle.blobs.uploads == 0 and not lifecycle.service.committed_artifacts("run-1")
+
+
+@pytest.mark.parametrize("revocation", ["denied", "changed"])
+def test_a_merged_document_rechecks_access_to_its_files_before_reading_them(lifecycle, revocation):
+    files = {"report-a": _merged_pdf_pages(2), "report-b": _merged_pdf_pages(1)}
+    assembly = _retain_document_merge(lifecycle, files)
+    reads = []
+    _merge_reader(lifecycle, files, reads)
+    output = lifecycle.prepare(
+        "pdf", step_id="merged_pdf", reference=assembly, profile="assembled_document_v1", file_name="merged.pdf",
+    )
+    if revocation == "denied":
+        lifecycle.results.denied.add("report-b")
+    else:
+        lifecycle.results.sources["report-b"]["source_version"] = 2
+    failed = lifecycle.run(output)
+    assert failed["state"] == "failed" and failed["can_retry"] is False
+    assert reads == [] and lifecycle.blobs.uploads == 0
+
+
+def test_without_a_document_reader_a_merged_document_is_not_rendered(lifecycle):
+    assembly = _retain_document_merge(lifecycle, {"report-a": _merged_pdf_pages(1), "report-b": _merged_pdf_pages(1)})
+    output = lifecycle.prepare(
+        "pdf", step_id="merged_pdf", reference=assembly, profile="assembled_document_v1", file_name="merged.pdf",
+    )
+    failed = lifecycle.run(output)
+    assert failed["state"] == "failed" and failed["can_retry"] is False
+    assert lifecycle.blobs.uploads == 0
+
+
+@pytest.mark.parametrize("failure", ["storage", "held"])
+def test_a_storage_fault_reading_a_merged_documents_file_stays_retryable(lifecycle, failure):
+    import hashlib
+
+    from azure.core.exceptions import ServiceRequestError
+    from content_screening.contracts import DocumentHeldError
+
+    files = {"report-a": _merged_pdf_pages(2), "report-b": _merged_pdf_pages(1)}
+    assembly = _retain_document_merge(lifecycle, files)
+    described = lifecycle.results.service.open_result(assembly).read_value()
+    outage = {"active": True}
+
+    def read(snapshot):
+        if snapshot["document_id"] != "report-b" or not outage["active"]:
+            return files[snapshot["document_id"]]
+        if failure == "held":
+            raise DocumentHeldError()
+        # The screening-aware reader reports a failed download as a hold caused by the storage error.
+        try:
+            raise ServiceRequestError("The storage service didn't answer.")
+        except ServiceRequestError as cause:
+            raise DocumentHeldError() from cause
+
+    lifecycle.document_bytes_reader = read
+    lifecycle.restart()
+    output = lifecycle.prepare(
+        "pdf", step_id="merged_pdf", reference=assembly, profile="assembled_document_v1", file_name="merged.pdf",
+    )
+    state = lifecycle.run(output)
+    assert lifecycle.blobs.uploads == 0
+    if failure == "held":
+        assert state["state"] == "failed" and state["can_retry"] is False
+        assert state["error_code"] == "output_screening_hold"
+        return
+    assert state["state"] == "retry_scheduled" and state["error_code"] == "output_storage_unavailable"
+    outage["active"] = False
+    lifecycle.advance_due(output)
+    completed = lifecycle.run(output)
+    assert completed["state"] == "completed"
+    assert hashlib.sha256(lifecycle.download(completed)).hexdigest() == described["output"]["content_sha256"]
 
 
 _IMPORT_PROBE = r'''

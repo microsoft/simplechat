@@ -1,13 +1,14 @@
 # functions_document_merge.py
 """Ordered assembly of several PDF, Word, PowerPoint or spreadsheet files into one file.
 
-Version: 0.261.223
+Version: 0.261.224
 
 The engine is pure: it receives already-authorized byte loaders, never resolves
 documents, settings, storage or routes, and performs no model work. Each assembler reads
-one source at a time, checks a package's size before parsing it, and writes the output to
-a bounded spooled file whose size is checked before it is returned. The same files and
-options always produce the same bytes, so a replayed merge reuses its file.
+one source at a time, checks a package's size and refuses XML parts that declare a document
+type or aren't UTF-8 or UTF-16 before parsing it, and writes the output to a bounded spooled
+file whose size is checked before it is returned. The same files and options always produce
+the same bytes, so a replayed merge reuses its file.
 """
 
 from dataclasses import dataclass, field
@@ -16,6 +17,8 @@ import os
 import tempfile
 from typing import Callable, Optional, Sequence, Tuple
 import zipfile
+
+from functions_ooxml_package_guard import UnreadablePackageError, first_unsafe_xml_part
 
 
 DOCUMENT_MERGE_REPORT_VERSION = "document-merge-report-v1"
@@ -372,8 +375,11 @@ def selected_indices(part, total, unit):
     return indices
 
 
-def guard_ooxml_package(content, part, limits, label):
-    """Refuse encrypted, damaged or oversized Office Open XML packages before parsing."""
+def guard_ooxml_package(content, part, limits, label, *, check=None):
+    """Refuse encrypted, damaged, oversized or unsafe Office Open XML packages before parsing.
+
+    ``check()`` runs between parts; its errors, such as a cancellation, pass through unchanged.
+    """
     if content[:8] == _OLE_MAGIC:
         raise DocumentMergeError(
             "encrypted_document",
@@ -382,14 +388,24 @@ def guard_ooxml_package(content, part, limits, label):
     if content[:4] != _ZIP_MAGIC:
         raise DocumentMergeError("unreadable_document", f"{part.display_name()} isn't a valid {label}.")
     try:
-        with zipfile.ZipFile(io.BytesIO(content)) as archive:
-            entries = archive.infolist()
+        archive = zipfile.ZipFile(io.BytesIO(content))
     except zipfile.BadZipFile as exc:
         raise DocumentMergeError("unreadable_document", f"{part.display_name()} isn't a valid {label}.") from exc
-    if len(entries) > limits.max_package_entries:
-        raise DocumentMergeError("source_too_large", f"{part.display_name()} has too many internal parts to merge.")
-    if sum(entry.file_size for entry in entries) > limits.max_package_uncompressed_bytes:
-        raise DocumentMergeError("source_too_large", f"{part.display_name()} is too large to merge once uncompressed.")
+    with archive:
+        entries = archive.infolist()
+        if len(entries) > limits.max_package_entries:
+            raise DocumentMergeError("source_too_large", f"{part.display_name()} has too many internal parts to merge.")
+        if sum(entry.file_size for entry in entries) > limits.max_package_uncompressed_bytes:
+            raise DocumentMergeError("source_too_large", f"{part.display_name()} is too large to merge once uncompressed.")
+        try:
+            unsafe = first_unsafe_xml_part(archive, entries, check=check)
+        except UnreadablePackageError as exc:
+            raise DocumentMergeError("unreadable_document", f"{part.display_name()} isn't a valid {label}.") from exc
+    if unsafe is not None:
+        raise DocumentMergeError(
+            "unreadable_document",
+            f"{part.display_name()} isn't a valid {label}; it has XML that Office files can't contain.",
+        )
     names = {entry.filename for entry in entries}
     return names
 

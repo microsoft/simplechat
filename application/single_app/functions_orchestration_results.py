@@ -746,6 +746,14 @@ class OrchestrationResultReader:
         self.recheck()
         return tuple(ResultRef.from_dict(item) for item in self._manifest["lineage"]["upstream"])
 
+    def lineage_sources(self):
+        """The workspace documents this result was prepared from, after current access checks.
+
+        Only these may be read again for it; a merged file is assembled from exactly them.
+        """
+        self.recheck()
+        return deepcopy(self._manifest["lineage"]["sources"])
+
     def _collection(self):
         output = self._manifest["outputs"][self.reference.output_name]
         return _collection_manifest(self.reference.producer, self.reference.output_name, output["storage"])

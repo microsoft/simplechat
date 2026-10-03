@@ -1,14 +1,15 @@
 # functions_document_merge_workbook.py
 """Workbook assembly for V2 file merge: each source file becomes its own sheet.
 
-Version: 0.261.221
+Version: 0.261.224
 
 Excel sources keep their cell types — numbers stay numbers and dates stay dates with
 their number format — while CSV sources are copied as text so codes keep their leading
 zeros. Formulas contribute their last calculated values. Strings that look like formulas
 are written as text and never evaluated. Control characters, which Excel can't store, are
 removed and counted. Styles, column widths, merged cells, charts and images are not
-copied. The workbook carries fixed dates, so the same files give the same bytes.
+copied. The workbook carries fixed dates, so the same files give the same bytes. Excel
+packages are checked for unsafe XML, with cancellation checks, before they are opened.
 """
 
 from datetime import date, datetime, time, timedelta
@@ -86,7 +87,7 @@ def _copy_part(output, context, index, part, content, used_names, totals, every_
     elif extension == ".xls":
         sheets = _xls_sheets(part, content, context)
     else:
-        guard_ooxml_package(content, part, context.limits, "Excel workbook")
+        guard_ooxml_package(content, part, context.limits, "Excel workbook", check=context.check_cancel)
         sheets = _xlsx_sheets(part, content, context)
     entry = context.part_entry(index)
     entry["sheets"] = 0

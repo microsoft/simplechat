@@ -1,15 +1,17 @@
 # test_v2_orchestration_merge_arguments.py
 """
-Real-component browser tests for how the plan review states spreadsheet merge settings.
-Version: 0.261.219
+Real-component browser tests for how the plan review states merge settings.
+Version: 0.261.224
 Implemented in: 0.261.219
+Document merge settings added in: 0.261.224
 Refs: microsoft/simplechat#1619
 
 The production OrchestrationPlanCard and OrchestrationRunView run in Chromium with the
 production CSS. Only HTTP boundaries are stubbed. The plan mirrors the server shape for a
-tabular_inspect step, a compose step preparing a tabular_column_mapping_v1 mapping, and a
+tabular_inspect step, a compose step preparing a tabular_column_mapping_v1 mapping, a
 tabular_merge step whose union, alias, exclusion, duplicate and sort settings must read in
-words, without raw argument names, with column names kept as plain text.
+words, and a document_merge step that must say what it creates and which settings it
+changes, without raw argument names, with column names kept as plain text.
 
 Build CSS with the existing V2 build, keeping outputs in UI test artifacts:
 npm --prefix .\\application\\v2_ui run build -- --outDir ..\\..\\ui_tests\\artifacts\\orchestration-plan-editor
@@ -50,8 +52,9 @@ HOSTILE_COLUMN = '<img src=x onerror="window.__hostile = 1"> cust id'
 RAW_KEYS = [
     "schema_policy", "column_aliases", "on_incompatible", "dedupe", "dedupe_columns", "dedupe_keep",
     "sort_by", "doc_scope", "include_source_column", "source_column_name", "header_row",
-    "sample_rows", "document_ids",
+    "sample_rows", "document_ids", "kind", "page_breaks", "source_headings", "bookmarks",
 ]
+STEP_IDS = ("inspect", "merge", "plain_merge", "merge_documents")
 
 
 def plan_step(step_id, capability_id, role, arguments, *, inputs=None, outputs=None, title=None):
@@ -84,6 +87,11 @@ SERVER_PLAN = {
             "include_source_column": True, "source_column_name": "Source File",
         }, outputs=[{"name": "records", "kind": "records-v1"}, {"name": "report", "kind": "structured-v1"}],
             title="Merge matching spreadsheets"),
+        plan_step("merge_documents", "document_merge", "reason", {
+            "document_ids": ["doc-letter-a", "doc-letter-b"], "doc_scope": "all", "kind": "docx",
+            "formatting": "use_first", "source_headings": True,
+        }, outputs=[{"name": "assembly", "kind": "structured-v1"}, {"name": "report", "kind": "structured-v1"}],
+            title="Merge documents"),
     ],
     "plan_id": "plan_merge_arguments",
     "run_id": "run_merge_arguments",
@@ -104,6 +112,8 @@ SERVER_PLAN = {
         "documents": [
             {"document_id": "doc-east", "title": "east.csv", "scope": "personal"},
             {"document_id": "doc-west", "title": "west.xlsx", "scope": "personal"},
+            {"document_id": "doc-letter-a", "title": "Letter A.docx", "scope": "personal"},
+            {"document_id": "doc-letter-b", "title": "Letter B.docx", "scope": "personal"},
         ],
         "image_reference_documents": [], "image_reference_messages": [], "web": False,
         "required_capabilities": [], "actions": [], "agent": None,
@@ -218,7 +228,7 @@ def mount_plan(page, api, plan, *, theme="light"):
     )
     expect(page.locator("#mount-a").get_by_role("button", name="Approve and run the plan")).to_be_visible()
     review = page.locator("#mount-b")
-    for step_id in ("inspect", "merge", "plain_merge"):
+    for step_id in STEP_IDS:
         expect(review.locator(f'li[data-step-id="{step_id}"]')).to_be_visible()
     return review
 
@@ -265,7 +275,11 @@ def test_merge_settings_read_in_words(merge_ui, theme, width):
     assert terms(inspect) == ["sheets", "header row", "sample rows"]
     assert definitions(inspect) == ["Every visible sheet", "Row 2", "5"]
 
-    for step_id in ("inspect", "merge", "plain_merge"):
+    documents = review.locator('li[data-step-id="merge_documents"]')
+    assert terms(documents) == ["creates", "formatting", "file name headings"]
+    assert definitions(documents) == ["One Word document", "The first document\u2019s styles", "On"]
+
+    for step_id in STEP_IDS:
         shown = terms(review.locator(f'li[data-step-id="{step_id}"]'))
         for key in RAW_KEYS:
             assert key not in shown, (step_id, key, shown)

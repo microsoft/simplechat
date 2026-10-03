@@ -112,8 +112,10 @@ See [Create a workflow](../../guides/create-a-workflow.md#merge-files-in-a-workf
 
 - The first deck decides the slide size.
 - Fonts embedded in later decks and slide comments are not carried over.
-- Links, linked media, embedded objects and actions that start a program are copied as they
-  are. PowerPoint opens downloaded files in Protected View and asks before it runs a program
-  from a link; Phase 7 reviews active content in Word and PowerPoint merges.
+- Links, linked media and embedded objects are copied as they are. PowerPoint opens
+  downloaded files in Protected View. Since **0.261.224**, actions that start a program or
+  run a macro are removed from every deck
+  ([Phase 7](V2_FILE_MERGE_PHASE_7_CHAT_DOCUMENTS.md#hardening)).
 - Slide ranges are supported by the engine but not yet offered in the workflow editor.
-- Merging decks directly in a chat turn, without a workflow, arrives in Phase 7.
+- In this phase PowerPoint merges ran only in workflows. Since **0.261.224** a chat turn
+  merges decks directly ([Phase 7](V2_FILE_MERGE_PHASE_7_CHAT_DOCUMENTS.md)).

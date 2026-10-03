@@ -2,8 +2,9 @@
 # test_workflow_merge_task.py
 """
 Functional test for workflow Merge tasks.
-Version: 0.261.223
+Version: 0.261.224
 Implemented in: 0.261.220
+Scale and formula checks added in: 0.261.224
 Refs: microsoft/simplechat#1619
 
 This test ensures that a workflow task can merge many CSV and Excel files into one CSV or
@@ -13,8 +14,10 @@ owner chose, or found when the run starts (every matching file, recently added f
 files a File Sync run changed) and merged in file-name order. Every file is authorized again
 and read through the access boundary; the merged file is rendered by the shared export
 framework and attached to the run's conversation once; cancellation stops the merge before
-anything is published; and failures name what the owner can fix. A chat-proposed blueprint
-builds the same merge action. No model, Azure service or network is used.
+anything is published; and failures name what the owner can fix. One hundred files of a
+thousand rows merge in one run, and merged CSV and Excel files never carry a live formula.
+A chat-proposed blueprint builds the same merge action. No model, Azure service or network
+is used.
 """
 
 import copy
@@ -381,6 +384,65 @@ def test_an_excel_merge_holds_the_same_rows_and_reads_excel_files(app):
     # Only CSV results are offered to later tasks as tabular inputs.
     assert result["generated_tabular_outputs"] == []
     assert result["merge_summary"]["file_name"] == "Regional sales.xlsx"
+
+
+def test_one_hundred_files_merge_in_one_workflow_run(app):
+    import time
+
+    files = {
+        f"file-{index:03d}": (
+            f"region-{index:03d}.csv",
+            ("Region,Amount,Rep\r\n" + "".join(
+                f"R{index},{row},Rep {row % 7}\r\n" for row in range(1000)
+            )).encode("utf-8"),
+        )
+        for index in range(100)
+    }
+    merge_world = MergeWorld(files)
+    started = time.monotonic()
+    result = merge_world.run(app, normalize(app, merge_action(document_ids=list(files))))
+    elapsed = time.monotonic() - started
+
+    [published] = merge_world.published
+    assert merge_world.reads == list(files)
+    assert published["row_count"] == 100_000
+    rows = csv_rows(published["content"])
+    assert len(rows) == 100_001
+    assert rows[0] == ["Source File", "Region", "Amount", "Rep"]
+    assert rows[1] == ["region-000.csv", "R0", "0", "Rep 0"]
+    assert rows[-1] == ["region-099.csv", "R99", "999", "Rep 5"]
+    assert result["merge_summary"]["files"] == 100 and result["merge_summary"]["rows"] == 100_000
+    # A generous bound that still catches work that grows faster than the rows do.
+    assert elapsed < 120, elapsed
+
+
+@pytest.mark.parametrize("output_format", ["csv", "xlsx"])
+def test_merged_files_never_carry_live_formulas(app, output_format):
+    from openpyxl import load_workbook
+
+    files = MergeWorld({
+        "first": ("first.csv", b"Name,Value\r\nA,=1+1\r\nB,+cmd|' /C calc'!A0\r\nC,-2\r\n"),
+        "second": ("second.csv", b"Name,Value\r\nD,@SUM(A1:A2)\r\nE,\"\t=HYPERLINK(\"\"http://x\"\")\"\r\nF,-10.5\r\n"),
+    })
+    files.run(app, normalize(app, merge_action(
+        document_ids=["first", "second"], output_format=output_format,
+        merge_options={"include_source_column": False},
+    )))
+    [published] = files.published
+    if output_format == "csv":
+        values = [row[1] for row in csv_rows(published["content"])[1:]]
+        # Formula-like text is prefixed so spreadsheet apps show it as text; signed numbers stay numbers.
+        assert values == [
+            "'=1+1", "'+cmd|' /C calc'!A0", "-2", "'@SUM(A1:A2)", "'\t=HYPERLINK(\"http://x\")", "-10.5",
+        ]
+    else:
+        sheet = load_workbook(io.BytesIO(published["content"])).active
+        cells = [row[1] for row in sheet.iter_rows(min_row=2)]
+        assert [cell.value for cell in cells] == [
+            "=1+1", "+cmd|' /C calc'!A0", "-2", "@SUM(A1:A2)", "\t=HYPERLINK(\"http://x\")", "-10.5",
+        ]
+        # Every value is stored as text; none is a formula Excel would calculate.
+        assert {cell.data_type for cell in cells} == {"s"}
 
 
 def test_files_found_at_run_time_skip_what_cannot_be_merged_and_say_so(app):

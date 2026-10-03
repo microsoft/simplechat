@@ -1,11 +1,12 @@
 # test_orchestration_dependency_allowlist.py
 """Functional tests for authoritative capability allowlists and admin metadata.
 
-Version: 0.261.219
+Version: 0.261.224
 Implemented in: 0.261.127
 Single orchestration contract updated in: 0.261.139
 Workflow proposal capability described in: 0.261.207
 Spreadsheet inspection and merge capabilities listed in: 0.261.219
+Document merge capability listed in: 0.261.224
 A capability list saved before Gather / Reason / Render became the only contract keeps
 its answering ability, because a stored `respond` reads as `compose`, and never silently
 opts into file publication. The stored list itself is never rewritten.
@@ -209,7 +210,7 @@ def test_registry_metadata_expresses_roles_without_phases_or_a_terminal_step(run
         'contract_version': 2,
         'capability_ids': [
             'document_search', 'document_analyze', 'document_compare', 'tabular_analyze',
-            'tabular_inspect', 'tabular_merge',
+            'tabular_inspect', 'tabular_merge', 'document_merge',
             'web_search', 'url_fetch', 'deep_research', 'action_invoke', 'agent_invoke',
             'compose', 'generate_image', 'workflow_propose', 'workflow_run', 'workflow_results', 'render_file',
         ],

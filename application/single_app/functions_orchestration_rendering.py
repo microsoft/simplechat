@@ -35,7 +35,7 @@ from functions_generated_export_contracts import (
     GeneratedFileExportRequest,
     GeneratedFileExportStream,
 )
-from functions_generated_export_registry import resolve_generated_file_export_format
+from functions_generated_export_registry import ASSEMBLED_DOCUMENT_PROFILE, resolve_generated_file_export_format
 from functions_generated_file_exports import build_generated_file_export
 from functions_orchestration_artifacts import (
     OrchestrationArtifactTransport,
@@ -181,6 +181,68 @@ def _source_visibility_code(error):
     return None
 
 
+def _raise_source_read_failure(exc):
+    """Raise the output failure a failed source read means; return when ``exc`` should be raised as is.
+
+    Call it from an ``except`` block and re-raise when it returns. The checks run in the order
+    a source read's failures must be told apart, so infrastructure faults stay retryable.
+    """
+    if isinstance(exc, ScreeningError):
+        raise_output_read_infrastructure_failure(exc)
+        return
+    if isinstance(exc, (OutputError, OutputUnavailableError, OutputStorageError)):
+        authority = external_authority_failure(exc)
+        if authority is not None:
+            raise authority[0]
+        if output_storage_failure(exc) is not None:
+            raise_output_read_infrastructure_failure(exc)
+        return
+    if isinstance(exc, ResultUnavailableError):
+        authority = external_authority_failure(exc)
+        if authority is not None:
+            raise authority[0]
+        if exc.code in _SOURCE_CONFIGURATION_CODES:
+            raise OutputError("output_source_configuration_invalid") from exc
+        raise OutputUnavailableError(_source_visibility_code(exc)) from exc
+    if isinstance(exc, PermissionError):
+        raise OutputUnavailableError(_source_visibility_code(exc)) from exc
+    if isinstance(exc, LookupError):
+        authority = external_authority_failure(exc)
+        if authority is not None:
+            raise authority[0]
+        if type(exc) is not LookupError:
+            return
+        raise OutputUnavailableError("output_source_unavailable") from exc
+    if isinstance(exc, (ResourceNotFoundError, CosmosResourceNotFoundError)):
+        authority = external_authority_failure(exc)
+        if authority is not None:
+            raise authority[0]
+        raise OutputUnavailableError("output_source_unavailable") from exc
+    if isinstance(exc, AnalysisWorkUnitConflictError):
+        code = _source_visibility_code(exc)
+        if code is None:
+            return
+        raise OutputUnavailableError(code) from exc
+    if isinstance(exc, (AzureError, TimeoutError, ConnectionError)):
+        authority = external_authority_failure(exc)
+        if authority is not None:
+            raise authority[0]
+        raise OutputStorageError() from exc
+    if isinstance(exc, (ResultContractError, WorkflowResultIntegrityError)):
+        authority = external_authority_failure(exc)
+        if authority is not None:
+            raise authority[0]
+        if output_storage_failure(exc) is not None:
+            raise_output_read_infrastructure_failure(exc)
+        raise OutputError("output_invalid_result") from exc
+    if isinstance(exc, (RuntimeError, ValueError, TypeError, AttributeError, OSError)):
+        authority = external_authority_failure(exc)
+        if authority is not None:
+            raise authority[0]
+        if output_storage_failure(exc) is not None:
+            raise_output_read_infrastructure_failure(exc)
+
+
 def output_failure(exc):
     """Classify once without persisting or exposing provider exception messages."""
     if isinstance(exc, OutputStepTimeLimitError):
@@ -207,6 +269,9 @@ def output_failure(exc):
     if isinstance(exc, ResultContractError):
         return "output_invalid_result", False
     if isinstance(exc, GeneratedFileExportError):
+        if exc.code == "source_changed":
+            # A merged file assembled again from its originals no longer matches the checked bytes.
+            return "output_source_changed", False
         code = exc.code if exc.code in _VALIDATION_CODES | _TRANSIENT_RENDER_CODES else "render_validation_failed"
         return code, bool(exc.retryable is True and code in _TRANSIENT_RENDER_CODES)
     if isinstance(exc, (TimeoutError, ConnectionError)):
@@ -484,8 +549,8 @@ class OrchestrationRenderingService:
     def __init__(
         self, store, results, transport, *, authorize_execution,
         max_output_bytes, limits=None, office_limits=None, image_resolver=None,
-        image_asset_reader=None, renderer=build_generated_file_export, jitter=random.random,
-        full_check_interval=RENDER_FULL_CHECK_INTERVAL_SECONDS, monotonic=time.monotonic,
+        image_asset_reader=None, document_bytes_reader=None, renderer=build_generated_file_export,
+        jitter=random.random, full_check_interval=RENDER_FULL_CHECK_INTERVAL_SECONDS, monotonic=time.monotonic,
     ):
         if (
             not isinstance(store, OrchestrationOutputStore)
@@ -496,6 +561,7 @@ class OrchestrationRenderingService:
             or results.access.user_id != store.user_id
             or results.access.conversation_id != store.conversation_id
             or (image_asset_reader is not None and not callable(image_asset_reader))
+            or (document_bytes_reader is not None and not callable(document_bytes_reader))
         ):
             raise OutputError("output_service_required")
         if type(max_output_bytes) is not int or not 1 <= max_output_bytes <= MAX_OUTPUT_BYTES:
@@ -519,6 +585,9 @@ class OrchestrationRenderingService:
         # image descriptor; the owner supplies it. The service decides which images a file
         # may contain and verifies every byte it is given.
         self.image_asset_reader = image_asset_reader
+        # ``document_bytes_reader(source)`` returns one workspace document's current bytes with
+        # the actor's access; the owner supplies it. Only a merged file's own sources are read.
+        self.document_bytes_reader = document_bytes_reader
         self.renderer = renderer
         self.jitter = jitter
         self.full_check_interval = full_check_interval
@@ -581,6 +650,48 @@ class OrchestrationRenderingService:
 
         return resolve
 
+    def _document_reader_for(self, record):
+        """Read only the original files a merged file was assembled from, as they are now.
+
+        The merge result's own lineage names them. Each read re-authorizes the result and its
+        sources, and the renderer delivers the file only if it assembles to the checked bytes.
+        """
+        if self.document_bytes_reader is None or record["render_spec"].get("profile") != ASSEMBLED_DOCUMENT_PROFILE:
+            return None
+        source = ResultRef.from_dict(record["source_ref"])
+        cache = {}
+
+        def documents():
+            if "documents" not in cache:
+                try:
+                    reader = self.results.open_result(source, require_current_sources=True)
+                    lineage = reader.lineage_sources()
+                except Exception as exc:
+                    _raise_source_read_failure(exc)
+                    raise
+                by_id = {item.get("document_id"): item for item in lineage if type(item) is dict}
+                if len(by_id) != len(lineage):
+                    raise OutputUnavailableError("output_source_unavailable")
+                cache.update(reader=reader, documents=by_id)
+            return cache["documents"]
+
+        def read(document_id):
+            snapshot = documents().get(document_id) if type(document_id) is str else None
+            if snapshot is None:
+                raise OutputUnavailableError("output_source_unavailable")
+            try:
+                content = self.document_bytes_reader(deepcopy(snapshot))
+                cache["reader"].recheck()
+            except Exception as exc:
+                # A storage fault while reading a file stays retryable; a revoked or held file doesn't.
+                _raise_source_read_failure(exc)
+                raise
+            if type(content) is not bytes:
+                raise OutputUnavailableError("output_source_unavailable")
+            return content
+
+        return read
+
     @staticmethod
     def _read_metadata(read, *args, **kwargs):
         """A metadata I/O permission fault is not a source-access decision."""
@@ -603,60 +714,8 @@ class OrchestrationRenderingService:
             return self.results.open_result(
                 reference, require_current_sources=record["render_spec"]["require_current_sources"],
             )
-        except ScreeningError as exc:
-            raise_output_read_infrastructure_failure(exc)
-            raise
-        except (OutputError, OutputUnavailableError, OutputStorageError) as exc:
-            authority = external_authority_failure(exc)
-            if authority is not None:
-                raise authority[0]
-            if output_storage_failure(exc) is not None:
-                raise_output_read_infrastructure_failure(exc)
-            raise
-        except ResultUnavailableError as exc:
-            authority = external_authority_failure(exc)
-            if authority is not None:
-                raise authority[0]
-            if exc.code in _SOURCE_CONFIGURATION_CODES:
-                raise OutputError("output_source_configuration_invalid") from exc
-            raise OutputUnavailableError(_source_visibility_code(exc)) from exc
-        except PermissionError as exc:
-            raise OutputUnavailableError(_source_visibility_code(exc)) from exc
-        except LookupError as exc:
-            authority = external_authority_failure(exc)
-            if authority is not None:
-                raise authority[0]
-            if type(exc) is not LookupError:
-                raise
-            raise OutputUnavailableError("output_source_unavailable") from exc
-        except (ResourceNotFoundError, CosmosResourceNotFoundError) as exc:
-            authority = external_authority_failure(exc)
-            if authority is not None:
-                raise authority[0]
-            raise OutputUnavailableError("output_source_unavailable") from exc
-        except AnalysisWorkUnitConflictError as exc:
-            code = _source_visibility_code(exc)
-            if code is None:
-                raise
-            raise OutputUnavailableError(code) from exc
-        except (AzureError, TimeoutError, ConnectionError) as exc:
-            authority = external_authority_failure(exc)
-            if authority is not None:
-                raise authority[0]
-            raise OutputStorageError() from exc
-        except (ResultContractError, WorkflowResultIntegrityError) as exc:
-            authority = external_authority_failure(exc)
-            if authority is not None:
-                raise authority[0]
-            if output_storage_failure(exc) is not None:
-                raise_output_read_infrastructure_failure(exc)
-            raise OutputError("output_invalid_result") from exc
-        except (RuntimeError, ValueError, TypeError, AttributeError, OSError) as exc:
-            authority = external_authority_failure(exc)
-            if authority is not None:
-                raise authority[0]
-            if output_storage_failure(exc) is not None:
-                raise_output_read_infrastructure_failure(exc)
+        except Exception as exc:
+            _raise_source_read_failure(exc)
             raise
 
     def ensure_output(
@@ -998,6 +1057,7 @@ class OrchestrationRenderingService:
                     max_output_bytes=min(self.max_output_bytes, record["render_spec"]["max_output_bytes"]),
                     check=check, limits=bounded_limits, office_limits=self.office_limits,
                     image_resolver=self._image_resolver_for(record, entry),
+                    **({"document_reader": reader} if (reader := self._document_reader_for(record)) else {}),
                 )
             with ClosingExportResource(rendered):
                 with attempt.phase("verify"):

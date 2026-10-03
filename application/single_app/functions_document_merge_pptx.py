@@ -1,7 +1,7 @@
 # functions_document_merge_pptx.py
 """PowerPoint assembly for V2 file merge: slides appended in order into one deck.
 
-Version: 0.261.223
+Version: 0.261.224
 
 The merge works on the Office Open XML package itself, so every slide is copied with
 everything it relates to — pictures, media, charts and their embedded workbooks,
@@ -10,8 +10,10 @@ deck's slide layouts, masters and themes along (identical ones are reused), so s
 keep their original look. ``use_first`` places each slide on the first deck's matching
 layout, by name and then by type, so every slide takes the first deck's theme. Each
 source deck can become its own section. The first deck decides the slide size. Entries
-and section IDs are fixed, so the same decks always give the same bytes. Hyperlinks are
-copied as they are; content linked from other files or the web stays linked and is reported.
+and section IDs are fixed, so the same decks always give the same bytes. Click and hover
+actions that start a program or run a macro are removed from every deck; hyperlinks are
+copied as they are, and content linked from other files or the web stays linked and is
+reported.
 """
 
 import hashlib
@@ -30,6 +32,7 @@ from functions_document_merge import (
     new_output_spool,
     selected_indices,
 )
+from functions_ooxml_package_guard import content_type_of, is_office_xml_part
 
 
 _NS = {
@@ -58,6 +61,10 @@ _PRESENTATION_CHILD_ORDER = (
     "sldMasterIdLst", "notesMasterIdLst", "handoutMasterIdLst", "sldIdLst", "sldSz", "notesSz",
 )
 _NUMBERED_NAME = re.compile(r"^(?P<stem>.*?)(?P<number>\d*)(?P<extension>\.[^./]+)$")
+# Slide actions that start another program or run a macro instead of following a link.
+_PROGRAM_ACTIONS = ("ppaction://program", "ppaction://macro")
+_ACTION_TAGS = ("hlinkClick", "hlinkHover", "hlinkMouseOver")
+_RELATIONSHIPS_TYPE = "application/vnd.openxmlformats-package.relationships+xml"
 
 
 def _parser():
@@ -96,8 +103,8 @@ class _Relationship:
 class _Package:
     """An Office Open XML package as part names, bytes, relationships and content types."""
 
-    def __init__(self, content, part, limits):
-        guard_ooxml_package(content, part, limits, "PowerPoint presentation")
+    def __init__(self, content, part, limits, check=None):
+        guard_ooxml_package(content, part, limits, "PowerPoint presentation", check=check)
         try:
             with zipfile.ZipFile(io.BytesIO(content)) as archive:
                 self.files = {info.filename: archive.read(info) for info in archive.infolist() if not info.is_dir()}
@@ -277,9 +284,12 @@ class _Destination:
     def next_master_or_layout_id(self):
         values = [_FIRST_MASTER_OR_LAYOUT_ID - 1]
         values.extend(int(element.get("id")) for element in self.presentation.iter(_q("p", "sldMasterId")))
-        for name, data in self.files.items():
-            if name.endswith(".xml") and b"sldLayoutIdLst" in data:
-                values.extend(int(element.get("id")) for element in _parse(data).iter(_q("p", "sldLayoutId")))
+        # Masters are found through the presentation, whatever their names or encodings.
+        for rel in self.presentation_rels:
+            if rel.reltype == RT_SLIDE_MASTER and not rel.external and rel.target in self.files:
+                values.extend(
+                    int(element.get("id")) for element in _parse(self.files[rel.target]).iter(_q("p", "sldLayoutId"))
+                )
         return max(values) + 1
 
     def next_slide_id(self):
@@ -515,6 +525,20 @@ def assemble_pptx(context):
     spool = new_output_spool()
     try:
         _collect_garbage(state.destination)
+        try:
+            stripped = _strip_program_actions(state.destination)
+        except Exception as exc:
+            if not context.blames_file(exc):
+                raise
+            # A deck that can't be checked for actions that start programs is not delivered.
+            raise DocumentMergeError(
+                "merge_failed", "The merged PowerPoint deck couldn't be checked for actions that start programs.",
+            ) from exc
+        if stripped:
+            context.warn(
+                "active_content_removed",
+                "Click and hover actions that start programs or run macros were removed; other links were kept.",
+            )
         if context.options.sections:
             _write_sections(state.destination, state.sections)
         state.destination.write(spool)
@@ -538,7 +562,7 @@ def _add_deck(context, state, index, part, content):
     """Append one deck's selected slides; the first deck becomes the destination."""
     from lxml import etree
 
-    package = _Package(content, part, context.limits)
+    package = _Package(content, part, context.limits, check=context.check_cancel)
     slide_names = package.slide_names()
     if not slide_names:
         raise DocumentMergeError("empty_source", f"{part.display_name()} has no slides.")
@@ -655,21 +679,72 @@ def _reachable_parts(destination):
     return seen
 
 
+def _is_relationships_part(name):
+    """Relationship parts are the .rels files inside a _rels folder; other names are ordinary parts."""
+    return name.endswith(".rels") and posixpath.basename(posixpath.dirname(name)) == "_rels"
+
+
 def _collect_garbage(destination):
     """Remove parts nothing refers to any more, such as the first deck's unselected slides."""
     reachable = _reachable_parts(destination)
     for name in list(destination.files):
-        if name == "[Content_Types].xml" or name.endswith(".rels"):
+        if name == "[Content_Types].xml" or _is_relationships_part(name):
             continue
         if name not in reachable:
             del destination.files[name]
     for name in list(destination.files):
-        if not name.endswith(".rels") or name == "_rels/.rels":
+        if not _is_relationships_part(name) or name == "_rels/.rels":
             continue
         directory, file_name = posixpath.split(name)
         owner = posixpath.join(posixpath.dirname(directory), file_name[: -len(".rels")])
         if owner not in destination.files and owner != destination.presentation_name:
             del destination.files[name]
+
+
+def _strip_program_actions(destination):
+    """Remove click and hover actions that start a program or run a macro; return how many.
+
+    Every part PowerPoint reads as Office XML is checked, by its declared content type and
+    whatever its name or encoding. Relationship parts and legacy VML drawings, also known by
+    their declared type, can't carry these actions.
+    """
+    tags = tuple(_q("a", tag) for tag in _ACTION_TAGS)
+    relationship_prefix = "{" + _NS["r"] + "}"
+    overrides = {name.lower(): content_type for name, content_type in destination.overrides.items()}
+    removed = 0
+    for name in sorted(destination.files):
+        lowered = name.lower()
+        content_type = content_type_of(name, destination.defaults, overrides).strip().lower()
+        # PowerPoint reads a part by its declared type, so only the type rules a part out, never its name.
+        if (
+            lowered == "[content_types].xml" or content_type == _RELATIONSHIPS_TYPE
+            or "vmldrawing" in content_type or (not content_type and not lowered.endswith(".xml"))
+            or not is_office_xml_part(name, content_type)
+        ):
+            continue
+        root = _parse(destination.files[name])
+        dropped = set()
+        for element in list(root.iter(*tags)):
+            if (element.get("action") or "").strip().lower().startswith(_PROGRAM_ACTIONS):
+                dropped.add(element.get(_q("r", "id")))
+                element.getparent().remove(element)
+                removed += 1
+        if not dropped:
+            continue
+        destination.files[name] = _serialize(root)
+        still_used = {
+            value for element in root.iter() if isinstance(element.tag, str)
+            for key, value in element.attrib.items() if key.startswith(relationship_prefix)
+        }
+        unused = {rid for rid in dropped if rid and rid not in still_used}
+        rels_name = _Package.rels_name(name)
+        if unused and rels_name in destination.files:
+            rels = _parse(destination.files[rels_name])
+            for rel in list(rels.iter(_q("rel", "Relationship"))):
+                if rel.get("Id") in unused:
+                    rels.remove(rel)
+            destination.files[rels_name] = _serialize(rels)
+    return removed
 
 
 def _write_sections(destination, sections):

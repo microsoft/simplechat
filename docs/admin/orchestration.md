@@ -248,11 +248,23 @@ answer questions about files' structure, and before a merge whose columns may
 differ, so **Prepare content** can line up the columns as a column mapping that
 the merge checks and applies with code.
 
-Both are offered while **Enable Merge** is on under
+**Merge documents** (`document_merge`), since **0.261.224**, joins two or more
+PDFs into one PDF, Word documents into one Word document or PowerPoint decks into
+one deck, or puts CSV and Excel files on separate sheets of one workbook, which
+the plan then delivers through **Create a file**. Code copies the files in the
+order listed; no model reads or rewrites them. The merge step checks the merged
+file and keeps only a description of it, and **Create a file** assembles the same
+files again and delivers the file only if it is identical, so a file that changed
+in between is never delivered. Word documents whose fields start other programs
+are refused, and PowerPoint actions that start programs or run macros are
+removed.
+
+All three are offered while **Enable Merge** is on under
 [Document Action Capabilities]({{ '/admin/agents-actions/' | relative_url }}#document-action-capabilities-card),
 which also sets how many files and rows one chat request may merge or inspect.
-Clearing either here keeps it out of plans; a narrowed list needs **Inspect
-spreadsheets** and **Prepare content** for merges that line up columns. See
+Clearing any of them here keeps it out of plans; a narrowed list needs **Inspect
+spreadsheets** and **Prepare content** for merges that line up columns, and
+**Create a file** to deliver any merged file. See
 [Merge files in chat]({{ '/guides/merge-files/' | relative_url }}).
 
 Selecting a capability does not grant source/model access or enable another

@@ -2,6 +2,31 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.224)**
+
+#### New Features
+
+*   **Merge PDFs, Word Documents, Decks And Workbooks In Chat**
+    *   V2 chat orchestration can join whole documents in a chat turn, without a workflow: "combine these contracts into one PDF" plans a **Merge documents** step (`document_merge`) and a file to create. It joins PDFs into one PDF, Word documents into one Word document or PowerPoint decks into one deck, or puts CSV and Excel files on separate sheets of one workbook, with the same deterministic engine and options as workflow merges. No model reads or rewrites the files.
+    *   The merge step checks the merged file and retains only a description of it: the kind, options, files in order, and the file's size and SHA-256. Rendering with the new `assembled_document_v1` profile reads only that merge's own files, with current access checked again, assembles them again, and delivers the file only if it is byte-for-byte identical. A file that changed in between fails as `output_source_changed` and nothing is uploaded.
+    *   The plan card says what a document merge creates and lists only the settings that differ from the defaults. Plans must name the kind, use only that kind's settings, and render the merge in its own format. Failures use application-owned messages, including the new `document_merge_active_content`.
+    *   Merges stay governed by **Enable Merge** and the Merge chat file limit; deployments with a narrowed orchestration capability list must add **Merge documents**. The planner now proposes merge workflows only for scheduled, synced or very large merges.
+    *   (Ref: #1619, `functions_document_merge_assembly.py`, `functions_orchestration_document_merge.py`, `functions_orchestration_registry.py`, `functions_orchestration_adapters.py`, `functions_orchestration_schema.py`, `functions_orchestration_rendering.py`, `functions_generated_office_adapters.py`, `functions_generated_export_registry.py`, `orchestrationMerge.ts`, [Phase 7](features/V2_FILE_MERGE_PHASE_7_CHAT_DOCUMENTS.md), [Merge files](../guides/merge-files.md#merge-pdfs-word-documents-decks-or-workbooks))
+
+#### Bug Fixes
+
+*   **Hostile Files Can't Make A Merged File Run Programs Or Read Server Files**
+    *   Word documents with fields that start other programs (DDE or DDEAUTO) are refused, however the field code is split, nested, cased or encoded, in the body, headers, footers or notes. The first document's link to its template is removed so Word never fetches it, and other linked content is reported.
+    *   PowerPoint click and hover actions that start a program or run a macro are removed from every merged deck, including the first, in every part declared as Office XML whatever its name or encoding; web links are kept.
+    *   Word, PowerPoint and Excel packages with an XML part that declares a document type, which Office Open XML forbids and which is how a part asks a parser to read other files, or that is written or declared in an encoding other than UTF-8 or UTF-16, are refused before any library parses them, in document merges and in spreadsheet merges of `.xlsx` and `.xlsm` files. Parts are chosen by name and by declared content type, and only each part's prolog is read, within a fixed budget per package.
+    *   A storage fault while a merged file's originals are read again for delivery now stays retryable instead of reading as a screening hold.
+    *   Verified that 100 files of 1,000 rows merge in one workflow run, that merged CSV and Excel files never carry a live formula, and that the merge modules import without loading any Office or PDF library.
+    *   (Ref: #1619, `functions_document_merge_docx.py`, `functions_document_merge_pptx.py`, `functions_ooxml_package_guard.py`, `functions_document_merge.py`, `functions_tabular_merge.py`, `functions_orchestration_rendering.py`, [Phase 7 hardening](features/V2_FILE_MERGE_PHASE_7_CHAT_DOCUMENTS.md#hardening))
+
+*   **Word Merges With Lists Give The Same File Every Time**
+    *   docxcompose gave every list it copied from a later document a random ID, so a Word merge whose later documents had ordinary bulleted or numbered lists produced different bytes on each run. A retried workflow Word merge could attach a second copy, and a chat merge of such documents could never be delivered. The ID is now derived and unique within the document, so each document's list still restarts and the same documents always give the same file.
+    *   (Ref: #1619, `functions_document_merge_docx.py`, [Phase 5](features/V2_FILE_MERGE_PHASE_5_WORD.md))
+
 ### **(v0.261.223)**
 
 #### New Features

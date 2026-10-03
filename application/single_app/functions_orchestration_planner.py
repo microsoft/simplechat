@@ -298,8 +298,8 @@ Its arguments are {"blueprint":{...},"task_actions":[[...],...]}. The blueprint 
   "column_aliases" written as [{"column","aliases":[...]}]; workbook takes "sheets" and "sheet";
   pdf takes "bookmarks"; docx takes "formatting", "page_breaks" and "source_headings"; pptx takes
   "formatting" and "sections". Propose one when the user wants files merged on a schedule or on
-  every sync, or more files than one chat merge allows, or PDFs, workbooks, Word documents or
-  PowerPoint decks merged; it needs no task_actions.
+  every sync, or more files than one chat merge allows; a one-time merge of a few files runs in
+  chat with tabular_merge or document_merge. It needs no task_actions.
 Refer to agents, documents and File Sync sources only by their workflow_planning.catalog handles,
 and never write a record id, model or endpoint into a blueprint. "task_actions" lists, for each task
 in order, the action kinds it needs from the capability's input schema, or [] when it needs none.

@@ -1,11 +1,12 @@
 # V2 File Merge
 
-Version: **0.261.223**
+Version: **0.261.224**
 
 Implemented in version: **0.261.218** (Phase 1, same-structure spreadsheets),
 **0.261.219** (Phase 2, reconciling different structures), **0.261.220** (Phase 3,
 workflow merges), **0.261.221** (Phase 4, PDF and workbook merges), **0.261.222**
-(Phase 5, Word merges) and **0.261.223** (Phase 6, PowerPoint merges), recorded in
+(Phase 5, Word merges), **0.261.223** (Phase 6, PowerPoint merges) and **0.261.224**
+(Phase 7, document merges in chat and hardening), recorded in
 `application/single_app/config.py`.
 
 GitHub issue: [#1619](https://github.com/microsoft/simplechat/issues/1619)
@@ -32,11 +33,12 @@ request and the easiest to verify exactly; documents and decks follow.
 | 4 | Document merge engine; PDF merges (a bookmark per file) and workbooks with one sheet per file, as workflow merge types | Implemented in **0.261.221** — see [Phase 4](V2_FILE_MERGE_PHASE_4_PDF_WORKBOOKS.md) |
 | 5 | Word merge, keeping each document's styles or the first document's, as a workflow merge type | Implemented in **0.261.222** — see [Phase 5](V2_FILE_MERGE_PHASE_5_WORD.md) |
 | 6 | PowerPoint merge, keeping each deck's look or the first deck's theme, as a workflow merge type | Implemented in **0.261.223** — see [Phase 6](V2_FILE_MERGE_PHASE_6_POWERPOINT.md) |
-| 7 | Document merges directly in chat (`document_merge` with assembled Render profiles) for every document kind; scale and security hardening, final documentation | Planned |
+| 7 | Document merges directly in chat (`document_merge` with the `assembled_document_v1` Render profile) for every document kind; scale and security hardening, final documentation | Implemented in **0.261.224** — see [Phase 7](V2_FILE_MERGE_PHASE_7_CHAT_DOCUMENTS.md) |
 
-Document merges reach workflows first, kind by kind, so every file type is usable as soon as
-its phase lands, including from workflows that chat proposes. Merging documents inline in a
-chat turn shares one Render path for all document kinds, so it is built once, in Phase 7.
+Document merges reached workflows first, kind by kind, so every file type was usable as soon
+as its phase landed, including from workflows that chat proposes. Merging documents inline
+in a chat turn shares one Render path for all document kinds, so it was built once, in
+Phase 7.
 
 ## Where merge fits in Gather / Reason / Render
 
@@ -47,12 +49,14 @@ plans the work.
 | Purpose | Role in a merge |
 | --- | --- |
 | Gather (optional) | `document_search` finds the files when the user describes them instead of selecting them. Its `sources` output binds into the merge. `tabular_inspect` reads the files' sheets, headers, row counts and samples and reports how their columns line up. |
-| Reason | `compose` can prepare a `tabular_column_mapping_v1` column mapping from an inspection. `tabular_merge` reads the authorized files and appends their rows with code into one retained table. No model reads or rewrites rows. |
-| Render | `render_file` turns the retained table into a CSV or Excel file. |
+| Reason | `compose` can prepare a `tabular_column_mapping_v1` column mapping from an inspection. `tabular_merge` reads the authorized files and appends their rows with code into one retained table. `document_merge` assembles PDFs, Word documents, decks or workbooks once to check them and retains a description of the checked file. No model reads or rewrites rows or documents. |
+| Render | `render_file` turns the retained table into a CSV or Excel file. With `assembled_document_v1` it assembles a merge's own files again and delivers the file only if it matches the checked bytes. |
 
 Merging is Reason, not Render, because it computes a new dataset from sources; Render only
 serializes a prepared result. Keeping the merged table as a retained result also lets one
-merge feed several files — a CSV and an Excel copy — without merging twice.
+merge feed several files — a CSV and an Excel copy — without merging twice. A document
+merge retains a description instead of a second copy of every file, and Render reads only
+the files that description names, after checking access again.
 
 Saved memory does not store or merge files. The planner does read saved preferences, so a
 saved instruction such as "always give me Excel" shapes merge requests without extra work.
@@ -69,6 +73,9 @@ document, and since **0.261.223** append PowerPoint decks into one deck. Chat ca
 such a workflow when a user asks for a recurring merge. See
 [Phase 3](V2_FILE_MERGE_PHASE_3_WORKFLOWS.md), [Phase 4](V2_FILE_MERGE_PHASE_4_PDF_WORKBOOKS.md),
 [Phase 5](V2_FILE_MERGE_PHASE_5_WORD.md) and [Phase 6](V2_FILE_MERGE_PHASE_6_POWERPOINT.md).
+Since **0.261.224** a chat turn merges every document kind too, and workflows remain the
+way to merge on a schedule, on every sync, or more files than chat allows
+([Phase 7](V2_FILE_MERGE_PHASE_7_CHAT_DOCUMENTS.md)).
 
 ## Technical specifications
 
@@ -85,8 +92,10 @@ such a workflow when a user asks for a recurring merge. See
 | `functions_document_actions.py` | The `merge` document action: enablement, file limits and row limits for chat and workflows, and the workflow Merge task contract. |
 | `functions_workflow_merge.py`, `functions_workflow_runner.py` | Workflow Merge tasks: finding the files, authorizing them again, merging, rendering and attaching the file to the run. |
 | `functions_document_merge.py`, `functions_document_merge_pdf.py`, `functions_document_merge_workbook.py`, `functions_document_merge_docx.py`, `functions_document_merge_pptx.py` | The document merge engine and its PDF, workbook, Word and PowerPoint assemblers. Word composition uses `docxcompose`; decks are merged at the package level. |
+| `functions_document_merge_assembly.py`, `functions_orchestration_document_merge.py` | The `document_assembly_v1` description and its byte-identical re-assembly, and the chat `document_merge` glue (Phase 7). |
+| `functions_ooxml_package_guard.py` | Refuses Office packages whose XML parts declare a document type or aren't UTF-8 or UTF-16, for the document and spreadsheet engines (Phase 7). |
 | `functions_workflow_drafts.py` | The `merge` field of workflow blueprints proposed from chat. |
-| `functions_generated_export_registry.py`, `functions_structured_file_renderers.py`, `functions_generated_office_adapters.py` | The `exact_tabular_records_v1` (CSV) and `exact_tabular_workbook_v1` (XLSX) profiles. |
+| `functions_generated_export_registry.py`, `functions_structured_file_renderers.py`, `functions_generated_office_adapters.py` | The `exact_tabular_records_v1` (CSV) and `exact_tabular_workbook_v1` (XLSX) profiles, and the `assembled_document_v1` profile for merged PDF, Word, PowerPoint and Excel files. |
 | `application/v2_ui/src/lib/orchestrationMerge.ts` | The plan review's wording for merge and inspection settings. |
 | `application/v2_ui/src/lib/workflowEditor.ts`, `components/workflows/WorkflowTaskFields.tsx` | The workflow editor's **Merge files** document action. |
 
@@ -136,15 +145,21 @@ most 1,048,575 rows, 5,000,000 cells and 32 MiB. CSV suits the largest merges.
   access, screening holds and the source revision the plan approved.
 - Workbooks are opened read-only with external links disabled; `defusedxml` protects XML
   parsing. Encrypted workbooks are refused, and archive size is checked before parsing.
+- Office packages with an XML part that declares a document type, or is written or declared
+  in an encoding other than UTF-8 or UTF-16, are refused before any library parses them.
+  Word documents with fields that start other programs are refused, the first document's
+  template link is removed, and PowerPoint actions that start programs or run macros are
+  removed. See [Phase 7](V2_FILE_MERGE_PHASE_7_CHAT_DOCUMENTS.md#hardening).
 - Values stay text and are never evaluated. CSV output neutralizes formula-like cells;
   XLSX output writes them as literal text.
 - Failure messages are application-owned text. File names and header text from users'
-  files never appear in a failure message.
+  files never appear in a chat failure message.
 
 ## Usage
 
-Users ask in a V2 chat, for example "merge these three regional CSVs into one Excel file",
-or add a **Merge files** task to a workflow for many files or repeated merges. See
+Users ask in a V2 chat, for example "merge these three regional CSVs into one Excel file"
+or "combine these contracts into one PDF", or add a **Merge files** task to a workflow for
+many files or repeated merges. See
 [Merge files](../../guides/merge-files.md) and
 [Create a workflow](../../guides/create-a-workflow.md). Administrators control the feature
 under [Document Action Capabilities](../../admin/agents-actions.md#document-action-capabilities-card)
@@ -165,6 +180,8 @@ and the orchestration Capabilities list
 | `functional_tests/test_document_merge_pdf_workbook.py`, `functional_tests/test_workflow_merge_pdf_workbook.py` | The PDF and workbook assemblers, and PDF and workbook workflow merges (Phase 4). |
 | `functional_tests/test_document_merge_docx.py`, `functional_tests/test_workflow_merge_word.py` | The Word assembler and Word workflow merges (Phase 5). |
 | `functional_tests/test_document_merge_pptx.py`, `functional_tests/test_workflow_merge_powerpoint.py` | The PowerPoint assembler and PowerPoint workflow merges (Phase 6). |
+| `functional_tests/test_orchestration_document_merge_capability.py`, `functional_tests/test_document_merge_assembly.py`, `functional_tests/test_orchestration_output_lifecycle.py` | Chat document merges, the assembly description and its byte-identical re-assembly, and delivery through the real rendering service (Phase 7). |
+| `functional_tests/test_file_merge_hardening.py`, `functional_tests/test_workflow_merge_task.py` | Hostile Word, PowerPoint and Excel files, ZIP size guards, 100 files in one workflow run, and output without live formulas (Phase 7). |
 
 ## Known limitations
 

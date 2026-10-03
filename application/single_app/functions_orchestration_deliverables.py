@@ -1,8 +1,9 @@
 # functions_orchestration_deliverables.py
 """What the user asked to receive, and whether the plan can actually deliver each part.
 
-Version: 0.261.141
+Version: 0.261.224
 Implemented in: 0.261.138
+Document merge recipes added in: 0.261.224
 
 The planner lists its plan's deliverables first: the answer, files, images, charts, and
 diagrams the user asked for (``requested: explicit``) and anything it adds on its own
@@ -39,6 +40,7 @@ from functions_orchestration_registry import (
     CAPABILITY_COMPOSE,
     CAPABILITY_DOCUMENT_ANALYZE,
     CAPABILITY_DOCUMENT_COMPARE,
+    CAPABILITY_DOCUMENT_MERGE,
     CAPABILITY_GENERATE_IMAGE,
     CAPABILITY_RENDER_FILE,
     CAPABILITY_TABULAR_INSPECT,
@@ -351,6 +353,13 @@ def build_deliverable_availability(settings, *, capabilities, unavailable=None, 
             facts.append(
                 'tabular_merge appends rows exactly; it does not match rows on a key column or change values.'
             )
+        if CAPABILITY_DOCUMENT_MERGE in available:
+            recipes.append({'for': 'One PDF, Word document, PowerPoint deck or workbook merged from several files', 'steps': (
+                'document_merge with the files in order and its kind, then render_file binding its '
+                '"assembly" output with profile assembled_document_v1 and output_format pdf, docx, pptx, or '
+                'xlsx for a workbook. Never compose a merged document.'
+            )})
+            facts.append('document_merge copies files exactly; it never summarizes, translates or rewrites them.')
     if explicit_images['status'] == 'available':
         facts.extend([
             'generate_image follows the visual style the user asks for, including photorealistic '

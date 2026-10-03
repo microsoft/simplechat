@@ -63,9 +63,9 @@ from functions_orchestration_context import (
 )
 from functions_orchestration_deliverables import explicit_image_shortfalls
 from functions_orchestration_registry import (
-    CAPABILITY_TABULAR_ANALYZE, CAPABILITY_TABULAR_INSPECT, CAPABILITY_TABULAR_MERGE, CAPABILITY_WORKFLOW_PROPOSE,
-    CAPABILITY_WORKFLOW_RESULTS, CAPABILITY_WORKFLOW_RUN, DEPENDENCY_PLAN_CONTRACT_VERSION, admitted_export_pairs,
-    external_effect_capability_ids, get_capability, resolve_available_capability_ids,
+    CAPABILITY_DOCUMENT_MERGE, CAPABILITY_TABULAR_ANALYZE, CAPABILITY_TABULAR_INSPECT, CAPABILITY_TABULAR_MERGE,
+    CAPABILITY_WORKFLOW_PROPOSE, CAPABILITY_WORKFLOW_RESULTS, CAPABILITY_WORKFLOW_RUN, DEPENDENCY_PLAN_CONTRACT_VERSION,
+    admitted_export_pairs, external_effect_capability_ids, get_capability, resolve_available_capability_ids,
 )
 from functions_orchestration_result_contracts import (
     InputBinding, PartialInputNotAcceptedError, ProducerIdentity, ResultContractError, ResultRef, TaskResult, digest,
@@ -868,7 +868,7 @@ def _run_dependency_step(
         named_sources = []
         # Analyze, Inspect and Merge accept a search's source set in place of explicit document IDs.
         if 'sources' in readers and step['capability_id'] in (
-            'document_analyze', CAPABILITY_TABULAR_INSPECT, CAPABILITY_TABULAR_MERGE,
+            'document_analyze', CAPABILITY_TABULAR_INSPECT, CAPABILITY_TABULAR_MERGE, CAPABILITY_DOCUMENT_MERGE,
         ):
             named_sources = read_complete_input(readers['sources'])
             runtime_step['arguments']['document_ids'] = [

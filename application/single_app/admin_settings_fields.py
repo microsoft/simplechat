@@ -3829,6 +3829,7 @@ ADMIN_SETTINGS_FIELDS = {
                 {"value": "tabular_analyze", "label": "Analyse spreadsheets"},
                 {"value": "tabular_inspect", "label": "Inspect spreadsheets"},
                 {"value": "tabular_merge", "label": "Merge spreadsheets"},
+                {"value": "document_merge", "label": "Merge documents"},
                 {"value": "web_search", "label": "Search the web"},
                 {"value": "url_fetch", "label": "Read linked pages"},
                 {"value": "deep_research", "label": "Research in depth"},

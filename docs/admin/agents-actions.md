@@ -208,7 +208,10 @@ Since **0.261.219** it also reconciles files whose columns differ, and the same
 switch and file limit govern **Inspect spreadsheets**, which reads the files'
 headers and samples first. Since **0.261.220**, a V2 workflow task can merge
 files too, on a schedule or whenever File Sync brings new files, within the
-workflow limits below. Code appends the rows; no model reads them, so a
+workflow limits below. Since **0.261.224**, the same switch and chat file limit
+also govern **Merge documents**, which joins PDFs, Word documents or PowerPoint
+decks into one file, or puts spreadsheets on separate sheets of one workbook, in
+a chat turn. Code appends the rows and copies the documents; no model reads them, so a
 merge costs far less than analyzing the same files. That is why its limits are
 higher, and why it is limited by merged rows as well as by files: a few very
 large files can cost more than many small ones.
@@ -231,7 +234,7 @@ than as separate settings.
 | Enable Document Comparison | Offers Document Comparison in the Action menu. | On | — | `document_action_capabilities.comparison.enabled` |
 | Comparison: Chat Document Limit | Most documents one chat message may compare, including the baseline. | 3 | 2–300 | `comparison.chat_max_documents` |
 | Comparison: Workflow Document Limit | The same limit for a workflow run. | 10 | 2–1000 | `comparison.workflow_max_documents` |
-| Enable Merge | Lets chat orchestration combine CSV and Excel files into one file, and inspect their columns first, and lets workflow tasks merge files. While it's off, workflow merge tasks can't be saved, and existing ones fail when they run. | On | — | `document_action_capabilities.merge.enabled`; in chat, also governed by the **Merge spreadsheets** and **Inspect spreadsheets** orchestration capabilities. |
+| Enable Merge | Lets chat orchestration combine CSV and Excel files into one file, inspect their columns first, and join PDFs, Word documents, PowerPoint decks or workbooks into one file, and lets workflow tasks merge files. While it's off, workflow merge tasks can't be saved, and existing ones fail when they run. | On | — | `document_action_capabilities.merge.enabled`; in chat, also governed by the **Merge spreadsheets**, **Inspect spreadsheets** and **Merge documents** orchestration capabilities. |
 | Merge: Chat Document Limit | Most files one chat request may merge or inspect. | 10 | 2–300 | `merge.chat_max_documents` |
 | Merge: Workflow Document Limit | Most files one workflow merge task may merge in a run. A task that finds more files fails rather than merging only some. | 100 | 2–1000 | `merge.workflow_max_documents` |
 | Merge: Chat Row Limit | Most rows one chat merge may produce. A merge over the limit stops without creating a file. | 250,000 | 1,000–1,000,000 | `merge.chat_max_rows` |

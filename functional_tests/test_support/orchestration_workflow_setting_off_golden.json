@@ -984,6 +984,108 @@
     "result_output_kinds": []
    },
    {
+    "id": "document_merge",
+    "label": "Merge documents",
+    "role": "reason",
+    "summary": "Combine two or more PDFs, Word documents or PowerPoint decks into one file of the same kind, or CSV and Excel files into one workbook with a sheet per file, exactly and without a model.",
+    "when_to_use": "Use when the user asks to combine, join, append, put together or bind several PDFs, Word documents or PowerPoint decks into one file, or to keep several CSV or Excel files as separate sheets of one workbook. Files are copied exactly, in the order listed; nothing is summarized or rewritten. Name the files in document_ids in merge order, or bind inputs.sources to a search step's sources output when the files must be found first. kind is required: pdf for PDFs (bookmarks false leaves out the bookmark per file); docx for Word documents (formatting keep_source or use_first, page_breaks, source_headings); pptx for PowerPoint decks (formatting, sections); workbook for CSV or Excel files, one sheet per file (sheets all copies every visible sheet, or sheet names one). Every file must be the kind being merged. To deliver the file, bind the assembly output to render_file with profile assembled_document_v1 and output_format pdf, docx, pptx, or xlsx for workbook. To append the rows of spreadsheets into one table, use tabular_merge instead. A merge of more files than the chat limit, or one that should repeat, belongs in a workflow.",
+    "inputs": {
+     "type": "object",
+     "properties": {
+      "document_ids": {
+       "type": "array",
+       "items": {
+        "type": "string"
+       },
+       "minItems": 2,
+       "uniqueItems": true,
+       "description": "The files to merge, in the order they should appear."
+      },
+      "doc_scope": {
+       "type": "string",
+       "enum": [
+        "all",
+        "personal",
+        "group",
+        "public"
+       ],
+       "default": "all"
+      },
+      "kind": {
+       "type": "string",
+       "enum": [
+        "pdf",
+        "docx",
+        "pptx",
+        "workbook"
+       ],
+       "description": "The kind of file to create; every file must be that kind."
+      },
+      "bookmarks": {
+       "type": "boolean",
+       "description": "pdf only: a bookmark named after each file; true when omitted."
+      },
+      "formatting": {
+       "type": "string",
+       "enum": [
+        "keep_source",
+        "use_first"
+       ],
+       "description": "docx and pptx only: keep_source (default) keeps each file's look; use_first uses the first file's styles or theme for all of them."
+      },
+      "page_breaks": {
+       "type": "boolean",
+       "description": "docx only: start each document on a new page; true when omitted."
+      },
+      "source_headings": {
+       "type": "boolean",
+       "description": "docx only: put a heading with the file name before each document."
+      },
+      "sections": {
+       "type": "boolean",
+       "description": "pptx only: group each deck's slides in a section; true when omitted."
+      },
+      "sheet": {
+       "type": "string",
+       "minLength": 1,
+       "maxLength": 31,
+       "description": "workbook only: the one sheet to copy from every file."
+      },
+      "sheets": {
+       "type": "string",
+       "enum": [
+        "first",
+        "all"
+       ],
+       "description": "workbook only: all copies every visible sheet; first (default) copies one."
+      }
+     },
+     "required": [
+      "kind"
+     ],
+     "additionalProperties": false
+    },
+    "cost": "medium",
+    "produces": [
+     "retained_results"
+    ],
+    "max_per_plan": 2,
+    "plan_contract_version": 2,
+    "result_contract_version": "document-merge-v1",
+    "result_input_kinds": {
+     "sources": [
+      "source-set-v1"
+     ]
+    },
+    "partial_inputs_supported": false,
+    "result_outputs": {
+     "assembly": "structured-v1",
+     "report": "structured-v1"
+    },
+    "optional_result_outputs": {},
+    "result_output_kinds": []
+   },
+   {
     "id": "web_search",
     "label": "Search the web",
     "role": "gather",
@@ -1619,6 +1721,7 @@
     "tabular_analyze",
     "tabular_inspect",
     "tabular_merge",
+    "document_merge",
     "web_search",
     "action_invoke",
     "agent_invoke",
@@ -1725,11 +1828,13 @@
       },
       "xlsx": {
        "source_kinds": [
-        "records-v1"
+        "records-v1",
+        "structured-v1"
        ],
        "profiles": [
         "tabular_workbook_v1",
-        "exact_tabular_workbook_v1"
+        "exact_tabular_workbook_v1",
+        "assembled_document_v1"
        ],
        "embeds_images": false,
        "status": "unavailable",
@@ -1738,10 +1843,12 @@
       "docx": {
        "source_kinds": [
         "markdown-v1",
+        "structured-v1",
         "text-v1"
        ],
        "profiles": [
-        "prepared_report_v1"
+        "prepared_report_v1",
+        "assembled_document_v1"
        ],
        "embeds_images": true,
        "status": "unavailable",
@@ -1750,10 +1857,12 @@
       "pdf": {
        "source_kinds": [
         "markdown-v1",
+        "structured-v1",
         "text-v1"
        ],
        "profiles": [
-        "prepared_report_v1"
+        "prepared_report_v1",
+        "assembled_document_v1"
        ],
        "embeds_images": true,
        "status": "unavailable",
@@ -1764,7 +1873,8 @@
         "structured-v1"
        ],
        "profiles": [
-        "prepared_slide_deck_v1"
+        "prepared_slide_deck_v1",
+        "assembled_document_v1"
        ],
        "embeds_images": true,
        "status": "unavailable",
@@ -1871,6 +1981,7 @@
   "tabular_analyze",
   "tabular_inspect",
   "tabular_merge",
+  "document_merge",
   "web_search",
   "action_invoke",
   "agent_invoke",

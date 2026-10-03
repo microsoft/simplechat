@@ -1,13 +1,14 @@
 # functions_orchestration_services.py
 """Bind initialized application resources to the retained-result runtime.
 
-Version: 0.261.139
+Version: 0.261.224
 
 The web and scheduler owners supply storage, current access callbacks and private
 artifact transport. This module never discovers configuration, credentials or
 Flask request state, and never initializes a client as an import side effect.
 Each run attempt is its own approved work, so a retry's files never reuse the
-superseded attempt's output identity.
+superseded attempt's output identity. A merged document's original files are read
+only through the owner-supplied document reader (0.261.224).
 """
 
 from copy import deepcopy
@@ -147,7 +148,7 @@ class OrchestrationServices:
         transport, authorize_execution, max_output_bytes,
         external_source_catalog=None, external_source_authorizer=None,
         external_source_admission=None, external_source_preflight=None, native_bridge_for_step=None,
-        capture_external_source_configuration=None, image_asset_reader=None,
+        capture_external_source_configuration=None, image_asset_reader=None, document_bytes_reader=None,
     ):
         if external_source_preflight is not None and not callable(external_source_preflight):
             raise ResultContractError("result_external_reader_required")
@@ -186,7 +187,7 @@ class OrchestrationServices:
         self.rendering = OrchestrationRenderingService(
             self.outputs, self.results, transport,
             authorize_execution=authorize_execution, max_output_bytes=max_output_bytes,
-            image_asset_reader=image_asset_reader,
+            image_asset_reader=image_asset_reader, document_bytes_reader=document_bytes_reader,
         )
 
     @property

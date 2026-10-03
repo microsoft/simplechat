@@ -1,13 +1,14 @@
 # functions_orchestration_bootstrap.py
 """Application-owned factories shared by web requests and scheduler continuations.
 
-Version: 0.261.209
+Version: 0.261.224
 
 Unlike the result/rendering services, this is an application composition root.
 Import it only after config has initialized the existing clients. Registering the
 artifact factory performs no I/O; each use rebuilds current actor/source access.
 External-source identity trusts the signed-in session's app roles, like classic
-chat, and makes no Microsoft Graph calls (0.261.209).
+chat, and makes no Microsoft Graph calls (0.261.209). Merged documents are rendered
+from their own original files through a screening-aware reader (0.261.224).
 """
 
 import hashlib
@@ -254,6 +255,29 @@ def _authorize_render_output(record, *, operation, rendering_service):
     return True
 
 
+def build_merge_document_reader(user_id):
+    """Read one workspace document a merged file was assembled from, with current access.
+
+    The rendering service names only the merge result's own lineage sources and checks the
+    re-assembled bytes; this reader applies the same screening-aware access as the merge.
+    """
+    def read(source):
+        # Screening-aware reads load only when a merged file is rendered.
+        from content_screening.access import read_available_document_bytes
+
+        scope = source.get("scope")
+        scope_id = source.get("scope_id")
+        _document, content = read_available_document_bytes(
+            source, user_id,
+            scope_id if scope == "group" else None,
+            scope_id if scope == "public" else None,
+            purpose="native",
+        )
+        return content
+
+    return read
+
+
 def build_image_asset_reader(user_id, conversation_id):
     """Read a retained generated image's bytes from its own conversation image message.
 
@@ -377,6 +401,7 @@ def build_orchestration_services(user_id, conversation_id, *, settings=None):
         max_output_bytes=min(maximum_mb, 500) * 1024 * 1024,
         native_bridge_for_step=native_bridge_for_step,
         image_asset_reader=build_image_asset_reader(user_id, conversation_id),
+        document_bytes_reader=build_merge_document_reader(user_id),
     )
     return services
 

@@ -1,10 +1,11 @@
 # functions_tabular_merge.py
 """Deterministic merging and inspection of CSV and Excel files.
 
-Version: 0.261.220
+Version: 0.261.224
 Implemented in: 0.261.218
 Reconciliation policies, sheet modes, duplicate removal, sorting and inspection added in: 0.261.219
 Single-file merges for workflow files found at run time (min_sources=1) added in: 0.261.220
+Workbooks with unsafe or unreadable XML refused in: 0.261.224
 
 The engine is pure: it receives already-authorized byte loaders, never resolves
 documents, settings, storage, routes, or models, and performs no model work.
@@ -41,6 +42,7 @@ from typing import Callable, List, Mapping, Optional, Sequence, Tuple
 import unicodedata
 import zipfile
 
+from functions_ooxml_package_guard import UnreadablePackageError, first_unsafe_xml_part
 
 TABULAR_MERGE_REPORT_VERSION = "tabular-merge-report-v1"
 TABULAR_INSPECTION_VERSION = "tabular-inspection-v1"
@@ -2037,16 +2039,30 @@ def _guard_workbook_archive(content, source, limits):
     if content[:4] != _ZIP_MAGIC:
         raise TabularMergeError("unreadable_workbook", f"{_safe_name(source)} isn't a valid Excel workbook.")
     try:
-        with zipfile.ZipFile(io.BytesIO(content)) as archive:
-            entries = archive.infolist()
+        archive = zipfile.ZipFile(io.BytesIO(content))
     except zipfile.BadZipFile as exc:
         raise TabularMergeError(
             "unreadable_workbook", f"{_safe_name(source)} isn't a valid Excel workbook.",
         ) from exc
-    if len(entries) > limits.max_workbook_entries:
-        raise TabularMergeError("workbook_too_large", f"{_safe_name(source)} has too many internal parts to merge.")
-    if sum(entry.file_size for entry in entries) > limits.max_workbook_uncompressed_bytes:
-        raise TabularMergeError("workbook_too_large", f"{_safe_name(source)} is too large to merge once uncompressed.")
+    with archive:
+        entries = archive.infolist()
+        if len(entries) > limits.max_workbook_entries:
+            raise TabularMergeError("workbook_too_large", f"{_safe_name(source)} has too many internal parts to merge.")
+        if sum(entry.file_size for entry in entries) > limits.max_workbook_uncompressed_bytes:
+            raise TabularMergeError(
+                "workbook_too_large", f"{_safe_name(source)} is too large to merge once uncompressed.",
+            )
+        try:
+            unsafe = first_unsafe_xml_part(archive, entries)
+        except UnreadablePackageError as exc:
+            raise TabularMergeError(
+                "unreadable_workbook", f"{_safe_name(source)} isn't a valid Excel workbook.",
+            ) from exc
+    if unsafe is not None:
+        raise TabularMergeError(
+            "unreadable_workbook",
+            f"{_safe_name(source)} isn't a valid Excel workbook; it has XML that Excel files can't contain.",
+        )
 
 
 class _XlsReader(_Reader):
