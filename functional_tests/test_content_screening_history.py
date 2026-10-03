@@ -1,12 +1,13 @@
 # test_content_screening_history.py
 """
 Functional regressions for public history and native evidence quarantine.
-Version: 0.261.223
+Version: 0.261.230
 Implemented in: 0.261.106
 
 Executes the real history route, artifact hydration, and model-history guard
 against fake Cosmos. Removed metadata aliases and missing release proofs must
-not turn old source material into newly authorized evidence.
+not turn old source material into newly authorized evidence. Since 0.261.230,
+metadata edited after a release keeps the document available.
 """
 
 import ast
@@ -224,14 +225,25 @@ class ScreeningHistoryTests(ScreeningAccessFixture):
 
     def test_public_metadata_is_status_only_without_matching_release_proof(self):
         self.scans.documents.clear()
+        self.document["abstract"] = "UNRELEASED_PRIVATE_ABSTRACT"
         result = access.public_documents_payload([self.document], "user-1")[0]
         self.assertFalse(result["content_screening"]["available"])
         self.assertNotIn("abstract", result)
         self.seed_release(self.document)
-        self.document["abstract"] = "UNAPPROVED_PRIVATE_ABSTRACT"
+        scan = self.scans.documents[self.document["content_screening"]["scan_id"]]
+        scan["publication"]["content_fingerprint"] = "a-different-release"
         result = access.public_document_payload(self.document)
         self.assertFalse(result["content_screening"]["available"])
-        self.assertNotIn("UNAPPROVED_PRIVATE_ABSTRACT", json.dumps(result))
+        self.assertNotIn("UNRELEASED_PRIVATE_ABSTRACT", json.dumps(result))
+
+    def test_metadata_edited_after_release_stays_available(self):
+        """Metadata edits apply directly and are not screened, so they don't revoke a release."""
+        self.seed_release(self.document)
+        self.document.update({"abstract": "Edited after release", "title": "Edited title"})
+        result = access.public_document_payload(self.document)
+        self.assertTrue(result["content_screening"]["available"])
+        self.assertEqual(result["abstract"], "Edited after release")
+        self.assertEqual(result["title"], "Edited title")
 
 
 if __name__ == "__main__":

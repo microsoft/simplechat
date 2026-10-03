@@ -105,4 +105,8 @@ Existing tests that asserted the removed behavior were rewritten:
 - `test_content_screening_pipeline.py`: a metadata edit keeps a release, recovery finalizes a release after a metadata edit, and only the source-format rule remains.
 - `test_group_document_management.py`: a screened metadata edit returns `updated` and keeps the release; a screened tag edit updates chunks but not the release blob.
 - `test_public_document_publication.py`: approval records no screening reservation, and a held legacy destination blocks approval.
+- `test_content_screening_history.py`: a release proof that doesn't match the content still leaves only the screening status, and metadata edited after a release stays available.
+- `test_group_document_fixture_parity.py` and `test_public_document_fixture_parity.py`: a released screened document's metadata change returns the ordinary `updated` receipt (200), not `queued` (202).
 - `test_group_document_publication_screening_bootstrap.py` tested only the removed reservation and was removed. Its import check moved to the new file.
+
+The 258 functional test files present on both branches were run on the base branch and with this change. No test that passes on the base branch fails with this change; the remaining failures already fail on the base branch for unrelated reasons, such as harnesses that need Azure configuration.
