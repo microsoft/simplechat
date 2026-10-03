@@ -7,7 +7,7 @@ doesn't change the version. Each phase records the version it ships in.
 
 Planning branch: `paullizer-orchestration-workflows-capability`.
 
-Status updated: **2026-10-03**, with `paullizer-react-v2-ui` at 0.261.228. The PRs for this work target that branch
+Status updated: **2026-10-03**, with `paullizer-react-v2-ui` at 0.261.232. The PRs for this work target that branch
 (§10).
 
 This is the master plan for letting chat orchestration propose, create, run and hand off saved workflows. It's the
@@ -30,7 +30,7 @@ Dependencies: V2 chat orchestration (`functions_orchestration*.py`), durable wor
 | 4 | Orchestration proposes workflows (`workflow_propose` + Approve / Deny / Edit card) | [#1547](https://github.com/microsoft/simplechat/issues/1547) | 2 | **Done**: [#1580](https://github.com/microsoft/simplechat/pull/1580), v0.261.207, behind **Propose Workflows From Chat** (off by default). It includes personal File Sync authoring in the V2 editor (gotcha 58) |
 | 5 | Orchestration runs existing workflows (`workflow_run`, start-and-link) | [#1551](https://github.com/microsoft/simplechat/issues/1551) | 4 | **Done**: [#1594](https://github.com/microsoft/simplechat/pull/1594), v0.261.212, behind **Run Workflows From Chat** (off by default) |
 | 6 | Results back in chat: 6a results reader + **Follow up**; 6b post-back delivery, run card and chat-list indicator; 6c in-plan wait (later) | [#1546](https://github.com/microsoft/simplechat/issues/1546) | 6a: 4 · 6b: 5, 6a, N1 | **6a done**: [#1592](https://github.com/microsoft/simplechat/pull/1592), v0.261.214, behind **Use Workflow Results In Chat** (off by default). **The `workflow_results` planner capability is done**: [#1607](https://github.com/microsoft/simplechat/pull/1607), v0.261.217, under the same setting. **6b-1 done**: [#1610](https://github.com/microsoft/simplechat/pull/1610), v0.261.227 (server delivery and the status route). **In progress**: 6b-2 (V2 run card, tracker and chat-list indicator). 6c not started |
-| 7 | Hand-off of big one-time jobs | [#1549](https://github.com/microsoft/simplechat/issues/1549) | 4, 6b | **In progress**: 7a, the server part of the hand-off. 7b, the V2 part, follows |
+| 7 | Hand-off of big one-time jobs | [#1549](https://github.com/microsoft/simplechat/issues/1549) | 4, 6b | **In progress**: 7a, the server part of the hand-off, behind `enable_chat_orchestration_workflow_handoff` (off by default). §6 has its settled design. 7b, the V2 part, follows |
 | 8 | Follow-ons: group workflows, #1347 parity, plan-replay task | [#1550](https://github.com/microsoft/simplechat/issues/1550) | 4+ | Not started |
 | A1 | Shared AI-assist thread: immediate send, Cancel/Retry, one component for every assist editor | [#1552](https://github.com/microsoft/simplechat/issues/1552) | — | **Done**: [#1564](https://github.com/microsoft/simplechat/pull/1564), v0.261.200 |
 | A2 | `#` document references in AI-assist inputs: plan editor now, workflow assistant via Phase 3. Not the artifact editors (Mermaid, chart, image) | [#1556](https://github.com/microsoft/simplechat/issues/1556) | A1 | **Done**: [#1568](https://github.com/microsoft/simplechat/pull/1568), v0.261.201. It merged into A1's branch and landed with #1564 |
@@ -51,7 +51,7 @@ have landed, so 6b can rely on the V2 bell for undeliverable results.
 Repository follow-ups found along the way, not tied to one phase:
 
 - The generated release-notes pages under `docs/explanation/release-notes/` are stale, so
-  `test_docs_release_notes_integrity.py` fails on the base, with 164 stale releases at 0.261.228. The PRs above leave
+  `test_docs_release_notes_integrity.py` fails on the base, with 168 stale releases at 0.261.232. The PRs above leave
   them alone; regenerate them once, in a docs-only change, after the in-flight PRs land.
 - Other docs pages have pre-existing broken relative links (`test_docs_link_integrity.py`).
 - **Fixed in [#1576](https://github.com/microsoft/simplechat/pull/1576)** (#1571): the PR guardrail workflows (broken
@@ -129,6 +129,15 @@ Repository follow-ups found along the way, not tied to one phase:
   that doesn't have `enabled_required` yet. The app isn't affected, because `app.py` loads `functions_authentication`
   (through `semantic_kernel_loader`) before `functions_settings`. A test that imports a route module directly has to
   import `functions_authentication` first, as #1597's import test does.
+- Cancelling a durable workflow run answers 500 when the runtime reports a conflict or is unavailable. All four
+  cancel routes catch only `LookupError` and `WorkflowCancellationConflictError`, while the runtime raises
+  `WorkflowRuntimeConflict` and `RuntimeUnavailable`, which subclass `RuntimeError`. The fix is to map them the way
+  `_workflow_runtime_response` already does: 409 with a `code` for a conflict, and a logged 503 when the runtime is
+  unavailable.
+- A v3 For each loop can allow up to 5,000 items, but a run admits at most 5,000 executions, and each item uses one
+  plus one per task attempt. A loop with one task pauses with `execution_budget_exceeded` after about 2,500 items,
+  after that work is done, and nothing checks this when the workflow is saved. 7a caps its hand-off loops at 2,000
+  for this reason.
 
 ## 1. Goal
 
@@ -1315,6 +1324,31 @@ merged.
   (gotcha #55).
 - One-time lifecycle: auto-disable after completion, marked in provenance.
 - **Done when** a 200-document review is handed off, runs durably, and posts one summary back.
+- **7a in progress**, the server part; 7b adds the V2 card. Its approved plan settles these points, and its PR
+  records any that change:
+  - A new admin setting, `enable_chat_orchestration_workflow_handoff`, off by default. Hand-off also needs Chat
+    Orchestration, personal workflows, **Propose Workflows From Chat**, **Run Workflows From Chat** and **Use Workflow
+    Results In Chat** on, and it's offered only to users with the WorkflowUser role, in their own private
+    conversations.
+  - A `workflow_handoff` step (Reason role) dry-runs a v3 For each blueprint: up to 25 named `#` documents, or a
+    keyword workspace query over scopes the turn already authorized, then one per-item task with a current-item
+    Analyze, a complete Collect and one report task. The tasks run on a model or a local agent, because loop bodies
+    and saved-record reporting require one.
+  - Two approvals: a plan with a hand-off always waits for the user (the manual approval floor), and the hand-off
+    card is the second. The step isn't a deliverable; the server adds a fixed note to the reply.
+  - Accept creates the workflow **disabled**, with a deterministic ID and a one-time marker in its origin, then
+    queues exactly one durable run that 6b-1 posts back to the chat. A retried accept returns the same workflow and
+    run. Chat's `workflow_run` won't start a one-time workflow again; the user can open it in Workflows to run it
+    again or delete it.
+  - Hand-offs don't count toward Phase 4's cap of 20. A rolling 24-hour limit applies instead, checked at accept
+    (default 5, range 1–100).
+  - A loop takes at most 2,000 items, or the admin's loop limit when that's lower, because each item uses two of a
+    run's 5,000 execution admissions. When a query matches more, the run pauses before it reviews any item, and the
+    user can only cancel it.
+  - The 6a reader gains a narrow branch for a hand-off run's v3 report, so the post-back and Follow up can read it.
+    Other v3 runs still answer `workflow_result_unsupported`.
+  - Where it differs from the bullets above: the workflow is created disabled, so nothing needs disabling after it
+    runs, and the run records how it ended in a `one_time_status`.
 
 ### Phase 8 — Follow-ons (separately scoped)
 
@@ -1528,7 +1562,7 @@ merged.
 | N2 | Keep the alert lab after the choice? | **Settled in #1567**: kept, dev-only, at `/v2/dev/alert-lab`, as the test bed for later alert changes |
 | P | Search-index provenance fields | **Deferred in #1562** until a search use case appears. It needs the index schema and deployer change |
 | — | Detached orchestration answers don't mark the chat unread today (gotcha #34) | A small, separate fix that reuses 6b's helper |
-| 7 | Auto-archive vs. disable one-time workflows | Disable and label; the user can delete |
+| 7 | Auto-archive vs. disable one-time workflows | **Decided for 7a**: the workflow is created disabled, with a one-time marker in its origin, and is never archived or deleted automatically. The user can delete it. |
 
 ## 10. How to resume in a new conversation
 
