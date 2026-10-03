@@ -99,7 +99,7 @@ from functions_workflow_definitions import (
 )
 from functions_workflow_editor import get_workflow_editor_options
 from functions_analysis_access import AnalysisResultUnavailable
-from functions_workflow_results import authorize_workflow_run_read, authorize_workflow_task_result_read
+from functions_workflow_results import authorize_workflow_task_result_read
 from functions_workflow_result_reader import WorkflowResultUnavailable, read_workflow_result, workflow_result_error_payload
 from functions_saved_analysis import sanitize_workflow_analysis_history
 from functions_workflow_runtime import (
@@ -150,26 +150,19 @@ def _normalize_bool(value):
     return bool(value)
 
 
-def _workflow_definition_response(workflow, reader_user_id):
-    """Keep definitions editable without exposing an inaccessible run's cached text."""
+def _workflow_definition_response(workflow):
+    """Keep definitions editable without exposing a cached preview that no run owns."""
     if not workflow.get('last_run_response_preview') and not workflow.get('last_run_error'):
         return workflow
-    access = 'available'
-    run_id = workflow.get('last_run_id')
-    if not run_id:
-        access = 'legacy_preview_unbound'
-    else:
-        try:
-            authorize_workflow_run_read(workflow, run_id, reader_user_id=reader_user_id)
-        except AnalysisResultUnavailable:
-            access = 'source_unavailable'
-    if access == 'available':
+    # A run's preview takes its access from the workflow the caller already read;
+    # it is not re-checked against the documents the run used.
+    if workflow.get('last_run_id'):
         return workflow
     return {
         **workflow,
         'last_run_response_preview': '',
         'last_run_error': '',
-        'result_access': access,
+        'result_access': 'legacy_preview_unbound',
     }
 
 
@@ -258,7 +251,7 @@ def _request_workflow_run_cancellation(
     if run_record and run_record.get('durable_execution') is True:
         cancelled = cancel_durable_workflow_run(workflow, target_run_id, actor_user_id=requested_by)
         safe_run = {key: cancelled['run'].get(key) for key in ('id', 'workflow_id', 'status', 'durable_execution', 'runtime')}
-        return _workflow_definition_response(cancelled['workflow'], requested_by), safe_run
+        return _workflow_definition_response(cancelled['workflow']), safe_run
 
     run_status = _normalize_identifier((run_record or {}).get('status')).lower()
     if run_status in {'completed', 'completed_partial', 'failed', 'invalid', 'incomplete', 'skipped', 'cancelled', 'canceled'}:
@@ -621,7 +614,7 @@ def _queue_workflow_response(workflow, user_id):
         queued = queue_durable_workflow_run(
             workflow, actor_user_id=user_id, request_id=data.get('request_id'),
         )
-        queued['workflow'] = _workflow_definition_response(queued['workflow'], user_id)
+        queued['workflow'] = _workflow_definition_response(queued['workflow'])
         queued['run'] = {key: queued['run'].get(key) for key in (
             'id', 'workflow_id', 'status', 'success', 'durable_execution', 'started_at', 'completed_at',
         )}
@@ -1005,8 +998,6 @@ def _resolve_workflow_activity_context(user_id, conversation_id='', workflow_id=
         raise ValueError('The requested run does not belong to this workflow conversation.')
 
     thoughts = []
-    if run_record and workflow:
-        authorize_workflow_run_read(workflow, run_record['id'], reader_user_id=user_id)
     if run_record and conversation_id and _normalize_identifier(run_record.get('assistant_message_id')):
         thoughts = get_thoughts_for_message(
             conversation_id,
@@ -1092,8 +1083,6 @@ def _resolve_group_workflow_activity_context(user_id, group_id, conversation_id=
     )
 
     thoughts = []
-    if run_record and workflow:
-        authorize_workflow_run_read(workflow, run_record['id'], reader_user_id=user_id)
     if run_record and conversation_id and _normalize_identifier(run_record.get('assistant_message_id')):
         thoughts = get_thoughts_for_message(
             conversation_id,
@@ -1687,7 +1676,7 @@ def register_route_backend_workflows(bp):
     def get_user_workflows():
         user_id = get_current_user_id()
         return jsonify({'workflows': [
-            _workflow_definition_response(workflow, user_id)
+            _workflow_definition_response(workflow)
             for workflow in get_personal_workflows(user_id)
         ]})
 
@@ -1824,7 +1813,7 @@ def register_route_backend_workflows(bp):
                 trigger_type=workflow.get('trigger_type'),
             )
 
-        return jsonify({'success': True, 'workflow': _workflow_definition_response(workflow, user_id)}), 201 if is_create else 200
+        return jsonify({'success': True, 'workflow': _workflow_definition_response(workflow)}), 201 if is_create else 200
 
 
     @bp.route('/api/user/workflows/<workflow_id>', methods=['DELETE'])
@@ -1863,12 +1852,8 @@ def register_route_backend_workflows(bp):
         if not workflow:
             return jsonify({'error': 'Workflow not found.'}), 404
 
+        # Runs take their access from the workflow; one run's sources never hide the list.
         runs = list_personal_workflow_runs(user_id, workflow_id, limit=50)
-        try:
-            for run in runs:
-                authorize_workflow_run_read(workflow, run['id'], reader_user_id=user_id)
-        except AnalysisResultUnavailable:
-            return jsonify({'error': 'Run history is unavailable because source access could not be confirmed.'}), 403
         return jsonify({
             'workflow_id': workflow_id,
             'runs': [
@@ -1966,10 +1951,6 @@ def register_route_backend_workflows(bp):
         if not run_record or _normalize_identifier(run_record.get('workflow_id')) != _normalize_identifier(workflow_id):
             return jsonify({'error': 'Workflow run not found.'}), 404
 
-        try:
-            authorize_workflow_run_read(workflow, run_id, reader_user_id=user_id)
-        except AnalysisResultUnavailable:
-            return jsonify({'error': 'Task results are unavailable because source access could not be confirmed.'}), 403
         return jsonify({
             'workflow_id': workflow_id,
             'run_id': run_id,
@@ -2116,7 +2097,7 @@ def register_route_backend_workflows(bp):
         try:
             group_id, _ = _resolve_group_workflow_request_group(user_id)
             return jsonify({'workflows': [
-                _workflow_definition_response(workflow, user_id)
+                _workflow_definition_response(workflow)
                 for workflow in get_group_workflows(group_id)
             ]})
         except ValueError as exc:
@@ -2267,7 +2248,7 @@ def register_route_backend_workflows(bp):
                 group_id=group_id,
             )
 
-        return jsonify({'success': True, 'workflow': _workflow_definition_response(workflow, user_id)}), 201 if is_create else 200
+        return jsonify({'success': True, 'workflow': _workflow_definition_response(workflow)}), 201 if is_create else 200
 
 
     @bp.route('/api/group/workflows/<workflow_id>', methods=['DELETE'])
@@ -2326,12 +2307,8 @@ def register_route_backend_workflows(bp):
         if not workflow:
             return jsonify({'error': 'Workflow not found.'}), 404
 
+        # Runs take their access from the workflow; one run's sources never hide the list.
         runs = list_group_workflow_runs(group_id, workflow_id, limit=50)
-        try:
-            for run in runs:
-                authorize_workflow_run_read(workflow, run['id'], reader_user_id=user_id)
-        except AnalysisResultUnavailable:
-            return jsonify({'error': 'Run history is unavailable because source access could not be confirmed.'}), 403
         return jsonify({
             'workflow_id': workflow_id,
             'runs': [
@@ -2463,10 +2440,6 @@ def register_route_backend_workflows(bp):
         if not run_record or _normalize_identifier(run_record.get('workflow_id')) != _normalize_identifier(workflow_id):
             return jsonify({'error': 'Workflow run not found.'}), 404
 
-        try:
-            authorize_workflow_run_read(workflow, run_id, reader_user_id=user_id)
-        except AnalysisResultUnavailable:
-            return jsonify({'error': 'Task results are unavailable because source access could not be confirmed.'}), 403
         return jsonify({
             'workflow_id': workflow_id,
             'run_id': run_id,

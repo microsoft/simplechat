@@ -1,9 +1,10 @@
 # content_screening_classic.py
 """
 Closed, synthetic API boundary for classic Content Screening browser tests.
-Version: 0.261.114
+Version: 0.261.228
 Implemented in: 0.261.106
 Empty-policy activation coverage: 0.261.114
+Approvals page Microsoft 365 sections answered with empty lists from: 0.261.228
 
 The real Jinja partials and local browser assets run without application startup,
 real documents, authentication tokens, storage, or inference requests.
@@ -286,6 +287,13 @@ class ClassicScreeningFixture:
             return
         elif path == "/api/approvals":
             route.fulfill(json={"approvals": [self.approval], "page": 1, "page_size": 20, "total_count": 1})
+            return
+        elif path == "/api/m365/requests":
+            # The Approvals page's Microsoft 365 sections load alongside screening requests.
+            route.fulfill(json={"items": [], "continuation_token": None, "csrf_token": "fixture-csrf"})
+            return
+        elif path == "/api/msgraph/pending-actions":
+            route.fulfill(json={"success": True, "pending_actions": [], "continuation_token": None})
             return
         elif path.startswith("/api/approvals/"):
             if request.method == "POST":

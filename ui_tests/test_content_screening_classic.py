@@ -1,9 +1,10 @@
 # test_content_screening_classic.py
 """
 Classic Content Screening policy, hold, review, and remediation workflows.
-Version: 0.261.114
+Version: 0.261.228
 Implemented in: 0.261.106
 Empty-policy scan feedback implemented in: 0.261.114
+Approvals screening notice follows the screening setting from: 0.261.228
 
 Uses the existing local/Azure Playwright connection fixture and a closed,
 synthetic API boundary. No application accounts, real documents, secrets,
@@ -590,6 +591,23 @@ def test_classic_approval_review_link_rejects_untrusted_destinations(classic_scr
     classic_screening.open_approvals()
     link = classic_screening.page.locator("#approvalsTableBody").get_by_role("link", name="Open content review", exact=True)
     expect(link).to_have_attribute("href", "/content-review")
+    assert classic_screening.generic_approval_writes == []
+
+
+@pytest.mark.parametrize("enabled", [True, False])
+def test_classic_approvals_screening_notice_follows_the_screening_setting(classic_screening, enabled):
+    classic_screening.config["enabled"] = enabled
+    classic_screening.open_approvals()
+    page = classic_screening.page
+    notice = page.locator("#contentScreeningApprovalsNotice")
+    if enabled:
+        expect(notice).to_be_visible()
+        expect(notice.get_by_role("link", name="Content review", exact=True)).to_have_attribute("href", "/content-review")
+    else:
+        expect(notice).to_have_count(0)
+    # A held document's request keeps its own review link even after screening is turned off.
+    table = page.locator("#approvalsTableBody")
+    expect(table.get_by_role("link", name="Open content review", exact=True)).to_be_visible()
     assert classic_screening.generic_approval_writes == []
 
 

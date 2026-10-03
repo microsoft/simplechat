@@ -2,6 +2,24 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.228)**
+
+#### Bug Fixes
+
+*   **Workflow Run History No Longer Fails When A Source Document Changes**
+    *   A workflow's run history no longer returns "Run history is unavailable because source access could not be confirmed." when one of its runs used a document that was later deleted or re-uploaded. The run list, a run's task results, the live run activity view and the last-run preview in the workflow list now take their access from the workflow, not from the documents each run used.
+    *   A task no longer fails right after saving its output with "Saved task output was withheld because its source access could not be confirmed."
+    *   Container checks are unchanged: you still need access to the workflow, group runs still require group membership, and a run from another workflow still answers as not found.
+    *   This is the first step of limiting content screening to uploaded documents. Some per-task previews and structured workflow execution history still re-check sources until the next step.
+    *   (Ref: #1613, #1621, `route_backend_workflows.py`, `functions_workflow_runner.py`, [Workflow Run History Source Re-check Fix](fixes/WORKFLOW_RUN_HISTORY_SOURCE_RECHECK_FIX.md))
+
+#### User Interface Enhancements
+
+*   **Approvals Page Screening Notice Only When Screening Is On**
+    *   The content screening notice at the top of **Approval Requests** now appears only while content screening is enabled, and reads in plain language: "To review uploaded documents that content screening is holding, open Content review."
+    *   Each content screening request still has its own **Open content review** link, so documents held before screening was turned off stay reachable.
+    *   (Ref: `templates/approvals.html`, `test_content_screening_classic.py`)
+
 ### **(v0.261.227)**
 
 #### New Features

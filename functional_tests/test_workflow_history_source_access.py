@@ -1,11 +1,13 @@
 # test_workflow_history_source_access.py
 """
 Functional tests for workflow history, preview, and activity source inheritance.
-Version: 0.261.108
+Version: 0.261.228
 Implemented in: 0.261.108
+Definition previews stopped re-checking run sources in: 0.261.228
 
 History authorization follows real stored producer receipts and does not rely on
-the workflow owner's old permissions or the visible UI's item limit.
+the workflow owner's old permissions or the visible UI's item limit. A workflow
+definition's last-run preview takes its access from the workflow itself.
 """
 
 import ast
@@ -17,6 +19,7 @@ import pytest
 
 from test_workflow_result_contract import SerializedSections, WORKFLOW, RUN_ID
 from functions_analysis_access import AnalysisResultUnavailable, build_analysis_access
+from functions_m365_workflow_binding import M365_ACTIVE_STATES
 from functions_workflow_results import (
     authorize_workflow_run_read,
     build_workflow_task_result,
@@ -95,28 +98,22 @@ def test_history_authorization_does_not_stop_at_the_old_thousand_item_limit():
         )
 
 
-def test_definition_catalog_redacts_cached_text_without_hiding_editable_settings():
-    store, state, sources, items = history()
-    namespace = {
-        "AnalysisResultUnavailable": AnalysisResultUnavailable,
-        "authorize_workflow_run_read": lambda workflow, run_id, **kwargs: authorize_workflow_run_read(
-            workflow, run_id, result_items=items, load_result=store.load, source_resolver=sources, **kwargs,
-        ),
-    }
+def test_definition_catalog_keeps_a_run_preview_without_rechecking_its_sources():
+    # An empty namespace proves the preview never looks up the run's sources.
+    namespace = {}
     node = next(node for node in ast.parse(ROUTES.read_text(encoding="utf-8")).body
                 if isinstance(node, ast.FunctionDef) and node.name == "_workflow_definition_response")
     exec(compile(ast.Module(body=[node], type_ignores=[]), str(ROUTES), "exec"), namespace)
     workflow = {
         **WORKFLOW, "last_run_id": RUN_ID, "name": "Still editable",
-        "last_run_response_preview": "PRIVATE-DERIVED-OUTPUT", "last_run_error": "",
+        "last_run_response_preview": "SAVED-RUN-OUTPUT", "last_run_error": "",
     }
-    state["allowed"] = False
-    response = namespace["_workflow_definition_response"](workflow, "current-reader")
-    assert response["name"] == "Still editable"
-    assert response["result_access"] == "source_unavailable"
-    assert "PRIVATE-DERIVED-OUTPUT" not in str(response)
+    assert namespace["_workflow_definition_response"](workflow) == workflow
     workflow.pop("last_run_id")
-    assert namespace["_workflow_definition_response"](workflow, "current-reader")["result_access"] == "legacy_preview_unbound"
+    response = namespace["_workflow_definition_response"](workflow)
+    assert response["name"] == "Still editable"
+    assert response["result_access"] == "legacy_preview_unbound"
+    assert "SAVED-RUN-OUTPUT" not in str(response)
 
 
 @pytest.mark.parametrize("group", [False, True])
@@ -132,6 +129,7 @@ def test_activity_stream_stops_before_emitting_revoked_source_content(group):
     name = "_stream_group_workflow_activity" if group else "_stream_workflow_activity"
     namespace = {
         "AnalysisResultUnavailable": AnalysisResultUnavailable, "json": json,
+        "M365_ACTIVE_STATES": M365_ACTIVE_STATES,
         "time": SimpleNamespace(sleep=lambda seconds: None),
         "_resolve_workflow_activity_context": snapshot,
         "_resolve_group_workflow_activity_context": snapshot,

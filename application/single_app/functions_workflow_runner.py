@@ -11229,10 +11229,6 @@ def _execute_workflow_task_sequence(
                     **persistence_options,
                 )
                 result_summary = workflow_result_summary(manifest, result_ref)
-                authorize_workflow_task_result_read(
-                    workflow, run_id, task_id, result_ref, manifest=manifest, reader_user_id=actor_id,
-                    **(durable.selectors(attempt=attempt_count) if structured_definition else {}),
-                )
                 task_result['workflow_result'] = result_summary
                 task_result['context_budget'] = context_budget
                 _save_workflow_task_run_item(
