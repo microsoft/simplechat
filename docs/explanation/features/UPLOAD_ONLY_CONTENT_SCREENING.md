@@ -6,7 +6,7 @@ Content screening checks a document when it enters a workspace, and then trusts 
 
 Earlier versions also re-checked every result produced from a screened document against that document, both when the result was saved and each time it was read. These results included saved Analyze results, orchestration and workflow outputs, generated files, chat replies and their citations, history and exports. A single deleted, re-uploaded or re-screened document, an access change, or even a failed lookup could hide a result that had already been produced. This happened even when screening was off. Chat history replaced a whole AI reply with "Source content is unavailable pending document screening and review." Saved Analyze results and orchestration files were withheld.
 
-**Implemented in version: 0.261.232.** This version completes a stack of changes that began in 0.261.229. Application version tracking remains in `application\single_app\config.py`.
+**Implemented in version: 0.261.232.** This version completes a stack of changes that began in 0.261.230. Application version tracking remains in `application\single_app\config.py`.
 
 **Related issue:** [#1621](https://github.com/microsoft/simplechat/issues/1621). Layer 1 also fixes [#1613](https://github.com/microsoft/simplechat/issues/1613).
 
@@ -123,16 +123,16 @@ Example: a user analyzes a contract, and a reviewer later holds the contract aft
 
 ## Delivery
 
-Layer 1 merges first. Layers 2, 3a and 3b each target layer 1 and can merge in any order after it; whichever merges later resolves the `VERSION` and release-notes conflict.
+Every layer targets layer 1's branch, `paullizer-workspace-knowledge-holds`. Layers 1 and 2 ship together as 0.261.230; layers 2 and 3a merged into that branch before 3b.
 
 | Layer | Version | Scope | Pull request |
 | --- | --- | --- | --- |
-| 1 | 0.261.229 | Run history and task output stop re-checking workflow run sources (fixes #1613). | [#1628](https://github.com/microsoft/simplechat/pull/1628) |
+| 1 | 0.261.230 | Run history and task output stop re-checking workflow run sources (fixes #1613). | [#1628](https://github.com/microsoft/simplechat/pull/1628) |
 | 2 | 0.261.230 | Intake and metadata: generated documents skip screening, and metadata edits no longer put a cleared document back on hold. | [#1629](https://github.com/microsoft/simplechat/pull/1629) |
-| 3a | 0.261.231 | Workflow saved results take their access from the workflow and run. | Targets layer 1 |
-| 3b | 0.261.232 | Chat, Analyze, orchestration, generated files, history and exports (this document). | Targets layer 1 |
+| 3a | 0.261.231 | Workflow saved results take their access from the workflow and run. | [#1631](https://github.com/microsoft/simplechat/pull/1631) |
+| 3b | 0.261.232 | Chat, Analyze, orchestration, generated files, history and exports (this document). | [#1632](https://github.com/microsoft/simplechat/pull/1632) |
 
-Shared source-check helpers that layer 1's workflow code still calls, such as `authorize_analysis_sources`, stay in place in 3b. Removing the leftovers is a small follow-up after 3a and 3b both merge.
+Shared source-check helpers that are still used for input reads, such as `authorize_analysis_sources`, stay in place. Removing helpers left with no callers after 3a and 3b, including the `functions_saved_analysis` re-export, is a small follow-up.
 
 ## Testing and validation
 
