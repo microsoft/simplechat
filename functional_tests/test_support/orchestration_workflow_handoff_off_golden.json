@@ -1,5 +1,5 @@
 {
- "captured_from": "fd842e199 (0.261.228, before workflow hand-off)",
+ "captured_from": "ca95275ab (0.261.229, before workflow hand-off)",
  "system_prompts": {
   "prompt_1": [
    "Plan bounded work; do not execute or answer it. Return one JSON object.",
