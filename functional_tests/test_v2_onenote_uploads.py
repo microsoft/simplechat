@@ -137,13 +137,19 @@ if functions_onenote.OneNoteExtractionError("runtime_unavailable").code != "runt
     def test_final_image_contains_both_native_runtime_and_built_spa(self):
         dockerfile = (APP_ROOT / "Dockerfile").read_text(encoding="utf-8")
         final_stage = dockerfile.rsplit("\nFROM ", 1)[1]
-        self.assertTrue(final_stage.startswith("onenote-runtime\n"))
+        # The final stage builds from the distroless image directly, not an intermediate stage
+        # (0.261.233): an inherited stage created /app as root before the runtime user's copy.
+        self.assertTrue(final_stage.startswith("mcr.microsoft.com/azurelinux/distroless/python:"))
         self.assertIn("AS v2uibuilder", dockerfile)
         self.assertIn("AS onenote-builder", dockerfile)
-        self.assertIn("AS onenote-runtime", dockerfile)
         self.assertIn("cargo build --release --locked", dockerfile)
-        self.assertIn("COPY --from=onenote-builder /build/target/release/simplechat-onenote-extractor", dockerfile)
-        self.assertIn("COPY --from=onenote-builder /onenote-source/", dockerfile)
+        for native_copy in (
+            "COPY --from=onenote-builder /build/target/release/simplechat-onenote-extractor",
+            "COPY --from=onenote-builder /build/THIRD_PARTY_NOTICES.txt",
+            "COPY --from=onenote-builder /build/licenses/",
+            "COPY --from=onenote-builder /onenote-source/",
+        ):
+            self.assertIn(native_copy, final_stage)
         self.assertIn("COPY --from=v2uibuilder", final_stage)
         self.assertLess(
             final_stage.index("application/single_app ./"),
