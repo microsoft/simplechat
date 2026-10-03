@@ -10,8 +10,9 @@
 // says the server would still resume it.
 //
 // Everything here is pure, so it is checked in isolation by
-// functional_tests/test_v2_workflow_delivery.mjs.
+// functional_tests/test_v2_workflow_delivery_messages.mjs.
 
+import type { CompletedReply } from './replyEvents';
 import type { ChatMessage } from './types';
 import { readWorkflowResult } from './workflowResults';
 import type { WorkflowResultDescriptor } from './types';
@@ -19,6 +20,7 @@ import {
     isWorkflowRunIdentifier,
     workflowRunRowControls,
     WORKFLOW_DELIVERY_MESSAGE_PREFIX,
+    type WorkflowRunStatusRow,
 } from './workflowRunStatus';
 import type { TrackedWorkflowRun, WorkflowRunTrackerSnapshot } from './workflowRunTracker';
 
@@ -188,4 +190,58 @@ export function workflowDeliveryCanRetry(
 /** The DOM id of a delivered message's footer, so the run card can move focus to it. */
 export function workflowDeliveryFooterId(messageId: string): string {
     return `workflow-delivery-${messageId}`;
+}
+
+/**
+ * The reply a posted result settles as: a workflow's, so the desktop notice and the unread rules
+ * treat it as one, and keyed by the posted message, so one result is never announced twice.
+ */
+export function workflowDeliveryReply(row: WorkflowRunStatusRow, conversationTitle: string | null): CompletedReply {
+    return {
+        conversationId: row.conversation_id,
+        messageId: row.delivery.message_id,
+        runId: row.run_id,
+        conversationTitle,
+        blocked: false,
+        source: 'workflow',
+    };
+}
+
+/** What the open chat is doing, as far as re-reading its messages is concerned. */
+export interface OpenChatActivity {
+    /** A reply is streaming into it. */
+    streaming: boolean;
+    /** Its messages are being read. */
+    messagesLoading: boolean;
+    /** A plan is still running in it, whose stream the chat store doesn't report. */
+    orchestrationActive: boolean;
+}
+
+/** Whether a result posted to the open chat must wait before its messages are re-read. */
+export function workflowDeliveryMustWait(activity: OpenChatActivity): boolean {
+    return activity.streaming || activity.messagesLoading || activity.orchestrationActive;
+}
+
+export interface WorkflowDeliveryLanding<T> {
+    /** Results for any other chat, settled straight away. */
+    elsewhere: T[];
+    /** Results for the open chat, settled after one re-read of its messages. */
+    reloadNow: T[];
+    /** Results for the open chat that wait until it is quiet. */
+    waiting: T[];
+}
+
+/**
+ * Where each posted result lands: another chat's straight away; the open chat's after one re-read,
+ * or later when the open chat is busy. `openConversationId` is null when no chat is open.
+ */
+export function planWorkflowDeliveryLanding<T extends { conversation_id: string }>(
+    rows: readonly T[],
+    openConversationId: string | null,
+    openChatBusy: boolean,
+): WorkflowDeliveryLanding<T> {
+    const elsewhere = rows.filter((row) => row.conversation_id !== openConversationId);
+    const here = rows.filter((row) => row.conversation_id === openConversationId);
+    const now = here.length > 0 && openConversationId !== null && !openChatBusy;
+    return { elsewhere, reloadNow: now ? here : [], waiting: now ? [] : here };
 }

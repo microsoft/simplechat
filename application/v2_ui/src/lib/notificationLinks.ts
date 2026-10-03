@@ -87,7 +87,8 @@ export function v2WorkflowRunPath(
 ): string | null {
     const workflow = safeId(workflowId);
     const run = safeId(runId);
-    if (!scope || !workflow || !run) {
+    // Checked here as well as typed: workflowRunHref reads anything that is not a group as personal.
+    if (!scope || (scope.type !== 'personal' && scope.type !== 'group') || !workflow || !run) {
         return null;
     }
     try {

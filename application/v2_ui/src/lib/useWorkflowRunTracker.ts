@@ -16,6 +16,7 @@ import { useEffect } from 'react';
 import { desktopNotificationPermission, desktopNotificationsEnabled } from './desktopNotifications';
 import { hasActiveOrchestration } from './orchestrationController';
 import { subscribeCompletedReplies, type CompletedReply } from './replyEvents';
+import { planWorkflowDeliveryLanding, workflowDeliveryMustWait, workflowDeliveryReply } from './workflowDelivery';
 import { createWorkflowRunTracker, type WorkflowRunTracker } from './workflowRunTracker';
 import { fetchWorkflowRunStatus, type WorkflowRunRow, type WorkflowRunStatusRow } from './workflowRunStatus';
 import { settleCompletedReply, useChatStore } from '../stores/chatStore';
@@ -82,7 +83,11 @@ export function kickWorkflowRunTracker(options?: { immediate?: boolean }): void 
 
 function chatIsBusy(conversationId: string): boolean {
     const { streaming, messagesLoading } = useChatStore.getState();
-    return streaming || messagesLoading || hasActiveOrchestration(conversationId);
+    return workflowDeliveryMustWait({
+        streaming,
+        messagesLoading,
+        orchestrationActive: hasActiveOrchestration(conversationId),
+    });
 }
 
 /** Reload the chat list from its first page, unless it hasn't loaded yet, is loading or is filtered. */
@@ -96,18 +101,8 @@ function reloadConversationList(): void {
 
 function settleDelivery(row: WorkflowRunStatusRow, current: boolean): void {
     const listed = useChatStore.getState().conversations.find((item) => item.id === row.conversation_id);
-    settleCompletedReply(
-        {
-            conversationId: row.conversation_id,
-            messageId: row.delivery.message_id,
-            runId: row.run_id,
-            conversationTitle: listed?.title || null,
-            blocked: false,
-            source: 'workflow',
-        },
-        // The server marks a chat unread whenever it posts a result to it.
-        { current, serverMarksUnread: true },
-    );
+    // The server marks a chat unread whenever it posts a result to it.
+    settleCompletedReply(workflowDeliveryReply(row, listed?.title || null), { current, serverMarksUnread: true });
 }
 
 function stopWaiting(): void {
@@ -173,26 +168,24 @@ function landWaitingDeliveries(): void {
         return;
     }
     const openId = useChatStore.getState().activeConversationId;
-    const elsewhere = waitingDeliveries.filter((row) => row.conversation_id !== openId);
-    const here = waitingDeliveries.filter((row) => row.conversation_id === openId);
-    const reloadNow = here.length > 0 && openId !== null && !chatIsBusy(openId);
-    waitingDeliveries.splice(0, waitingDeliveries.length, ...(reloadNow ? [] : here));
+    const landing = planWorkflowDeliveryLanding(waitingDeliveries, openId, openId !== null && chatIsBusy(openId));
+    waitingDeliveries.splice(0, waitingDeliveries.length, ...landing.waiting);
     // Set before anything is settled, so a store change made while settling can't start a second
     // re-read of the same results.
-    reloadingMessages = reloadNow;
+    reloadingMessages = landing.reloadNow.length > 0;
     if (waitingDeliveries.length === 0) {
         stopWaiting();
     } else {
         waitForQuietChat();
     }
-    for (const row of elsewhere) {
+    for (const row of landing.elsewhere) {
         settleDelivery(row, false);
         if (!useChatStore.getState().conversations.some((item) => item.id === row.conversation_id)) {
             reloadConversationList();
         }
     }
-    if (reloadNow) {
-        void reloadAndSettle(here);
+    if (landing.reloadNow.length > 0) {
+        void reloadAndSettle(landing.reloadNow);
     }
 }
 

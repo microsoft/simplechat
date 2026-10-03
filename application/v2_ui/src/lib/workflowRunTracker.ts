@@ -17,9 +17,11 @@
 // or Check now. Errors back off (30 s, 1 min, 2 min, then 5 min); 401 and 403, and a 400 on the
 // global read, halt it for the page session.
 //
-// Baseline. The first response in a page session records every result already posted, silently.
-// Only a posting seen later in the same page session is announced, so a reload never announces a
-// result twice, never marks a chat unread again and never shows a second desktop notification.
+// Baseline. The first response in a page session that lists a chat's runs records every result
+// already posted there, silently. That is the first read of every chat's runs, or the chat's own
+// read when it comes back first. Only a posting seen later in the same page session is announced,
+// so a reload never announces a result twice, never marks a chat unread again and never shows a
+// second desktop notification.
 
 import {
     isStatusConversationId,
@@ -161,7 +163,11 @@ export function createWorkflowRunTracker(deps: WorkflowRunTrackerDeps): Workflow
 
     // What this page session has already seen. Kept across stop and start, so a tracker that
     // restarts (a flag flipped back on, or React mounting twice) announces nothing again.
-    let baselineCheckedAt: string | null = null;
+    // A chat's baseline is the first good read that listed its runs: every chat's, or that chat's
+    // own when it came back first. A chat's own read says nothing about the other chats, so it
+    // never sets their baseline.
+    let globalBaseline: string | null = null;
+    const conversationBaselines = new Map<string, string>();
     const deliveredKeys = new Set<string>();
     const seenUndelivered = new Set<string>();
     const seenInFlight = new Set<string>();
@@ -304,6 +310,10 @@ export function createWorkflowRunTracker(deps: WorkflowRunTrackerDeps): Workflow
         safely(() => deps.onHalted?.());
     }
 
+    function baselineFor(conversationId: string): string | null {
+        return conversationBaselines.get(conversationId) ?? globalBaseline;
+    }
+
     function isAnnounceable(row: WorkflowRunStatusRow): boolean {
         const { generation, message_id: messageId, delivered_at: deliveredAt } = row.delivery;
         if (generation === null || !messageId || !messageId.startsWith(WORKFLOW_DELIVERY_MESSAGE_PREFIX)) {
@@ -313,8 +323,9 @@ export function createWorkflowRunTracker(deps: WorkflowRunTrackerDeps): Workflow
             return true;
         }
         // Both are server times in whole seconds, so a posting in the same second as the
-        // first read, but missing from it, still counts as new.
-        return baselineCheckedAt !== null && deliveredAt !== null && deliveredAt >= baselineCheckedAt;
+        // chat's first read, but missing from it, still counts as new.
+        const baseline = baselineFor(row.conversation_id);
+        return baseline !== null && deliveredAt !== null && deliveredAt >= baseline;
     }
 
     function noteTransitions(
@@ -358,7 +369,8 @@ export function createWorkflowRunTracker(deps: WorkflowRunTrackerDeps): Workflow
         const delivered: WorkflowRunStatusRow[] = [];
         const closed: WorkflowRunStatusRow[] = [];
         const retired: WorkflowRunRow[] = [];
-        const first = baselineCheckedAt === null;
+        const firstGlobal = conversationId === null && globalBaseline === null;
+        const firstForConversation = conversationId !== null && baselineFor(conversationId) === null;
         if (response.checked_at >= availableAt) {
             available = response.available;
             availableAt = response.checked_at;
@@ -373,11 +385,14 @@ export function createWorkflowRunTracker(deps: WorkflowRunTrackerDeps): Workflow
             if (tracked && tracked.checkedAt > response.checked_at) {
                 continue;
             }
-            noteTransitions(row, first, delivered, closed);
+            noteTransitions(row, baselineFor(row.conversation_id) === null, delivered, closed);
             runs.set(row.run_id, { row, checkedAt: response.checked_at, retired: false });
         }
-        if (first) {
-            baselineCheckedAt = response.checked_at;
+        if (firstGlobal) {
+            globalBaseline = response.checked_at;
+        }
+        if (firstForConversation && conversationId !== null) {
+            conversationBaselines.set(conversationId, response.checked_at);
         }
         // Only a complete read of every chat's runs can say a run has dropped out. A chat's own
         // read is capped, and a truncated read leaves rows out.
