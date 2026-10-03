@@ -40,6 +40,7 @@ MAX_ANALYSIS_PAGE_RECORDS = 100
 MAX_ANALYSIS_PAGE_BYTES = 256 * 1024
 MAX_ANALYSIS_DIAGNOSTIC_PAGE_BYTES = 65536
 UNAVAILABLE_ANALYSIS_MESSAGE = "This saved analysis is unavailable because its access could not be confirmed."
+UNVERIFIED_WORKFLOW_OUTPUT_MESSAGE = "This saved task output is unavailable because it could not be read or verified."
 
 
 def _authorize_conversation(user_id, conversation_id):
@@ -874,6 +875,8 @@ def load_saved_analysis(
         else:
             loader = workflow_loader or _workflow_load
         load = lambda ref: loader(workflow, binding["run_id"], binding["task_id"], ref, **selectors)
+        # A workflow result takes its access from its workflow and run (checked above);
+        # this proves its lineage and returns its sources as provenance only.
         manifest, checked = authorize_workflow_task_result_read(
             workflow, binding["run_id"], binding["task_id"], reference,
             reader_user_id=user_id, load_result=loader, source_resolver=source_resolver,
@@ -1844,7 +1847,13 @@ def sanitize_saved_analysis_messages(
 
 
 def sanitize_workflow_analysis_history(workflow, run_record, user_id, *, items=None, result_reader=None):
-    """Keep task previews and activity from bypassing the workflow result reader."""
+    """Keep task previews and activity from bypassing the workflow result reader.
+
+    Previews take their access from the workflow and run the caller already read.
+    Each stored result is still checked for identity, lineage and integrity; a
+    result that fails that check, or can't be read from storage, is withheld.
+    Its contributing documents are never re-checked.
+    """
     if not isinstance(run_record, Mapping):
         return run_record, items, True
     read = result_reader or authorize_workflow_task_result_read
@@ -1907,17 +1916,17 @@ def sanitize_workflow_analysis_history(workflow, run_record, user_id, *, items=N
         redacted = deepcopy(task)
         for field in ("output_summary", "response_preview", "reply"):
             if field in redacted:
-                redacted[field] = UNAVAILABLE_ANALYSIS_MESSAGE
+                redacted[field] = UNVERIFIED_WORKFLOW_OUTPUT_MESSAGE
         if redacted.get("error"):
-            redacted["error"] = UNAVAILABLE_ANALYSIS_MESSAGE
+            redacted["error"] = UNVERIFIED_WORKFLOW_OUTPUT_MESSAGE
         redacted["analysis_access_available"] = False
         return redacted
 
     run = deepcopy(run_record)
-    run["response_preview"] = UNAVAILABLE_ANALYSIS_MESSAGE
+    run["response_preview"] = UNVERIFIED_WORKFLOW_OUTPUT_MESSAGE
     run["analysis_access_available"] = False
     if run.get("error"):
-        run["error"] = UNAVAILABLE_ANALYSIS_MESSAGE
+        run["error"] = UNVERIFIED_WORKFLOW_OUTPUT_MESSAGE
     for field in ("reply", "analysis_result", "analysis_coverage", "generated_analysis_artifacts", "generated_tabular_outputs"):
         run.pop(field, None)
     run["task_results"] = [redact(task) for task in run.get("task_results") or []]

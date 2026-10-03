@@ -101,7 +101,8 @@ def workflow_repeat_iterations_page(workflow, run_id, execution_id, *, reader_us
     return {
         "iterations": items, "total_count": through, "next_cursor": next_cursor,
         "repeat_execution_id": execution_id, "repeat": repeat_summary(head),
-        "source_snapshot_changed": authorization.access()["source_snapshot_changed"],
+        # Retained for older clients; saved rounds are never compared with current sources.
+        "source_snapshot_changed": False,
     }
 
 
@@ -159,5 +160,6 @@ def workflow_repeat_state_page(workflow, run_id, execution_id, iteration, *, rea
     return {
         **result, "states": states, "available": True, "total_count": len(declarations),
         "next_cursor": _next_cursor(scope, offset + len(states), len(declarations)),
-        "partial": state["partial"], "source_snapshot_changed": authorization.access()["source_snapshot_changed"],
+        # Retained for older clients; saved state is never compared with current sources.
+        "partial": state["partial"], "source_snapshot_changed": False,
     }

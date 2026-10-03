@@ -220,7 +220,8 @@ when a workflow or its private run results are deleted.
 Regression coverage includes real native Analyze adaptation through a saved
 join; personal/group/public publication; both Cosmos and Blob result storage;
 delayed approval/index visibility; restart and repeated Resume; screening and
-original-byte checks; lost acknowledgements; source/destination revocation;
+original-byte checks; lost acknowledgements; workflow and destination access
+revocation; publishing again after a source document changes;
 notification deduplication; and no-policy compatibility.
 
 Principal tests are `test_workflow_publication_completion.py`,

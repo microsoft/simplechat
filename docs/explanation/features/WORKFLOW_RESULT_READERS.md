@@ -1,4 +1,4 @@
-# Source-authorized workflow result readers
+# Lineage-verified workflow result readers
 
 Implemented in version: **0.261.107**, recorded in
 `application/single_app/config.py`.
@@ -16,12 +16,18 @@ and incremental collection indexes.
 Updated in version: **0.261.120** for exact Repeat state receipts and mixed
 iteration paths.
 
+Updated in version: **0.261.231**. Readers no longer re-check the documents a
+saved result came from. A saved or generated result takes its access from its
+workflow and run; its contributing sources are kept as provenance. See
+[Workflow Saved Result Source Re-check Fix](../fixes/WORKFLOW_SAVED_RESULT_SOURCE_RECHECK_FIX.md).
+
 ## Purpose and dependencies
 
 This incremental foundation extends the existing `workflow-result-v1` store.
 Tasks can select a named final output without receiving a display summary or
-diagnostic notes in its place. Contributing sources remain attached to derived
-results so that losing access to a source also prevents later result reuse.
+diagnostic notes in its place. Contributing sources stay attached to derived
+results as provenance, so a later reader can see which documents a result came
+from. They are not looked up again when the result is read or reused.
 
 It uses `functions_workflow_results.py`, `functions_analysis_access.py`, the
 existing source resolver, and `functions_workflow_result_store.py`. No new
@@ -35,9 +41,10 @@ load_result=..., source_resolver=None)` returns `(prompt, receipt)`.
 
 The workflow, run, task, and reference must come from an authorized server-side
 lookup. The reader additionally verifies producer identity, immutable section
-identity, and current access to every direct or transitively consumed source.
+identity, and the receipts of every direct or transitively consumed result.
 `reader_user_id` identifies the actual reader when it differs from the workflow
-owner.
+owner. The `source_resolver` parameter is kept for compatibility and is not
+called.
 
 `output_name` may select `authoritative`, `text`, `records`, `json`, or
 `documents`. Only an existing named final section is readable as task input.
@@ -47,9 +54,10 @@ be bound as final output.
 The receipt records the producer, output name, manifest reference, and exact
 output reference. Consumers must retain it on their resulting manifest.
 
-Workflow task-result HTTP reads, run history, and activity now use this source
-authorization boundary. `authorize_workflow_run_read` checks all stored task
-references without applying a UI history-page limit. Generic
+Workflow task-result HTTP reads, run history, and activity use this lineage
+boundary after their own workflow, run and group checks.
+`authorize_workflow_run_read` verifies all stored task references without
+applying a UI history-page limit. Generic
 `workflow_validation` requirements are enforced independently of the producer's
 Analyze validation; neither an invalid requirement report nor a pending producer
 can be bypassed by requesting partial output.
@@ -81,9 +89,9 @@ workflow task result. This also applies to a raw-model task that consumes
 shared reference documents without running Analyze.
 
 The builder normalizes metadata; it does not authorize a read. Reference
-loaders must still check current source permissions and validate any reused
-content snapshot. A retained content hash is not proof that current content
-was fetched or verified.
+loaders, which read uploaded documents as run inputs, must still check current
+source permissions and validate any reused content snapshot. A retained content
+hash is not proof that current content was fetched or verified.
 
 ## Storage and large outputs
 
@@ -104,7 +112,7 @@ Version **0.261.117** adds `open_workflow_record_input` for exact V3 producer
 identities, frozen item membership, and bounded complete-record reads. The new
 `record_tree` representation keeps its index bounded as well as its payload
 pages; existing inline and `record_pages` outputs remain readable. Manifest
-caches are bounded, and source checks remain independent of storage identity.
+caches are bounded, and lineage checks remain independent of storage identity.
 
 [For each and Collect](WORKFLOW_FOR_EACH_COLLECT.md) reuse these readers for
 iteration and aggregate consumption. Explicit saved-record reporting can
@@ -127,8 +135,9 @@ not permission to invent a historical round.
 
 State and producer lineage use shared bounded, cycle-detecting authorization
 traversal. Reusing an exact receipt does not cache authority indefinitely:
-current workflow/group, contributor, source revision, producer attempt, and
-lifecycle checks still apply at their existing boundaries.
+current workflow/group, producer attempt, and lifecycle checks still apply at
+their existing boundaries. Repeat state is generated output, so a change to a
+document an earlier task read doesn't block a grant, a later round or history.
 
 Before/after inspection is paged. Uncommitted after-state is unavailable, not
 an eligible empty value. Partial state requires explicit acceptance and
@@ -144,9 +153,10 @@ without a latest-task lookup or a fabricated native Analyze producer.
 ## Validation and integration boundary
 
 The foundation's functional coverage includes named sections and receipts,
-explicit partial eligibility, pending/invalid rejection, current contributor
-access, record-page reconstruction, and Blob/Cosmos identity and integrity.
-Tests use the real result implementations with isolated SDK doubles.
+explicit partial eligibility, pending/invalid rejection, results that stay
+readable after their sources change, record-page reconstruction, and
+Blob/Cosmos identity and integrity. Tests use the real result implementations
+with isolated SDK doubles.
 
 The broader Analyze UI, native-engine adapters, and live work-unit retry
 integration are separate changes. An authenticated live deployment was not

@@ -9,7 +9,6 @@ from collections.abc import Mapping
 from functions_analysis_access import (
     AnalysisResultUnavailable,
     analysis_source_snapshot,
-    authorize_analysis_sources,
 )
 from functions_artifact_publication_readiness import public_publication_status
 from functions_workflow_result_store import (
@@ -359,7 +358,14 @@ def authorize_workflow_task_result_read(
     workflow, run_id, task_id, reference, *, reader_user_id=None, manifest=None,
     load_result=load_workflow_task_result, source_resolver=None, **selectors,
 ):
-    """Recheck contributors of this result and every actually consumed ancestor."""
+    """Verify this result and every actually consumed ancestor; their sources are provenance.
+
+    A saved result takes its access from its workflow and run, which the caller has
+    already authorized. This proves identity, lineage and integrity only: contract
+    versions, producer identities, hashes and consumed-input receipts. Contributing
+    sources are returned so callers can carry ``analysis_access`` forward; they are
+    never re-resolved for the reader. ``source_resolver`` is accepted and unused.
+    """
     if selectors:
         from functions_workflow_identity import workflow_node_identity
         from functions_workflow_node_results import authorize_workflow_node_result_read
@@ -447,19 +453,12 @@ def authorize_workflow_task_result_read(
         loaded[(str(task_id), reference["sha256"])] = (dict(reference), root)
     visit(root, task_id, reference)
     snapshots = analysis_source_snapshot(sources)
-    access = (
-        authorize_analysis_sources(
-            reader_user_id if reader_user_id is not None else workflow.get("user_id"),
-            snapshots, resolver=source_resolver,
-        )
-        if snapshots else {"source_count": 0, "source_snapshot_changed": False}
-    )
-    return root, {**access, "sources": snapshots}
+    return root, {"source_count": len(snapshots), "source_snapshot_changed": False, "sources": snapshots}
 
 
 def authorize_workflow_run_read(workflow, run_id, *, reader_user_id=None, result_items=None,
                                 load_result=load_workflow_task_result, source_resolver=None):
-    """Guard history/activity with every stored task result, without a UI item cap."""
+    """Verify the identity and lineage of every stored task result in a run, without a UI item cap."""
     structured_run = False
     if result_items is None:
         # These are already scope-authorized workflow/run reads. Query only task
@@ -898,7 +897,8 @@ def load_workflow_task_input(workflow, run_id, task_id, reference,
         "provenance": manifest.get("provenance") or {},
         "coverage": manifest.get("coverage") or {},
         "validation": public_analysis_validation(manifest.get("validation")) if access["source_count"] else manifest.get("validation") or {},
-        "source_snapshot_changed": access["source_snapshot_changed"],
+        # A fixed field keeps saved input digests stable; sources are not re-checked.
+        "source_snapshot_changed": False,
         "kind": output["kind"],
         "value": output["value"],
         **({

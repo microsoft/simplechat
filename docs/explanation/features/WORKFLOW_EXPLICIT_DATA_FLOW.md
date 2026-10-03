@@ -159,9 +159,11 @@ The run outcome accounts for every task, not only the last successful reply.
 Accepted partial results remain distinct as `completed_partial`; the presence of
 the word "complete" in model text does not set a success state.
 
-Result pages, task history, and workflow activity recheck contributing sources
-through the shared source-authorized reader. Workflow lists redact cached
-last-run text when its source access is lost. Older cached previews without a
+Result pages, task history, and workflow activity verify each saved result's
+lineage through the shared reader after their workflow, run and group checks.
+Since 0.261.231 they don't re-check the documents a run read: a saved result
+takes its access from its workflow and run. Workflow lists keep a run-bound
+last-run preview. Older cached previews without a
 bound `last_run_id` are omitted instead of guessing which run they describe.
 
 Output validation happens after a task returns. It does not undo side effects
@@ -198,9 +200,10 @@ The new independent modules are:
 - `functions_workflow_editor.py`: non-secret, scope-authorized runner choices.
 
 Functional coverage includes nonadjacent producers, missing/forward bindings,
-V1 downgrade prevention, stale edits, concurrent runtime updates, source
-revocation/change, zero counts, duplicate identities, explicit partial
-acceptance, and preservation of stricter producer validation.
+V1 downgrade prevention, stale edits, concurrent runtime updates, saved
+outputs that stay reusable after a source changes, zero counts, duplicate
+identities, explicit partial acceptance, and preservation of stricter producer
+validation.
 
 The V2 editor uses locally bundled assets and existing Python Playwright
 fixtures. No CDN, new graph runtime, or new test framework is required.
