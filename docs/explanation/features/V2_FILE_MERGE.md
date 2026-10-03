@@ -1,6 +1,6 @@
 # V2 File Merge
 
-Version: **0.261.241**
+Version: **0.261.242**
 
 Implemented in version: **0.261.234** (Phase 1, same-structure spreadsheets),
 **0.261.235** (Phase 2, reconciling different structures), **0.261.236** (Phase 3,
@@ -143,6 +143,10 @@ contract `tabular-inspect-v1`.
 Rendering keeps its own limits: CSV exports hold at most 1,000,000 records, and XLSX at
 most 1,048,575 rows, 5,000,000 cells and 32 MiB. CSV suits the largest merges.
 
+Merged rows over 8 MiB and assembled documents over 16 MiB spill from memory to disk, in
+the container's scratch directory `/sc-temp-files` since **0.261.242**. See
+[Phase 7](V2_FILE_MERGE_PHASE_7_CHAT_DOCUMENTS.md#where-merges-spill-to-disk).
+
 ### Security
 
 - Every source is authorized again when the run starts and when its bytes are read, through
@@ -188,6 +192,7 @@ and the orchestration Capabilities list
 | `functional_tests/test_orchestration_document_merge_capability.py`, `functional_tests/test_document_merge_assembly.py`, `functional_tests/test_orchestration_output_lifecycle.py` | Chat document merges, the assembly description and its byte-identical re-assembly, and delivery through the real rendering service (Phase 7). |
 | `functional_tests/test_file_merge_hardening.py`, `functional_tests/test_workflow_merge_task.py` | Hostile Word, PowerPoint and Excel files, ZIP size guards, 100 files in one workflow run, and output without live formulas (Phase 7). |
 | `functional_tests/test_orchestration_merge_layout_question.py` | The question that asks for one sheet or a sheet per file (0.261.241). |
+| `functional_tests/test_file_merge_scratch_dir.py` | Where merges spill to disk (0.261.242). |
 
 ## Known limitations
 

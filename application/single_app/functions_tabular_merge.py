@@ -1,11 +1,12 @@
 # functions_tabular_merge.py
 """Deterministic merging and inspection of CSV and Excel files.
 
-Version: 0.261.240
+Version: 0.261.242
 Implemented in: 0.261.234
 Reconciliation policies, sheet modes, duplicate removal, sorting and inspection added in: 0.261.235
 Single-file merges for workflow files found at run time (min_sources=1) added in: 0.261.236
 Workbooks with unsafe or unreadable XML refused in: 0.261.240
+Spooled rows written to the container's scratch directory in: 0.261.242
 
 The engine is pure: it receives already-authorized byte loaders, never resolves
 documents, settings, storage, routes, or models, and performs no model work.
@@ -43,6 +44,7 @@ import unicodedata
 import zipfile
 
 from functions_ooxml_package_guard import UnreadablePackageError, first_unsafe_xml_part
+from functions_temp_files import scratch_file_dir
 
 TABULAR_MERGE_REPORT_VERSION = "tabular-merge-report-v1"
 TABULAR_INSPECTION_VERSION = "tabular-inspection-v1"
@@ -678,7 +680,9 @@ class _RowSpool:
     """Validated rows as compact JSON lines; small merges stay in memory."""
 
     def __init__(self):
-        self._file = tempfile.SpooledTemporaryFile(max_size=_SPOOL_MEMORY_BYTES, mode="w+b")
+        # The container's dedicated scratch directory, or the platform default; never the
+        # working directory, which the container's non-root user can't write.
+        self._file = tempfile.SpooledTemporaryFile(max_size=_SPOOL_MEMORY_BYTES, mode="w+b", dir=scratch_file_dir())
         self._offsets = array("q")
         self._end = 0
         self.count = 0

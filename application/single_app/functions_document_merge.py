@@ -1,14 +1,15 @@
 # functions_document_merge.py
 """Ordered assembly of several PDF, Word, PowerPoint or spreadsheet files into one file.
 
-Version: 0.261.240
+Version: 0.261.242
 
 The engine is pure: it receives already-authorized byte loaders, never resolves
 documents, settings, storage or routes, and performs no model work. Each assembler reads
 one source at a time, checks a package's size and refuses XML parts that declare a document
 type or aren't UTF-8 or UTF-16 before parsing it, and writes the output to a bounded spooled
-file whose size is checked before it is returned. The same files and options always produce
-the same bytes, so a replayed merge reuses its file.
+file whose size is checked before it is returned; a spool larger than 16 MiB spills into the
+container's scratch directory (0.261.242). The same files and options always produce the
+same bytes, so a replayed merge reuses its file.
 """
 
 from dataclasses import dataclass, field
@@ -19,6 +20,7 @@ from typing import Callable, Optional, Sequence, Tuple
 import zipfile
 
 from functions_ooxml_package_guard import UnreadablePackageError, first_unsafe_xml_part
+from functions_temp_files import scratch_file_dir
 
 
 DOCUMENT_MERGE_REPORT_VERSION = "document-merge-report-v1"
@@ -299,7 +301,9 @@ def _new_part_entry(part):
 
 
 def new_output_spool():
-    return tempfile.SpooledTemporaryFile(max_size=_SPOOL_MEMORY_BYTES, mode="w+b")
+    # The container's dedicated scratch directory, or the platform default; never the working
+    # directory, which the container's non-root user can't write.
+    return tempfile.SpooledTemporaryFile(max_size=_SPOOL_MEMORY_BYTES, mode="w+b", dir=scratch_file_dir())
 
 
 def fixed_zip_entry(name):

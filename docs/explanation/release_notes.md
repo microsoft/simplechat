@@ -2,6 +2,15 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.242)**
+
+#### Bug Fixes
+
+*   **Large Merges Spill To The Container's Scratch Directory**
+    *   A merge keeps its data in memory up to 16 MiB for an assembled PDF, Word document, deck or workbook, and 8 MiB of rows for a spreadsheet merge. Larger merges now spill into `/sc-temp-files`, the directory the container image creates for scratch files, like file renders and downloads since 0.261.233. Before, they used the platform temp directory (`/tmp` in the image), which also works.
+    *   Where `/sc-temp-files` doesn't exist or can't be written, such as on a development machine, merges still use the platform temp directory, and never the working directory. Spilling doesn't change the merged file.
+    *   (Ref: #1619, `functions_document_merge.py`, `functions_tabular_merge.py`, `functions_temp_files.py`, `test_file_merge_scratch_dir.py`, [Phase 7](features/V2_FILE_MERGE_PHASE_7_CHAT_DOCUMENTS.md#where-merges-spill-to-disk))
+
 ### **(v0.261.241)**
 
 #### User Interface Enhancements
