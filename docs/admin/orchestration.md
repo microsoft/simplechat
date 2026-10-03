@@ -259,6 +259,12 @@ in between is never delivered. Word documents whose fields start other programs
 are refused, and PowerPoint actions that start programs or run macros are
 removed.
 
+Since **0.261.225**, while both **Merge spreadsheets** and **Merge documents** are
+offered, a plan asks whether spreadsheets merged into one Excel file should share
+one sheet or keep a sheet each, unless the request already says. Clearing **Merge
+documents** keeps that question out of plans, and merged rows always share one
+sheet.
+
 All three are offered while **Enable Merge** is on under
 [Document Action Capabilities]({{ '/admin/agents-actions/' | relative_url }}#document-action-capabilities-card),
 which also sets how many files and rows one chat request may merge or inspect.

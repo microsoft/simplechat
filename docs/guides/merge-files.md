@@ -4,7 +4,7 @@ title: "Merge files in chat"
 description: "Combine several CSV or Excel files into one table, or several PDFs, Word documents or PowerPoint decks into one file."
 section: "Guides"
 audience: user
-version: "0.261.224"
+version: "0.261.225"
 ---
 
 ## What this does
@@ -51,19 +51,47 @@ for that work separately.
 1. Select the files in the chat's document picker, or name them in your message.
 2. Ask for the merge and the file you want back, for example:
 
-   > Merge these three regional sales files into one Excel file.
+   > Stack the rows of these three regional sales files into one Excel sheet.
 
    > Combine the selected CSVs into one CSV. Don't add a column for the file name.
 
    > Stack the "Data" sheet from each of these workbooks into one CSV.
 
-3. Review the plan. It shows a **Merge spreadsheets** task followed by the file to
+3. If you asked for one Excel file without saying whether the rows share one sheet, chat
+   asks first. See [One sheet, or a sheet per file](#one-sheet-or-a-sheet-per-file).
+4. Review the plan. It shows a **Merge spreadsheets** task followed by the file to
    create. Check the files and settings listed, then run the plan.
-4. Download the file from the answer.
+5. Download the file from the answer.
 
 If you don't select the files, you can describe them, for example "merge the monthly
 timesheet files from my workspace". The plan then searches for matching files first and
 merges the ones it finds, so check the plan's search wording before you run it.
+
+## One sheet, or a sheet per file
+
+Merging spreadsheets into one Excel file can mean two different things:
+
+- **All rows on one sheet.** The rows of every file are stacked into one table, as
+  described on this page.
+- **Each file on its own sheet.** The files stay separate tables, one sheet each, in a
+  single workbook. See [Merge PDFs, Word documents, decks or
+  workbooks](#merge-pdfs-word-documents-decks-or-workbooks).
+
+From version **0.261.225**, when you ask to merge or combine spreadsheets into one Excel
+file, or don't name a format, and your request doesn't say which you want, chat asks
+before it plans the merge. Pick **All rows on one sheet** or **Each file on its own
+sheet**. If you choose **Decline**, chat doesn't ask again: it puts every row on one sheet
+and says so in the plan.
+
+Say which in your request to skip the question:
+
+| You want | Ask like this |
+| --- | --- |
+| Every row in one table | "Stack the rows into one sheet", "combine them into one table", or ask for a CSV file, which always holds one table. |
+| Each file kept separate | "Put each file on its own sheet", "one tab per file", or "keep them as separate sheets". |
+
+A workflow that chat proposes for a repeated merge asks the same question. If your
+administrator turned off **Merge documents**, chat can only stack rows, so it doesn't ask.
 
 ## Check the files first
 

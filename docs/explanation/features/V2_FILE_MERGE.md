@@ -1,6 +1,6 @@
 # V2 File Merge
 
-Version: **0.261.224**
+Version: **0.261.225**
 
 Implemented in version: **0.261.218** (Phase 1, same-structure spreadsheets),
 **0.261.219** (Phase 2, reconciling different structures), **0.261.220** (Phase 3,
@@ -57,6 +57,11 @@ serializes a prepared result. Keeping the merged table as a retained result also
 merge feed several files — a CSV and an Excel copy — without merging twice. A document
 merge retains a description instead of a second copy of every file, and Render reads only
 the files that description names, after checking access again.
+
+Spreadsheets merged into one Excel file can share one sheet (`tabular_merge`) or keep a
+sheet each (`document_merge` with kind `workbook`). Since **0.261.225**, when a request
+doesn't say which and both are offered, the plan asks first
+([Phase 7](V2_FILE_MERGE_PHASE_7_CHAT_DOCUMENTS.md#one-sheet-or-a-sheet-per-file)).
 
 Saved memory does not store or merge files. The planner does read saved preferences, so a
 saved instruction such as "always give me Excel" shapes merge requests without extra work.
@@ -182,6 +187,7 @@ and the orchestration Capabilities list
 | `functional_tests/test_document_merge_pptx.py`, `functional_tests/test_workflow_merge_powerpoint.py` | The PowerPoint assembler and PowerPoint workflow merges (Phase 6). |
 | `functional_tests/test_orchestration_document_merge_capability.py`, `functional_tests/test_document_merge_assembly.py`, `functional_tests/test_orchestration_output_lifecycle.py` | Chat document merges, the assembly description and its byte-identical re-assembly, and delivery through the real rendering service (Phase 7). |
 | `functional_tests/test_file_merge_hardening.py`, `functional_tests/test_workflow_merge_task.py` | Hostile Word, PowerPoint and Excel files, ZIP size guards, 100 files in one workflow run, and output without live formulas (Phase 7). |
+| `functional_tests/test_orchestration_merge_layout_question.py` | The question that asks for one sheet or a sheet per file (0.261.225). |
 
 ## Known limitations
 

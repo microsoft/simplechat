@@ -1,8 +1,9 @@
 # V2 File Merge — Phase 7: Document Merges in Chat and Hardening
 
-Version: **0.261.224**
+Version: **0.261.225**
 
 Implemented in version: **0.261.224**, recorded in `application/single_app/config.py`.
+The one-sheet or sheet-per-file question was added in **0.261.225**.
 
 GitHub issue: [#1619](https://github.com/microsoft/simplechat/issues/1619). Umbrella document:
 [V2 File Merge](V2_FILE_MERGE.md). Builds on [Phase 4](V2_FILE_MERGE_PHASE_4_PDF_WORKBOOKS.md),
@@ -97,6 +98,40 @@ contract:
 - The planner's deliverable recipes describe merge → render, and its workflow guidance now
   proposes workflows only for scheduled, synced or very large merges.
 
+### One sheet or a sheet per file
+
+Added in **0.261.225**.
+
+Merging several spreadsheets into one Excel file can mean every row on one sheet
+(`tabular_merge`, rendered with `exact_tabular_workbook_v1`) or each file on its own sheet
+(`document_merge` with kind `workbook`, rendered with `assembled_document_v1`). Requests such
+as "merge these files into one Excel file" don't say which, and the planner used to assume
+one sheet. Since **0.261.225** it asks instead:
+
+- `build_deliverable_availability` adds `MERGE_LAYOUT_FACT` to
+  `capability_availability.deliverables.facts` only when `tabular_merge`, `document_merge`
+  and `render_file` are all offered, so the planner never asks a question whose answer it
+  can't deliver. A deployment that narrows out **Merge documents** keeps stacking rows.
+- The fact tells the planner to return an elicitation with one required single-choice field
+  offering exactly **All rows on one sheet** (`MERGE_LAYOUT_ONE_SHEET`) and **Each file on
+  its own sheet** (`MERGE_LAYOUT_SHEET_PER_FILE`). It applies when the user asks to merge or
+  combine spreadsheets, wants Excel or names no format, and hasn't said which layout.
+- It doesn't ask when the request already decides the layout. CSV output holds one table.
+  Words such as one sheet, one table, stack, append or combine the rows mean one sheet. A
+  sheet or tab per file, separate sheets or keep them separate mean a sheet each. A saved
+  preference, a clarification or an earlier answer also decides it.
+- When the user declines the question, the plan puts every row on one sheet and says so in
+  its assumptions.
+- The planner's general clarification rule ("only ask when you truly cannot proceed")
+  now names its exceptions: a capability's `when_to_use`, a deliverables fact or the
+  workflow instructions that say to ask. Without the exception, the planner would assume
+  one sheet as before.
+- The workflow proposal instructions ask the same question, with the same two choices,
+  before proposing a merge task: kind `tabular` with `xlsx`, or kind `workbook`.
+
+The answer arrives as a clarification, and the planner plans the matching merge. The
+question card is the existing V2 elicitation card, so no UI changes were needed.
+
 ### Failure messages
 
 Chat failures are application-owned text and never name a file:
@@ -133,7 +168,7 @@ Workflow merges keep naming the file, because the owner needs to know which one 
 | `functions_orchestration_document_merge.py` | New. Chat glue: limits, the authorized manifest check, persistence of `assembly` and `report`, step summaries and failure codes. |
 | `functions_ooxml_package_guard.py` | New. The XML prolog check shared by the document and spreadsheet engines, and the content-type lookup PowerPoint stripping uses. |
 | `functions_orchestration_registry.py`, `functions_orchestration_adapters.py`, `functions_orchestration_executor.py`, `functions_orchestration_result_contracts.py` | The `document_merge` descriptor, adapter and named-source handling. |
-| `functions_orchestration_schema.py`, `functions_orchestration_deliverables.py`, `functions_orchestration_planner.py` | Plan rules, failure messages, recipes and planner guidance. |
+| `functions_orchestration_schema.py`, `functions_orchestration_deliverables.py`, `functions_orchestration_planner.py` | Plan rules, failure messages, recipes and planner guidance, and (0.261.225) the one-sheet or sheet-per-file question. |
 | `functions_generated_export_registry.py`, `functions_generated_office_adapters.py`, `functions_generated_file_exports.py` | The `assembled_document_v1` profile on the PDF, Word, PowerPoint and Excel formats, and the assembled renderer. |
 | `functions_orchestration_rendering.py`, `functions_orchestration_services.py`, `functions_orchestration_bootstrap.py`, `functions_orchestration_results.py` | The lineage-bound document reader, `ResultReader.lineage_sources()`, and one shared translation of source read failures for the reader and every other source Render opens. |
 | `functions_document_merge.py`, `functions_document_merge_docx.py`, `functions_document_merge_pptx.py`, `functions_document_merge_workbook.py`, `functions_tabular_merge.py` | The hardening above, and derived Word list IDs. |
@@ -170,6 +205,7 @@ the default, followed by the file to create. See
 | `functional_tests/test_document_merge_docx.py` | Lists copied from later documents keep restarting and give the same bytes on every run. |
 | `functional_tests/test_workflow_merge_task.py` | 100 files of 1,000 rows in one workflow run, and CSV and Excel output without live formulas. |
 | `functional_tests/test_v2_orchestration_merge_arguments.mjs`, `ui_tests/test_v2_orchestration_merge_arguments.py` | The plan card's wording for document merges. |
+| `functional_tests/test_orchestration_merge_layout_question.py` | The one-sheet or sheet-per-file fact is offered only when both layouts and a file can be delivered; the clarification rule names its exceptions; workflow merge proposals ask the same question; the real planner sees the fact and returns a question the server accepts, with both choices and Decline handled; each answer plans to a valid merge (0.261.225). |
 
 ## Known limitations
 

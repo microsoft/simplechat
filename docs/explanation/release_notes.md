@@ -2,6 +2,17 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.225)**
+
+#### User Interface Enhancements
+
+*   **Chat Asks Whether Merged Spreadsheets Share One Sheet**
+    *   Merging several CSV or Excel files into one Excel file can mean every row on one sheet or each file on its own sheet. When a request such as "merge these files into one Excel file" doesn't say which, V2 chat now asks first, with two choices: **All rows on one sheet** or **Each file on its own sheet**. Before, it assumed one sheet.
+    *   It doesn't ask when the request already decides the layout. CSV output holds one table. Words like "stack the rows", "one table" or "a sheet per file" also decide it, as do a saved preference or an earlier answer. Choosing **Decline** puts every row on one sheet and the plan says so.
+    *   The question is offered only while **Merge spreadsheets**, **Merge documents** and **Create a file** are all available, so a deployment that narrows out **Merge documents** keeps stacking rows. Workflows that chat proposes for repeated merges ask the same question.
+    *   The planner's general rule to prefer a stated assumption over a question now names its exceptions: capability guidance, deliverables facts and workflow instructions that say to ask.
+    *   (Ref: #1619, `functions_orchestration_deliverables.py`, `functions_orchestration_planner.py`, [Phase 7](features/V2_FILE_MERGE_PHASE_7_CHAT_DOCUMENTS.md#one-sheet-or-a-sheet-per-file), [Merge files](../guides/merge-files.md#one-sheet-or-a-sheet-per-file))
+
 ### **(v0.261.224)**
 
 #### New Features

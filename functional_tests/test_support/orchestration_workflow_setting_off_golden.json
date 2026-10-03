@@ -242,8 +242,10 @@
   "user's request, without replacing the original \"message\" or user selections. Plan around",
   "accepted source identities and explanations, including on repeated questions. Do not repeat a",
   "question that clarifications or earlier runs already answered or declined. Only ask when you",
-  "truly cannot proceed; a reasonable assumption about what the user means, stated in",
-  "\"assumptions\", is better than a question.",
+  "truly cannot proceed, or when a capability's when_to_use, a fact in",
+  "capability_availability.deliverables or the workflow instructions say to ask; otherwise a",
+  "reasonable assumption about what the user means, stated in \"assumptions\", is better than a",
+  "question.",
   ""
  ],
  "planner_payload": {

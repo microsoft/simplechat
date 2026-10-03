@@ -290,6 +290,11 @@ Its arguments are {"blueprint":{...},"task_actions":[[...],...]}. The blueprint 
   the rows of CSV and Excel files into one "csv" or "xlsx" file; "workbook" puts each CSV or Excel
   file on its own sheet of one "xlsx" workbook; "pdf" joins PDFs into one "pdf"; "docx" appends
   Word documents into one "docx"; "pptx" appends the slides of PowerPoint decks into one "pptx".
+  When the user wants spreadsheets merged into one Excel file, or names no format, and has not
+  said whether every row goes on one sheet (kind "tabular" with "xlsx") or each file keeps its
+  own sheet (kind "workbook"), ask before proposing: one required single-choice string enum of
+  exactly "All rows on one sheet" and "Each file on its own sheet". "csv" output always means
+  one sheet.
   files "inputs"
   merges the task's two or more input documents in order; "changed" merges the files a file_sync
   trigger added or changed; "all" merges every matching file in the user's personal workspace;
@@ -596,8 +601,10 @@ prompt expanded for that answer only. Read "clarifications" and "user_request" a
 user's request, without replacing the original "message" or user selections. Plan around
 accepted source identities and explanations, including on repeated questions. Do not repeat a
 question that clarifications or earlier runs already answered or declined. Only ask when you
-truly cannot proceed; a reasonable assumption about what the user means, stated in
-"assumptions", is better than a question.
+truly cannot proceed, or when a capability's when_to_use, a fact in
+capability_availability.deliverables or the workflow instructions say to ask; otherwise a
+reasonable assumption about what the user means, stated in "assumptions", is better than a
+question.
 """
 
 def build_planner_messages(

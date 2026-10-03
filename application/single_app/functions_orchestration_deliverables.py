@@ -1,9 +1,10 @@
 # functions_orchestration_deliverables.py
 """What the user asked to receive, and whether the plan can actually deliver each part.
 
-Version: 0.261.224
+Version: 0.261.225
 Implemented in: 0.261.138
 Document merge recipes added in: 0.261.224
+One-sheet or sheet-per-file question for spreadsheet merges added in: 0.261.225
 
 The planner lists its plan's deliverables first: the answer, files, images, charts, and
 diagrams the user asked for (``requested: explicit``) and anything it adds on its own
@@ -84,6 +85,22 @@ MAX_DELIVERABLE_QUANTITY = 12
 MAX_DESCRIPTION_LENGTH = 300
 MAX_FORMAT_LENGTH = 40
 AI_ILLUSTRATION_LABEL = 'AI-generated image'
+# The two answers to "one sheet or a sheet per file?" for a spreadsheet merge into one Excel file.
+MERGE_LAYOUT_ONE_SHEET = 'All rows on one sheet'
+MERGE_LAYOUT_SHEET_PER_FILE = 'Each file on its own sheet'
+MERGE_LAYOUT_FACT = (
+    'Several CSV or Excel files merged into one Excel file can mean every row on one sheet '
+    '(tabular_merge, then render_file with xlsx) or each file on its own sheet (document_merge with '
+    'kind workbook). When the user asks to merge or combine several spreadsheets, wants Excel or '
+    'names no format, and has not said which, ask instead of assuming: return an elicitation whose '
+    'only field is a required single-choice string enum of exactly "' + MERGE_LAYOUT_ONE_SHEET
+    + '" and "' + MERGE_LAYOUT_SHEET_PER_FILE + '". Do not ask when the request already decides it: '
+    'CSV holds one table, so CSV output means one sheet; one sheet, one table, one list, stack, '
+    'append or combine the rows mean one sheet; a sheet or tab per file, separate sheets or keep them '
+    'separate mean a sheet each; a saved preference, a clarification or an earlier answer also '
+    'decides it. When the user declines to answer, put every row on one sheet and say so in '
+    'assumptions.'
+)
 
 # The closed set of reasons a deliverable can be unavailable. Each one is a condition the
 # server can check; the text is application-owned and is what users see.
@@ -360,6 +377,9 @@ def build_deliverable_availability(settings, *, capabilities, unavailable=None, 
                 'xlsx for a workbook. Never compose a merged document.'
             )})
             facts.append('document_merge copies files exactly; it never summarizes, translates or rewrites them.')
+        if CAPABILITY_TABULAR_MERGE in available and CAPABILITY_DOCUMENT_MERGE in available:
+            # Only when the plan could deliver either layout is it worth asking which one.
+            facts.append(MERGE_LAYOUT_FACT)
     if explicit_images['status'] == 'available':
         facts.extend([
             'generate_image follows the visual style the user asks for, including photorealistic '
