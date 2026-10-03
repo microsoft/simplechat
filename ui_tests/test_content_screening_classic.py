@@ -1,10 +1,10 @@
 # test_content_screening_classic.py
 """
 Classic Content Screening policy, hold, review, and remediation workflows.
-Version: 0.261.228
+Version: 0.261.229
 Implemented in: 0.261.106
 Empty-policy scan feedback implemented in: 0.261.114
-Approvals screening notice follows the screening setting from: 0.261.228
+Approvals screening notice follows the screening setting from: 0.261.229
 
 Uses the existing local/Azure Playwright connection fixture and a closed,
 synthetic API boundary. No application accounts, real documents, secrets,

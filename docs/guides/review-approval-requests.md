@@ -76,7 +76,7 @@ The request status changes in the table. Approved executable requests complete t
 
 Content-screening requests use a dedicated evidence and remediation workflow rather than the generic **Approve & Execute** action. The whole document stays unavailable until its complete scan and required review are resolved.
 
-From **0.261.228**, a note at the top of **Approval Requests** links to **Content review** while content screening is turned on. Each content-screening request also has its own **Open content review** link, so documents held before screening was turned off can still be reviewed.
+From **0.261.229**, a note at the top of **Approval Requests** links to **Content review** while content screening is turned on. Each content-screening request also has its own **Open content review** link, so documents held before screening was turned off can still be reviewed.
 
 For this review type, personal owners and group/public workspace Owners, Admins, and DocumentManagers can review their own uploads. That does not change the self-approval rules for other request types. Follow [Screen and review workspace documents]({{ '/guides/review-screened-documents/' | relative_url }}) to accept a retained flag, remove precise content, or publish a clean candidate.
 

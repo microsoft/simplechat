@@ -1,8 +1,8 @@
 # test_workflow_run_history_source_recheck_fix.py
 """
 Functional test for the workflow run history source re-check fix.
-Version: 0.261.228
-Implemented in: 0.261.228
+Version: 0.261.229
+Implemented in: 0.261.229
 
 This test ensures that workflow run lists and run task items load from the
 workflow the caller can already read, without re-checking each run's source
@@ -34,7 +34,7 @@ from test_workflow_task_sequence import load_runner_helpers  # noqa: E402  (real
 
 ROUTES = APP_ROOT / "route_backend_workflows.py"
 TEMPLATES = APP_ROOT / "templates"
-FIX_VERSION = "0.261.228"
+FIX_VERSION = "0.261.229"
 ROUTE_NAMES = {
     "_normalize_identifier",
     "get_user_workflow_runs",

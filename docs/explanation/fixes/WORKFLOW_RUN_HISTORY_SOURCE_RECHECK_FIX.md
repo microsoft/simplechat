@@ -1,6 +1,6 @@
 # Workflow Run History Source Re-check Fix
 
-Fixed in version: **0.261.228**
+Fixed in version: **0.261.229**
 
 Related issues: [#1613](https://github.com/microsoft/simplechat/issues/1613) (fixed), [#1621](https://github.com/microsoft/simplechat/issues/1621) (first step).
 

@@ -1,10 +1,10 @@
 # content_screening_classic.py
 """
 Closed, synthetic API boundary for classic Content Screening browser tests.
-Version: 0.261.228
+Version: 0.261.229
 Implemented in: 0.261.106
 Empty-policy activation coverage: 0.261.114
-Approvals page Microsoft 365 sections answered with empty lists from: 0.261.228
+Approvals page Microsoft 365 sections answered with empty lists from: 0.261.229
 
 The real Jinja partials and local browser assets run without application startup,
 real documents, authentication tokens, storage, or inference requests.
