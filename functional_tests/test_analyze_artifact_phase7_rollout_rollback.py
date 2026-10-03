@@ -276,18 +276,27 @@ def test_rollout_state_is_backend_only_and_status_safe():
 def run_tests():
     results = []
     with lightweight_tabular_planner() as planner_module:
-        for test, arguments in (
-            (test_rollout_state_normalization_and_assignment_reasons, (planner_module,)),
-            (test_rollback_state_declines_new_execution_without_calling_executor, (planner_module,)),
-            (test_rollout_state_is_backend_only_and_status_safe, ()),
+        for name, run in (
+            (
+                "test_rollout_state_normalization_and_assignment_reasons",
+                lambda: test_rollout_state_normalization_and_assignment_reasons(planner_module),
+            ),
+            (
+                "test_rollback_state_declines_new_execution_without_calling_executor",
+                lambda: test_rollback_state_declines_new_execution_without_calling_executor(planner_module),
+            ),
+            (
+                "test_rollout_state_is_backend_only_and_status_safe",
+                test_rollout_state_is_backend_only_and_status_safe,
+            ),
         ):
-            print(f"\nRunning {test.__name__}...")
+            print(f"\nRunning {name}...")
             try:
-                test(*arguments)
+                run()
                 results.append(True)
-                print(f"PASS {test.__name__}")
+                print(f"PASS {name}")
             except Exception as exc:
-                print(f"FAIL {test.__name__}: {exc}")
+                print(f"FAIL {name}: {exc}")
                 traceback.print_exc()
                 results.append(False)
     print(f"\nResults: {sum(results)}/{len(results)} tests passed")
