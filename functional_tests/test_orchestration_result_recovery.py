@@ -1,11 +1,13 @@
 # test_orchestration_result_recovery.py
 """
 Native resumed guards and exact committed-result recovery for orchestration.
-Version: 0.261.125
+Version: 0.261.232
 Implemented in: 0.261.125
+Container-only committed-result recovery covered in: 0.261.232
 
 Exercise real checkpoint/transport/facade APIs with external I/O doubled.
-The parent integration owns the next application version increment.
+Native checkpoints still check the documents they read as inputs; a committed
+result is recovered with its conversation's and run's access only.
 """
 
 from copy import deepcopy
@@ -43,7 +45,7 @@ def native_checkpoints(fixture, producer, *, previous=None):
         store=fixture.service.store, resume_run_id=previous,
         authorize=lambda: fixture.service.access.authorize_producer(producer, for_write=True),
         source_authorizer=lambda user_id, sources, require_snapshot: (
-            fixture.service.access.authorize_sources(sources, require_snapshot=require_snapshot)
+            fixture.service.access.authorize_input_sources(sources, require_snapshot=require_snapshot)
         ),
     )
 
@@ -297,21 +299,34 @@ def test_partial_task_receipt_preserves_unreadable_failure_output_without_promot
         fixture.service.open_result(recovered.output("failed"), allow_partial=True)
 
 
-@pytest.mark.parametrize("change", ["source_deleted", "screening", "revision", "owner", "scope", "attempt", "cleanup"])
-def test_receipt_recovery_reauthorizes_current_source_and_producer_state(change):
+@pytest.mark.parametrize("change", ["source_deleted", "screening", "revision", "scope"])
+def test_receipt_recovery_keeps_container_access_when_sources_change(change):
+    # 0.261.232: a committed result takes its access from its conversation and run;
+    # the documents it was produced from are provenance and are not reread.
     fixture = ResultFixture()
     checkpoints = native_checkpoints(fixture, fixture.producer)
-    persist_native_output(fixture, fixture.producer, checkpoints, input_fingerprint=INPUT_FINGERPRINT)
+    committed = persist_native_output(fixture, fixture.producer, checkpoints, input_fingerprint=INPUT_FINGERPRINT)
     if change == "source_deleted":
         fixture.sources.clear()
     elif change == "screening":
         fixture.held.add("document-1")
     elif change == "revision":
         fixture.sources["document-1"]["source_revision"] = "new-revision"
-    elif change == "owner":
-        fixture.conversation["user_id"] = "foreign"
-    elif change == "scope":
+    else:
         fixture.sources["document-1"].update(scope="group", scope_id="foreign-group")
+    reads = len(fixture.source_reads)
+    recovered = fixture.restart().recover_task_result(producer=fixture.producer, input_fingerprint=INPUT_FINGERPRINT)
+    assert recovered == committed
+    assert len(fixture.source_reads) == reads
+
+
+@pytest.mark.parametrize("change", ["owner", "attempt", "cleanup"])
+def test_receipt_recovery_reauthorizes_current_producer_state(change):
+    fixture = ResultFixture()
+    checkpoints = native_checkpoints(fixture, fixture.producer)
+    persist_native_output(fixture, fixture.producer, checkpoints, input_fingerprint=INPUT_FINGERPRINT)
+    if change == "owner":
+        fixture.conversation["user_id"] = "foreign"
     elif change == "attempt":
         fixture.runs["run-1"]["attempt_index"] = 2
     else:

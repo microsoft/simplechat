@@ -2,16 +2,29 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
-### **(v0.261.232)**
+### **(v0.261.233)**
 
 #### Bug Fixes
 
 *   **Orchestration File Generation Fix**
     *   Chat orchestration could no longer create downloadable files. A request such as "create a csv showing the states and their capitals" planned correctly and prepared its rows, then the file step failed with "This file could not be created." Every CSV, JSON, XML, YAML, TXT and Markdown file failed this way. Word and PDF files rendered, but downloading any orchestration-generated file used the same failing step, so those downloads would have failed too.
-    *   Two changes interacted to cause this. Since the OneNote extractor was added to the container image, `/app` has been owned by root, while the app runs as a non-root user with `/app` as its working directory. The file renderer and the verified download stream created their scratch files in the working directory, so the operating system refused them. The refusal was reported as `output_access_denied`, which is a source-access category, and the real cause wasn't logged.
+    *   Two changes interacted to cause this. Since the OneNote extractor was added to the container image, `/app` has been owned by root, while the app runs as a non-root user with `/app` as its working directory. The file renderer and the verified download stream created their scratch files in the working directory, so the operating system refused them. The refusal was reported as `output_access_denied`, a code meant for access refusals, and the real cause wasn't logged.
     *   Scratch files now go to `/sc-temp-files` when it's writable, and otherwise to the platform temp directory, never to the working directory. The image creates `/app` for the runtime user again. The OneNote extractor binary is added after that and stays root-owned.
-    *   For a failed attempt, the `[ORCHESTRATION_EXECUTOR] A file render attempt finished.` event now also records `sc_error_type`, `sc_error_cause_type` and `sc_error_errno`, so a file-system error can be told apart from a source-access refusal. Messages and paths aren't logged.
+    *   For a failed attempt, the `[ORCHESTRATION_EXECUTOR] A file render attempt finished.` event now also records `sc_error_type`, `sc_error_cause_type` and `sc_error_errno`, so a file-system error can be told apart from an access refusal. Messages and paths aren't logged.
     *   (Ref: #1623, `functions_temp_files.py`, `functions_structured_file_renderers.py`, `functions_simplechat_operations.py`, `functions_orchestration_rendering.py`, `Dockerfile`, [Orchestration File Render Permission Fix](fixes/ORCHESTRATION_FILE_RENDER_PERMISSION_FIX.md))
+
+### **(v0.261.232)**
+
+#### Breaking Changes
+
+*   **Saved Chat, Analyze And Orchestration Results Take Their Container's Access**
+    *   Results built from documents are no longer checked against those documents again. This covers chat AI replies and their stored citations, tool results in history, saved Analyze results, orchestration files and results, generated chat files, and conversation and tabular exports. They stay available to everyone who can open their conversation or orchestration run, even after a source document is deleted, re-uploaded or held for content screening.
+    *   Chat history no longer replaces a whole AI reply with "Source content is unavailable pending document screening and review." when a document it cited changes. A workspace attachment shown in history is still replaced while its document is held or unavailable.
+    *   One input check stays. Search retrieval, document selection (including chat uploads), file bytes and previews, opening a cited document, and orchestration or Analyze steps that read documents still need current access to an uploaded document, and the document must not be held. After such a read is refused, the model fence still blocks later model calls in that request or step.
+    *   A follow-up orchestration step that reads documents named by an earlier run reads their current version instead of failing. Version checks still protect a read in progress, such as a resumed Analyze checkpoint.
+    *   Container, lineage and integrity checks are unchanged. Nothing is withdrawn after the fact, and no data migration runs: results that earlier versions withheld when they were read become visible again. Error messages now name the conversation or saved result instead of source access.
+    *   **Migration**: none. Deployments that relied on source re-checks to hide existing results from people who can open their conversation should review shared conversations; opening the full cited document still requires access.
+    *   (Ref: #1621, `content_screening/access.py`, `functions_saved_analysis.py`, `functions_orchestration_results.py`, `functions_orchestration_source_access.py`, `functions_orchestration_executor.py`, `route_backend_chats.py`, `route_enhanced_citations.py`, `functions_tabular_generated_exports.py`, `OrchestrationOutputs.tsx`, `test_saved_results_container_access_chat_orchestration.py`, [Upload-Only Content Screening](features/UPLOAD_ONLY_CONTENT_SCREENING.md))
 
 ### **(v0.261.231)**
 

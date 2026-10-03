@@ -1,8 +1,8 @@
 # Orchestration File Render Permission Fix
 
-**Version: 0.261.232**
+**Version: 0.261.233**
 
-Fixed in version: **0.261.232**, recorded in
+Fixed in version: **0.261.233**, recorded in
 `application/single_app/config.py`.
 
 Issue: [#1623](https://github.com/microsoft/simplechat/issues/1623). This affects
@@ -20,8 +20,10 @@ the chat showed:
 - `This operation could not complete.`
 
 Production telemetry recorded the render attempt as `output_access_denied`
-after about 260 ms of rendering. That code describes a source-access refusal,
-but the source was general knowledge with no documents involved.
+after about 260 ms of rendering. At the time, that code meant source access
+could not be confirmed, but the source was general knowledge with no documents
+involved. Since 0.261.232 the same code means access to the file's
+conversation could not be confirmed.
 
 ## Root cause
 
@@ -116,8 +118,10 @@ includes, for a failed attempt:
 Exception messages, file paths, and identifiers are never recorded. A
 successful attempt does not include these fields. The user-facing
 classification is unchanged. A file-system `PermissionError` still reports
-`output_access_denied`, but the log now shows `error_type=PermissionError` and
-`error_errno=13`, so the two cases can be told apart.
+`output_access_denied`, the same code as an access refusal such as losing
+access to the file's conversation. Only the file-system error logs
+`error_type=PermissionError` and `error_errno=13`, so the two can be told
+apart.
 
 ## Validation
 

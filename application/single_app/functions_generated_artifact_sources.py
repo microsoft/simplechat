@@ -131,7 +131,11 @@ def authorize_generated_artifact_source(user_id, artifact, *, for_publication=Fa
 
 
 def sanitize_generated_artifact_history(message, user_id):
-    """Reauthorize saved-output cards and strip private bindings from history."""
+    """Apply each generated file's container access and strip private bindings from history.
+
+    A saved-output card or file message stays visible while its conversation, workflow or
+    orchestration run allows it. The documents it was generated from are never rechecked.
+    """
     metadata = message.get("metadata") or {}
     orchestration_history = (
         is_orchestration_artifact_source(metadata.get("generated_artifact_source"))
@@ -154,7 +158,7 @@ def sanitize_generated_artifact_history(message, user_id):
         return message
 
     def authorize(conversation_id, message_id):
-        # Reuse the complete conversation/approval/source/screening boundary for saved cards.
+        # Reuse the conversation, approval and publication boundary for saved cards.
         from route_enhanced_citations import _get_authorized_chat_artifact_message
 
         request_context = has_request_context()

@@ -1,10 +1,11 @@
 # test_v2_orchestration_outputs.py
 """
 Real-component coverage for independent orchestration file recovery.
-Version: 0.261.141
+Version: 0.261.232
 Implemented in: 0.261.127
 Simplified file cards covered in: 0.261.141
-Refs: microsoft/simplechat#1509
+Container-only file access messages covered in: 0.261.232
+Refs: microsoft/simplechat#1509, microsoft/simplechat#1621
 
 Executes the production React thread/drawer, stores, SSE reader and HTTP clients
 with the existing local/Azure Playwright fixture and production CSS. Responses
@@ -866,8 +867,8 @@ def test_auth_or_conflict_rejection_is_safe_and_does_not_hide_ready_sibling(outp
 
 
 @pytest.mark.parametrize("reason,message", [
-    ("output_access_denied", "This file is unavailable because current source access could not be confirmed."),
-    ("output_screening_hold", "This file is unavailable while its source is under review."),
+    ("output_access_denied", "This file is unavailable because access to its conversation could not be confirmed."),
+    ("output_artifact_missing", "This file is unavailable because its committed artifact is missing."),
     ("output_deleted", "This file was deleted."),
 ])
 @pytest.mark.parametrize("width", [1440, 390])
@@ -918,6 +919,33 @@ def test_authoritative_unavailability_withholds_stale_card_but_preserves_ready_s
         restored_outputs = saved_outputs(page, api.plan["run_id"])
         assert restored_outputs == initial_outputs
         assert not api.accepted
+    assert not write_calls(api)
+
+
+@pytest.mark.parametrize("width", [1440, 390])
+def test_uncoded_unavailable_file_names_access_not_its_sources(outputs_ui, width):
+    page, api = outputs_ui
+    page.set_viewport_size({"width": width, "height": 900})
+    api.record["outputs"][1] = public_output(RETRY_ID, "completed", "summary.csv", "file_b")
+    api.publish()
+    files = mount_outputs(page, api)
+    expect(files.get_by_role("button", name="Download CSV")).to_have_count(2)
+    api.output.update(
+        available=False, artifact_message_id=None, can_retry=False, next_retry_at=None,
+        row_count=None, character_count=None, size_bytes=None, error_code=None,
+    )
+    api.publish()
+    files.get_by_role("button", name="Check saved file status", exact=True).click()
+    card = file_card(files)
+    expect(card.get_by_role("status")).to_have_text("Unavailable")
+    expect(card).to_contain_text(
+        "This file is unavailable because current access could not be confirmed. "
+        "Other ready files remain available."
+    )
+    expect(card).not_to_contain_text("source access")
+    expect(card).not_to_contain_text("screening")
+    expect(card.get_by_role("button", name="Download CSV")).to_have_count(0)
+    expect(file_card(files, "findings.csv").get_by_role("button", name="Download CSV")).to_be_enabled()
     assert not write_calls(api)
 
 

@@ -1,11 +1,12 @@
 # test_orchestration_harness_execution.py
 """Real-boundary headless V2 preparation, execution and publication regressions.
 
-Version: 0.261.139
+Version: 0.261.232
 Implemented in: 0.261.127
 Invocation, catalog, and citation regressions implemented in: 0.261.129
 Direct initial-binding scope coverage implemented in: 0.261.130
 Single orchestration contract updated in: 0.261.139
+Retained answers and citations take their run's access in: 0.261.232
 
 Production context, models, runtime, services, result store, checkpoint/lease and
 artifact adapters execute with external Azure/model I/O doubled. Cold imports run
@@ -3437,8 +3438,15 @@ def test_citation_delivery_rechecks_exact_sources_and_preserves_storage_uncertai
                 record, services=services, settings=harness.settings, lease=execution.lease,
             )
             done = decoded_frames(frames)[-1]
-            assert done["status"] == "failed" and done["failure"]["code"] == "context_unavailable"
-            assert done["hybrid_citations"] == [] and "Prepared from exactly" not in done["full_content"]
+            if change == "revision":
+                # 0.261.232: the retained answer and its citations are generated content. A newer
+                # version of a document the run already read neither withdraws nor blocks them.
+                assert done["status"] == "completed", done
+                assert done["hybrid_citations"] and "Prepared from exactly" in done["full_content"]
+            else:
+                # Delivery still confirms that the documents this run read are accessible and not held.
+                assert done["status"] == "failed" and done["failure"]["code"] == "context_unavailable"
+                assert done["hybrid_citations"] == [] and "Prepared from exactly" not in done["full_content"]
     execution.close()
     saved = harness.read()
     messages = harness.assistant_messages()
@@ -3446,9 +3454,13 @@ def test_citation_delivery_rechecks_exact_sources_and_preserves_storage_uncertai
     assert references == [record["final_response"]]
     if change == "storage":
         assert messages == [] and saved["status"] == record["status"] and not saved.get("failure")
+    elif change == "revision":
+        assert len(messages) == 1 and messages[0]["hybrid_citations"] and saved["citations"]
     else:
         assert len(messages) == 1 and messages[0]["hybrid_citations"] == [] and saved["citations"] == []
-    assert not conversation.get("used_documents") and saved["task_results"] == record["task_results"]
+    if change != "revision":
+        assert not conversation.get("used_documents")
+    assert saved["task_results"] == record["task_results"]
     assert harness.results.container.items == rows_before and harness.steps.items == steps_before
     assert len(citation_execution.queries) == 2 and len(harness.model_calls) == 1
     assert harness.blobs.file_uploads == 0 and saved["execution_lease"] is None

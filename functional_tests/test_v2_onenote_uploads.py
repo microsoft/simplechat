@@ -138,7 +138,7 @@ if functions_onenote.OneNoteExtractionError("runtime_unavailable").code != "runt
         dockerfile = (APP_ROOT / "Dockerfile").read_text(encoding="utf-8")
         final_stage = dockerfile.rsplit("\nFROM ", 1)[1]
         # The final stage builds from the distroless image directly, not an intermediate stage
-        # (0.261.232): an inherited stage created /app as root before the runtime user's copy.
+        # (0.261.233): an inherited stage created /app as root before the runtime user's copy.
         self.assertTrue(final_stage.startswith("mcr.microsoft.com/azurelinux/distroless/python:"))
         self.assertIn("AS v2uibuilder", dockerfile)
         self.assertIn("AS onenote-builder", dockerfile)

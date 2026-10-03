@@ -1,11 +1,14 @@
 # test_analyze_native_saved_integration.py
 """
 Native Analyze output, adapter and saved-consumer integration regressions.
-Version: 0.261.127
+Version: 0.261.232
 Implemented in: 0.261.109
+Container-only saved-result access covered in: 0.261.232
 
 Real native checkpoint serialization, adaptation and saved-section readers run
 against offline run/blob/provider boundaries. No source is uploaded or re-indexed.
+Adapting native output is an input read and still requires source access; a saved
+result is then read with its conversation's access only.
 """
 
 import asyncio
@@ -192,8 +195,10 @@ def test_complete_native_checkpoints_survive_saving_beyond_the_old_eight_thousan
     assert [record["values"] for record in json.loads(payload)["records"]] == fixture.rows
     assert len(fixture.reads) == 3
     fixture.state["allowed"] = False
-    with pytest.raises(PermissionError):
-        saved.read_saved_analysis_page(USER_ID, saved.saved_analysis_context(descriptor), **options)
+    # 0.261.232: the saved result takes its conversation's access; its source is provenance.
+    page = saved.read_saved_analysis_page(USER_ID, saved.saved_analysis_context(descriptor), **options)
+    assert page["total_records"] == len(fixture.rows)
+    assert [record["values"] for record in page["records"]] == fixture.rows[:len(page["records"])]
     assert len(fixture.reads) == 3
 
 

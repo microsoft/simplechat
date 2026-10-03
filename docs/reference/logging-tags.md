@@ -408,14 +408,15 @@ A render attempt records how its time was spent:
   exception. `sc_output_code` carries the output failure category when there is
   one; a render stopped by the step time limit reports `failed` with
   `output_step_time_limit`.
-- Since **0.261.232**, an attempt that failed with an exception also records
+- Since **0.261.233**, an attempt that failed with an exception also records
   `sc_error_type`, the exception's class name; `sc_error_cause_type`, the class at
   the end of its explicit cause chain when the error was wrapped; and
   `sc_error_errno`, the first operating-system error number in that chain. Messages,
   paths, and identifiers are never recorded. These fields separate causes that share
-  an output code: a source-access refusal and a local file-system `PermissionError`
-  both report `output_access_denied`, but only the file-system error carries
-  `sc_error_errno` (`13` for permission denied).
+  an output code: an access refusal, such as losing access to the file's
+  conversation, and a local file-system `PermissionError` both report
+  `output_access_denied`, but only the file-system error carries `sc_error_errno`
+  (`13` for permission denied).
 
 To see where a run's file rendering spent its time:
 
