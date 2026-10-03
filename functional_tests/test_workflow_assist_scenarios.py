@@ -586,7 +586,8 @@ def test_an_email_task_on_an_agent_asks_once_whether_that_agent_can_send_email(c
 
 @pytest.mark.parametrize("run_as, checked, expected", [
     ("", True, ["email_requires_m365_agent", "m365_not_connected"]),
-    (wa.USER_ID, True, ["run_as_reapproval", "email_requires_m365_agent", "m365_not_connected"]),
+    # Saving as your own Run as account is your own revision, so it never needs re-approving.
+    (wa.USER_ID, True, ["email_requires_m365_agent", "m365_not_connected"]),
     (wa.RUN_AS_ID, False, ["run_as_reapproval", "email_requires_m365_agent"]),
 ], ids=["runs as the caller implicitly", "runs as the caller explicitly", "runs as someone else"])
 def test_a_missing_m365_connection_is_the_callers_own_only(run_as, checked, expected):
@@ -625,7 +626,11 @@ def test_an_advisory_check_that_fails_adds_no_warning_and_never_fails_the_reques
     assert SENTINEL not in json.dumps(bundle.logs)
 
 
-def test_with_little_time_left_the_stored_record_checks_are_skipped_but_run_as_is_not():
+@pytest.mark.parametrize("run_as, expected", [
+    (wa.USER_ID, ["email_requires_m365_agent"]),
+    (wa.RUN_AS_ID, ["run_as_reapproval", "email_requires_m365_agent"]),
+], ids=["runs as the caller", "runs as someone else"])
+def test_with_little_time_left_the_stored_record_checks_are_skipped_but_run_as_is_not(run_as, expected):
     clock = wa.FakeClock()
     lookups = []
 
@@ -637,11 +642,12 @@ def test_with_little_time_left_the_stored_record_checks_are_skipped_but_run_as_i
         clock.advance(3)
         return {"ok": True, "workflow": payload, "errors": []}
 
-    stored = wa.stored_workflow(m365_run_as_user_id=wa.USER_ID)
+    stored = wa.stored_workflow(m365_run_as_user_id=run_as)
     model = wa.ScriptedModel(wa.reply("changed", "Done.", [EMAIL_TASK]), on_call=lambda _call: clock.advance(144))
     bundle = wa.services(model, stored=stored, clock=clock, dry_run=dry_run, m365_connected=m365_connected)
     result = wa.run(wa.request_body(stored=stored), bundle)
-    assert _codes(result) == ["run_as_reapproval", "email_requires_m365_agent"]
+    # The connection lookup is skipped for want of time; the Run as check reads no stored record.
+    assert _codes(result) == expected
     assert lookups == []
 
 
