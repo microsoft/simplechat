@@ -4,16 +4,22 @@ title: "Screen and review workspace documents"
 description: "Inspect sensitive or manipulative extracted content, keep it out of knowledge use, and release only a reviewed version."
 section: "Guides"
 audience: user
-version: "0.261.127"
+version: "0.261.230"
 ---
 
 ## What this does
 
-Content screening checks workspace knowledge for configured PII, patterns, values, and optional model-evaluated criteria. A finding holds the whole document so a clean early page cannot be used while another page awaits review.
+Content screening checks documents that people upload to a workspace, or that File Sync brings in, for configured PII, patterns, values, and optional model-evaluated criteria. A finding holds the whole document so a clean early page cannot be used while another page awaits review.
 
 **Implemented in version: 0.261.106**, tracked in `application\single_app\config.py`.
 
 Use it when a document might contain sensitive data or instructions aimed at an AI rather than a human reader. Text can enter extraction even when its appearance makes it hard to notice in the original.
+
+### What isn't screened
+
+Since **0.261.230**, documents that SimpleChat generates aren't screened. That includes files an agent saves to a workspace and chat or workflow artifacts published to a workspace. Files you attach in chat that are saved to a workspace are uploads, so they're still screened.
+
+Editing a document's title, abstract, keywords, tags or other metadata isn't screened either, and doesn't hold a document that was already released. The same applies to metadata the model generates for a document after it's released. You still can't rename a screened file to a different file type.
 
 ## Configure an appropriate baseline
 
@@ -63,7 +69,7 @@ Choose the documents or workspaces to inspect. Only administrators can start an 
 
 In V2, **Screening scans** in the Documents section scans the workspace you're in: your own documents in My Workspace, and, from version **0.261.174**, a group's documents for its Owner, Admins and DocumentManagers.
 
-Use the workload/progress view to distinguish queued, running, completed, flagged, incomplete, and failed documents. Queued documents remain in their previous state until their scan starts. Started documents remain held if a check cannot finish.
+Use the workload/progress view to distinguish queued, running, completed, flagged, incomplete, and failed documents. Queued documents remain in their previous state until their scan starts. Started documents remain held if a check cannot finish. Documents SimpleChat generated are skipped rather than scanned.
 
 Do not interpret a completed enumeration or a model timeout as evidence that every document passed. Correct the reported source, model, policy, or storage problem and resume or retry the work. Cancelling a job does not release documents that are already held.
 
@@ -109,6 +115,8 @@ Review original files as potentially untrusted content. Do not follow links or i
 | The document has a warning after approval | It was approved with flags; the warning is intentional. |
 | An original is missing | Source-backed inspection or re-extraction may be unavailable. A table schema summary does not cover the underlying cell data. |
 | Scanning was disabled but a document is still held | Disabling future scans does not approve existing held content. |
+| A file an agent saved, or an artifact you published, has no screening status | By design: documents SimpleChat generates aren't screened. |
+| A published artifact waiting for approval can't be approved because it's held by screening | It was requested before generated content stopped being screened. Cancel the request and publish the artifact again. |
 | An older attachment or tool result is unavailable in conversation history | Its source is held, or that old result cannot prove it used the currently approved revision. Complete review and run a new query against the approved document. |
 | Another person cannot open the evidence | Review access is scoped. Administrative scan permission or ordinary shared-read access is not sufficient. |
 

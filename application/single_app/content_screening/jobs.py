@@ -24,13 +24,14 @@ from content_screening.contracts import (
     ScreeningConfigurationError,
     ScreeningConflictError,
     ScreeningError,
+    ScreeningNotRequiredError,
     ScreeningPolicyRequiredError,
     ScreeningValidationError,
     Subject,
     content_fingerprint,
     document_is_available,
     hash_payload,
-    metadata_fingerprint,
+    is_generated_screening_exempt,
     normalize_identifier,
     normalize_units,
     subject_from_document,
@@ -397,7 +398,7 @@ def _verify_ingestion_job(job, subject, scan_id, actor_id):
 def enqueue_document_scan(subject, actor_id, *, scan_id=None, repository=None):
     """Idempotently enroll an already-authorized ingestion/reprocessing scan.
 
-    Internal upload/metadata adapters must stage and authorize the exact scan
+    Internal upload/reprocessing adapters must stage and authorize the exact scan
     before calling this helper. It never grants workspace or evidence access,
     and must not be exposed as an alternative to role-checked create_scan_job.
     """
@@ -825,7 +826,6 @@ def _publication_matches_document(scan, document):
         and scan["units_ref"] == marker.get("canonical_ref")
         and scan.get("content_fingerprint") == marker.get("content_fingerprint") == publication.get("content_fingerprint")
         and scan.get("policy_fingerprint") == marker.get("policy_fingerprint") == hash_payload(scan.get("policy"))
-        and publication.get("metadata_fingerprint") == metadata_fingerprint(document)
         and publication.get("active_blob") == marker.get("active_blob") == active_blob
         and bool(scan.get("sanitized")) == bool(marker.get("sanitized"))
     )
@@ -886,6 +886,8 @@ def _hold_document(repository, job, item, owner, *, use_service=False):
         if expires_at is not None:
             raise _ScanLeaseBusy(expires_at)
         document = repository.read_document(subject)
+        if SCREENING_FIELD not in document and is_generated_screening_exempt(document):
+            raise ScreeningNotRequiredError()
         marker = document.get(SCREENING_FIELD, {})
         if (
             not isinstance(marker, dict)
@@ -1162,19 +1164,12 @@ def _reconcile_scan_completion(repository, scan_id):
         if not _completed_scan(repository, {"scan_id": scan_id, "subject": scan["subject"]}):
             document = repository.read_document(Subject.from_dict(scan["subject"]))
             marker = document.get(SCREENING_FIELD)
-            successor = repository.get_scan(marker["scan_id"]) if isinstance(marker, dict) and marker.get("scan_id") else None
             inactive_review = (
                 scan["state"] == "pending_review" and isinstance(marker, dict)
                 and marker.get("scan_id") and marker["scan_id"] != scan_id
             )
-            if not inactive_review and (
-                scan["state"] not in AVAILABLE_STATES or not successor
-                or successor.get("subject") != scan["subject"] or successor.get("trigger") != "metadata"
-                or (successor.get("previous_marker") or {}).get("scan_id") != scan_id
-            ):
+            if not inactive_review:
                 return False
-            # A crash may leave the completed parent's acknowledgement pending
-            # after metadata has already queued a new, independently held scan.
         if repository.count("work_item", filters={
             "scan_id": scan_id, "status": ["queued", "running", "retry"],
         }):

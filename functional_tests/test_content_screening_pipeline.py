@@ -1,11 +1,12 @@
 # test_content_screening_pipeline.py
 """
 Functional integration tests for workspace admission and reviewed publication.
-Version: 0.261.189
+Version: 0.261.230
 Implemented in: 0.261.106
 The exec namespace carries ONENOTE_EXTENSIONS, which the upload path reads from 0.261.189: 0.261.189
 Enabled-empty upload admission implemented in: 0.261.114
 Publication processing evidence implemented in: 0.261.118
+Metadata edits keep a release (no metadata rescan) implemented in: 0.261.230
 
 Runs the real durable job, scanner, repository, private storage, TXT extraction,
 and publication services against fake Azure boundaries. No live data is used.
@@ -41,6 +42,7 @@ from content_screening.contracts import (
     ScreeningChecksRequiredError,
     ScreeningConflictError,
     ScreeningError,
+    ScreeningValidationError,
     Subject,
     document_is_available,
     hash_payload,
@@ -574,26 +576,31 @@ def test_restored_clear_marker_without_release_proof_is_not_available(pipeline, 
         access.assert_document_available("document", "owner")
 
 
-def test_unscreened_metadata_cannot_borrow_previous_clearance(pipeline, tmp_path):
+def test_metadata_edits_after_release_keep_the_clearance(pipeline, tmp_path):
     seed(pipeline)
     upload(pipeline, tmp_path, "Ordinary evidence")
     document = pipeline.repository.document_container("personal").read_item("document", "document")
-    document["abstract"] = "PRIVATE_CANARY"
+    document["abstract"] = "An edited abstract"
+    document["tags"] = ["edited"]
     pipeline.repository.document_container("personal").replace_item(
         item="document", body=document, etag=document["_etag"],
         match_condition=MatchConditions.IfNotModified,
     )
-    with pytest.raises(DocumentHeldError):
-        access.assert_document_available("document", "owner")
+    available = access.assert_document_available("document", "owner")
+    assert available["abstract"] == "An edited abstract"
+    assert access.read_available_document_bytes("document", "owner")[1] == b"Ordinary evidence"
+    assert len(pipeline.repository.query("scan")["items"]) == 1
 
 
-def test_initial_metadata_changes_do_not_enqueue_a_sourceless_rescan(pipeline):
+def test_metadata_validation_keeps_only_the_screened_source_format(pipeline):
     document = seed(pipeline)
-    assert service.queue_metadata_rescan(document, {"tags": ["intake"]}, "owner", repository=pipeline.repository) is None
+    assert service.validate_screened_metadata_update(document, {"tags": ["intake"], "file_name": "renamed.txt"}) is None
+    with pytest.raises(ScreeningValidationError):
+        service.validate_screened_metadata_update(document, {"file_name": "renamed.pdf"})
+    unscreened = {key: value for key, value in document.items() if key != SCREENING_FIELD}
+    assert service.validate_screened_metadata_update(unscreened, {"file_name": "renamed.pdf"}) is None
     assert not pipeline.repository.query("job")["items"]
-    current = pipeline.repository.read_document(Subject("personal", "owner", "document", "1"))
-    assert current["tags"] == ["intake"]
-    assert current[SCREENING_FIELD]["scan_id"] == document[SCREENING_FIELD]["scan_id"]
+    assert not pipeline.repository.query("scan")["items"]
 
 
 def test_stale_worker_failure_does_not_clear_another_workers_lease(pipeline):
@@ -750,15 +757,15 @@ def test_recovery_finalizes_only_the_already_committed_publication(pipeline, tmp
     assert access.read_available_document_bytes("document", "owner")[1] == b"Complete inspected text"
 
 
-def test_recovery_does_not_invent_proof_for_changed_metadata(pipeline, tmp_path, monkeypatch):
+def test_recovery_finalizes_a_release_after_a_metadata_edit(pipeline, tmp_path, monkeypatch):
     scan = interrupt_after_document_release(pipeline, tmp_path, monkeypatch)
     subject = Subject("personal", "owner", "document", "1")
     document = pipeline.repository.read_document(subject)
-    pipeline.repository.update_document(subject, {"abstract": "UNAPPROVED"}, etag=document["_etag"])
-    with pytest.raises(ScreeningConflictError):
-        service.finalize_publication_checkpoint(scan["id"], repository=pipeline.repository)
-    with pytest.raises(DocumentHeldError):
-        access.assert_document_available("document", "owner")
+    pipeline.repository.update_document(subject, {"abstract": "Edited after release"}, etag=document["_etag"])
+    finished = service.finalize_publication_checkpoint(scan["id"], repository=pipeline.repository)
+    assert finished["state"] == "cleared"
+    assert access.assert_document_available("document", "owner")["abstract"] == "Edited after release"
+    assert access.read_available_document_bytes("document", "owner")[1] == b"Complete inspected text"
 
 
 def test_service_model_resume_reuses_durable_validated_windows(pipeline, tmp_path):

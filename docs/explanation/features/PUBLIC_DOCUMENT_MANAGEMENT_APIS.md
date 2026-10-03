@@ -74,7 +74,9 @@ Metadata receipt:
 }
 ```
 
-`status` is `updated` (200) or `queued` (202). The scope field is
+`status` is `updated` (200). Since 0.261.230 a metadata edit on a screened
+document applies directly and never starts a new screening hold, so metadata
+receipts are no longer `queued` (202). The scope field is
 `public_workspace_id` where the group equivalent carries `group_id`.
 
 Incomplete propagation surfaces as a `document_propagation_incomplete` repair

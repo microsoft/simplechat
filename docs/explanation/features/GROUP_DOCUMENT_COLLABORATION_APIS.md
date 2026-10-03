@@ -193,63 +193,24 @@ Collaboration changes coordinate with document projection writes through
 from republishing a revoked access list. See
 [Group Document Projection Coordination](GROUP_DOCUMENT_PROJECTION_COORDINATION.md).
 
-## Screening bootstrap for artifact approval
+## Screening and artifact approval
 
-Approving a generated artifact is the operation whose whole purpose is to
-*start* screening on the destination. That creates a bootstrap problem: the
-destination shell already carries a reserved screening marker, and a scoped
-adapter that denies every non-available marker would deny the approval that
-would have started the scan, deadlocking every new artifact approval once
-screening is enabled.
+Since version 0.261.230, a published artifact is generated content. Its
+destination document is created with the server-managed `screening_exemption`
+field, so it never gets a screening marker, and approving it hands it straight
+to ordinary processing. The publication receipt no longer reserves or consumes a
+screening scan, and approval needs no scan-start proof.
 
-Two facts make the naive fixes unsafe:
+Approval still never overrides a screening hold on the destination itself. A
+destination that carries a screening marker can be approved only when its
+release is available. In practice that is a destination created before
+0.261.230 with screening on. If it is still held, the approval is refused with
+409 `publication_unavailable`, and the remedy is to cancel the request and
+request publication again, which creates a new destination that isn't screened.
 
-- **A reserved `scan_id` always exists.** The initial document marker carries
-  one before anything runs, so its presence is reservation *identity* and is
-  never evidence that a scan ran, nor a deny signal on its own.
-- **Absence of a scan row proves nothing.** It cannot distinguish "never
-  started" from "started, errored, and the row was later removed or reset",
-  which would otherwise be a laundering path.
-
-Positive proof is therefore recorded, not inferred. The existing publication
-receipt owns two fields:
-
-| Field | Meaning |
-|---|---|
-| `screening_reservation` | The exact stored subject plus a fingerprint derived from the original reserved identifier, the full initial marker, the upload timestamp, and the Cosmos resource identity when present |
-| `screening_reservation_consumption` | A monotonic latch recording the consuming `operation_id` and `fingerprint`, with the `scan_id` written **ahead of** any scan being created or executed |
-
-Only the request that newly created both its receipt and its destination can
-capture proof, and it captures it from the stored prepared document. An older
-or unproven receipt cannot acquire proof later through legacy enrollment or by
-replaying preparation.
-
-Admission requires all of: a matching unconsumed reservation, completed create
-and prepare stages, no queue stage, no prior decision, and no real screening
-history. Any actual scan, review, finding, or model-window record, any
-generation, content, processing, or provenance evidence, a marker that is
-absent under an active screening policy, a recreated reservation whose
-fingerprint no longer matches, or a previous queue attempt all fail closed.
-
-Recovery is bounded rather than automatic. The same scoped operation, actor,
-and fingerprint can recover a proven pre-queue crash using the existing
-operation id and a rotated conditional execution token, which is why the latch
-stores an operation identity instead of a boolean. A different operation
-against a consumed latch is denied. Cancellation, rejection, and errors all
-retain the latch; the user-visible remedy is to cancel and re-request, which
-produces a fresh receipt that is admissible on its own merits.
-
-`begin_scan` and `inspect_scan` persist scan-start consumption before any
-effect, so a scan that races receipt preparation consumes an unverified
-reservation and preparation cannot manufacture proof afterwards. Canonical
-approval consumes atomically with its decision and then rechecks fresh proof
-immediately before queue dispatch, so an unknown handoff never dispatches
-twice.
-
-The exemption admits **only** the approval-to-scan handoff. It never clears or
-weakens the hold, and it never admits read, download, content listing,
-publication, promotion, share, or revision activation. Source authorization and
-hash checks are unchanged.
+Source authorization and hash checks are unchanged. Approval admits only the
+processing handoff; it never admits read, download, content listing, promotion,
+share or revision activation of a held destination.
 
 ## Serialization boundary
 
@@ -272,7 +233,7 @@ for a non-owner-manager.
 |---|---|
 | `functional_tests/test_group_document_collaboration.py` | Sharing state, targets, decisions, authorization, receipts |
 | `functional_tests/test_group_document_publication.py` | Artifact approval, rejection, cancellation, cleanup |
-| `functional_tests/test_group_document_publication_screening_bootstrap.py` | 65 cases over reservation proof, the monotonic latch, crash recovery, and every fail-closed path |
+| `functional_tests/test_content_screening_upload_only_intake.py` | Since 0.261.230: published destinations get no screening marker and approval needs no screening reservation |
 | `functional_tests/test_public_document_payload_redaction.py` | Serialization boundary, including the roster exclusions |
 | `ui_tests/test_v2_group_document_collaboration.py` | 33 browser cases over the review surface |
 
@@ -285,10 +246,8 @@ broken-access-control scanner passes on all changed backend modules.
 
 ### Deliberate limits
 
-No legacy proof is backfilled, so a reservation predating the receipt stays
-denied as unverifiable. There is no retry after an ambiguous queue attempt.
-Isolated conditional-store tests do not establish live Cosmos CAS or Azure
-behavior.
+There is no retry after an ambiguous queue attempt. Isolated conditional-store
+tests do not establish live Cosmos CAS or Azure behavior.
 
 ## Related
 

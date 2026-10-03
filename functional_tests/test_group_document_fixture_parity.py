@@ -1,10 +1,11 @@
 # test_group_document_fixture_parity.py
 """
 Per-route shape parity between the M2 group document UI fixtures and the real routes.
-Version: 0.261.168
+Version: 0.261.230
 Implemented in: 0.261.161
 A tag vocabulary conflict is pinned from the etag pre-check and from a lost patch: 0.261.167
 A bulk tagging batch or metadata save that meets it is refused whole, with no document written: 0.261.168
+A released screened document's metadata change applies directly and returns the ordinary receipt: 0.261.230
 
 The V2 group Documents explorer mocks the network with three closed HTTP fixtures, which predate
 the per-route parity rule:
@@ -481,18 +482,19 @@ def real_synced_delete_guard(file_sync):
     return namespace["build_synced_document_delete_guard"]
 
 
-@pytest.mark.parametrize("scenario", ["updated", "queued", "propagation_incomplete"])
+@pytest.mark.parametrize("scenario", ["updated", "screened", "propagation_incomplete"])
 def test_metadata_receipt_parity(management, scenario):
-    """A saved change names its fields in request order; a screened document's change is queued
-    (202); a change whose projections failed after the document saved is a coded 500."""
+    """A saved change names its fields in request order; a released screened document's change applies
+    directly and returns the same receipt; a change whose projections failed after the document saved
+    is a coded 500."""
     env = management
     body = {"title": "Changed title", "keywords": ["alpha", "beta"]}
     expected, status = metadata_result("document-a", body), 200
-    if scenario == "queued":
+    if scenario == "screened":
         env.settings["enable_content_screening"] = True
         env.seed_release(env.source.records["document-a"])
         body = {"abstract": "Updated abstract"}
-        expected, status = metadata_result("document-a", body, queued=True), 202
+        expected = metadata_result("document-a", body)
     elif scenario == "propagation_incomplete":
         def fail_chunk(**_kwargs):
             raise StoreFailure()

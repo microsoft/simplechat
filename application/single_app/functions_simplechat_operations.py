@@ -43,6 +43,7 @@ from functions_activity_logging import (
     log_workflow_creation,
 )
 from functions_appinsights import log_event
+from content_screening.contracts import generated_screening_exemption
 from content_screening.service import prepare_document_upload
 from functions_citation_tracking import rebuild_conversation_used_documents
 from functions_authentication import (
@@ -2866,6 +2867,7 @@ def _upload_generated_document_for_current_user(
                 num_file_chunks=0,
                 status=initial_status,
                 source_file_path=temp_file_path,
+                screening_exemption=generated_screening_exemption(),
             )
             update_document(
                 document_id=document_id,
@@ -2881,6 +2883,7 @@ def _upload_generated_document_for_current_user(
                 num_file_chunks=0,
                 status=initial_status,
                 source_file_path=temp_file_path,
+                screening_exemption=generated_screening_exemption(),
             )
             update_document(
                 document_id=document_id,

@@ -285,11 +285,11 @@ def update_group_document_metadata(
         updated_fields={name: "[updated]" for name in changes} if SCREENING_FIELD in document else changes,
         file_type=document.get("file_type"),
     )
-    queued = SCREENING_FIELD in document and any(document.get(name) != value for name, value in changes.items())
+    # Metadata edits apply directly; they never start a new screening hold.
     return {
-        "message": "Metadata saved and queued for content screening." if queued else "Group document metadata updated.",
+        "message": "Group document metadata updated.",
         "document_id": document_id, "group_id": group_id,
-        "updated_fields": list(changes), "status": "queued" if queued else "updated",
+        "updated_fields": list(changes), "status": "updated",
     }
 
 

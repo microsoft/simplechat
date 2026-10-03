@@ -1,11 +1,12 @@
 # test_group_document_management.py
 """
 Functional tests for immutable-target group document management.
-Version: 0.261.194
+Version: 0.261.230
 Implemented in: 0.261.129
 A tag vocabulary conflict answers one coded sentence, from the pre-check or a lost patch: 0.261.167
 New tags are defined before any document carries them, so a conflict writes no document: 0.261.168
 The real document definitions receive the server-only document provenance helpers they import: 0.261.194
+Screened metadata edits apply directly and never rewrite the pinned release blob: 0.261.230
 
 Real Flask routes, management/access/policy modules, conditional document writes,
 revision deletion and canonical downloads run against isolated storage, queues,
@@ -250,15 +251,6 @@ def management(environment):
     def chunk_update(**kwargs):
         env.chunk_writes.append(deepcopy(kwargs))
 
-    def metadata_rescan(document_item, updates, actor_id):
-        current = env.source.read_item(document_item["id"], document_item["id"])
-        changed = {**current, **updates, SCREENING_FIELD: {
-            **current[SCREENING_FIELD], "state": "pending_scan", "scan_id": f"rescan-{current['id']}",
-        }}
-        return env.source.replace_item(
-            current["id"], changed, etag=document_item["_etag"], match_condition="match",
-        )
-
     def prepare_delete(document_item, actor_id):
         marker = {**document_item[SCREENING_FIELD], "state": "deleting"}
         env.source.change(document_item["id"], content_screening=marker)
@@ -267,9 +259,9 @@ def management(environment):
     # The application modules are loaded only after the base fixture's network
     # and bootstrap seams are active; real shared mutation definitions run below.
     from content_screening.contracts import (
-        CONTENT_METADATA_FIELDS, SCREENING_FIELD, DocumentHeldError, ScreeningConflictError,
-        ScreeningError, ScreeningValidationError, document_is_available, require_document_available,
-        subject_from_document,
+        SCREENING_EXEMPTION_FIELD, SCREENING_FIELD, DocumentHeldError, ScreeningConflictError,
+        ScreeningError, ScreeningValidationError, document_is_available, is_generated_screening_exempt,
+        require_document_available, subject_from_document,
     )
 
     namespace = env.document_helpers
@@ -286,11 +278,11 @@ def management(environment):
         "ScreeningError": ScreeningError, "ScreeningValidationError": ScreeningValidationError,
         "DocumentHeldError": DocumentHeldError, "document_is_available": document_is_available,
         "require_document_available": require_document_available, "subject_from_document": subject_from_document,
-        "CONTENT_METADATA_FIELDS": CONTENT_METADATA_FIELDS,
+        "SCREENING_EXEMPTION_FIELD": SCREENING_EXEMPTION_FIELD,
+        "is_generated_screening_exempt": is_generated_screening_exempt, "Path": Path,
         "public_document_payload": env.access.public_document_payload,
         "read_available_document_bytes": env.access.read_available_document_bytes,
         "current_extraction": lambda _document_id: None, "is_publication": lambda *_args: False,
-        "queue_metadata_rescan": metadata_rescan,
         "add_file_task_to_file_processing_log": Mock(),
         "calculate_processing_percentage": lambda item: item.get("percentage_complete", 0),
         "get_all_chunks": lambda document_id, user_id, group_id=None, public_workspace_id=None: [{"id": f"{document_id}-chunk"}],
@@ -314,6 +306,8 @@ def management(environment):
         "ORIGIN_FIELD_NAMES", "ORIGIN_KIND_FIELD", "DocumentOriginError",
         "apply_document_provenance", "remember_document_origin_summary", "validate_origin",
     )})
+    # Metadata edits apply directly; only the real source-format rule guards a screened rename.
+    execute_functions("content_screening/service.py", {"validate_screened_metadata_update"}, namespace)
     execute_functions("functions_documents.py", {
         "_get_blob_service_client", "_blob_exists", "_get_documents_container",
         "_upsert_document_and_sync_access_index", "update_document", "propagate_tags_to_blob_metadata",
@@ -530,17 +524,36 @@ def test_required_projection_failure_never_returns_an_updated_receipt(management
     assert env.source.records["document-a"]["tags"] == ["changed"]
 
 
-def test_metadata_rescan_has_a_bound_queued_receipt(management):
+def test_screened_metadata_edit_applies_directly_and_keeps_the_release(management):
     env = management
     env.settings["enable_content_screening"] = True
     env.seed_release(env.source.records["document-a"])
+    marker = deepcopy(env.source.records["document-a"]["content_screening"])
     response = env.client.patch(f"{ROOT}/document-a", json={"abstract": "Updated abstract"})
-    assert response.status_code == 202, response.get_json()
-    assert response.get_json()["status"] == "queued"
+    assert response.status_code == 200, response.get_json()
+    assert response.get_json()["status"] == "updated"
     assert response.get_json()["document_id"] == "document-a"
     assert response.get_json()["group_id"] == "group-a"
     assert response.get_json()["updated_fields"] == ["abstract"]
-    assert env.source.records["document-a"]["content_screening"]["state"] == "pending_scan"
+    current = env.source.records["document-a"]
+    assert current["abstract"] == "Updated abstract"
+    assert current["content_screening"] == marker
+    assert env.queue.jobs == []
+
+
+def test_screened_tag_edit_updates_chunks_but_never_the_pinned_release_blob(management):
+    env = management
+    env.settings["enable_content_screening"] = True
+    env.seed_release(env.source.records["document-a"])
+    marker = deepcopy(env.source.records["document-a"]["content_screening"])
+    response = env.client.patch(f"{ROOT}/document-a", json={"tags": ["reviewed"]})
+    assert response.status_code == 200, response.get_json()
+    assert response.get_json()["status"] == "updated"
+    current = env.source.records["document-a"]
+    assert current["tags"] == ["reviewed"]
+    assert current["content_screening"] == marker
+    assert [write.get("document_tags") for write in env.chunk_writes] == [["reviewed"]]
+    assert env.blobs.metadata_writes == []
 
 
 def test_incoming_download_uses_source_bytes_with_same_name_in_recipient(management):
