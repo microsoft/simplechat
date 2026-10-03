@@ -15,6 +15,8 @@ Implemented in version: **0.261.199**, tracked in
 [chat orchestration workflows roadmap](CHAT_ORCHESTRATION_WORKFLOWS_ROADMAP.md)
 (#1553, part of #1543).
 
+Open and Dismiss up front, with everything else under Show more, since version: **0.261.228** (#1624).
+
 Dependencies:
 
 - The V2 bell ([V2 Notification Bell and Desktop Notifications](V2_NOTIFICATIONS_BELL.md)).
@@ -151,7 +153,7 @@ shell. Escape, the backdrop and the focus trap behave as in every other V2 dialo
 Focus moves into the card and goes back to where the reader was when it closes,
 because the notice that opened it is gone by then.
 
-The card shows:
+The card shows just enough to decide what to do:
 
 - **A header band** in the priority's colors, with the priority, the kind ("Alert"
   or "Run failed"), the title, the workflow and when it arrived.
@@ -162,13 +164,24 @@ The card shows:
   reason. The runner's own log line ("HIGH alert triggered by: …") is left out,
   because the sentence and the rules already say it. A reason that says anything
   else is shown.
-- **The summary**, and **Show more** for the detail.
+- **The summary.**
 - **What went wrong**, for a failed run.
+- **Open**, a large green button, and **Dismiss**. Open goes to the conversation the
+  workflow created when it created one; otherwise to the conversation it posted
+  into, then its run, then the workflow. Its accessible name and tooltip name the
+  destination, for example "Open created conversation". An alert with nothing to
+  open offers **Mark read** in its place.
+
+**Show more** holds everything else, so a busy alert, such as one that stood up a
+response group, a meeting, a map and a briefing, doesn't bury its summary and Open
+button under a dozen chips and links:
+
+- **The detail**.
 - **Chips** for the alert's enrichments and its trigger, runner and agent.
-- **Links** the alert carries, checked by the bell's resolver. Classic labels the
-  link to the conversation a workflow posts into "Open workflow"; V2 names it
-  **Open workflow conversation**, because the card's own **Open workflow** goes to
-  the workflow. A link to another site isn't offered; a note says so.
+- **The other links** the alert carries, checked by the bell's resolver. Classic
+  labels the link to the conversation a workflow posts into "Open workflow"; V2
+  names it **Open workflow conversation**, because the card's own **Open workflow**
+  goes to the workflow. A link to another site isn't offered; a note says so.
 - **Open workflow**, which goes to the workflows list of the workspace the workflow
   lives in and opens the run that raised the alert:
   `/workspace/workflows?workflow_id=<id>&run_id=<id>`, or
@@ -184,7 +197,10 @@ The card shows:
   Alerts from before this release have no recorded scope. For those, it is taken
   from the workspace named on their **Open workflow** conversation link, and when
   that doesn't name one the button isn't shown rather than guessing.
-- **Mark read** and **Dismiss** for the entry shown.
+- **Ask about this**, when the alert offers it.
+
+Below the card's body:
+
 - **"1 of 3", Next and Mark all read** when more than one entry is waiting. Next
   steps through the entries and wraps around.
 
@@ -192,9 +208,10 @@ The card shows:
 
 | Action | Effect |
 |---|---|
-| Mark read, Dismiss | Every alert in the entry shown, so a grouped workflow's alerts are handled together. The button's tooltip says how many, for example "Acts on all 2 alerts from this workflow." |
+| Open, Dismiss | Every alert in the entry shown, so a grouped workflow's alerts are handled together. Open marks them read and goes to its destination. The button's tooltip says how many, for example "Acts on all 2 alerts from this workflow." |
+| Mark read | Shown in Open's place only when the alert has nothing to open. Every alert in the entry shown. |
 | Mark all read | Every alert the card holds, one request each. It never calls the bell's own `mark-all-read`, which would also clear notices the card never showed. |
-| A link, Open workflow | Opens the page and marks the entry's lead alert read, as opening a notice in the bell does |
+| Another link, Open workflow | Opens the page and marks every alert in the entry read, as Open does |
 | Ask about this | Opens a new chat that answers from the run's stored result ([Phase 6a](CHAT_WORKFLOW_RESULTS_FOLLOW_UP.md)). Nothing is marked, as with Close: the alert stays unread in the bell. |
 | Close (×, Escape, backdrop) | Nothing is marked. The alerts stay unread in the bell and don't pop up again. |
 
@@ -396,7 +413,9 @@ as Flask does in production. Before, it answered those with Vite's "did you mean
   minutes to appear. Focusing the window or returning to the tab reads it at once.
 - Open run arrives with Phase 6b. Ask about this (Phase 6a) is offered for personal
   workflows only, and only while **Use Workflow Results In Chat** is on.
-- The card's primary button (**Mark read**) pairs `--accent` with `--on-accent` at
+- The card's **Open** button uses `--ok-strong` with `--on-ok`, a green chosen to keep
+  its text at 5.5:1 in the light theme and 7.9:1 in the dark theme. **Mark read**,
+  shown only when there is nothing to open, pairs `--accent` with `--on-accent` at
   4.49:1 in the light theme, just under 4.5:1. That is a design-token matter shared
   by every V2 primary button.
 
@@ -408,7 +427,7 @@ as Flask does in production. Before, it answered those with Vite's "did you mean
 | `functional_tests/route_tests/test_workflow_alert_since_hours_policy.py` | 8 functions | The route keeps its Blueprint, Swagger and authentication policy; classic's request is unchanged; V2's window is validated and passed through; out-of-range limits fall back as before; invalid windows are refused without reading; a reader failure keeps the existing error shape; through the real reader with a failing Cosmos query, V2's read answers `500` and classic's still answers an empty list |
 | `functional_tests/test_v2_alert_lab_excluded_from_build.py` | 4 | The lab's markers exist only in lab code; the reference scanner recognizes every import form; the only reference to the lab is App.tsx's lazy import inside the `import.meta.env.DEV` branch; an existing production build has no file named for the lab and no lab marker (skipped without a build) |
 | `functional_tests/test_workflow_priority_alerts.py` | Existing | Classic's workflow alert contract, with the new signature |
-| `ui_tests/test_v2_workflow_alert_notices.py` | 28 | Pop-up versus notify-only and the 24-hour window against a server that leaves both filters out; one claim across two tabs of one browser, and a tab opened later; waiting behind a dialog, the bell's panel and a hidden tab; only a successful read retiring an alert, through a failed read on return and a zero count whose confirming read fails; a rise on return read behind a read already on its way; the eight-second tuck, its hover and focus pause, and high and critical staying; storm grouping; every card action; keyboard focus, Escape and the tuck on covering focus; motion with and without reduced motion, including the Web Animations' properties and every `wf-*` keyframe; the rail expanded, collapsed and on a 360 px phone in both themes; text contrast for every priority and category in both themes, with and without reduced transparency; hostile text rendered as text; refused off-site links; and Open workflow's personal, group and unplaceable cases |
+| `ui_tests/test_v2_workflow_alert_notices.py` | 29 | Pop-up versus notify-only and the 24-hour window against a server that leaves both filters out; one claim across two tabs of one browser, and a tab opened later; waiting behind a dialog, the bell's panel and a hidden tab; only a successful read retiring an alert, through a failed read on return and a zero count whose confirming read fails; a rise on return read behind a read already on its way; the eight-second tuck, its hover and focus pause, and high and critical staying; storm grouping; every card action; only Close, Show more, Dismiss and the green Open shown up front, with Open going to the created conversation and settling every alert of the entry, and the detail, chips and other actions under Show more; keyboard focus, Escape and the tuck on covering focus; motion with and without reduced motion, including the Web Animations' properties and every `wf-*` keyframe; the rail expanded, collapsed and on a 360 px phone in both themes; text contrast for every priority and category in both themes, with and without reduced transparency; hostile text rendered as text; refused off-site links; and Open workflow's personal, group and unplaceable cases |
 | `ui_tests/test_v2_document_provenance.py` | 6 added | Against the real workflows section, personal and group: Open workflow while the list is open expands the run; a second Open workflow for the same run opens it again; running another workflow afterwards doesn't reopen it; a workflow created after the list was read is found with exactly one more list read, which opens its run; a workflow missing from that read too costs one list read per navigation and no more, opens nothing, shows no error and leaves the list usable |
 
 The UI suite mounts the real V2 frame in a harness build, following

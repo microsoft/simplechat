@@ -408,7 +408,7 @@ A render attempt records how its time was spent:
   exception. `sc_output_code` carries the output failure category when there is
   one; a render stopped by the step time limit reports `failed` with
   `output_step_time_limit`.
-- Since **0.261.228**, an attempt that failed with an exception also records
+- Since **0.261.229**, an attempt that failed with an exception also records
   `sc_error_type`, the exception's class name; `sc_error_cause_type`, the class at
   the end of its explicit cause chain when the error was wrapped; and
   `sc_error_errno`, the first operating-system error number in that chain. Messages,

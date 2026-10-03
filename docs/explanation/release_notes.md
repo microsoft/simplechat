@@ -2,7 +2,7 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
-### **(v0.261.228)**
+### **(v0.261.229)**
 
 #### Bug Fixes
 
@@ -12,6 +12,17 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
     *   Scratch files now go to `/sc-temp-files` when it's writable, and otherwise to the platform temp directory, never to the working directory. The image creates `/app` for the runtime user again. The OneNote extractor binary is added after that and stays root-owned.
     *   For a failed attempt, the `[ORCHESTRATION_EXECUTOR] A file render attempt finished.` event now also records `sc_error_type`, `sc_error_cause_type` and `sc_error_errno`, so a file-system error can be told apart from a source-access refusal. Messages and paths aren't logged.
     *   (Ref: #1623, `functions_temp_files.py`, `functions_structured_file_renderers.py`, `functions_simplechat_operations.py`, `functions_orchestration_rendering.py`, `Dockerfile`, [Orchestration File Render Permission Fix](fixes/ORCHESTRATION_FILE_RENDER_PERMISSION_FIX.md))
+
+### **(v0.261.228)**
+
+#### User Interface Enhancements
+
+*   **V2 Workflow Alerts Lead With One Open Button**
+    *   The full workflow alert now shows just what's needed to act: why it came, its summary, and a large green **Open** button next to **Dismiss**. Open goes to the conversation the workflow created, or else to the conversation it posted into, its run or the workflow, and marks the alert read.
+    *   **Mark read** is gone from alerts that have somewhere to open, because Open marks the alert read and takes you there. When one workflow raised several alerts together, Open and Dismiss act on all of them. An alert with nothing to open still offers Mark read.
+    *   The detail, the pills for the alert's enrichments, trigger, runner and agent, and the other ways in (other links, **Open workflow** and **Ask about this**) are under **Show more**.
+    *   Open's green keeps its text at 4.5:1 contrast or better in the light and dark themes.
+    *   (Ref: #1624, `WorkflowAlertCard.tsx`, `workflowAlertStore.ts`, `theme.css`, [V2 Workflow Alert Notices](features/V2_WORKFLOW_ALERT_NOTICES.md))
 
 ### **(v0.261.227)**
 
