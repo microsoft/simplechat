@@ -46,7 +46,10 @@ lets chat answer from a finished run's stored result, with **Follow up**. The `w
 (#1607) lets a plan read a finished run, and 6b-1 (#1610) posts a run's results back into the private chat that
 started it. 6b-2 (the V2 run card, tracker and chat-list indicator) and 7a (the server part of Phase 7's hand-off) are
 in progress. Tracks N (V2 notifications) and P (document provenance) are independent too, and all three of their items
-have landed, so 6b can rely on the V2 bell for undeliverable results.
+have landed, so 6b can rely on the V2 bell for undeliverable results. Two related changes have also landed: saved
+results take their access from the workflow, run or chat that holds them (#1621: #1628, #1631 and #1632), and a
+revision the Run as user saved runs as them without a separate approval (#1630). §7 and gotchas 4, 15 and 36
+reflect both.
 
 Repository follow-ups found along the way, not tied to one phase:
 
@@ -1208,6 +1211,9 @@ chat later (decision #11). Nothing stays connected, and closing the browser does
     Gather step reads one finished run, either the workflow's latest or the one that finished on a named day in the
     user's local time. The server picks the run, the result reaches the compose step as fenced, untrusted notes (never
     evidence), and the answer names each run it read (`CHAT_ORCHESTRATION_WORKFLOW_RESULTS.md`).
+  - Since 0.261.231 (#1631), the reader checks each stored task result's identity, lineage and hashes, but no
+    longer looks up the documents the run's tasks read. "Lost access" in the Done when above now means access to
+    the workflow or run (`CHAT_WORKFLOW_RESULTS_FOLLOW_UP.md`).
 
 #### 6b — Post-back delivery, run card and chat-list indicator
 
@@ -1366,8 +1372,9 @@ merged.
   definitions, and creation happens only in request-thread routes with fresh authorization.
 - **Idempotency** everywhere a side effect happens: deterministic workflow IDs, run `request_id`s, and notification
   keys.
-- **Workflow results in chat** are private-chat only, re-authorized on every read and every delivery, and treated as
-  untrusted content.
+- **Workflow results in chat** are private-chat only and treated as untrusted content. Every read and every delivery
+  re-checks access to the chat, workflow and run that hold them. Since 0.261.231 (#1631), the documents a run's
+  tasks read are provenance only and aren't re-checked, so losing access to one doesn't withhold the result.
 - **Every new route** needs `@swagger_route(security=get_auth_security())` plus auth decorators and route policy tests.
 - **Settings safety.** Every new `enable_*` key defaults off and is documented: the `docs/admin/*` table,
   `docs/_data/features.yml`, and `python .\scripts\build_docs_inventory.py`. Settings sent to the frontend are
@@ -1389,9 +1396,12 @@ merged.
    - Key Vault key `M365_WORKFLOW_TOKEN_KEY_SECRET_NAME` and the `/api/m365/connections/callback` redirect
    - Profile → Connect Microsoft 365 with offline consent
    - Run as = self
-   - Approval of the exact revision
-   - Any material edit invalidates approval. The first run pauses in `waiting_m365` and notifies. Large mailboxes can
-     hit extended-analysis approval waits.
+   - Approval of the exact revision, unless the Run as user saved it. Since 0.261.229 (#1630), a revision the Run as
+     user saved runs as them without a separate approval
+     ([Run as approval for a revision you saved](M365_RUN_AS_SELF_AUTHORED_APPROVAL.md)).
+   - A material edit by someone else, or a later change by someone else to an agent or action it uses, needs
+     approval again. The first run after it pauses in `waiting_m365` and notifies. Large mailboxes can hit
+     extended-analysis approval waits.
 5. **Persistent prompt injection.** Email, documents, or web content could shape standing instructions. Mitigations:
    - a static blueprint
    - no free-form destinations
@@ -1414,8 +1424,9 @@ merged.
     adds the current date and time for calendar-scheduled workflows only (§6).
 14. **Brittle LLM definitions.** Keep blueprints and change sets small, use deterministic builders, allow one repair,
     and fall back to Edit.
-15. **Fingerprint sensitivity.** Don't reshape the legacy `schedule`. Assistant edits trigger re-approval, and the UI
-    warns first.
+15. **Fingerprint sensitivity.** Don't reshape the legacy `schedule`. A fingerprinted change that someone other than
+    the Run as user saves triggers re-approval, and the UI warns first. Since 0.261.229 (#1630), the Run as user's
+    own saves, assistant edits included, need no separate approval.
 16. **Classic UI** can't edit v2/v3 or calendar workflows, so it routes to V2. Orchestration and the assistant are
     V2-only.
 17. **Stale proposals.** Agents and sources change, and accept re-validates. Consider expiring proposals. An old card
@@ -1461,8 +1472,9 @@ merged.
     `create_chat_response_notification` (`route_backend_chats.py:25686-25700`). Delivery must do both, idempotently.
 35. **The chat changes after the run starts.** It may be deleted, made shared, or no longer accessible. Then don't
     post; send one bell notice instead. The result stays in the workflow's conversation.
-36. **Authorization drift at delivery.** Re-check chat ownership and run read access at delivery, and withhold (and
-    name) any source the requester can no longer read.
+36. **Authorization drift at delivery.** Re-check chat ownership and run read access at delivery. Since 0.261.231
+    (#1631), a stored result takes its access from its workflow and run, so a document the requester can no longer
+    read doesn't withhold it (`WORKFLOW_SAVED_RESULT_SOURCE_RECHECK_FIX.md`).
 37. **Exactly once.** A lease on `chat_delivery`, a deterministic message ID, create-if-absent, and an idempotent
     notice. Retries and concurrent sweeps must still produce one message.
 38. **Mid-stream delivery.** Posting while a reply streams breaks message order, so wait for the next sweep.
