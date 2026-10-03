@@ -15,8 +15,6 @@ Content screening checks workspace knowledge for configured PII, patterns, value
 
 Use it when a document might contain sensitive data or instructions aimed at an AI rather than a human reader. Text can enter extraction even when its appearance makes it hard to notice in the original.
 
-Screening checks documents as they enter a workspace: files you upload, files you attach in chat (they're saved to your workspace), and File Sync. Anything built from those documents isn't screened or checked again. This includes AI replies, saved Analyze results, workflow and orchestration outputs, and generated files.
-
 ## Configure an appropriate baseline
 
 An administrator must configure Enhanced Citations and its storage account before enabling screening. The capability is off by default.
@@ -101,7 +99,7 @@ Review original files as potentially untrusted content. Do not follow links or i
 
 ## What a hold does to earlier results
 
-A hold stops the document from being used as an input from now on. It doesn't take back anything already built from it.
+Screening checks a document as it enters a workspace. Anything built from that document isn't screened or checked again, including AI replies, saved Analyze results, workflow and orchestration outputs, and generated files. So a hold stops the document from being used as an input from now on, but it doesn't take back anything already built from it.
 
 - Search, document selection, previews, downloads and opening the document from a citation are refused until review completes.
 - If the document was attached in chat, the attachment shows "Source content is unavailable pending document screening and review." in the conversation.
