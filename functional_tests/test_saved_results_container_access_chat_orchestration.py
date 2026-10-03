@@ -553,10 +553,9 @@ class ContainerAccessAndInputReadTests(ScreeningAccessFixture):
         calls = []
         with self.telemetry, self.assertRaises(DocumentHeldError):
             with screening_access.strict_source_authority():
-                try:
+                # A headless step may catch the refused input read and carry on; the fence still holds.
+                with self.assertRaises(DocumentHeldError):
                     screening_access.assert_document_available("document-1", "user-1", purpose="orchestration")
-                except DocumentHeldError:
-                    pass
                 screening_access.guard_model_callable(lambda: calls.append("model"), [], "user-1")()
         self.assertEqual(calls, [])
 

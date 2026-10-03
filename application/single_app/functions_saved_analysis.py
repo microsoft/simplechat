@@ -13,11 +13,7 @@ from azure.core import MatchConditions
 from azure.core.exceptions import AzureError
 from azure.cosmos.exceptions import CosmosHttpResponseError, CosmosResourceNotFoundError
 
-# authorize_analysis_sources stays importable from here until the workflow layer stops
-# reaching it through this module; saved results no longer call it.
-from functions_analysis_access import (  # noqa: F401
-    AnalysisResultUnavailable, analysis_source_snapshot, authorize_analysis_sources,
-)
+from functions_analysis_access import AnalysisResultUnavailable, analysis_source_snapshot
 from functions_appinsights import log_event
 from functions_generated_file_exports import build_saved_analysis_export
 from functions_workflow_context import WorkflowContextBudgetError, calculate_workflow_context_budget

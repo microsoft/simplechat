@@ -132,7 +132,7 @@ Layers 2 and 3a merged into layer 1's branch, `paullizer-workspace-knowledge-hol
 | 3a | 0.261.231 | Workflow saved results take their access from the workflow and run. | [#1631](https://github.com/microsoft/simplechat/pull/1631) |
 | 3b | 0.261.232 | Chat, Analyze, orchestration, generated files, history and exports (this document). | [#1632](https://github.com/microsoft/simplechat/pull/1632) |
 
-Shared source-check helpers that are still used for input reads, such as `authorize_analysis_sources`, stay in place. Removing helpers left with no callers after 3a and 3b, including the `functions_saved_analysis` re-export, is a small follow-up.
+Shared source-check helpers that are still used for input reads, such as `authorize_analysis_sources`, stay in place. Rewording `AnalysisResultUnavailable`, which no longer means a source re-check failed for saved results, is a small follow-up.
 
 ## Testing and validation
 
