@@ -74,7 +74,7 @@ from functions_workflow_result_store import AnalysisWorkUnitConflictError, Workf
 
 
 MAX_OUTPUT_BYTES = 500 * 1024 * 1024
-# A render re-proves its claim, run state, capability admission and source access on this
+# A render re-proves its claim, run state, capability admission and result lineage on this
 # cadence rather than on every block it writes. Publication boundaries still check in full.
 RENDER_FULL_CHECK_INTERVAL_SECONDS = 5.0
 _REQUEST_FIELDS = frozenset({"output_format", "profile", "columns", "title", "sheet_name"})
@@ -738,7 +738,7 @@ class OrchestrationRenderingService:
                 yield public_output(record), record
 
     def list_public_outputs(self, run_id):
-        """Current per-file visibility; a source denial cannot hide its siblings."""
+        """Current per-file state; one unavailable file cannot hide its siblings."""
         return [projection for projection, _ in self._public_records(run_id)]
 
     def claim_due(self, output_id, *, worker_id=None):

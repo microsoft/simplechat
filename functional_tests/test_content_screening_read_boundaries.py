@@ -1,11 +1,14 @@
 # test_content_screening_read_boundaries.py
 """
 Behavioral tests for search, native caches, and resumed source consumption.
-Version: 0.261.122
+Version: 0.261.232
 Implemented in: 0.261.106
+Upload-only export checks covered in: 0.261.232
 
 Executes the actual boundary function bodies with isolated fake dependencies.
 Azure Search, Cosmos, Blob Storage, and model providers are never contacted.
+A running export still checks the source file it reads; a finished export and
+the request provenance stored with it are not rechecked.
 """
 
 import ast
@@ -287,12 +290,7 @@ class NativeCacheBoundaryTests(ScreeningAccessFixture):
 
 
 class ResumedEvidenceBoundaryTests(ScreeningAccessFixture):
-    def test_cached_native_status_does_not_republish_or_expose_held_previews(self):
-        run = {
-            "id": "run-1", "user_id": "user-1", "conversation_id": "conversation-1",
-            "status": "completed", "generated_artifact": {"preview_text": "PRIVATE PREVIEW"},
-            "screening_sources": [{access.PROVENANCE_FIELD: access.document_provenance(self.document)}],
-        }
+    def native_status_namespace(self, run):
         reconciled = []
         namespace = {
             "cosmos_conversations_container": self.conversations,
@@ -300,22 +298,61 @@ class ResumedEvidenceBoundaryTests(ScreeningAccessFixture):
             "get_settings": lambda: {},
             "CosmosResourceNotFoundError": KeyError,
             "ScreeningError": ScreeningError,
+            "TABULAR_EXPORT_STATUS_COMPLETED": "completed",
             "assert_evidence_available": access.assert_evidence_available,
             "assert_blob_available": access.assert_blob_available,
+            "storage_account_personal_chat_container_name": "personal-chat",
+            "storage_account_user_documents_container_name": "user-documents",
+            "storage_account_group_documents_container_name": "group-documents",
+            "storage_account_public_documents_container_name": "public-documents",
             "_can_cancel_run": lambda _run: False,
-            "_reconcile_completed_tabular_artifact_set": lambda _run: reconciled.append(True),
+            "_reconcile_completed_tabular_artifact_set": lambda _run: reconciled.append(True) or _run,
+            "_build_run_public_status": lambda _run, settings=None: {"id": _run["id"], "source_available": True},
         }
         load_functions(
             "functions_tabular_generated_exports.py",
-            {"_authorize_tabular_export_run_execution", "_screened_run_public_status", "get_tabular_generated_output_run_status"},
+            {
+                "_authorize_tabular_export_run_conversation", "_authorize_tabular_export_run_execution",
+                "_screened_run_public_status", "get_tabular_generated_output_run_status",
+            },
             namespace,
         )
+        return namespace, reconciled
+
+    def test_completed_export_status_follows_its_conversation_not_its_held_source(self):
+        run = {
+            "id": "run-1", "user_id": "user-1", "conversation_id": "conversation-1",
+            "status": "completed", "generated_artifact": {"preview_text": "GENERATED PREVIEW"},
+            "screening_sources": [{access.PROVENANCE_FIELD: access.document_provenance(self.document)}],
+            "source_authorization": {
+                "source": "workspace", "scope_id": "user-1", "container": "user-documents",
+                "blob_path": self.document["content_screening"]["active_blob"]["path"],
+            },
+        }
+        namespace, reconciled = self.native_status_namespace(run)
+        self.hold()
+        status = namespace["get_tabular_generated_output_run_status"]("user-1", "run-1")
+        self.assertTrue(status["source_available"])
+        self.assertEqual(reconciled, [True])
+        self.assertEqual(self.personal.reads["document-1"], 0)
+        self.conversations.documents["conversation-1"]["user_id"] = "someone-else"
+        denied = namespace["get_tabular_generated_output_run_status"]("user-1", "run-1")
+        self.assertFalse(denied["source_available"])
+        self.assertEqual(denied["generated_artifacts"], [])
+
+    def test_running_export_status_still_stops_when_its_source_file_is_held(self):
+        run = {
+            "id": "run-1", "user_id": "user-1", "conversation_id": "conversation-1", "status": "running",
+            "source_authorization": {
+                "source": "workspace", "scope_id": "user-1", "container": "user-documents",
+                "blob_path": self.document["content_screening"]["active_blob"]["path"],
+            },
+        }
+        namespace, reconciled = self.native_status_namespace(run)
         self.hold()
         status = namespace["get_tabular_generated_output_run_status"]("user-1", "run-1")
         self.assertFalse(status["source_available"])
-        self.assertEqual(status["generated_artifacts"], [])
         self.assertFalse(status["can_resume"])
-        self.assertNotIn("PRIVATE", json.dumps(status))
         self.assertEqual(reconciled, [])
 
     def test_linked_history_uses_clean_text_instead_of_original_attachment_metadata(self):
@@ -341,7 +378,7 @@ class ResumedEvidenceBoundaryTests(ScreeningAccessFixture):
         self.assertEqual(result["role"], "file")
         self.assertIn(access.PROVENANCE_FIELD, result)
 
-    def test_persisted_native_run_rechecks_sources_before_reusing_staged_rows(self):
+    def test_persisted_native_run_rechecks_its_source_file_but_not_request_provenance(self):
         namespace = {
             "cosmos_conversations_container": self.conversations,
             "CosmosResourceNotFoundError": KeyError,
@@ -352,14 +389,26 @@ class ResumedEvidenceBoundaryTests(ScreeningAccessFixture):
             "storage_account_group_documents_container_name": "group-documents",
             "storage_account_public_documents_container_name": "public-documents",
         }
-        load_functions("functions_tabular_generated_exports.py", {"_authorize_tabular_export_run_execution"}, namespace)
-        run = {
+        load_functions(
+            "functions_tabular_generated_exports.py",
+            {"_authorize_tabular_export_run_conversation", "_authorize_tabular_export_run_execution"},
+            namespace,
+        )
+        provenance_only = {
             "user_id": "user-1", "conversation_id": "conversation-1",
             "screening_sources": [{access.PROVENANCE_FIELD: access.document_provenance(self.document)}],
         }
+        reading_source = {
+            **provenance_only,
+            "source_authorization": {
+                "source": "workspace", "scope_id": "user-1", "container": "user-documents",
+                "blob_path": self.document["content_screening"]["active_blob"]["path"],
+            },
+        }
         self.hold()
+        namespace["_authorize_tabular_export_run_execution"](provenance_only)
         with self.assertRaises(DocumentHeldError):
-            namespace["_authorize_tabular_export_run_execution"](run)
+            namespace["_authorize_tabular_export_run_execution"](reading_source)
 
     def test_nested_historical_tool_provenance_is_not_lost_in_json(self):
         evidence = {

@@ -215,8 +215,11 @@ views and may show index metadata; they are not semantic record pages.
 Inline record inspection has a bounded response size. An oversized individual
 record produces an explicit retained-data error, not a shortened record.
 
-Every read and continuation rechecks the relevant source boundary. Changed
-source revisions or revoked permissions cannot become optional absence.
+Reading a frozen document item as an input rechecks that document: a changed
+source revision or revoked permission refuses the item and cannot become
+optional absence. Since 0.261.231, saved item outputs, collected records and
+inspection pages are generated output and are not re-checked against the
+documents they came from.
 Cancellation/deletion fences subsequent writes, including Analyze preparation.
 It does not undo external actions that already completed.
 
@@ -250,7 +253,8 @@ separate engine.
 
 Functional coverage includes 0/1/10/100/500-item runs, nested scopes, frozen
 restart, item-specific approvals, exact zero/multiple-record collection,
-business-key errors, per-document native Analyze, source revocation, storage
+business-key errors, per-document native Analyze, held or revoked loop inputs,
+collected results that stay readable after a document changes, storage
 integrity, and histories beyond 1,000 executions. Browser coverage uses the
 actual local V2 bundle and closed API fixtures.
 

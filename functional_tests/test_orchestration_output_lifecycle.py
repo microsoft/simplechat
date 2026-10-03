@@ -1,12 +1,15 @@
 # test_orchestration_output_lifecycle.py
 """
 Real retained-result/render/transport/commit/download lifecycle integration.
-Version: 0.261.127
+Version: 0.261.232
 Implemented in: 0.261.127
+Container-only generated-file access covered in: 0.261.232
 
 Production modules (including the complete upload and download modules) run with
 external Azure I/O doubled. No AST-extracted service, model call, or provider is
 used. The transactional Cosmos fixture applies the installed SDK's batch format.
+A generated file takes its access from its conversation and run: changes to the
+documents behind its retained result never fail, hide or withhold it.
 """
 
 import builtins
@@ -35,8 +38,6 @@ from flask import Flask, g
 from content_screening.contracts import (
     ScreeningConfigurationError,
     ScreeningError,
-    SourceAuthorityUnavailableError,
-    SourceAuthorityUnverifiedError,
 )
 from functions_generated_export_contracts import GeneratedFileExportError, GeneratedFileExportRequest
 from functions_generated_file_exports import build_generated_file_export
@@ -722,6 +723,14 @@ def test_staged_history_and_download_are_withheld_until_output_commit(lifecycle)
     assert "generated_artifact_source" not in encoded and "blob_path" not in encoded
     assert safe["filename"] == state["file_name"]
     lifecycle.results.denied.add("document-1")
+    lifecycle.results.held.add("document-1")
+    with lifecycle.app.test_request_context():
+        kept = lifecycle.modules.sources.sanitize_generated_artifact_history(message, "owner")
+        kept_cache = lifecycle.modules.sources.sanitize_generated_artifact_history(safe, "owner")
+    assert not kept.get("content_unavailable") and kept["filename"] == state["file_name"]
+    assert not kept_cache.get("content_unavailable")
+    assert json.loads(lifecycle.download(state)) == ROWS
+    lifecycle.capabilities = False
     with lifecycle.app.test_request_context():
         blocked = lifecycle.modules.sources.sanitize_generated_artifact_history(message, "owner")
         blocked_cache = lifecycle.modules.sources.sanitize_generated_artifact_history(safe, "owner")
@@ -732,7 +741,7 @@ def test_staged_history_and_download_are_withheld_until_output_commit(lifecycle)
         lifecycle.download(state)
     with pytest.raises(PermissionError):
         lifecycle.service.manual_retry(output["output_id"], "revoked-retry")
-    lifecycle.results.denied.clear()
+    lifecycle.capabilities = True
     with lifecycle.app.test_request_context():
         restored = lifecycle.modules.sources.sanitize_generated_artifact_history(blocked_cache, "owner")
     assert not restored.get("content_unavailable") and restored["filename"] == state["file_name"]
@@ -844,18 +853,12 @@ def test_stop_fences_every_publication_boundary_and_cleans_staging(lifecycle, bo
     assert repeated["state"] == "cancelled" and len(lifecycle.render_calls) == 1
 
 
-@pytest.mark.parametrize("revocation", ["source", "screening", "capability"])
 @pytest.mark.parametrize("boundary", ["after_render", "after_blob"])
-def test_current_access_is_rechecked_after_render_and_before_commit(lifecycle, revocation, boundary):
+def test_capability_is_rechecked_after_render_and_before_commit(lifecycle, boundary):
     output = lifecycle.prepare()
 
     def revoke():
-        if revocation == "source":
-            lifecycle.results.denied.add("document-1")
-        elif revocation == "screening":
-            lifecycle.results.held.add("document-1")
-        else:
-            lifecycle.capabilities = False
+        lifecycle.capabilities = False
 
     if boundary == "after_render":
         real = lifecycle.service.renderer
@@ -871,10 +874,7 @@ def test_current_access_is_rechecked_after_render_and_before_commit(lifecycle, r
     state = lifecycle.run(output)
     assert state["state"] == "failed" and state["automatic_attempts"] == 1
     assert state["can_retry"] is False and state["artifact_message_id"] is None
-    assert state["error_code"] == {
-        "source": "output_access_denied", "screening": "output_screening_hold",
-        "capability": "output_capability_disabled",
-    }[revocation]
+    assert state["error_code"] == "output_capability_disabled"
     with pytest.raises((PermissionError, OutputError, ScreeningError)):
         lifecycle.service.manual_retry(output["output_id"], "not-eligible")
     lifecycle.now += timedelta(seconds=11)
@@ -882,21 +882,40 @@ def test_current_access_is_rechecked_after_render_and_before_commit(lifecycle, r
     assert not lifecycle.messages.items and not lifecycle.blobs.data
 
 
+@pytest.mark.parametrize("change", ["source", "screening"])
+@pytest.mark.parametrize("boundary", ["after_render", "after_blob"])
+def test_source_changes_during_render_do_not_fail_the_file(lifecycle, change, boundary):
+    output = lifecycle.prepare()
+
+    def revoke():
+        (lifecycle.results.denied if change == "source" else lifecycle.results.held).add("document-1")
+
+    if boundary == "after_render":
+        real = lifecycle.service.renderer
+
+        def renderer(**kwargs):
+            rendered = real(**kwargs)
+            revoke()
+            return rendered
+
+        lifecycle.service.renderer = renderer
+    else:
+        lifecycle.blobs.after_upload = revoke
+    state = lifecycle.run(output)
+    assert state["state"] == "completed" and state["available"] is True
+    assert state["artifact_message_id"] and state["automatic_attempts"] == 1
+    assert json.loads(lifecycle.download(state)) == ROWS
+    assert lifecycle.results.source_reads == []
+
+
 @pytest.mark.parametrize("revocation", [
-    "source", "screening", "source_deleted", "capability", "owner",
-    "conversation_deleted", "run_deleted", "superseded", "step_disabled",
+    "capability", "owner", "conversation_deleted", "run_deleted", "superseded", "step_disabled",
 ])
 def test_completed_download_history_and_retry_reauthorize_current_state(lifecycle, revocation):
     output = lifecycle.run(lifecycle.prepare())
     record = lifecycle.raw(output)
     message = lifecycle.service.transport.message(record, committed=True)
-    if revocation == "source":
-        lifecycle.results.denied.add("document-1")
-    elif revocation == "screening":
-        lifecycle.results.held.add("document-1")
-    elif revocation == "source_deleted":
-        lifecycle.results.sources.clear()
-    elif revocation == "capability":
+    if revocation == "capability":
         lifecycle.capabilities = False
     elif revocation in {"owner", "conversation_deleted"}:
         conversation = lifecycle.conversations.read_item("conversation-1", "conversation-1")
@@ -924,18 +943,34 @@ def test_completed_download_history_and_retry_reauthorize_current_state(lifecycl
     assert len(lifecycle.render_calls) == lifecycle.blobs.uploads == 1
 
 
+@pytest.mark.parametrize("change", ["source", "screening", "source_deleted", "source_changed"])
+def test_completed_file_download_and_history_survive_source_changes(lifecycle, change):
+    output = lifecycle.run(lifecycle.prepare())
+    message = lifecycle.service.transport.message(lifecycle.raw(output), committed=True)
+    if change == "source":
+        lifecycle.results.denied.add("document-1")
+    elif change == "screening":
+        lifecycle.results.held.add("document-1")
+    elif change == "source_deleted":
+        lifecycle.results.sources.clear()
+    else:
+        lifecycle.results.sources["document-1"]["source_version"] = 2
+    assert json.loads(lifecycle.download(output)) == ROWS
+    with lifecycle.app.test_request_context():
+        safe = lifecycle.modules.sources.sanitize_generated_artifact_history(message, "owner")
+    assert not safe.get("content_unavailable") and safe["filename"] == output["file_name"]
+    projection = lifecycle.service.list_public_outputs("run-1")[0]
+    assert projection["available"] is True and projection["artifact_message_id"] == output["artifact_message_id"]
+    assert len(lifecycle.render_calls) == lifecycle.blobs.uploads == 1
+    assert lifecycle.results.source_reads == []
+
+
 @pytest.mark.parametrize("revocation,reason", [
-    ("source", "output_access_denied"),
-    ("screening", "output_screening_hold"),
-    ("source_deleted", "output_source_changed"),
-    ("source_changed", "output_source_changed"),
-    ("source_digest_changed", "output_source_changed"),
     ("retained_deleted", "output_source_unavailable"),
     ("retained_guard_missing", "output_source_unavailable"),
     ("retained_commit_missing", "output_source_unavailable"),
     ("retained_manifest_missing", "output_source_unavailable"),
     ("source_producer_deleted", "output_source_unavailable"),
-    ("source_metadata_missing", "output_source_unavailable"),
     ("message_missing", "output_artifact_missing"),
     ("capability", "output_capability_disabled"),
 ])
@@ -952,17 +987,7 @@ def test_public_output_list_preserves_authorized_siblings(lifecycle, revocation,
     visible_before = lifecycle.raw(visible)
     source_run = second_source.producer.run_id
     store = lifecycle.service.results.store
-    if revocation == "source":
-        lifecycle.results.denied.add("document-2")
-    elif revocation == "screening":
-        lifecycle.results.held.add("document-2")
-    elif revocation == "source_deleted":
-        del lifecycle.results.sources["document-2"]
-    elif revocation == "source_changed":
-        lifecycle.results.sources["document-2"]["source_version"] = 2
-    elif revocation == "source_digest_changed":
-        lifecycle.results.sources["document-2"]["content_sha256"] = "2" * 64
-    elif revocation == "retained_deleted":
+    if revocation == "retained_deleted":
         binding = store.prepare_orchestration_result(
             "owner", "conversation-1", source_run, "analyze", guard_token="server-attempt-token",
         )
@@ -987,15 +1012,6 @@ def test_public_output_list_preserves_authorized_siblings(lifecycle, revocation,
         run = lifecycle.runs.read_item(source_run, "conversation-1")
         run["checkpoints_deleted"] = True
         lifecycle.runs.upsert_item(run)
-    elif revocation == "source_metadata_missing":
-        original = lifecycle.service.results.access.source_metadata_reader
-
-        def metadata(document_id, **kwargs):
-            if document_id == "document-2":
-                raise LookupError("Private source disappeared between current ACL and metadata reads.")
-            return original(document_id, **kwargs)
-
-        lifecycle.service.results.access.source_metadata_reader = metadata
     elif revocation == "message_missing":
         message = lifecycle.messages.read_item(hidden["artifact_message_id"], "conversation-1")
         lifecycle.messages.delete_item(message["id"], "conversation-1", etag=message["_etag"])
@@ -1026,14 +1042,44 @@ def test_public_output_list_preserves_authorized_siblings(lifecycle, revocation,
         assert private not in json.dumps(projections)
 
 
-@pytest.mark.parametrize("revocation", ["source", "screening"])
-def test_public_outputs_restore_current_access_without_rerendering(lifecycle, revocation):
+@pytest.mark.parametrize("change", [
+    "source", "screening", "source_deleted", "source_changed", "source_digest_changed", "source_metadata_missing",
+])
+def test_public_output_list_ignores_changes_to_retained_sources(lifecycle, change):
+    second_source = lifecycle.retain_source("document-2")
+    first = lifecycle.run(lifecycle.prepare("json", reference=second_source))
+    second = lifecycle.run(lifecycle.prepare("csv"))
+    if change == "source":
+        lifecycle.results.denied.add("document-2")
+    elif change == "screening":
+        lifecycle.results.held.add("document-2")
+    elif change == "source_deleted":
+        del lifecycle.results.sources["document-2"]
+    elif change == "source_changed":
+        lifecycle.results.sources["document-2"]["source_version"] = 2
+    elif change == "source_digest_changed":
+        lifecycle.results.sources["document-2"]["content_sha256"] = "2" * 64
+    else:
+        def metadata(*args, **kwargs):
+            raise LookupError("Private source disappeared between current ACL and metadata reads.")
+
+        lifecycle.service.results.access.source_metadata_reader = metadata
+    projections = lifecycle.service.list_public_outputs("run-1")
+    cards = lifecycle.service.committed_artifacts("run-1")
+    assert [projection["available"] for projection in projections] == [True, True]
+    assert {card["artifact_message_id"] for card in cards} == {
+        first["artifact_message_id"], second["artifact_message_id"],
+    }
+    assert b"last" in lifecycle.download(first)
+    assert lifecycle.render_calls == [("json", "exact_records_v1"), ("csv", "tabular_records_v1")]
+
+
+def test_public_outputs_restore_capability_without_rerendering(lifecycle):
     hidden = lifecycle.run(lifecycle.prepare())
-    collection = lifecycle.results.denied if revocation == "source" else lifecycle.results.held
-    collection.add("document-1")
+    lifecycle.capabilities = False
     denied = lifecycle.service.list_public_outputs("run-1")
     unavailable_cards = lifecycle.service.committed_artifacts("run-1")
-    collection.clear()
+    lifecycle.capabilities = True
     lifecycle.restart()
     writes = lifecycle.results.container.sequence
     restored = lifecycle.service.list_public_outputs("run-1")
@@ -1048,13 +1094,16 @@ def test_public_outputs_restore_current_access_without_rerendering(lifecycle, re
 
 
 @pytest.mark.parametrize("state", ["waiting", "retry_scheduled", "failed"])
-def test_public_outputs_withhold_retry_controls_after_source_revocation(lifecycle, state):
+def test_public_outputs_withhold_retry_controls_while_the_capability_is_off(lifecycle, state):
     output = lifecycle.prepare()
     lifecycle.failures["json"] = [TimeoutError("Private transport failure")] * 3
     for _ in range({"waiting": 0, "retry_scheduled": 1, "failed": 3}[state]):
         output = lifecycle.run(output)
         lifecycle.advance_due(output)
     lifecycle.results.denied.add("document-1")
+    kept = lifecycle.service.list_public_outputs("run-1")
+    assert kept[0]["state"] == state and kept[0]["available"] is True
+    lifecycle.capabilities = False
     projections = lifecycle.service.list_public_outputs("run-1")
     cards = lifecycle.service.committed_artifacts("run-1")
     assert projections[0]["state"] == state and projections[0]["available"] is False
@@ -1064,17 +1113,13 @@ def test_public_outputs_withhold_retry_controls_after_source_revocation(lifecycl
         lifecycle.service.manual_retry(output["output_id"], "denied-request")
 
 
-@pytest.mark.parametrize("boundary", [
-    "outputs", "results", "messages", "source_network", "source_wrapped_network",
-    "screening_configuration", "screening_service", "unexpected_callback", "source_reader_missing",
-    "metadata_key_error",
-])
-@pytest.mark.parametrize("operation", [
+_OUTPUT_READS = [
     "list_public_outputs", "committed_artifacts", "history_file", "history_cached_file", "history_card",
     "history_outputs", "history_cached_outputs", "history_top_level_card",
-])
-def test_public_output_reads_propagate_infrastructure_failures(lifecycle, boundary, operation):
-    completed = lifecycle.run(lifecycle.prepare())
+]
+
+
+def _output_read_message(lifecycle, completed, operation):
     message = lifecycle.service.transport.message(lifecycle.raw(completed), committed=True)
     if operation == "history_cached_file":
         with lifecycle.app.test_request_context():
@@ -1094,18 +1139,48 @@ def test_public_output_reads_propagate_infrastructure_failures(lifecycle, bounda
     elif operation == "history_top_level_card":
         message = lifecycle.output_history()
         del message["metadata"]["orchestration"]["outputs"]
-    expected = (AzureError, OutputStorageError)
+    return message
+
+
+def _read_outputs(lifecycle, operation, message):
+    if operation.startswith("history_"):
+        with lifecycle.app.test_request_context():
+            return lifecycle.modules.sources.sanitize_generated_artifact_history(message, "owner")
+    return getattr(lifecycle.service, operation)("run-1")
+
+
+@pytest.mark.parametrize("boundary", ["outputs", "results", "messages"])
+@pytest.mark.parametrize("operation", _OUTPUT_READS)
+def test_public_output_reads_propagate_infrastructure_failures(lifecycle, boundary, operation):
+    completed = lifecycle.run(lifecycle.prepare())
+    message = _output_read_message(lifecycle, completed, operation)
     if boundary == "outputs":
         lifecycle.runs.fail_reads = True
     elif boundary == "results":
         lifecycle.results.container.fail_reads = True
-    elif boundary == "messages":
+    else:
         lifecycle.messages.fail_reads = True
-    elif boundary == "source_reader_missing":
-        lifecycle.service.results.access.source_resolver = None
-        expected = OutputError
+    with pytest.raises((AzureError, OutputStorageError)):
+        _read_outputs(lifecycle, operation, message)
+    assert len(lifecycle.render_calls) == lifecycle.blobs.uploads == 1
+
+
+@pytest.mark.parametrize("boundary", [
+    "source_network", "source_wrapped_network", "screening_configuration", "screening_service",
+    "unexpected_callback", "source_reader_missing", "metadata_key_error",
+])
+@pytest.mark.parametrize("operation", _OUTPUT_READS)
+def test_public_output_reads_never_reach_source_services(lifecycle, boundary, operation):
+    completed = lifecycle.run(lifecycle.prepare())
+    message = _output_read_message(lifecycle, completed, operation)
+    calls = []
+    access = lifecycle.service.results.access
+    if boundary == "source_reader_missing":
+        access.source_resolver = None
+        access.source_metadata_reader = None
     else:
         def fail(*args, **kwargs):
+            calls.append(boundary)
             if boundary == "source_network":
                 raise TimeoutError("private-source-endpoint")
             if boundary == "source_wrapped_network":
@@ -1118,45 +1193,29 @@ def test_public_output_reads_propagate_infrastructure_failures(lifecycle, bounda
                 raise KeyError("private unexpected metadata field")
             raise RuntimeError("private unexpected callback details")
 
-        lifecycle.service.results.access.source_metadata_reader = fail
-        expected = {
-            "source_network": SourceAuthorityUnavailableError, "source_wrapped_network": OutputStorageError,
-            "screening_configuration": ScreeningConfigurationError, "screening_service": ScreeningError,
-            "unexpected_callback": SourceAuthorityUnverifiedError,
-            "metadata_key_error": SourceAuthorityUnverifiedError,
-        }[boundary]
-    with pytest.raises(expected):
-        if operation.startswith("history_"):
-            with lifecycle.app.test_request_context():
-                lifecycle.modules.sources.sanitize_generated_artifact_history(message, "owner")
-        else:
-            getattr(lifecycle.service, operation)("run-1")
+        access.source_metadata_reader = fail
+        access.source_resolver = fail
+    result = _read_outputs(lifecycle, operation, message)
+    assert calls == []
+    assert "content_unavailable" not in json.dumps(result)
     assert len(lifecycle.render_calls) == lifecycle.blobs.uploads == 1
 
 
-@pytest.mark.parametrize("failure_type,retryable,code", [
-    (TimeoutError, True, "source_authority_unavailable"),
-    (RuntimeError, False, "source_authority_unverified"),
-    (ScreeningError, True, "output_screening_unavailable"),
-    (ScreeningConfigurationError, False, "output_screening_unavailable"),
-])
-def test_current_source_service_failures_preserve_retry_classification(lifecycle, failure_type, retryable, code):
+@pytest.mark.parametrize("failure_type", [TimeoutError, RuntimeError, ScreeningError, ScreeningConfigurationError])
+def test_source_service_failures_never_reach_a_retained_file_render(lifecycle, failure_type):
     output = lifecycle.prepare()
+    calls = []
 
     def unavailable(*args, **kwargs):
+        calls.append(failure_type)
         raise failure_type("Private source service details")
 
     lifecycle.service.results.access.source_metadata_reader = unavailable
-    for attempt in range(1, 4 if retryable else 2):
-        result = lifecycle.run(output)
-        if retryable and attempt < 3:
-            assert result["state"] == "retry_scheduled" and result["automatic_attempts"] == attempt + 1
-            lifecycle.advance_due(output)
-        else:
-            assert result["state"] == "failed" and result["can_retry"] is retryable
-    assert result["error_code"] == code and "Private source" not in json.dumps(result)
-    assert not lifecycle.render_calls and not lifecycle.blobs.data
-
+    lifecycle.service.results.access.source_resolver = unavailable
+    result = lifecycle.run(output)
+    assert result["state"] == "completed" and result["available"] is True
+    assert calls == [] and "Private source" not in json.dumps(result)
+    assert lifecycle.render_calls == [("json", "exact_records_v1")]
 
 @pytest.mark.parametrize("change", ["owner", "conversation_deleted"])
 def test_public_output_list_never_downgrades_conversation_denial_to_file_placeholder(lifecycle, change):
@@ -1171,8 +1230,7 @@ def test_public_output_list_never_downgrades_conversation_denial_to_file_placeho
 
 
 @pytest.mark.parametrize("card_location", ["none", "legacy", "top_level", "both"])
-@pytest.mark.parametrize("revocation", ["source", "screening", "source_deleted"])
-def test_nested_output_history_refreshes_denied_siblings_before_hydration(lifecycle, card_location, revocation):
+def test_nested_output_history_refreshes_denied_siblings_before_hydration(lifecycle, card_location):
     second_source = lifecycle.retain_source("document-2")
     hidden = lifecycle.run(lifecycle.prepare("json", reference=second_source))
     visible = lifecycle.run(lifecycle.prepare("csv"))
@@ -1182,12 +1240,11 @@ def test_nested_output_history_refreshes_denied_siblings_before_hydration(lifecy
     message["metadata"]["orchestration"]["outputs"][0]["source_ref"] = {"blob_path": "private-cache-locator"}
     message["metadata"]["orchestration"]["outputs"][0]["can_retry"] = True
     before = deepcopy(message)
-    if revocation == "source":
-        lifecycle.results.denied.add("document-2")
-    elif revocation == "screening":
-        lifecycle.results.held.add("document-2")
-    else:
-        del lifecycle.results.sources["document-2"]
+    # A changed or held source hides nothing; the capability decision hides one sibling.
+    lifecycle.results.denied.add("document-2")
+    lifecycle.results.held.add("document-2")
+    real_authorize = lifecycle.service.authorize_execution
+    lifecycle.service.authorize_execution = lambda record, **kwargs: record["id"] != hidden["output_id"]
     with lifecycle.app.test_request_context():
         safe = lifecycle.modules.sources.sanitize_generated_artifact_history(message, "owner")
         screening_error = getattr(g, "content_screening_error", None)
@@ -1208,9 +1265,7 @@ def test_nested_output_history_refreshes_denied_siblings_before_hydration(lifecy
         cards = safe["metadata"]["generated_orchestration_outputs"]
         assert cards[0]["status"] == "unavailable" and "artifact_message_id" not in cards[0]
         assert cards[1]["artifact_message_id"] == visible["artifact_message_id"]
-    lifecycle.results.denied.clear()
-    lifecycle.results.held.clear()
-    lifecycle.results.sources["document-2"] = {**source("document-2"), "content_sha256": "1" * 64}
+    lifecycle.service.authorize_execution = real_authorize
     with lifecycle.app.test_request_context():
         restored = lifecycle.modules.sources.sanitize_generated_artifact_history(safe, "owner")
     restored_by_id = {
@@ -1262,11 +1317,15 @@ def test_nested_history_rechecks_saved_retry_controls(lifecycle, state):
     cached = lifecycle.output_history(with_cards=False)
     lifecycle.results.denied.add("document-1")
     with lifecycle.app.test_request_context():
+        kept = lifecycle.modules.sources.sanitize_generated_artifact_history(cached, "owner")
+    assert kept["metadata"]["orchestration"]["outputs"][0]["available"] is True
+    lifecycle.capabilities = False
+    with lifecycle.app.test_request_context():
         safe = lifecycle.modules.sources.sanitize_generated_artifact_history(cached, "owner")
     masked = safe["metadata"]["orchestration"]["outputs"][0]
     assert masked["state"] == state and masked["available"] is False
     assert masked["can_retry"] is False and masked["next_retry_at"] is None
-    lifecycle.results.denied.clear()
+    lifecycle.capabilities = True
     lifecycle.now = lifecycle.deadline + timedelta(seconds=1)
     with lifecycle.app.test_request_context():
         expired = lifecycle.modules.sources.sanitize_generated_artifact_history(cached, "owner")

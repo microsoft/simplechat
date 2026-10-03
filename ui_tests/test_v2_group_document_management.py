@@ -1,7 +1,7 @@
 # test_v2_group_document_management.py
 """
 Closed, real-SPA browser scenarios for M2B group document management.
-Version: 0.261.174
+Version: 0.261.230
 Implemented in: 0.261.129
 Coded failures show the server's sentence, delete guards name the conversation, and an archive takes
 the server's name: 0.261.164
@@ -9,6 +9,8 @@ A tag vocabulary conflict shows its sentence; the empty explorer and a refused c
 change documents, or why no one can, and never point at classic: 0.261.167
 A manager who can't upload is told why when dropping files: 0.261.168
 The group's content screening controls, offered to the members the screening routes accept: 0.261.174
+A screened document's metadata edit applies directly and the document stays available; a queued
+metadata receipt no longer confirms a save: 0.261.230
 Every scripted receipt is the server's (the builders in fixtures/group_document_management.py,
 pinned by functional_tests/test_group_document_fixture_parity.py), except the deliberately
 malformed receipts each robustness scenario names.
@@ -628,42 +630,44 @@ def test_metadata_propagation_failure_shows_the_servers_sentence(group_managemen
     expect(dialog.get_by_role("alert")).not_to_contain_text("document_propagation_incomplete")
 
 
-def test_queued_metadata_acknowledgement_keeps_saved_content_held_for_screening(group_management_ui):
+def test_screened_metadata_edit_applies_directly_and_keeps_the_document_available(group_management_ui):
+    """Metadata edits are never screened. Saving a released screened document's metadata gets the
+    ordinary `updated` receipt, and the document stays released: the edit shows in its details and
+    every action it offered before is still offered."""
     ui = group_management_ui
+    released = {"state": "cleared", "available": True, "finding_count": 0}
+    ui.record("same-document")["content_screening"] = copy.deepcopy(released)
     open_documents(ui)
     dialog = edit_metadata(ui)
-    body = {"abstract": "New unscreened abstract that must not be released yet."}
+    body = {"abstract": "Edited after release, with no new screening hold."}
     dialog.get_by_label(re.compile(r"^Abstract")).fill(body["abstract"])
-    held = restricted(changed_record(
-        ui, "same-document", **body,
-        content_screening={"state": "pending_review", "available": False, "finding_count": 1},
-    ))
-    held["document_actions"] = ["delete"]
     reply = ui.queue_operation(
-        "PATCH", "same-document", body=body, status=202,
-        response=metadata_result("same-document", body, queued=True), records=[held],
+        "PATCH", "same-document", body=body, response=metadata_result("same-document", body),
+        records=[changed_record(ui, "same-document", **body)],
     )
     perform(ui, reply, dialog.get_by_role("button", name="Save", exact=True).click)
     expect(dialog).to_have_count(0)
-    expect(ui.page.get_by_text(
-        "Metadata saved. Screening is queued; the document remains unavailable until released.", exact=True,
-    )).to_be_visible()
-    expect(ui.page.get_by_text("Metadata saved.", exact=True)).to_have_count(0)
-    expect(details_button(ui, "same-document")).to_be_visible()
-    expect(ui.page.get_by_text(body["abstract"], exact=True)).to_have_count(0)
+    expect(ui.page.get_by_text("Metadata saved.", exact=True)).to_be_visible()
+    expect(ui.page.get_by_text(re.compile(r"Screening is queued|remains unavailable"))).to_have_count(0)
+    details = ui.page.get_by_role("complementary")
+    expect(details.get_by_text(body["abstract"], exact=True)).to_be_visible()
+    expect(details.get_by_role("button", name="Edit", exact=True)).to_be_enabled()
     select_documents(ui, "same-document")
-    for label in ("Chat", "Tag", "Extract", "Download"):
-        expect(command(ui, label)).to_be_disabled()
-    expect(ui.page.get_by_role("complementary").get_by_role("button", name="Edit", exact=True)).to_have_count(0)
-    expect(command(ui, "Delete")).to_be_enabled()
+    for label in ("Chat", "Tag", "Extract", "Download", "Delete"):
+        expect(command(ui, label)).to_be_enabled()
+    assert ui.record("same-document")["content_screening"] == released
+    assert ui.record("same-document")["abstract"] == body["abstract"]
     assert len(ui.operation_requests) == 1
 
 
 def test_malformed_metadata_success_never_discards_the_draft(group_management_ui):
+    """Only an `updated` 200 receipt confirms a save. The `queued` 202 receipt that screened metadata
+    edits used to get before 0.261.230 confirms nothing either, since edits are no longer screened."""
     ui = group_management_ui
     original = copy.deepcopy(ui.record("same-document"))
     body = {"title": "Unconfirmed metadata draft", "keywords": ["baseline", "unconfirmed"]}
     receipt = metadata_result("same-document", body)
+    legacy_queued = {**receipt, "status": "queued", "message": "Metadata saved and queued for content screening."}
     cases = (
         ("message-only", {"response": {"message": METADATA_UPDATED_MESSAGE}}),
         ("raw-record", {"response": {**original, **body}}),
@@ -673,6 +677,7 @@ def test_malformed_metadata_success_never_discards_the_draft(group_management_ui
         ("extra-field", {"response": {**receipt, "updated_fields": ["title", "keywords", "abstract"]}}),
         ("duplicate-field", {"response": {**receipt, "updated_fields": ["title", "title"]}}),
         ("queued-as-200", {"response": {**receipt, "status": "queued"}}),
+        ("legacy-queued-202", {"response": legacy_queued, "status": 202}),
         ("updated-as-202", {"response": receipt, "status": 202}),
         ("empty-error-207", {"response": {**receipt, "errors": []}, "status": 207}),
         ("html", {"response": b"<html><body>Sign in to continue.</body></html>", "content_type": "text/html"}),

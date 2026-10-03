@@ -1,11 +1,14 @@
 # test_workflow_repeat_recovery.py
 """
 Functional tests for Repeat atomic recovery, live authority and lifetime budgets.
-Version: 0.261.120
+Version: 0.261.231
 Implemented in: 0.261.120
+Repeat state stopped re-checking its sources in: 0.261.231
 
 Exercises the real journal and result store with fictional transactional Cosmos,
-Blob and clock fixtures. External effects are local counters only.
+Blob and clock fixtures. External effects are local counters only. Repeat state
+is generated output: grants, history and the next round take their access from
+the run, never from the documents an earlier task used.
 """
 
 import copy
@@ -21,7 +24,6 @@ from azure.cosmos.exceptions import CosmosHttpResponseError
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "application" / "single_app"))
 
 # Production imports follow the isolated worktree import setup.
-from functions_analysis_access import AnalysisResultUnavailable
 from functions_workflow_execution import WorkflowSuspended
 from functions_workflow_execution_history import workflow_execution_history
 from functions_workflow_identity import workflow_execution_id
@@ -202,52 +204,62 @@ def test_transition_commit_is_fenced_after_preparing_next_state(monkeypatch, rac
         assert len(container.items) == 1 and next(iter(container.items.values()))["deleted"]
 
 
-def test_live_state_authority_is_rechecked_before_grants_and_unfinished_history(monkeypatch):
+FICTIONAL_SOURCE = {"document_id": "fictional-source", "scope": "personal", "scope_id": "owner", "source_version": 1}
+
+
+class SourceLookups:
+    """Records any attempt to re-resolve the documents behind a saved Repeat result.
+
+    Repeat state is generated output, so nothing here should ever ask. With
+    ``allowed`` off, any lookup would also find the document gone.
+    """
+
+    def __init__(self, monkeypatch):
+        self.allowed = True
+        self.calls = []
+        monkeypatch.setattr("functions_analysis_access.resolve_authorized_source_manifest", self)
+
+    def __call__(self, document_ids, **context):
+        self.calls.append(list(document_ids))
+        status = "authorized" if self.allowed else "unresolved"
+        return [{**FICTIONAL_SOURCE, "document_id": key, "authorization_status": status} for key in document_ids]
+
+
+def source_provenance(current, envelope):
+    if current["id"] == "source":
+        envelope["analysis_access"] = {"version": "analysis-source-access-v1", "sources": [FICTIONAL_SOURCE]}
+
+
+def test_grants_and_unfinished_history_take_access_from_the_run_not_its_sources(monkeypatch):
     definition = repeat_definition(1)
     definition["tasks"][1]["approval"] = {"required": True, "message": "Review this exact fictional round."}
     workflow, store, container, _, _ = repeat_runtime(monkeypatch, definition=definition)
-    allowed = {"value": True}
-    source = {"document_id": "fictional-source", "scope": "personal", "scope_id": "owner", "source_version": 1}
-
-    def authorize(user, sources, **options):
-        if not allowed["value"]:
-            raise AnalysisResultUnavailable("analysis_source_access_revoked")
-        return {"sources": sources, "source_count": len(sources), "source_snapshot_changed": False}
-
-    monkeypatch.setattr("functions_workflow_node_results.authorize_analysis_sources", authorize)
-
-    def provenance(current, envelope):
-        if current["id"] == "source":
-            envelope["analysis_access"] = {"version": "analysis-source-access-v1", "sources": [source]}
+    lookups = SourceLookups(monkeypatch)
 
     with pytest.raises(WorkflowSuspended):
-        execute_repeat(workflow, store, target=2, envelope_transform=provenance)
+        execute_repeat(workflow, store, target=2, envelope_transform=source_provenance)
     repeat_id = repeat_head(workflow, store)["execution_id"]
     assert store.journal_read("execution", repeat_id)["payload"].get("workflow_result") is None
-    allowed["value"] = False
-    with pytest.raises(AnalysisResultUnavailable):
-        workflow_execution_history(workflow, "run", reader_user_id="owner")
-    with pytest.raises(AnalysisResultUnavailable):
-        workflow_repeat_state_page(workflow, "run", repeat_id, 0, reader_user_id="owner")
+    lookups.allowed = False
+    history = workflow_execution_history(workflow, "run", reader_user_id="owner")
+    assert history["total_count"] >= 2
+    assert workflow_repeat_state_page(workflow, "run", repeat_id, 0, reader_user_id="owner")["states"]
     from functions_workflow_results import authorize_workflow_run_read
 
     monkeypatch.setitem(sys.modules, "config", SimpleNamespace(
         cosmos_personal_workflow_run_items_container=container, cosmos_group_workflow_run_items_container=container,
     ))
     monkeypatch.setattr("functions_workflow_runtime_store.workflow_runtime_store", lambda *args: store)
-    with pytest.raises(AnalysisResultUnavailable):
-        authorize_workflow_run_read(workflow, "run", reader_user_id="owner")
-    allowed["value"] = True
+    authorize_workflow_run_read(workflow, "run", reader_user_id="owner")
     approval = store.read()
     store.decide(expected_version=approval["version"], gate_id=approval["gate"]["id"],
                  choice="approve", actor_user_id="owner", request_id="approved-round")
     with pytest.raises(WorkflowSuspended):
-        execute_repeat(workflow, store, target=2, envelope_transform=provenance)
-    allowed["value"] = False
+        execute_repeat(workflow, store, target=2, envelope_transform=source_provenance)
     before = store.read()["repeat_counts"]
-    with pytest.raises(AnalysisResultUnavailable):
-        continue_repeat(store)
-    assert store.read()["repeat_counts"] == before
+    continue_repeat(store)
+    assert store.read()["repeat_counts"]["continuation_count"] == before["continuation_count"] + 1
+    assert lookups.calls == []
 
 
 @pytest.mark.parametrize("backend", ["cosmos", "blob"])
@@ -406,35 +418,24 @@ def test_cancellation_without_repeat_path_does_not_load_frozen_definition(monkey
     assert [row for row in container.items.values() if row.get("record_kind") == "loop"] == loop_rows
 
 
-def test_cached_state_proof_never_caches_current_access_to_a_source(monkeypatch):
+def test_a_source_change_before_the_body_runs_does_not_block_its_repeat_state(monkeypatch):
     workflow, store, _, _, _ = repeat_runtime(monkeypatch)
-    allowed = {"value": True}
+    lookups = SourceLookups(monkeypatch)
     original = store.journal_commit
     calls = []
-    source = {"document_id": "fictional-source", "scope": "personal", "scope_id": "owner", "source_version": 1}
-
-    def authorize(user, sources, **options):
-        if not allowed["value"]:
-            raise AnalysisResultUnavailable("analysis_source_access_revoked")
-        return {"source_count": len(sources), "sources": sources, "source_snapshot_changed": False}
 
     def revoke_before_model(token, kind, key, payload, **options):
         row = original(token, kind, key, payload, **options)
         if kind == "unit" and key[-1] == "task:body" and payload["state"] == "running":
-            allowed["value"] = False
+            lookups.allowed = False
         return row
 
-    def provenance(current, envelope):
-        if current["id"] == "source":
-            envelope["analysis_access"] = {"version": "analysis-source-access-v1", "sources": [source]}
-
-    monkeypatch.setattr("functions_workflow_node_results.authorize_analysis_sources", authorize)
     monkeypatch.setattr(store, "journal_commit", revoke_before_model)
-    with pytest.raises(WorkflowSuspended):
-        execute_repeat(workflow, store, calls=calls, envelope_transform=provenance)
-    assert [call[0] for call in calls] == ["source"]
-    assert repeat_head(workflow, store)["completed_count"] == 0
-    assert store.read()["gate"]["choices"] == ["cancel"]
+    flow, _ = execute_repeat(workflow, store, calls=calls, envelope_transform=source_provenance)
+    # The body reads the Repeat state, which is generated output, so it still runs.
+    assert [call[0] for call in calls] == ["source", "body"] and flow.finished
+    assert repeat_head(workflow, store)["completed_count"] == 1
+    assert lookups.calls == []
 
 
 def test_history_cursors_bind_phase_round_and_admitted_snapshot(monkeypatch):

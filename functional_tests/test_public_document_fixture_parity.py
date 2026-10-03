@@ -1,13 +1,15 @@
 # test_public_document_fixture_parity.py
 """
 Per-route shape parity between the M9B public document UI fixtures and the real routes.
-Version: 0.261.186
+Version: 0.261.230
 Implemented in: 0.261.179
 A generated artifact awaiting publication is held for managers and absent for everyone else
 (decision 27): 0.261.183
 Reader downloads: the read fixture models a downloads-off workspace, so a reader's
 file_downloads_enabled is False and a download the workspace no longer offers is refused
 with the server's downloads-unavailable sentence: 0.261.186
+A released screened document's metadata change applies directly and returns the ordinary
+receipt: 0.261.230
 
 The V2 public Documents explorer mocks the network with three closed HTTP fixtures, which predate the
 per-route parity rule:
@@ -507,9 +509,10 @@ def test_metadata_receipt_parity(manage, scenario):
     assert_receipt_parity(f"metadata {scenario}", served, real)
 
 
-def test_queued_metadata_receipt_parity(manage):
-    """A screened document's change is queued for screening (202). The screening release proof is made
-    to pass, so the document counts as available, as a released document is."""
+def test_screened_metadata_receipt_parity(manage):
+    """A released screened document's change applies directly and returns the ordinary receipt (200).
+    The screening release proof is made to pass, so the document counts as available, as a released
+    document is."""
     env = manage
     record = env.source.records["same-document"]
     record["content_screening"] = {"state": "cleared", "scan_id": "scan-same-document", "source_revision": "3"}
@@ -525,10 +528,10 @@ def test_queued_metadata_receipt_parity(manage):
     body = {"abstract": "Updated abstract"}
     real = raw_json(env, "PATCH", "same-document", body)
     served = fixture_receipt(
-        env.fixture, "PATCH", "same-document", response=metadata_result("same-document", body, queued=True),
-        status=202, body=body,
+        env.fixture, "PATCH", "same-document", response=metadata_result("same-document", body),
+        status=200, body=body,
     )
-    assert_receipt_parity("metadata queued", served, real)
+    assert_receipt_parity("metadata screened", served, real)
 
 
 @pytest.mark.parametrize("mode", ["current_only", "all_versions"])

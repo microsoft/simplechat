@@ -92,7 +92,10 @@ def run_repeat_until(flow, node, region_id):
         try:
             initial, initial_ref = prepare_repeat_state(flow, node, identity)
         except AnalysisResultUnavailable:
-            execution.pause_input("The Repeat state's original sources are no longer available.", code="workflow_repeat_source_unavailable")
+            execution.pause_input(
+                "The Repeat state's input is no longer available or could not be verified. Saved originals are retained.",
+                code="workflow_repeat_source_unavailable",
+            )
         except (WorkflowInputError, WorkflowResultNotReadyError, ValueError):
             execution.pause_input(
                 "The required initial Repeat state did not satisfy its contract. Saved originals are retained.",
@@ -157,8 +160,6 @@ def run_repeat_until(flow, node, region_id):
                 flow.workflow, flow.run_id, reader_user_id=flow.actor_user_id, store=store, load_result=execution.load_result,
             )
             before = authorization.authorize_repeat(identity, admission["before_state_ref"])
-            if authorization.access()["source_snapshot_changed"]:
-                raise AnalysisResultUnavailable("analysis_source_snapshot_changed")
             execution.set_node(
                 None, node["body"]["id"], iteration_path=path, iteration_inputs=parent_receipts + [iteration_receipt],
             )
@@ -182,7 +183,7 @@ def run_repeat_until(flow, node, region_id):
         except AnalysisResultUnavailable:
             execution.set_node(node, region_id, iteration_path=parent_path, iteration_inputs=parent_receipts)
             execution.pause_input(
-                "The Repeat state's original sources are no longer available. Saved originals are retained.",
+                "The Repeat state's input is no longer available or could not be verified. Saved originals are retained.",
                 code="workflow_repeat_source_unavailable",
             )
         except (WorkflowInputError, WorkflowResultNotReadyError, ValueError):

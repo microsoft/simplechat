@@ -1,8 +1,9 @@
 # test_workflow_structured_flow.py
 """
 Isolated regression coverage for the structured v3 compiler, exact results and journal.
-Version: 0.261.116
+Version: 0.261.231
 Implemented in: 0.261.116
+Results stopped re-checking their sources in: 0.261.231
 
 Uses production compiler, controller, flow traversal, result transport and readers
 with JSON-copying transactional Cosmos fakes. No model, Azure or workflow is invoked.
@@ -23,7 +24,6 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "application" / "si
 
 # Production imports follow the worktree path setup.
 from functions_workflow_definitions import WorkflowDefinitionError, workflow_definition_revision
-from functions_analysis_access import AnalysisResultUnavailable
 from functions_workflow_execution import WorkflowSuspended, workflow_execution_scope
 from functions_workflow_execution import current_workflow_execution
 from functions_workflow_results import WorkflowResultNotReadyError
@@ -606,7 +606,7 @@ def test_blob_transport_keeps_attempt_namespaces_distinct_and_cleans_genuine_nod
     assert len(container.items) == 1
 
 
-def test_control_provenance_cannot_bypass_source_authorization_or_claim_analyze_origin(runtime):
+def test_control_provenance_carries_sources_without_rechecking_or_claiming_analyze_origin(runtime):
     workflow, _, _, _ = runtime
     source = {"document_id": "source", "scope": "personal", "scope_id": "owner", "source_version": 1}
     receipts = []
@@ -621,15 +621,20 @@ def test_control_provenance_cannot_bypass_source_authorization_or_claim_analyze_
         receipts.append({"producer": identity, "result_ref": reference, "output_name": "text",
                          "output_ref": manifest["outputs"]["text"]["result_ref"], "control": task_id is None})
     authorized = True
+    lookups = []
 
     def resolver(ids, **kwargs):
+        lookups.append(list(ids))
         return [{**source, "authorization_status": "authorized" if authorized else "unresolved"}]
 
     root, access = authorize_workflow_node_result_read(workflow, "run", identity, reference, source_resolver=resolver)
     assert access["source_count"] == 1 and root.get("analysis_origin") is not True
+    # Control nodes pass the provenance on. A later change to the source doesn't block
+    # reading the result, because the source is never looked up again.
     authorized = False
-    with pytest.raises(AnalysisResultUnavailable):
-        authorize_workflow_node_result_read(workflow, "run", identity, reference, source_resolver=resolver)
+    root, access = authorize_workflow_node_result_read(workflow, "run", identity, reference, source_resolver=resolver)
+    assert access["source_count"] == 1 and access["sources"][0]["document_id"] == "source"
+    assert root.get("analysis_origin") is not True and lookups == []
 
 
 def test_history_sanitizer_preserves_exact_task_and_control_result_bindings(runtime):

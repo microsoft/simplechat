@@ -633,7 +633,7 @@ def register_route_backend_group_documents(bp):
         _group_management_query()
         changes = validate_metadata_changes(request.get_json(silent=True))
         receipt = update_group_document_metadata(get_current_user_id(), group_id, document_id, changes)
-        return jsonify(receipt), 202 if receipt["status"] == "queued" else 200
+        return jsonify(receipt), 200
 
     @bp.route('/api/groups/<group_id>/documents/<document_id>', methods=['DELETE'])
     @swagger_route(security=get_auth_security())

@@ -625,7 +625,9 @@ def _prepare_conversation_context_for_invocation(
     model_endpoint_id=None,
     selected_agent=None,
 ):
-    assert_evidence_available([conversation_history, agent_citations])
+    # Current-turn tool citations were read in this request; earlier history is
+    # conversation content and is not rechecked against its sources.
+    assert_evidence_available(agent_citations)
     assert_current_request_sources_available()
     agent_fields = _get_conversation_context_agent_fields(selected_agent)
     context_snapshot = build_conversation_context_snapshot(
@@ -2638,7 +2640,7 @@ def _read_recent_assistant_messages(conversation_id, message_limit):
 
 
 def _sanitize_saved_analysis_history(messages, user_id=None):
-    """Apply source access before summaries, citations, or model context are built."""
+    """Apply saved-result access before summaries, citations, or model context are built."""
     messages = list(messages or [])
     if not any(
         any((message.get('metadata') or {}).get(key) for key in (
@@ -2837,11 +2839,11 @@ def _load_prior_turn_function_results(user_id, conversation_id, settings=None):
 
     try:
         _authorize_personal_conversation_access(normalized_user_id, normalized_conversation_id)
+        # Earlier turns' tool results are conversation content; their sources are not rechecked.
         assistant_messages = _read_recent_assistant_messages(
             normalized_conversation_id,
             _resolve_prior_turn_history_window(settings),
         )
-        assert_evidence_available(assistant_messages, normalized_user_id, cached=True)
         selected_citations = select_prior_turn_action_citations(
             assistant_messages,
         )[:PRIOR_TURN_ACTION_RESULT_ARTIFACT_LIMIT]
@@ -2862,7 +2864,6 @@ def _load_prior_turn_function_results(user_id, conversation_id, settings=None):
             artifact_payload = artifact_payload_map.get(str(citation.get('artifact_id') or ''))
             stored_citation = artifact_payload.get('citation') if isinstance(artifact_payload, dict) else None
             resolved_citations.append(stored_citation if isinstance(stored_citation, dict) else citation)
-        assert_evidence_available([assistant_messages, resolved_citations], normalized_user_id, cached=True)
         return resolved_citations
     except ScreeningError:
         raise
@@ -15875,7 +15876,7 @@ def register_route_backend_chats(bp):
             message = 'The saved analysis could not be explained. Its saved data is unchanged.'
             status = 503
             if isinstance(exc, PermissionError):
-                message = 'This analysis is unavailable because its source access could not be confirmed.'
+                message = 'This analysis is unavailable because access to its conversation or saved result could not be confirmed.'
                 status = 403
             elif isinstance(exc, (WorkflowContextBudgetError, WorkflowResultNotReadyError, SavedAnalysisFollowupUnsupported)):
                 message = str(exc)
@@ -16753,7 +16754,7 @@ def register_route_backend_chats(bp):
                 )
                 return {
                     'error': (
-                        'This analysis is unavailable because its source access could not be confirmed.'
+                        'The analysis could not be saved because this conversation or a selected document is no longer available.'
                         if isinstance(exc, PermissionError)
                         else 'The analysis completed, but its final data could not be saved.'
                     ),
@@ -19039,9 +19040,10 @@ def register_route_backend_chats(bp):
                                 summary_prompt_search += "\n".join(message_texts_search)
 
                                 try:
-                                    # Use the already initialized gpt_client and gpt_model
+                                    # The summary reads only earlier user and assistant text, so
+                                    # only this request's input reads guard the model call.
                                     summary_response_search = guard_model_callable(
-                                        gpt_client.chat.completions.create, last_messages_asc, user_id,
+                                        gpt_client.chat.completions.create, (), user_id,
                                     )(
                                         model=gpt_model,
                                         messages=[
@@ -28225,7 +28227,7 @@ def should_apply_history_grounding_message(
 
 
 def build_assistant_history_content_with_citations(message, content):
-    assert_evidence_available(message, cached=True)
+    # A stored reply and its citations are conversation content; their sources are not rechecked.
     base_content = str(content or '').strip()
     citation_sections = []
 
@@ -28392,13 +28394,8 @@ def build_conversation_history_segments(
 
     recent_messages = ordered_messages[-num_recent_messages:] if num_recent_messages else []
     older_messages_to_summarize = ordered_messages[:num_older_messages]
-    reused_messages = recent_messages + (older_messages_to_summarize if enable_summarize_older_messages else [])
-    assert_evidence_available([
-        message for message in reused_messages
-        if message.get("role") == "assistant"
-        and (message.get("metadata") or {}).get("thread_info", {}).get("active_thread") is not False
-        and not (message.get("metadata") or {}).get("masked")
-    ], cached=True)
+    # Earlier replies are reused as conversation content without rechecking their sources.
+    # Workspace attachments sent to the model are input reads of current documents.
     assert_evidence_available([
         message for message in recent_messages
         if message.get("workspace_document_id")
@@ -28449,8 +28446,10 @@ def build_conversation_history_segments(
         if message_texts_older:
             summary_prompt_older += "\n".join(message_texts_older)
             try:
+                # Older user and assistant text is conversation content; only this
+                # request's input reads guard the summary model call.
                 summary_response_older = guard_model_callable(
-                    gpt_client.chat.completions.create, older_messages_to_summarize,
+                    gpt_client.chat.completions.create, (),
                 )(
                     model=gpt_model,
                     messages=[

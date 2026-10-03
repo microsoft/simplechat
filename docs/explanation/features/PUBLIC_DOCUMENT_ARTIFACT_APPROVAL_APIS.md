@@ -12,8 +12,8 @@ Implemented in version: **0.261.134**, tracked in
 
 Dependencies are the existing public workspace and public document containers,
 the shared `decide_artifact_publication` in `functions_artifact_publication.py`,
-the screening bootstrap consume-latch, notifications, and Content Screening. No
-new setting, container, or cloud architecture is required.
+notifications, and Content Screening. No new setting, container, or cloud
+architecture is required.
 
 ## Scope, and why it changed
 
@@ -96,8 +96,7 @@ outcome:
 | Decision recorded, but notice or cache cleanup did not complete | `partial` | 207 |
 
 A successful approval always returns `queued` rather than `applied`, because
-approving hands the document to screening and processing rather than finishing
-synchronously.
+approving hands the document to processing rather than finishing synchronously.
 
 Only one decision can ever commit for a given request. Repeating the decision
 that was already recorded returns `unchanged`. A *different* decision — for
@@ -126,18 +125,16 @@ resolving the conflict silently.
 Cancellation requires that the actor is the original requester, so a requester
 can withdraw their own request without gaining authority over anyone else's.
 
-## Screening bootstrap is reused, not reimplemented
+## Screening and artifact approval
 
-`decide_artifact_publication` is shared by the group and public paths. The
-screening bootstrap consume-latch introduced for group workspaces therefore
-already governs public artifact approval, and this slice reuses it unchanged.
-
-Public-path coverage proves the latch's rules hold here too: a reserved
-`scan_id` is reservation identity rather than evidence that a scan ran; absence
-of a scan row cannot distinguish "never started" from "started, errored, row
-removed", so admission requires recorded proof; the latch stores the consuming
-operation identity rather than a boolean; and cancellation, rejection, and
-errors all retain it.
+`decide_artifact_publication` is shared by the group and public paths, so the
+same screening rule governs public artifact approval. Since version 0.261.230 a
+published artifact is generated content: its destination is created without a
+screening marker, approval hands it straight to processing, and the receipt no
+longer reserves or consumes a screening scan. A destination that was already
+held by screening before 0.261.230 cannot be approved; the request is refused
+with 409 `publication_unavailable`, and the remedy is to cancel it and request
+publication again.
 
 ## Scope-aware projection fence
 
@@ -219,7 +216,7 @@ group and public reads modules.
 
 | Suite | Coverage |
 |---|---|
-| `functional_tests/test_public_document_publication.py` | Approve, reject, cancel; authorization; requester-only cancellation; receipts; `etag` conflicts; cleanup; the screening bootstrap on the public path |
+| `functional_tests/test_public_document_publication.py` | Approve, reject, cancel; authorization; requester-only cancellation; receipts; `etag` conflicts; cleanup; approval with no screening reservation and a held legacy destination refused |
 | `functional_tests/test_group_document_projection_fence.py` | Scope isolation in both directions, including a different workspace of the same kind |
 | `functional_tests/test_public_document_publication_predicate_single_source.py` | One definition of the publication predicate |
 | `functional_tests/test_document_action_hint_seam.py` | Action hints computed from policy on both projectors |

@@ -1,8 +1,9 @@
 # test_workflow_data_flow_execution.py
 """
 Functional tests for native data-flow execution through real workflow functions.
-Version: 0.261.108
+Version: 0.261.231
 Implemented in: 0.261.108
+Saved outputs stopped re-checking their sources in: 0.261.231
 
 Production Analyze, dispatch, immutable persistence/reload, binding, validation
 and source-lineage readers run together; only provider and source I/O are faked.
@@ -13,8 +14,7 @@ import json
 import pytest
 
 from test_workflow_task_result_handoff import build_inventory_run
-from functions_analysis_access import AnalysisResultUnavailable
-from functions_workflow_bindings import load_workflow_reference
+from functions_workflow_bindings import WorkflowInputError, load_workflow_reference
 from functions_workflow_results import authorize_workflow_task_result_read, load_workflow_task_input
 
 
@@ -95,7 +95,7 @@ def test_continue_runs_independent_work_but_never_uses_an_invalid_required_produ
     assert result["workflow_outcome"]["success"] is False
 
 
-def test_shared_reference_lineage_survives_reload_and_revocation_blocks_reuse():
+def test_shared_reference_lineage_survives_reload_and_saved_outputs_stay_reusable():
     runner, workflow, records, requests, artifacts, items = build_inventory_run(10)
     workflow["definition_version"] = 2
     reference = {
@@ -142,8 +142,12 @@ def test_shared_reference_lineage_survives_reload_and_revocation_blocks_reuse():
     assert manifest["analysis_origin"] is False
     last = result["task_results"][1]["workflow_result"]
     allowed = False
-    with pytest.raises(AnalysisResultUnavailable):
-        runner["load_workflow_task_input"](workflow, "run-inventory", "consume", last["result_ref"])
+    # A saved output takes its access from its run, so losing the reference it read
+    # doesn't block reusing it. Reading the reference itself as an input still checks it.
+    _, receipt = runner["load_workflow_task_input"](workflow, "run-inventory", "consume", last["result_ref"])
+    assert receipt["result_ref"] == last["result_ref"]
+    with pytest.raises(WorkflowInputError):
+        runner["load_workflow_reference"](workflow, reference, actor_user_id="owner")
 
 
 @pytest.mark.parametrize("expected_count,allow_partial,status,success", [
