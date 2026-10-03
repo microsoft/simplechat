@@ -4,6 +4,22 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
 
 ### **(v0.261.230)**
 
+#### Bug Fixes
+
+*   **Workflow Run History No Longer Fails When A Source Document Changes**
+    *   A workflow's run history no longer returns "Run history is unavailable because source access could not be confirmed." when one of its runs used a document that was later deleted or re-uploaded. The run list, a run's task results, the live run activity view and the last-run preview in the workflow list now take their access from the workflow, not from the documents each run used.
+    *   A task no longer fails right after saving its output with "Saved task output was withheld because its source access could not be confirmed."
+    *   Container checks are unchanged: you still need access to the workflow, group runs still require group membership, and a run from another workflow still answers as not found.
+    *   This is the first step of limiting content screening to uploaded documents. Some per-task previews and structured workflow execution history still re-check sources until the next step.
+    *   (Ref: #1613, #1621, `route_backend_workflows.py`, `functions_workflow_runner.py`, [Workflow Run History Source Re-check Fix](fixes/WORKFLOW_RUN_HISTORY_SOURCE_RECHECK_FIX.md))
+
+#### User Interface Enhancements
+
+*   **Approvals Page Screening Notice Only When Screening Is On**
+    *   The content screening notice at the top of **Approval Requests** now appears only while content screening is enabled, and reads in plain language: "To review uploaded documents that content screening is holding, open Content review."
+    *   Each content screening request still has its own **Open content review** link, so documents held before screening was turned off stay reachable.
+    *   (Ref: `templates/approvals.html`, `test_content_screening_classic.py`)
+
 #### Breaking Changes
 
 *   **Generated Documents Are No Longer Screened**
@@ -22,21 +38,17 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
 
 ### **(v0.261.229)**
 
-#### Bug Fixes
+#### Breaking Changes
 
-*   **Workflow Run History No Longer Fails When A Source Document Changes**
-    *   A workflow's run history no longer returns "Run history is unavailable because source access could not be confirmed." when one of its runs used a document that was later deleted or re-uploaded. The run list, a run's task results, the live run activity view and the last-run preview in the workflow list now take their access from the workflow, not from the documents each run used.
-    *   A task no longer fails right after saving its output with "Saved task output was withheld because its source access could not be confirmed."
-    *   Container checks are unchanged: you still need access to the workflow, group runs still require group membership, and a run from another workflow still answers as not found.
-    *   This is the first step of limiting content screening to uploaded documents. Some per-task previews and structured workflow execution history still re-check sources until the next step.
-    *   (Ref: #1613, #1621, `route_backend_workflows.py`, `functions_workflow_runner.py`, [Workflow Run History Source Re-check Fix](fixes/WORKFLOW_RUN_HISTORY_SOURCE_RECHECK_FIX.md))
-
-#### User Interface Enhancements
-
-*   **Approvals Page Screening Notice Only When Screening Is On**
-    *   The content screening notice at the top of **Approval Requests** now appears only while content screening is enabled, and reads in plain language: "To review uploaded documents that content screening is holding, open Content review."
-    *   Each content screening request still has its own **Open content review** link, so documents held before screening was turned off stay reachable.
-    *   (Ref: `templates/approvals.html`, `test_content_screening_classic.py`)
+*   **Microsoft 365 Workflow Run As Approval Only When Someone Else Authored The Revision**
+    *   A workflow revision saved by its own Run as user now runs as them without a separate approval, including on its first run. SimpleChat records an approved, audited Run as authorization for that exact revision and connection, sends no notification, and never shows it as pending. Before, every edit asked the Run as user to approve again, even their own.
+    *   Approval is still required when someone else is responsible for what runs: someone else saved the current revision, `modified_by` is missing, or someone else changed an agent or action the workflow uses after the Run as user's save. A new connection or connection generation asks again for a revision someone else saved.
+    *   Conversation audience changes no longer ask for Run as approval again; the authorization still records the audience. Source-sharing approvals and the runtime checks that guard runs and deliveries already in progress are unchanged.
+    *   Explicit decisions still win. A denial or cancellation recorded for a run still stops that run. Revoking a Run as authorization in Profile revokes every approved authorization for that revision, which then waits for approval even if its Run as user saved it. That holds when the revocation overlaps a run recording a new authorization, or is interrupted: a run that finds an authorization the revocation missed revokes it instead of using it.
+    *   Raw edits of workflows, agents and actions in the Data Management Cosmos DB editor now record the administrator as the last author, so an edited record can't run as someone else without asking them.
+    *   The V2 workflow proposal card, the editor's **Saving requires re-approving Run as** note, the AI assistant's `run_as_reapproval` warning, the Run as help text in both editors, and the classic Profile and Approvals labels follow the new rule.
+    *   **Migration**: None. Existing approvals keep working. A workflow its Run as user saved last is authorized automatically the next time it needs a new authorization. To require approval for such a revision, revoke its authorization in Profile. An authorization revoked before this release still withdraws only itself, so other approvals of that revision keep working, but that revision is never authorized automatically.
+    *   (Ref: #1621, `functions_m365_approvals.py`, `functions_m365_execution.py`, `functions_m365_workflow_binding.py`, `functions_m365_runtime.py`, `functions_m365_data_lifecycle.py`, `functions_data_management.py`, `functions_orchestration_workflow_proposals.py`, `functions_workflow_assist.py`, `WorkflowProposalCard.tsx`, `WorkflowChangeTracking.tsx`, [Run as approval for a revision you saved](features/M365_RUN_AS_SELF_AUTHORED_APPROVAL.md))
 
 ### **(v0.261.228)**
 

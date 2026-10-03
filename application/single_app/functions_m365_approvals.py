@@ -130,6 +130,15 @@ def validate_workflow_review(review):
     return copy.deepcopy(review)
 
 
+def _required_workflow_review(review):
+    if review is None:
+        raise M365PolicyError(
+            "m365_workflow_review_required",
+            "The workflow owner must provide its instructions, capabilities, inputs, triggers and destinations for your review.",
+        )
+    return review
+
+
 def _source(value, file_only=False):
     if not isinstance(value, str) or value not in (M365_FILE_SOURCES if file_only else M365_SOURCES):
         raise ValueError("Invalid Microsoft 365 source.")
@@ -155,6 +164,65 @@ def logical_request_fingerprint(context):
     })
 
 
+def _source_snapshot(sources, state):
+    """Each requested source's sharing ceiling and current generation, as a request records them."""
+    snapshot = {}
+    for source, policy in sources.items():
+        ceiling = normalize_sharing_policy(policy)
+        snapshot[source] = {
+            "maximum_sharing_acknowledgement": ceiling,
+            "allowed_durations": list(SHARING_DURATIONS[:SHARING_DURATIONS.index(ceiling) + 1]),
+            "generation": state["source_generations"][source],
+        }
+    return snapshot
+
+
+def _revision_revocation(records, workflow_id, workflow_fingerprint):
+    """Whether a workflow revision's Run as was ever revoked, and when the user last revoked all of it.
+
+    Every revocation blocks a self-authored binding for the revision. Only a revocation that
+    withdrew the whole revision, marked ``revision_wide``, sets the time before which no other
+    approval of it stands. One made before 0.261.229 withdrew a single binding, and one a run
+    completes later must not cancel an approval the user granted in between.
+    """
+    revoked = False
+    latest = None
+    for approval in records:
+        binding = approval.get("binding") or {}
+        if (
+            approval.get("status") != "revoked"
+            or binding.get("workflow_id") != workflow_id
+            or binding.get("workflow_fingerprint") != workflow_fingerprint
+        ):
+            continue
+        revoked = True
+        if approval.get("revision_wide") is not True:
+            continue
+        try:
+            revoked_at = utc_datetime(approval.get("resolved_at"))
+        except ValueError:
+            continue
+        latest = revoked_at if latest is None else max(latest, revoked_at)
+    return revoked, latest
+
+
+def _approved_after_revocation(approval, revoked_at):
+    """Whether an approved copy of a revoked revision is the user's explicit approval since then.
+
+    Revoking the whole revision withdraws every approval of it that existed then, so only an
+    approval the user granted afterwards stands. A self-authored approval never outlives any
+    revocation of its revision.
+    """
+    if approval.get("self_authored") is True:
+        return False
+    if revoked_at is None:
+        return True
+    try:
+        return utc_datetime(approval.get("approved_at")) > revoked_at
+    except ValueError:
+        return False
+
+
 def is_m365_approval(approval):
     return isinstance(approval, dict) and approval.get("request_type") in M365_APPROVAL_TYPES
 
@@ -176,23 +244,30 @@ def sanitize_m365_approval(approval):
         "resolved_at",
         "approved_by_id", "resume_key", "execution_status", "continuation_status",
         "context", "sources", "decisions", "analysis_choice", "proposal", "binding",
-        "decision_event_id", "terminal_reason", "notification_status",
+        "decision_event_id", "terminal_reason", "notification_status", "self_authored",
     )
     result = {key: copy.deepcopy(approval[key]) for key in fields if key in approval}
     result["group_name"] = "Microsoft 365"
-    result["reason"] = {
-        TYPE_SOURCE_SHARING: (
-            "Allow answers and retained source evidence to be published to conversation "
-            "participants. Revocation does not remove already-published history."
-        ),
-        TYPE_EXTENDED_ANALYSIS: (
-            "Choose deeper staged file analysis or a faster answer with disclosed limits."
-        ),
-        TYPE_WORKFLOW_RUN_AS: (
-            "Allow this workflow revision to use your connected Microsoft 365 account. "
-            "Connecting your account alone does not authorize a workflow."
-        ),
-    }[approval["request_type"]]
+    if approval["request_type"] == TYPE_WORKFLOW_RUN_AS and approval.get("self_authored") is True:
+        result["reason"] = (
+            "You saved this workflow revision yourself, so it needed no separate approval to use your "
+            "connected Microsoft 365 account. Once revoked, this revision waits for your approval "
+            "before it runs as you again."
+        )
+    else:
+        result["reason"] = {
+            TYPE_SOURCE_SHARING: (
+                "Allow answers and retained source evidence to be published to conversation "
+                "participants. Revocation does not remove already-published history."
+            ),
+            TYPE_EXTENDED_ANALYSIS: (
+                "Choose deeper staged file analysis or a faster answer with disclosed limits."
+            ),
+            TYPE_WORKFLOW_RUN_AS: (
+                "Allow this workflow revision to use your connected Microsoft 365 account. "
+                "Connecting your account alone does not authorize a workflow."
+            ),
+        }[approval["request_type"]]
     result["can_approve"] = approval.get("status") == "pending"
     result["can_deny"] = result["can_approve"]
     return result
@@ -429,16 +504,7 @@ class M365ApprovalService:
     def _create_request(self, context, request_type, sources, state, **details):
         snapshot = approval_context(context)
         scope = request_scope_fingerprint(context)
-        source_snapshot = {
-            source: {
-                "maximum_sharing_acknowledgement": normalize_sharing_policy(policy),
-                "allowed_durations": list(
-                    SHARING_DURATIONS[:SHARING_DURATIONS.index(normalize_sharing_policy(policy)) + 1]
-                ),
-                "generation": state["source_generations"][source],
-            }
-            for source, policy in sources.items()
-        }
+        source_snapshot = _source_snapshot(sources, state)
         if request_type == TYPE_WORKFLOW_RUN_AS:
             key = material_fingerprint({
                 "request_type": request_type, "subject_user_id": context.data_user_id,
@@ -751,7 +817,8 @@ class M365ApprovalService:
             proposal=proposal, analysis_generation=state["analysis_generations"][source],
         ))
 
-    def create_workflow_binding(self, context, sources, connection, *, review=None):
+    def _workflow_binding(self, context, sources, connection, review):
+        """The exact revision, account and generation one Run as decision covers."""
         review = validate_workflow_review(review)
         if not context.workflow_id or not context.workflow_fingerprint or not context.connection_id:
             raise ValueError("An explicit workflow revision and connection are required.")
@@ -765,67 +832,195 @@ class M365ApprovalService:
         sources = sorted({_source(source) for source in sources})
         if not sources or not set(sources).issubset(connection["sources"]):
             raise ValueError("The connection must authorize the selected workflow sources.")
+        return sources, {
+            "workflow_id": context.workflow_id,
+            "workflow_fingerprint": context.workflow_fingerprint,
+            "connection_id": connection["id"],
+            "connection_generation": connection["generation"],
+            "sources": sources,
+            "conversation_id": context.conversation_id,
+            # Recorded for audit only. An audience change never asks for Run as again.
+            "audience_version": context.audience_version,
+            "review": review,
+            "review_fingerprint": material_fingerprint(review),
+        }
+
+    def create_workflow_binding(self, context, sources, connection, *, review=None):
+        sources, binding = self._workflow_binding(context, sources, connection, review)
         state = self._state(context.data_user_id)
         return self._create_request(
             context, TYPE_WORKFLOW_RUN_AS, {source: "always" for source in sources}, state,
-            binding={
-                "workflow_id": context.workflow_id,
-                "workflow_fingerprint": context.workflow_fingerprint,
-                "connection_id": connection["id"],
-                "connection_generation": connection["generation"],
-                "sources": sources,
-                "conversation_id": context.conversation_id,
-                "audience_version": context.audience_version,
-                "review": review,
-                "review_fingerprint": material_fingerprint(review),
-            },
+            binding=binding,
         )
 
-    def ensure_workflow_binding(self, context, sources, connection, *, review=None):
-        """Reuse consent only for the exact approved revision, audience and account."""
+    def _create_self_authored_binding(self, context, sources, connection, review):
+        """Approve, with its audit event, a revision the Run as user saved themselves.
+
+        The binding covers the exact revision, account and generation. It is approved from the
+        start, sends no notification and is never pending. Returns None when the record already
+        stored under its id is not an approval, so the caller asks the user instead.
+        """
+        sources, binding = self._workflow_binding(context, sources, connection, review)
+        subject = context.data_user_id
+        key = material_fingerprint({
+            "request_type": TYPE_WORKFLOW_RUN_AS, "subject_user_id": subject,
+            "tenant_id": context.tenant_id, "binding": binding, "self_authored": True,
+        })
+        approval_id = f"m365-{key}"
+        if self._read(approval_id, subject) is None:
+            state = self._state(subject)
+            now = self.clock().isoformat()
+            snapshot = approval_context(context)
+            event_id = f"m365-audit-{approval_id}-self-authored"
+            approval = {
+                "id": approval_id,
+                "group_id": subject,
+                "record_kind": "m365_approval",
+                "request_type": TYPE_WORKFLOW_RUN_AS,
+                "approval_scope": "user",
+                "subject_user_id": subject,
+                "requester_id": context.actor_user_id,
+                "tenant_id": context.tenant_id,
+                "status": "approved",
+                "self_authored": True,
+                "created_at": now,
+                "approved_at": now,
+                "resolved_at": now,
+                "approved_by_id": subject,
+                "decision_event_id": event_id,
+                "ttl": -1,
+                "context": snapshot,
+                "request_scope": request_scope_fingerprint(context),
+                "logical_request": logical_request_fingerprint(context),
+                "sources": _source_snapshot({source: "always" for source in sources}, state),
+                "resume_key": key,
+                "execution_status": "not_required",
+                "continuation_status": "delivered",
+                "continuation_lease": None,
+                "notification_status": "not_required",
+                "binding": binding,
+            }
+            event = self._audit_document(
+                subject, "self_authored_approved", event_id,
+                approval_id=approval_id, request_type=TYPE_WORKFLOW_RUN_AS, context=snapshot,
+                connection_generation=binding["connection_generation"], sources=sources,
+            )
+            try:
+                self.container.execute_item_batch(
+                    batch_operations=[("create", (approval,)), ("create", (event,))],
+                    partition_key=subject,
+                )
+            except (
+                cosmos_exceptions.CosmosBatchOperationError,
+                cosmos_exceptions.CosmosHttpResponseError,
+            ) as exc:
+                # Another run recorded this revision first; its stored record is read below.
+                if exc.status_code not in (409, 412, 424):
+                    raise
+            else:
+                _log(
+                    "Microsoft 365 Run as approved for a revision its Run as user saved",
+                    {"approval_id": approval_id, "workflow_id": context.workflow_id},
+                    level=logging.INFO,
+                )
+        current = self._read(approval_id, subject)
+        if current is None or current.get("status") != "approved":
+            return None
+        # The record is written before this check and a revocation before its fan-out, so a
+        # revocation of this revision that ran meanwhile is seen here or its fan-out sees the record.
+        revoked, _revoked_at = _revision_revocation(
+            self._records(subject, TYPE_WORKFLOW_RUN_AS, tenant_id=context.tenant_id, status="revoked"),
+            context.workflow_id, context.workflow_fingerprint,
+        )
+        if revoked:
+            self._revoke_revision_copy(current)
+            _log(
+                "Microsoft 365 Run as self-authored approval withdrawn for a revoked revision",
+                {"approval_id": approval_id, "workflow_id": context.workflow_id},
+            )
+            return None
+        return current
+
+    def ensure_workflow_binding(self, context, sources, connection, *, review=None, self_authored=False):
+        """Reuse consent for the exact revision and account, whatever the conversation audience.
+
+        ``self_authored`` is the caller's finding, from stored records, that the Run as user saved
+        this revision. That save stands in for their approval unless they revoked this revision.
+        After a revocation only an approval the user granted since then is reused. An explicit
+        denial or cancellation recorded for this run still stops it.
+        """
         sources = sorted({_source(source) for source in sources})
-        for approval in self._records(
+        records = list(self._records(
             context.data_user_id, TYPE_WORKFLOW_RUN_AS, tenant_id=context.tenant_id,
-        ):
-            binding = approval.get("binding", {})
+        ))
+        for approval in records:
             if (
                 approval["status"] in {"denied", "cancelled"}
-                and binding.get("workflow_id") == context.workflow_id
+                and approval.get("binding", {}).get("workflow_id") == context.workflow_id
                 and approval["context"].get("run_id") == context.run_id
             ):
                 raise M365PolicyError(
                     "m365_workflow_declined",
                     "The selected account declined this workflow run. Start a new run before requesting authorization again.",
                 )
+        account_ready = (
+            connection.get("id") == context.connection_id
+            and connection.get("user_id") == context.data_user_id
+            and connection.get("tenant_id") == context.tenant_id
+            and connection.get("status") == "connected"
+        )
+        revoked, revoked_at = _revision_revocation(
+            records, context.workflow_id, context.workflow_fingerprint,
+        )
+        pending = None
+        for approval in records:
+            binding = approval.get("binding", {})
             if (
-                approval["status"] in {"approved", "pending"}
-                and binding.get("workflow_id") == context.workflow_id
-                and binding.get("workflow_fingerprint") == context.workflow_fingerprint
-                and binding.get("connection_id") == context.connection_id == connection.get("id")
-                and binding.get("connection_generation") == connection.get("generation")
-                and binding.get("conversation_id") == context.conversation_id
-                and binding.get("audience_version") == context.audience_version
-                and binding.get("sources") == sources
-                and binding.get("review")
-                and connection.get("user_id") == context.data_user_id
-                and connection.get("tenant_id") == context.tenant_id
-                and connection.get("status") == "connected"
+                binding.get("workflow_id") != context.workflow_id
+                or binding.get("workflow_fingerprint") != context.workflow_fingerprint
             ):
-                approval = self.expire(approval)
-                if approval["status"] in {"approved", "pending"}:
-                    return approval
-        if review is None:
-            raise M365PolicyError(
-                "m365_workflow_review_required",
-                "The workflow owner must provide its instructions, capabilities, inputs, triggers and destinations for your review.",
+                continue
+            if (
+                approval["status"] == "approved"
+                and revoked
+                and not _approved_after_revocation(approval, revoked_at)
+            ):
+                # A revocation that was interrupted, or that raced this copy's creation, missed it.
+                self._revoke_revision_copy(approval)
+                continue
+            if (
+                approval["status"] not in {"approved", "pending"}
+                or not account_ready
+                or binding.get("connection_id") != context.connection_id
+                or binding.get("connection_generation") != connection.get("generation")
+                or binding.get("conversation_id") != context.conversation_id
+                or binding.get("sources") != sources
+                or not binding.get("review")
+            ):
+                continue
+            approval = self.expire(approval)
+            if approval["status"] == "approved":
+                return approval
+            if approval["status"] == "pending" and pending is None:
+                pending = approval
+        if self_authored is True and not revoked:
+            approved = self._create_self_authored_binding(
+                context, sources, connection, _required_workflow_review(review),
             )
-        return self.create_workflow_binding(context, sources, connection, review=review)
+            if approved is not None:
+                return approved
+        if pending is not None:
+            return pending
+        return self.create_workflow_binding(
+            context, sources, connection, review=_required_workflow_review(review),
+        )
 
     def validate_workflow_binding(self, context, connection, source=None):
         if not context.binding_id:
             raise M365PolicyError("m365_run_as_required", "An approved workflow Run as binding is required.")
         approval = self.get_approval(context.binding_id, context.data_user_id)
         binding = approval.get("binding", {})
+        # The binding records its audience, but a changed audience never asks for Run as again.
         if (
             approval["request_type"] == TYPE_WORKFLOW_RUN_AS
             and approval["status"] == "pending"
@@ -834,7 +1029,6 @@ class M365ApprovalService:
             and binding.get("workflow_fingerprint") == context.workflow_fingerprint
             and binding.get("connection_id") == context.connection_id
             and binding.get("conversation_id") == context.conversation_id
-            and binding.get("audience_version") == context.audience_version
             and connection.get("id") == context.connection_id
             and connection.get("generation") == binding.get("connection_generation")
             and connection.get("status") == "connected"
@@ -847,7 +1041,6 @@ class M365ApprovalService:
             or binding.get("workflow_fingerprint") != context.workflow_fingerprint
             or binding.get("connection_id") != context.connection_id
             or binding.get("conversation_id") != context.conversation_id
-            or binding.get("audience_version") != context.audience_version
             or connection.get("id") != context.connection_id
             or connection.get("user_id") != context.data_user_id
             or connection.get("tenant_id") != context.tenant_id
@@ -857,19 +1050,53 @@ class M365ApprovalService:
         ):
             raise M365PolicyError(
                 "m365_run_as_invalid",
-                "The workflow, audience, or connected account changed. Renew Run as approval.",
+                "The workflow or its connected account changed. Renew Run as approval.",
             )
         return sanitize_m365_approval(approval)
 
     def revoke_workflow_binding(self, binding_id, subject_user_id):
+        """Withdraw a revision's permission, including copies approved for earlier audiences."""
         approval = self.get_approval(binding_id, subject_user_id)
         if approval["request_type"] != TYPE_WORKFLOW_RUN_AS:
             raise LookupError("Workflow Run as binding not found.")
-        if approval["status"] == "revoked":
-            return sanitize_m365_approval(approval)
-        return sanitize_m365_approval(self._transition(
-            approval, "revoked", terminal_reason="subject_revoked",
-        ))
+        if approval["status"] != "revoked":
+            approval = self._transition(
+                approval, "revoked", terminal_reason="subject_revoked", revision_wide=True,
+            )
+        self._revoke_revision_copies(approval)
+        return sanitize_m365_approval(approval)
+
+    def _revoke_revision_copies(self, revoked):
+        """Audiences no longer separate Run as approvals, so every approved copy is revoked too."""
+        binding = revoked.get("binding") or {}
+        copies = [
+            approval for approval in self._records(
+                revoked["subject_user_id"], TYPE_WORKFLOW_RUN_AS,
+                tenant_id=revoked["tenant_id"], status="approved",
+            )
+            if (approval.get("binding") or {}).get("workflow_id") == binding.get("workflow_id")
+            and (approval.get("binding") or {}).get("workflow_fingerprint") == binding.get("workflow_fingerprint")
+        ]
+        for approval in copies:
+            self._revoke_revision_copy(approval, revision_wide=True)
+
+    def _revoke_revision_copy(self, approval, *, revision_wide=False):
+        """Revoke one approved copy of a revoked revision, tolerating a concurrent change to it.
+
+        ``revision_wide`` marks a copy the user's revocation withdraws. A copy a run withdraws
+        later, after finding that revocation, stays unmarked so it never moves the revision's
+        cut-off.
+        """
+        fields = {"revision_wide": True} if revision_wide else {}
+        for _attempt in range(3):
+            try:
+                self._transition(approval, "revoked", terminal_reason="subject_revoked", **fields)
+                return
+            except M365ApprovalConflict:
+                approval = self._read(approval["id"], approval["group_id"])
+                if approval is None or approval.get("status") != "approved":
+                    return
+        raise M365ApprovalConflict()
 
     def claim_continuation(self, approval_id, subject_user_id, worker_id, lease_seconds=60):
         """Claim the decision outbox, not permission to bypass execution validation."""

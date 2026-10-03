@@ -43,7 +43,11 @@ from functions_m365_operations import (
     M365_LEGACY_OPERATION_SOURCES,
 )
 from functions_m365_connections import preflight_m365_chat_authentication
-from functions_m365_workflow_binding import workflow_execution_fingerprint
+from functions_m365_workflow_binding import (
+    M365_REVISION_AUTHORSHIP_FIELD,
+    m365_revision_component,
+    workflow_execution_fingerprint,
+)
 from m365_interaction import M365_AUTH_INTERACTION_CODES
 
 
@@ -450,6 +454,11 @@ def workflow_m365_manifests(workflow):
             "other_settings": agent.get("other_settings"),
             "actions_to_load": agent.get("actions_to_load"),
         } for agent in selected_agents
+    ]
+    # Who last changed each agent and action this revision runs; never part of the fingerprint.
+    fingerprint_workflow[M365_REVISION_AUTHORSHIP_FIELD] = [
+        *(m365_revision_component("agent", agent) for agent in selected_agents),
+        *(m365_revision_component("action", action) for action in selected_actions),
     ]
     return selected_actions, fingerprint_workflow
 

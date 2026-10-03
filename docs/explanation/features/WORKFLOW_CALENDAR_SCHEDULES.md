@@ -209,8 +209,9 @@ fingerprint (`functions_m365_workflow_binding.py`). Existing interval
 workflows keep their stored schedule byte for byte, and re-saving one without
 changing it produces the same schedule, so their fingerprints and approvals
 don't change. Changing a workflow's schedule, including to a calendar
-schedule, changes its fingerprint and needs renewed approval, as any schedule
-change always has.
+schedule, changes its fingerprint. Since 0.261.229 the new revision needs
+renewed approval only when someone other than the Run as user saved it; a
+schedule change the Run as user saved runs as them without asking.
 
 ### Editor options, routes and the MCP summary
 

@@ -517,24 +517,45 @@ def test_saving_only_your_own_edits_takes_one_click(authoring_ui, kind):
     expect(ui.page.locator("aside[aria-label='Workflow editor side panel']")).to_have_count(0)
 
 
-def test_run_as_note_names_the_reapproval_for_fingerprinted_changes(authoring_ui):
+def test_saving_as_your_own_run_as_account_needs_no_reapproval(authoring_ui):
     ui = authoring_ui
     ui.personal_workflows[WORKFLOW_ID]["m365_run_as_user_id"] = OWNER_ID
     editor = open_classic(ui)
     expect(editor.get_by_label("Microsoft 365 Run as", exact=True)).to_have_value(OWNER_ID)
+    expect(editor.get_by_label("Microsoft 365 Run as", exact=True)).to_have_accessible_description(
+        re.compile(r"A revision they saved themselves needs no separate approval\."))
     editor.locator("section[aria-label='Workflow basics']").get_by_label("Description", exact=True).fill(
         "Only the description changed.")
     panel = open_panel(editor)
     expect(change_row(panel, "description")).to_have_count(1)
     expect(panel.get_by_text(RUN_AS_NOTE, exact=True)).to_have_count(0)
 
+    # A change Run as covers, saved by the Run as account itself, is that person's own revision.
     task_item(editor, "task-a").get_by_label("Instructions", exact=True).fill("Collect only signed evidence.")
+    expect(change_row(panel, "task:task-a:instructions")).to_have_count(1)
+    expect(panel.get_by_text(RUN_AS_NOTE, exact=True)).to_have_count(0)
+    payload = authoring.save(ui, editor)
+    assert payload["m365_run_as_user_id"] == OWNER_ID
+    assert payload["tasks"][0]["instructions"] == "Collect only signed evidence."
+
+
+def test_run_as_note_names_the_reapproval_when_someone_else_must_approve(authoring_ui):
+    ui = authoring_ui
+    ui.group_workflows[GROUP_ID][FLOW_WORKFLOW_ID]["m365_run_as_user_id"] = OWNER_ID
+    editor = authoring.open_editor(ui, group_id=GROUP_ID)
+    run_as = editor.get_by_label("Microsoft 365 Run as", exact=True)
+    expect(run_as).to_have_value(OWNER_ID)
+    panel = open_panel(editor)
+    expect(panel.get_by_text(RUN_AS_NOTE, exact=True)).to_have_count(0)
+
+    # Handing Run as to another member means they approve this revision before it runs as them.
+    run_as.select_option("group-reviewer")
     note = panel.get_by_text(RUN_AS_NOTE, exact=True)
     expect(note).to_be_visible()
     assert_readable(note)
     payload = authoring.save(ui, editor)
-    assert payload["m365_run_as_user_id"] == OWNER_ID
-    assert payload["tasks"][0]["instructions"] == "Collect only signed evidence."
+    assert payload["m365_run_as_user_id"] == "group-reviewer"
+    assert ui.workflow_writes[-1].path == "/api/group/workflows"
 
 
 @pytest.mark.parametrize("restriction", ["reader", "unsupported", "schedule"])
