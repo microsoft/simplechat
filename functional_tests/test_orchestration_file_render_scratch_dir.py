@@ -18,6 +18,7 @@ import errno
 import io
 import json
 import os
+import re
 import tempfile
 from pathlib import Path
 
@@ -162,15 +163,26 @@ def test_failed_render_logs_the_root_cause_class_of_a_wrapped_error(lifecycle):
     print("✅ The outer class, root cause class and errno were logged.")
 
 
+def _build_stage_names(dockerfile):
+    """Stage aliases declared with FROM ... AS; Docker matches them case-insensitively."""
+    return {
+        match.group(1).lower()
+        for match in re.finditer(r"^FROM\s+\S+\s+AS\s+(\S+)", dockerfile, re.MULTILINE | re.IGNORECASE)
+    }
+
+
 def test_container_image_creates_app_directory_for_the_runtime_user():
     print("🔍 Testing the image's /app is created by the runtime user's chowned copy...")
     dockerfile = DOCKERFILE.read_text(encoding="utf-8")
-    runtime_stage = dockerfile.split("AS onenote-runtime\n", 1)[1].split("\nFROM ", 1)[0]
     final_stage = dockerfile.rsplit("\nFROM ", 1)[1]
-    assert final_stage.startswith("onenote-runtime\n")
-    for line in runtime_stage.splitlines():
-        if line.startswith(INSTRUCTIONS):
-            assert not line.split()[-1].startswith("/app"), f"The base stage must not create /app: {line}"
+    final_base = final_stage.split(None, 1)[0]
+    # An inherited build stage can create /app as root first, as the former onenote-runtime stage did.
+    assert final_base.lower() not in _build_stage_names(dockerfile), (
+        f"The final stage must not inherit another build stage: {final_base}"
+    )
+    assert "@sha256:" in final_base or ":" in final_base.rsplit("/", 1)[-1], (
+        f"The final base image must be pinned to a tag or digest: {final_base}"
+    )
     app_copy = final_stage.index("COPY --from=builder --chown=${UID}:${GID} /app /app")
     for line in final_stage[:app_copy].splitlines():
         if line.startswith(INSTRUCTIONS):
@@ -181,7 +193,7 @@ def test_container_image_creates_app_directory_for_the_runtime_user():
         "/app/native/onenote_extractor/bin/simplechat-onenote-extractor"
     )
     assert app_copy < code_copy < extractor_copy
-    print("✅ /app is created by the chowned copy and the extractor is added afterward.")
+    print("✅ /app is created by the chowned copy from a pinned base, and the extractor is added afterward.")
 
 
 if __name__ == "__main__":

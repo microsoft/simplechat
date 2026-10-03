@@ -59,14 +59,6 @@ RUN cargo build --release --locked \
     && cp Cargo.toml Cargo.lock /onenote-source/wrapper/ \
     && cp -R src /onenote-source/wrapper/
 
-FROM mcr.microsoft.com/azurelinux/distroless/python:3.12 AS onenote-runtime
-
-# Nothing in this stage may create /app. The final stage's chowned copy from the builder
-# must be what creates /app, so the non-root runtime user owns its working directory.
-COPY --from=onenote-builder /build/THIRD_PARTY_NOTICES.txt /usr/share/simplechat/onenote-extractor/THIRD_PARTY_NOTICES.txt
-COPY --from=onenote-builder /build/licenses/ /usr/share/simplechat/onenote-extractor/licenses/
-COPY --from=onenote-builder /onenote-source/ /usr/share/simplechat/onenote-extractor/source/
-
 FROM mcr.microsoft.com/azurelinux/base/python:3.12 AS builder
 
 ARG UID
@@ -243,10 +235,17 @@ RUN set -eux; \
             ;; \
     esac
 
-FROM onenote-runtime
+FROM mcr.microsoft.com/azurelinux/distroless/python:3.12
 
 ARG UID
 ARG GID
+
+# OneNote extractor notices and corresponding source, required when redistributing the image.
+# Nothing may be copied under /app before the chowned copy from the builder below creates it,
+# so the non-root runtime user owns its working directory.
+COPY --from=onenote-builder /build/THIRD_PARTY_NOTICES.txt /usr/share/simplechat/onenote-extractor/THIRD_PARTY_NOTICES.txt
+COPY --from=onenote-builder /build/licenses/ /usr/share/simplechat/onenote-extractor/licenses/
+COPY --from=onenote-builder /onenote-source/ /usr/share/simplechat/onenote-extractor/source/
 
 COPY --from=builder /etc/pki /etc/pki
 COPY --from=builder /etc/ssl/certs /etc/ssl/certs

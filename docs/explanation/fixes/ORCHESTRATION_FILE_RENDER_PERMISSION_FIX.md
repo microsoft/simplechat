@@ -70,12 +70,13 @@ Inspection of the deployed image layers confirmed the regression:
 | `application/single_app/functions_structured_file_renderers.py` | The renderer's scratch file uses `scratch_file_dir()` instead of `dir='.'`. |
 | `application/single_app/functions_simplechat_operations.py` | `open_generated_chat_artifact_stream` uses `scratch_file_dir()` instead of `dir="."`. |
 | `application/single_app/functions_orchestration_rendering.py` | A failed render attempt records its error class names and OS error number in its diagnostics. |
-| `application/single_app/Dockerfile` | `onenote-runtime` no longer creates `/app`. The extractor binary is copied in the final stage after the app code. |
+| `application/single_app/Dockerfile` | The `onenote-runtime` stage is removed. The final stage builds from the pinned distroless image and copies the extractor's notices and source directly. The extractor binary is copied after the app code. |
 | `docs/explanation/features/ONENOTE_INGESTION.md` | Build layout updated for the new copy location. |
 | `docs/reference/logging-tags.md` | New render-attempt diagnostic fields documented. |
 | `functional_tests/test_orchestration_file_render_scratch_dir.py` | New regression tests. |
 | `functional_tests/test_generated_file_structured_renderers.py`, `functional_tests/test_orchestration_output_lifecycle.py` | Their stream-tracking doubles required `dir='.'`, which pinned the defect. They now require the `scratch_file_dir()` location. |
 | `functional_tests/test_workflow_saved_output_artifacts.py` | Supplies `scratch_file_dir` to the download function it loads from source. |
+| `functional_tests/test_v2_onenote_uploads.py` | The image-wiring test required the final stage to inherit `onenote-runtime`. It now requires the distroless base and the extractor binary, notices, licenses, and source in the final stage. |
 
 ### Scratch directory
 
@@ -87,13 +88,20 @@ on Windows development machines). It never returns the working directory.
 
 ### Image layout
 
-The `onenote-runtime` stage keeps the extractor's notices and corresponding
-source under `/usr/share/simplechat/onenote-extractor/`, but no longer writes
-under `/app`. In the final stage, the chowned copy from the builder stage
-creates `/app` owned by the runtime user, as it did before 2026-09-26. The
-extractor binary is copied afterward to the path `functions_onenote.py`
-expects. The binary remains root-owned: the application user can run it but
-cannot replace it.
+The `onenote-runtime` stage is removed. The final stage builds directly from
+`mcr.microsoft.com/azurelinux/distroless/python:3.12`, as it did before
+2026-09-26. It copies the extractor's notices and corresponding source from
+`onenote-builder` to `/usr/share/simplechat/onenote-extractor/`, so the
+redistribution notices are unchanged. The chowned copy from the builder stage
+then creates `/app` owned by the runtime user. The extractor binary is copied
+afterward to the path `functions_onenote.py` expects. The binary remains
+root-owned: the application user can run it but cannot replace it.
+
+Removing the stage also clears a false positive in the Malicious PR Security
+Review. That check inspects the whole Dockerfile whenever a pull request
+changes it. It requires each `FROM` to name an image with a tag or digest, so it
+flagged `FROM onenote-runtime`, a build-stage name. The final `FROM` now names
+the pinned image, and the check itself is unchanged.
 
 ### Render diagnostics
 
@@ -127,8 +135,9 @@ classification is unchanged. A file-system `PermissionError` still reports
   previous code with `output_access_denied`.
 - A failed render logs `PermissionError` and errno `13` without the message or
   path. A wrapped failure logs its outer class, root cause class, and errno.
-- The Dockerfile creates `/app` only through the runtime user's chowned copy,
-  and adds the extractor afterward.
+- The Dockerfile's final stage builds from a pinned image rather than another
+  build stage, creates `/app` only through the runtime user's chowned copy, and
+  adds the extractor afterward.
 
 Related suites that pass with the change: `test_orchestration_render_check_cadence.py`,
 `test_orchestration_output_lifecycle.py`, `test_generated_file_structured_renderers.py`,
