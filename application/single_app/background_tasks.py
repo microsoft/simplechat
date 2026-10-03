@@ -921,6 +921,45 @@ def run_orchestration_scheduler_loop(app=None):
         time.sleep(30)
 
 
+def run_workflow_chat_delivery_loop(app=None):
+    """Post chat-started workflow outcomes back into the chats that asked for them.
+
+    A hint from the runtime projection wakes the loop at once. The cross-user sweep runs at most
+    once per sweep interval, and the worker runs it only while it holds the distributed lock.
+    """
+    # Deferred like the orchestration loop: the worker binds application storage on first use.
+    import functions_workflow_chat_delivery as delivery_contract
+    import functions_workflow_chat_delivery_worker as delivery_worker
+
+    interval = delivery_contract.SWEEP_INTERVAL_SECONDS
+    services = None
+    next_sweep_at = 0.0
+    while True:
+        started = time.monotonic()
+        sweep_due = started >= next_sweep_at
+        if sweep_due:
+            next_sweep_at = started + interval
+        try:
+            if services is None:
+                services = delivery_worker.default_workflow_chat_delivery_services(
+                    acquire_lock=acquire_distributed_task_lock,
+                    release_lock=release_distributed_task_lock,
+                )
+            with app.app_context() if app is not None else nullcontext():
+                delivery_worker.process_workflow_chat_delivery_hints(services)
+                if sweep_due:
+                    delivery_worker.run_workflow_chat_delivery_sweep(services)
+        except Exception as exc:
+            log_event(
+                '[WORKFLOW_CHAT_DELIVERY] Delivery slice could not complete.',
+                level=logging.ERROR, extra={'error_type': type(exc).__name__},
+            )
+            # A failure can leave hints queued, so wait without them to avoid a busy loop.
+            time.sleep(interval)
+            continue
+        delivery_contract.wait_for_workflow_chat_delivery_hint(max(1.0, next_sweep_at - time.monotonic()))
+
+
 def run_data_management_scheduler_loop(app=None):
     """Queue due backup and recoverable migration jobs across scaled-out workers."""
     while True:
@@ -1045,6 +1084,7 @@ def start_background_task_threads(app=None):
         ('File Sync scheduler background task started.', run_file_sync_scheduler_loop),
         ('Tabular generated-output scheduler background task started.', run_tabular_generated_output_scheduler_loop),
         ('Orchestration scheduler background task started.', lambda: run_orchestration_scheduler_loop(app=app)),
+        ('Workflow chat delivery background task started.', lambda: run_workflow_chat_delivery_loop(app=app)),
         ('Data Management scheduler background task started.', lambda: run_data_management_scheduler_loop(app=app)),
         ('Content screening scheduler background task started.', lambda: run_content_screening_scheduler_loop(app=app)),
         ('App maintenance background task started.', run_app_maintenance_loop),

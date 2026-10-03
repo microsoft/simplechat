@@ -83,6 +83,12 @@ alerts. Stopping the plan doesn't stop a workflow it already started, so cancel 
 from its run history if you need to. Retrying a failed step never starts a workflow
 twice: when the plan already started it, the retry links that run instead.
 
+When your administrator also turns on **Use Workflow Results In Chat**, a
+durable personal run started from chat can post its outcome back into that same
+private chat after it finishes. The chat is marked unread, and a bell
+notification opens the chat. If the chat was deleted or shared before delivery,
+you get a workflow notification that opens the run instead.
+
 A workflow that's already running isn't started again; the answer says so, and you can
 start it once that run finishes. If a run the plan started waits for a Microsoft 365
 approval or sign-in, its status shows **Waiting**; follow

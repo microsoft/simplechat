@@ -1,6 +1,6 @@
 // AssistantMarkdown.tsx
-// Markdown rendering for assistant output: prose, citations, masks, maths, diagrams, charts
-// and image proposals.
+// Markdown rendering for assistant output: prose, citations, masks, maths, diagrams, charts,
+// image proposals, and inline audio, video and image cards.
 //
 // Split out of MessageList so that "what a message looks like" is separable from "how the
 // thread is laid out". The renderer carries the whole substitution pipeline and the fence
@@ -29,10 +29,14 @@ import {
 import { applyMasks, MASK_PLACEHOLDER_PATTERN, type MaskedRange } from '../../lib/masking';
 import { MaskedSpan } from './MaskedSpan';
 import { CitationChip } from './CitationChip';
+import { InlineAudioPlayer } from './InlineAudioPlayer';
 import { InlineChart } from './InlineChart';
+import { InlineImageCard } from './InlineImageCard';
 import { InlineImageProposal } from './InlineImageProposal';
+import { InlineVideoCard } from './InlineVideoCard';
 import { MathDisplay, MathInline } from './MathBlock';
 import { MermaidDiagram } from './MermaidDiagram';
+import { inlineMediaKind, inlineMediaTitle, safeMarkdownHref, safeMediaUrl } from '../../lib/inlineMedia';
 import {
     IMAGE_PROPOSAL_LANGUAGE,
     INLINE_CHART_LANGUAGE,
@@ -233,6 +237,28 @@ function Markdown({
             blockquote: ({ children }) => <blockquote>{renderTokens(children)}</blockquote>,
             em: ({ children }) => <em>{renderTokens(children)}</em>,
             strong: ({ children }) => <strong>{renderTokens(children)}</strong>,
+
+            // A link to an audio or video file plays in place instead of navigating away;
+            // every other link renders as before. `node` is the hast element, read for the
+            // link's plain text and kept off the DOM element.
+            a: ({ href, children, node, ...props }) => {
+                const kind = inlineMediaKind(href);
+                const source = safeMediaUrl(href);
+                if (kind && source) {
+                    const title = inlineMediaTitle(node ? toText(node) : '', source);
+                    return kind === 'audio' ? (
+                        <InlineAudioPlayer src={source} title={title} />
+                    ) : (
+                        <InlineVideoCard src={source} title={title} />
+                    );
+                }
+                return (
+                    <a href={safeMarkdownHref(href)} {...props}>
+                        {children}
+                    </a>
+                );
+            },
+            img: ({ src, alt }) => <InlineImageCard src={src} alt={alt} />,
 
             // A diagram, chart or image proposal replaces the whole code block, so the
             // <pre> wrapper markdown puts around it is dropped: leaving it would box

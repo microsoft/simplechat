@@ -1,7 +1,7 @@
 # test_content_screening_history.py
 """
 Functional regressions for public history and native evidence quarantine.
-Version: 0.261.122
+Version: 0.261.223
 Implemented in: 0.261.106
 
 Executes the real history route, artifact hydration, and model-history guard
@@ -179,6 +179,7 @@ class ScreeningHistoryTests(ScreeningAccessFixture):
             "hydrate_m365_pending_action_cards": lambda messages, _reader, _conversation: messages,
             "deepcopy": deepcopy, "List": List, "Dict": Dict, "Any": Any,
             "refresh_azure_maps_citation_payload": lambda value: value,
+            "refresh_azure_maps_message_citations": lambda messages: messages,
         }
         load_body("functions_message_artifacts.py", "hydrate_agent_citations_from_artifacts", namespace)
         load_body("route_backend_conversations.py", "api_get_messages", namespace, nested=True)

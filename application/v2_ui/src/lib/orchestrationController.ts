@@ -60,7 +60,7 @@ import { applyOrchestrationOutputEvent } from './orchestrationOutputController';
 import { choosePlanSubmissionId, rememberPlanSubmission } from './planSubmissionIds';
 import { canonicalPlanReferences, PlanReferenceError, type PlanReference } from './planReferences';
 import { announceCompletedReply } from './replyEvents';
-import { useChatStore } from '../stores/chatStore';
+import { currentConversationEpoch, useChatStore } from '../stores/chatStore';
 import {
     selectEdits,
     selectCanEditPlan,
@@ -187,9 +187,10 @@ export interface StartPlanParams {
 /**
  * Create the conversation a first message needs, or pass an existing one through.
  *
- * Mirrors the minimal half of `sendMessage`'s creation: claim `activeConversationId` only if
- * nothing has been opened in the round trip, so a reader who opens another thread meanwhile keeps
- * their place while this turn still attaches to the conversation it created.
+ * Mirrors the minimal half of `sendMessage`'s creation: claim `activeConversationId` only if the
+ * reader is still in the new chat this was sent from, so a reader who opens another thread -- or
+ * starts another new chat -- meanwhile keeps their place while this turn still attaches to the
+ * conversation it created.
  */
 async function ensureConversation(
     conversationId: string | null,
@@ -198,10 +199,13 @@ async function ensureConversation(
     if (conversationId) {
         return conversationId;
     }
+    // Taken before the round trip: New chat leaves the id null too, so only the epoch says the
+    // reader has moved on to a different new chat.
+    const epoch = currentConversationEpoch();
     try {
         const created = await createConversation(message);
         const chat = useChatStore.getState();
-        if (chat.activeConversationId === null) {
+        if (chat.activeConversationId === null && currentConversationEpoch() === epoch) {
             useChatStore.setState({
                 activeConversationId: created.conversation_id,
                 activeConversationKind: 'personal',

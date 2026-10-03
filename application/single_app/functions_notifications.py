@@ -34,6 +34,9 @@ WORKFLOW_ALERT_NOTIFICATION_TYPE = 'workflow_priority_alert'
 KEY_VAULT_SECRET_REMINDER_NOTIFICATION_TYPE = 'key_vault_secret_expiring'
 M365_APPROVAL_PENDING_NOTIFICATION_TYPE = 'm365_approval_pending'
 M365_APPROVAL_UPDATED_NOTIFICATION_TYPE = 'm365_approval_updated'
+# Pinned by a parity test to functions_workflow_chat_delivery.NOTIFICATION_TYPE, which this module
+# does not import so its import graph stays unchanged.
+WORKFLOW_CHAT_DELIVERY_NOTIFICATION_TYPE = 'workflow_chat_delivery'
 MAX_NOTIFICATION_IDEMPOTENCY_KEY_LENGTH = 512
 WORKFLOW_ALERT_PRIORITY_CONFIG = {
     'info': {
@@ -208,6 +211,10 @@ NOTIFICATION_TYPES = {
     WORKFLOW_ALERT_NOTIFICATION_TYPE: {
         'icon': 'bi-bell',
         'color': 'secondary'
+    },
+    WORKFLOW_CHAT_DELIVERY_NOTIFICATION_TYPE: {
+        'icon': 'bi-activity',
+        'color': 'info'
     },
     KEY_VAULT_SECRET_REMINDER_NOTIFICATION_TYPE: {
         'icon': 'bi-safe',
@@ -715,8 +722,15 @@ def create_chat_response_notification(
     message_id,
     conversation_title='',
     response_preview='',
+    *,
+    idempotency_key=None,
+    strict=False,
 ):
-    """Create a personal notification when a chat response completes."""
+    """Create a personal notification when a chat response completes.
+
+    ``idempotency_key`` and ``strict`` pass through to ``create_notification``, so a server
+    retry with the same key returns the existing notice rather than creating a second one.
+    """
     normalized_title = str(conversation_title or '').strip() or 'Conversation'
     normalized_preview = str(response_preview or '').strip()
     if len(normalized_preview) > 160:
@@ -740,7 +754,9 @@ def create_chat_response_notification(
         metadata={
             'conversation_id': conversation_id,
             'message_id': message_id,
-        }
+        },
+        idempotency_key=idempotency_key,
+        strict=strict,
     )
 
 

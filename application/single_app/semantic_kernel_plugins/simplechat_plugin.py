@@ -476,8 +476,8 @@ class SimpleChatPlugin(BasePlugin):
         )
 
     @plugin_function_logger("SimpleChatPlugin")
-    # bac-check: ignore - add_group_member_for_current_user validates the current user's group role before mutation.
-    @kernel_function(description="Add a user directly to a group as the current user. user_identifier can be an email, user principal name, or user ID. If group_id is omitted, the active group is used.")
+    # bac-check: ignore - add_group_member_for_current_user validates the current user's group role before mutation; user_id only names the member to add, as the REST members route accepts.
+    @kernel_function(description="Add a user directly to a group as the current user. user_identifier can be an email, user principal name, or user ID. When you know the user's object ID, pass it as user_id with their email or display_name to add them without a directory lookup. If group_id is omitted, the active group is used.")
     def add_user_to_group(
         self,
         user_identifier: str = "",
@@ -485,11 +485,13 @@ class SimpleChatPlugin(BasePlugin):
         role: str = "user",
         display_name: str = "",
         email: str = "",
+        user_id: str = "",
     ) -> dict:
         return self._execute_operation(
             "add_group_member",
             lambda: _with_agent_group_summary(add_group_member_for_current_user(
                 group_id=group_id,
+                user_id=user_id,
                 user_identifier=user_identifier,
                 email=email,
                 display_name=display_name,

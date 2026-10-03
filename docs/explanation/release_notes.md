@@ -2,7 +2,7 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
-### **(v0.261.218)**
+### **(v0.261.228)**
 
 #### Bug Fixes
 
@@ -12,6 +12,137 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
     *   Scratch files now go to `/sc-temp-files` when it's writable, and otherwise to the platform temp directory, never to the working directory. The image creates `/app` for the runtime user again. The OneNote extractor binary is added after that and stays root-owned.
     *   For a failed attempt, the `[ORCHESTRATION_EXECUTOR] A file render attempt finished.` event now also records `sc_error_type`, `sc_error_cause_type` and `sc_error_errno`, so a file-system error can be told apart from a source-access refusal. Messages and paths aren't logged.
     *   (Ref: #1623, `functions_temp_files.py`, `functions_structured_file_renderers.py`, `functions_simplechat_operations.py`, `functions_orchestration_rendering.py`, `Dockerfile`, [Orchestration File Render Permission Fix](fixes/ORCHESTRATION_FILE_RENDER_PERMISSION_FIX.md))
+
+### **(v0.261.227)**
+
+#### New Features
+
+*   **Workflow results posted back to chat**
+    *   When a chat orchestration plan starts one of the user's saved durable personal workflows, the server can now post the run's terminal outcome back into the same private chat after the run finishes, even hours later.
+    *   The behavior is gated by **Use Workflow Results In Chat** (`enable_chat_workflow_results`), checked when the run starts and again when delivery happens, in addition to the existing Run Workflows From Chat gates.
+    *   Delivery is exactly once per durable runtime generation: one deterministic chat message, one unread mark, and one bell notification. If the chat can no longer receive the post, the server posts nothing and sends one workflow notification with a run link instead.
+    *   A new owner-only status route, `GET /api/v2/orchestration/workflow-runs/status`, gives 6b-2 the batched run-card contract. Retry/Edit on delivery messages are refused with fixed 400 codes.
+    *   (Ref: #1546, #1543, `functions_workflow_chat_delivery.py`, `functions_workflow_chat_delivery_worker.py`, `functions_workflow_chat_delivery_status.py`, `functions_orchestration_workflow_runs.py`, `functions_workflow_runtime.py`, `route_backend_orchestration.py`, `route_backend_conversations.py`, [Workflow result delivery to chat](features/CHAT_WORKFLOW_RESULT_DELIVERY.md))
+
+### **(v0.261.226)**
+
+#### Bug Fixes
+
+*   **V2 New Chat Always Starts A Clean Conversation**
+    *   Clicking **New chat** while chat orchestration was planning or running no longer carries the old turn into the new chat. Before, the new chat kept the previous turn's **Thinking** bubble and a **Stop** button that did nothing. Its empty state never appeared and it wouldn't send until the page was reloaded.
+    *   The previous conversation's plan, run or reply keeps going in the background and is there when you reopen it. If you reopen it while its turn is still running, it shows as working, with **Stop**.
+    *   Clicking **New chat** while the first message of a new chat is still creating its conversation no longer lets that message take over the new chat. The message is still sent, and its conversation appears in the list. Clicking **New chat** while a conversation is loading now shows the empty state instead of loading placeholders.
+    *   **Chat** on selected workspace documents or on a tag, and **Start chatting** on the home page, now always open a brand-new conversation, as the classic interface does. The documents or tag arrive as context in the new chat instead of being added to whichever conversation was last open. Text you've typed but not sent stays in the message box.
+    *   (Ref: #1617, `chatStore.ts`, `orchestrationController.ts`, `DocumentExplorer.tsx`, `TagsSection.tsx`, `HomePage.tsx`, [V2 New Chat Reset Fix](fixes/V2_NEW_CHAT_RESET_FIX.md))
+
+### **(v0.261.225)**
+
+#### New Features
+
+*   **Photos and Facts on V2 Map Points**
+    *   A point an agent puts on a map can now carry a photo of the place and labelled facts about it, such as a reading's time, a transponder ID or a lane. Hovering the point in the V2 chat shows the photo, its caption and the facts with the point's label and description. Clicking keeps them open, and clicking the photo opens it full size in the image viewer.
+    *   A point without a photo shows its facts on their own, so a reading with no camera image still shows when and where it was taken.
+    *   **List what the map shows** includes each point's facts and a thumbnail of its photo, for keyboard and screen reader users.
+    *   The details open on whichever side of the point has room, and pinned details move the map so all of them are visible.
+    *   Agents send `image_url`, `image_caption` and `fields` with each point in `locations_json`. Only `https` photo links are kept; any other link is left out, and the action tells the agent how many it dropped. Photos load without a referrer, and captions and facts are only ever written as text. The classic chat still shows a point's label and description only.
+    *   (Ref: #1609, `azure_maps_openlayers_plugin.py`, `InlineMapCard.tsx`, `lib/inlineMaps.ts`, [V2 Interactive Maps](features/V2_INTERACTIVE_MAPS.md))
+
+### **(v0.261.224)**
+
+#### Bug Fixes
+
+*   **Maps From Agents Load Their Tiles Again**
+    *   Tool results are redacted before they are stored with a reply, and the redaction treated the Azure Maps tile proxy token as a secret. Every stored map lost its token, so maps drew their markers and paths on blank tiles in both the classic and the V2 chat.
+    *   The token in SimpleChat's own tile template is now kept. It is encrypted with the app's secret key, expires, and only works on SimpleChat's signed-in tile proxy. Every other `token=` value and every other secret in a tool result is still redacted.
+    *   Maps stored before this fix keep the redacted token and still show no tiles. Run the request again to get a map with tiles.
+    *   (Ref: #1609, `plugin_invocation_logger.py`, [Azure Maps Tile Token Redaction Fix](fixes/AZURE_MAPS_TILE_TOKEN_REDACTION_FIX.md))
+
+### **(v0.261.223)**
+
+#### New Features
+
+*   **Interactive Maps in the V2 Chat**
+    *   A reply that used the Azure Maps action now shows its map under the text in the V2 chat, as the classic chat does. It opens fitted to every marker, path and area, and can be panned, zoomed and expanded to full screen.
+    *   Hovering a marker, path or area shows its label and description; clicking keeps them open until you click elsewhere or press Escape. **List what the map shows** lists everything on the map as text for keyboard and screen reader users.
+    *   The mouse wheel zooms only with Ctrl (Cmd on a Mac), so scrolling a conversation never zooms a map by accident.
+    *   OpenLayers 10.6.1, the build the classic chat already uses, is vendored into the V2 app and loaded only when a reply has a map. No CDN assets are added and the Content-Security-Policy is unchanged.
+    *   Map text is only ever written as text, and tiles are only loaded through SimpleChat's tile proxy.
+    *   (Ref: #1609, `InlineMapCard.tsx`, `lib/inlineMaps.ts`, `vendorAssets.ts`, [V2 Interactive Maps](features/V2_INTERACTIVE_MAPS.md))
+
+#### Bug Fixes
+
+*   **Maps in Older Replies and Group Conversations Load Their Tiles**
+    *   The message endpoints the V2 chat reads, including the one for group conversations, returned maps with their original tile token, which expires after four hours. Older maps drew their points on blank tiles.
+    *   Both endpoints now reissue the token when the conversation is opened, as the classic route already did.
+    *   (Ref: #1609, `functions_azure_maps.py`, `route_backend_conversations.py`, `route_backend_collaboration.py`)
+
+*   **Legacy Map Blocks Hidden From V2 Replies**
+    *   Older replies that stored a `{{map:...}}` block in their text showed it as raw JSON in the V2 chat. The block is now hidden, as in the classic chat, and the map is drawn from the tool result.
+    *   (Ref: #1609, `stripLegacyMapBlocks` in `lib/inlineMaps.ts`, `MessageList.tsx`)
+
+### **(v0.261.222)**
+
+#### New Features
+
+*   **Inline Audio and Video Players in the V2 Chat**
+    *   A link to an audio file in a reply, such as a recording an action returned, now plays in place as a compact player. Collapsed, it shows play/pause, the title and elapsed and total time; expanded, it adds a seek slider, stop, volume and mute, playback speed and an open-in-new-tab link.
+    *   A link to a video file renders as a card with the browser's own controls, including fullscreen. Starting one recording or clip pauses any other.
+    *   Media that cannot play, for example an expired signed link or a host the page does not allow, shows a short notice and a link instead of a broken player.
+    *   (Ref: #1611, `InlineAudioPlayer.tsx`, `InlineVideoCard.tsx`, `lib/inlineMedia.ts`, [V2 Inline Media and Agent-Posted Messages](features/V2_INLINE_MEDIA_AND_AGENT_MESSAGES.md))
+
+*   **External Media Sources in the Content-Security-Policy**
+    *   The new `CSP_MEDIA_SRC_ORIGINS` app setting lets administrators list the `https://` origins whose audio and video may play inline, for example an action's media host. The origins are added to `media-src`.
+    *   Only bare `https://` origins (with an optional leading `*.` label and port) are accepted. Anything else is ignored and logged, so the setting cannot widen the policy beyond media. Empty by default, which keeps media same-origin.
+    *   (Ref: #1611, `csp_media_sources.py`, `config.py`)
+
+#### User Interface Enhancements
+
+*   **Image Cards in Chat Replies**
+    *   Images in a reply's markdown appear as captioned cards with a bounded height. Selecting one opens the image viewer for the full-size view, saving and opening in a new tab.
+    *   (Ref: #1611, `InlineImageCard.tsx`, `AssistantMarkdown.tsx`)
+
+*   **Agent-Posted Messages Render as Formatted Text**
+    *   A message an agent posts into a personal or shared conversation through the Simple Chat action is now marked as agent-authored markdown. The V2 chat renders it like the agent's own replies, with headings, tables, links, images and players, in the neutral bubble and labeled "posted through an agent". Messages people type are unchanged.
+    *   (Ref: #1611, `functions_simplechat_operations.py`, `MessageList.tsx`, `sharedMessage.ts`)
+
+### **(v0.261.221)**
+
+#### Bug Fixes
+
+*   **GPT-6 Sol Agents With Actions Send Reasoning Effort None**
+    *   Agents with actions on `gpt-6-sol` failed unless their Reasoning Effort was set to None by hand. Chat Completions accepts function tools for this model only with `reasoning_effort: none`, and with no effort set the model applied its own default and rejected the tools.
+    *   `gpt-6-sol` is now in the model catalog with a Chat Completions tool rule for Azure and direct OpenAI. An agent with tools and no effort set now sends `none`. Another explicit effort fails before the request with "This model's Chat Completions tools require Reasoning Effort None." instead of a provider error.
+    *   The record also carries the verified limits (1,050,000 context, 922,000 input, 128,000 output, counting reasoning tokens) and the reasoning efforts none, low, medium, high and xhigh.
+    *   (Ref: #1606, `model_capabilities.json`, [GPT-6 Sol Chat Completions Tools Fix](fixes/GPT6_SOL_CHAT_COMPLETIONS_TOOLS_FIX.md))
+
+### **(v0.261.220)**
+
+#### Bug Fixes
+
+*   **GPT-6 Astra Limits And Reasoning Efforts In The Model Catalog**
+    *   `gpt-6-astra` now has verified token limits for Azure and direct OpenAI: 1,050,000 context, 922,000 input and 128,000 output, counting reasoning tokens. File evidence and workflow budgets work without limits entered in Model Endpoints, and limits entered there still take precedence.
+    *   Its reasoning efforts are low, medium, high and xhigh. Chat now sends the selected effort; before, with no policy, it sent no effort and the model used its default. None and other unsupported selections are sent as Low. Agents still send their saved effort as is.
+    *   Azure Chat Completions rejects function tools for this model at every effort it accepts, so agents with actions can't run on it yet. The catalog records this in its notes. #1606 tracks a Responses API path and an early, clear error.
+    *   (Ref: #1606, `model_capabilities.json`, [GPT-6 Astra Model Catalog Fix](fixes/GPT6_ASTRA_MODEL_CATALOG_FIX.md))
+
+### **(v0.261.219)**
+
+#### Bug Fixes
+
+*   **GPT-6 Models Use Reasoning Model Request Parameters**
+    *   Requests to GPT-6 deployments failed whenever a response length was set: "Unsupported parameter: 'max_tokens' is not supported with this model. Use 'max_completion_tokens' instead." Every workflow run on a GPT-6 agent failed on its first model call once token limits were configured.
+    *   GPT-6 is now recognized alongside GPT-5, by name prefix and as a family name anywhere in a deployment or display name. Response length is sent as `max_completion_tokens`, and no temperature is sent. Workflow budgets, chat, prompt variables, content screening and orchestration all follow the shared policy.
+    *   (Ref: #1605, `model_endpoint_clients.py`, [GPT-6 Reasoning Model Parameters Fix](fixes/GPT6_REASONING_MODEL_PARAMETERS_FIX.md))
+
+### **(v0.261.218)**
+
+#### Bug Fixes
+
+*   **Scheduled Workflow Runs Act As Their Owner**
+    *   A scheduled run had no signed-in session, so the runner created one that held only the owner's object ID. Groups and conversation messages the run created showed that ID instead of the owner's name, and the run then wrote the ID over the owner's stored display name. The runner now uses the owner's stored display name and email. A manual run keeps the signed-in session, as before.
+    *   The SimpleChat action's `add_user_to_group` now accepts `user_id`. Given with an email or display name, it adds the user without a directory lookup, as the REST members route already does. Scheduled runs have no delegated token for Microsoft Graph, so they couldn't add members before.
+    *   Group conversation invites first match each identifier against the group's current owner and members, by user ID, email or display name. An identifier that matches no member, or more than one, still goes to the directory lookup.
+    *   (Ref: `functions_workflow_runner.py`, `functions_simplechat_operations.py`, `simplechat_plugin.py`, [Workflow Background Identity Fix](fixes/WORKFLOW_BACKGROUND_IDENTITY_FIX.md), [SimpleChat action](../reference/actions/simplechat.md))
 
 ### **(v0.261.217)**
 
@@ -25,6 +156,18 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
     *   Later turns never reuse a read: result aliases skip any run whose plan reads a workflow result, and a new attempt or revised plan runs its reads and the steps built on them again instead of reusing an earlier answer. A plan edit that breaks a results rule is refused, and the previous plan stays.
     *   Admins can keep it out of plans by clearing **Read workflow results** in the orchestration Capabilities list. Group workflows, structured (version 3) runs and runs that saved an analysis can't be read from a plan, and a plan never waits for a run it starts to finish.
     *   (Ref: #1546, #1543, `functions_orchestration_workflow_results.py`, `functions_orchestration_registry.py`, `functions_orchestration_workflow_context.py`, `functions_orchestration_planner.py`, `functions_orchestration_schema.py`, `functions_orchestration_execution.py`, `functions_orchestration_executor.py`, `functions_orchestration_composition.py`, `functions_orchestration_services.py`, `functions_orchestration_recovery.py`, `route_backend_orchestration.py`, [Chat Orchestration Workflow Results](features/CHAT_ORCHESTRATION_WORKFLOW_RESULTS.md), [Ask about workflow results](../guides/ask-about-workflow-results.md#ask-orchestrate-about-workflow-results))
+
+#### Bug Fixes
+
+*   **Group Document Uploads With Enhanced Citations**
+    *   With Enhanced Citations on, every document uploaded to a group workspace failed with "Document processing failed." That included Word and Markdown documents an agent or workflow saved to a group. The upload's own status update changed the document record's etag between the read and the guarded write, so the write always saw a conflict.
+    *   The status is now posted before the record is read. A change made by anyone else during the upload is still rejected.
+    *   (Ref: `functions_documents.py`, [Group Document Blob Upload Etag Fix](fixes/GROUP_DOCUMENT_BLOB_UPLOAD_ETAG_FIX.md))
+
+*   **Call Agent Actions Save Again**
+    *   Saving any Call agent action, whether personal, group or global, failed with "Invalid plugin configuration." The manifest check rejected the server-owned `scope_id` field that binding to a collection adds, so agents couldn't delegate to other agents.
+    *   `scope_id` is now accepted. The server always sets it from the authorized collection, and every other extra field is still rejected.
+    *   (Ref: `functions_agent_delegation.py`, [Call Agent Action Save Fix](fixes/CALL_AGENT_ACTION_SAVE_FIX.md))
 
 #### User Interface Enhancements
 

@@ -62,6 +62,7 @@ from functions_documents import (
     serialize_chat_upload_workspace_documents_for_conversation,
 )
 from functions_group import get_user_groups
+from functions_azure_maps import refresh_azure_maps_message_citations
 from functions_message_artifacts import (
     build_message_artifact_payload_map,
     filter_assistant_artifact_items,
@@ -95,6 +96,12 @@ from functions_saved_analysis import (
     cleanup_chat_analysis_messages,
     is_saved_analysis_unavailable,
     sanitize_saved_analysis_messages,
+)
+from functions_workflow_chat_delivery import (
+    DELIVERY_EDIT_UNSUPPORTED,
+    DELIVERY_RETRY_UNSUPPORTED,
+    is_workflow_delivery_message,
+    workflow_delivery_refusal_payload,
 )
 from functions_workflow_result_masking import message_asks_about_workflow_result, message_uses_workflow_result
 from functions_workflow_result_reader import WorkflowResultUnavailable, workflow_result_error_payload
@@ -1139,6 +1146,7 @@ def register_route_backend_conversations(bp):
 
             all_items = sanitize_saved_analysis_messages(all_items, user_id)
             all_items = hydrate_agent_citations_from_artifacts(all_items, artifact_payload_map)
+            all_items = refresh_azure_maps_message_citations(all_items)
             try:
                 all_items = public_history_messages(all_items, user_id)
             except (
@@ -3141,6 +3149,11 @@ def register_route_backend_conversations(bp):
                     return jsonify({'error': 'Conversation not found'}), 404
             elif message_user_id != user_id:
                 return jsonify({'error': 'You can only retry your own messages'}), 403
+
+            if is_workflow_delivery_message(original_msg):
+                # A workflow run posted this message, so there is no question to replay.
+                payload, status = workflow_delivery_refusal_payload(DELIVERY_RETRY_UNSUPPORTED)
+                return jsonify(payload), status
             
             # Get thread info from original message
             thread_id = original_msg.get('metadata', {}).get('thread_info', {}).get('thread_id')
@@ -3364,6 +3377,11 @@ def register_route_backend_conversations(bp):
             original_msg = message_results[0]
             conversation_id = original_msg.get('conversation_id')
             original_role = original_msg.get('role')
+
+            if is_workflow_delivery_message(original_msg):
+                # A workflow run posted this message, so there is nothing of the user's to edit.
+                payload, status = workflow_delivery_refusal_payload(DELIVERY_EDIT_UNSUPPORTED)
+                return jsonify(payload), status
             
             # Only allow editing user messages
             if original_role != 'user':
