@@ -56,6 +56,7 @@ from functions_orchestration_registry import (
     CAPABILITY_COMPOSE,
     CAPABILITY_GENERATE_IMAGE,
     CAPABILITY_TABULAR_ANALYZE,
+    CAPABILITY_TABULAR_INSPECT,
     CAPABILITY_TABULAR_MERGE,
     CAPABILITY_WORKFLOW_PROPOSE,
     CAPABILITY_WORKFLOW_RESULTS,
@@ -75,6 +76,11 @@ from functions_orchestration_result_contracts import (
     ResultContractError, StepBindings, TaskResult, canonical_bytes, output_name, validate_input_bindings,
 )
 from functions_orchestration_deliverables import DeliverableError, compile_deliverables
+# The merge engine imports only the standard library; plan validation shares its option rules.
+from functions_tabular_merge import (
+    TABULAR_COLUMN_MAPPING_PROFILE, TabularMergeError, tabular_inspect_options_from_arguments,
+    tabular_merge_options_from_arguments,
+)
 
 ORCHESTRATION_ELICITATION_CONTRACT_VERSION = 2
 
@@ -571,6 +577,37 @@ def _apply_image_input_policy(steps, existing_results):
             )
 
 
+def _require_merge_mapping_producers(steps):
+    """A merge's mapping input must come from a compose step that prepared a column mapping.
+
+    A retained result named by alias is checked against the profile when the merge runs.
+    """
+    by_id = {step['step_id']: step for step in steps}
+    for step in steps:
+        if step['capability_id'] != CAPABILITY_TABULAR_MERGE:
+            continue
+        for spec in step_input_specs(step):
+            if spec.name != 'mapping' or spec.binding.step_id is None:
+                continue
+            producer = by_id.get(spec.binding.step_id)
+            if producer is None:
+                # A missing producer is reported by the binding validation that follows.
+                continue
+            output = next(
+                (item for item in producer['outputs'] if item.get('name') == spec.binding.output_name), None,
+            )
+            if (
+                producer['capability_id'] != CAPABILITY_COMPOSE
+                or (output or {}).get('profile') != TABULAR_COLUMN_MAPPING_PROFILE
+            ):
+                raise PlanValidationError(
+                    f'Step "{step["step_id"]}" binds a "mapping" input that is not a prepared column '
+                    'mapping. Bind the output of a compose step declared as structured-v1 with profile '
+                    f'{TABULAR_COLUMN_MAPPING_PROFILE}.',
+                    code='mapping_profile_required', rule='merge_mapping_profile',
+                )
+
+
 def _reject_workflow_proposal_consumers(steps, final_response):
     """A workflow proposal is reviewed on its own card, so no step and no answer may read it."""
     producers = {step['step_id'] for step in steps if step['capability_id'] == CAPABILITY_WORKFLOW_PROPOSE}
@@ -881,9 +918,35 @@ def validate_dependency_plan(
                     )
                 if arguments.get('document_ids') and 'sources' in step['inputs']:
                     raise PlanValidationError('Use either explicit document IDs or a named source-set input.')
+                try:
+                    tabular_merge_options_from_arguments(arguments, mapping_bound='mapping' in step['inputs'])
+                except TabularMergeError as exc:
+                    raise PlanValidationError(
+                        f'Step "{step["step_id"]}" has merge settings that cannot be used together: '
+                        f'{exc.message}',
+                        code='merge_options_invalid', rule='merge_options_invalid',
+                    ) from exc
+            if capability_id == CAPABILITY_TABULAR_INSPECT:
+                if not arguments.get('document_ids') and 'sources' not in step['inputs']:
+                    raise PlanValidationError(
+                        'Inspect requires arguments.document_ids naming the CSV or Excel files, or an '
+                        'inputs.sources source-set binding.',
+                        code='source_binding_required', rule='inspect_sources_required',
+                    )
+                if arguments.get('document_ids') and 'sources' in step['inputs']:
+                    raise PlanValidationError('Use either explicit document IDs or a named source-set input.')
+                try:
+                    tabular_inspect_options_from_arguments(arguments)
+                except TabularMergeError as exc:
+                    raise PlanValidationError(
+                        f'Step "{step["step_id"]}" has inspection settings that cannot be used together: '
+                        f'{exc.message}',
+                        code='merge_options_invalid', rule='inspect_options_invalid',
+                    ) from exc
             accepted.append(step)
         if not any(step['enabled'] for step in accepted):
             raise PlanValidationError('The plan contains no enabled work.')
+        _require_merge_mapping_producers(accepted)
         _apply_image_input_policy(accepted, existing_results)
         _reject_workflow_proposal_consumers(accepted, plan.get('final_response'))
         _reject_workflow_run_consumers(accepted, plan.get('final_response'))
@@ -1017,14 +1080,17 @@ def validate_plan_document_source_kinds(plan, document_source_kinds):
     if not isinstance(document_source_kinds, dict):
         raise PlanValidationError('Document type metadata is unavailable.', code='source_metadata_invalid')
     for step in plan.get('steps') or []:
-        if step.get('enabled', True) and step.get('capability_id') == CAPABILITY_TABULAR_MERGE:
+        if step.get('enabled', True) and step.get('capability_id') in (
+            CAPABILITY_TABULAR_MERGE, CAPABILITY_TABULAR_INSPECT,
+        ):
             if any(
                 document_source_kinds.get(document_id) not in (None, 'tabular')
                 for document_id in plan_document_ids({'steps': [step]})
             ):
+                action = 'merges' if step['capability_id'] == CAPABILITY_TABULAR_MERGE else 'inspects'
                 raise PlanValidationError(
-                    f'Step "{step["step_id"]}" merges only CSV or Excel files, and a selected source is '
-                    'another kind of document. Merge only the tabular sources, or prepare the others '
+                    f'Step "{step["step_id"]}" {action} only CSV or Excel files, and a selected source is '
+                    'another kind of document. Use only the tabular sources there, or prepare the others '
                     'with compatible offered capabilities. Keep every selected source.',
                     code='source_kind_invalid', rule='tabular_source_required',
                 )
@@ -1532,12 +1598,21 @@ FAILURE_MESSAGES = {
     'image_request_invalid': 'The image model did not accept the planned image request.',
     'retry_would_repeat': 'A retry would send the same request that was declined. Ask again with a different description instead.',
     'merge_schema_mismatch': (
-        "The selected files don't all have the same columns, so nothing was merged. Ask to "
-        'inspect their columns to see how they differ.'
+        "The selected files don't all have the same columns, so nothing was merged. Ask to keep every "
+        'column, to line up columns that have different names, or to leave out the files that '
+        "don't match."
+    ),
+    'merge_nothing_to_merge': (
+        'None of the selected files had a sheet with column headers that fit the merge, so nothing '
+        'was merged.'
     ),
     'merge_columns_invalid': (
         'A selected file has duplicate or overly long column headers, no header row, or too many '
         'columns, so nothing was merged.'
+    ),
+    'merge_columns_not_found': (
+        "A column named for removing duplicates or sorting isn't in the merged files, so nothing "
+        'was merged.'
     ),
     'merge_rows_invalid': (
         'A selected file has a row with more values than column headers, or a value longer than a '
@@ -1549,9 +1624,16 @@ FAILURE_MESSAGES = {
     ),
     'merge_sheet_not_found': "A selected workbook doesn't have the requested sheet, so nothing was merged.",
     'merge_sources_invalid': 'Merging needs at least two different CSV or Excel files (.csv, .xlsx, .xlsm or .xls).',
+    'merge_options_invalid': "This merge's settings can't be used together, so nothing was merged.",
+    'merge_mapping_invalid': "The column mapping prepared for this merge isn't valid, so nothing was merged.",
     'merge_limit_exceeded': (
         'The merge is larger than chat allows. Merge fewer or smaller files, or ask for a workflow '
         'to merge them.'
+    ),
+    'inspect_sources_invalid': 'Only CSV and Excel files (.csv, .xlsx, .xlsm or .xls) can be inspected.',
+    'inspect_limit_exceeded': (
+        'The selected files have too many sheets or columns to inspect here. Inspect fewer files at '
+        'a time.'
     ),
     'step_failed': 'This operation could not complete.',
     'message_not_saved': 'The explanation could not be saved. Reload this run to check its durable status.',

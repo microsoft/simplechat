@@ -84,7 +84,10 @@ def test_appends_rows_in_file_order_with_a_source_column():
         report = result.report
         assert report["version"] == "tabular-merge-report-v1"
         assert report["status"] == "merged"
-        assert report["totals"] == {"sources": 2, "rows": 3, "columns": 4, "blank_rows_skipped": 0}
+        assert report["totals"] == {
+            "sources": 2, "tables_merged": 2, "rows": 3, "columns": 4, "blank_rows_skipped": 0,
+            "duplicates_removed": 0, "excluded": 0,
+        }
         assert [entry["rows"] for entry in report["sources"]] == [2, 1]
         assert report["limitations"] == []
 
@@ -362,7 +365,7 @@ def test_source_validation():
         merge_tabular_sources([csv_source("a.csv", "A\n1\n"), csv_source("notes.docx", "A\n2\n")])
     assert caught.value.code == "unsupported_format"
     with pytest.raises(TabularMergeError) as caught:
-        TabularMergeOptions(schema_policy="union")
+        TabularMergeOptions(schema_policy="crosswalk")
     assert caught.value.code == "invalid_options"
 
 

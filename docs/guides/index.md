@@ -50,7 +50,7 @@ Use this section when you want momentum first: each page is a practical path thr
 | [Use web search]({{ '/guides/use-web-search/' | relative_url }}) | Ground an answer in current public web results, and see exactly what leaves SimpleChat when you do. | Users |
 | [Review pasted URLs]({{ '/guides/review-pasted-urls/' | relative_url }}) | Use URL Access to review links included in the current chat message. | Users |
 | [Generate images]({{ '/guides/generate-images/' | relative_url }}) | Use the chat Image control to request AI-generated images. | Users |
-| [Merge files in chat]({{ '/guides/merge-files/' | relative_url }}) | Combine several CSV or Excel files that share the same columns into one CSV or Excel file. | Users |
+| [Merge files in chat]({{ '/guides/merge-files/' | relative_url }}) | Combine several CSV or Excel files into one CSV or Excel file, even when their columns differ. | Users |
 
 ## Documents and workspaces
 

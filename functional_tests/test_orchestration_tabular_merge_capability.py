@@ -72,7 +72,7 @@ def test_tabular_merge_is_a_gated_reason_capability(runtime):
     assert capability['label'] == 'Merge spreadsheets'
     assert capability['document_action_type'] == 'merge'
     assert capability['result_outputs'] == {'records': 'records-v1', 'report': 'structured-v1'}
-    assert capability['result_input_kinds'] == {'sources': ('source-set-v1',)}
+    assert capability['result_input_kinds'] == {'sources': ('source-set-v1',), 'mapping': ('structured-v1',)}
     assert capability['inputs']['properties']['document_ids']['minItems'] == 2
     assert capability['adapter'] == 'tabular_merge'
     assert 'tabular_merge' in runtime.contracts.REASON_CAPABILITIES
@@ -122,7 +122,7 @@ def test_plans_name_sources_explicitly_or_bind_a_source_set(runtime):
     with pytest.raises(schema.PlanValidationError):
         runtime.make([merge_step(['east-doc'])], available=AVAILABLE)
     with pytest.raises(schema.PlanValidationError):
-        runtime.make([merge_step(['east-doc', 'west-doc'], schema_policy='union')], available=AVAILABLE)
+        runtime.make([merge_step(['east-doc', 'west-doc'], schema_policy='crosswalk')], available=AVAILABLE)
 
 
 def test_the_chat_document_limit_and_source_kinds_are_enforced_at_planning(runtime):
@@ -186,7 +186,10 @@ def test_executor_retains_exact_rows_and_a_report_without_a_model(runtime):
     assert records.completeness.coverage.unit == 'sources'
     report = service.open_result(task.output('report')).read_value()
     assert report['status'] == 'merged'
-    assert report['totals'] == {'sources': 2, 'rows': 3, 'columns': 4, 'blank_rows_skipped': 0}
+    assert report['totals'] == {
+        'sources': 2, 'tables_merged': 2, 'rows': 3, 'columns': 4, 'blank_rows_skipped': 0,
+        'duplicates_removed': 0, 'excluded': 0,
+    }
     assert [entry['file_name'] for entry in report['sources']] == ['east.csv', 'west.csv']
     metadata = service.open_result(task.output('records')).metadata()
     assert metadata['origin'] == 'grounded'

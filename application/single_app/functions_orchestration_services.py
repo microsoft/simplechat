@@ -28,6 +28,9 @@ from functions_orchestration_result_contracts import (
     InputBinding, ResultContractError, ResultRef, TaskResult, canonical_digest,
 )
 from functions_orchestration_results import OrchestrationResultAccess, OrchestrationResults
+from functions_tabular_merge import (
+    TABULAR_COLUMN_MAPPING_PROFILE, TabularMergeError, tabular_column_mapping_schema, tabular_mapping_from_profile,
+)
 from functions_workflow_result_store import _orchestration_identity
 
 
@@ -35,11 +38,24 @@ MAX_RESULT_ALIASES = 64
 
 
 def composition_profiles():
-    """Use the renderer's exact prepared-content schema, not a second slide grammar."""
-    return {PREPARED_SLIDE_DECK_VERSION: get_prepared_slide_deck_schema()}
+    """Use each owner's exact prepared-content schema, not a second grammar.
+
+    The slide deck schema is the renderer's; the column mapping schema is the merge engine's.
+    """
+    return {
+        PREPARED_SLIDE_DECK_VERSION: get_prepared_slide_deck_schema(),
+        TABULAR_COLUMN_MAPPING_PROFILE: tabular_column_mapping_schema(),
+    }
 
 
 def validate_composition_profile(profile, value):
+    if profile == TABULAR_COLUMN_MAPPING_PROFILE:
+        try:
+            tabular_mapping_from_profile(value)
+        except TabularMergeError as exc:
+            # Asking once more names the broken rule; the reply itself is never logged.
+            raise ResultContractError("result_schema_invalid") from exc
+        return True
     if profile != PREPARED_SLIDE_DECK_VERSION:
         raise ResultContractError("result_profile_unavailable")
     # Office libraries are execution dependencies, not registry/bootstrap dependencies.

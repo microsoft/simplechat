@@ -421,9 +421,10 @@ Only name a document ID that appears in candidate_documents or that the user sel
 invent one. If the user already selected documents, plan around those documents.
 Use each candidate's server-resolved source_kind, not its display label, to choose compatible
 work. Never send tabular source IDs to document_analyze or document_compare: those steps
-do not admit native tabular inputs. To combine the rows of several tabular sources that share
-the same columns into one table or file, use tabular_merge with every one of those sources, never
-compose; it appends rows and cannot match rows on a key, so ask when the user may mean that.
+do not admit native tabular inputs. To combine the rows of several tabular sources into one
+table or file, use tabular_merge with every one of those sources, never compose; it appends
+rows and cannot match rows on a key, so ask when the user may mean that. When their columns
+may differ, choose union, aliases or exclusion, or inspect them with tabular_inspect first.
 For mixed narrative/tabular comparisons, prepare each
 source with compatible offered capabilities and compose their named results. Ask each
 preparation step only for its own sources' contribution, such as values, periods, units and

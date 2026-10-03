@@ -64,6 +64,7 @@ import type {
 import type { ImageReferenceRequest } from '../../lib/imageReferences';
 import { useDocumentTitles } from '../../lib/documentTitles';
 import { plannedFileSpecification, type OrchestrationExportFormat } from '../../lib/orchestrationExports';
+import { tabularArgumentEntries } from '../../lib/orchestrationMerge';
 import {
     WORKFLOW_RESULTS_ARGUMENT_KEYS,
     WORKFLOW_RESULTS_CAPABILITY,
@@ -104,6 +105,11 @@ const STATUS_LABELS: Record<StepStatus, string> = {
 
 /** A step argument key/value the run will use, minus the document fields shown as chips. */
 function readableArguments(step: OrchestrationStep): Array<[string, string]> {
+    // Spreadsheet merge and inspection settings are put in words, without restating defaults.
+    const tabular = tabularArgumentEntries(step.capability_id, step.arguments);
+    if (tabular) {
+        return tabular;
+    }
     const hidden = new Set<string>([
         'document_ids',
         'right_document_ids',
@@ -429,7 +435,7 @@ export function OrchestrationRunView({
                         ) : null}
 
                         {args.length > 0 ? (
-                            <dl className="mt-2 space-y-0.5">
+                            <dl className="mt-2 space-y-0.5" data-testid="orchestration-step-arguments">
                                 {args.map(([key, value]) => (
                                     <div key={key} className="flex gap-1.5 text-xs">
                                         <dt className="shrink-0 font-mono text-text-3">

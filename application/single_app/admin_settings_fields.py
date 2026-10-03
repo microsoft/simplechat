@@ -3827,6 +3827,7 @@ ADMIN_SETTINGS_FIELDS = {
                 {"value": "document_analyze", "label": "Analyse documents"},
                 {"value": "document_compare", "label": "Compare documents"},
                 {"value": "tabular_analyze", "label": "Analyse spreadsheets"},
+                {"value": "tabular_inspect", "label": "Inspect spreadsheets"},
                 {"value": "tabular_merge", "label": "Merge spreadsheets"},
                 {"value": "web_search", "label": "Search the web"},
                 {"value": "url_fetch", "label": "Read linked pages"},
@@ -4622,8 +4623,9 @@ ADMIN_SETTINGS_FIELDS = {
             "label": "Enable Merge",
             "help": (
                 "Lets chat orchestration combine the rows of several CSV or Excel files "
-                "that share the same columns into one table, then deliver it as a CSV or "
-                "Excel file. Rows are appended exactly by code, not rewritten by a model."
+                "into one table, lining up columns that differ when asked, then deliver it "
+                "as a CSV or Excel file. Rows are appended exactly by code, not rewritten by "
+                "a model. Also allows inspecting the files' columns first."
             ),
             "default": True,
             "group": "Merge",
@@ -4634,8 +4636,8 @@ ADMIN_SETTINGS_FIELDS = {
             "type": "number",
             "label": "Merge: Chat Document Limit",
             "help": (
-                "Most files one chat request may merge. Merging is cheaper than Analyze "
-                "because no model reads the files, so this can be higher."
+                "Most files one chat request may merge or inspect. Merging is cheaper than "
+                "Analyze because no model reads the files, so this can be higher."
             ),
             "default": DOCUMENT_ACTION_MERGE_CHAT_DEFAULT_LIMIT,
             "min": DOCUMENT_ACTION_CHAT_MIN_LIMIT,

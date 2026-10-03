@@ -41,11 +41,13 @@ from functions_orchestration_registry import (
     CAPABILITY_DOCUMENT_COMPARE,
     CAPABILITY_GENERATE_IMAGE,
     CAPABILITY_RENDER_FILE,
+    CAPABILITY_TABULAR_INSPECT,
     CAPABILITY_TABULAR_MERGE,
     CAPABILITY_WORKFLOW_PROPOSE,
     CAPABILITY_WORKFLOW_RESULTS,
     CAPABILITY_WORKFLOW_RUN,
     MAX_GENERATED_IMAGES_PER_PLAN,
+    TABULAR_COLUMN_MAPPING_PROFILE,
     VISUAL_CHART,
     VISUAL_DIAGRAM,
     VISUAL_IMAGE_PROPOSAL,
@@ -338,6 +340,14 @@ def build_deliverable_availability(settings, *, capabilities, unavailable=None, 
                 'output with csv and exact_tabular_records_v1, or xlsx and exact_tabular_workbook_v1 '
                 '(options.sheet_name is optional). Never compose merged rows.'
             )})
+            if CAPABILITY_TABULAR_INSPECT in available and compose:
+                recipes.append({'for': 'One file merged from CSV or Excel files whose columns differ', 'steps': (
+                    'tabular_inspect with the files; compose binding its "inspection" output and declaring '
+                    'a structured-v1 output with profile ' + TABULAR_COLUMN_MAPPING_PROFILE + '; '
+                    'tabular_merge with the same files and its "mapping" input bound to that output; then '
+                    'render_file as above. When the user wants to review the differences first, compose a '
+                    'markdown-v1 answer from the inspection instead and merge in a later turn.'
+                )})
             facts.append(
                 'tabular_merge appends rows exactly; it does not match rows on a key column or change values.'
             )

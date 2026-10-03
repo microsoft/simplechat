@@ -2,6 +2,29 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.219)**
+
+#### New Features
+
+*   **Merge Spreadsheets Whose Columns Differ**
+    *   V2 chat merges can now reconcile files whose columns don't match. A merge can keep every column from every file (a file without a column leaves it blank), keep only a listed set of columns, treat differently named headers as one column (for example `cust_id` and `CustomerID` as `Customer ID`), or leave out and report the files or sheets that don't fit instead of failing.
+    *   Merges can also read headers below a title row, merge every visible sheet of each workbook with a **Source Sheet** column, remove duplicate rows (identical rows, or rows with the same key columns, keeping the first or last copy), and sort by up to three columns as text, numbers or dates (up to 250,000 rows).
+    *   When the user asks chat to line the columns up, the plan inspects the files, a **Prepare content** step prepares a column mapping with the new `tabular_column_mapping_v1` profile, and the merge validates that mapping again before code applies it. No model copies or rewrites rows, and the merge report lists mapped, left-out and low-confidence columns.
+    *   Merged columns that some files lack are retained as nullable and render as blank cells. A merge that leaves out files says so in its limitations and step summary.
+    *   New fixed failure messages cover settings that can't be combined, an invalid prepared mapping, missing duplicate or sort columns, and merges where nothing fits; the "different columns" message now suggests the new options.
+    *   (Ref: #1619, `functions_tabular_merge.py`, `functions_orchestration_merge.py`, `functions_orchestration_adapters.py`, `functions_orchestration_registry.py`, `functions_orchestration_schema.py`, `functions_orchestration_services.py`, [Phase 2](features/V2_FILE_MERGE_PHASE_2_RECONCILIATION.md), [Merge files in chat](../guides/merge-files.md))
+
+*   **Inspect Spreadsheets In V2 Chat**
+    *   A new Gather capability, **Inspect spreadsheets** (`tabular_inspect`), reads the sheet names, column headers, row counts and a few sample rows of CSV or Excel files, and reports which files share the same columns, which columns look like the same thing under different names, likely title rows, and a suggested merge policy. A file that can't be read is reported instead of stopping the step, and no model is used.
+    *   It answers questions such as "what columns do these files have?" and prepares merges whose columns differ. The **Enable Merge** switch and its chat file limit govern it, and it appears in the orchestration Capabilities list.
+    *   (Ref: #1619, `run_tabular_inspect`, `inspect_tabular_sources`, `admin_settings_fields.py`, [Phase 2](features/V2_FILE_MERGE_PHASE_2_RECONCILIATION.md))
+
+#### User Interface Enhancements
+
+*   **Merge Settings In Words On The Plan Review**
+    *   The V2 plan review now states merge and inspection settings in plain words, such as "Keep every column from every file" or "Remove rows with the same Customer ID, keeping the last", leaves out values that only repeat a default, and shows column and sheet names as plain text.
+    *   (Ref: `application/v2_ui/src/lib/orchestrationMerge.ts`, `OrchestrationRunView.tsx`)
+
 ### **(v0.261.218)**
 
 #### New Features

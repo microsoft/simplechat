@@ -88,6 +88,7 @@ from functions_orchestration_registry import (
     CAPABILITY_DOCUMENT_COMPARE,
     CAPABILITY_DOCUMENT_SEARCH,
     CAPABILITY_TABULAR_ANALYZE,
+    CAPABILITY_TABULAR_INSPECT,
     CAPABILITY_TABULAR_MERGE,
     CAPABILITY_URL_FETCH,
     CAPABILITY_WEB_SEARCH,
@@ -934,13 +935,110 @@ def run_document_compare(step, context, *, settings, user_id, emit, cancel_reque
 
 
 # --------------------------------------------------------------------------------------
-# tabular_merge -> functions_tabular_merge through functions_orchestration_merge
+# tabular_inspect and tabular_merge -> functions_tabular_merge through functions_orchestration_merge
 # --------------------------------------------------------------------------------------
 
-def run_tabular_merge(step, context, *, settings, user_id, emit, cancel_requested):
-    """Append the rows of authorized same-structure spreadsheets; no model and no file.
+def _tabular_step_failure(exc, step, user_id, *, failure_code, label):
+    """The result for a refused or failed spreadsheet step; only catalog text reaches the user."""
+    from functions_tabular_merge import TabularMergeError
 
-    The retained ``records`` output is what ``render_file`` turns into a CSV or XLSX file.
+    if isinstance(exc, TabularMergeError):
+        failure = build_failure(failure_code(exc))
+        log_event(
+            f'{_LOG_PREFIX} {label} was refused.',
+            extra={
+                'user_id': user_id, 'step_id': (step or {}).get('step_id'),
+                'merge_code': exc.code, 'failure_code': failure['code'],
+            },
+            level=logging.WARNING,
+        )
+        return build_step_result(
+            status=STEP_STATUS_FAILED, summary=failure['message'], error=failure['message'], failure=failure,
+        )
+    # Typed authority, cancellation and lifecycle controls belong to the owning runtime.
+    from functions_orchestration_result_runtime import raise_source_service_failure
+
+    raise_source_service_failure(exc)
+    log_event(
+        f'{_LOG_PREFIX} {label} failed.',
+        extra={'user_id': user_id, 'step_id': (step or {}).get('step_id'), 'error_type': type(exc).__name__},
+        level=logging.ERROR, exceptionTraceback=True,
+    )
+    if isinstance(exc, (PermissionError, LookupError)) or type(exc).__name__ in (
+        'ResultUnavailableError', 'DocumentHeldError',
+    ):
+        failure = access_failure(exc)
+        return build_step_result(
+            status=STEP_STATUS_FAILED, summary=failure['message'], error=failure['message'], failure=failure,
+        )
+    return _failed_result(f'The {label.lower()} could not be completed.', exc)
+
+
+def run_tabular_inspect(step, context, *, settings, user_id, emit, cancel_requested):
+    """Describe authorized spreadsheets and how their columns line up; no model and no file."""
+    arguments = _arguments(step)
+    # The merge engine is standard-library only; its Excel readers load only when used.
+    from functions_tabular_merge import TabularMergeCancelled, TabularMergeError
+
+    try:
+        raise_if_mixed_source_cancelled(cancel_requested, 'orchestration_inspect')
+        input_fingerprint = _internal_result_input_fingerprint(step, context)
+        from functions_orchestration_merge import (
+            build_tabular_merge_sources,
+            inspection_step_summary,
+            persist_tabular_inspection_result,
+            require_tabular_merge_manifest,
+            tabular_inspect_options,
+            tabular_merge_limits,
+        )
+        from functions_tabular_merge import inspect_tabular_sources
+
+        with orchestration_file_policy(allow_generated_files=False):
+            document_ids = _string_list(arguments.get('document_ids'))
+            limits = tabular_merge_limits(settings)
+            if len(document_ids) > limits.max_sources:
+                # A bound source set is checked here; explicit IDs were checked at planning.
+                raise TabularMergeError('too_many_sources', 'Too many files were selected to inspect here.')
+            options = tabular_inspect_options(arguments)
+            service, producer, token, input_fingerprint = _internal_result_context(
+                step, context, user_id, CAPABILITY_TABULAR_INSPECT, input_fingerprint=input_fingerprint,
+            )
+            manifest = resolve_context_source_manifest(
+                context, document_ids, settings=settings, user_id=user_id, cancel_requested=cancel_requested,
+            )
+            require_tabular_merge_manifest(manifest, document_ids, minimum=1)
+            _emit(emit, _progress(step, CAPABILITY_TABULAR_INSPECT, 'Inspecting spreadsheets'))
+            sources = build_tabular_merge_sources(
+                manifest, user_id, byte_reader=_ctx(context, 'merge_source_reader', None),
+            )
+            inspection = inspect_tabular_sources(
+                sources, options=options, limits=limits,
+                cancel_requested=lambda: _is_cancelled(cancel_requested),
+            )
+            raise_if_mixed_source_cancelled(cancel_requested, 'orchestration_inspect_saving')
+            task_result = persist_tabular_inspection_result(
+                service=service, producer=producer, inspection=inspection, sources=manifest,
+                guard_token=token, input_fingerprint=input_fingerprint,
+            )
+            summary = inspection_step_summary(inspection)
+            raise_if_mixed_source_cancelled(cancel_requested, 'orchestration_inspect_finalization')
+    except (MixedSourceCancellationError, TabularMergeCancelled):
+        return _cancelled_result('Inspecting spreadsheets was cancelled.')
+    except Exception as exc:
+        from functions_orchestration_merge import inspect_failure_code
+
+        return _tabular_step_failure(
+            exc, step, user_id, failure_code=inspect_failure_code, label='Spreadsheet inspection',
+        )
+    return build_step_result(status=STEP_STATUS_COMPLETED, summary=summary, task_result=task_result)
+
+
+def run_tabular_merge(step, context, *, settings, user_id, emit, cancel_requested):
+    """Append the rows of authorized spreadsheets into one table; no model and no file.
+
+    A bound ``mapping`` input is a compose step's prepared column mapping; it is validated
+    again here and makes the merge keep exactly its columns. The retained ``records`` output
+    is what ``render_file`` turns into a CSV or XLSX file.
     """
     arguments = _arguments(step)
     # The merge engine is standard-library only; its Excel readers load only when used.
@@ -957,7 +1055,7 @@ def run_tabular_merge(step, context, *, settings, user_id, emit, cancel_requeste
             tabular_merge_limits,
             tabular_merge_options,
         )
-        from functions_tabular_merge import merge_tabular_sources
+        from functions_tabular_merge import merge_tabular_sources, tabular_mapping_from_profile
 
         with orchestration_file_policy(allow_generated_files=False):
             document_ids = _string_list(arguments.get('document_ids'))
@@ -965,10 +1063,17 @@ def run_tabular_merge(step, context, *, settings, user_id, emit, cancel_requeste
             if len(document_ids) > limits.max_sources:
                 # A bound source set is checked here; explicit IDs were checked at planning.
                 raise TabularMergeError('too_many_sources', 'Too many files were selected to merge here.')
-            options = tabular_merge_options(arguments)
             service, producer, token, input_fingerprint = _internal_result_context(
                 step, context, user_id, CAPABILITY_TABULAR_MERGE, input_fingerprint=input_fingerprint,
             )
+            mapping = None
+            if 'mapping' in (step.get('inputs') or {}):
+                # Retained-result readers load only when a plan binds a prepared mapping.
+                from functions_orchestration_result_runtime import read_complete_input, resolve_step_inputs
+
+                readers = resolve_step_inputs(step, context)
+                mapping = tabular_mapping_from_profile(read_complete_input(readers['mapping']))
+            options = tabular_merge_options(arguments, mapping)
             manifest = resolve_context_source_manifest(
                 context, document_ids, settings=settings, user_id=user_id, cancel_requested=cancel_requested,
             )
@@ -984,45 +1089,16 @@ def run_tabular_merge(step, context, *, settings, user_id, emit, cancel_requeste
                 raise_if_mixed_source_cancelled(cancel_requested, 'orchestration_merge_saving')
                 task_result = persist_tabular_merge_result(
                     service=service, producer=producer, merge_result=merge_result, sources=manifest,
-                    guard_token=token, input_fingerprint=input_fingerprint,
+                    guard_token=token, input_fingerprint=input_fingerprint, mapping=mapping,
                 )
                 summary = merge_step_summary(merge_result)
             raise_if_mixed_source_cancelled(cancel_requested, 'orchestration_merge_finalization')
     except (MixedSourceCancellationError, TabularMergeCancelled):
         return _cancelled_result('Merging spreadsheets was cancelled.')
-    except TabularMergeError as exc:
+    except Exception as exc:
         from functions_orchestration_merge import merge_failure_code
 
-        failure = build_failure(merge_failure_code(exc))
-        log_event(
-            f'{_LOG_PREFIX} Spreadsheet merge was refused.',
-            extra={
-                'user_id': user_id, 'step_id': (step or {}).get('step_id'),
-                'merge_code': exc.code, 'failure_code': failure['code'],
-            },
-            level=logging.WARNING,
-        )
-        return build_step_result(
-            status=STEP_STATUS_FAILED, summary=failure['message'], error=failure['message'], failure=failure,
-        )
-    except Exception as exc:
-        # Typed authority, cancellation and lifecycle controls belong to the owning runtime.
-        from functions_orchestration_result_runtime import raise_source_service_failure
-
-        raise_source_service_failure(exc)
-        log_event(
-            f'{_LOG_PREFIX} Spreadsheet merge failed.',
-            extra={'user_id': user_id, 'step_id': (step or {}).get('step_id'), 'error_type': type(exc).__name__},
-            level=logging.ERROR, exceptionTraceback=True,
-        )
-        if isinstance(exc, (PermissionError, LookupError)) or type(exc).__name__ in (
-            'ResultUnavailableError', 'DocumentHeldError',
-        ):
-            failure = access_failure(exc)
-            return build_step_result(
-                status=STEP_STATUS_FAILED, summary=failure['message'], error=failure['message'], failure=failure,
-            )
-        return _failed_result('The spreadsheet merge could not be completed.', exc)
+        return _tabular_step_failure(exc, step, user_id, failure_code=merge_failure_code, label='Spreadsheet merge')
     return build_step_result(status=STEP_STATUS_COMPLETED, summary=summary, task_result=task_result)
 
 
@@ -1985,6 +2061,7 @@ ADAPTER_REGISTRY = {
     CAPABILITY_DOCUMENT_ANALYZE: run_document_analyze,
     CAPABILITY_DOCUMENT_COMPARE: run_document_compare,
     CAPABILITY_TABULAR_ANALYZE: run_tabular_analyze,
+    CAPABILITY_TABULAR_INSPECT: run_tabular_inspect,
     CAPABILITY_TABULAR_MERGE: run_tabular_merge,
     CAPABILITY_WEB_SEARCH: run_web_search,
     CAPABILITY_URL_FETCH: run_url_fetch,

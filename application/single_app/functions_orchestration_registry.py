@@ -43,6 +43,8 @@ from functions_appinsights import log_event
 from functions_orchestration_result_contracts import (
     IMAGE_ASSET_KIND, RESULT_KINDS, ResultContractError, canonical_bytes,
 )
+# The merge engine imports only the standard library, so the registry stays importable alone.
+from functions_tabular_merge import TABULAR_COLUMN_MAPPING_PROFILE
 
 # The schema marker every saved plan carries. A plan without it, or with the earlier value,
 # was written by the removed legacy contract and is never opened or run.
@@ -97,6 +99,7 @@ CAPABILITY_DOCUMENT_SEARCH = 'document_search'
 CAPABILITY_DOCUMENT_ANALYZE = 'document_analyze'
 CAPABILITY_DOCUMENT_COMPARE = 'document_compare'
 CAPABILITY_TABULAR_ANALYZE = 'tabular_analyze'
+CAPABILITY_TABULAR_INSPECT = 'tabular_inspect'
 CAPABILITY_TABULAR_MERGE = 'tabular_merge'
 CAPABILITY_WEB_SEARCH = 'web_search'
 CAPABILITY_URL_FETCH = 'url_fetch'
@@ -574,6 +577,27 @@ _NARRATIVE_ONLY_NOTE = (
     ' This step reads narrative documents; native tabular handoff is not admitted.'
 )
 
+# Argument shapes shared by the spreadsheet merge and inspection steps. Descriptors are
+# deep-copied whenever they are read, so sharing them here never shares a caller's copy.
+_MERGE_COLUMN_NAME_INPUT = {'type': 'string', 'minLength': 1, 'maxLength': 256}
+_MERGE_SHEET_INPUT = {
+    'type': 'string',
+    'minLength': 1,
+    'maxLength': 31,
+    'description': "One sheet to read in every Excel file. Omit for each workbook's first visible sheet.",
+}
+_MERGE_SHEETS_INPUT = {
+    'type': 'string',
+    'enum': ['first', 'all'],
+    'description': 'all reads every visible sheet of each workbook; first (default) reads one.',
+}
+_MERGE_HEADER_ROW_INPUT = {
+    'type': 'integer',
+    'minimum': 1,
+    'maximum': 1000,
+    'description': 'The row holding the column headers in every file. Omit to use the first nonblank row.',
+}
+
 
 # The registry itself, in the order a plan tends to read: gather, then reason, then render.
 #
@@ -782,27 +806,102 @@ CAPABILITY_REGISTRY = (
         'adapter': CAPABILITY_TABULAR_ANALYZE,
     },
     {
+        'id': CAPABILITY_TABULAR_INSPECT,
+        'label': 'Inspect spreadsheets',
+        'role': ROLE_GATHER,
+        'request_gate': None,
+        'summary': (
+            'Read the sheets, column headers, row counts and a few sample rows of CSV or Excel files, '
+            'and how their columns line up.'
+        ),
+        'when_to_use': (
+            'Use before tabular_merge when the files may not share the same columns, or when the user '
+            'asks what sheets, columns or rows CSV or Excel files have. It reports each file\'s headers, '
+            'row counts and sample rows, which files share the same columns, near matches such as '
+            '"Customer ID" and "customer_id", a likely title row with the header_row to use, and a '
+            'suggested schema_policy. A file that cannot be read is reported, not fatal. To line up '
+            'differently named columns, bind its "inspection" output to a compose step that declares '
+            'a structured-v1 output with profile ' + TABULAR_COLUMN_MAPPING_PROFILE + ', and bind '
+            'that output as tabular_merge\'s "mapping" input. When the user should review the '
+            'differences first, compose an answer from the inspection and merge in a later turn.'
+        ),
+        'settings_gates': (),
+        'settings_gates_any': (
+            'enable_user_workspace',
+            'enable_group_workspaces',
+            'enable_public_workspaces',
+        ),
+        'gate': _document_action_gate(DOCUMENT_ACTION_TYPE_MERGE),
+        'requires_scope': (SCOPE_PERSONAL, SCOPE_GROUP, SCOPE_PUBLIC),
+        'inputs': {
+            'type': 'object',
+            'properties': {
+                'document_ids': {
+                    'type': 'array',
+                    'items': {'type': 'string'},
+                    'minItems': 1,
+                    'uniqueItems': True,
+                    'description': 'The CSV or Excel files to inspect.',
+                },
+                'doc_scope': {
+                    'type': 'string',
+                    'enum': ['all', 'personal', 'group', 'public'],
+                    'default': 'all',
+                },
+                'sheet': _MERGE_SHEET_INPUT,
+                'sheets': _MERGE_SHEETS_INPUT,
+                'header_row': _MERGE_HEADER_ROW_INPUT,
+                'sample_rows': {
+                    'type': 'integer',
+                    'minimum': 0,
+                    'maximum': 10,
+                    'description': 'Sample rows to read per sheet; 3 when omitted.',
+                },
+            },
+            'additionalProperties': False,
+        },
+        'result_contract_version': 'tabular-inspect-v1',
+        'result_outputs': {'inspection': 'structured-v1'},
+        # Files a search found can be inspected by binding its source set by name.
+        'result_input_kinds': {'sources': ('source-set-v1',)},
+        'partial_inputs_supported': False,
+        'produces': (PRODUCES_RETAINED_RESULTS,),
+        'cost_class': COST_CLASS_LOW,
+        'max_per_plan': 2,
+        'adapter': CAPABILITY_TABULAR_INSPECT,
+        # Inspection serves Merge, so Merge's switch and chat file limit govern it too.
+        'document_action_type': DOCUMENT_ACTION_TYPE_MERGE,
+    },
+    {
         'id': CAPABILITY_TABULAR_MERGE,
         'label': 'Merge spreadsheets',
         'role': ROLE_REASON,
         'request_gate': None,
         'summary': (
-            'Combine the rows of two or more CSV or Excel files that share the same columns into '
-            'one table, exactly and without a model.'
+            'Combine the rows of two or more CSV or Excel files into one table, exactly and without '
+            'a model, lining up columns by name, alias or a prepared mapping.'
         ),
         'when_to_use': (
             'Use when the user asks to merge, combine, append, stack or consolidate several CSV or '
-            'Excel files with the same columns into one table or file. Every row is kept exactly, in '
-            'the order the files are listed. It never matches rows on a key column (no joins or '
-            'lookups) and never edits values; when "merge" could mean matching rows on a key, ask. '
-            'Name the files in document_ids in merge order, or bind inputs.sources to a search '
-            "step's sources output when the files must be found first. Columns are matched by name "
-            'in any order; schema_policy exact_order also requires the same order. sheet picks one '
-            "sheet in every workbook; otherwise each workbook's first visible sheet is read. "
-            'include_source_column adds each row\'s file name. To deliver a file, bind the records '
-            'output to render_file with csv and exact_tabular_records_v1, or xlsx and '
-            'exact_tabular_workbook_v1. Never compose merged rows. A merge of more files than the '
-            'chat limit, or one that should repeat, belongs in a workflow.'
+            'Excel files into one table or file. Every row is kept, in the order the files are listed. '
+            'It never matches rows on a key column (no joins or lookups) and never edits values; when '
+            '"merge" could mean matching rows on a key, ask. Name the files in document_ids in merge '
+            "order, or bind inputs.sources to a search step's sources output when the files must be "
+            'found first. schema_policy: by_name (default) needs the same columns in any order, '
+            'exact_order also the same order, union keeps every column from every file and leaves a '
+            'missing one blank, mapped keeps exactly "columns". column_aliases lines up other header '
+            'names, e.g. {"Customer ID": ["cust_id"]}. When the columns may differ and how they line '
+            'up is unclear, run tabular_inspect first and bind a compose step\'s '
+            + TABULAR_COLUMN_MAPPING_PROFILE + ' output as the "mapping" input, without columns or '
+            'aliases. on_incompatible exclude leaves out, and reports, files or sheets that do not fit '
+            'instead of failing. header_row skips title rows above the headers. sheet picks one sheet; '
+            'sheets all merges every visible sheet and adds a Source Sheet column. dedupe removes '
+            'duplicate rows: exact_rows, or key_columns with dedupe_columns, keeping the first or last '
+            '(dedupe_keep). sort_by orders rows by up to three columns. include_source_column adds '
+            'each row\'s file name. To deliver a file, bind the records output to render_file with '
+            'csv and exact_tabular_records_v1, or xlsx and exact_tabular_workbook_v1. Never compose '
+            'merged rows. A merge of more files than the chat limit, or one that should repeat, '
+            'belongs in a workflow.'
         ),
         'settings_gates': (),
         'settings_gates_any': (
@@ -829,19 +928,36 @@ CAPABILITY_REGISTRY = (
                 },
                 'schema_policy': {
                     'type': 'string',
-                    'enum': ['by_name', 'exact_order'],
+                    'enum': ['by_name', 'exact_order', 'union', 'mapped'],
                     'default': 'by_name',
                     'description': (
-                        'by_name accepts the same columns in any order; exact_order also requires '
-                        'the same order.'
+                        'by_name: same columns in any order. exact_order: same columns in the same '
+                        'order. union: every column from every file. mapped: exactly "columns".'
                     ),
                 },
-                'sheet': {
-                    'type': 'string',
-                    'minLength': 1,
-                    'maxLength': 31,
-                    'description': "The sheet to read in every Excel file. Omit for each workbook's first visible sheet.",
+                'columns': {
+                    'type': 'array',
+                    'items': _MERGE_COLUMN_NAME_INPUT,
+                    'minItems': 1,
+                    'maxItems': 255,
+                    'uniqueItems': True,
+                    'description': 'mapped only: the merged columns, in order.',
                 },
+                'column_aliases': {
+                    'type': 'object',
+                    'maxProperties': 256,
+                    'additionalProperties': {
+                        'type': 'array',
+                        'items': _MERGE_COLUMN_NAME_INPUT,
+                        'minItems': 1,
+                        'maxItems': 32,
+                        'uniqueItems': True,
+                    },
+                    'description': 'Each column name mapped to the other header names that mean it.',
+                },
+                'sheet': _MERGE_SHEET_INPUT,
+                'sheets': _MERGE_SHEETS_INPUT,
+                'header_row': _MERGE_HEADER_ROW_INPUT,
                 'include_source_column': {
                     'type': 'boolean',
                     'default': True,
@@ -853,13 +969,52 @@ CAPABILITY_REGISTRY = (
                     'maxLength': 128,
                     'default': 'Source File',
                 },
+                'on_incompatible': {
+                    'type': 'string',
+                    'enum': ['fail', 'exclude'],
+                    'description': 'fail (default) merges nothing when a file does not fit; exclude leaves it out.',
+                },
+                'dedupe': {
+                    'type': 'string',
+                    'enum': ['none', 'exact_rows', 'key_columns'],
+                    'description': 'Remove duplicate rows; none when omitted.',
+                },
+                'dedupe_columns': {
+                    'type': 'array',
+                    'items': _MERGE_COLUMN_NAME_INPUT,
+                    'minItems': 1,
+                    'maxItems': 16,
+                    'uniqueItems': True,
+                    'description': 'key_columns only: the columns that identify a duplicate.',
+                },
+                'dedupe_keep': {
+                    'type': 'string',
+                    'enum': ['first', 'last'],
+                    'description': 'Which duplicate to keep; first when omitted.',
+                },
+                'sort_by': {
+                    'type': 'array',
+                    'maxItems': 3,
+                    'items': {
+                        'type': 'object',
+                        'properties': {
+                            'column': _MERGE_COLUMN_NAME_INPUT,
+                            'descending': {'type': 'boolean'},
+                            'value_type': {'type': 'string', 'enum': ['text', 'number', 'date']},
+                        },
+                        'required': ['column'],
+                        'additionalProperties': False,
+                    },
+                    'description': 'Sort keys, most significant first; text ascending when not stated.',
+                },
             },
             'additionalProperties': False,
         },
         'result_contract_version': 'tabular-merge-v1',
         'result_outputs': {'records': 'records-v1', 'report': 'structured-v1'},
-        # Files a search found can be merged by binding its source set by name.
-        'result_input_kinds': {'sources': ('source-set-v1',)},
+        # Files a search found can be merged by binding its source set by name, and a compose
+        # step's prepared column mapping lines up differently named columns.
+        'result_input_kinds': {'sources': ('source-set-v1',), 'mapping': ('structured-v1',)},
         'partial_inputs_supported': False,
         'produces': (PRODUCES_RETAINED_RESULTS,),
         'cost_class': COST_CLASS_MEDIUM,

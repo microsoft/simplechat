@@ -1,8 +1,9 @@
 # V2 File Merge
 
-Version: **0.261.218**
+Version: **0.261.219**
 
-Implemented in version: **0.261.218** (Phase 1, same-structure spreadsheets), recorded in
+Implemented in version: **0.261.218** (Phase 1, same-structure spreadsheets) and
+**0.261.219** (Phase 2, reconciling different structures), recorded in
 `application/single_app/config.py`.
 
 GitHub issue: [#1619](https://github.com/microsoft/simplechat/issues/1619)
@@ -24,7 +25,7 @@ request and the easiest to verify exactly; documents and decks follow.
 | Phase | Scope | Status |
 | --- | --- | --- |
 | 1 | Same-structure CSV and Excel merge in V2 chat (`tabular_merge`), Merge limits, exact-schema CSV/XLSX exports | Implemented in **0.261.218** — see [Phase 1](V2_FILE_MERGE_PHASE_1_SPREADSHEETS.md) |
-| 2 | Reconciling different structures: column inspection, union and mapped policies, sheet modes, duplicate removal, AI-suggested column mapping | Planned |
+| 2 | Reconciling different structures: column inspection (`tabular_inspect`), union and mapped policies, aliases, header rows, every-sheet mode, exclusion, duplicate removal, sorting, AI-prepared column mapping | Implemented in **0.261.219** — see [Phase 2](V2_FILE_MERGE_PHASE_2_RECONCILIATION.md) |
 | 3 | Large and recurring merges (100+ files) as V2 workflow tasks | Planned |
 | 4 | Document assembly foundation, PDF merge, and workbooks with one tab per file | Planned |
 | 5 | Word merge, keeping each document's styles or the first document's | Planned |
@@ -39,8 +40,8 @@ plans the work.
 
 | Purpose | Role in a merge |
 | --- | --- |
-| Gather (optional) | `document_search` finds the files when the user describes them instead of selecting them. Its `sources` output binds into the merge. |
-| Reason | `tabular_merge` reads the authorized files and appends their rows with code into one retained table. No model reads or rewrites rows. |
+| Gather (optional) | `document_search` finds the files when the user describes them instead of selecting them. Its `sources` output binds into the merge. `tabular_inspect` reads the files' sheets, headers, row counts and samples and reports how their columns line up. |
+| Reason | `compose` can prepare a `tabular_column_mapping_v1` column mapping from an inspection. `tabular_merge` reads the authorized files and appends their rows with code into one retained table. No model reads or rewrites rows. |
 | Render | `render_file` turns the retained table into a CSV or Excel file. |
 
 Merging is Reason, not Render, because it computes a new dataset from sources; Render only
@@ -56,27 +57,34 @@ saved instruction such as "always give me Excel" shapes merge requests without e
 
 | File | Responsibility |
 | --- | --- |
-| `functions_tabular_merge.py` | Pure merge engine: CSV, XLSX/XLSM and XLS readers that keep values as text, header normalization, schema policies, provenance column, limits, cancellation, archive guards, and the merge report. No Flask, settings, storage or model imports. |
-| `functions_orchestration_merge.py` | Orchestration glue: Merge limits from settings, the authorized-source manifest check, screening-aware byte loaders, persistence of the retained `records` and `report`, and the engine-to-failure-code map. |
-| `functions_orchestration_adapters.py` | `run_tabular_merge`, registered in `ADAPTER_REGISTRY`. |
-| `functions_orchestration_registry.py` | The `tabular_merge` capability descriptor and the `merge` document-action gate. |
-| `functions_orchestration_schema.py` | Plan rules: explicit document IDs or a bound source set, tabular-only sources, the Merge chat limit, and the merge failure messages. |
+| `functions_tabular_merge.py` | Pure merge and inspection engine: CSV, XLSX/XLSM and XLS readers that keep values as text, header normalization, schema policies and aliases, header rows, sheet modes, provenance columns, exclusion, duplicate removal, bounded sort, limits, cancellation, archive guards, the merge report, the inspection, and the column mapping profile. No Flask, settings, storage or model imports. |
+| `functions_orchestration_merge.py` | Orchestration glue: Merge limits from settings, the authorized-source manifest check, screening-aware byte loaders, persistence of the retained `records`, `report` and `inspection`, and the engine-to-failure-code maps. |
+| `functions_orchestration_adapters.py` | `run_tabular_inspect` and `run_tabular_merge`, registered in `ADAPTER_REGISTRY`. |
+| `functions_orchestration_registry.py` | The `tabular_inspect` and `tabular_merge` capability descriptors and the `merge` document-action gate. |
+| `functions_orchestration_schema.py` | Plan rules: explicit document IDs or a bound source set, tabular-only sources, the Merge chat limit, valid option combinations, the mapping producer, and the merge and inspection failure messages. |
+| `functions_orchestration_services.py` | The `tabular_column_mapping_v1` prepared-content profile and its validator. |
 | `functions_document_actions.py` | The `merge` document action: enablement, file limits and row limits for chat and workflows. |
 | `functions_generated_export_registry.py`, `functions_structured_file_renderers.py`, `functions_generated_office_adapters.py` | The `exact_tabular_records_v1` (CSV) and `exact_tabular_workbook_v1` (XLSX) profiles. |
+| `application/v2_ui/src/lib/orchestrationMerge.ts` | The plan review's wording for merge and inspection settings. |
 
 ### Result contract
 
 `tabular_merge` retains two outputs under contract `tabular-merge-v1`:
 
 - `records` (`records-v1`): one string column per merged column, in output order, with
-  every row. At most 256 columns, because retained record schemas allow 256.
+  every row. At most 256 columns, because retained record schemas allow 256. A column is
+  nullable when some merged file or sheet doesn't have it.
 - `report` (`structured-v1`): `tabular-merge-report-v1`, holding the policy, the output
-  columns, the provenance column name, totals, one entry per source (file name, format,
-  sheet, encoding, delimiter, rows, skipped blank rows, padded short rows, column
-  differences, warnings) and limitations.
+  columns, nullable columns, the file and sheet name columns, totals, one entry per file
+  or sheet (file name, format, sheet, header row, encoding, delimiter, status and reason,
+  rows, skipped blank rows, padded short rows, removed duplicates, column differences,
+  renamed and left-out columns, warnings), any prepared column mapping, and limitations.
 
-Coverage counts sources. The result is complete only when every source merged; a merge
-either finishes or produces nothing.
+Coverage counts sources. The result is complete only when every source merged or was
+left out by request; a merge either finishes or produces nothing.
+
+`tabular_inspect` retains `inspection` (`structured-v1`, `tabular-inspection-v1`) under
+contract `tabular-inspect-v1`.
 
 ### Limits
 
@@ -91,6 +99,9 @@ either finishes or produces nothing.
 | Header name | 256 UTF-8 bytes | Retained column name limit |
 | Cell | 32,767 characters | Excel's cell limit |
 | Workbook expansion | 512 MB uncompressed, 10,000 parts | Engine guard |
+| Sheets per workbook (every-sheet mode) | 100 | Engine constant |
+| Rows that can be sorted | 250,000 | Engine constant, capped by the row limit |
+| Inspection size | 96 KB, samples dropped first | Engine constant |
 
 Rendering keeps its own limits: CSV exports hold at most 1,000,000 records, and XLSX at
 most 1,048,575 rows, 5,000,000 cells and 32 MiB. CSV suits the largest merges.
@@ -120,13 +131,17 @@ and the orchestration Capabilities list
 | Test | Covers |
 | --- | --- |
 | `functional_tests/test_tabular_merge_engine.py` | Readers, encodings, delimiters, Excel values, sheet selection, legacy XLS conversion, policies, mismatch reporting, provenance, limits, guards, cancellation, spill to disk at 120,000 rows. |
+| `functional_tests/test_tabular_merge_reconciliation.py` | Union, mapped and alias policies, header rows, every-sheet mode, exclusion, duplicates, sorting and inspection. |
 | `functional_tests/test_orchestration_tabular_merge_capability.py` | Registry and gating, plan validation, real executor runs without model calls, search-bound sources, failure messages, revoked access, and CSV/XLSX rendering of the retained result. |
+| `functional_tests/test_orchestration_tabular_reconciliation.py` | Inspection, option combinations, the mapping producer, inspect → compose mapping → merge through the real executor, nullable union columns, and the planner recipe. |
+| `functional_tests/test_v2_orchestration_merge_arguments.mjs`, `ui_tests/test_v2_orchestration_merge_arguments.py` | The plan review's wording for merge and inspection settings. |
 | `functional_tests/test_v2_admin_actions_parity.py`, `functional_tests/test_admin_settings_pane_variable_scope.py` | Admin field paths, bounds and defaults, and the admin card rendering with and without stored Merge settings. |
 
 ## Known limitations
 
 - Merge appends rows. It does not match rows across files on a key column.
-- Phase 1 requires the same columns in every file; Phase 2 reconciles different ones.
+- Column aliases apply to every file; a header that means different things in different
+  files can't be mapped per file.
 - Excel formulas contribute their last calculated values; a workbook saved without them
   merges those cells as blanks.
 - Workflows cannot run merges until Phase 3.
