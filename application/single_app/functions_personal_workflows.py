@@ -591,6 +591,22 @@ def _normalize_selected_agent(user_id, settings, requested_agent, strict_permiss
     }
 
 
+def resolve_personal_workflow_agent_type(user_id, requested_agent, settings):
+    """Return the ``agent_type`` of the enabled agent a task runner selects, ``'local'`` by default.
+
+    The same candidates a strict task-runner save accepts. Raises ``ValueError`` when no enabled
+    personal or merged global agent matches.
+    """
+    candidates = [
+        candidate for candidate in _build_selectable_agents(user_id, settings, requested_agent=None)
+        if candidate.get('is_enabled', True)
+    ]
+    matched_agent = _find_matching_agent(candidates, requested_agent)
+    if not matched_agent:
+        raise ValueError('Select a valid personal or merged global agent.')
+    return str(matched_agent.get('agent_type') or 'local')
+
+
 def _build_default_model_summary(settings):
     default_selection = settings.get('default_model_selection', {}) if isinstance(settings, dict) else {}
     endpoint_id = str(default_selection.get('endpoint_id') or '').strip()

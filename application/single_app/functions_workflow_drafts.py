@@ -55,6 +55,7 @@ from functions_personal_workflows import (
     get_personal_workflow,
     get_workflow_max_tasks,
     normalize_personal_workflow_task_runner,
+    resolve_personal_workflow_agent_type,
 )
 from functions_settings import is_user_workflows_enabled_for_user, read_user_settings_snapshot
 from functions_workflow_bindings import authorize_workflow_reference
@@ -67,6 +68,28 @@ from functions_workflow_definitions import (
     existing_server_created_workflow,
     normalize_workflow_origin,
     workflow_definition_for_editor,
+)
+from functions_workflow_handoff_builder import (
+    HANDOFF_CONTENT_MAX_LENGTH,
+    HANDOFF_HANDLE_KINDS,
+    HANDOFF_LOOP_SOURCE_DOCUMENTS,
+    HANDOFF_LOOP_SOURCE_QUERY,
+    HANDOFF_LOOP_SOURCES,
+    HANDOFF_MAX_DOCUMENTS,
+    HANDOFF_MAX_LOOP_ITEMS,
+    HANDOFF_MAX_SCOPES,
+    HANDOFF_MAX_TAGS,
+    HANDOFF_SCOPE_TYPES,
+    HANDOFF_SELECTION_ALL,
+    HANDOFF_SELECTION_BEST,
+    HANDOFF_SELECTION_MODES,
+    HANDOFF_TAG_MAX_LENGTH,
+    HANDOFF_TASK_COUNT,
+    build_handoff_definition,
+    handoff_disclosure,
+    handoff_effective_loop_limit,
+    handoff_handle_uses,
+    handoff_loop_bound,
 )
 from functions_workflow_limits import (
     WorkflowLoopLimitError,
@@ -130,6 +153,14 @@ DRAFT_ERROR_MESSAGES = {
     'file_sync_source_unavailable': 'This File Sync source is not available to you.',
     'workflow_conflict': 'A different workflow already uses this id.',
     'workflows_unavailable': 'Personal workflows are not available for this account.',
+    'handoff_agent_unsupported': 'This agent cannot run hand-off tasks. Choose a local agent, or use the default model.',
+    'handoff_analyze_unavailable': 'Document analysis is turned off, so this work cannot be handed off.',
+    'handoff_edit_invalid': 'A hand-off must stay a manual, durable workflow and cannot use Microsoft 365 Run as.',
+    'handoff_kind_mismatch': 'A different workflow already uses this id.',
+    'handoff_limit_changed': 'The document limit changed since this hand-off was prepared. Ask again.',
+    'handoff_loop_limit': 'This hand-off covers more documents than one run allows.',
+    'handoff_unavailable': 'Workflows here cannot have the two tasks a hand-off needs.',
+    'scope_unavailable': 'This workspace is not available to you.',
 }
 DRAFT_UNAVAILABLE_REFERENCE_MESSAGE = 'A document or source in this blueprint is not available to you.'
 DRAFT_HANDLE_MAP_ERROR = 'The workflow draft handle map is malformed.'
@@ -615,8 +646,11 @@ def _nested_too_deeply(value, limit=BLUEPRINT_MAX_DEPTH):
     return False
 
 
-def _prepare_blueprint(blueprint):
-    """Return ``(blueprint, errors)``: a JSON round-tripped copy of a valid blueprint, or its errors."""
+def _prepare_blueprint(blueprint, *, validator=None, map_error=None):
+    """Return ``(blueprint, errors)``: a JSON round-tripped copy of a valid blueprint, or its errors.
+
+    ``validator`` and ``map_error`` default to the workflow blueprint schema; a hand-off passes its own.
+    """
     if not isinstance(blueprint, dict):
         return None, [draft_error('blueprint_invalid', '', 'The workflow blueprint must be a JSON object.')]
     try:
@@ -632,7 +666,9 @@ def _prepare_blueprint(blueprint):
     candidate = json.loads(encoded)
     if _nested_too_deeply(candidate):
         return None, [draft_error('blueprint_invalid', '', 'The workflow blueprint is nested too deeply.')]
-    errors = [mapped for error in _BLUEPRINT_VALIDATOR.iter_errors(candidate) for mapped in _map_schema_error(error)]
+    validator = validator or _BLUEPRINT_VALIDATOR
+    map_error = map_error or _map_schema_error
+    errors = [mapped for error in validator.iter_errors(candidate) for mapped in map_error(error)]
     return (None, errors) if errors else (candidate, [])
 
 
@@ -644,6 +680,122 @@ def validate_workflow_blueprint(blueprint):
     """
     _prepared, errors = _prepare_blueprint(blueprint)
     return _finalize_errors(errors)
+
+
+# ---------------------------------------------------------------------------
+# Hand-off blueprint schema
+# ---------------------------------------------------------------------------
+
+WORKFLOW_HANDOFF_BLUEPRINT_SCHEMA_ID = 'urn:simplechat:workflow-handoff-blueprint:1'
+HANDOFF_TASKS_MESSAGE = (
+    'A hand-off has exactly two tasks: one that reviews each document and one that writes the report.'
+)
+HANDOFF_DOCUMENTS_MESSAGE = (
+    f'A hand-off can name up to {HANDOFF_MAX_DOCUMENTS} documents. For more, use a workspace query.'
+)
+
+
+def _handoff_handle_list(max_items):
+    return {
+        'type': 'array', 'minItems': 1, 'maxItems': max_items, 'uniqueItems': True,
+        'items': {'$ref': '#/$defs/handle'},
+    }
+
+
+def _handoff_loop_schema():
+    return {
+        'type': 'object',
+        'additionalProperties': False,
+        'required': ['source'],
+        'properties': {
+            'source': {'enum': list(HANDOFF_LOOP_SOURCES)},
+            'documents': _handoff_handle_list(HANDOFF_MAX_DOCUMENTS),
+            'scopes': _handoff_handle_list(HANDOFF_MAX_SCOPES),
+            'tags': {
+                'type': 'array', 'minItems': 1, 'maxItems': HANDOFF_MAX_TAGS, 'uniqueItems': True,
+                'items': _text_schema(HANDOFF_TAG_MAX_LENGTH),
+            },
+            'content': _text_schema(HANDOFF_CONTENT_MAX_LENGTH),
+            'selection': {'enum': list(HANDOFF_SELECTION_MODES)},
+            'count': {'type': 'integer', 'minimum': 1, 'maximum': HANDOFF_MAX_LOOP_ITEMS},
+        },
+        'allOf': [
+            _when('source', HANDOFF_LOOP_SOURCE_DOCUMENTS, {
+                'required': ['documents'],
+                'allOf': _forbid('scopes', 'tags', 'content', 'selection', 'count'),
+            }),
+            _when('source', HANDOFF_LOOP_SOURCE_QUERY, {
+                'required': ['scopes', 'selection'],
+                'allOf': [
+                    *_forbid('documents'),
+                    _when('selection', HANDOFF_SELECTION_BEST, {'required': ['content', 'count']}),
+                    _when('selection', HANDOFF_SELECTION_ALL, {'allOf': _forbid('count')}),
+                ],
+            }),
+        ],
+    }
+
+
+def _build_handoff_blueprint_schema():
+    return {
+        '$schema': 'https://json-schema.org/draft/2020-12/schema',
+        '$id': WORKFLOW_HANDOFF_BLUEPRINT_SCHEMA_ID,
+        'title': 'Workflow hand-off blueprint',
+        'description': (
+            'A one-time workflow handed off from chat: a loop over named documents or a workspace '
+            'query, a task that reviews each document and a task that writes the report. Documents, '
+            'workspaces and agents are handles supplied with the request; the blueprint never names '
+            'ids, models, endpoints or URLs.'
+        ),
+        'type': 'object',
+        'additionalProperties': False,
+        'required': ['name', 'loop', 'tasks'],
+        'properties': {
+            'name': _text_schema(BLUEPRINT_NAME_MAX_LENGTH),
+            'description': _text_schema(BLUEPRINT_DESCRIPTION_MAX_LENGTH, required_text=False),
+            'loop': _handoff_loop_schema(),
+            'tasks': {
+                'type': 'array', 'minItems': HANDOFF_TASK_COUNT, 'maxItems': HANDOFF_TASK_COUNT,
+                'items': {
+                    'type': 'object',
+                    'additionalProperties': False,
+                    'required': ['title', 'instructions'],
+                    'properties': {
+                        'title': _text_schema(BLUEPRINT_TASK_TITLE_MAX_LENGTH),
+                        'instructions': _text_schema(BLUEPRINT_TASK_INSTRUCTIONS_MAX_LENGTH),
+                        'runner': {'$ref': '#/$defs/runner'},
+                    },
+                },
+            },
+        },
+        '$defs': {
+            'handle': copy.deepcopy(WORKFLOW_BLUEPRINT_SCHEMA['$defs']['handle']),
+            'runner': copy.deepcopy(WORKFLOW_BLUEPRINT_SCHEMA['$defs']['runner']),
+        },
+    }
+
+
+WORKFLOW_HANDOFF_BLUEPRINT_SCHEMA = _build_handoff_blueprint_schema()
+_HANDOFF_BLUEPRINT_VALIDATOR = Draft202012Validator(WORKFLOW_HANDOFF_BLUEPRINT_SCHEMA)
+
+
+def workflow_handoff_blueprint_schema():
+    """Return a copy of the closed hand-off blueprint schema, for a planner prompt or documentation."""
+    return copy.deepcopy(WORKFLOW_HANDOFF_BLUEPRINT_SCHEMA)
+
+
+def _map_handoff_schema_error(error):
+    parts = list(error.absolute_path)
+    if parts == ['tasks'] and error.validator in ('minItems', 'maxItems'):
+        yield draft_error('blueprint_invalid', parts, HANDOFF_TASKS_MESSAGE)
+    elif parts == ['loop', 'documents'] and error.validator == 'maxItems':
+        yield draft_error('handoff_loop_limit', parts, HANDOFF_DOCUMENTS_MESSAGE)
+    elif parts == ['loop', 'count'] and error.validator == 'maximum':
+        yield draft_error(
+            'handoff_loop_limit', parts, f'A hand-off can cover up to {HANDOFF_MAX_LOOP_ITEMS:,} documents.',
+        )
+    else:
+        yield from _map_schema_error(error)
 
 
 # ---------------------------------------------------------------------------
@@ -1326,3 +1478,427 @@ def create_personal_workflow_from_payload(user_id, workflow_data, *, origin, set
     return _log_draft_outcome(
         'create_from_payload', user_id, _success(workflow_definition_for_editor(workflow), created=created),
     )
+
+
+# ---------------------------------------------------------------------------
+# Hand-off drafts
+# ---------------------------------------------------------------------------
+#
+# A hand-off is a one-time workflow chat orchestration creates, paused, for work too large for a
+# chat plan. Its blueprint names a loop and two tasks; ``functions_workflow_handoff_builder`` maps
+# it to a durable version 3 workflow. These functions apply the draft service's checks to it and
+# create it at most once per hand-off, always paused and always marked one-time.
+
+HANDOFF_SERVER_FIELDS = ('origin', 'one_time', 'conversation_id')
+_HANDOFF_UNKNOWN_HANDLE_MESSAGES = {
+    **_UNKNOWN_HANDLE_MESSAGES,
+    'scopes': 'No workspace was provided for this handle.',
+}
+
+
+def _normalize_scope_handle(entry, user_id):
+    if entry.keys() - {'scope_type', 'scope_id', 'name'}:
+        raise ValueError(DRAFT_HANDLE_MAP_ERROR)
+    scope_type = entry.get('scope_type')
+    if scope_type not in HANDOFF_SCOPE_TYPES:
+        raise ValueError(DRAFT_HANDLE_MAP_ERROR)
+    scope = {'scope_type': scope_type, 'scope_id': _handle_scope_id(entry, scope_type, user_id)}
+    name = _handle_text(entry.get('name'), DRAFT_HANDLE_ID_MAX_LENGTH, required=False)
+    if name:
+        scope['name'] = name
+    return scope
+
+
+_HANDOFF_HANDLE_NORMALIZERS = {
+    'documents': _normalize_document_handle,
+    'scopes': _normalize_scope_handle,
+    'agents': _normalize_agent_handle,
+}
+
+
+def normalize_handoff_handles(handles, *, user_id):
+    """Validate a hand-off's handle map and return a normalized copy.
+
+    The map is built by server code, like ``normalize_workflow_draft_handles``'s, with a
+    ``scopes`` kind for the workspaces a query searches::
+
+        {'documents': {'q3_report': {'document_id', 'scope_type', 'scope_id'}},
+         'scopes': {'my_workspace': {'scope_type', 'scope_id', 'name'}},
+         'agents': {'reviewer': {'id', 'name', 'is_global'}}}
+
+    A malformed map raises ``ValueError``. Mapping a handle does not authorize it.
+    """
+    if handles is None:
+        handles = {}
+    if not isinstance(handles, dict) or handles.keys() - set(HANDOFF_HANDLE_KINDS):
+        raise ValueError(DRAFT_HANDLE_MAP_ERROR)
+    normalized = {}
+    for kind in HANDOFF_HANDLE_KINDS:
+        entries = handles.get(kind)
+        entries = {} if entries is None else entries
+        if not isinstance(entries, dict) or len(entries) > BLUEPRINT_MAX_HANDLES:
+            raise ValueError(DRAFT_HANDLE_MAP_ERROR)
+        normalized[kind] = {}
+        for handle, entry in entries.items():
+            if not isinstance(handle, str) or not _HANDLE_RE.fullmatch(handle) or not isinstance(entry, dict):
+                raise ValueError(DRAFT_HANDLE_MAP_ERROR)
+            normalized[kind][handle] = _HANDOFF_HANDLE_NORMALIZERS[kind](entry, user_id)
+    return normalized
+
+
+def _handoff_unknown_handle_errors(blueprint, handle_names):
+    errors = []
+    for kind, uses in handoff_handle_uses(blueprint).items():
+        for handle, paths in uses.items():
+            if handle not in handle_names[kind]:
+                errors.extend(
+                    draft_error('reference_unknown', path, _HANDOFF_UNKNOWN_HANDLE_MESSAGES[kind]) for path in paths
+                )
+    return errors
+
+
+def check_handoff_blueprint(blueprint, *, settings, handle_names=None, loop_limit=None):
+    """Check a hand-off blueprint against every rule that reads nothing. Returns ``(blueprint, errors)``.
+
+    The rules are the closed hand-off schema, the administrator's task limit (a hand-off needs
+    two tasks), document analysis being on, the loop limit, and, when ``handle_names`` maps each
+    handle kind to the handles offered with the request, that every handle the blueprint names
+    is one of them. ``loop_limit`` is the item limit an earlier dry run disclosed: a query over
+    every match keeps it, and a current limit below it is ``handoff_limit_changed``. Returns a
+    JSON round-tripped copy of a blueprint that passes and ``[]``, or ``None`` and up to ten draft
+    errors. A misconfigured administrator loop limit raises ``WorkflowLoopLimitError``.
+    """
+    settings = _required_settings(settings)
+    if loop_limit is not None and (type(loop_limit) is not int or loop_limit < 1):
+        raise ValueError('A hand-off loop limit must be a positive whole number.')
+    prepared, errors = _prepare_blueprint(
+        blueprint, validator=_HANDOFF_BLUEPRINT_VALIDATOR, map_error=_map_handoff_schema_error,
+    )
+    if errors:
+        return None, _finalize_errors(errors)
+    if get_workflow_max_tasks(settings) < HANDOFF_TASK_COUNT:
+        return None, [draft_error('handoff_unavailable', ('tasks',))]
+    if DOCUMENT_ACTION_TYPE_ANALYZE not in get_enabled_document_action_types(settings=settings):
+        return None, [draft_error('handoff_analyze_unavailable', ('loop',))]
+    limit = handoff_effective_loop_limit(settings)
+    if handoff_loop_bound(prepared['loop'], limit if loop_limit is None else loop_limit) > limit:
+        if loop_limit is not None:
+            return None, [draft_error('handoff_limit_changed', ('loop',))]
+        return None, [draft_error(
+            'handoff_loop_limit', ('loop',), f'One hand-off can cover up to {limit:,} documents.',
+        )]
+    if handle_names is not None:
+        names = {kind: set(handle_names.get(kind) or ()) for kind in HANDOFF_HANDLE_KINDS}
+        errors = _handoff_unknown_handle_errors(prepared, names)
+        if errors:
+            return None, _finalize_errors(errors)
+    return prepared, []
+
+
+def _handoff_agent_errors(uses, handles, *, user_id, settings, reader):
+    # A loop task and a saved-record report run only on locally metered models or local agents.
+    errors = []
+    for handle, paths in uses['agents'].items():
+        found = _agent_errors({'agents': {handle: paths}}, handles, user_id=user_id, settings=settings, reader=reader)
+        if found:
+            errors.extend(found)
+            continue
+        try:
+            agent_type = resolve_personal_workflow_agent_type(user_id, dict(handles['agents'][handle]), settings)
+        except ValueError:
+            errors.extend(draft_error('agent_unavailable', path) for path in paths)
+            continue
+        if agent_type != 'local':
+            errors.extend(draft_error('handoff_agent_unsupported', path) for path in paths)
+    return errors
+
+
+def _handoff_scope_errors(uses, handles, *, user_id, authorize_scope):
+    if not uses['scopes']:
+        return []
+    if authorize_scope is None:
+        # The workspace stores initialize clients, so they load only when a query names a workspace.
+        from functions_workflow_loop_inputs import _default_authorize_scope as authorize_scope
+    errors = []
+    for handle, paths in uses['scopes'].items():
+        scope = handles['scopes'][handle]
+        try:
+            allowed = authorize_scope(
+                {'scope_type': scope['scope_type'], 'scope_id': scope['scope_id']}, actor_user_id=user_id,
+            ) is not False
+        except Exception:
+            allowed = False
+        if not allowed:
+            errors.extend(draft_error('scope_unavailable', path) for path in paths)
+    return errors
+
+
+def _checked_handoff(user_id, blueprint, handles, *, settings, loop_limit, reader, resolver, authorize_scope):
+    """Return ``(blueprint, handles, N, errors)`` for a hand-off that passes every draft check."""
+    handles = normalize_handoff_handles(handles, user_id=user_id)
+    prepared, errors = check_handoff_blueprint(
+        blueprint, settings=settings, handle_names=handles, loop_limit=loop_limit,
+    )
+    if errors:
+        return None, None, None, errors
+    uses = handoff_handle_uses(prepared)
+    # Collected together, so one repair round can fix every problem at once.
+    errors = [
+        *_handoff_agent_errors(uses, handles, user_id=user_id, settings=settings, reader=reader),
+        *_document_errors(uses, handles, user_id=user_id, resolver=resolver),
+        *_handoff_scope_errors(uses, handles, user_id=user_id, authorize_scope=authorize_scope),
+    ]
+    if errors:
+        return None, None, None, errors
+    limit = handoff_effective_loop_limit(settings) if loop_limit is None else loop_limit
+    return prepared, handles, handoff_loop_bound(prepared['loop'], limit), []
+
+
+def _handoff_payload(prepared, handles, *, workflow_id, max_items):
+    payload = build_handoff_definition(
+        prepared, handles, workflow_id=workflow_id, max_items=max_items,
+        derived_id=_derived_id, alert_fields=_alert_fields,
+    )
+    # Always paused: a hand-off runs once, from its accept, and never on a schedule.
+    payload['is_enabled'] = False
+    return payload
+
+
+def _log_handoff_outcome(operation, result):
+    # Codes only, and no ids: never the blueprint, its text, or the documents and workspaces it names.
+    log_event(
+        f'[WorkflowHandoffDrafts] {operation} {"accepted" if result["ok"] else "rejected"}',
+        extra={
+            'operation': operation,
+            'created': bool(result.get('created')),
+            'error_codes': sorted({error['code'] for error in result['errors']}),
+        },
+        level=logging.INFO,
+    )
+    return result
+
+
+def is_handoff_workflow(workflow, user_id):
+    """Whether ``workflow`` is a one-time workflow chat orchestration created for ``user_id``."""
+    workflow = workflow if isinstance(workflow, dict) else {}
+    origin = workflow.get('origin') if isinstance(workflow.get('origin'), dict) else {}
+    return (
+        origin.get('one_time') is True
+        and origin.get('source') == WORKFLOW_ORIGIN_SOURCE_ORCHESTRATION
+        and bool(user_id)
+        and workflow.get('user_id') == user_id
+    )
+
+
+def _handoff_existing_result(user_id, workflow, handoff_id):
+    """The result for a hand-off whose workflow id already holds a record."""
+    if workflow.get('deleting'):
+        return _failure([draft_error('workflow_conflict', '', 'This workflow is being deleted.')], created=False)
+    try:
+        workflow = existing_server_created_workflow(workflow, handoff_id, one_time=True)
+    except WorkflowDefinitionConflict:
+        return _failure([draft_error('handoff_kind_mismatch')], created=False)
+    if not is_handoff_workflow(workflow, user_id):
+        return _failure([draft_error('handoff_kind_mismatch')], created=False)
+    return _success(workflow_definition_for_editor(workflow), created=False)
+
+
+def _repeated_handoff_create(user_id, workflow_id, handoff_id):
+    """Return the result for a hand-off that was already created, or ``None`` for a new one."""
+    existing = get_personal_workflow(user_id, workflow_id)
+    if not existing:
+        return None
+    return _handoff_existing_result(user_id, existing, handoff_id)
+
+
+def _handoff_conflict(user_id, workflow_id, handoff_id):
+    # A concurrent create or delete won the id. Classify it from the stored record, never from text.
+    repeated = _repeated_handoff_create(user_id, workflow_id, handoff_id)
+    if repeated is not None:
+        return repeated
+    return _failure([draft_error('workflow_conflict')], created=False)
+
+
+def _handoff_created(operation, user_id, workflow, created, handoff_id):
+    if not created:
+        return _log_handoff_outcome(operation, _handoff_existing_result(user_id, workflow, handoff_id))
+    return _log_handoff_outcome(operation, _success(workflow_definition_for_editor(workflow), created=True))
+
+
+def dry_run_handoff_workflow(user_id, blueprint, handles, *, origin, settings, user_info=None, loop_limit=None,
+                             resolve_document=None, user_settings_reader=None, authorize_scope=None):
+    """Validate a hand-off blueprint and build the one-time workflow it would create, writing nothing.
+
+    Returns ``{'ok', 'workflow', 'errors', 'disclosure', 'loop_limit'}``: the normalized workflow
+    document exactly as the create would store it, what it covers for the hand-off card, and the
+    disclosed item limit N; or up to ten draft errors. Like ``dry_run_workflow_blueprint`` it
+    needs no Flask context and makes no write, queue or Microsoft 365 call. ``origin``'s
+    ``proposal_id`` is the hand-off id, which fixes the workflow id. ``loop_limit`` is the N an
+    earlier dry run disclosed, for an accept. ``authorize_scope`` replaces the workspace access
+    check, for tests. A malformed ``handles`` map or ``origin`` raises ``ValueError``.
+    """
+    user_id = _required_id(user_id, 'user id')
+    settings = _required_settings(settings)
+    origin = normalize_workflow_origin(origin, one_time=True)
+    workflow_id = orchestration_workflow_id(user_id, origin['proposal_id'])
+    if not _workflows_available(settings, user_info):
+        return _log_handoff_outcome(
+            'dry_run', _failure([draft_error('workflows_unavailable')], disclosure=None, loop_limit=None),
+        )
+    reader, resolver = _draft_seams(user_settings_reader, resolve_document)
+    prepared, handles, bound, errors = _checked_handoff(
+        user_id, blueprint, handles, settings=settings, loop_limit=loop_limit,
+        reader=reader, resolver=resolver, authorize_scope=authorize_scope,
+    )
+    if errors:
+        return _log_handoff_outcome('dry_run', _failure(errors, disclosure=None, loop_limit=None))
+    try:
+        payload = _handoff_payload(prepared, handles, workflow_id=workflow_id, max_items=bound)
+        workflow, _existing = build_personal_workflow_document(
+            user_id, payload, user_id, settings=settings, workflow_id=workflow_id, origin=origin,
+            user_settings_reader=reader, resolve_document=resolver, sanitize_source=_project_source,
+            one_time=True,
+        )
+    except WorkflowLoopLimitError:
+        raise
+    except (ValueError, PermissionError, LookupError, DocumentHeldError) as exc:
+        return _log_handoff_outcome(
+            'dry_run', _failure(_blueprint_build_errors(exc), disclosure=None, loop_limit=None),
+        )
+    return _log_handoff_outcome('dry_run', _success(
+        workflow, disclosure=handoff_disclosure(prepared, handles, max_items=bound), loop_limit=bound,
+    ))
+
+
+def create_personal_handoff_workflow(user_id, blueprint, handles, *, origin, settings, user_info=None,
+                                     loop_limit=None, resolve_document=None, user_settings_reader=None,
+                                     authorize_scope=None):
+    """Create the one-time workflow a hand-off describes, paused, at most once per hand-off.
+
+    Applies every ``dry_run_handoff_workflow`` check, then stores the workflow under
+    ``orchestration_workflow_id(user_id, origin['proposal_id'])`` with a one-time ``origin``.
+    Hand-offs do not count toward the cap on workflows created from chat. Accepting the same
+    hand-off again returns the stored workflow with ``created`` False; a record under that id that
+    another proposal or user made is ``handoff_kind_mismatch``. Returns ``{'ok', 'workflow',
+    'created', 'errors'}``.
+    """
+    user_id = _required_id(user_id, 'user id')
+    settings = _required_settings(settings)
+    origin = normalize_workflow_origin(origin, one_time=True)
+    handoff_id = origin['proposal_id']
+    workflow_id = orchestration_workflow_id(user_id, handoff_id)
+    if not _workflows_available(settings, user_info):
+        return _log_handoff_outcome('create', _failure([draft_error('workflows_unavailable')], created=False))
+    repeated = _repeated_handoff_create(user_id, workflow_id, handoff_id)
+    if repeated is not None:
+        return _log_handoff_outcome('create', repeated)
+
+    reader, resolver = _draft_seams(user_settings_reader, resolve_document)
+    prepared, handles, bound, errors = _checked_handoff(
+        user_id, blueprint, handles, settings=settings, loop_limit=loop_limit,
+        reader=reader, resolver=resolver, authorize_scope=authorize_scope,
+    )
+    if errors:
+        return _log_handoff_outcome('create', _failure(errors, created=False))
+    try:
+        payload = _handoff_payload(prepared, handles, workflow_id=workflow_id, max_items=bound)
+        workflow, created = create_personal_workflow_if_absent(
+            user_id, payload, workflow_id=workflow_id, origin=origin, actor_user_id=user_id, settings=settings,
+            user_settings_reader=reader, resolve_document=resolver, sanitize_source=_project_source,
+            one_time=True,
+        )
+    except WorkflowLoopLimitError:
+        raise
+    except WorkflowDefinitionConflict:
+        return _log_handoff_outcome('create', _handoff_conflict(user_id, workflow_id, handoff_id))
+    except (ValueError, PermissionError, LookupError, DocumentHeldError) as exc:
+        return _log_handoff_outcome('create', _failure(_blueprint_build_errors(exc), created=False))
+    return _handoff_created('create', user_id, workflow, created, handoff_id)
+
+
+def _handoff_edit_errors(workflow, *, user_id, settings):
+    """Refuse an edited hand-off that is no longer a manual, durable, local-runner workflow."""
+    errors = []
+    if workflow.get('trigger_type') != 'manual':
+        errors.append(draft_error('handoff_edit_invalid', ('trigger_type',)))
+    if workflow.get('definition_version') != 3 or workflow.get('durable_execution') is not True:
+        errors.append(draft_error('handoff_edit_invalid', ('durable_execution',)))
+    if workflow.get('m365_run_as_user_id'):
+        errors.append(draft_error('handoff_edit_invalid', ('m365_run_as_user_id',)))
+    runners = [((), workflow)] if workflow.get('runner_type') == 'agent' else []
+    for index, task in enumerate(workflow.get('tasks') or []):
+        runner = task.get('runner') if isinstance(task, dict) else None
+        if isinstance(runner, dict) and runner.get('type') == 'agent':
+            runners.append((('tasks', index, 'runner'), runner))
+    for path, runner in runners:
+        try:
+            agent_type = resolve_personal_workflow_agent_type(user_id, runner.get('selected_agent') or {}, settings)
+        except ValueError:
+            errors.append(draft_error('agent_unavailable', path))
+            continue
+        if agent_type != 'local':
+            errors.append(draft_error('handoff_agent_unsupported', path))
+    return errors
+
+
+def create_personal_handoff_workflow_from_payload(user_id, workflow_data, *, origin, settings, user_info=None,
+                                                  resolve_document=None, user_settings_reader=None):
+    """Create a hand-off's one-time workflow from an editor payload, paused, at most once.
+
+    For a hand-off the user edited before accepting: built exactly as a save builds it, under the
+    id and one-time ``origin`` the blueprint create would use. The workflow is always paused;
+    ``origin``, ``one_time`` and ``conversation_id`` in the payload are ignored, and a payload
+    ``id`` other than the derived one is ``workflow_conflict``. URL Access is refused
+    (``unsupported_field``) and its authorization fields dropped, as for a proposal. The edit
+    must keep a manual trigger, durable execution and no Microsoft 365 Run as
+    (``handoff_edit_invalid``), and every agent must be local. Returns ``{'ok', 'workflow',
+    'created', 'errors'}``.
+    """
+    user_id = _required_id(user_id, 'user id')
+    settings = _required_settings(settings)
+    origin = normalize_workflow_origin(origin, one_time=True)
+    handoff_id = origin['proposal_id']
+    workflow_id = orchestration_workflow_id(user_id, handoff_id)
+    payload = copy.deepcopy(workflow_data) if isinstance(workflow_data, dict) else {}
+    for field in (*URL_ACCESS_AUTHORIZATION_FIELDS, *HANDOFF_SERVER_FIELDS):
+        payload.pop(field, None)
+    payload_id = str(payload.pop('id', None) or '').strip()
+    if payload_id and payload_id != workflow_id:
+        return _log_handoff_outcome('create_from_payload', _failure(
+            [draft_error('workflow_conflict', ('id',), 'This draft names a different workflow.')], created=False,
+        ))
+    payload['is_enabled'] = False
+    if not _workflows_available(settings, user_info):
+        return _log_handoff_outcome(
+            'create_from_payload', _failure([draft_error('workflows_unavailable')], created=False),
+        )
+    repeated = _repeated_handoff_create(user_id, workflow_id, handoff_id)
+    if repeated is not None:
+        return _log_handoff_outcome('create_from_payload', repeated)
+    if _requests_url_access(payload):
+        return _log_handoff_outcome('create_from_payload', _failure(
+            [draft_error('unsupported_field', ('url_access_enabled',), DRAFT_URL_ACCESS_MESSAGE)], created=False,
+        ))
+
+    reader, resolver = _draft_seams(user_settings_reader, resolve_document)
+    try:
+        built, _existing = build_personal_workflow_document(
+            user_id, copy.deepcopy(payload), user_id, settings=settings, workflow_id=workflow_id, origin=origin,
+            user_settings_reader=reader, resolve_document=resolver, sanitize_source=_project_source,
+            one_time=True,
+        )
+        errors = _handoff_edit_errors(built, user_id=user_id, settings=settings)
+        if errors:
+            return _log_handoff_outcome('create_from_payload', _failure(errors, created=False))
+        workflow, created = create_personal_workflow_if_absent(
+            user_id, payload, workflow_id=workflow_id, origin=origin, actor_user_id=user_id, settings=settings,
+            user_settings_reader=reader, resolve_document=resolver, sanitize_source=_project_source,
+            one_time=True,
+        )
+    except WorkflowLoopLimitError:
+        raise
+    except WorkflowDefinitionConflict:
+        return _log_handoff_outcome('create_from_payload', _handoff_conflict(user_id, workflow_id, handoff_id))
+    except (ValueError, PermissionError, LookupError, DocumentHeldError) as exc:
+        return _log_handoff_outcome('create_from_payload', _failure(_payload_errors(exc), created=False))
+    return _handoff_created('create_from_payload', user_id, workflow, created, handoff_id)

@@ -64,7 +64,10 @@ ORIGIN = {
     "created_at": "2026-09-28T12:00:00+00:00",
 }
 USER_INFO = {"roles": ["User"]}
-DRAFT_MODULES = ("content_screening", "content_screening.contracts", "functions_workflow_drafts")
+DRAFT_MODULES = (
+    "content_screening", "content_screening.contracts", "functions_workflow_handoff_builder",
+    "functions_workflow_drafts",
+)
 WRITE_METHODS = frozenset({
     "create_item", "replace_item", "upsert_item", "delete_item", "patch_item", "execute_item_batch",
 })
@@ -163,8 +166,12 @@ class DraftHarness(SaveParityHarness):
             )
             _load("functions_workflow_bindings", APP_ROOT / "functions_workflow_bindings.py")
             contracts = _load("content_screening.contracts", APP_ROOT / "content_screening" / "contracts.py")
+            builder = _load("functions_workflow_handoff_builder", APP_ROOT / "functions_workflow_handoff_builder.py")
             drafts = _load("functions_workflow_drafts", APP_ROOT / "functions_workflow_drafts.py")
-        self.draft_modules = {"content_screening.contracts": contracts, "functions_workflow_drafts": drafts}
+        self.draft_modules = {
+            "content_screening.contracts": contracts, "functions_workflow_handoff_builder": builder,
+            "functions_workflow_drafts": drafts,
+        }
         self.contracts = contracts
         self.drafts = drafts
 
