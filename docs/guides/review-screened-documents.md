@@ -4,7 +4,7 @@ title: "Screen and review workspace documents"
 description: "Inspect sensitive or manipulative extracted content, keep it out of knowledge use, and release only a reviewed version."
 section: "Guides"
 audience: user
-version: "0.261.127"
+version: "0.261.232"
 ---
 
 ## What this does
@@ -14,6 +14,8 @@ Content screening checks workspace knowledge for configured PII, patterns, value
 **Implemented in version: 0.261.106**, tracked in `application\single_app\config.py`.
 
 Use it when a document might contain sensitive data or instructions aimed at an AI rather than a human reader. Text can enter extraction even when its appearance makes it hard to notice in the original.
+
+Screening checks documents as they enter a workspace: files you upload, files you attach in chat (they're saved to your workspace), and File Sync. Anything built from those documents isn't screened or checked again. This includes AI replies, saved Analyze results, workflow and orchestration outputs, and generated files.
 
 ## Configure an appropriate baseline
 
@@ -97,6 +99,16 @@ After remediation, the original stays restricted to reviewers; ordinary citation
 
 Review original files as potentially untrusted content. Do not follow links or instructions in the document simply because they appeared in a review view.
 
+## What a hold does to earlier results
+
+A hold stops the document from being used as an input from now on. It doesn't take back anything already built from it.
+
+- Search, document selection, previews, downloads and opening the document from a citation are refused until review completes.
+- If the document was attached in chat, the attachment shows "Source content is unavailable pending document screening and review." in the conversation.
+- AI replies and their citation excerpts stay in the conversation and its exports. So do saved Analyze results, workflow and orchestration outputs, and generated files. Anyone who can open that conversation, workflow or run can still see them.
+
+Deleting, rejecting or screening a document again works the same way. To reflect a reviewed or replaced document, run a new search or Analyze against it.
+
 ## Common problems
 
 | Symptom | Meaning and response |
@@ -109,7 +121,7 @@ Review original files as potentially untrusted content. Do not follow links or i
 | The document has a warning after approval | It was approved with flags; the warning is intentional. |
 | An original is missing | Source-backed inspection or re-extraction may be unavailable. A table schema summary does not cover the underlying cell data. |
 | Scanning was disabled but a document is still held | Disabling future scans does not approve existing held content. |
-| An older attachment or tool result is unavailable in conversation history | Its source is held, or that old result cannot prove it used the currently approved revision. Complete review and run a new query against the approved document. |
+| A workspace attachment is unavailable in conversation history | Its document is held, deleted, or no longer available to you. AI replies and their citations stay visible. Complete review, then attach or search the approved document again. |
 | Another person cannot open the evidence | Review access is scoped. Administrative scan permission or ordinary shared-read access is not sufficient. |
 
 ## Related

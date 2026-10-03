@@ -1,12 +1,15 @@
 # test_analyze_backend_saved_integration.py
 """
 Behavioral integration tests for Analyze presentation and saved-data chat reuse.
-Version: 0.261.122
+Version: 0.261.232
 Implemented in: 0.261.109
+Container-only saved-result access covered in: 0.261.232
 
 Real adapter, artifact, history, chat route and shared section-reader functions
 run against serialized storage, Flask requests and deterministic model doubles.
 No original document extraction, workspace upload or live Azure call is made.
+Saved follow-ups and history take their access from the conversation, not from
+the documents the analysis read.
 """
 
 import ast
@@ -568,6 +571,14 @@ def chat(saved_chat, monkeypatch):
         "collect_conversation_metadata": lambda **kwargs: kwargs["conversation_item"],
         "_build_agent_selection_metadata": lambda *args: {},
         "merge_cited_documents_into_conversation": lambda *args: None,
+        # Chat text checks are off in this fixture; their real behavior has its own tests.
+        "check_chat_content": lambda text, stage, **kwargs: SimpleNamespace(blocked=False),
+        "attach_chat_check": lambda document, result: None,
+        "checked_history_messages": lambda values, **kwargs: list(values or []),
+        "prepare_checked_reply": lambda message, **kwargs: message,
+        "persist_chat_reply": lambda container, message: container.upsert_item(message),
+        "reply_is_retracted": lambda message: False,
+        "record_chat_content_incident": lambda *args, **kwargs: None,
     })
     names = {
         "SavedAnalysisFollowupUnsupported", "_invoke_saved_analysis_chat_reply",
@@ -757,11 +768,19 @@ def test_saved_followup_blocks_full_input_that_exceeds_selected_model_budget(cha
     assert not [item for item in chat.messages.documents.values() if item["id"] != "assistant-1" and item["role"] == "assistant"]
 
 
-def test_revocation_blocks_saved_followup_before_model_or_assistant_persistence(chat):
+def test_source_revocation_does_not_block_saved_followup(chat):
     chat.source_state["source_allowed"] = False
     response = chat.client.post("/api/chat", json=followup_body(chat))
+    assert response.status_code == 200, response.get_json()
+    assert response.get_json()["reply"].startswith("All 60 saved controls")
+    assert len(chat.state["model_calls"]) == 1
+
+
+def test_conversation_loss_blocks_saved_followup_before_model_or_assistant_persistence(chat):
+    chat.source_state["conversation_allowed"] = False
+    response = chat.client.post("/api/chat", json=followup_body(chat))
     assert response.status_code == 403
-    assert "source access" in response.get_json()["error"]
+    assert "source access" not in response.get_json()["error"]
     assert chat.state["model_calls"] == []
     assert len(chat.messages.documents) == 1
 
@@ -901,7 +920,7 @@ def test_direct_chat_consumes_all_saved_records_in_model_sized_pages(chat):
     assert len(calls) > 1 and chat.state["analyze_calls"] == []
 
 
-def test_history_propagates_identity_and_withholds_derived_text_after_revocation(chat):
+def test_history_propagates_identity_and_keeps_derived_text_after_source_revocation(chat):
     origin = deepcopy(chat.messages.documents["assistant-1"])
     with chat.app.test_request_context():
         chat.namespace["build_conversation_history_segments"]([origin], 10)
@@ -916,6 +935,11 @@ def test_history_propagates_identity_and_withholds_derived_text_after_revocation
     chat.source_state["source_allowed"] = False
     with chat.app.test_request_context():
         segments = chat.namespace["build_conversation_history_segments"]([origin, derived], 10)
+        assert chat.namespace["_analysis_history_metadata"]() == lineage
+    assert "PRIVATE-COPIED-EXPLANATION" in json.dumps(segments, default=list)
+    chat.source_state["conversation_allowed"] = False
+    with chat.app.test_request_context():
+        withheld = chat.namespace["build_conversation_history_segments"]([origin, derived], 10)
         assert chat.namespace["_analysis_history_metadata"]() == {}
-    assert "PRIVATE-COPIED" not in json.dumps(segments, default=list)
-    assert "unavailable" in json.dumps(segments, default=list).lower()
+    assert "PRIVATE-COPIED" not in json.dumps(withheld, default=list)
+    assert "unavailable" in json.dumps(withheld, default=list).lower()

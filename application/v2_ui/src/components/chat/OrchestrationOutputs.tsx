@@ -78,7 +78,7 @@ function OutputCard({
     // could act on, or a scheduled time they could not otherwise see, earns a sentence.
     const note = accessDenied ? 'Current access could not be verified. Downloads and retries are withheld.'
         : output.available === false && !output.error_code && output.state !== 'cancelled'
-            ? 'This file is unavailable under current source access or screening. Other ready files remain available.'
+            ? 'This file is unavailable because current access could not be confirmed. Other ready files remain available.'
         : output.available === false || output.state === 'failed' || output.state === 'cancelled'
             ? output.message || STATUS_FALLBACK
         : output.state === null ? STATUS_FALLBACK : '';

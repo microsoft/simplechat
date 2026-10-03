@@ -498,7 +498,8 @@ def _sources(step, context, service, *, require_current, require_replay=False):
         ):
             raise NativeOrchestrationBridgeError("native_selection_unsupported")
     snapshots = analysis_source_snapshot(manifest)
-    service.access.authorize_sources(snapshots, require_snapshot=require_current)
+    # The native engine reads the uploaded tabular file itself, so this is an input read.
+    service.access.authorize_input_sources(snapshots, require_snapshot=require_current)
     return deepcopy(manifest), snapshots
 
 

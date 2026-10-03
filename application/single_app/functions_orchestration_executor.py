@@ -879,12 +879,18 @@ def _run_dependency_step(
         manifest = _dependency_source_manifest(context, document_ids, settings, cancel_probe)
         if named_sources:
             by_id = {source['document_id']: source for source in manifest}
+            named_by = readers['sources'].reference.producer
+            # Sources named earlier in this attempt must still be the version that step read.
+            # A list reused from an earlier run or attempt only selects documents: they pass
+            # the input check above and are read at their current version.
+            same_attempt = (named_by.run_id, named_by.attempt_index) == (producer.run_id, producer.attempt_index)
+            fields = ('scope', 'scope_id', 'source_version', 'source_revision') if same_attempt else ('scope', 'scope_id')
             for source in named_sources:
                 current = by_id.get(source['document_id'], {})
-                if any(
-                    current.get(field) != source.get(field)
-                    for field in ('scope', 'scope_id', 'source_version', 'source_revision')
-                ) or (source.get('content_sha256') is not None and current.get('content_sha256') != source['content_sha256']):
+                if any(current.get(field) != source.get(field) for field in fields) or (
+                    same_attempt and source.get('content_sha256') is not None
+                    and current.get('content_sha256') != source['content_sha256']
+                ):
                     raise ResultUnavailableError('result_source_snapshot_changed')
         scoped = _dependency_adapter_context(context, manifest, step, input_fingerprint)
         binding_scope = getattr(context, 'step_model_scope', None)

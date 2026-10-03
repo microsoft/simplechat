@@ -1,12 +1,13 @@
 # test_orchestration_dependency_runtime.py
 """Real Gather / Reason / Render compiler, executor, composition, retained readers and checkpoints.
 
-Version: 0.261.209
+Version: 0.261.232
 Implemented in: 0.261.127
 Pending-Gather regression implemented in: 0.261.129
 Single orchestration contract updated in: 0.261.139
 Partial-input refusal diagnostics implemented in: 0.261.191
 Missing signed-in session failure messages implemented in: 0.261.209
+Container-only retained-result reads covered in: 0.261.232
 External model/search/storage I/O is isolated; no paid or provider calls.
 """
 
@@ -769,10 +770,51 @@ def test_checkpoint_contains_refs_not_datasets_and_wait_has_separate_manifest(ru
     assert completed_payload == payload
 
 
-@pytest.mark.parametrize('change', ['revocation', 'screening', 'revision', 'snapshot_revision', 'deletion', 'cancel'])
+@pytest.mark.parametrize('change', ['deletion', 'cancel'])
 def test_current_access_and_cancellation_fail_closed(runtime, change):
     case = runtime.make([compose('producer'), compose('answer', inputs={'source': source_input('producer', 'answer')})],
                         ['Should not be called'], final_response=binding('answer'))
+    called = []
+
+    def produce(step, context, **kwargs):
+        called.append(step['step_id'])
+        if step['step_id'] == 'answer':
+            return runtime.composition.adapter_compose(step, context, **kwargs)
+        task = context.result_service.persist_task_result(
+            producer=context.result_producer(step), role='reason', status='complete',
+            outputs=[runtime.NamedOutput('answer', 'markdown-v1', 'Source-bound answer.', runtime.complete(1))],
+            sources=[case.fixture.sources['document-1']], origin='grounded',
+            guard_token=context.result_guard_token_for_step(step['step_id']),
+        )
+        return runtime.schema.build_step_result(task_result=task)
+
+    def event(value):
+        if value.get('step_id') != 'producer' or value.get('phase') != 'completed':
+            return
+        if change == 'deletion':
+            case.fixture.conversation['orchestration_deleted'] = True
+        else:
+            case.fixture.runs['run-1']['cancellation_requested_at'] = 'server-stop'
+
+    result = execute(
+        runtime, case, get_adapter=lambda capability: produce, emit=event,
+        cancel_requested=lambda: bool(case.fixture.runs['run-1'].get('cancellation_requested_at')),
+    )
+    assert result['status'] == ('cancelled' if change == 'cancel' else 'failed')
+    assert result['steps'][0]['status'] == 'completed'
+    assert case.model.calls == []
+    assert 'Source-bound answer.' not in result['message']
+    assert result['outputs'] == []
+    assert result['result_outputs'][0]['status'] == 'unavailable'
+    assert 'reference' not in result['result_outputs'][0]
+
+
+@pytest.mark.parametrize('change', ['revocation', 'screening', 'revision', 'snapshot_revision'])
+def test_source_changes_after_a_producer_do_not_block_its_retained_result(runtime, change):
+    # 0.261.232: a later step reads the producer's retained result, which takes its access
+    # from the conversation and run. The documents behind it are provenance, not inputs.
+    case = runtime.make([compose('producer'), compose('answer', inputs={'source': source_input('producer', 'answer')})],
+                        ['Answer from the retained result.'], final_response=binding('answer'))
     called = []
 
     def produce(step, context, **kwargs):
@@ -795,24 +837,15 @@ def test_current_access_and_cancellation_fail_closed(runtime, change):
             case.fixture.denied.add('document-1')
         elif change == 'screening':
             case.fixture.held.add('document-1')
-        elif change in ('revision', 'snapshot_revision'):
-            case.fixture.sources['document-1']['source_revision'] = 'changed'
-        elif change == 'deletion':
-            case.fixture.conversation['orchestration_deleted'] = True
         else:
-            case.fixture.runs['run-1']['cancellation_requested_at'] = 'server-stop'
+            case.fixture.sources['document-1']['source_revision'] = 'changed'
 
-    result = execute(
-        runtime, case, get_adapter=lambda capability: produce, emit=event,
-        cancel_requested=lambda: bool(case.fixture.runs['run-1'].get('cancellation_requested_at')),
-    )
-    assert result['status'] == ('cancelled' if change == 'cancel' else 'failed')
-    assert result['steps'][0]['status'] == 'completed'
-    assert case.model.calls == []
-    assert 'Source-bound answer.' not in result['message']
-    assert result['outputs'] == []
-    assert result['result_outputs'][0]['status'] == 'unavailable'
-    assert 'reference' not in result['result_outputs'][0]
+    result = execute(runtime, case, get_adapter=lambda capability: produce, emit=event)
+    assert result['status'] == 'completed', result
+    assert called == ['producer', 'answer']
+    assert result['message'] == 'Answer from the retained result.'
+    assert len(case.model.calls) == 1
+    assert 'Source-bound answer.' in json.dumps(case.model.calls[0][0])
 
 
 def test_default_registry_and_plan_admission_use_the_single_contract(runtime):

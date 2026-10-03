@@ -4,7 +4,7 @@ title: "Read and discuss saved Analyze results"
 description: "Read the answer first, browse saved findings and evidence, and ask follow-up questions without requesting another source pass."
 section: "Guides"
 audience: user
-version: "0.261.115"
+version: "0.261.232"
 ---
 
 ## What this does
@@ -65,7 +65,8 @@ download actions, such as **Download CSV**, when an output is available. Downloa
 are optional supporting outputs, not a prerequisite for reading or discussing the
 findings.
 
-Downloads check current artifact and source access before returning the file.
+Downloads check that you can still open this conversation and that the file is
+intact before returning it. The documents the analysis read are not checked again.
 If a download fails, the conversation remains open and the download button becomes
 available again. Refresh the conversation before retrying a stale or unavailable
 file. A preview opening successfully does not establish that a download will work.
@@ -137,24 +138,29 @@ instead of asking through the saved-analysis notice.
 
 ## Understand unavailable and stale results
 
-Saved Analyze results produced by this feature require current access to every
-contributing source for new reads or reuse. Keeping access to the conversation
-alone is not sufficient. If access to any contributing source is lost, the entire
-original saved result becomes unavailable, including its evidence, saved
-explanations derived from it, and original exports. A mixed-source result is not
-silently reduced to the sources you can still access.
+Since **0.261.232**, a saved Analyze result takes its access from the conversation
+it was saved in. Anyone who can open that conversation can read the result, its
+evidence, explanations based on it, and its original exports. This holds even if a
+document the analysis read is later deleted, replaced with a new upload, or held
+for content screening. Nothing already produced is withdrawn. A newer version of a
+document is reflected only when you run a new Analyze on it.
+
+The result becomes unavailable when you can no longer open its conversation, or
+when its saved data fails an integrity check, for example because it no longer
+matches the result your browser selected.
 
 **Already explicitly published workspace copies are different:** they remain
 separate documents governed by the destination workspace's permissions and
-lifecycle. Losing access to an original contributing source does not replace
-those destination permissions. Saving a result in its originating chat is not
-workspace publication. Bytes already delivered or downloaded cannot be recalled.
+lifecycle. Saving a result in its originating chat is not workspace publication.
+Bytes already delivered or downloaded cannot be recalled.
 
 An unavailable or stale notice is not an empty successful analysis:
 
-- **Saved analysis unavailable** can indicate removal or changed access. Result
-  reading, **Ask about this analysis**, and original result export controls are
-  unavailable. A sign-in notice asks you to sign in again before checking access.
+- **Saved analysis unavailable** can indicate that the conversation or its saved
+  result was removed, that you lost access to the conversation, or that the saved
+  data failed an integrity check. Result reading, **Ask about this analysis**, and
+  original result export controls are unavailable. A sign-in notice asks you to
+  sign in again before checking access.
 - **Saved analysis is stale or has changed** asks you to reopen the conversation
   to use its current saved result, rather than silently switching results.
 - **Retry findings** or **Retry evidence** appears after a temporary loading

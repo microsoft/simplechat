@@ -1,11 +1,13 @@
 # test_saved_analysis_routes.py
 """
 Functional tests for the saved Analyze result reader route.
-Version: 0.261.109
+Version: 0.261.232
 Implemented in: 0.261.109
+Container-only saved-result access covered in: 0.261.232
 
 The production route runs against serialized saved results, including page
-bounds, current source access, evidence selection, and stale references.
+bounds, conversation access, evidence selection, and stale references. A saved
+result takes its access from its conversation, not from its source documents.
 """
 
 import ast
@@ -80,12 +82,22 @@ def test_second_page_is_available_without_reanalysis(analysis_client):
     assert response.json["next_offset"] == 50
 
 
-def test_source_revocation_returns_no_result_data(analysis_client):
+def test_source_revocation_keeps_the_saved_result_readable(analysis_client):
     client, state, fixture = analysis_client
     fixture["state"]["source_allowed"] = False
     response = client.get(result_url(fixture))
+    assert response.status_code == 200
+    assert response.json["records"]
+    assert fixture["state"]["resolutions"] == 0
+
+
+def test_conversation_denial_returns_no_result_data(analysis_client):
+    client, state, fixture = analysis_client
+    fixture["state"]["conversation_allowed"] = False
+    response = client.get(result_url(fixture))
     assert response.status_code == 403
     assert set(response.json) == {"error"}
+    assert "source" not in response.json["error"].lower()
     assert "Control" not in response.get_data(as_text=True)
 
 

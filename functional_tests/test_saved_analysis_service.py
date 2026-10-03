@@ -1,11 +1,14 @@
 # test_saved_analysis_service.py
 """
 Functional tests for saved Analyze data in chat and follow-up reads.
-Version: 0.261.109
+Version: 0.261.232
 Implemented in: 0.261.109
+Container-only saved-result access covered in: 0.261.232
 
 The production result builder/readers use serialized sections and authorized
-message/source seams without re-uploading, indexing, or analyzing source files.
+message seams without re-uploading, indexing, or analyzing source files. A saved
+result takes its access from its conversation: its source documents are recorded
+as provenance and are not checked again when it is saved or read.
 """
 
 import hashlib
@@ -146,15 +149,18 @@ def test_evidence_is_selected_from_the_same_saved_record(saved_chat):
     assert page["evidence"][0]["quote"] == "Owner: unassigned"
 
 
-def test_source_revocation_blocks_record_and_evidence_reads(saved_chat):
+def test_source_revocation_does_not_hide_record_and_evidence_reads(saved_chat):
     fixture = saved_chat
     fixture["state"]["source_allowed"] = False
     context = saved.saved_analysis_context(fixture["descriptor"])
-    for representation in ("records", "evidence"):
-        with pytest.raises(access.AnalysisResultUnavailable):
-            saved.read_saved_analysis_page(
-                "reader", context, representation=representation, record_id="record-0", **read_options(fixture)
-            )
+    records = saved.read_saved_analysis_page("reader", context, **read_options(fixture))
+    evidence = saved.read_saved_analysis_page(
+        "reader", context, representation="evidence", record_id="record-0", **read_options(fixture)
+    )
+    assert records["total_records"] == 60 and records["source_count"] == 1
+    assert records["source_snapshot_changed"] is False
+    assert [item["evidence_id"] for item in evidence["evidence"]] == ["evidence-0"]
+    assert fixture["state"]["resolutions"] == 0
 
 
 def test_conversation_denial_happens_before_result_storage_reads(saved_chat):
@@ -183,9 +189,25 @@ def test_masked_analysis_cannot_be_recovered_through_record_pages(saved_chat):
     assert failure.value.code == "analysis_message_masked"
 
 
-def test_history_withholds_content_and_citations_after_revocation(saved_chat):
+def test_history_keeps_content_and_citations_after_source_revocation(saved_chat):
     fixture = saved_chat
     fixture["state"]["source_allowed"] = False
+    original = deepcopy(fixture["message"])
+    reader = lambda user_id, context: saved.load_saved_analysis(user_id, context, **read_options(fixture))
+    messages = saved.sanitize_saved_analysis_messages(
+        [fixture["message"], {"id": "ordinary", "content": "Unrelated message."}], "reader", result_reader=reader,
+    )
+    assert messages[0]["content"] == original["content"]
+    assert messages[0]["agent_citations"] == original["agent_citations"]
+    assert messages[0]["metadata"]["saved_analysis"].get("available") is not False
+    assert messages[1]["content"] == "Unrelated message."
+    assert fixture["state"]["resolutions"] == 0
+    assert fixture["message"] == original
+
+
+def test_history_withholds_content_and_citations_when_the_conversation_is_lost(saved_chat):
+    fixture = saved_chat
+    fixture["state"]["conversation_allowed"] = False
     original = deepcopy(fixture["message"])
     messages = saved.sanitize_saved_analysis_messages(
         [fixture["message"], {"id": "ordinary", "content": "Unrelated message."}],

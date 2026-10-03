@@ -1,12 +1,14 @@
 # test_orchestration_export_sources.py
 """
 Authorized retained-result to shared-export integration.
-Version: 0.261.126
+Version: 0.261.232
 Implemented in: 0.261.126
+Container-only retained-result access covered in: 0.261.232
 
 Uses real result persistence/readers and serializers with external storage and
 source access doubled. Verifies full consumption, exact counts, explicit public
-projections, revocation, and no replacement of authoritative data with previews.
+projections, producer revocation, and no replacement of authoritative data with
+previews. Source documents of a retained result are never reread for an export.
 """
 
 import csv
@@ -20,7 +22,6 @@ from pathlib import Path
 
 import pytest
 
-from functions_analysis_access import AnalysisResultUnavailable
 from functions_generated_file_exports import GeneratedFileExportRequest, build_generated_file_export
 from functions_generated_export_contracts import GeneratedFileExportError
 from functions_orchestration_export_sources import (
@@ -214,13 +215,27 @@ def test_a_partial_iteration_is_not_an_integrity_receipt():
     assert complete_records == ROWS
 
 
-def test_access_revocation_prevents_render_and_invalidates_an_existing_receipt():
+def test_source_revocation_keeps_the_receipt_and_renders():
     fixture = ResultFixture()
     saved = fixture.save()
     bound = open_orchestration_export_source(fixture.service, saved.output("findings"))
     records = list(bound.iter_records())
     bound.require_complete_consumption()
     fixture.denied.add("document-1")
+    fixture.held.add("document-1")
+    bound.require_complete_consumption()
+    render(bound)
+    assert records == ROWS
+    assert fixture.source_reads == []
+
+
+def test_producer_revocation_prevents_render_and_invalidates_an_existing_receipt():
+    fixture = ResultFixture()
+    saved = fixture.save()
+    bound = open_orchestration_export_source(fixture.service, saved.output("findings"))
+    records = list(bound.iter_records())
+    bound.require_complete_consumption()
+    fixture.runs["run-1"]["checkpoints_deleted"] = True
     with pytest.raises(PermissionError):
         bound.require_complete_consumption()
     with pytest.raises(PermissionError):
@@ -228,13 +243,13 @@ def test_access_revocation_prevents_render_and_invalidates_an_existing_receipt()
     assert records == ROWS
 
 
-def test_revocation_during_iteration_is_detected_at_exhaustion():
+def test_producer_revocation_during_iteration_is_detected_at_exhaustion():
     fixture = ResultFixture()
     saved = fixture.save()
     bound = open_orchestration_export_source(fixture.service, saved.output("findings"))
     records = bound.iter_records()
     first = next(records)
-    fixture.denied.add("document-1")
+    fixture.conversation["orchestration_deleted"] = True
     with pytest.raises(PermissionError):
         list(records)
     assert first == ROWS[0]
@@ -259,7 +274,7 @@ def test_rebinding_reader_metadata_fails_instead_of_changing_the_export(field):
     assert bound.integrity_verified is False
 
 
-def test_current_source_requirement_does_not_silently_replace_a_saved_snapshot():
+def test_current_source_requirement_reads_the_saved_snapshot_after_a_source_change():
     fixture = ResultFixture()
     saved = fixture.save(source_policy="snapshot")
     fixture.sources["document-1"]["source_revision"] = "revision-2"
@@ -267,10 +282,11 @@ def test_current_source_requirement_does_not_silently_replace_a_saved_snapshot()
     records = list(bound.iter_records())
     bound.require_complete_consumption()
     assert records == ROWS
-    with pytest.raises(AnalysisResultUnavailable):
-        open_orchestration_export_source(
-            fixture.service, saved.output("findings"), require_current_sources=True,
-        )
+    current = open_orchestration_export_source(
+        fixture.service, saved.output("findings"), require_current_sources=True,
+    )
+    assert list(current.iter_records()) == ROWS
+    assert fixture.source_reads == []
 
 
 @pytest.mark.parametrize("extra", [False, True])

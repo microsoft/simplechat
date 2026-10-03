@@ -1,12 +1,15 @@
 # test_orchestration_output_history_routes.py
 """Verify retained file history and conversation-cleanup classification.
 
-Version: 0.261.127
+Version: 0.261.232
 Implemented in: 0.261.127
+Container-only retained-file history covered in: 0.261.232
 
 Exercise conversation ownership, the public screening/history pipeline, current
 output authorization and committed cards. Only external storage/authority I/O
 is doubled; history reads must not render, publish or mutate saved messages.
+Retained files take their access from their conversation and run, so history
+never reads the documents behind their retained results.
 """
 
 import importlib
@@ -71,7 +74,7 @@ def test_only_retained_file_records_bypass_legacy_conversation_purges(history_ru
     assert message == before
 
 
-@pytest.mark.parametrize("revocation", ["source", "screening"])
+@pytest.mark.parametrize("revocation", ["source", "screening", "source_producer_deleted"])
 def test_history_refreshes_current_siblings_without_writing_or_replaying(history_runtime, revocation):
     world = history_runtime.world
     restricted_source = world.retain_source("document-2")
@@ -81,23 +84,33 @@ def test_history_refreshes_current_siblings_without_writing_or_replaying(history
     message["metadata"]["orchestration"]["outputs"][0]["source_ref"] = "PRIVATE cached binding"
     world.messages.create_item(message)
     stored_messages = deepcopy(world.messages.items)
-    writes = (world.runs.sequence, world.results.container.sequence, world.messages.sequence)
     if revocation == "source":
         world.results.denied.add("document-2")
-    else:
+    elif revocation == "screening":
         world.results.held.add("document-2")
+    else:
+        run = world.runs.read_item(restricted_source.producer.run_id, "conversation-1")
+        run["checkpoints_deleted"] = True
+        world.runs.upsert_item(run)
+    writes = (world.runs.sequence, world.results.container.sequence, world.messages.sequence)
     response = read_history(history_runtime)
     body = response.get_json()
     assert response.status_code == 200, body
     restored = next(item for item in body["messages"] if item["id"] == message["id"])
     current = {item["output_id"]: item for item in restored["metadata"]["orchestration"]["outputs"]}
+    # 0.261.232: a file takes its access from its conversation and the run that retained its
+    # input. Revoking or holding a document behind that result does not hide the file.
+    hidden = revocation == "source_producer_deleted"
     assert current[restricted["output_id"]]["state"] == "completed"
-    assert current[restricted["output_id"]]["available"] is False
-    assert current[restricted["output_id"]]["artifact_message_id"] is None
+    assert current[restricted["output_id"]]["available"] is not hidden
+    assert current[restricted["output_id"]]["artifact_message_id"] == (
+        None if hidden else restricted["artifact_message_id"]
+    )
     assert current[available["output_id"]]["available"] is True
-    assert [card["artifact_message_id"] for card in restored["generated_artifacts"]] == [
-        available["artifact_message_id"],
-    ]
+    assert {card["artifact_message_id"] for card in restored["generated_artifacts"]} == (
+        {available["artifact_message_id"]} if hidden
+        else {available["artifact_message_id"], restricted["artifact_message_id"]}
+    )
     assert "PRIVATE cached binding" not in response.get_data(as_text=True)
     assert restored["content"] == message["content"] and not restored.get("content_unavailable")
     assert world.messages.items == stored_messages
@@ -107,6 +120,37 @@ def test_history_refreshes_current_siblings_without_writing_or_replaying(history
 
 @pytest.mark.parametrize("failure", [
     "source_io", "source_unverified", "screening_configuration", "screening_transient",
+])
+def test_history_never_reaches_source_services_for_retained_files(history_runtime, failure):
+    world = history_runtime.world
+    completed = world.run(world.prepare())
+    message = world.output_history()
+    world.messages.create_item(message)
+    error = {
+        "source_io": TimeoutError("PRIVATE source outage"),
+        "source_unverified": ValueError("PRIVATE malformed authority"),
+        "screening_configuration": ScreeningConfigurationError("PRIVATE screening configuration"),
+        "screening_transient": ScreeningError("PRIVATE screening outage"),
+    }[failure]
+    calls = []
+
+    def fail(*args, **kwargs):
+        calls.append(failure)
+        raise error
+
+    world.service.results.access.source_metadata_reader = fail
+    world.service.results.access.source_resolver = fail
+    response = read_history(history_runtime)
+    body = response.get_json()
+    assert response.status_code == 200, body
+    restored = next(item for item in body["messages"] if item["id"] == message["id"])
+    output = restored["metadata"]["orchestration"]["outputs"][0]
+    assert output["available"] is True and output["artifact_message_id"] == completed["artifact_message_id"]
+    assert calls == [] and "PRIVATE" not in response.get_data(as_text=True)
+    assert len(world.render_calls) == world.blobs.uploads == 1
+
+
+@pytest.mark.parametrize("failure", [
     "directory", "output_storage", "result_storage", "message_storage",
     "configuration", "configuration_invalid",
 ])
@@ -134,21 +178,12 @@ def test_history_outage_is_not_a_screening_hold_missing_conversation_or_empty_su
 
         world.service.authorize_execution = fail
     else:
-        error = {
-            "source_io": TimeoutError("PRIVATE source outage"),
-            "source_unverified": ValueError("PRIVATE malformed authority"),
-            "screening_configuration": ScreeningConfigurationError("PRIVATE screening configuration"),
-            "screening_transient": ScreeningError("PRIVATE screening outage"),
-            "directory": ExternalIdentityServiceError("external_identity_timeout"),
-        }[failure]
+        error = ExternalIdentityServiceError("external_identity_timeout")
 
         def fail(*args, **kwargs):
             raise error
 
-        if failure == "directory":
-            world.service.authorize_execution = fail
-        else:
-            world.service.results.access.source_metadata_reader = fail
+        world.service.authorize_execution = fail
     response = read_history(history_runtime)
     body = response.get_json()
     assert response.status_code == 503, body

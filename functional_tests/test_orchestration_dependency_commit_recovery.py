@@ -1,9 +1,10 @@
 # test_orchestration_dependency_commit_recovery.py
 """Declared-input receipts close the v2 producer-commit/checkpoint crash window.
 
-Version: 0.261.139
+Version: 0.261.232
 Implemented in: 0.261.127
 Single orchestration contract updated in: 0.261.139
+Container-only receipt recovery covered in: 0.261.232
 Uses real facade, storage, checkpoint and recovery APIs with isolated external I/O.
 """
 
@@ -161,8 +162,8 @@ def test_receipt_recovery_rejects_corruption_or_changed_identity_without_replay(
 
 
 @pytest.mark.parametrize('status', ['complete', 'partial'])
-@pytest.mark.parametrize('access_change', [None, 'revoked', 'held', 'revision'])
-def test_partial_and_grounded_receipts_keep_completeness_and_current_access(durable, status, access_change):
+@pytest.mark.parametrize('access_change', [None, 'revoked', 'held', 'revision', 'conversation'])
+def test_partial_and_grounded_receipts_keep_completeness_and_container_access(durable, status, access_change):
     runtime = durable.runtime
 
     def producer(step, context, **kwargs):
@@ -193,11 +194,15 @@ def test_partial_and_grounded_receipts_keep_completeness_and_current_access(dura
         durable.case.fixture.held.add('document-1')
     elif access_change == 'revision':
         durable.case.fixture.sources['document-1']['source_revision'] = 'changed'
-    if access_change is not None:
+    elif access_change == 'conversation':
+        durable.case.fixture.conversation['orchestration_deleted'] = True
+    if access_change == 'conversation':
         with pytest.raises(runtime.checkpoints.CheckpointError) as failure:
             durable.recovery.validate_resume(record, durable.fresh_context(record), durable.case.settings, lambda: True)
         assert failure.value.code == 'result_unavailable'
     else:
+        # 0.261.232: a committed receipt takes its conversation's and run's access. The
+        # documents it was produced from are provenance and are not rechecked on recovery.
         payloads = durable.recovery.validate_resume(
             record, durable.fresh_context(record), durable.case.settings, lambda: True,
         )

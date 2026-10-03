@@ -1,11 +1,14 @@
 # test_analysis_saved_source_access.py
 """
-Functional tests for current source access on saved Analyze results.
-Version: 0.261.107
+Functional tests for the current-source check used by in-progress Analyze reads.
+Version: 0.261.232
 Implemented in: 0.261.107
+Limited to input reads in: 0.261.232
 
-Saved results require access to every contributor; large selections are resolved
-without dropping sources, and historical explanation differs from checkpoint reuse.
+An Analyze run that is still reading documents (a resumed checkpoint or a native
+computation) requires access to every input; large selections are resolved without
+dropping sources, and a changed input cannot resume a checkpoint. Saved results do
+not call this check: they take their access from their conversation or run.
 """
 
 from copy import deepcopy
@@ -54,7 +57,7 @@ def test_source_resolution_reads_every_source_in_bounded_batches(count):
     assert all(len(batch) <= access.SOURCE_MANIFEST_MAX_SOURCES for batch, _ in calls)
 
 
-def test_one_revoked_contributor_blocks_the_entire_mixed_result():
+def test_one_revoked_input_blocks_resuming_a_mixed_analysis():
     original = [
         source("personal"),
         source("group", "group", "group-1"),
@@ -76,7 +79,7 @@ def test_a_different_authorized_scope_cannot_substitute_for_the_original(field, 
 
 
 @pytest.mark.parametrize("field", ["source_version", "source_revision"])
-def test_history_can_be_explained_but_changed_sources_cannot_resume(field):
+def test_changed_input_is_reported_and_cannot_resume_a_checkpoint(field):
     original = [source()]
     fresh = deepcopy(original)
     fresh[0][field] = "changed"

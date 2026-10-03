@@ -1,11 +1,14 @@
 # test_analysis_artifact_publication.py
 """
 Functional tests for explicit existing-artifact publication and retry receipts.
-Version: 0.261.137
+Version: 0.261.232
 Implemented in: 0.261.109
+Saved-result access wording aligned in: 0.261.232
 
 Exercise real publication, normalization, and route bodies with Cosmos/queue
 doubles. No Azure or model calls. XSD source files are scoped and cleaned up.
+The saved-result reader is the access decision; it no longer rereads the
+documents an analysis came from, so a lost result is modeled by the reader.
 """
 
 import ast
@@ -213,7 +216,7 @@ def publication(monkeypatch):
         assert user_id == "actor"
         assert context["result_sha256"] == "saved-digest"
         if not state["source_allowed"]:
-            raise PermissionError("Contributing source access revoked")
+            raise PermissionError("Saved result access revoked")
         return {"execution": {"status": state["execution"]}, "validation": {"status": state["validation"]}}, None, {}
 
     def authorize_analysis(user_id, source, **kwargs):
@@ -397,7 +400,7 @@ def test_unregistered_projections_and_staged_artifacts_are_blocked(publication):
     assert not publication.calls["create"]
 
 
-def test_source_revocation_blocks_republication_not_existing_destination_copy(publication):
+def test_lost_saved_result_access_blocks_republication_not_existing_destination_copy(publication):
     result = publish(publication)
     destination_id = result["document"]["id"]
     publication.state["source_allowed"] = False
@@ -541,7 +544,7 @@ def test_access_is_rechecked_after_reading_existing_artifact_bytes(publication, 
     assert publication.messages.writes == 0
 
 
-def test_revocation_after_shell_creation_prevents_processing_and_approval(publication):
+def test_result_access_loss_after_shell_creation_prevents_processing_and_approval(publication):
     publication.state["create_hook"] = lambda: publication.state.update(source_allowed=False)
     with pytest.raises(PermissionError):
         publish(publication, "group")

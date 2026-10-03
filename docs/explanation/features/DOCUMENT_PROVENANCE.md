@@ -2,6 +2,8 @@
 
 Implemented in version: **0.261.194**.
 
+Provenance described as record-keeping only, never access, in version: **0.261.232**.
+
 Application version tracking: `application\single_app\config.py`.
 
 Tracking: issue #1555, Track P of the
@@ -239,6 +241,21 @@ cap. A missing name shows as "Untitled workflow" or "Untitled conversation".
 The links are V2 routes: `/workspace/workflows?workflow_id=...&run_id=...`,
 `/groups/<group_id>/workflows?workflow_id=...&run_id=...`, and
 `/chat?conversationId=...`.
+
+### Provenance is not access
+
+Since **0.261.232**, provenance describes where content came from. It never
+decides who can read that content. Two kinds of provenance are kept for display,
+filtering and audit: a document's `origin` record, and the source lists stored
+with saved Analyze, orchestration and workflow results.
+
+- A saved result takes its access from its conversation, orchestration run or
+  workflow.
+- A published document takes its access from its destination workspace.
+- Reading a source document again, for example to open a citation or run a new
+  Analyze, is an input read. It has its own access and screening check.
+
+See [Upload-only content screening](UPLOAD_ONLY_CONTENT_SCREENING.md).
 
 ### Origin filters on list routes
 

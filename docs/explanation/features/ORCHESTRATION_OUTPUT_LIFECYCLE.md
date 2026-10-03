@@ -4,6 +4,8 @@
 
 **Updated in version: 0.261.134** (each run attempt owns its outputs)
 
+**Updated in version: 0.261.232** (a file takes its access from its conversation and run; the documents behind its retained result are not reread. See [Upload-only content screening](UPLOAD_ONLY_CONTENT_SCREENING.md))
+
 **Application version owner:** `application/single_app/config.py`
 
 **Issue:** microsoft/simplechat#1509
@@ -93,7 +95,8 @@ separate.
 4. Persist an immutable byte intent before transport. It includes a deterministic
    per-intent idempotency key and private artifact address.
 5. Upload bytes and create an immutable file message privately. Reauthorize
-   ownership, sources, screening, capability, deadline, and lease throughout.
+   ownership, the retained result's producer and run, capability, deadline, and
+   lease throughout. The documents behind the retained result are not reread.
 6. Verify the staged message and complete blob, then reauthorize again. A
    same-partition conditional batch compares the parent run and output ETags
    and commits **one output's** exact intent.
@@ -109,9 +112,10 @@ logical output ID remains unchanged. Only one intent can become visible. A
 late write to an abandoned intent cannot replace committed bytes.
 
 Successful outputs are immutable. Stop preserves already committed siblings;
-explicit output deletion withdraws that output. Source deletion, screening,
-ownership changes, superseded work, and deleted result/run records still deny
-downloads and history even when a previous commit exists.
+explicit output deletion withdraws that output. Ownership changes, superseded
+work, and deleted result/run records still deny downloads and history even when a
+previous commit exists. Deleting, re-uploading or screening a document behind the
+retained result does not: the file keeps its conversation's and run's access.
 When an attempt reuses earlier staged bytes, the byte intent keeps its original
 render-attempt binding, while the output separately records the committing
 attempt. Earlier failed automatic attempts remain failed in the audit history.
@@ -123,26 +127,26 @@ at most two automatic retries. Counts include durable admissions, so an attempt
 can appear as admitted while waiting for its worker. Reloading, duplicate calls,
 polling, and process replacement do not reset them.
 
-Transient transport/storage failures, typed current-source authority or screening outages,
-and explicitly retryable renderer I/O failures use bounded exponential backoff
-with jitter. Safe numeric service
+Transient transport/storage failures and explicitly retryable renderer I/O
+failures use bounded exponential backoff with jitter. Safe numeric service
 retry guidance up to 300 seconds is honored, subject to the original deadline.
-Access denial, screening holds, partial/invalid results, unsupported
+Access denial, partial/invalid results, unsupported
 formats/profiles/options, deterministic layout/schema errors, cancellation,
 deletion, and supersession do not automatically retry unchanged.
-`SourceAuthorityUnavailableError` uses the same bounded retry cycle;
-`SourceAuthorityUnverifiedError` indicates a non-transient authority problem
-and does not automatically retry. Public output and history reads propagate
-both typed failures instead of presenting them as source denial or stale success.
+Retained-result reads no longer call document authority services, so a render
+does not meet `SourceAuthorityUnavailableError` or `SourceAuthorityUnverifiedError`
+from its input. The classification is kept for callers that still report them:
+the first uses the bounded retry cycle, the second does not automatically retry,
+and public output and history reads propagate both instead of presenting them as
+a denial or stale success.
 
 Current directory/token failures preserve `ExternalIdentityServiceError.code`
 and its declared retryability. Throttling, timeouts, incomplete responses and
 temporary service failures use the same three-attempt automatic budget.
 Malformed responses, pagination/size limits and invalid authority callbacks
 are nonretryable and return no authorized data. Neither category is proof of
-revoked access. Only actual `ResultUnavailableError` denial or
-`DocumentHeldError` screening holds are treated as such; other screening
-exceptions remain configuration/service failures. Failure progress retains
+revoked access. Only an actual `ResultUnavailableError` denial of the
+conversation, run or retained result is treated as such. Failure progress retains
 durable admission/retry facts but withholds rendered counts and artifact IDs
 when current authority could not be verified.
 
@@ -317,8 +321,9 @@ must revalidate current capability availability and the server-approved
 render/source admission. It raises a typed denial or returns `False` on denial.
 Operations are `admit`, `render`, `prepare`, `commit`, `retry`, `read`, and
 `publication`. It must not trust route/model-supplied actor IDs, paths, source
-manifests, or settings. The result service independently rechecks current source
-ACLs and screening.
+manifests, or settings. The result service independently rechecks the retained
+result's producer, conversation and run. It does not reread the documents the
+result came from.
 
 Register `configure_orchestration_artifact_service(factory)` in the owning web
 and scheduler bootstrap. `factory(user_id, conversation_id)` rebuilds an
@@ -541,16 +546,17 @@ owner must preserve the existing checkpoint/wait and report a safe operational
 error; inability to verify current access is neither permission to replay work
 nor a terminal denial. No cached success, links or replacement uncertainty DTO
 are returned. A later successful observation returns freshly authorized facts.
-Genuine denial or a document hold, after verifying the exact saved binding,
-returns a failed StepResult with the current safe `available=false` projection:
-artifact identity, counts and retry controls are withheld. Cancellation remains
+Genuine denial of the conversation, run or retained result, after verifying the
+exact saved binding, returns a failed StepResult with the current safe
+`available=false` projection: artifact identity, counts and retry controls are
+withheld. Cancellation remains
 cancelled, and identity/spec/deadline disagreements remain explicit failures.
 Changes to current execution limits do not create a new file identity during
 observation.
 The same observation path reauthorizes an already-completed file checkpoint
 before its card is displayed. It works with
 `context.allow_generated_files=False`: permission to perform file-creation
-effects is not needed for observation, while current source access,
+effects is not needed for observation, while current conversation and run access,
 capabilities and publication visibility are still enforced. A completed saved
 status never makes an unfinished or unavailable current output ready.
 
@@ -571,39 +577,40 @@ routes and history use `service.list_public_outputs(run_id)`, or strict
 | `can_retry` | Whether another explicit manual admission is currently eligible. |
 | `error_code`, `message` | Stable safe code and fixed user-facing status text; never exception text. |
 | `artifact_message_id` | Present only for a committed, currently available output; otherwise `null`. |
-| `row_count`, `character_count`, `size_bytes` | Verified rendered counts when available; `null` before preparation or when source access is withheld. |
+| `row_count`, `character_count`, `size_bytes` | Verified rendered counts when available; `null` before preparation or when the output is unavailable. |
 
 No path, container, source reference, raw manifest, lease token, settings, or
 provider exception is included. Final assistant publication must use
 `committed_artifacts`, not saved `run.artifacts`, model-generated links, or
 staged upload responses.
 
-If one source is revoked, held for screening, deleted, changed under the current
-snapshot policy, or no longer has a readable retained result, the list preserves
-the other files. The unavailable entry keeps only its safe requested-file
+If one file's retained result is no longer readable (for example, the result was
+deleted, its producer run was removed, or its committed records are missing), or
+its capability is disabled, the list preserves the other files. The unavailable
+entry keeps only its safe requested-file
 description, identity, persisted state, and admission counters. It sets
 `available=false`, `can_retry=false`, and clears the artifact ID, retry time,
 and all rendered counts. Its existing `error_code` and `message` fields contain
 the current stable reason and fixed safe explanation; there is no separate
 reason field. Restored access restores the committed link without rerendering
-or modifying that output's successful record.
+or modifying that output's successful record. Changes to the documents behind a
+retained result, such as revoked access, a screening hold, deletion or a new
+version, do not make a file unavailable.
 
-These overlays distinguish genuine `DocumentHeldError` from screening
-configuration/service errors. Storage failures, network failures, missing
-source-reader configuration, and unexpected callback failures propagate.
-They are not reported as ordinary source denials. Owner/conversation denial
+Storage failures, network failures and unexpected callback failures propagate.
+They are not reported as an unavailable file. Owner/conversation denial
 also fails the overall list rather than returning another owner's file metadata.
 Orchestration file-message and card history use the same infrastructure-failure
 distinction; legacy workflow history behavior remains unchanged.
 
 Bare `PermissionError` raised while reading the output index, output row, parent
-run or committed-file metadata is a backing-store fault, not a source-access
+run or committed-file metadata is a backing-store fault, not an access
 decision. Those specific metadata reads translate it to `OutputStorageError`
 before public projection or delivery can invent a denial. Typed ownership,
-deletion and missing-record errors remain unchanged. Source-authorization
-callbacks are outside this translation, so actual source denials and screening
-holds still produce unavailable-file projections; the context-free permission
-classifier is not broadened.
+deletion and missing-record errors remain unchanged. Retained-result reads never
+call document source services, so no source denial or screening hold can produce
+an unavailable-file projection; the context-free permission classifier is not
+broadened.
 Saved Render resumption uses the same metadata-read boundary for its initial
 output record and current parent-run reads, before checking their immutable
 bindings. Neither read can bypass the operational-error classification.
@@ -656,12 +663,11 @@ and availability are never initial-hydration authority. Top-level orchestration
 cards are rebuilt from `committed_artifacts`; unrelated artifact kinds retain
 their existing handling.
 
-Source denial affects only that file's current projection. An unavailable
+An unavailable file affects only its own current projection. An unavailable
 owning run/conversation clears the cached output list and orchestration cards;
 storage, network, missing service configuration, and unexpected read failures
 propagate instead of returning cached success. Metadata-only history reads do
-not import route owners, and their screening checks restore request-local
-screening state so one withheld source does not hide accessible siblings.
+not import route owners and do not read the documents behind a retained result.
 
 ## Validation and limitations
 
@@ -680,9 +686,9 @@ tests reject ordinary runs, mismatched or replaced guards, missing tokens and
 readers, and storage outages. Real upload threads cover data arriving after
 logical deletion and lease grace, and generation checks preserve late cleanup
 notifications. Committed siblings require their own explicit tombstones.
-Card-free assistant history independently exercises current source denial,
-screening holds, logical deletion, and infrastructure errors without cached
-success or replaying producers.
+Card-free assistant history independently exercises source denial and screening
+holds that leave the file available, capability disablement, logical deletion,
+and infrastructure errors without cached success or replaying producers.
 `functional_tests/test_orchestration_output_identity.py` verifies every current
 identity-service error code at rendering, commit, artifact-factory, public
 output/card and history boundaries, including explicit wrapped causes,
@@ -785,10 +791,11 @@ component cleanup-root and scheduler coverage alone does not satisfy it.
 Coverage includes CSV and JSON from one source, a real PDF report, empty TXT/MD,
 independent sibling success, exactly three automatic attempts and one
 idempotent manual admission, restart, duplicate/concurrent/stale workers,
-parent lease replacement, deadline and bounded retry guidance, source and
-screening revocation, capability disablement, Stop/deletion, integrity failures,
+parent lease replacement, deadline and bounded retry guidance, files that survive
+source revocation, screening, deletion and new versions, capability disablement,
+Stop/deletion, integrity failures,
 blob-only/message/commit crash points, uncertain acknowledgments, safe history,
-independently revoked/deleted/changed source projections, restored access,
+restored access,
 infrastructure-error propagation, bounded admission, cleanup, and owner-free
 cold imports in normal and optimized Python. Required setup and I/O occur
 outside assertion expressions.

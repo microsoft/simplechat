@@ -37,7 +37,7 @@ OUTPUT_STATES = frozenset({
     "waiting", "rendering", "retry_scheduled", "completed", "failed", "cancelled",
 })
 OUTPUT_UNAVAILABLE_MESSAGES = {
-    "output_access_denied": "This file is unavailable because current source access could not be confirmed.",
+    "output_access_denied": "This file is unavailable because access to its conversation could not be confirmed.",
     "output_screening_hold": "This file is unavailable while its source is under review.",
     "output_source_unavailable": "This file is unavailable because its retained source is missing or no longer readable.",
     "output_source_changed": "This file is unavailable because its source no longer matches the retained version.",

@@ -14,10 +14,13 @@ results carry revision/generation provenance; a subsequent call is a new read.
 An injected ``units_reader(reference, subject)`` supplies canonical units.
 
 ``assert_evidence_available(evidence, user_id=None, *, metadata_reader=None,
-cached=False, strict_errors=False)`` checks known provenance on every reuse. Set ``cached=True`` for
-historical results: an old unversioned context cannot borrow a new clearance.
+cached=False, strict_errors=False)`` checks known provenance when evidence is read
+as an input. Set ``cached=True`` for evidence carried within one operation: an old
+unversioned context cannot borrow a new clearance. Generated results and stored
+conversation history are never passed here; they take their access from their
+container (the conversation, workflow or orchestration run).
 
-Server-owned retained-result operations opt into typed authority failures with
+Server-owned input reads opt into typed authority failures with
 ``strict_errors=True`` or ``strict_source_authority()``. A headless owner that
 catches errors keeps the latter scope around the entire source/model decision.
 
@@ -639,7 +642,7 @@ def assert_document_chunks_available(
 
 
 def assert_evidence_available(evidence, user_id=None, *, metadata_reader=None, cached=False, strict_errors=False):
-    """Revalidate known workspace provenance before using saved/model evidence."""
+    """Revalidate known workspace provenance before evidence is used as an input."""
     if type(strict_errors) is not bool:
         raise TypeError("The source authority error policy must be server-owned.")
     if strict_errors:
@@ -844,7 +847,14 @@ def refresh_workspace_attachment(message, user_id=None):
 
 
 def public_history_messages(messages, user_id=None):
-    """Withhold unavailable source material without deleting ordinary chat text."""
+    """Return conversation history without rechecking where generated content came from.
+
+    Assistant and tool messages, and the citations stored with them, take their access
+    from the conversation the caller already authorized, so their sources are never
+    checked again. A file or image message backed by a workspace document is an input
+    read: only that message is replaced when the reader can no longer open the document
+    or it is held.
+    """
     # This read boundary already has conversation authorization. Keep the chat
     # adapter out of the document contracts' import/bootstrap dependency chain.
     from functions_chat_content_checks import strip_private_chat_checks
@@ -864,7 +874,6 @@ def public_history_messages(messages, user_id=None):
 
                 message = refresh_checked_message(message)
             refreshed = refresh_workspace_attachment(message, user_id)
-            assert_evidence_available(refreshed, user_id, cached=True)
         except (ScreeningError, LookupError, PermissionError):
             if request_context:
                 flask.g.content_screening_error = previous_error
@@ -884,8 +893,10 @@ def public_history_messages(messages, user_id=None):
             })
             safe_messages.append(safe)
         else:
-            # This dispatcher handles per-file denials itself. Operational failures
-            # must escape rather than become an unrelated document-screening hold.
+            # Generated files keep their container checks (conversation, workflow or
+            # orchestration run) and lose only private storage bindings here; their
+            # source documents are not rechecked. Operational failures must escape
+            # rather than become an unrelated document-screening hold.
             from functions_generated_artifact_sources import sanitize_generated_artifact_history
 
             safe_messages.append(strip_private_chat_checks(

@@ -1,10 +1,13 @@
 # functions_orchestration_source_access.py
-"""Strict current-authority source services for retained orchestration results.
+"""Strict current-authority source services for orchestration input reads.
 
-Version: 0.261.127
+Version: 0.261.232
 
-Owners bind these runtime callbacks, not a browser-selectable policy. Legacy
-screening/search callers outside the explicit scope retain their old behavior.
+Owners bind these runtime callbacks, not a browser-selectable policy. They are used
+only when a step reads uploaded documents as inputs. Retained orchestration results
+take their access from the conversation and run that produced them and never call
+back into these services. Legacy screening/search callers outside the explicit scope
+retain their old behavior.
 """
 
 from content_screening.access import (
@@ -48,10 +51,15 @@ def read_orchestration_source_metadata(document_id, user_id, group_id=None, publ
     )
 
 
-def authorize_orchestration_sources(
+def verify_orchestration_input_sources(
     user_id, sources, *, require_snapshot, resolver, metadata_reader,
 ):
-    """Check retained lineage with an explicit server-owned strict authority boundary."""
+    """Input reads only: confirm a step may still read the uploaded documents it selected.
+
+    The reader must still have access, no document may be held, and with
+    ``require_snapshot`` each document must still be the version the step started from.
+    Never call this for a retained result: those take their access from their container.
+    """
     def resolve(document_ids, **scope):
         try:
             return resolver(document_ids, **scope)

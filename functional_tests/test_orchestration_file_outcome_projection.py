@@ -1,8 +1,9 @@
 # test_orchestration_file_outcome_projection.py
 """Runtime file outcomes come only from current authorized rendering-service projections.
 
-Version: 0.261.127
+Version: 0.261.232
 Implemented in: 0.261.127
+Container-only file access covered in: 0.261.232
 Real renderer, result store, artifact transport and commit readers use isolated external I/O.
 """
 
@@ -49,7 +50,12 @@ def test_denied_file_stays_visible_without_hiding_its_authorized_sibling(lifecyc
     allowed = lifecycle.prepare('json', step_id='allowed_file', reference=allowed_source)
     lifecycle.run(restricted)
     lifecycle.run(allowed)
-    lifecycle.results.held.add('restricted')
+    # 0.261.232: holding a document behind a retained result does not hide its file;
+    # losing the retained result's own run does.
+    lifecycle.results.held.add('allowed')
+    run = lifecycle.runs.read_item(restricted_source.producer.run_id, 'conversation-1')
+    run['checkpoints_deleted'] = True
+    lifecycle.runs.upsert_item(run)
     before = list(lifecycle.render_calls)
 
     outputs, artifacts = _dependency_file_outcomes(context_for(lifecycle), settings={}, user_id='owner')

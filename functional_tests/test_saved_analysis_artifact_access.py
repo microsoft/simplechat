@@ -1,11 +1,13 @@
 # test_saved_analysis_artifact_access.py
 """
 Functional tests for Analyze artifact association and publication eligibility.
-Version: 0.261.109
+Version: 0.261.232
 Implemented in: 0.261.109
+Container-only saved-result access covered in: 0.261.232
 
-New projections require their exact saved producer and current source access.
-Legacy artifacts keep their existing access rules.
+New projections require their exact saved producer and their conversation's
+access; the documents the analysis read are not checked again. Legacy artifacts
+keep their existing access rules.
 """
 
 from copy import deepcopy
@@ -58,9 +60,16 @@ def test_another_analysis_cannot_satisfy_the_artifact_binding(saved_chat):
         authorize(saved_chat, artifact)
 
 
-def test_revoked_source_blocks_an_existing_projection(saved_chat):
+def test_revoked_source_keeps_an_existing_projection_readable(saved_chat):
     saved_chat["state"]["source_allowed"] = False
-    with pytest.raises(access.AnalysisResultUnavailable):
+    authorize(saved_chat, artifact_for(saved_chat))
+    authorize(saved_chat, artifact_for(saved_chat), for_publication=True)
+    assert saved_chat["state"]["resolutions"] == 0
+
+
+def test_lost_conversation_blocks_an_existing_projection(saved_chat):
+    saved_chat["state"]["conversation_allowed"] = False
+    with pytest.raises(PermissionError):
         authorize(saved_chat, artifact_for(saved_chat))
 
 

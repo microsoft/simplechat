@@ -2,14 +2,15 @@
 # test_orchestration_render_check_cadence.py
 """
 Functional test for paced render execution checks and step time limits during rendering.
-Version: 0.261.141
+Version: 0.261.232
 Implemented in: 0.261.141
+Container-only retained-result access covered in: 0.261.232
 
 This test ensures that a file render re-proves its claim, run, capability admission and
-source access on a bounded cadence instead of on every record or block, that revocation
-and lease renewal still happen on time, that publication boundaries keep their own full
-checks, and that the owning step's time limit stops an unstaged render cleanly with a
-clear, non-retryable failure while a staged file is always committed.
+retained-result access on a bounded cadence instead of on every record or block, that
+revocation and lease renewal still happen on time, that publication boundaries keep their
+own full checks, and that the owning step's time limit stops an unstaged render cleanly
+with a clear, non-retryable failure while a staged file is always committed.
 """
 
 import importlib
@@ -20,7 +21,7 @@ from unittest.mock import patch
 
 import pytest
 
-from functions_orchestration_output_store import OutputError
+from functions_orchestration_output_store import OutputError, OutputUnavailableError
 from functions_orchestration_rendering import (
     OrchestrationRenderingService,
     OutputStepTimeLimitError,
@@ -154,7 +155,7 @@ def test_lease_renewal_is_not_delayed_by_pacing(lifecycle):
 
 
 def test_renderer_source_rechecks_are_paced_but_revocation_is_still_refused(lifecycle):
-    print("🔍 Testing renderer source rechecks are paced without weakening the final proof...")
+    print("🔍 Testing renderer retained-result rechecks are paced without weakening the final proof...")
     _paced(lifecycle)
     output = lifecycle.prepare()
     facts = []
@@ -172,16 +173,20 @@ def test_renderer_source_rechecks_are_paced_but_revocation_is_still_refused(life
     revoked = lifecycle.prepare("csv")
 
     def revoking(kwargs):
+        # 0.261.232: a retained result takes its access from its conversation and run,
+        # so losing the conversation (not a source document) is what must be refused.
         kwargs["source"].recheck()
-        lifecycle.results.denied.add("document-1")
+        conversation = lifecycle.conversations.read_item("conversation-1", "conversation-1")
+        conversation["orchestration_deleted"] = True
+        lifecycle.conversations.upsert_item(conversation)
         kwargs["source"].recheck()
 
     _wrap_renderer(lifecycle, revoking)
     uploads = lifecycle.blobs.uploads
-    state = lifecycle.run(revoked)
-    assert state["state"] == "failed" and state["error_code"] == "output_access_denied"
+    with pytest.raises(OutputUnavailableError):
+        lifecycle.run(revoked)
     assert lifecycle.blobs.uploads == uploads
-    print("✅ Rechecks were paced and the revoked source was still refused.")
+    print("✅ Rechecks were paced and the lost conversation was still refused.")
 
 
 def test_step_stop_fails_the_file_before_rendering_without_publishing(lifecycle):

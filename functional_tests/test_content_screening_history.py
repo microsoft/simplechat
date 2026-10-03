@@ -1,12 +1,15 @@
 # test_content_screening_history.py
 """
 Functional regressions for public history and native evidence quarantine.
-Version: 0.261.223
+Version: 0.261.232
 Implemented in: 0.261.106
+Upload-only history checks covered in: 0.261.232
 
 Executes the real history route, artifact hydration, and model-history guard
 against fake Cosmos. Removed metadata aliases and missing release proofs must
-not turn old source material into newly authorized evidence.
+not turn old source material into newly authorized evidence. Stored replies and
+their citations are conversation content and are not rechecked; a workspace
+attachment shown in history is an input read and is.
 """
 
 import ast
@@ -138,26 +141,31 @@ class ScreeningHistoryTests(ScreeningAccessFixture):
         with self.assertRaises(DocumentHeldError):
             access.assert_evidence_available(source, "user-1", cached=True)
 
-    def test_real_model_history_helper_does_not_replay_held_native_values(self):
+    def test_real_model_history_helper_replays_a_stored_reply_without_rechecking_its_sources(self):
+        reads = []
         helper = load_body("route_backend_chats.py", "build_assistant_history_content_with_citations", {
-            "assert_evidence_available": access.assert_evidence_available,
+            "assert_evidence_available": lambda *args, **kwargs: reads.append(args),
             "_build_agent_citation_history_lines": lambda citations: [json.dumps(citations)],
             "_build_document_citation_history_lines": lambda citations: [],
             "_build_web_citation_history_lines": lambda citations: [],
+            "_truncate_history_citation_text": lambda text, max_chars: text,
         })
         self.hold()
         for tabular in (False, True):
             with self.subTest(tabular=tabular):
-                with self.assertRaises(DocumentHeldError):
-                    helper({"agent_citations": [self.native_citation(tabular=tabular)]}, "Previous answer")
+                content = helper({"agent_citations": [self.native_citation(tabular=tabular)]}, "Previous answer")
+                self.assertIn("Previous answer", content)
+                self.assertIn("TOOL_PRIVATE_CANARY", content)
+        self.assertEqual(reads, [])
+        self.assertEqual(self.personal.reads["document-1"], 0)
 
-    def test_history_api_suppresses_held_attachments_and_hydrated_tool_evidence(self):
+    def test_history_api_suppresses_held_attachments_but_keeps_replies_and_citations(self):
         citation = self.native_citation()
         items = [
             {"id": "user-message", "role": "user", "content": "Preserve ordinary conversation text"},
             {"id": "file-message", "role": "file", "workspace_document_id": "document-1",
              "file_content": "ATTACHMENT_PRIVATE_CANARY", "extracted_text": "ATTACHMENT_PRIVATE_CANARY"},
-            {"id": "assistant-message", "role": "assistant", "content": "SOURCE_DERIVED_CANARY",
+            {"id": "assistant-message", "role": "assistant", "content": "SOURCE_DERIVED_REPLY",
              "agent_citations": [{"artifact_id": "artifact-one"}]},
         ]
         namespace = {
@@ -189,11 +197,13 @@ class ScreeningHistoryTests(ScreeningAccessFixture):
         self.assertEqual(response.status_code, 200)
         payload = response.get_json()
         self.assertIn("Preserve ordinary conversation text", json.dumps(payload))
-        self.assertNotIn("PRIVATE_CANARY", json.dumps(payload))
-        self.assertNotIn("SOURCE_DERIVED_CANARY", json.dumps(payload))
+        self.assertNotIn("ATTACHMENT_PRIVATE_CANARY", json.dumps(payload))
         messages_by_id = {message["id"]: message for message in payload["messages"]}
         self.assertTrue(messages_by_id["file-message"]["content_unavailable"])
-        self.assertTrue(messages_by_id["assistant-message"]["content_unavailable"])
+        reply = messages_by_id["assistant-message"]
+        self.assertEqual(reply["content"], "SOURCE_DERIVED_REPLY")
+        self.assertNotIn("content_unavailable", reply)
+        self.assertIn("TOOL_PRIVATE_CANARY", json.dumps(reply["agent_citations"]))
         self.assertGreater(self.personal.reads["document-1"], 0)
 
     def test_screened_attachment_history_uses_only_current_clean_text(self):

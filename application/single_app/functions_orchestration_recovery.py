@@ -997,7 +997,12 @@ def request_cancellation(run_id, user_id, conversation_id, authorize, *, analysi
 
 
 def _validate_payload_sources(payload, context, settings, user_id):
-    """Recheck every retained result a checkpoint references, and its current sources."""
+    """Recheck every retained result a checkpoint references.
+
+    Each result's producer, lineage integrity and external sources are checked again.
+    The documents those results were produced from are not reread; a resumed step that
+    reads documents itself checks them as inputs when it runs.
+    """
     state = payload.get('state') or {}
     if getattr(context, 'plan_contract_version', None) != 2 or state.get('plan_contract_version') != 2:
         raise CheckpointError('checkpoint_invalid')

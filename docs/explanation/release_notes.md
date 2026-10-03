@@ -2,6 +2,19 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.232)**
+
+#### Breaking Changes
+
+*   **Saved Chat, Analyze And Orchestration Results Take Their Container's Access**
+    *   Results built from documents are no longer checked against those documents again. This covers chat AI replies and their stored citations, tool results in history, saved Analyze results, orchestration files and results, generated chat files, and conversation and tabular exports. They stay available to everyone who can open their conversation or orchestration run, even after a source document is deleted, re-uploaded or held for content screening.
+    *   Chat history no longer replaces a whole AI reply with "Source content is unavailable pending document screening and review." when a document it cited changes. A workspace attachment shown in history is still replaced while its document is held or unavailable.
+    *   One input check stays. Search retrieval, document selection (including chat uploads), file bytes and previews, opening a cited document, and orchestration or Analyze steps that read documents still need current access to an uploaded document, and the document must not be held. After such a read is refused, the model fence still blocks later model calls in that request or step.
+    *   A follow-up orchestration step that reads documents named by an earlier run reads their current version instead of failing. Version checks still protect a read in progress, such as a resumed Analyze checkpoint.
+    *   Container, lineage and integrity checks are unchanged. Nothing is withdrawn after the fact, and no data migration runs: results that earlier versions withheld when they were read become visible again. Error messages now name the conversation or saved result instead of source access.
+    *   **Migration**: none. Deployments that relied on source re-checks to hide existing results from people who can open their conversation should review shared conversations; opening the full cited document still requires access.
+    *   (Ref: #1621, `content_screening/access.py`, `functions_saved_analysis.py`, `functions_orchestration_results.py`, `functions_orchestration_source_access.py`, `functions_orchestration_executor.py`, `route_backend_chats.py`, `route_enhanced_citations.py`, `functions_tabular_generated_exports.py`, `OrchestrationOutputs.tsx`, `test_saved_results_container_access_chat_orchestration.py`, [Upload-Only Content Screening](features/UPLOAD_ONLY_CONTENT_SCREENING.md))
+
 ### **(v0.261.229)**
 
 #### Bug Fixes

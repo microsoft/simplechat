@@ -1,11 +1,14 @@
 # test_orchestration_results.py
 """
 M1 authorized retained-result persistence, complete readers, and lifecycle fences.
-Version: 0.261.125
+Version: 0.261.232
 Implemented in: 0.261.125
+Container-only retained-result access covered in: 0.261.232
 
-Real contracts, facade, record trees, transport, source/screening checks and SDK-
-formatted conditional batches run with external Cosmos/Blob/source I/O doubled.
+Real contracts, facade, record trees, transport, producer checks and SDK-
+formatted conditional batches run with external Cosmos/Blob I/O doubled. A
+retained result takes its access from its conversation and run; the documents
+it was produced from are provenance and are never reread.
 """
 
 from copy import deepcopy
@@ -14,7 +17,6 @@ import json
 
 import pytest
 
-from content_screening.contracts import ScreeningError
 from functions_generated_file_exports import GeneratedFileExportRequest, build_generated_file_export
 from functions_orchestration_result_contracts import (
     InputBinding, InputSpec, RecordColumn, ResultContractError, ResultRef, TaskResult, canonical_bytes,
@@ -162,7 +164,7 @@ def test_result_producer_owner_scope_and_attempt_mismatch_fail(field, value):
 
 
 @pytest.mark.parametrize("change", ["deleted", "revoked", "scope", "revision", "version", "screening"])
-def test_current_source_access_is_checked_on_consumption_not_only_save(change):
+def test_source_changes_never_withhold_a_retained_result(change):
     fixture = ResultFixture()
     reference = fixture.save().output("findings")
     reader = fixture.service.open_result(reference)
@@ -178,29 +180,30 @@ def test_current_source_access_is_checked_on_consumption_not_only_save(change):
         fixture.sources["document-1"]["source_version"] = 2
     else:
         fixture.held.add("document-1")
-    with pytest.raises((PermissionError, ScreeningError)):
-        list(reader.iter_records())
-    with pytest.raises((PermissionError, ScreeningError)):
-        fixture.restart().open_result(reference)
+    assert list(reader.iter_records()) == ROWS
+    restarted = fixture.restart().open_result(reference, require_current_sources=True)
+    assert list(restarted.iter_records()) == ROWS
+    assert restarted.metadata()["source_count"] == 1
+    assert fixture.source_reads == []
 
 
-def test_explicit_historical_snapshot_never_refreshes_or_hides_changes():
+def test_snapshot_and_current_policies_read_the_same_values_after_a_source_changes():
     fixture = ResultFixture()
     reference = fixture.save(source_policy="snapshot").output("findings")
     fixture.sources["document-1"]["source_revision"] = "changed-revision"
     reader = fixture.restart().open_result(reference)
     metadata = reader.metadata()
     rows = list(reader.iter_records())
-    assert metadata["source_snapshot_changed"] is True
+    assert metadata["source_snapshot_changed"] is False
     assert metadata["source_policy"] == "snapshot" and rows == ROWS
-    with pytest.raises(PermissionError):
-        fixture.service.open_result(reference, require_current_sources=True)
+    current = fixture.service.open_result(reference, require_current_sources=True)
+    assert list(current.iter_records()) == ROWS
     fixture.held.add("document-1")
-    with pytest.raises((PermissionError, ScreeningError)):
-        reader.recheck()
+    reader.recheck()
+    assert fixture.source_reads == []
 
 
-def test_current_source_content_digest_is_not_ignored():
+def test_changed_source_content_digest_does_not_withhold_a_retained_result():
     fixture = ResultFixture()
     snapshot = {**source(), "content_sha256": "a" * 64}
     fixture.sources["document-1"] = deepcopy(snapshot)
@@ -210,8 +213,7 @@ def test_current_source_content_digest_is_not_ignored():
         sources=[snapshot], origin="grounded", guard_token="server-attempt-token",
     )
     fixture.sources["document-1"]["content_sha256"] = "b" * 64
-    with pytest.raises(PermissionError):
-        fixture.service.open_result(task.output("result"))
+    assert list(fixture.service.open_result(task.output("result")).iter_records()) == ROWS
 
 
 @pytest.mark.parametrize("kind", ["source-set-v1", "evidence-set-v1"])
@@ -313,6 +315,8 @@ def test_upstream_lineage_and_explicit_aliases_reauthorize_without_cross_attempt
         outputs=[NamedOutput("draft", "text-v1", "Prepared from all original findings.", complete(1))],
     )
     fixture.denied.add("document-1")
+    assert fixture.restart().open_result(child.output("draft")).read_text() == "Prepared from all original findings."
+    fixture.runs["run-1"]["plan"]["steps"][0]["enabled"] = False
     with pytest.raises(PermissionError):
         fixture.restart().open_result(child.output("draft"))
 
@@ -543,5 +547,7 @@ def test_saved_analyze_adapter_uses_actual_saved_reader_preserving_evidence_and_
     assert metadata["sources"] == [source()] and metadata["coverage"] == native["coverage"]
     assert "original_sources_reanalyzed" in metadata and metadata["original_sources_reanalyzed"] is False
     fixture.denied.add("document-1")
+    assert len(list(adapter.iter_records())) == 150
+    fixture.conversation["orchestration_deleted"] = True
     with pytest.raises(PermissionError):
         list(adapter.iter_records())

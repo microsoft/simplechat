@@ -1,9 +1,10 @@
 # test_orchestration_internal_analysis.py
 """
 Real v2 adapters -> native Analyze/Compare -> saved readers -> generic result store.
-Version: 0.261.139
+Version: 0.261.232
 Implemented in: 0.261.127
 Single orchestration contract updated in: 0.261.139
+Retained results take container access only in: 0.261.232
 
 Source/model/Cosmos/Blob I/O is offline. Producers, native work-unit checkpoints,
 saved Analyze contracts, complete readers and the M1 facade/store are real.
@@ -27,7 +28,6 @@ sys.path.insert(0, str(APP))
 
 # Application imports follow the standalone test path setup.
 from content_screening import access as screening_access
-from content_screening.contracts import ScreeningError
 from functions_analysis_access import analysis_source_snapshot, authorize_analysis_sources
 from functions_document_analysis_checkpoints import AnalysisWorkUnitCheckpoints
 from functions_orchestration_result_contracts import RecordColumn, ResultContractError, TaskResult
@@ -347,15 +347,22 @@ def test_saved_record_source_rejects_an_incompatible_declared_projection(interna
 
 
 @pytest.mark.parametrize('change', ['revoked', 'screened', 'revision'])
-def test_completed_native_and_generic_data_recheck_sources_after_restart(internal, change):
+def test_completed_native_and_generic_data_keep_container_access_after_restart(internal, change):
+    # 0.261.232: retained results take access from their conversation and run, not their sources.
     result = analyze(internal)
+    expected = list(internal.fixture.service.open_result(result['task_result'].output('findings')).iter_records())
     if change == 'revoked':
         internal.fixture.denied.add('document-1')
     elif change == 'screened':
         internal.fixture.held.add('document-1')
     else:
         internal.fixture.sources['document-1']['source_revision'] = 'new-revision'
-    with pytest.raises((PermissionError, ScreeningError)):
+    reads = len(internal.fixture.source_reads)
+    reader = internal.fixture.restart().open_result(result['task_result'].output('findings'))
+    assert list(reader.iter_records()) == expected
+    assert len(internal.fixture.source_reads) == reads
+    internal.fixture.conversation['user_id'] = 'another-user'
+    with pytest.raises(PermissionError):
         internal.fixture.restart().open_result(result['task_result'].output('findings'))
     assert internal.hooks.call_count == 0
 
@@ -879,3 +886,82 @@ def test_executor_owned_digest_recovers_native_results_without_repeating_work(
             producer=task.producer, input_fingerprint=adapted_inputs[0]['adapted_fingerprint'],
         )
         assert wrong_receipt is None
+
+def _run_analyze_on_sources_named_by_an_earlier_run(internal, sources):
+    runtime = importlib.import_module('functions_orchestration_executor')
+    schema = importlib.import_module('functions_orchestration_schema')
+    settings = {'enable_user_workspace': True}
+    internal.state['mode'] = 'analyze'
+    prior = replace(
+        internal.fixture.producer, run_id='prior-run', step_id='gather',
+        capability_id='document_search', contract_version='orchestration-gathered-content-v1',
+    )
+    internal.fixture.add_producer(prior)
+    checkpoint = AnalysisWorkUnitCheckpoints(
+        internal.fixture.service.store,
+        _orchestration_identity(prior.user_id, prior.conversation_id, prior.run_id, prior.step_id),
+        user_id=prior.user_id,
+        authorize=lambda: internal.fixture.service.access.authorize_producer(prior, for_write=True),
+    )
+    checkpoint.prepare()
+    gathered = internal.fixture.service.persist_task_result(
+        producer=prior, role='gather', status='complete', sources=sources,
+        origin='grounded', guard_token=checkpoint.token,
+        outputs=[NamedOutput('sources', 'source-set-v1', sources, complete(len(sources)))],
+    )
+    aliases = {'selected_sources': gathered.output('sources')}
+    plan = schema.normalize_plan(
+        {'run_id': 'run-1', 'steps': [{
+            'step_id': 'analyze', 'capability_id': 'document_analyze',
+            'arguments': {'analysis_prompt': 'Retain all original findings.'},
+            'inputs': {'sources': {
+                'binding': {
+                    'version': 'orchestration-input-binding-v1', 'step_id': None,
+                    'output_name': None, 'existing_result': 'selected_sources',
+                },
+                'allow_partial': False,
+            }},
+        }]},
+        'conversation-1', 'owner', settings=settings, contract_version=2,
+        available_capability_ids=['document_analyze'], existing_results=aliases,
+    )
+    internal.fixture.runs['run-1']['plan'] = plan
+    context = runtime.RunContext(
+        run_id='run-1', plan_id=plan['plan_id'], conversation_id='conversation-1', user_id='owner',
+        user_message='Retain all requested findings.', plan_contract_version=2,
+        result_service=internal.fixture.service, resolve_source_manifest=internal.fixture.resolve,
+        result_aliases=aliases, invoke_prompt=internal.context.invoke_prompt,
+        result_guard_token_for_step=internal.context.result_guard_token_for_step,
+    )
+    context.analysis_checkpoint_factory = internal.context.analysis_checkpoint_factory
+    return runtime.execute_plan(plan, context, settings=settings, user_id='owner', emit=[].append)
+
+
+def test_follow_up_reads_sources_named_by_an_earlier_run_at_their_current_version(internal):
+    # 0.261.232: an earlier run's source list only selects documents; a newer version is not an error.
+    earlier = analysis_source_snapshot([{
+        **internal.fixture.sources['document-1'], 'source_version': 0, 'source_revision': 'revision-0',
+    }])
+    result = _run_analyze_on_sources_named_by_an_earlier_run(internal, earlier)
+    assert result['status'] == 'completed', result
+    task = TaskResult.from_dict(result['task_results']['analyze'])
+    coverage = internal.fixture.service.open_result(task.output('coverage')).read_value()
+    assert [(source['document_id'], source['source_version']) for source in coverage['sources']] == [
+        ('document-1', 1),
+    ]
+    assert internal.state['calls']
+    assert internal.hooks.call_count == 0
+
+
+@pytest.mark.parametrize('change', ['revoked', 'screened'])
+def test_follow_up_still_checks_sources_named_by_an_earlier_run_as_inputs(internal, change):
+    earlier = analysis_source_snapshot([internal.fixture.sources['document-1']])
+    if change == 'revoked':
+        internal.fixture.denied.add('document-1')
+    else:
+        internal.fixture.held.add('document-1')
+    result = _run_analyze_on_sources_named_by_an_earlier_run(internal, earlier)
+    assert result['status'] == 'failed', result
+    assert not result.get('task_results', {}).get('analyze')
+    assert not any(call['stage'] in {'window_analysis', 'analysis'} for call in internal.state['calls'])
+    assert internal.hooks.call_count == 0

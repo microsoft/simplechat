@@ -1,12 +1,15 @@
 # test_orchestration_render_resume.py
 """
 Observe checkpoint-pinned Render files without performing scheduler work.
-Version: 0.261.127
+Version: 0.261.232
 Implemented in: 0.261.127
+Container-only file access covered in: 0.261.232
 
-Real output persistence, source authorization, committed messages and StepResult
-builders exercise exact resume bindings and current readiness. Retry claims,
-rendering, model execution and stale completion fallbacks are forbidden.
+Real output persistence, retained-result authorization, committed messages and
+StepResult builders exercise exact resume bindings and current readiness. Retry
+claims, rendering, model execution and stale completion fallbacks are forbidden.
+A file takes its access from its conversation and run, so changes to the
+documents behind its retained result never fail its resumption.
 """
 
 import importlib
@@ -612,17 +615,13 @@ def test_resumption_propagates_operational_read_failures_without_a_replacement_r
     assert saved == original_saved
 
 
-@pytest.mark.parametrize("failure", ["source", "screening", "message", "capability", "output_storage"])
+@pytest.mark.parametrize("failure", ["message", "capability", "output_storage"])
 @pytest.mark.parametrize("saved_kind", ["waiting", "completed"])
 def test_resumption_rechecks_current_readiness_not_cached_completion(resumption, monkeypatch, failure, saved_kind):
     case, world = resumption, resumption.world
     completed = world.run(world.prepare())
     before = world.raw(completed)
-    if failure == "source":
-        world.results.denied.add("document-1")
-    elif failure == "screening":
-        world.results.held.add("document-1")
-    elif failure == "message":
+    if failure == "message":
         world.messages.delete_item(completed["artifact_message_id"], "conversation-1")
     elif failure == "capability":
         world.capabilities = False
@@ -641,11 +640,39 @@ def test_resumption_rechecks_current_readiness_not_cached_completion(resumption,
         assert result["status"] == "failed" and result["artifacts"] == [] and result["output_error"]
         assert completed["artifact_message_id"] not in json.dumps(result)
         assert "PRIVATE" not in json.dumps(result)
-        if failure in {"source", "screening", "capability"}:
+        if failure == "capability":
             assert result["outputs"][0]["available"] is False
             assert result["outputs"][0]["artifact_message_id"] is None
             assert result["failure"]["code"] == "result_unavailable"
     after = world.runs.read_item(completed["output_id"], "conversation-1")
+    assert before == after and len(world.render_calls) == world.blobs.uploads == 1
+
+
+@pytest.mark.parametrize("change", ["source", "screening", "source_deleted", "source_changed"])
+@pytest.mark.parametrize("saved_kind", ["waiting", "completed"])
+def test_resumption_ignores_changes_to_the_retained_result_sources(resumption, monkeypatch, change, saved_kind):
+    # 0.261.232: a file takes its access from its conversation and run, not from the
+    # documents behind its retained result.
+    case, world = resumption, resumption.world
+    completed = world.run(world.prepare())
+    before = world.raw(completed)
+    if change == "source":
+        world.results.denied.add("document-1")
+    elif change == "screening":
+        world.results.held.add("document-1")
+    elif change == "source_deleted":
+        world.results.sources.clear()
+    else:
+        world.results.sources["document-1"]["source_version"] = 2
+    forbid_execution(case, monkeypatch)
+    saved = pending_result(case, completed) if saved_kind == "waiting" else completed_result(case, completed)
+    result = resume(case, saved)
+    after = world.raw(completed)
+    assert result["status"] == "completed" and result["failure"] is None
+    assert result["outputs"] == [completed]
+    assert result["artifacts"][0]["artifact_message_id"] == completed["artifact_message_id"]
+    assert "PRIVATE" not in json.dumps(result)
+    assert world.results.source_reads == []
     assert before == after and len(world.render_calls) == world.blobs.uploads == 1
 
 
@@ -735,17 +762,13 @@ def test_resumption_does_not_overwrite_a_full_saved_wait_after_a_failed_read(
     assert saved == original_saved
 
 
-@pytest.mark.parametrize("failure", ["source", "screening", "capability", "cancelled", "identity", "configuration"])
+@pytest.mark.parametrize("failure", ["capability", "cancelled", "identity", "configuration"])
 def test_resumption_distinguishes_denial_cancellation_and_nonretryable_uncertainty(resumption, monkeypatch, failure):
     case, world = resumption, resumption.world
     output = world.run(world.prepare())
     saved = world.modules.schema.build_step_result(status="completed", summary="The file was ready.")
     saved["outputs"] = [deepcopy(output)]
-    if failure == "source":
-        world.results.denied.add("document-1")
-    elif failure == "screening":
-        world.results.held.add("document-1")
-    elif failure == "capability":
+    if failure == "capability":
         world.capabilities = False
     elif failure == "cancelled":
         case.cancel_requested = lambda: True

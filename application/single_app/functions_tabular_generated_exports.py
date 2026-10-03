@@ -3028,9 +3028,8 @@ def _delete_blob_if_exists(blob_path):
         blob_client.delete_blob()
 
 
-def _authorize_tabular_export_run_execution(
-    run, *, require_current_sources=True, require_active_producer=None,
-):
+def _authorize_tabular_export_run_conversation(run):
+    """The run's conversation is the container for the exports it produces."""
     user_id = str((run or {}).get('user_id') or '').strip()
     conversation_id = str((run or {}).get('conversation_id') or '').strip()
     if not user_id or not conversation_id:
@@ -3045,6 +3044,20 @@ def _authorize_tabular_export_run_execution(
         raise PermissionError('Export conversation no longer exists') from exc
     if str(conversation.get('user_id') or '').strip() != user_id:
         raise PermissionError('Export conversation ownership changed')
+    return conversation
+
+
+def _authorize_tabular_export_run_execution(
+    run, *, require_current_sources=True, require_active_producer=None,
+):
+    """Authorize work that still reads the export's source file as an input.
+
+    The sources the originating chat request consumed (``screening_sources``) are
+    provenance and are not checked again.
+    """
+    conversation = _authorize_tabular_export_run_conversation(run)
+    user_id = str((run or {}).get('user_id') or '').strip()
+    conversation_id = str((run or {}).get('conversation_id') or '').strip()
     if run.get('execution_policy') == 'data_only' or run.get('compute_context') is not None:
         if require_active_producer is None:
             require_active_producer = run.get('status') != 'completed'
@@ -3062,7 +3075,6 @@ def _authorize_tabular_export_run_execution(
             return conversation
     elif run.get('execution_policy') not in (None, 'publish'):
         raise ValueError('The native execution policy is invalid.')
-    assert_evidence_available((run or {}).get("screening_sources"), user_id=user_id)
 
     source_authorization = (
         (run or {}).get('source_descriptor')
@@ -3119,9 +3131,7 @@ def _authorize_tabular_export_run_execution(
 
     if not authorized:
         raise PermissionError('Export source is no longer authorized')
-    assert_evidence_available(
-        [(run or {}).get("screening_sources"), source_authorization], user_id=user_id,
-    )
+    assert_evidence_available(source_authorization, user_id=user_id)
     if container_name and blob_path:
         assert_blob_available(container_name, blob_path, user_id=user_id, purpose="export")
     return conversation
@@ -7750,7 +7760,12 @@ def _screened_run_public_status(run):
     if not any(run.get(key) for key in ("source_descriptor", "source_authorization", "screening_sources")):
         return None
     try:
-        _authorize_tabular_export_run_execution(run)
+        if str(run.get('status') or '').strip().lower() == TABULAR_EXPORT_STATUS_COMPLETED:
+            # A finished export is generated content: its status follows its conversation,
+            # not the file it was generated from.
+            _authorize_tabular_export_run_conversation(run)
+        else:
+            _authorize_tabular_export_run_execution(run)
     except (ScreeningError, LookupError, PermissionError) as error:
         message = error.public_message if isinstance(error, ScreeningError) else "Source content is unavailable."
         return {
