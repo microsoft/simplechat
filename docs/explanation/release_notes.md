@@ -2,7 +2,7 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
-### **(v0.261.233)**
+### **(v0.261.234)**
 
 #### Bug Fixes
 
@@ -14,6 +14,17 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
     *   Workflow task errors, a task result that couldn't be saved, a paused loop item, saved analysis explanations, Analyze saves, the Analyze publication check and the workflow progress view now show the matching message. Placeholders in chat history for an unavailable saved analysis or saved workflow output no longer mention access confirmation.
     *   Error codes and HTTP statuses are unchanged, apart from two internal codes for a message or workflow binding mismatch (`analysis_message_unavailable` and `analysis_workflow_unavailable`) that map to the same response codes as before.
     *   (Ref: #1621, `functions_analysis_access.py`, `functions_workflow_runner.py`, `functions_workflow_flow_runner.py`, `route_backend_chats.py`, `route_backend_workflows.py`, `test_analysis_unavailable_message_families.py`, [Saved-Result Error Messages Fix](fixes/ANALYSIS_RESULT_UNAVAILABLE_MESSAGES_FIX.md))
+
+### **(v0.261.233)**
+
+#### Bug Fixes
+
+*   **Orchestration File Generation Fix**
+    *   Chat orchestration could no longer create downloadable files. A request such as "create a csv showing the states and their capitals" planned correctly and prepared its rows, then the file step failed with "This file could not be created." Every CSV, JSON, XML, YAML, TXT and Markdown file failed this way. Word and PDF files rendered, but downloading any orchestration-generated file used the same failing step, so those downloads would have failed too.
+    *   Two changes interacted to cause this. Since the OneNote extractor was added to the container image, `/app` has been owned by root, while the app runs as a non-root user with `/app` as its working directory. The file renderer and the verified download stream created their scratch files in the working directory, so the operating system refused them. The refusal was reported as `output_access_denied`, a code meant for access refusals, and the real cause wasn't logged.
+    *   Scratch files now go to `/sc-temp-files` when it's writable, and otherwise to the platform temp directory, never to the working directory. The image creates `/app` for the runtime user again. The OneNote extractor binary is added after that and stays root-owned.
+    *   For a failed attempt, the `[ORCHESTRATION_EXECUTOR] A file render attempt finished.` event now also records `sc_error_type`, `sc_error_cause_type` and `sc_error_errno`, so a file-system error can be told apart from an access refusal. Messages and paths aren't logged.
+    *   (Ref: #1623, `functions_temp_files.py`, `functions_structured_file_renderers.py`, `functions_simplechat_operations.py`, `functions_orchestration_rendering.py`, `Dockerfile`, [Orchestration File Render Permission Fix](fixes/ORCHESTRATION_FILE_RENDER_PERMISSION_FIX.md))
 
 ### **(v0.261.232)**
 

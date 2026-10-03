@@ -59,13 +59,6 @@ RUN cargo build --release --locked \
     && cp Cargo.toml Cargo.lock /onenote-source/wrapper/ \
     && cp -R src /onenote-source/wrapper/
 
-FROM mcr.microsoft.com/azurelinux/distroless/python:3.12 AS onenote-runtime
-
-COPY --from=onenote-builder /build/target/release/simplechat-onenote-extractor /app/native/onenote_extractor/bin/simplechat-onenote-extractor
-COPY --from=onenote-builder /build/THIRD_PARTY_NOTICES.txt /usr/share/simplechat/onenote-extractor/THIRD_PARTY_NOTICES.txt
-COPY --from=onenote-builder /build/licenses/ /usr/share/simplechat/onenote-extractor/licenses/
-COPY --from=onenote-builder /onenote-source/ /usr/share/simplechat/onenote-extractor/source/
-
 FROM mcr.microsoft.com/azurelinux/base/python:3.12 AS builder
 
 ARG UID
@@ -242,10 +235,17 @@ RUN set -eux; \
             ;; \
     esac
 
-FROM onenote-runtime
+FROM mcr.microsoft.com/azurelinux/distroless/python:3.12
 
 ARG UID
 ARG GID
+
+# OneNote extractor notices and corresponding source, required when redistributing the image.
+# Nothing may be copied under /app before the chowned copy from the builder below creates it,
+# so the non-root runtime user owns its working directory.
+COPY --from=onenote-builder /build/THIRD_PARTY_NOTICES.txt /usr/share/simplechat/onenote-extractor/THIRD_PARTY_NOTICES.txt
+COPY --from=onenote-builder /build/licenses/ /usr/share/simplechat/onenote-extractor/licenses/
+COPY --from=onenote-builder /onenote-source/ /usr/share/simplechat/onenote-extractor/source/
 
 COPY --from=builder /etc/pki /etc/pki
 COPY --from=builder /etc/ssl/certs /etc/ssl/certs
@@ -284,6 +284,10 @@ COPY --chown=${UID}:${GID} application/single_app ./
 # copy above. static/v2 is gitignored, so it is absent from the build context and only
 # ever arrives from the v2uibuilder stage.
 COPY --from=v2uibuilder --chown=${UID}:${GID} /single_app/static/v2 ./static/v2
+
+# The native OneNote extractor is copied after /app already exists with runtime-user
+# ownership. The binary itself stays root-owned: the app user can run it but not replace it.
+COPY --from=onenote-builder /build/target/release/simplechat-onenote-extractor /app/native/onenote_extractor/bin/simplechat-onenote-extractor
 
 # Expose port
 EXPOSE 5000
