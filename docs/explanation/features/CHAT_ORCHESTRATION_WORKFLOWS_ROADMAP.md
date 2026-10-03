@@ -51,7 +51,7 @@ have landed, so 6b can rely on the V2 bell for undeliverable results.
 Repository follow-ups found along the way, not tied to one phase:
 
 - The generated release-notes pages under `docs/explanation/release-notes/` are stale, so
-  `test_docs_release_notes_integrity.py` fails on the base, with 152 stale releases at 0.261.216. The PRs above leave
+  `test_docs_release_notes_integrity.py` fails on the base, with 164 stale releases at 0.261.228. The PRs above leave
   them alone; regenerate them once, in a docs-only change, after the in-flight PRs land.
 - Other docs pages have pre-existing broken relative links (`test_docs_link_integrity.py`).
 - **Fixed in [#1576](https://github.com/microsoft/simplechat/pull/1576)** (#1571): the PR guardrail workflows (broken
