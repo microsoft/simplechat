@@ -1,9 +1,10 @@
 # functions_tabular_merge.py
 """Deterministic merging and inspection of CSV and Excel files.
 
-Version: 0.261.219
+Version: 0.261.220
 Implemented in: 0.261.218
 Reconciliation policies, sheet modes, duplicate removal, sorting and inspection added in: 0.261.219
+Single-file merges for workflow files found at run time (min_sources=1) added in: 0.261.220
 
 The engine is pure: it receives already-authorized byte loaders, never resolves
 documents, settings, storage, routes, or models, and performs no model work.
@@ -787,18 +788,22 @@ def merge_tabular_sources(
     limits: Optional[TabularMergeLimits] = None,
     cancel_requested: Optional[Callable[[], bool]] = None,
     on_progress: Optional[Callable[[dict], None]] = None,
+    min_sources: int = 2,
 ) -> TabularMergeResult:
     """Append the rows of the sources, in the given order, into one table.
 
     The first file (or sheet) defines the column order for ``by_name`` and ``exact_order``;
     ``union`` adds each new column the first time a file has it; ``mapped`` uses exactly
     the requested columns. Under ``on_incompatible="fail"`` a mismatch reads every remaining
-    header so the report lists all mismatches, then nothing is merged.
+    header so the report lists all mismatches, then nothing is merged. ``min_sources`` is 1
+    only for a scheduled merge of whatever files arrived, which may be a single file.
     """
+    if min_sources not in (1, 2):
+        raise ValueError("min_sources must be 1 or 2.")
     options = options or TabularMergeOptions()
     limits = limits or TabularMergeLimits()
     sources = list(sources or ())
-    _validate_sources(sources, limits)
+    _validate_sources(sources, limits, minimum=min_sources)
     merger = _Merger(options, limits, len(sources), cancel_requested)
     try:
         for index, source in enumerate(sources):

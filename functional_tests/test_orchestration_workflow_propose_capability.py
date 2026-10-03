@@ -2,8 +2,9 @@
 # test_orchestration_workflow_propose_capability.py
 """
 Functional test for the workflow_propose orchestration capability.
-Version: 0.261.207
+Version: 0.261.220
 Implemented in: 0.261.207
+Merge tasks added in: 0.261.220
 
 This test ensures that chat orchestration offers workflow_propose only when workflow proposals
 are turned on and available to the requester, and checks each proposal against the draft rules
@@ -11,7 +12,8 @@ and the request's handle catalog while a plan is validated. A rejected proposal 
 once; after that it is dropped with every binding to it, so the rest of the plan still runs.
 The step runs as a write-free dry run. Its server-only sidecar describes the proposal for the
 approval card without the task instructions, keeps its id across recovery and retries, and is
-never streamed, listed or offered to a later plan.
+never streamed, listed or offered to a later plan. A proposed merge task is checked against the
+merge rules when planned and described as a code merge that needs no model.
 """
 
 import ast
@@ -447,6 +449,40 @@ def test_the_draft_rules_apply_to_every_proposal(schema, planning):
     # The argument schema caps task_actions at the same limit, before the blueprint is read.
     error = _rejection(schema, planning, [ANSWER, _propose(many, task_actions=[["email"]] * 6)])
     assert error.code == "plan_invalid"
+
+
+def test_a_merge_task_is_checked_when_planned_and_described_without_a_model(schema, ow, planning, monkeypatch):
+    merge_task = {
+        "title": "Merge the sales files", "instructions": "Merge every sales file into one workbook.",
+        "merge": {"files": "all", "output_format": "xlsx"},
+    }
+    blueprint = _blueprint(planning, run_as="none", tasks=[merge_task], trigger={**WEEKLY_TRIGGER, "timezone": ZONE})
+    plan = _normalize(schema, planning, [ANSWER, _propose(blueprint, task_actions=[[]])])
+    assert _step(plan, "propose")["arguments"]["blueprint"]["tasks"][0]["merge"] == {
+        "files": "all", "output_format": "xlsx",
+    }
+
+    document = _handle(planning, "documents", "Weekly priorities.docx")
+    researcher = _handle(planning, "agents", "Researcher")
+    for task, rule in (
+        ({**merge_task, "merge": {"files": "inputs"}, "inputs": [document]}, "merge_inputs_required"),
+        ({**merge_task, "merge": {"files": "changed"}}, "merge_trigger_required"),
+        ({**merge_task, "runner": {"type": "agent", "agent_ref": researcher}}, "merge_runner_invalid"),
+    ):
+        error = _rejection(schema, planning, [ANSWER, _propose(
+            _blueprint(planning, run_as="none", tasks=[task]), task_actions=[[]],
+        )])
+        assert (error.code, error.rule) == ("workflow_blueprint_invalid", rule)
+
+    # A merge runs with code, so a default model that cannot run workflows does not block it.
+    sidecar, _card, _calls = _describe(
+        ow, {**planning, "default_model_valid": False}, monkeypatch, blueprint, task_actions=[[]],
+    )
+    assert sidecar["summary"]["tasks"] == [{
+        "title": "Merge the sales files", "runner": "model", "agent_name": "", "action_kinds": [],
+        "requested_actions": [], "inputs": [], "merge": {"files": "all", "output_format": "xlsx"},
+    }]
+    assert (sidecar["status"], sidecar["reason"]) == ("ready", None)
 
 
 @pytest.mark.parametrize("wiring", ["input", "depends_on", "final_response"])

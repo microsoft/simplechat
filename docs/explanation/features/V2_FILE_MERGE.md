@@ -1,10 +1,10 @@
 # V2 File Merge
 
-Version: **0.261.219**
+Version: **0.261.220**
 
-Implemented in version: **0.261.218** (Phase 1, same-structure spreadsheets) and
-**0.261.219** (Phase 2, reconciling different structures), recorded in
-`application/single_app/config.py`.
+Implemented in version: **0.261.218** (Phase 1, same-structure spreadsheets),
+**0.261.219** (Phase 2, reconciling different structures) and **0.261.220** (Phase 3,
+workflow merges), recorded in `application/single_app/config.py`.
 
 GitHub issue: [#1619](https://github.com/microsoft/simplechat/issues/1619)
 
@@ -26,7 +26,7 @@ request and the easiest to verify exactly; documents and decks follow.
 | --- | --- | --- |
 | 1 | Same-structure CSV and Excel merge in V2 chat (`tabular_merge`), Merge limits, exact-schema CSV/XLSX exports | Implemented in **0.261.218** — see [Phase 1](V2_FILE_MERGE_PHASE_1_SPREADSHEETS.md) |
 | 2 | Reconciling different structures: column inspection (`tabular_inspect`), union and mapped policies, aliases, header rows, every-sheet mode, exclusion, duplicate removal, sorting, AI-prepared column mapping | Implemented in **0.261.219** — see [Phase 2](V2_FILE_MERGE_PHASE_2_RECONCILIATION.md) |
-| 3 | Large and recurring merges (100+ files) as V2 workflow tasks | Planned |
+| 3 | Large and recurring merges (100+ files) as V2 workflow tasks: selected files, every matching file, recent files or the files File Sync changed; chat-proposed merge workflows | Implemented in **0.261.220** — see [Phase 3](V2_FILE_MERGE_PHASE_3_WORKFLOWS.md) |
 | 4 | Document assembly foundation, PDF merge, and workbooks with one tab per file | Planned |
 | 5 | Word merge, keeping each document's styles or the first document's | Planned |
 | 6 | PowerPoint merge, keeping each deck's look or the first deck's theme | Planned |
@@ -51,6 +51,15 @@ merge feed several files — a CSV and an Excel copy — without merging twice.
 Saved memory does not store or merge files. The planner does read saved preferences, so a
 saved instruction such as "always give me Excel" shapes merge requests without extra work.
 
+### Merges in workflows
+
+A chat turn suits a few files. A workflow task merges up to 100 files and 1,000,000 rows by
+default, on a schedule or whenever File Sync brings new files, without anyone asking. In
+the V2 workflow editor a task's **Document action** can be **Merge files**: the task runs
+the same engine with code, no model, and attaches the merged CSV or Excel file to the run.
+Chat can propose such a workflow when a user asks for a recurring merge. See
+[Phase 3](V2_FILE_MERGE_PHASE_3_WORKFLOWS.md).
+
 ## Technical specifications
 
 ### Components
@@ -63,9 +72,12 @@ saved instruction such as "always give me Excel" shapes merge requests without e
 | `functions_orchestration_registry.py` | The `tabular_inspect` and `tabular_merge` capability descriptors and the `merge` document-action gate. |
 | `functions_orchestration_schema.py` | Plan rules: explicit document IDs or a bound source set, tabular-only sources, the Merge chat limit, valid option combinations, the mapping producer, and the merge and inspection failure messages. |
 | `functions_orchestration_services.py` | The `tabular_column_mapping_v1` prepared-content profile and its validator. |
-| `functions_document_actions.py` | The `merge` document action: enablement, file limits and row limits for chat and workflows. |
+| `functions_document_actions.py` | The `merge` document action: enablement, file limits and row limits for chat and workflows, and the workflow Merge task contract. |
+| `functions_workflow_merge.py`, `functions_workflow_runner.py` | Workflow Merge tasks: finding the files, authorizing them again, merging, rendering and attaching the file to the run. |
+| `functions_workflow_drafts.py` | The `merge` field of workflow blueprints proposed from chat. |
 | `functions_generated_export_registry.py`, `functions_structured_file_renderers.py`, `functions_generated_office_adapters.py` | The `exact_tabular_records_v1` (CSV) and `exact_tabular_workbook_v1` (XLSX) profiles. |
 | `application/v2_ui/src/lib/orchestrationMerge.ts` | The plan review's wording for merge and inspection settings. |
+| `application/v2_ui/src/lib/workflowEditor.ts`, `components/workflows/WorkflowTaskFields.tsx` | The workflow editor's **Merge files** document action. |
 
 ### Result contract
 
@@ -120,8 +132,10 @@ most 1,048,575 rows, 5,000,000 cells and 32 MiB. CSV suits the largest merges.
 
 ## Usage
 
-Users ask in a V2 chat, for example "merge these three regional CSVs into one Excel file".
-See [Merge files in chat](../../guides/merge-files.md). Administrators control the feature
+Users ask in a V2 chat, for example "merge these three regional CSVs into one Excel file",
+or add a **Merge files** task to a workflow for many files or repeated merges. See
+[Merge files](../../guides/merge-files.md) and
+[Create a workflow](../../guides/create-a-workflow.md). Administrators control the feature
 under [Document Action Capabilities](../../admin/agents-actions.md#document-action-capabilities-card)
 and the orchestration Capabilities list
 ([orchestration settings](../../admin/orchestration.md)).
@@ -136,6 +150,7 @@ and the orchestration Capabilities list
 | `functional_tests/test_orchestration_tabular_reconciliation.py` | Inspection, option combinations, the mapping producer, inspect → compose mapping → merge through the real executor, nullable union columns, and the planner recipe. |
 | `functional_tests/test_v2_orchestration_merge_arguments.mjs`, `ui_tests/test_v2_orchestration_merge_arguments.py` | The plan review's wording for merge and inspection settings. |
 | `functional_tests/test_v2_admin_actions_parity.py`, `functional_tests/test_admin_settings_pane_variable_scope.py` | Admin field paths, bounds and defaults, and the admin card rendering with and without stored Merge settings. |
+| `functional_tests/test_workflow_merge_task.py`, `functional_tests/test_v2_workflow_merge_task.mjs`, `functional_tests/test_v2_workflow_proposal_merge.mjs`, `ui_tests/test_v2_workflow_merge_task.py` | Workflow Merge tasks, their editor, and proposed merge tasks (Phase 3). |
 
 ## Known limitations
 
@@ -144,4 +159,4 @@ and the orchestration Capabilities list
   files can't be mapped per file.
 - Excel formulas contribute their last calculated values; a workbook saved without them
   merges those cells as blanks.
-- Workflows cannot run merges until Phase 3.
+- A workflow merge that resumes after an interruption starts again from its first file.

@@ -84,7 +84,10 @@ The card shows what the workflow would do:
   whether it can send email or calendar invitations, and whose account it uses.
 - Each task, with the agent or model that runs it and the documents it reads.
   Expand **Instructions** to read exactly what the task is told to do on every
-  run.
+  run. From version **0.261.220**, a task that merges spreadsheets says so
+  instead, for example "Merges the input files below, in order, into one Excel
+  file with code. No model runs.", and lists the files under **Files to merge,
+  in order**.
 - Similar workflows you already have, so you don't create a duplicate.
 
 A proposed task reads only documents you named in that request: the documents
@@ -199,7 +202,9 @@ sources to choose from:
   or interval workflow. **Wait for File Sync** and **Continue the workflow**
   decide whether the workflow waits, and whether it runs when nothing changed.
 - **Use changed files as Analyze targets** lets an Analyze task with no
-  selected documents work on the files each sync changed.
+  selected documents work on the files each sync changed. From version
+  **0.261.220**, it also lets a **Merge files** task merge them; see
+  [Merge files in a workflow](#merge-files-in-a-workflow).
 
 A group workflow uses between 1 and 10 of the group's own sources. A source the
 group no longer offers is marked **No longer available**; remove it before
@@ -219,6 +224,57 @@ and sources the workflow already uses stay selected so you can keep or remove
 them. The save checks every source again: a deleted source is refused with the
 same message as for a group, and a source you're no longer allowed to use with
 "Workflow settings or sources are not allowed for this account."
+
+## Merge files in a workflow
+
+From version **0.261.220**, a task can merge many CSV and Excel files into one CSV
+or Excel file. Use it for a merge that's too big for one chat turn, such as a
+year of weekly exports, or one that should happen on its own, such as every
+Monday or whenever a synced folder gets a new export. A merge task runs with
+code, not a model or agent: rows are copied exactly and the task's answer
+summarizes what was merged.
+
+1. Add a task and choose **Merge files** as its **Document action**. Write a
+   short note in **Instructions** describing the merge; the merge itself
+   doesn't read it. **Merge files** isn't offered while your administrator has
+   Merge turned off.
+2. Under **Files to merge**, choose:
+   - **Selected files, in this order** to merge files you pick, at least two.
+     Set their order under **Merge order**.
+   - **All matching files in scope** to merge every CSV and Excel file in the
+     workflow's workspace when the run starts.
+   - **Recently added or updated files** to merge those added or changed within
+     **Recent window in minutes** before the run, 60 by default.
+   - **Files changed by File Sync** to merge the files each sync adds or
+     changes. It's offered when File Sync is on and **Use changed files as
+     Analyze targets** is selected.
+
+   Files found when the run starts are merged in file-name order.
+3. Choose **Output format**, CSV or Excel workbook, and optionally an **Output
+   file name** without an extension.
+4. Open **More merge options** to decide how columns are matched, add column
+   aliases, choose sheets or a header row, leave out files whose columns don't
+   match, remove duplicates, or sort. These are the same settings you can ask
+   for in a [chat merge]({{ '/guides/merge-files/' | relative_url }}).
+
+Each run attaches the merged file to the run's conversation, and later tasks
+can read the merge task's summary. A workflow merges up to 100 files and
+1,000,000 rows by default; your administrator sets these limits under
+[Document Action Capabilities]({{ '/admin/agents-actions/' | relative_url }}#document-action-capabilities-card).
+
+A run with nothing to merge finishes and says so without creating a file.
+Files that can't be merged are handled by how they were chosen:
+
+- For **Selected files**, a file that's no longer available, or isn't a CSV or
+  Excel file, fails the task and says which.
+- For files found at run time, those files are skipped and named in the
+  task's answer.
+- When more files match than the limit allows, the task fails rather than
+  merging only some of them. Narrow the files, or ask your administrator to
+  raise the limit.
+
+A merge failure caused by the files or settings is shown on the task and isn't
+retried, because the same merge would fail the same way.
 
 ## Set up alerts
 
@@ -830,7 +886,7 @@ by a workflow**. See
 | Save is blocked after moving or removing a block | A retained reference is now missing or out of scope | Use the affected-selector diagnostics to repair each consumer explicitly. |
 | Save is refused with "This schedule runs more often than the administrator allows." | The new or changed interval is shorter than the administrator's minimum | Choose the interval the message names or longer, or use a calendar schedule. |
 | A calendar schedule's time zone isn't accepted | The name isn't an exact IANA time zone that the server offers; names are case-sensitive | Choose a zone from the **Time zone** list, such as `America/New_York`. |
-| The classic editor won't open a workflow | It uses a calendar schedule or advanced data flow, which the classic editor can't represent | Edit it in V2. Run and Cancel still work in the classic workspace. |
+| The classic editor won't open a workflow | It uses a calendar schedule, advanced data flow, or a **Merge files** task, which the classic editor can't represent | Edit it in V2. Run and Cancel still work in the classic workspace. |
 | The V2 editor has no **Ask AI** tab | The assistant is turned off, the workflow belongs to a group, or the editor can't change the workflow, for example because it's running or you can only view it | Ask an admin to turn on **Enable AI Workflow Assistant**, or open a personal workflow you can edit. |
 | Ask AI says the saved workflow changed | Someone saved the workflow after you opened it | Choose **Reload workflow**. Reloading discards your unsaved changes, so copy anything you need first. |
 

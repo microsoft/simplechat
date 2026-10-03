@@ -488,6 +488,10 @@ def _proposal_summary(blueprint, task_actions, planning, used, request_time_zone
                 document_names.get(handle) or 'Document'
                 for handle in task.get('inputs') or () if isinstance(handle, str)
             ],
+            **({'merge': {
+                'files': task['merge'].get('files'),
+                'output_format': task['merge'].get('output_format') or 'csv',
+            }} if isinstance(task.get('merge'), dict) else {}),
         })
 
     m365_sources, can_send, required = set(), False, False
@@ -529,8 +533,10 @@ def _uncovered_task(blueprint, task_actions, planning):
 
 
 def _uses_default_model(blueprint):
+    # A merge task merges files with code, so it never needs the default model.
     return any(
-        isinstance(task, dict) and _runner_agent(task) is None for task in blueprint.get('tasks') or ()
+        isinstance(task, dict) and _runner_agent(task) is None and not task.get('merge')
+        for task in blueprint.get('tasks') or ()
     )
 
 

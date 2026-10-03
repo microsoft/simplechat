@@ -269,7 +269,7 @@ export function WorkflowFileSyncFields({
                 checked={config.use_changed_documents}
                 disabled={disabled || !active}
                 onChange={(checked) => update({ use_changed_documents: checked })}
-                description="Analyze tasks without selected documents run on the files this sync changed."
+                description="Analyze tasks without selected documents, and Merge files tasks set to merge the files File Sync changed, run on the files this sync changed."
             />
         </section>
     );

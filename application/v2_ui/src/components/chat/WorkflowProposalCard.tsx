@@ -33,6 +33,7 @@ import {
     type WorkflowProposalMode,
     type WorkflowProposalState,
     type WorkflowProposalSummary,
+    workflowProposalMergeText as mergeTaskText,
 } from '../../lib/workflowProposals';
 
 const PERSONAL_SCOPE: WorkflowScope = { type: 'personal' };
@@ -246,18 +247,22 @@ function ProposalDetails({ proposal }: { proposal: WorkflowProposal }) {
                     <li key={index} className="min-w-0 space-y-1 rounded-lg border border-edge bg-surface-1 p-2">
                         <p className="break-words font-medium text-text-1">{`${index + 1}. ${task.title || 'Untitled task'}`}</p>
                         <p className="break-words text-text-2">
-                            {task.runner === 'agent'
-                                ? `Runs with the agent ${task.agent_name || 'chosen for it'}.`
-                                : 'Runs with the default model.'}
+                            {task.merge
+                                ? mergeTaskText(task)
+                                : task.runner === 'agent'
+                                    ? `Runs with the agent ${task.agent_name || 'chosen for it'}.`
+                                    : 'Runs with the default model.'}
                         </p>
                         {task.requested_actions.length ? (
                             <p className="break-words text-text-2">{`Needs: ${actionList(task.requested_actions)}.`}</p>
                         ) : null}
-                        {task.action_kinds.length ? (
+                        {task.action_kinds.length && !task.merge ? (
                             <p className="break-words text-text-2">{`The agent can use: ${actionList(task.action_kinds)}.`}</p>
                         ) : null}
                         {task.inputs.length ? (
-                            <p className="break-words text-text-2">{`Reads: ${task.inputs.join(', ')}.`}</p>
+                            <p className="break-words text-text-2">
+                                {`${task.merge ? 'Files to merge, in order' : 'Reads'}: ${task.inputs.join(', ')}.`}
+                            </p>
                         ) : null}
                         <details className="group">
                             <summary className="cursor-pointer rounded font-medium text-accent focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent">

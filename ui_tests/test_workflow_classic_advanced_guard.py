@@ -1,13 +1,14 @@
 # test_workflow_classic_advanced_guard.py
 """
 Source-backed browser coverage for the Classic advanced-workflow edit guard.
-Version: 0.261.193
-Implemented in: 0.261.116; calendar schedule routing and labels added in 0.261.193
+Version: 0.261.220
+Implemented in: 0.261.116; calendar schedule routing and labels added in 0.261.193;
+Merge files tasks routed to V2 in 0.261.220
 
 The actual local edit function must stop before loading runners or resetting a
-draft for advanced definitions and for calendar schedules, which the Classic
-form cannot show. Legacy eligibility, the advanced-flow message, interval
-labels, and Run/Cancel are unchanged.
+draft for advanced definitions, for calendar schedules, and for Merge files
+tasks, which the Classic form cannot show. Legacy eligibility, the advanced-flow
+message, interval labels, and Run/Cancel are unchanged.
 """
 
 import re
@@ -27,6 +28,10 @@ ADVANCED_MESSAGE = (
 )
 CALENDAR_MESSAGE = (
     "This workflow uses a calendar schedule. Open V2 to edit it without losing its configuration. "
+    "Run and Cancel remain available here."
+)
+MERGE_MESSAGE = (
+    "This workflow uses a Merge files task. Open V2 to edit it without losing its configuration. "
     "Run and Cancel remain available here."
 )
 GUARD_FUNCTIONS = (
@@ -149,6 +154,37 @@ def test_classic_calendar_edit_routes_to_v2(page, scope, trigger, version):
     assert page.evaluate("workflowNeedsNativeEditor({trigger_type: 'interval', schedule: {kind: 'Calendar'}})") is True
     assert page.evaluate("workflowNativeEditorReason({definition_version: 3, flow: {}, schedule: {kind: 'calendar'}})") == "a calendar schedule"
     assert page.evaluate("workflowNativeEditorReason({definition_version: 2, schedule: {unit: 'minutes', value: 5}})") == "advanced data flow"
+    assert not unexpected
+    assert not errors
+
+
+@pytest.mark.parametrize("scope", ["personal", "group"])
+@pytest.mark.parametrize("placement", ["task", "workflow"])
+def test_classic_merge_task_edit_routes_to_v2(page, scope, placement):
+    # The Classic form has no Merge files action, so saving there would drop the merge.
+    unexpected = []
+    errors = []
+    page.on("pageerror", lambda error: errors.append(str(error)))
+    _serve(page, _guard_script(), unexpected)
+    page.evaluate("(scope) => window.configureScope(scope)", scope)
+    page.evaluate(
+        """(placement) => {
+            const merge = {type: 'Merge', target_mode: 'selected', document_ids: ['a', 'b']};
+            window.testWorkflow = placement === 'task'
+                ? {id: 'workflow', definition_version: 1, tasks: [{document_action: {type: 'none'}}, {document_action: merge}]}
+                : {id: 'workflow', definition_version: 1, document_action: merge};
+        }""",
+        placement,
+    )
+    page.get_by_role("button", name="Edit workflow", exact=True).click()
+    expect(page.get_by_role("alert")).to_have_text(MERGE_MESSAGE)
+    assert page.evaluate("window.preparationCalls") == 0
+    assert page.evaluate(
+        "workflowNeedsNativeEditor({definition_version: 1, tasks: [{document_action: {type: 'analyze'}}, {}, null]})"
+    ) is False
+    assert page.evaluate(
+        "workflowNativeEditorReason({definition_version: 2, tasks: [{document_action: {type: 'merge'}}]})"
+    ) == "advanced data flow"
     assert not unexpected
     assert not errors
 

@@ -21,14 +21,24 @@ import {
 } from '../../lib/workflowFlow';
 import {
     comparisonActionFromSelection,
+    cleanupWorkflowMergeOptions,
     documentActionFromSelection,
+    formatWorkflowMergeColumnAliases,
     findWorkflowAgent,
     isWorkflowPublicationCompletionPolicy,
     isWorkflowPublicationSourceKind,
+    parseWorkflowMergeColumnAliases,
     safeWorkflowAlias,
     savedOutputPublicationFormats,
+    workflowMergeActionFromSelection,
+    workflowMergeDocumentLimit,
+    workflowMergeEnabled,
+    workflowMergeValidationErrors,
     workflowFileSyncProvidesAnalyzeTargets,
     workflowInputProcessingErrors,
+    WORKFLOW_MERGE_KIND_INPUTS,
+    WORKFLOW_MERGE_KIND_LABELS,
+    WORKFLOW_MERGE_KINDS_AVAILABLE,
     WORKFLOW_APPROVAL_MESSAGE_LIMIT,
     workflowSchemaErrors,
     workflowAgentKey,
@@ -43,6 +53,12 @@ import {
     type WorkflowAgentReference,
     type WorkflowInputBinding,
     type WorkflowInputOutput,
+    type WorkflowMergeActionOptions,
+    type WorkflowMergeKind,
+    type WorkflowMergeOptions,
+    type WorkflowMergeOutputFormat,
+    type WorkflowMergeSortRule,
+    type WorkflowMergeTargetMode,
     type WorkflowOutputContract,
     type WorkflowOutputKind,
     type WorkflowScope,
@@ -746,6 +762,9 @@ function actionMode(action: WorkflowDocumentAction | undefined): string {
     if (action.type === 'comparison') {
         return 'comparison';
     }
+    if (action.type === 'merge') {
+        return 'merge';
+    }
     if (action.type === 'search') {
         return Array.isArray(action.document_ids) && action.document_ids.length
             ? 'search_selected'
@@ -766,16 +785,463 @@ function splitComparisonEvidence(
     return { left, right };
 }
 
+function mergeKind(action: WorkflowDocumentAction | undefined): WorkflowMergeKind {
+    return ['tabular', 'workbook', 'pdf', 'docx', 'pptx'].includes(String(action?.merge_kind))
+        ? action?.merge_kind as WorkflowMergeKind : 'tabular';
+}
+
+function mergeTargetMode(action: WorkflowDocumentAction | undefined): WorkflowMergeTargetMode {
+    return ['selected', 'all', 'recent', 'changed'].includes(String(action?.target_mode))
+        ? action?.target_mode as WorkflowMergeTargetMode : 'selected';
+}
+
+function mergeOutputFormat(action: WorkflowDocumentAction | undefined, kind: WorkflowMergeKind): WorkflowMergeOutputFormat {
+    if (kind === 'tabular' && (action?.output_format === 'xlsx' || action?.output_format === 'csv')) {
+        return action.output_format;
+    }
+    if (kind === 'tabular') {
+        return 'csv';
+    }
+    return kind === 'workbook' ? 'xlsx' : kind;
+}
+
+function mergeOptions(action: WorkflowDocumentAction | undefined): WorkflowMergeOptions {
+    return isRecord(action?.merge_options) ? { ...action.merge_options as WorkflowMergeOptions } : {};
+}
+
+function optionTextList(value: unknown): string {
+    return Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string').join('\n') : '';
+}
+
+function setOptionTextList(options: WorkflowMergeOptions, key: keyof WorkflowMergeOptions, value: string): WorkflowMergeOptions {
+    const next = { ...options };
+    const values = value.split(/\r?\n|,/).map((item) => item.trim()).filter(Boolean);
+    if (values.length) {
+        next[key] = values as never;
+    } else {
+        delete next[key];
+    }
+    return next;
+}
+
+function sortRules(value: unknown): WorkflowMergeSortRule[] {
+    const rules = Array.isArray(value) ? value.filter(isRecord).slice(0, 3) : [];
+    return [0, 1, 2].map((index) => {
+        const rule = rules[index];
+        return {
+            column: typeof rule?.column === 'string' ? rule.column : '',
+            descending: rule?.descending === true,
+            value_type: ['text', 'number', 'date'].includes(String(rule?.value_type))
+                ? rule?.value_type : 'text',
+        } as WorkflowMergeSortRule;
+    });
+}
+
+function updateSortRule(options: WorkflowMergeOptions, index: number, patch: Partial<WorkflowMergeSortRule>): WorkflowMergeOptions {
+    const rules = sortRules(options.sort_by).map((rule, position) => (position === index ? { ...rule, ...patch } : rule))
+        .filter((rule) => rule.column.trim());
+    const next = { ...options };
+    if (rules.length) next.sort_by = rules;
+    else delete next.sort_by;
+    return next;
+}
+
+function moveReference(references: WorkflowReferenceInput[], index: number, direction: -1 | 1): WorkflowReferenceInput[] {
+    const next = references.slice();
+    const target = index + direction;
+    if (target < 0 || target >= references.length) {
+        return references;
+    }
+    [next[index], next[target]] = [next[target], next[index]];
+    return next;
+}
+
+function MergeActionFields({
+    action,
+    evidence,
+    changedFileTargets,
+    maxSelectedDocuments,
+    onActionChange,
+    onEvidenceChange,
+}: {
+    action: WorkflowDocumentAction | undefined;
+    evidence: WorkflowReferenceInput[];
+    changedFileTargets: boolean;
+    maxSelectedDocuments?: number;
+    onActionChange: (updates: {
+        mergeKind?: WorkflowMergeKind;
+        targetMode?: WorkflowMergeTargetMode;
+        outputFormat?: WorkflowMergeOutputFormat;
+        recentWindowMinutes?: number;
+        outputFileName?: string;
+        mergeOptions?: WorkflowMergeOptions;
+    }) => void;
+    onEvidenceChange: (references: WorkflowReferenceInput[]) => void;
+}) {
+    const kind = mergeKind(action);
+    const targetMode = mergeTargetMode(action);
+    const options = mergeOptions(action);
+    const [aliasesText, setAliasesText] = useState(() => formatWorkflowMergeColumnAliases(options.column_aliases));
+    const aliasParse = parseWorkflowMergeColumnAliases(aliasesText);
+    const validationErrors = workflowMergeValidationErrors(action, {
+        isFileSyncWorkflow: changedFileTargets,
+        maxSelectedDocuments,
+    });
+    const kindOptions = WORKFLOW_MERGE_KINDS_AVAILABLE.includes(kind)
+        ? WORKFLOW_MERGE_KINDS_AVAILABLE
+        : [kind, ...WORKFLOW_MERGE_KINDS_AVAILABLE];
+    const applyOptions = (nextOptions: WorkflowMergeOptions) => {
+        onActionChange({ mergeOptions: cleanupWorkflowMergeOptions(kind, nextOptions) ?? nextOptions });
+    };
+    const applyAliases = (value: string) => {
+        setAliasesText(value);
+        const parsed = parseWorkflowMergeColumnAliases(value);
+        if (!parsed.errors.length) {
+            const next = { ...options };
+            if (Object.keys(parsed.aliases).length) next.column_aliases = parsed.aliases;
+            else delete next.column_aliases;
+            applyOptions(next);
+        }
+    };
+    const sheetMode = options.sheet ? 'named' : options.sheets === 'all' ? 'all' : 'first';
+    return (
+        <div className="space-y-3 rounded-xl border border-edge p-3">
+            <div className="grid gap-3 md:grid-cols-2">
+                <label className="text-sm text-text-2">
+                    Merge type
+                    <select
+                        className={`${inputClass} mt-1`}
+                        aria-label="Merge type"
+                        value={kind}
+                        onChange={(event) => onActionChange({ mergeKind: event.target.value as WorkflowMergeKind })}
+                    >
+                        {kindOptions.map((item) => (
+                            <option key={item} value={item}>
+                                {WORKFLOW_MERGE_KIND_LABELS[item]}{WORKFLOW_MERGE_KINDS_AVAILABLE.includes(item) ? '' : ' (not enabled)'}
+                            </option>
+                        ))}
+                    </select>
+                    <span className="mt-1 block text-xs text-text-3">Inputs: {WORKFLOW_MERGE_KIND_INPUTS[kind]}</span>
+                </label>
+                <label className="text-sm text-text-2">
+                    Files to merge
+                    <select
+                        className={`${inputClass} mt-1`}
+                        aria-label="Files to merge"
+                        value={targetMode}
+                        onChange={(event) => onActionChange({ targetMode: event.target.value as WorkflowMergeTargetMode })}
+                    >
+                        <option value="selected">Selected files, in this order</option>
+                        <option value="all">All matching files in scope</option>
+                        <option value="recent">Recently added or updated files</option>
+                        {changedFileTargets || targetMode === 'changed'
+                            ? <option value="changed" disabled={!changedFileTargets}>Files changed by File Sync</option>
+                            : null}
+                    </select>
+                    <span className="mt-1 block text-xs text-text-3">
+                        Selected files keep your order. Other choices merge every matching file, ordered by file name.
+                    </span>
+                </label>
+            </div>
+            {targetMode === 'recent' ? (
+                <label className="block text-sm text-text-2">
+                    Recent window in minutes
+                    <input
+                        className={`${inputClass} mt-1`}
+                        type="number"
+                        min={1}
+                        max={1440}
+                        aria-label="Recent window in minutes"
+                        value={action?.recent_window_minutes ?? 60}
+                        onChange={(event) => onActionChange({ recentWindowMinutes: Number(event.target.value) })}
+                    />
+                    <span className="mt-1 block text-xs text-text-3">Use files added or updated in this many minutes before the workflow runs.</span>
+                </label>
+            ) : null}
+            <div className="grid gap-3 md:grid-cols-2">
+                {kind === 'tabular' ? (
+                    <label className="text-sm text-text-2">
+                        Output format
+                        <select
+                            className={`${inputClass} mt-1`}
+                            aria-label="Merge output format"
+                            value={mergeOutputFormat(action, kind)}
+                            onChange={(event) => onActionChange({ outputFormat: event.target.value as WorkflowMergeOutputFormat })}
+                        >
+                            <option value="csv">CSV</option>
+                            <option value="xlsx">Excel workbook</option>
+                        </select>
+                    </label>
+                ) : (
+                    <p className="rounded-xl border border-edge p-3 text-sm text-text-2">
+                        Output format: <span className="font-medium text-text-1">{mergeOutputFormat(action, kind).toUpperCase()}</span>
+                    </p>
+                )}
+                <label className="text-sm text-text-2">
+                    Output file name
+                    <input
+                        className={`${inputClass} mt-1`}
+                        aria-label="Merge output file name"
+                        maxLength={100}
+                        value={typeof action?.output_file_name === 'string' ? action.output_file_name : ''}
+                        onChange={(event) => onActionChange({ outputFileName: event.target.value })}
+                        placeholder="Leave blank to name it automatically"
+                    />
+                    <span className="mt-1 block text-xs text-text-3">Do not include an extension; the workflow adds it.</span>
+                </label>
+            </div>
+            {targetMode === 'selected' && evidence.length ? (
+                <div className="space-y-2">
+                    <p className="text-sm font-medium text-text-1">Merge order</p>
+                    <ol className="space-y-2" aria-label="Selected merge file order">
+                        {evidence.map((item, index) => (
+                            <li key={item.id} className="flex flex-wrap items-center gap-2 rounded-xl border border-edge p-2">
+                                <span className="min-w-0 flex-1 text-sm text-text-1">{index + 1}. {item.name}</span>
+                                <GlassButton size="sm" disabled={index === 0} onClick={() => onEvidenceChange(moveReference(evidence, index, -1))}
+                                    aria-label={`Move ${item.name} up in merge order`}>
+                                    <ArrowUp size={14} /> Up
+                                </GlassButton>
+                                <GlassButton size="sm" disabled={index === evidence.length - 1} onClick={() => onEvidenceChange(moveReference(evidence, index, 1))}
+                                    aria-label={`Move ${item.name} down in merge order`}>
+                                    <ArrowDown size={14} /> Down
+                                </GlassButton>
+                            </li>
+                        ))}
+                    </ol>
+                </div>
+            ) : null}
+            <details className="rounded-xl border border-edge p-3">
+                <summary className="cursor-pointer text-sm font-medium text-text-1">More merge options</summary>
+                <div className="mt-3 space-y-3">
+                    {kind === 'tabular' ? (
+                        <>
+                            <label className="text-sm text-text-2">
+                                Column matching
+                                <select
+                                    className={`${inputClass} mt-1`}
+                                    aria-label="Column matching"
+                                    value={options.schema_policy ?? 'by_name'}
+                                    onChange={(event) => applyOptions({ ...options, schema_policy: event.target.value as WorkflowMergeOptions['schema_policy'] })}
+                                >
+                                    <option value="by_name">Match columns by name</option>
+                                    <option value="exact_order">Require the same columns in the same order</option>
+                                    <option value="union">Keep every column from every file</option>
+                                    <option value="mapped">Use mapped output columns</option>
+                                </select>
+                            </label>
+                            {options.schema_policy === 'mapped' ? (
+                                <label className="block text-sm text-text-2">
+                                    Output columns
+                                    <textarea className={`${textareaClass} mt-1`} aria-label="Mapped output columns"
+                                        value={optionTextList(options.columns)}
+                                        onChange={(event) => applyOptions(setOptionTextList(options, 'columns', event.target.value))}
+                                        placeholder="One output column per line" />
+                                </label>
+                            ) : null}
+                            <label className="block text-sm text-text-2">
+                                Column aliases
+                                <textarea className={`${textareaClass} mt-1`} aria-label="Column aliases"
+                                    value={aliasesText}
+                                    onChange={(event) => applyAliases(event.target.value)}
+                                    placeholder="Customer ID = cust_id, CustomerID" />
+                                <span className="mt-1 block text-xs text-text-3">Use one line per output column when headers vary across files.</span>
+                            </label>
+                            {aliasParse.errors.length ? (
+                                <div role="alert" className="text-xs text-danger">
+                                    {aliasParse.errors.map((error: string) => <p key={error}>{error}</p>)}
+                                </div>
+                            ) : null}
+                            <div className="grid gap-3 md:grid-cols-2">
+                                <label className="text-sm text-text-2">
+                                    Sheets
+                                    <select className={`${inputClass} mt-1`} aria-label="Sheets to merge" value={sheetMode}
+                                        onChange={(event) => {
+                                            const next = { ...options };
+                                            delete next.sheet;
+                                            if (event.target.value === 'all') next.sheets = 'all';
+                                            else delete next.sheets;
+                                            applyOptions(next);
+                                        }}>
+                                        <option value="first">First sheet</option>
+                                        <option value="all">Every sheet</option>
+                                        <option value="named">Named sheet</option>
+                                    </select>
+                                </label>
+                                {sheetMode === 'named' ? (
+                                    <label className="text-sm text-text-2">
+                                        Sheet name
+                                        <input className={`${inputClass} mt-1`} aria-label="Sheet name" maxLength={31}
+                                            value={typeof options.sheet === 'string' ? options.sheet : ''}
+                                            onChange={(event) => applyOptions({ ...options, sheet: event.target.value, sheets: undefined })} />
+                                    </label>
+                                ) : null}
+                            </div>
+                            <div className="grid gap-3 md:grid-cols-2">
+                                <label className="text-sm text-text-2">
+                                    Header row
+                                    <input className={`${inputClass} mt-1`} type="number" min={1} max={1000}
+                                        aria-label="Header row"
+                                        value={typeof options.header_row === 'number' ? options.header_row : ''}
+                                        onChange={(event) => applyOptions({ ...options, header_row: event.target.value ? Number(event.target.value) : undefined })} />
+                                </label>
+                                <label className="text-sm text-text-2">
+                                    Incompatible files
+                                    <select className={`${inputClass} mt-1`} aria-label="Incompatible files"
+                                        value={options.on_incompatible ?? 'fail'}
+                                        onChange={(event) => applyOptions({ ...options, on_incompatible: event.target.value as WorkflowMergeOptions['on_incompatible'] })}>
+                                        <option value="fail">Stop the merge</option>
+                                        <option value="exclude">Leave out files whose columns don't match</option>
+                                    </select>
+                                </label>
+                            </div>
+                            <Toggle label="Add source file column" checked={options.include_source_column !== false}
+                                description="Adds the source file name to each merged row."
+                                onChange={(checked) => applyOptions({ ...options, include_source_column: checked })} />
+                            {options.include_source_column !== false ? (
+                                <label className="block text-sm text-text-2">
+                                    Source column name
+                                    <input className={`${inputClass} mt-1`} aria-label="Source column name" maxLength={128}
+                                        value={typeof options.source_column_name === 'string' ? options.source_column_name : ''}
+                                        onChange={(event) => applyOptions({ ...options, source_column_name: event.target.value })} placeholder="Source File" />
+                                </label>
+                            ) : null}
+                            <div className="grid gap-3 md:grid-cols-2">
+                                <label className="text-sm text-text-2">
+                                    Duplicates
+                                    <select className={`${inputClass} mt-1`} aria-label="Duplicate rows"
+                                        value={options.dedupe ?? 'none'}
+                                        onChange={(event) => applyOptions({ ...options, dedupe: event.target.value as WorkflowMergeOptions['dedupe'] })}>
+                                        <option value="none">Keep all rows</option>
+                                        <option value="exact_rows">Remove duplicate rows</option>
+                                        <option value="key_columns">Remove rows with duplicate key columns</option>
+                                    </select>
+                                </label>
+                                <label className="text-sm text-text-2">
+                                    Keep duplicate
+                                    <select className={`${inputClass} mt-1`} aria-label="Duplicate keep rule"
+                                        value={options.dedupe_keep ?? 'first'}
+                                        onChange={(event) => applyOptions({ ...options, dedupe_keep: event.target.value as WorkflowMergeOptions['dedupe_keep'] })}>
+                                        <option value="first">First row</option>
+                                        <option value="last">Last row</option>
+                                    </select>
+                                </label>
+                            </div>
+                            {options.dedupe === 'key_columns' ? (
+                                <label className="block text-sm text-text-2">
+                                    Duplicate key columns
+                                    <textarea className={`${textareaClass} mt-1`} aria-label="Duplicate key columns"
+                                        value={optionTextList(options.dedupe_columns)}
+                                        onChange={(event) => applyOptions(setOptionTextList(options, 'dedupe_columns', event.target.value))}
+                                        placeholder="One key column per line" />
+                                </label>
+                            ) : null}
+                            <div className="space-y-2">
+                                <p className="text-sm font-medium text-text-1">Sort rows</p>
+                                {sortRules(options.sort_by).map((rule, index) => (
+                                    <div key={index} className="grid gap-2 md:grid-cols-[minmax(0,1fr)_9rem_8rem]">
+                                        <input className={inputClass} aria-label={`Sort column ${index + 1}`}
+                                            value={rule.column}
+                                            onChange={(event) => applyOptions(updateSortRule(options, index, { column: event.target.value }))} placeholder="Column name" />
+                                        <select className={inputClass} aria-label={`Sort type ${index + 1}`}
+                                            value={rule.value_type ?? 'text'}
+                                            onChange={(event) => applyOptions(updateSortRule(options, index, { value_type: event.target.value as WorkflowMergeSortRule['value_type'] }))}>
+                                            <option value="text">Text</option>
+                                            <option value="number">Number</option>
+                                            <option value="date">Date</option>
+                                        </select>
+                                        <label className="flex items-center gap-2 text-sm text-text-2">
+                                            <input type="checkbox" checked={rule.descending === true}
+                                                onChange={(event) => applyOptions(updateSortRule(options, index, { descending: event.target.checked }))} />
+                                            Descending
+                                        </label>
+                                    </div>
+                                ))}
+                            </div>
+                        </>
+                    ) : kind === 'workbook' ? (
+                        <div className="grid gap-3 md:grid-cols-2">
+                            <label className="text-sm text-text-2">
+                                Sheets
+                                <select className={`${inputClass} mt-1`} aria-label="Workbook sheets" value={sheetMode}
+                                    onChange={(event) => {
+                                        const next = { ...options };
+                                        delete next.sheet;
+                                        if (event.target.value === 'all') next.sheets = 'all';
+                                        else delete next.sheets;
+                                        applyOptions(next);
+                                    }}>
+                                    <option value="first">First sheet from each file</option>
+                                    <option value="all">Every sheet from every file</option>
+                                    <option value="named">Named sheet from each file</option>
+                                </select>
+                            </label>
+                            {sheetMode === 'named' ? (
+                                <label className="text-sm text-text-2">
+                                    Sheet name
+                                    <input className={`${inputClass} mt-1`} aria-label="Workbook sheet name"
+                                        value={typeof options.sheet === 'string' ? options.sheet : ''}
+                                        onChange={(event) => applyOptions({ ...options, sheet: event.target.value, sheets: undefined })} />
+                                </label>
+                            ) : null}
+                        </div>
+                    ) : kind === 'pdf' ? (
+                        <Toggle label="Add bookmarks" checked={options.bookmarks !== false}
+                            description="Adds one PDF outline entry per file."
+                            onChange={(checked) => applyOptions({ ...options, bookmarks: checked })} />
+                    ) : kind === 'docx' ? (
+                        <div className="space-y-3">
+                            <label className="text-sm text-text-2">
+                                Formatting
+                                <select className={`${inputClass} mt-1`} aria-label="Word formatting"
+                                    value={options.formatting ?? 'keep_source'}
+                                    onChange={(event) => applyOptions({ ...options, formatting: event.target.value as WorkflowMergeOptions['formatting'] })}>
+                                    <option value="keep_source">Keep source formatting</option>
+                                    <option value="use_first">Use the first document's formatting</option>
+                                </select>
+                            </label>
+                            <Toggle label="Page break between documents" checked={options.page_breaks !== false}
+                                onChange={(checked) => applyOptions({ ...options, page_breaks: checked })} />
+                            <Toggle label="Add source headings" checked={options.source_headings === true}
+                                onChange={(checked) => applyOptions({ ...options, source_headings: checked })} />
+                        </div>
+                    ) : (
+                        <div className="space-y-3">
+                            <label className="text-sm text-text-2">
+                                Formatting
+                                <select className={`${inputClass} mt-1`} aria-label="PowerPoint formatting"
+                                    value={options.formatting ?? 'keep_source'}
+                                    onChange={(event) => applyOptions({ ...options, formatting: event.target.value as WorkflowMergeOptions['formatting'] })}>
+                                    <option value="keep_source">Keep source formatting</option>
+                                    <option value="use_first">Use the first deck's theme</option>
+                                </select>
+                            </label>
+                            <Toggle label="Create one section per deck" checked={options.sections !== false}
+                                onChange={(checked) => applyOptions({ ...options, sections: checked })} />
+                        </div>
+                    )}
+                </div>
+            </details>
+            {validationErrors.length ? (
+                <div role="alert" className="text-xs text-danger">
+                    {validationErrors.map((error) => <p key={error}>{error}</p>)}
+                </div>
+            ) : null}
+        </div>
+    );
+}
+
 function DocumentActionFields({
     scope,
     task,
     onChange,
+    options,
     loops = [],
     changedFileTargets = false,
 }: {
     scope: WorkflowScope;
     task: WorkflowTask;
     onChange: (task: WorkflowTask) => void;
+    options: WorkflowEditorOptions;
     loops?: WorkflowForEachNode[];
     /** File Sync supplies the changed files, so Analyze may run without selected evidence. */
     changedFileTargets?: boolean;
@@ -785,6 +1251,25 @@ function DocumentActionFields({
     const [analysisMode, setAnalysisMode] = useState<'combined' | 'per_document'>(() =>
         task.document_action?.analysis_mode === 'per_document' ? 'per_document' : 'combined');
     const comparison = splitComparisonEvidence(task.document_action, evidence);
+    const maxMergeDocuments = workflowMergeDocumentLimit(options);
+    const mergeEnabled = workflowMergeEnabled(options);
+
+    const currentMergeActionOptions = (): WorkflowMergeActionOptions => {
+        const action = task.document_action?.type === 'merge' ? task.document_action : undefined;
+        const kind = mergeKind(action);
+        return {
+            mergeKind: kind,
+            targetMode: mergeTargetMode(action),
+            docScope: ['all', 'personal', 'group', 'public'].includes(String(action?.doc_scope))
+                ? action?.doc_scope as WorkflowMergeActionOptions['docScope'] : 'all',
+            activeGroupIds: Array.isArray(action?.active_group_ids) ? action.active_group_ids : [],
+            activePublicWorkspaceIds: Array.isArray(action?.active_public_workspace_id) ? action.active_public_workspace_id : [],
+            recentWindowMinutes: Number.isInteger(action?.recent_window_minutes) ? action?.recent_window_minutes : 60,
+            outputFormat: mergeOutputFormat(action, kind),
+            outputFileName: typeof action?.output_file_name === 'string' ? action.output_file_name : '',
+            mergeOptions: mergeOptions(action),
+        };
+    };
 
     const writeAction = (
         nextMode: string,
@@ -807,6 +1292,8 @@ function DocumentActionFields({
             onChange({ ...task, document_action: { type: 'analyze', target_mode: 'current_item', loop_id: loopId, analysis_mode: 'combined' } });
         } else if (nextMode === 'comparison') {
             onChange({ ...task, document_action: comparisonActionFromSelection(nextLeft, nextRight) });
+        } else if (nextMode === 'merge') {
+            onChange({ ...task, document_action: workflowMergeActionFromSelection(nextEvidence, currentMergeActionOptions()) });
         }
     };
 
@@ -833,7 +1320,20 @@ function DocumentActionFields({
         writeAction('comparison', evidence, analysisMode, comparison.left, right);
     };
 
-    const needsSelectedEvidence = ['analyze', 'search_selected', 'comparison'].includes(mode);
+    const updateMergeAction = (
+        nextEvidence: WorkflowReferenceInput[],
+        updates: WorkflowMergeActionOptions,
+    ) => {
+        const merged = { ...currentMergeActionOptions(), ...updates };
+        if (updates.mergeKind && updates.mergeKind !== currentMergeActionOptions().mergeKind) {
+            merged.outputFormat = mergeOutputFormat({ type: 'merge', merge_kind: updates.mergeKind }, updates.mergeKind);
+            merged.mergeOptions = cleanupWorkflowMergeOptions(updates.mergeKind, merged.mergeOptions);
+        }
+        onChange({ ...task, document_action: workflowMergeActionFromSelection(nextEvidence, merged) });
+    };
+
+    const mergeNeedsSelectedEvidence = mode === 'merge' && mergeTargetMode(task.document_action) === 'selected';
+    const needsSelectedEvidence = ['analyze', 'search_selected', 'comparison'].includes(mode) || mergeNeedsSelectedEvidence;
     const syncedAnalyzeTargets = mode === 'analyze' && changedFileTargets && evidence.length === 0;
     const missingEvidence = needsSelectedEvidence && evidence.length === 0 && !syncedAnalyzeTargets;
     const missingComparison = mode === 'comparison' && (!comparison.left || comparison.right.length === 0);
@@ -858,9 +1358,16 @@ function DocumentActionFields({
                     <option value="search_selected">Search selected evidence</option>
                     <option value="search_relevance">Search by relevance</option>
                     <option value="comparison">Compare source and target documents</option>
+                    {mergeEnabled || mode === 'merge' ? <option value="merge">Merge files</option> : null}
                     {mode === 'preserve' ? <option value="preserve">Existing advanced action (preserved)</option> : null}
                 </select>
             </label>
+            {mode === 'merge' && !mergeEnabled ? (
+                <p role="alert" className="rounded-xl bg-warn-soft p-3 text-xs text-warn">
+                    File merging is turned off by an administrator, so this workflow can't be saved with a
+                    Merge files task. Choose another document action, or ask an administrator to turn on Merge.
+                </p>
+            ) : null}
             {mode === 'preserve' ? (
                 <p className="rounded-xl bg-warn-soft p-3 text-xs text-warn">
                     This existing document action uses advanced options that V2 does not edit.
@@ -881,7 +1388,7 @@ function DocumentActionFields({
                     <span className="mt-1 block text-xs text-text-3">Analyzes only this visit's authorized frozen document, with combined analysis. It never repeats the whole selection or trusts a record's document ID.</span>
                 </label>
             ) : null}
-            {mode !== 'none' && mode !== 'preserve' && mode !== 'current_item' ? (
+            {mode !== 'none' && mode !== 'preserve' && mode !== 'current_item' && mode !== 'merge' ? (
                 <label className="text-sm text-text-2">
                     Analysis mode
                     <select
@@ -910,19 +1417,36 @@ function DocumentActionFields({
                     scope={scope}
                     references={evidence}
                     onChange={updateEvidence}
-                    title="Task evidence"
-                    selectedLabel={`Selected evidence for ${task.name || 'task'}`}
-                    availableLabel={`Available evidence for ${task.name || 'task'}`}
+                    title={mode === 'merge' ? 'Merge files' : 'Task evidence'}
+                    selectedLabel={mode === 'merge' ? `Selected merge files for ${task.name || 'task'}` : `Selected evidence for ${task.name || 'task'}`}
+                    availableLabel={mode === 'merge' ? `Available merge files for ${task.name || 'task'}` : `Available evidence for ${task.name || 'task'}`}
                     hideAliasFields
-                    emptyDescription="Select evidence documents for this task action."
-                    description="Task evidence is separate from shared workflow references and is posted as document_action document IDs."
+                    emptyDescription={mode === 'merge' ? 'Select at least two files to merge.' : 'Select evidence documents for this task action.'}
+                    description={mode === 'merge'
+                        ? 'Pick files in merge order. You can adjust the order below after adding them.'
+                        : 'Task evidence is separate from shared workflow references and is posted as document_action document IDs.'}
                 />
             ) : null}
             {missingEvidence ? (
-                <p role="alert" className="text-xs text-danger">Select at least one evidence document for this document action.</p>
+                <p role="alert" className="text-xs text-danger">
+                    {mode === 'merge' ? 'Select at least two files to merge.' : 'Select at least one evidence document for this document action.'}
+                </p>
             ) : null}
             {syncedAnalyzeTargets ? (
                 <p className="text-xs text-text-3">No evidence is selected, so this task analyzes the files each File Sync run changed.</p>
+            ) : null}
+            {mode === 'merge' ? (
+                <MergeActionFields
+                    action={task.document_action?.type === 'merge' ? task.document_action : undefined}
+                    evidence={evidence}
+                    changedFileTargets={changedFileTargets}
+                    maxSelectedDocuments={maxMergeDocuments}
+                    onEvidenceChange={(references) => {
+                        setEvidence(references);
+                        updateMergeAction(references, {});
+                    }}
+                    onActionChange={(updates) => updateMergeAction(evidence, updates)}
+                />
             ) : null}
             {mode === 'comparison' && evidence.length ? (
                 <div className="space-y-3 rounded-xl border border-edge p-3">
@@ -1136,7 +1660,7 @@ export function WorkflowTaskFields({
                     />
                     </WorkflowChangedField>
                     {!task.publication ? <WorkflowChangedField changeKey={workflowTaskKey(task.id, 'document_action')}>
-                        <DocumentActionFields scope={scope} task={task} onChange={onChange}
+                        <DocumentActionFields scope={scope} task={task} onChange={onChange} options={options}
                         changedFileTargets={workflowFileSyncProvidesAnalyzeTargets(workflow)}
                         loops={structuredNode ? enclosingFlowLoops(workflow, structuredNode.id).filter((loop) => loop.iterable.kind !== 'input') : []} />
                     </WorkflowChangedField> : null}

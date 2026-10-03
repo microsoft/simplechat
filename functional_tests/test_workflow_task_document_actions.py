@@ -2,8 +2,9 @@
 # test_workflow_task_document_actions.py
 """
 Functional test for per-task workflow workspace documents and the document picker fix.
-Version: 0.261.111
+Version: 0.261.220
 Implemented in: 0.250.225
+Stub namespace extended for workflow Merge tasks in: 0.261.220
 
 This test ensures that:
   1. The workflow builder loads the workspace document picker whenever the document
@@ -83,6 +84,11 @@ def build_document_action(action_type="none", **overrides):
 def load_store_helpers(document_action_error_types=()):
     """Load task normalization helpers with an injectable document action normalizer."""
 
+    class WorkflowPublicValidationError(ValueError):
+        def __init__(self, public_message):
+            self.public_message = public_message
+            super().__init__(public_message)
+
     def fake_normalize_document_action_config(action_payload=None, **_kwargs):
         payload = action_payload if isinstance(action_payload, dict) else {}
         action_type = str(payload.get("type") or "none").strip().lower()
@@ -104,6 +110,8 @@ def load_store_helpers(document_action_error_types=()):
             "normalize_workflow_max_tasks",
             "_normalize_workflow_tasks",
             "_normalize_task_document_action_config",
+            "_require_changed_file_merge_trigger",
+            "_normalize_merge_errors_for_save",
         },
         {
             "uuid": uuid,
@@ -115,6 +123,10 @@ def load_store_helpers(document_action_error_types=()):
             "WORKFLOW_TASK_NAME_MAX_LENGTH": 120,
             "WORKFLOW_TASK_RUNNER_TYPES": {"inherit", "agent", "model"},
             "DOCUMENT_ACTION_TYPE_ANALYZE": "analyze",
+            "DOCUMENT_ACTION_TYPE_MERGE": "merge",
+            "MERGE_TARGET_MODE_CHANGED": "changed",
+            "MergeActionError": type("MergeActionError", (ValueError,), {}),
+            "WorkflowPublicValidationError": WorkflowPublicValidationError,
             "DOCUMENT_ACTION_CONTEXT_WORKFLOW": "workflow",
             "get_settings": lambda: {},
             "get_document_action_max_documents_by_type": lambda *_args, **_kwargs: {},
@@ -137,6 +149,8 @@ def load_runner_helpers():
         "DOCUMENT_ACTION_TYPE_NONE": "none",
         "DOCUMENT_ACTION_TYPE_ANALYZE": "analyze",
         "DOCUMENT_ACTION_TYPE_COMPARISON": "comparison",
+        "DOCUMENT_ACTION_TYPE_MERGE": "merge",
+        "MERGE_TARGET_MODE_CHANGED": "changed",
         "re": __import__("re"),
         "build_analyze_config": lambda action: {"enabled": (action or {}).get("type") == "analyze"},
         "_get_document_action_config": lambda source: dict(

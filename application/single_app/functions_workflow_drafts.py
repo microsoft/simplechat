@@ -36,7 +36,12 @@ from jsonschema import Draft202012Validator
 
 from content_screening.contracts import DocumentHeldError
 from functions_appinsights import log_event
-from functions_document_actions import DOCUMENT_ACTION_TYPE_ANALYZE, get_enabled_document_action_types
+from functions_document_actions import (
+    DOCUMENT_ACTION_TYPE_ANALYZE,
+    DOCUMENT_ACTION_TYPE_MERGE,
+    get_enabled_document_action_types,
+    is_document_action_enabled,
+)
 from functions_file_sync import (
     FILE_SYNC_SCOPE_GROUP,
     FILE_SYNC_SCOPE_PERSONAL,
@@ -110,6 +115,9 @@ BLUEPRINT_ALERT_SEVERITIES = ('info', 'low')
 BLUEPRINT_RUN_AS = ('self', 'none')
 BLUEPRINT_SCOPE_TYPES = (FILE_SYNC_SCOPE_PERSONAL, FILE_SYNC_SCOPE_GROUP, FILE_SYNC_SCOPE_PUBLIC)
 BLUEPRINT_HANDLE_KINDS = ('documents', 'agents', 'sources')
+# Where a merge task's files come from: its inputs, a sync, or the user's personal workspace.
+BLUEPRINT_MERGE_FILES = ('inputs', 'changed', 'all', 'recent')
+BLUEPRINT_MERGE_FILE_NAME_MAX_LENGTH = 100
 
 DRAFT_MAX_ERRORS = 10
 DRAFT_MESSAGE_MAX_LENGTH = 240
@@ -130,6 +138,14 @@ DRAFT_ERROR_MESSAGES = {
     'file_sync_source_unavailable': 'This File Sync source is not available to you.',
     'workflow_conflict': 'A different workflow already uses this id.',
     'workflows_unavailable': 'Personal workflows are not available for this account.',
+    'merge_unavailable': 'File merging is turned off by an administrator. Remove merge from this task.',
+    'merge_inputs_required': 'A merge of input documents needs at least two input documents, in merge order.',
+    'merge_trigger_required': 'Merging the files a sync changed needs a File Sync trigger.',
+    'merge_runner_invalid': 'A merge task merges files with code, so it has no agent runner. Remove the runner.',
+    'merge_options_invalid': (
+        'These merge options cannot be used together: mapped needs columns, key_columns needs '
+        'dedupe_columns, a sheet name cannot be combined with all sheets, and a column is named once.'
+    ),
 }
 DRAFT_UNAVAILABLE_REFERENCE_MESSAGE = 'A document or source in this blueprint is not available to you.'
 DRAFT_HANDLE_MAP_ERROR = 'The workflow draft handle map is malformed.'
@@ -441,6 +457,70 @@ def _trigger_schema():
     }
 
 
+def _merge_schema():
+    return {
+        'type': 'object',
+        'additionalProperties': False,
+        'required': ['files'],
+        'description': (
+            'Makes this task merge CSV or Excel files into one file with code instead of running a '
+            "model. files: inputs merges the task's inputs (two or more document handles) in order; "
+            'changed merges the files a File Sync trigger added or changed; all merges every CSV and '
+            "Excel file in the user's personal workspace; recent merges those added in the last "
+            'recent_window_minutes. Rows are appended; rows are never matched on a key.'
+        ),
+        'properties': {
+            'files': {'enum': list(BLUEPRINT_MERGE_FILES)},
+            'output_format': {'enum': ['csv', 'xlsx']},
+            'file_name': _text_schema(BLUEPRINT_MERGE_FILE_NAME_MAX_LENGTH),
+            'recent_window_minutes': {'type': 'integer', 'minimum': 1, 'maximum': 1440},
+            'options': {'$ref': '#/$defs/merge_options'},
+        },
+    }
+
+
+def _merge_options_schema():
+    name = {'type': 'string', 'minLength': 1, 'maxLength': 256}
+    names = {'type': 'array', 'items': name, 'minItems': 1, 'uniqueItems': True}
+    return {
+        'type': 'object',
+        'additionalProperties': False,
+        'description': 'The same column, sheet, duplicate and sort settings a chat merge accepts.',
+        'properties': {
+            'schema_policy': {'enum': ['by_name', 'exact_order', 'union', 'mapped']},
+            'columns': {**names, 'maxItems': 255},
+            # A list of closed objects rather than a map, so every object in the blueprint stays closed.
+            'column_aliases': {
+                'type': 'array', 'minItems': 1, 'maxItems': 256,
+                'items': {
+                    'type': 'object', 'additionalProperties': False, 'required': ['column', 'aliases'],
+                    'properties': {'column': name, 'aliases': {**names, 'maxItems': 32}},
+                },
+            },
+            'sheet': {'type': 'string', 'minLength': 1, 'maxLength': 31},
+            'sheets': {'enum': ['first', 'all']},
+            'header_row': {'type': 'integer', 'minimum': 1, 'maximum': 1000},
+            'include_source_column': {'type': 'boolean'},
+            'source_column_name': {'type': 'string', 'minLength': 1, 'maxLength': 128},
+            'on_incompatible': {'enum': ['fail', 'exclude']},
+            'dedupe': {'enum': ['none', 'exact_rows', 'key_columns']},
+            'dedupe_columns': {**names, 'maxItems': 16},
+            'dedupe_keep': {'enum': ['first', 'last']},
+            'sort_by': {
+                'type': 'array', 'maxItems': 3,
+                'items': {
+                    'type': 'object', 'additionalProperties': False, 'required': ['column'],
+                    'properties': {
+                        'column': name,
+                        'descending': {'type': 'boolean'},
+                        'value_type': {'enum': ['text', 'number', 'date']},
+                    },
+                },
+            },
+        },
+    }
+
+
 def _build_blueprint_schema():
     return {
         '$schema': 'https://json-schema.org/draft/2020-12/schema',
@@ -471,6 +551,7 @@ def _build_blueprint_schema():
                             'type': 'array', 'maxItems': BLUEPRINT_TASK_MAX_INPUTS, 'uniqueItems': True,
                             'items': {'$ref': '#/$defs/handle'},
                         },
+                        'merge': {'$ref': '#/$defs/merge'},
                     },
                 },
             },
@@ -502,6 +583,8 @@ def _build_blueprint_schema():
                 ],
             },
             'file_sync_schedule': _file_sync_schedule_schema(),
+            'merge': _merge_schema(),
+            'merge_options': _merge_options_schema(),
         },
     }
 
@@ -798,6 +881,85 @@ def _alert_fields(alerts, workflow_id):
     }
 
 
+def _merge_options(options, *, aliases_as_pairs=False):
+    """A blueprint's merge options in the stored form: column aliases become a column-to-names map.
+
+    Validation reads the aliases as ordered pairs, so a column named twice is reported rather
+    than silently overwritten.
+    """
+    options = copy.deepcopy(options or {})
+    if 'column_aliases' in options:
+        pairs = [(entry['column'], list(entry['aliases'])) for entry in options['column_aliases']]
+        options['column_aliases'] = pairs if aliases_as_pairs else dict(pairs)
+    return options
+
+
+def _merge_document_action(merge, task, handles):
+    """The workflow Merge action a blueprint task describes; its files are never reference documents."""
+    action = {
+        'type': DOCUMENT_ACTION_TYPE_MERGE,
+        'merge_kind': 'tabular',
+        'output_format': merge.get('output_format', 'csv'),
+        'document_ids': [],
+        'active_group_ids': [],
+        'active_public_workspace_id': [],
+    }
+    if merge.get('file_name'):
+        action['output_file_name'] = merge['file_name']
+    if merge.get('options'):
+        action['merge_options'] = _merge_options(merge['options'])
+    files = merge['files']
+    if files == 'inputs':
+        documents = [handles['documents'][handle] for handle in task.get('inputs') or []]
+        scopes = {document['scope_type'] for document in documents}
+        action.update({
+            'target_mode': 'selected',
+            'document_ids': [document['document_id'] for document in documents],
+            'doc_scope': next(iter(scopes)) if len(scopes) == 1 else 'all',
+            'active_group_ids': list(dict.fromkeys(
+                document['scope_id'] for document in documents if document['scope_type'] == FILE_SYNC_SCOPE_GROUP
+            )),
+            'active_public_workspace_id': list(dict.fromkeys(
+                document['scope_id'] for document in documents if document['scope_type'] == FILE_SYNC_SCOPE_PUBLIC
+            )),
+        })
+    elif files == 'changed':
+        action.update({'target_mode': 'changed', 'doc_scope': 'all'})
+    else:
+        # A chat-created workflow is personal, so run-time discovery stays in the personal workspace.
+        action.update({'target_mode': files, 'doc_scope': FILE_SYNC_SCOPE_PERSONAL})
+        if files == 'recent' and merge.get('recent_window_minutes'):
+            action['recent_window_minutes'] = merge['recent_window_minutes']
+    return action
+
+
+def _merge_errors(blueprint, settings):
+    """Merge task rules that read no storage, so a planner can repair them in one round."""
+    errors = []
+    merging = [(index, task) for index, task in enumerate(blueprint['tasks']) if task.get('merge')]
+    if not merging:
+        return errors
+    if not is_document_action_enabled(DOCUMENT_ACTION_TYPE_MERGE, settings=settings):
+        return [draft_error('merge_unavailable', ('tasks', index, 'merge')) for index, _ in merging]
+    # The merge engine imports only the standard library; blueprints share its option rules.
+    from functions_tabular_merge import TabularMergeError, tabular_merge_options_from_arguments
+
+    for index, task in merging:
+        merge = task['merge']
+        if (task.get('runner') or {}).get('type') == 'agent':
+            errors.append(draft_error('merge_runner_invalid', ('tasks', index, 'runner')))
+        if merge['files'] == 'inputs' and len(task.get('inputs') or []) < 2:
+            errors.append(draft_error('merge_inputs_required', ('tasks', index, 'inputs')))
+        if merge['files'] == 'changed' and blueprint['trigger']['type'] != 'file_sync':
+            errors.append(draft_error('merge_trigger_required', ('tasks', index, 'merge', 'files')))
+        try:
+            tabular_merge_options_from_arguments(_merge_options(merge.get('options'), aliases_as_pairs=True))
+        except TabularMergeError:
+            # Engine messages can quote column names from the blueprint; draft errors never echo input.
+            errors.append(draft_error('merge_options_invalid', ('tasks', index, 'merge', 'options')))
+    return errors
+
+
 def _blueprint_payload(blueprint, handles, *, workflow_id, user_id, settings, enabled):
     trigger = blueprint['trigger']
     analyze_changed_documents = (
@@ -809,7 +971,8 @@ def _blueprint_payload(blueprint, handles, *, workflow_id, user_id, settings, en
     tasks = []
     for index, task in enumerate(blueprint['tasks']):
         task_reference_ids = []
-        for handle in task.get('inputs') or []:
+        merge = task.get('merge')
+        for handle in [] if merge else task.get('inputs') or []:
             if handle not in reference_ids:
                 reference_ids[handle] = _derived_id(workflow_id, 'reference', handle)
                 references.append({'id': reference_ids[handle], 'name': handle, **handles['documents'][handle]})
@@ -820,7 +983,9 @@ def _blueprint_payload(blueprint, handles, *, workflow_id, user_id, settings, en
         else:
             # The workflow runs on the default model; a blueprint never names one.
             task_runner = {'type': 'inherit'}
-        if index == 0 and analyze_changed_documents:
+        if merge:
+            document_action = _merge_document_action(merge, task, handles)
+        elif index == 0 and analyze_changed_documents:
             # The first task of a File Sync workflow analyzes the documents each sync changed.
             document_action = {'type': DOCUMENT_ACTION_TYPE_ANALYZE, 'document_ids': []}
         else:
@@ -1028,6 +1193,7 @@ def _checked_blueprint(user_id, blueprint, handles, *, workflow_id, settings, us
     # Collected together, so one repair round can fix every problem at once.
     errors = [
         *_schedule_errors(prepared['trigger'], settings),
+        *_merge_errors(prepared, settings),
         *_agent_errors(uses, handles, user_id=user_id, settings=settings, reader=reader),
         *_document_errors(uses, handles, user_id=user_id, resolver=resolver),
         *_source_errors(uses, handles, user_id=user_id, settings=settings, user_info=user_info),
@@ -1059,6 +1225,7 @@ def check_workflow_blueprint(blueprint, *, settings, handle_names=None):
     if len(prepared['tasks']) > task_limit:
         return None, [draft_error('too_many_tasks', ('tasks',), f'This workflow can have up to {task_limit} tasks.')]
     errors = list(_schedule_errors(prepared['trigger'], settings))
+    errors.extend(_merge_errors(prepared, settings))
     if handle_names is not None:
         names = {kind: set(handle_names.get(kind) or ()) for kind in BLUEPRINT_HANDLE_KINDS}
         errors = [*_unknown_handle_errors(prepared, names), *errors]

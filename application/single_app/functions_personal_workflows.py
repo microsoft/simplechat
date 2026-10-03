@@ -21,7 +21,10 @@ from functions_ai_connections import require_model_capability, resolve_capabilit
 from functions_debug import debug_print
 from functions_document_actions import (
     DOCUMENT_ACTION_TYPE_ANALYZE,
+    DOCUMENT_ACTION_TYPE_MERGE,
     DOCUMENT_ACTION_CONTEXT_WORKFLOW,
+    MERGE_TARGET_MODE_CHANGED,
+    MergeActionError,
     build_analyze_config,
     get_document_action_max_documents_by_type,
     get_enabled_document_action_types,
@@ -320,6 +323,9 @@ def _normalize_workflow_tasks(
                 raw_document_action = default_document_action
             try:
                 normalized_task['document_action'] = task_document_action_normalizer(raw_document_action)
+            except WorkflowPublicValidationError as exc:
+                # Reviewed messages stay public; the task is named by position, never by its name.
+                raise WorkflowPublicValidationError(f'Workflow task {index + 1}: {exc.public_message}') from exc
             except ValueError as exc:
                 raise ValueError(f'Workflow task {index + 1} ({name}): {exc}') from exc
 
@@ -351,12 +357,34 @@ def _normalize_workflow_error_handling(workflow_data, existing_workflow=None):
     }
 
 
+def _require_changed_file_merge_trigger(action_payload, allow_empty_file_sync_targets):
+    """Merging the files a sync changed needs a File Sync trigger that passes them on."""
+    if (
+        isinstance(action_payload, dict)
+        and str(action_payload.get('type') or '').strip().lower() == DOCUMENT_ACTION_TYPE_MERGE
+        and str(action_payload.get('target_mode') or '').strip().lower() == MERGE_TARGET_MODE_CHANGED
+        and not allow_empty_file_sync_targets
+    ):
+        raise WorkflowPublicValidationError(
+            'Merging the files a sync changed needs a File Sync trigger that uses changed documents.'
+        )
+
+
+def _normalize_merge_errors_for_save(normalize):
+    """Run a document action normalizer, showing a Merge action's reviewed reason as written."""
+    try:
+        return normalize()
+    except MergeActionError as exc:
+        raise WorkflowPublicValidationError(str(exc)) from exc
+
+
 def _normalize_document_action_config(workflow_data, existing_workflow=None, allow_empty_file_sync_targets=False,
                                       settings=None):
     workflow_data = workflow_data if isinstance(workflow_data, dict) else {}
     existing_workflow = existing_workflow if isinstance(existing_workflow, dict) else {}
     settings = get_settings() if settings is None else settings
     action_payload = workflow_data.get('document_action')
+    _require_changed_file_merge_trigger(action_payload, allow_empty_file_sync_targets)
     if allow_empty_file_sync_targets and isinstance(action_payload, dict):
         action_type = str(action_payload.get('type') or '').strip().lower()
         document_ids = action_payload.get('document_ids') if isinstance(action_payload.get('document_ids'), list) else []
@@ -372,12 +400,12 @@ def _normalize_document_action_config(workflow_data, existing_workflow=None, all
                     DOCUMENT_ACTION_CONTEXT_WORKFLOW,
                     settings=settings,
                 ),
-                allowed_action_types=get_enabled_document_action_types(settings=settings),
+                allowed_action_types=get_enabled_document_action_types(settings=settings, include_merge=True),
             )
             normalized_action['document_ids'] = []
             return normalized_action
 
-    return normalize_document_action_config(
+    return _normalize_merge_errors_for_save(lambda: normalize_document_action_config(
         action_payload=action_payload,
         existing_action=existing_workflow.get('document_action'),
         legacy_analyze=workflow_data.get('analyze') or existing_workflow.get('analyze'),
@@ -385,8 +413,8 @@ def _normalize_document_action_config(workflow_data, existing_workflow=None, all
             DOCUMENT_ACTION_CONTEXT_WORKFLOW,
             settings=settings,
         ),
-        allowed_action_types=get_enabled_document_action_types(settings=settings),
-    )
+        allowed_action_types=get_enabled_document_action_types(settings=settings, include_merge=True),
+    ))
 
 
 def _normalize_task_document_action_config(action_payload, allow_empty_file_sync_targets=False, settings=None,
@@ -394,11 +422,12 @@ def _normalize_task_document_action_config(action_payload, allow_empty_file_sync
     """Normalize a single workflow task's document action payload."""
     source_settings = settings if isinstance(settings, dict) else get_settings()
     action_payload = action_payload if isinstance(action_payload, dict) else {'type': 'none'}
+    _require_changed_file_merge_trigger(action_payload, allow_empty_file_sync_targets)
     max_documents_by_type = get_document_action_max_documents_by_type(
         DOCUMENT_ACTION_CONTEXT_WORKFLOW,
         settings=source_settings,
     )
-    allowed_action_types = get_enabled_document_action_types(settings=source_settings)
+    allowed_action_types = get_enabled_document_action_types(settings=source_settings, include_merge=True)
     if action_payload.get('target_mode') == 'current_item':
         if (
             not allow_current_item or action_payload.get('type') != DOCUMENT_ACTION_TYPE_ANALYZE
@@ -429,11 +458,11 @@ def _normalize_task_document_action_config(action_payload, allow_empty_file_sync
             normalized_action['document_ids'] = []
             return normalized_action
 
-    return normalize_document_action_config(
+    return _normalize_merge_errors_for_save(lambda: normalize_document_action_config(
         action_payload=action_payload,
         max_documents_by_type=max_documents_by_type,
         allowed_action_types=allowed_action_types,
-    )
+    ))
 
 
 def _normalize_file_sync_config(user_id, workflow_data, existing_workflow=None, sanitize_source=None):

@@ -4,7 +4,7 @@ title: "Merge files in chat"
 description: "Combine several CSV or Excel files into one CSV or Excel file, even when their columns differ."
 section: "Guides"
 audience: user
-version: "0.261.219"
+version: "0.261.220"
 ---
 
 ## What this does
@@ -145,8 +145,42 @@ how many were left out. The merged rows are still complete for the files that we
 
 Nothing is created when a merge stops, so there is never a partial file to clean up.
 
+## Merge many files, or the same files every week
+
+A chat merge suits a handful of files. When you have dozens of files, or the same merge
+should run every week or whenever a synced folder gets a new export, make it a workflow
+task instead. A workflow merge handles up to 100 files and 1,000,000 rows by default,
+runs on its own schedule, and attaches the merged file to each run.
+
+1. In the V2 workflow editor, add a task and choose **Merge files** as its **Document
+   action**.
+2. Under **Files to merge**, choose which files each run merges:
+   - **Selected files, in this order** merges the files you pick. Use **Up** and **Down**
+     to set their order.
+   - **All matching files in scope** merges every CSV and Excel file in the workflow's
+     workspace when the run starts.
+   - **Recently added or updated files** merges those added or changed in the last hour,
+     or the number of minutes you set.
+   - **Files changed by File Sync** merges the files each sync adds or changes. It
+     appears when the workflow's File Sync is set to use changed files.
+
+   Files found when the run starts are merged in file-name order.
+3. Choose CSV or Excel output, and optionally a file name. Open **More merge options** to
+   keep every column, line up columns with different names, read every sheet, remove
+   duplicates or sort, just as you would ask in chat.
+
+You can also ask chat for it, for example "every Monday, merge the regional sales files
+into one Excel file". Chat proposes a workflow with a merge task, and its card says the
+task merges the files with code and runs no model. See
+[Create a workflow]({{ '/guides/create-a-workflow/' | relative_url }}).
+
+A run with nothing to merge, such as a sync that brought no spreadsheets, finishes and
+says so without creating a file. If a selected file is gone or isn't a spreadsheet, or
+more files match than the workflow limit allows, the task fails and says which.
+
 ## Related
 
+- [Create a workflow]({{ '/guides/create-a-workflow/' | relative_url }})
 - [Create files with orchestration]({{ '/guides/create-files-with-orchestration/' | relative_url }})
 - [Orchestration settings]({{ '/admin/orchestration/' | relative_url }})
 - [Document Action Capabilities]({{ '/admin/agents-actions/' | relative_url }}#document-action-capabilities-card)

@@ -674,7 +674,7 @@ export function convertToStructuredWorkflow(workflow: WorkflowDefinition, rootId
     let inheritedAction: WorkflowDocumentAction | undefined;
     if (isRecord(converted.document_action)) {
         const type = converted.document_action.type;
-        if (type !== 'none' && type !== 'search' && type !== 'analyze' && type !== 'comparison') {
+        if (type !== 'none' && type !== 'search' && type !== 'analyze' && type !== 'comparison' && type !== 'merge') {
             throw new Error('Choose an explicit supported document action before converting this workflow.');
         }
         inheritedAction = { ...structuredClone(converted.document_action), type };

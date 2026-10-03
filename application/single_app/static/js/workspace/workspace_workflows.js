@@ -224,6 +224,8 @@ const DOCUMENT_ACTION_NONE = "none";
 const DOCUMENT_ACTION_SEARCH = "search";
 const DOCUMENT_ACTION_ANALYZE = "analyze";
 const DOCUMENT_ACTION_COMPARISON = "comparison";
+// Merge files is edited only in V2; the classic page lists it and refuses to edit it.
+const DOCUMENT_ACTION_MERGE = "merge";
 const DOCUMENT_ANALYSIS_MODE_COMBINED = "combined";
 const DOCUMENT_ANALYSIS_MODE_PER_DOCUMENT = "per_document";
 const DOCUMENT_ANALYSIS_TARGET_SELECTED = "selected";
@@ -3166,6 +3168,10 @@ function getWorkflowDocumentActionSummary(workflow) {
         return `Compare one source to ${rightCount || 0} ${rightCount === 1 ? "target" : "targets"}`;
     }
 
+    if (config.type === DOCUMENT_ACTION_MERGE) {
+        return "Merge files";
+    }
+
     return "No document action";
 }
 
@@ -4084,7 +4090,8 @@ function resetWorkflowForm() {
 }
 
 // Calendar schedules come first: the classic form edits only fixed intervals, and saving one here
-// would replace the calendar schedule.
+// would replace the calendar schedule. The classic form has no Merge files action either, so it
+// would save a merge task as a task with no document action.
 function workflowNativeEditorReason(workflow) {
     if (!workflow || typeof workflow !== "object") {
         return "";
@@ -4094,6 +4101,12 @@ function workflowNativeEditorReason(workflow) {
     }
     if ((workflow.definition_version !== undefined && workflow.definition_version !== 1) || workflow.flow !== undefined) {
         return "advanced data flow";
+    }
+    const tasks = Array.isArray(workflow.tasks) ? workflow.tasks : [];
+    if ([workflow.document_action, ...tasks.map((task) => task?.document_action)].some(
+        (action) => normalizeText(action?.type).toLowerCase() === "merge"
+    )) {
+        return "a Merge files task";
     }
     return "";
 }

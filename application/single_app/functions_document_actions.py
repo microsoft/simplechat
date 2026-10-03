@@ -78,12 +78,75 @@ DEFAULT_DOCUMENT_ACTION_CAPABILITIES = {
     },
 }
 # Classic chat and its document-action payloads only know Analyze and Comparison. Merge is
-# reached through V2 orchestration and, later, workflow tasks, so it is never offered to a
-# caller that does not ask for it explicitly.
+# reached through V2 orchestration and workflow tasks, so it is never offered to a caller
+# that does not ask for it explicitly.
 DOCUMENT_ACTION_TYPES_WITH_PAYLOAD_SUPPORT = (
     DOCUMENT_ACTION_TYPE_ANALYZE,
     DOCUMENT_ACTION_TYPE_COMPARISON,
 )
+
+# A workflow Merge task combines many files into one output file. The kind decides which
+# files it reads and what it produces; later phases add kinds to MERGE_KINDS_AVAILABLE.
+MERGE_KIND_TABULAR = 'tabular'
+MERGE_KIND_WORKBOOK = 'workbook'
+MERGE_KIND_PDF = 'pdf'
+MERGE_KIND_DOCX = 'docx'
+MERGE_KIND_PPTX = 'pptx'
+MERGE_KINDS = (MERGE_KIND_TABULAR, MERGE_KIND_WORKBOOK, MERGE_KIND_PDF, MERGE_KIND_DOCX, MERGE_KIND_PPTX)
+MERGE_KINDS_AVAILABLE = (MERGE_KIND_TABULAR,)
+MERGE_KIND_LABELS = {
+    MERGE_KIND_TABULAR: 'spreadsheet',
+    MERGE_KIND_WORKBOOK: 'workbook',
+    MERGE_KIND_PDF: 'PDF',
+    MERGE_KIND_DOCX: 'Word',
+    MERGE_KIND_PPTX: 'PowerPoint',
+}
+MERGE_KIND_EXTENSIONS = {
+    MERGE_KIND_TABULAR: ('.csv', '.xlsx', '.xlsm', '.xls'),
+    MERGE_KIND_WORKBOOK: ('.csv', '.xlsx', '.xlsm', '.xls'),
+    MERGE_KIND_PDF: ('.pdf',),
+    MERGE_KIND_DOCX: ('.docx',),
+    MERGE_KIND_PPTX: ('.pptx',),
+}
+MERGE_KIND_OUTPUT_FORMATS = {
+    MERGE_KIND_TABULAR: ('csv', 'xlsx'),
+    MERGE_KIND_WORKBOOK: ('xlsx',),
+    MERGE_KIND_PDF: ('pdf',),
+    MERGE_KIND_DOCX: ('docx',),
+    MERGE_KIND_PPTX: ('pptx',),
+}
+MERGE_KIND_OPTION_KEYS = {
+    MERGE_KIND_TABULAR: (
+        'schema_policy', 'columns', 'column_aliases', 'sheet', 'sheets', 'header_row',
+        'include_source_column', 'source_column_name', 'on_incompatible', 'dedupe',
+        'dedupe_columns', 'dedupe_keep', 'sort_by',
+    ),
+    MERGE_KIND_WORKBOOK: ('sheets', 'sheet'),
+    MERGE_KIND_PDF: ('bookmarks',),
+    MERGE_KIND_DOCX: ('formatting', 'page_breaks', 'source_headings'),
+    MERGE_KIND_PPTX: ('formatting', 'sections'),
+}
+# Files are named by the user ("Changed", "All"...) or chosen from the workspace at run time.
+MERGE_TARGET_MODE_CHANGED = 'changed'
+MERGE_TARGET_MODES = (
+    DOCUMENT_ACTION_TARGET_MODE_SELECTED,
+    DOCUMENT_ACTION_TARGET_MODE_ALL,
+    DOCUMENT_ACTION_TARGET_MODE_RECENT,
+    MERGE_TARGET_MODE_CHANGED,
+)
+MERGE_DEFAULT_RECENT_WINDOW_MINUTES = 60
+MERGE_OUTPUT_FILE_NAME_MAX_CHARS = 100
+_MERGE_FILE_NAME_FORBIDDEN = frozenset('/\\:*?"<>|')
+_MERGE_DOCUMENT_FORMATTING = ('keep_source', 'use_first')
+_MERGE_SHEET_MODES = ('first', 'all')
+
+
+class MergeActionError(ValueError):
+    """A reviewed reason a Merge action is invalid; its text never repeats the caller's input.
+
+    Workflow saves show it as written. Spreadsheet option errors from the merge engine stay plain
+    ``ValueError``s, because they can quote column names.
+    """
 
 
 def normalize_document_action_type(action_type):
@@ -273,8 +336,118 @@ def _build_document_action_disabled_message(action_type):
     if action_type == DOCUMENT_ACTION_TYPE_COMPARISON:
         return 'Document comparison is currently disabled in admin settings.'
     if action_type == DOCUMENT_ACTION_TYPE_MERGE:
-        return 'Merging files is not available here.'
+        return 'File merging is turned off in admin settings, or is not available here.'
     return 'The selected document action is currently disabled in admin settings.'
+
+
+def normalize_merge_output_file_name(value, output_format):
+    """A safe base name for a merged file without its extension, or '' when none is set."""
+    if value is None or value == '':
+        return ''
+    if not isinstance(value, str):
+        raise MergeActionError('The merged file name must be text.')
+    name = ' '.join(value.split())
+    suffix = f'.{output_format}'
+    if name.lower().endswith(suffix):
+        name = name[:-len(suffix)].rstrip()
+    if (
+        len(name) > MERGE_OUTPUT_FILE_NAME_MAX_CHARS or name.startswith('.')
+        or any(character in _MERGE_FILE_NAME_FORBIDDEN or ord(character) < 32 for character in name)
+    ):
+        raise MergeActionError(
+            f'The merged file name must be at most {MERGE_OUTPUT_FILE_NAME_MAX_CHARS} characters, '
+            'must not start with a dot, and must not contain / \\ : * ? " < > |.'
+        )
+    return name
+
+
+def _normalize_merge_options(kind, options):
+    """Kind-specific merge options with unset values dropped; rules match chat merges."""
+    if options is None:
+        return {}
+    if not isinstance(options, dict):
+        raise MergeActionError('Merge options must be an object.')
+    if set(options) - set(MERGE_KIND_OPTION_KEYS[kind]):
+        raise MergeActionError(
+            f"Some merge options don't apply to {MERGE_KIND_LABELS[kind]} merges. Remove them."
+        )
+    cleaned = {key: copy.deepcopy(value) for key, value in options.items() if value is not None}
+    if kind == MERGE_KIND_TABULAR:
+        # The merge engine imports only the standard library and owns the spreadsheet rules.
+        from functions_tabular_merge import TabularMergeError, tabular_merge_options_from_arguments
+
+        try:
+            tabular_merge_options_from_arguments(cleaned)
+        except TabularMergeError as exc:
+            raise ValueError(exc.message) from exc
+        return cleaned
+    for key in ('bookmarks', 'sections', 'page_breaks', 'source_headings'):
+        if key in cleaned and type(cleaned[key]) is not bool:
+            raise MergeActionError(f'The {key} merge option must be true or false.')
+    if 'formatting' in cleaned and cleaned['formatting'] not in _MERGE_DOCUMENT_FORMATTING:
+        raise MergeActionError('Formatting must be keep_source or use_first.')
+    if 'sheets' in cleaned and cleaned['sheets'] not in _MERGE_SHEET_MODES:
+        raise MergeActionError('Sheets must be first or all.')
+    if 'sheet' in cleaned:
+        if not isinstance(cleaned['sheet'], str) or not cleaned['sheet'].strip() or len(cleaned['sheet']) > 31:
+            raise MergeActionError('A sheet name must be 1 to 31 characters.')
+        if cleaned.get('sheets') == 'all':
+            raise MergeActionError('Name one sheet, or read all sheets, but not both.')
+    return cleaned
+
+
+def _normalize_merge_action(source_action, normalized_action, max_documents=None):
+    """A workflow Merge task: which files, in which order, into which kind of file."""
+    kind = str(source_action.get('merge_kind') or MERGE_KIND_TABULAR).strip().lower()
+    if kind not in MERGE_KINDS:
+        raise MergeActionError(f"Merge kind must be one of: {', '.join(MERGE_KINDS)}.")
+    if kind not in MERGE_KINDS_AVAILABLE:
+        raise MergeActionError(f'Merging {MERGE_KIND_LABELS[kind]} files is not available yet.')
+    target_mode = str(source_action.get('target_mode') or DOCUMENT_ACTION_TARGET_MODE_SELECTED).strip().lower()
+    if target_mode not in MERGE_TARGET_MODES:
+        raise MergeActionError(f"Merge files must be one of: {', '.join(MERGE_TARGET_MODES)}.")
+    doc_scope = str(source_action.get('doc_scope') or 'all').strip().lower()
+    if doc_scope not in {'all', 'personal', 'group', 'public'}:
+        raise MergeActionError('The merge workspace scope must be all, personal, group or public.')
+    resolved = bool(source_action.get('merge_targets_resolved'))
+    document_ids = normalize_search_id_list(source_action.get('document_ids'))
+    if target_mode == DOCUMENT_ACTION_TARGET_MODE_SELECTED:
+        if len(document_ids) < 2:
+            raise MergeActionError('Select at least two files to merge.')
+        if max_documents is not None and len(document_ids) > max_documents:
+            raise MergeActionError(f'A merge supports up to {max_documents} files at a time.')
+    elif not resolved:
+        # Files found at run time are never stored with the task.
+        document_ids = []
+    # Files a run found are counted by the merge itself, which names the count and the limit.
+    output_formats = MERGE_KIND_OUTPUT_FORMATS[kind]
+    output_format = str(source_action.get('output_format') or output_formats[0]).strip().lower()
+    if output_format not in output_formats:
+        raise MergeActionError(
+            f"A {MERGE_KIND_LABELS[kind]} merge creates "
+            f"{' or '.join(value.upper() for value in output_formats)} files."
+        )
+    normalized_action.update({
+        'merge_kind': kind,
+        'target_mode': target_mode,
+        'doc_scope': doc_scope,
+        'active_group_ids': normalize_search_id_list(source_action.get('active_group_ids')),
+        'active_public_workspace_id': normalize_search_id_list(source_action.get('active_public_workspace_id')),
+        'document_ids': document_ids,
+        'output_format': output_format,
+        'merge_options': _normalize_merge_options(kind, source_action.get('merge_options')),
+    })
+    if target_mode == DOCUMENT_ACTION_TARGET_MODE_RECENT:
+        window = source_action.get('recent_window_minutes')
+        normalized_action['recent_window_minutes'] = normalize_recent_document_window_minutes(
+            MERGE_DEFAULT_RECENT_WINDOW_MINUTES if window is None else window,
+        )
+    file_name = normalize_merge_output_file_name(source_action.get('output_file_name'), output_format)
+    if file_name:
+        normalized_action['output_file_name'] = file_name
+    if resolved:
+        normalized_action['merge_targets_resolved'] = True
+    return normalized_action
 
 
 def _build_analyze_action(legacy_analyze=None):
@@ -367,10 +540,11 @@ def normalize_document_action_config(
         }
         normalized_allowed_action_types.add(DOCUMENT_ACTION_TYPE_NONE)
         if action_type not in normalized_allowed_action_types:
-            raise ValueError(_build_document_action_disabled_message(action_type))
+            message = _build_document_action_disabled_message(action_type)
+            raise MergeActionError(message) if action_type == DOCUMENT_ACTION_TYPE_MERGE else ValueError(message)
 
     if action_type == DOCUMENT_ACTION_TYPE_MERGE:
-        raise ValueError(_build_document_action_disabled_message(action_type))
+        return _normalize_merge_action(source_action, normalized_action, resolved_max_documents)
 
     if action_type == DOCUMENT_ACTION_TYPE_ANALYZE:
         if 'analysis_options' in source_action or 'transformation_spec' in source_action:

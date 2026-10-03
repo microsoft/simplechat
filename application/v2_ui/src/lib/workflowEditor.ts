@@ -51,7 +51,14 @@ export type WorkflowTaskRunnerType = 'inherit' | 'agent' | 'model';
 export type WorkflowInputProcessing = 'full' | 'saved_record_report';
 export type WorkflowInputOutput = WorkflowOutputKind | 'authoritative' | 'documents';
 export type WorkflowReferenceScope = 'personal' | 'group' | 'public';
-export type WorkflowDocumentActionType = 'none' | 'search' | 'analyze' | 'comparison';
+export type WorkflowDocumentActionType = 'none' | 'search' | 'analyze' | 'comparison' | 'merge';
+export type WorkflowMergeKind = 'tabular' | 'workbook' | 'pdf' | 'docx' | 'pptx';
+export type WorkflowMergeTargetMode = 'selected' | 'all' | 'recent' | 'changed';
+export type WorkflowMergeOutputFormat = 'csv' | 'xlsx' | 'pdf' | 'docx' | 'pptx';
+export type WorkflowTabularSchemaPolicy = 'by_name' | 'exact_order' | 'union' | 'mapped';
+export type WorkflowMergeSheetsMode = 'first' | 'all';
+export type WorkflowMergeDedupe = 'none' | 'exact_rows' | 'key_columns';
+export type WorkflowMergeSortValueType = 'text' | 'number' | 'date';
 export type WorkflowRuntimeState =
     'queued' | 'running' | 'waiting_approval' | 'waiting_output' | 'waiting_recovery' |
     'awaiting_approval' | 'awaiting_sharing_approval' | 'awaiting_analysis_approval' |
@@ -114,6 +121,123 @@ export interface WorkflowEditorOptions {
     scope: { type: 'personal' | 'group'; id?: string };
     /** Schedule choices, the time zone list and the administrator's minimum interval; absent from older servers. */
     schedule?: WorkflowScheduleOptions;
+    document_action_limits?: {
+        merge?: {
+            max_documents?: number;
+        };
+        max_documents_by_type?: {
+            merge?: number;
+        };
+        [key: string]: unknown;
+    };
+    document_actions?: {
+        merge?: {
+            /** False when an administrator has turned Merge off; a merge task then can't be saved. */
+            enabled?: boolean;
+            workflow_max_documents?: number;
+            max_documents?: number;
+            [key: string]: unknown;
+        };
+        [key: string]: unknown;
+    };
+}
+
+/** Whether the server lets workflow tasks merge files; older servers don't say, so Merge stays offered. */
+export function workflowMergeEnabled(options: Pick<WorkflowEditorOptions, 'document_actions'>): boolean {
+    return options.document_actions?.merge?.enabled !== false;
+}
+
+export const WORKFLOW_MERGE_KINDS_AVAILABLE: readonly WorkflowMergeKind[] = ['tabular'];
+export const WORKFLOW_MERGE_KINDS: readonly WorkflowMergeKind[] = ['tabular', 'workbook', 'pdf', 'docx', 'pptx'];
+
+export const WORKFLOW_MERGE_KIND_LABELS: Readonly<Record<WorkflowMergeKind, string>> = {
+    tabular: 'Combine rows (CSV/Excel)',
+    workbook: 'One workbook, a sheet per file',
+    pdf: 'Combine PDFs',
+    docx: 'Combine Word documents',
+    pptx: 'Combine PowerPoint decks',
+};
+
+export const WORKFLOW_MERGE_KIND_INPUTS: Readonly<Record<WorkflowMergeKind, string>> = {
+    tabular: '.csv, .xlsx, .xlsm, .xls',
+    workbook: '.csv, .xlsx, .xlsm, .xls',
+    pdf: '.pdf',
+    docx: '.docx',
+    pptx: '.pptx',
+};
+
+const WORKFLOW_MERGE_DEFAULT_OUTPUT_FORMAT: Readonly<Record<WorkflowMergeKind, WorkflowMergeOutputFormat>> = {
+    tabular: 'csv',
+    workbook: 'xlsx',
+    pdf: 'pdf',
+    docx: 'docx',
+    pptx: 'pptx',
+};
+
+const WORKFLOW_MERGE_ALLOWED_OUTPUT_FORMATS: Readonly<Record<WorkflowMergeKind, readonly WorkflowMergeOutputFormat[]>> = {
+    tabular: ['csv', 'xlsx'],
+    workbook: ['xlsx'],
+    pdf: ['pdf'],
+    docx: ['docx'],
+    pptx: ['pptx'],
+};
+
+const WORKFLOW_MERGE_TARGET_MODES: readonly WorkflowMergeTargetMode[] = ['selected', 'all', 'recent', 'changed'];
+const WORKFLOW_TABULAR_SCHEMA_POLICIES: readonly WorkflowTabularSchemaPolicy[] = ['by_name', 'exact_order', 'union', 'mapped'];
+const WORKFLOW_MERGE_SHEETS_MODES: readonly WorkflowMergeSheetsMode[] = ['first', 'all'];
+const WORKFLOW_MERGE_DEDUPES: readonly WorkflowMergeDedupe[] = ['none', 'exact_rows', 'key_columns'];
+const WORKFLOW_MERGE_SORT_VALUE_TYPES: readonly WorkflowMergeSortValueType[] = ['text', 'number', 'date'];
+const WORKFLOW_MERGE_BAD_OUTPUT_NAME = /[\/\\:*?"<>|]/;
+
+export interface WorkflowMergeSortRule {
+    column: string;
+    descending?: boolean;
+    value_type?: WorkflowMergeSortValueType;
+}
+
+export interface WorkflowMergeOptions {
+    schema_policy?: WorkflowTabularSchemaPolicy;
+    columns?: string[];
+    column_aliases?: Record<string, string[]>;
+    sheet?: string;
+    sheets?: WorkflowMergeSheetsMode;
+    header_row?: number;
+    include_source_column?: boolean;
+    source_column_name?: string;
+    on_incompatible?: 'fail' | 'exclude';
+    dedupe?: WorkflowMergeDedupe;
+    dedupe_columns?: string[];
+    dedupe_keep?: 'first' | 'last';
+    sort_by?: WorkflowMergeSortRule[];
+    bookmarks?: boolean;
+    formatting?: 'keep_source' | 'use_first';
+    page_breaks?: boolean;
+    source_headings?: boolean;
+    sections?: boolean;
+    [key: string]: unknown;
+}
+
+export interface WorkflowMergeActionOptions {
+    mergeKind?: WorkflowMergeKind;
+    targetMode?: WorkflowMergeTargetMode;
+    docScope?: WorkflowReferenceScope | 'all';
+    activeGroupIds?: string[];
+    activePublicWorkspaceIds?: string[];
+    recentWindowMinutes?: number;
+    outputFormat?: WorkflowMergeOutputFormat;
+    outputFileName?: string;
+    mergeOptions?: WorkflowMergeOptions;
+}
+
+export interface WorkflowMergeAliasParseResult {
+    aliases: Record<string, string[]>;
+    errors: string[];
+}
+
+export interface WorkflowMergeValidationContext {
+    isFileSyncWorkflow?: boolean;
+    maxSelectedDocuments?: number;
+    availableKinds?: readonly WorkflowMergeKind[];
 }
 
 export interface WorkflowScheduleOptions {
@@ -327,11 +451,16 @@ export interface WorkflowDocumentAction {
     active_group_ids?: string[];
     active_public_workspace_id?: string[];
     document_ids?: string[];
-    target_mode?: 'selected' | 'current_item';
+    target_mode?: 'selected' | 'current_item' | WorkflowMergeTargetMode;
     loop_id?: string;
     analysis_mode?: 'combined' | 'per_document';
     left_document_id?: string;
     right_document_ids?: string[];
+    merge_kind?: WorkflowMergeKind;
+    recent_window_minutes?: number;
+    output_format?: WorkflowMergeOutputFormat;
+    output_file_name?: string;
+    merge_options?: WorkflowMergeOptions;
     [key: string]: unknown;
 }
 
@@ -1002,7 +1131,7 @@ function legacyWorkflowTask(record: Record<string, unknown>): WorkflowTask | nul
 }
 
 export function documentActionFromSelection(
-    type: Exclude<WorkflowDocumentActionType, 'none' | 'comparison'>,
+    type: Exclude<WorkflowDocumentActionType, 'none' | 'comparison' | 'merge'>,
     documents: WorkflowReferenceInput[],
     options: { mode?: 'selected' | 'relevance'; analysisMode?: 'combined' | 'per_document' } = {},
 ): WorkflowDocumentAction {
@@ -1027,6 +1156,181 @@ export function documentActionFromSelection(
         target_mode: 'selected',
         analysis_mode: options.analysisMode ?? 'combined',
     };
+}
+
+function textList(values: unknown): string[] {
+    return Array.isArray(values)
+        ? values.filter((value): value is string => typeof value === 'string').map((value) => value.trim()).filter(Boolean)
+        : [];
+}
+
+function stringRecordList(value: unknown): Record<string, string[]> | undefined {
+    if (!isRecord(value)) {
+        return undefined;
+    }
+    const aliases = Object.entries(value).reduce<Record<string, string[]>>((current, [key, entries]) => {
+        const name = key.trim();
+        const list = textList(entries);
+        if (name && list.length) {
+            current[name] = [...new Set(list)];
+        }
+        return current;
+    }, {});
+    return Object.keys(aliases).length ? aliases : undefined;
+}
+
+function cleanSortRules(value: unknown): WorkflowMergeSortRule[] | undefined {
+    if (!Array.isArray(value)) {
+        return undefined;
+    }
+    const rules = value.slice(0, 3).filter(isRecord).map((entry) => {
+        const column = text(entry.column).trim();
+        if (!column) {
+            return null;
+        }
+        return {
+            column,
+            ...(entry.descending === true ? { descending: true } : {}),
+            ...(WORKFLOW_MERGE_SORT_VALUE_TYPES.includes(entry.value_type as WorkflowMergeSortValueType)
+                ? { value_type: entry.value_type as WorkflowMergeSortValueType } : {}),
+        };
+    }).filter((entry): entry is WorkflowMergeSortRule => Boolean(entry));
+    return rules.length ? rules : undefined;
+}
+
+function compactMergeOptions(options: Record<string, unknown>): WorkflowMergeOptions | undefined {
+    return Object.keys(options).length ? options as WorkflowMergeOptions : undefined;
+}
+
+export function cleanupWorkflowMergeOptions(kind: WorkflowMergeKind, options: WorkflowMergeOptions | undefined): WorkflowMergeOptions | undefined {
+    if (!isRecord(options)) {
+        return undefined;
+    }
+    if (kind === 'tabular') {
+        const schemaPolicy = WORKFLOW_TABULAR_SCHEMA_POLICIES.includes(options.schema_policy as WorkflowTabularSchemaPolicy)
+            ? options.schema_policy as WorkflowTabularSchemaPolicy : 'by_name';
+        const dedupe = WORKFLOW_MERGE_DEDUPES.includes(options.dedupe as WorkflowMergeDedupe)
+            ? options.dedupe as WorkflowMergeDedupe : 'none';
+        const cleaned: Record<string, unknown> = {};
+        if (schemaPolicy !== 'by_name') cleaned.schema_policy = schemaPolicy;
+        // Columns and key columns apply only to the policy that uses them; the server refuses them otherwise.
+        const columns = textList(options.columns);
+        if (schemaPolicy === 'mapped' && columns.length) cleaned.columns = [...new Set(columns)];
+        const aliases = stringRecordList(options.column_aliases);
+        if (aliases) cleaned.column_aliases = aliases;
+        const sheet = text(options.sheet).trim();
+        if (sheet) cleaned.sheet = sheet.slice(0, 31);
+        else if (options.sheets === 'all') cleaned.sheets = 'all';
+        if (Number.isInteger(options.header_row) && Number(options.header_row) >= 1 && Number(options.header_row) <= 1000) {
+            cleaned.header_row = options.header_row;
+        }
+        if (options.include_source_column === false) cleaned.include_source_column = false;
+        const sourceColumnName = text(options.source_column_name).trim();
+        if (sourceColumnName && sourceColumnName !== 'Source File') cleaned.source_column_name = sourceColumnName.slice(0, 128);
+        if (options.on_incompatible === 'exclude') cleaned.on_incompatible = 'exclude';
+        if (dedupe !== 'none') cleaned.dedupe = dedupe;
+        const dedupeColumns = textList(options.dedupe_columns).slice(0, 16);
+        if (dedupe === 'key_columns' && dedupeColumns.length) cleaned.dedupe_columns = [...new Set(dedupeColumns)];
+        if (dedupe !== 'none' && options.dedupe_keep === 'last') cleaned.dedupe_keep = 'last';
+        const sortBy = cleanSortRules(options.sort_by);
+        if (sortBy) cleaned.sort_by = sortBy;
+        return compactMergeOptions(cleaned);
+    }
+    if (kind === 'workbook') {
+        const cleaned: Record<string, unknown> = {};
+        const sheet = text(options.sheet).trim();
+        if (sheet) cleaned.sheet = sheet.slice(0, 31);
+        else if (options.sheets === 'all') cleaned.sheets = 'all';
+        return compactMergeOptions(cleaned);
+    }
+    if (kind === 'pdf') {
+        return options.bookmarks === false ? { bookmarks: false } : undefined;
+    }
+    if (kind === 'docx') {
+        const cleaned: Record<string, unknown> = {};
+        if (options.formatting === 'use_first') cleaned.formatting = 'use_first';
+        if (options.page_breaks === false) cleaned.page_breaks = false;
+        if (options.source_headings === true) cleaned.source_headings = true;
+        return compactMergeOptions(cleaned);
+    }
+    const cleaned: Record<string, unknown> = {};
+    if (options.formatting === 'use_first') cleaned.formatting = 'use_first';
+    if (options.sections === false) cleaned.sections = false;
+    return compactMergeOptions(cleaned);
+}
+
+export function parseWorkflowMergeColumnAliases(value: string): WorkflowMergeAliasParseResult {
+    const aliases: Record<string, string[]> = {};
+    const errors: string[] = [];
+    value.split(/\r?\n/).forEach((line, index) => {
+        const trimmed = line.trim();
+        if (!trimmed) {
+            return;
+        }
+        const separator = trimmed.indexOf('=');
+        if (separator < 0) {
+            errors.push(`Line ${index + 1}: use "Column = alias, alias".`);
+            return;
+        }
+        const column = trimmed.slice(0, separator).trim();
+        const entries = trimmed.slice(separator + 1).split(',').map((entry) => entry.trim()).filter(Boolean);
+        if (!column) {
+            errors.push(`Line ${index + 1}: enter a column name before "=".`);
+            return;
+        }
+        if (!entries.length) {
+            errors.push(`Line ${index + 1}: enter at least one alias after "=".`);
+            return;
+        }
+        aliases[column] = [...new Set([...(aliases[column] ?? []), ...entries])];
+    });
+    return { aliases, errors };
+}
+
+export function formatWorkflowMergeColumnAliases(value: unknown): string {
+    const aliases = stringRecordList(value);
+    if (!aliases) {
+        return '';
+    }
+    return Object.entries(aliases)
+        .map(([column, entries]) => `${column} = ${entries.join(', ')}`)
+        .join('\n');
+}
+
+export function workflowMergeActionFromSelection(
+    documents: WorkflowReferenceInput[],
+    options: WorkflowMergeActionOptions = {},
+): WorkflowDocumentAction {
+    const mergeKind = WORKFLOW_MERGE_KINDS.includes(options.mergeKind as WorkflowMergeKind)
+        ? options.mergeKind as WorkflowMergeKind : 'tabular';
+    const targetMode = WORKFLOW_MERGE_TARGET_MODES.includes(options.targetMode as WorkflowMergeTargetMode)
+        ? options.targetMode as WorkflowMergeTargetMode : 'selected';
+    const selectedScope = targetMode === 'selected' ? documentActionScope(documents) : null;
+    const docScope = selectedScope?.docScope ?? options.docScope ?? 'all';
+    const outputFormat = WORKFLOW_MERGE_ALLOWED_OUTPUT_FORMATS[mergeKind].includes(options.outputFormat as WorkflowMergeOutputFormat)
+        ? options.outputFormat as WorkflowMergeOutputFormat
+        : WORKFLOW_MERGE_DEFAULT_OUTPUT_FORMAT[mergeKind];
+    const outputFileName = text(options.outputFileName).trim();
+    const recentWindowMinutes = Number.isInteger(options.recentWindowMinutes) &&
+        Number(options.recentWindowMinutes) >= 1 && Number(options.recentWindowMinutes) <= 1440
+        ? options.recentWindowMinutes : 60;
+    const action: WorkflowDocumentAction = {
+        type: 'merge',
+        merge_kind: mergeKind,
+        target_mode: targetMode,
+        doc_scope: docScope,
+        active_group_ids: selectedScope?.groupIds ?? options.activeGroupIds ?? [],
+        active_public_workspace_id: selectedScope?.publicWorkspaceIds ?? options.activePublicWorkspaceIds ?? [],
+        document_ids: targetMode === 'selected' ? documents.map((document) => document.document_id) : [],
+        ...(targetMode === 'recent' ? { recent_window_minutes: recentWindowMinutes } : {}),
+        output_format: outputFormat,
+        ...(outputFileName ? { output_file_name: outputFileName } : {}),
+    };
+    const cleanedOptions = cleanupWorkflowMergeOptions(mergeKind, options.mergeOptions);
+    if (cleanedOptions) {
+        action.merge_options = cleanedOptions;
+    }
+    return action;
 }
 
 export function comparisonActionFromSelection(
@@ -1061,6 +1365,216 @@ function documentActionScope(documents: WorkflowReferenceInput[]): {
         groupIds,
         publicWorkspaceIds,
     };
+}
+
+function validateStringList(
+    values: unknown,
+    label: string,
+    errors: string[],
+    options: { min?: number; max?: number } = {},
+): string[] {
+    if (!Array.isArray(values) || values.some((value) => typeof value !== 'string' || !value.trim())) {
+        errors.push(options.min !== undefined
+            ? `${label} needs at least ${options.min} item${options.min === 1 ? '' : 's'}.`
+            : `${label} must be a list of names.`);
+        return [];
+    }
+    const names = values.map((value) => value.trim());
+    if (options.min !== undefined && names.length < options.min) {
+        errors.push(`${label} needs at least ${options.min} item${options.min === 1 ? '' : 's'}.`);
+    }
+    if (options.max !== undefined && names.length > options.max) {
+        errors.push(`${label} supports at most ${options.max} items.`);
+    }
+    return names;
+}
+
+function mergeSheetErrors(options: WorkflowMergeOptions, label: string, errors: string[]): void {
+    const hasSheet = typeof options.sheet === 'string' && options.sheet.trim().length > 0;
+    const hasSheets = options.sheets !== undefined;
+    if (hasSheet && options.sheet && options.sheet.length > 31) {
+        errors.push(`${label} sheet name must be 31 characters or fewer.`);
+    }
+    if (hasSheets && !WORKFLOW_MERGE_SHEETS_MODES.includes(options.sheets as WorkflowMergeSheetsMode)) {
+        errors.push(`${label} sheets must be first or all.`);
+    }
+    if (hasSheet && hasSheets) {
+        errors.push(`${label} can use either one named sheet or every sheet, not both.`);
+    }
+}
+
+function tabularMergeOptionErrors(options: WorkflowMergeOptions, errors: string[]): void {
+    const policy = options.schema_policy ?? 'by_name';
+    if (!WORKFLOW_TABULAR_SCHEMA_POLICIES.includes(policy as WorkflowTabularSchemaPolicy)) {
+        errors.push('Merge schema policy must be by_name, exact_order, union, or mapped.');
+    }
+    if (policy === 'mapped') {
+        validateStringList(options.columns, 'Mapped columns', errors, { min: 1 });
+    } else if (options.columns !== undefined) {
+        validateStringList(options.columns, 'Merge columns', errors);
+    }
+    if (options.column_aliases !== undefined && (
+        !isRecord(options.column_aliases) || Object.entries(options.column_aliases).some(([column, aliases]) =>
+            !column.trim() || !Array.isArray(aliases) ||
+            aliases.some((alias) => typeof alias !== 'string' || !alias.trim()))
+    )) {
+        errors.push('Column aliases must map each column to one or more header aliases.');
+    }
+    mergeSheetErrors(options, 'Tabular merge', errors);
+    if (options.header_row !== undefined &&
+        (!Number.isInteger(options.header_row) || Number(options.header_row) < 1 || Number(options.header_row) > 1000)) {
+        errors.push('Header row must be a whole number from 1 to 1,000.');
+    }
+    if (options.include_source_column !== undefined && typeof options.include_source_column !== 'boolean') {
+        errors.push('Include source column must be on or off.');
+    }
+    if (options.source_column_name !== undefined &&
+        (typeof options.source_column_name !== 'string' || options.source_column_name.length > 128)) {
+        errors.push('Source column name must be 128 characters or fewer.');
+    }
+    if (options.on_incompatible !== undefined && options.on_incompatible !== 'fail' && options.on_incompatible !== 'exclude') {
+        errors.push('Incompatible files must either fail the merge or be left out.');
+    }
+    const dedupe = options.dedupe ?? 'none';
+    if (!WORKFLOW_MERGE_DEDUPES.includes(dedupe as WorkflowMergeDedupe)) {
+        errors.push('Duplicate handling must be none, exact rows, or key columns.');
+    }
+    if (dedupe === 'key_columns') {
+        validateStringList(options.dedupe_columns, 'Duplicate key columns', errors, { min: 1, max: 16 });
+    } else if (options.dedupe_columns !== undefined) {
+        validateStringList(options.dedupe_columns, 'Duplicate key columns', errors, { max: 16 });
+    }
+    if (options.dedupe_keep !== undefined && options.dedupe_keep !== 'first' && options.dedupe_keep !== 'last') {
+        errors.push('Duplicate rows can keep either the first or last match.');
+    }
+    if (options.sort_by !== undefined) {
+        if (!Array.isArray(options.sort_by) || options.sort_by.length > 3) {
+            errors.push('Sort by supports up to 3 columns.');
+        } else {
+            options.sort_by.forEach((rule, index) => {
+                if (!isRecord(rule) || typeof rule.column !== 'string' || !rule.column.trim()) {
+                    errors.push(`Sort rule ${index + 1} needs a column name.`);
+                }
+                if (isRecord(rule) && rule.descending !== undefined && typeof rule.descending !== 'boolean') {
+                    errors.push(`Sort rule ${index + 1} descending must be on or off.`);
+                }
+                if (isRecord(rule) && rule.value_type !== undefined &&
+                    !WORKFLOW_MERGE_SORT_VALUE_TYPES.includes(rule.value_type as WorkflowMergeSortValueType)) {
+                    errors.push(`Sort rule ${index + 1} value type must be text, number, or date.`);
+                }
+            });
+        }
+    }
+}
+
+function workflowMergeOptionsErrors(kind: WorkflowMergeKind, value: unknown): string[] {
+    if (value === undefined) {
+        return [];
+    }
+    if (!isRecord(value)) {
+        return ['Merge options must be an object.'];
+    }
+    const options = value as WorkflowMergeOptions;
+    const errors: string[] = [];
+    if (kind === 'tabular') {
+        tabularMergeOptionErrors(options, errors);
+    } else if (kind === 'workbook') {
+        mergeSheetErrors(options, 'Workbook merge', errors);
+    } else if (kind === 'pdf') {
+        if (options.bookmarks !== undefined && typeof options.bookmarks !== 'boolean') {
+            errors.push('PDF bookmarks must be on or off.');
+        }
+    } else if (kind === 'docx') {
+        if (options.formatting !== undefined && options.formatting !== 'keep_source' && options.formatting !== 'use_first') {
+            errors.push('Word formatting must keep source formatting or use the first document.');
+        }
+        if (options.page_breaks !== undefined && typeof options.page_breaks !== 'boolean') {
+            errors.push('Word page breaks must be on or off.');
+        }
+        if (options.source_headings !== undefined && typeof options.source_headings !== 'boolean') {
+            errors.push('Word source headings must be on or off.');
+        }
+    } else {
+        if (options.formatting !== undefined && options.formatting !== 'keep_source' && options.formatting !== 'use_first') {
+            errors.push('PowerPoint formatting must keep source formatting or use the first deck.');
+        }
+        if (options.sections !== undefined && typeof options.sections !== 'boolean') {
+            errors.push('PowerPoint sections must be on or off.');
+        }
+    }
+    return errors;
+}
+
+export function workflowMergeValidationErrors(
+    action: WorkflowDocumentAction | undefined,
+    context: WorkflowMergeValidationContext = {},
+): string[] {
+    if (!action || action.type !== 'merge') {
+        return [];
+    }
+    const errors: string[] = [];
+    const availableKinds = context.availableKinds ?? WORKFLOW_MERGE_KINDS_AVAILABLE;
+    const kind = WORKFLOW_MERGE_KINDS.includes(action.merge_kind as WorkflowMergeKind)
+        ? action.merge_kind as WorkflowMergeKind : undefined;
+    if (!kind) {
+        errors.push('Merge files needs a supported merge type.');
+    } else if (!availableKinds.includes(kind)) {
+        errors.push(`${WORKFLOW_MERGE_KIND_LABELS[kind]} is not enabled in this editor yet.`);
+    }
+    const targetMode = WORKFLOW_MERGE_TARGET_MODES.includes(action.target_mode as WorkflowMergeTargetMode)
+        ? action.target_mode as WorkflowMergeTargetMode : undefined;
+    if (!targetMode) {
+        errors.push('Merge files needs a supported target mode.');
+    } else if (targetMode === 'selected') {
+        const count = Array.isArray(action.document_ids) ? action.document_ids.filter((item) => typeof item === 'string' && item).length : 0;
+        if (count < 2) {
+            errors.push('Merge files needs at least 2 selected files.');
+        }
+        if (context.maxSelectedDocuments !== undefined && count > context.maxSelectedDocuments) {
+            errors.push(`Merge files can include at most ${context.maxSelectedDocuments.toLocaleString()} selected files in this workspace.`);
+        }
+    } else if (Array.isArray(action.document_ids) && action.document_ids.length > 0) {
+        errors.push('Merge files should only send document IDs when Selected files is chosen.');
+    }
+    if (targetMode === 'changed' && context.isFileSyncWorkflow !== true) {
+        errors.push('Changed files is available only for File Sync workflows.');
+    }
+    if (targetMode === 'recent' &&
+        (!Number.isInteger(action.recent_window_minutes) || Number(action.recent_window_minutes) < 1 || Number(action.recent_window_minutes) > 1440)) {
+        errors.push('Recent files window must be a whole number from 1 to 1,440 minutes.');
+    }
+    if (action.doc_scope !== undefined && !['all', 'personal', 'group', 'public'].includes(String(action.doc_scope))) {
+        errors.push('Merge files needs a supported workspace scope.');
+    }
+    if (!Array.isArray(action.active_group_ids) || action.active_group_ids.some((id) => typeof id !== 'string')) {
+        errors.push('Merge files group scopes must be a list of group IDs.');
+    }
+    if (!Array.isArray(action.active_public_workspace_id) || action.active_public_workspace_id.some((id) => typeof id !== 'string')) {
+        errors.push('Merge files public scopes must be a list of public workspace IDs.');
+    }
+    if (kind && !WORKFLOW_MERGE_ALLOWED_OUTPUT_FORMATS[kind].includes(action.output_format as WorkflowMergeOutputFormat)) {
+        errors.push(`${WORKFLOW_MERGE_KIND_LABELS[kind]} must output ${WORKFLOW_MERGE_ALLOWED_OUTPUT_FORMATS[kind].join(' or ')}.`);
+    }
+    if (action.output_file_name !== undefined) {
+        const name = text(action.output_file_name).trim();
+        if (!name || name.length > 100 || WORKFLOW_MERGE_BAD_OUTPUT_NAME.test(name) || name.includes('.')) {
+            errors.push('Output file name must be 1 to 100 characters with no extension or / \\ : * ? " < > | characters.');
+        }
+    }
+    if (kind) {
+        errors.push(...workflowMergeOptionsErrors(kind, action.merge_options));
+    }
+    return errors;
+}
+
+export function workflowMergeDocumentLimit(options: Pick<WorkflowEditorOptions, 'document_action_limits' | 'document_actions'>): number | undefined {
+    const values = [
+        options.document_action_limits?.merge?.max_documents,
+        options.document_action_limits?.max_documents_by_type?.merge,
+        options.document_actions?.merge?.workflow_max_documents,
+        options.document_actions?.merge?.max_documents,
+    ];
+    return values.find((value): value is number => typeof value === 'number' && Number.isInteger(value) && value >= 2 && value <= 1000);
 }
 
 export function normalizeWorkflowDefinition(
@@ -1651,8 +2165,17 @@ export function workflowValidationErrors(
             errors.push(`${task.name || `Task ${index + 1}`} needs a nonnegative whole-number expected count.`);
         }
         const action = task.document_action;
-        if (action && !['none', 'search', 'analyze', 'comparison'].includes(String(action.type))) {
+        if (action && !['none', 'search', 'analyze', 'comparison', 'merge'].includes(String(action.type))) {
             errors.push(`${task.name || `Task ${index + 1}`} has an unsupported document action type.`);
+        }
+        if (action?.type === 'merge') {
+            if (!workflowMergeEnabled(options)) {
+                errors.push(`${task.name || `Task ${index + 1}`}: File merging is turned off by an administrator.`);
+            }
+            errors.push(...workflowMergeValidationErrors(action, {
+                isFileSyncWorkflow: changedFileTargets,
+                maxSelectedDocuments: workflowMergeDocumentLimit(options),
+            }).map((message) => `${task.name || `Task ${index + 1}`}: ${message}`));
         }
         if (action?.type === 'analyze' && action.target_mode !== 'current_item' && !changedFileTargets &&
             (!Array.isArray(action.document_ids) || action.document_ids.length === 0)) {
@@ -1873,6 +2396,15 @@ export async function fetchWorkflowEditorOptions(
         schedule.min_interval_seconds > 86400
     )) {
         throw new Error('The workflow editor returned invalid schedule options.');
+    }
+    const merge = response.document_actions?.merge;
+    if (response.document_actions !== undefined && (
+        !isRecord(response.document_actions) || merge !== undefined && (
+            !isRecord(merge) || typeof merge.enabled !== 'boolean' || !Number.isInteger(merge.workflow_max_documents)
+            || Number(merge.workflow_max_documents) < 2 || Number(merge.workflow_max_documents) > 1000
+        )
+    )) {
+        throw new Error('The workflow editor returned invalid document action options.');
     }
     return response;
 }

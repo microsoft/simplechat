@@ -2,8 +2,9 @@
 # test_workflow_file_sync_prompt_context.py
 """
 Functional test for File Sync prompt context reaching the first workflow task.
-Version: 0.261.106
+Version: 0.261.220
 Implemented in: 0.250.226
+Stub namespace extended for workflow Merge tasks in: 0.261.220
 
 This test ensures that:
   1. _apply_file_sync_context_to_workflow() publishes file_sync_prompt_context, the producer
@@ -57,6 +58,8 @@ def load_runner_helpers() -> dict:
     namespace = {
         "DOCUMENT_ACTION_TYPE_NONE": "none",
         "DOCUMENT_ACTION_TYPE_ANALYZE": "analyze",
+        "DOCUMENT_ACTION_TYPE_MERGE": "merge",
+        "MERGE_TARGET_MODE_CHANGED": "changed",
         "WORKFLOW_FILE_SYNC_CONTEXT_MAX_CHARS": FILE_SYNC_CONTEXT_MAX_CHARS,
         "build_analyze_config": lambda action: {"enabled": (action or {}).get("type") == "analyze"},
         "_get_document_action_config": lambda source: dict(

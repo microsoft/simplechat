@@ -1,8 +1,9 @@
 # test_workflow_editor_options.py
 """
 Functional tests for authorized, non-secret workflow editor choices.
-Version: 0.261.108
+Version: 0.261.220
 Implemented in: 0.261.108
+Merge availability and workflow file limit added in: 0.261.220
 """
 
 import json
@@ -61,3 +62,11 @@ def test_management_policy_and_definition_version_are_explicit():
     assert result["can_manage"] is False
     assert result["scope"] == {"type": "group", "id": "group"}
     assert result["definition_version"] == 2
+
+
+def test_merge_availability_and_file_limit_reach_the_editor_only_when_given():
+    # The editor hides Merge files while an administrator has it off and checks the same file limit
+    # a save does; a caller that doesn't say leaves the options exactly as before.
+    result = options(agents=[], endpoints=[], merge={"enabled": False, "workflow_max_documents": 250})
+    assert result["document_actions"] == {"merge": {"enabled": False, "workflow_max_documents": 250}}
+    assert "document_actions" not in options(agents=[], endpoints=[])

@@ -118,9 +118,11 @@ from functions_document_actions import (
     DOCUMENT_ACTION_TARGET_MODE_RECENT,
     DOCUMENT_ACTION_TYPE_COMPARISON,
     DOCUMENT_ACTION_TYPE_ANALYZE,
+    DOCUMENT_ACTION_TYPE_MERGE,
     DOCUMENT_ACTION_TYPE_NONE,
     DOCUMENT_ACTION_TYPE_SEARCH,
     DEFAULT_RECENT_DOCUMENT_WINDOW_MINUTES,
+    MERGE_TARGET_MODE_CHANGED,
     build_analyze_config,
     get_document_action_config,
     get_document_action_max_documents,
@@ -6440,7 +6442,8 @@ def _create_assistant_message(conversation, workflow, result, trigger_source, ru
     raw_agent_citations = list(result.get('agent_citations') or [])
     xsd_generation_contract = result.get('_xsd_generation_contract')
     generated_file_output = None
-    if not xsd_generation_contract:
+    # A merge task's merged file is its output; its instructions never ask for a second file.
+    if not xsd_generation_contract and not result.get('merge_summary'):
         generated_file_output = _maybe_create_workflow_generated_file_output(
             workflow=workflow,
             conversation_id=conversation.get('id'),
@@ -6790,7 +6793,7 @@ def _get_document_action_config(workflow):
             DOCUMENT_ACTION_CONTEXT_WORKFLOW,
             settings=settings,
         ),
-        allowed_action_types=get_enabled_document_action_types(settings=settings),
+        allowed_action_types=get_enabled_document_action_types(settings=settings, include_merge=True),
     )
 
 
@@ -7691,8 +7694,21 @@ def _format_workflow_file_sync_context(file_sync_result):
 
 
 def _apply_file_sync_changed_documents_to_action(action_config, changed_document_ids, group_ids, public_workspace_ids):
-    """Point an analyze document action at the documents File Sync just changed."""
+    """Point an analyze document action, or a merge of changed files, at the documents File Sync just changed."""
     action_config = action_config if isinstance(action_config, dict) else {}
+    if action_config.get('type') == DOCUMENT_ACTION_TYPE_MERGE:
+        if action_config.get('target_mode') != MERGE_TARGET_MODE_CHANGED:
+            return None
+        # A merge with no changed files reports that there was nothing to merge.
+        updated_merge = dict(action_config)
+        updated_merge.update({
+            'document_ids': list(changed_document_ids),
+            'doc_scope': 'all',
+            'active_group_ids': list(group_ids),
+            'active_public_workspace_id': list(public_workspace_ids),
+            'merge_targets_resolved': True,
+        })
+        return updated_merge
     if action_config.get('type') != DOCUMENT_ACTION_TYPE_ANALYZE:
         return None
 
@@ -9809,6 +9825,194 @@ def _execute_document_comparison_workflow(
     }
 
 
+def _query_merge_candidate_documents(container, scope_clause, scope_parameters, extensions, cutoff_ts=None):
+    parameters = list(scope_parameters)
+    extension_clauses = []
+    for index, extension in enumerate(extensions):
+        parameter = f'@merge_extension_{index}'
+        extension_clauses.append(f'ENDSWITH(LOWER(c.file_name), {parameter})')
+        parameters.append({'name': parameter, 'value': extension})
+    query = f"SELECT * FROM c WHERE {scope_clause} AND ({' OR '.join(extension_clauses)})"
+    if cutoff_ts is not None:
+        query += ' AND c._ts >= @cutoff_ts'
+        parameters.append({'name': '@cutoff_ts', 'value': cutoff_ts})
+    return list(container.query_items(query=query, parameters=parameters, enable_cross_partition_query=True))
+
+
+def _collect_merge_workflow_documents(workflow, action_config, settings, extensions):
+    """Current documents of a merge's file types in the task's authorized workspace scopes.
+
+    Every match is returned; the merge orders them and refuses more than its file limit
+    rather than silently merging only some of them.
+    """
+    user_id = str(workflow.get('user_id') or '').strip()
+    workflow_group_id = _get_workflow_group_id(workflow)
+    doc_scope = normalize_search_scope(action_config.get('doc_scope'))
+    active_group_ids = normalize_search_id_list(action_config.get('active_group_ids'))
+    if workflow_group_id:
+        assert_group_role(
+            user_id,
+            workflow_group_id,
+            allowed_roles=("Owner", "Admin", "DocumentManager", "User"),
+        )
+        active_group_ids = [workflow_group_id]
+        doc_scope = 'group'
+    else:
+        active_group_ids = _resolve_recent_authorized_group_ids(user_id, active_group_ids)
+    active_public_workspace_ids = normalize_search_id_list(action_config.get('active_public_workspace_id'))
+    if not workflow_group_id:
+        active_public_workspace_ids = _resolve_recent_authorized_public_workspace_ids(
+            user_id, active_public_workspace_ids,
+        )
+    cutoff_ts = None
+    if action_config.get('target_mode') == DOCUMENT_ACTION_TARGET_MODE_RECENT:
+        window_minutes = _coerce_workflow_recent_window_minutes(action_config.get('recent_window_minutes'))
+        cutoff_ts = int(datetime.now(timezone.utc).timestamp()) - (window_minutes * 60)
+
+    documents = []
+    if doc_scope in {'personal', 'all'} and not workflow_group_id and user_id:
+        documents.extend(_query_merge_candidate_documents(
+            cosmos_user_documents_container, 'c.user_id = @user_id',
+            [{'name': '@user_id', 'value': user_id}], extensions, cutoff_ts,
+        ))
+    if doc_scope in {'group', 'all'}:
+        for group_id in active_group_ids:
+            documents.extend(_query_merge_candidate_documents(
+                cosmos_group_documents_container, 'c.group_id = @group_id',
+                [{'name': '@group_id', 'value': group_id}], extensions, cutoff_ts,
+            ))
+    if doc_scope in {'public', 'all'} and not workflow_group_id:
+        for workspace_id in active_public_workspace_ids:
+            documents.extend(_query_merge_candidate_documents(
+                cosmos_public_documents_container, 'c.public_workspace_id = @workspace_id',
+                [{'name': '@workspace_id', 'value': workspace_id}], extensions, cutoff_ts,
+            ))
+    return select_current_documents(documents)
+
+
+def _throttled_cancellation_check(check, interval_seconds=2.0):
+    """Ask whether a run was cancelled at most once per interval; a cancellation sticks."""
+    state = {'checked_at': None, 'cancelled': False}
+
+    def cancelled():
+        now = time.monotonic()
+        if not state['cancelled'] and (
+            state['checked_at'] is None or now - state['checked_at'] >= interval_seconds
+        ):
+            state['checked_at'] = now
+            state['cancelled'] = bool(check())
+        return state['cancelled']
+
+    return cancelled
+
+
+def _execute_document_merge_workflow(
+    workflow,
+    action_config,
+    settings,
+    conversation_id='',
+    run_id=None,
+    thought_tracker=None,
+):
+    """Run a task's Merge document action: many files into one CSV or Excel file, without a model."""
+    # The merge engine and its upload path load only when a workflow merges files.
+    from functions_simplechat_operations import upload_generated_file_artifact_stream_for_user
+    from functions_workflow_merge import (
+        WORKFLOW_MERGE_CAPABILITY,
+        WorkflowMergeAccessError,
+        WorkflowMergeCancelled,
+        WorkflowMergeError,
+        collect_merge_candidates,
+        execute_workflow_merge,
+    )
+
+    user_id = str(workflow.get('user_id') or '').strip()
+    task = workflow.get('active_task') if isinstance(workflow.get('active_task'), dict) else {}
+    activity_key = f"file-merge:{run_id}:{task.get('id') or 'task'}"
+
+    def collect(action, extensions, max_documents):
+        documents = _collect_merge_workflow_documents(workflow, action, settings, extensions)
+        return collect_merge_candidates(documents, extensions, max_documents)
+
+    def render(source, request, max_output_bytes):
+        return build_generated_file_export(source=source, export_request=request, max_output_bytes=max_output_bytes)
+
+    def publish(*, user_id, conversation_id, file_name, output_format, rendered, row_count, summary, idempotency_key):
+        upload_result = upload_generated_file_artifact_stream_for_user(
+            user_id,
+            conversation_id,
+            file_name,
+            rendered.file_content,
+            rendered.size_bytes,
+            capability=WORKFLOW_MERGE_CAPABILITY,
+            output_format=output_format,
+            summary=summary,
+            artifact_idempotency_key=idempotency_key,
+        )
+        metadata = build_generated_file_artifact_metadata(
+            {
+                'file_name': file_name, 'output_format': output_format, 'capability': WORKFLOW_MERGE_CAPABILITY,
+                'summary': summary, 'row_count': row_count,
+            },
+            upload_result,
+            conversation_id,
+        )
+        if not metadata:
+            raise RuntimeError('The merged file could not be attached to the workflow run.')
+        return metadata
+
+    def progress(update):
+        _add_workflow_activity_thought(
+            thought_tracker,
+            workflow,
+            run_id,
+            step_type='file_merge',
+            content=f"Merged file {update.get('index')} of {update.get('total')}",
+            detail=f"rows={update.get('rows', 0)}",
+            activity_key=activity_key,
+            kind='file_merge',
+            title='Merge files',
+            status='running',
+        )
+
+    cancel_requested = _throttled_cancellation_check(
+        lambda: _is_workflow_run_cancellation_requested(workflow, run_id),
+    )
+    try:
+        result = execute_workflow_merge(
+            action_config,
+            settings,
+            user_id=user_id,
+            conversation_id=conversation_id,
+            run_id=run_id,
+            task_id=str(task.get('id') or ''),
+            collect_documents=collect,
+            resolve_manifest=resolve_analysis_source_manifest,
+            render_file=render,
+            publish_file=publish,
+            cancel_requested=cancel_requested,
+            report_progress=progress,
+        )
+    except WorkflowMergeCancelled as exc:
+        raise WorkflowRunCancelledError(WORKFLOW_RUN_CANCELLED_MESSAGE) from exc
+    except (WorkflowMergeError, WorkflowMergeAccessError) as exc:
+        # The task shows why, in terms of the owner's own files; the same merge would fail again.
+        raise WorkflowInputError(str(exc)) from exc
+    _add_workflow_activity_thought(
+        thought_tracker,
+        workflow,
+        run_id,
+        step_type='file_merge',
+        content='Merged files',
+        detail=f"files={(result.get('merge_summary') or {}).get('files', 0)}",
+        activity_key=activity_key,
+        kind='file_merge',
+        title='Merge files',
+        status='completed',
+    )
+    return result
+
+
 def _execute_document_action_workflow(
     workflow,
     settings,
@@ -10457,7 +10661,20 @@ def _execute_workflow_dispatch(
         execution_workflow = workflow_search_context.get('workflow') or execution_workflow
         document_action = _get_document_action_config(execution_workflow)
 
-    if document_action.get('type') in {DOCUMENT_ACTION_TYPE_ANALYZE, DOCUMENT_ACTION_TYPE_COMPARISON}:
+    if document_action.get('type') == DOCUMENT_ACTION_TYPE_MERGE:
+        execution_result = _execute_cancelable_workflow_step(
+            execution_workflow,
+            run_id,
+            lambda: _execute_document_merge_workflow(
+                execution_workflow,
+                document_action,
+                settings,
+                conversation_id=conversation_id,
+                run_id=run_id,
+                thought_tracker=thought_tracker,
+            ),
+        )
+    elif document_action.get('type') in {DOCUMENT_ACTION_TYPE_ANALYZE, DOCUMENT_ACTION_TYPE_COMPARISON}:
         _raise_if_workflow_run_cancelled(execution_workflow, run_id)
         document_action = _resolve_recent_document_action_targets(execution_workflow, document_action, settings)
         execution_workflow = _apply_runtime_document_action_config(execution_workflow, document_action)
@@ -10963,11 +11180,13 @@ def _execute_workflow_task_sequence(
                     'runner': runner_audit,
                     **({'iteration_inputs': durable.iteration_inputs} if flow_runner and durable.iteration_path else {}),
                 }
+                # A merge only reads files and attaches its file under an idempotency key, so a
+                # durable run may repeat it instead of pausing for a review of external actions.
                 replay_safe = (
                     attempt_workflow.get('runner_type') == 'model'
                     and not attempt_workflow.get('chat_capabilities_enabled')
                     and (attempt_workflow.get('document_action') or {}).get('type') in {None, 'none'}
-                )
+                ) or (attempt_workflow.get('document_action') or {}).get('type') == 'merge'
                 def dispatch_task():
                     nonlocal analysis_checkpoints
                     if structured_definition:

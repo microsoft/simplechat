@@ -307,6 +307,8 @@ class WorkflowEditorFixture(WorkspaceAuthoringFixture):
     def __init__(self, page: Page):
         super().__init__(page)
         self.active_group_id = None
+        # Extra editor-option keys a test needs, such as the server's document action settings.
+        self.editor_option_overrides = {}
         self.personal_workflows = {
             WORKFLOW_ID: workflow_record(),
             "agent-workflow": workflow_record(
@@ -856,6 +858,7 @@ class WorkflowEditorFixture(WorkspaceAuthoringFixture):
             options["schedule"]["timezones"] = [
                 zone for zone in options["schedule"]["timezones"] if zone not in self.unlisted_schedule_timezones
             ]
+            options.update(self.editor_option_overrides)
             self._json(route, options)
         elif path == FILE_SYNC_SOURCES_PATH and method == "GET":
             self._group_file_sync_sources(route, entry)

@@ -2,6 +2,27 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.220)**
+
+#### New Features
+
+*   **Merge Files As A Workflow Task**
+    *   A V2 workflow task can now merge many CSV and Excel files into one CSV or Excel file with code: choose **Merge files** as the task's **Document action**. It suits merges too big for one chat turn, such as a year of weekly exports, and merges that should happen on their own, every week or whenever a synced folder gets a new export. A workflow merges up to 100 files and 1,000,000 rows by default, using the existing Merge workflow limits.
+    *   **Files to merge** can be files chosen in the editor, in an order the owner sets; every CSV and Excel file in the workflow's workspace; files added or changed in a recent window (60 minutes by default); or the files File Sync added or changed in that run. Files found when the run starts are merged in file-name order, and more matching files than the limit fail the task rather than merging only some.
+    *   The task takes the same column, sheet, duplicate and sort settings as a chat merge, and an output format and file name. Every file is authorized again as the workflow's owner and read through the access boundary, no model runs, and one file is attached to the run's conversation, even when a durable run resumes.
+    *   Files found at run time that are unavailable or aren't spreadsheets are skipped and named in the task's answer; a run with nothing to merge says so without creating a file. Merge failures, such as a selected file that's gone or columns that don't fit, are shown on the task in terms of the owner's files and aren't retried. A durable run repeats an interrupted merge instead of pausing for review, and reuses the file it already attached when the bytes are the same.
+    *   A save that breaks a merge rule now says why, naming the task by position, for example "Workflow task 2: Select at least two files to merge." The editor learns from the server whether Merge is on and how many files a run may merge, so it doesn't offer **Merge files** while an administrator has Merge off and checks the file limit before saving.
+    *   Chat can propose a workflow with a merge task when a user asks for a recurring merge. The blueprint gains a `merge` task field, with new repairable draft codes `merge_unavailable`, `merge_inputs_required`, `merge_trigger_required`, `merge_options_invalid` and `merge_runner_invalid`, and a merge task never needs the default model.
+    *   (Ref: #1619, `functions_workflow_merge.py`, `functions_workflow_runner.py`, `functions_document_actions.py`, `functions_personal_workflows.py`, `functions_workflow_editor.py`, `functions_workflow_drafts.py`, `functions_orchestration_workflows.py`, `functions_orchestration_planner.py`, [Phase 3](features/V2_FILE_MERGE_PHASE_3_WORKFLOWS.md), [Create a workflow](../guides/create-a-workflow.md#merge-files-in-a-workflow), [Merge files](../guides/merge-files.md))
+
+#### User Interface Enhancements
+
+*   **Merge Files In The V2 Workflow Editor And Proposal Card**
+    *   The V2 workflow editor's **Merge files** action offers **Files to merge**, **Merge order** with **Up** and **Down**, **Output format**, **Output file name**, the recent window, and **More merge options** for column matching, aliases, sheets, header row, incompatible files, the source column, duplicates and sorting. The **Analysis mode** choice no longer appears for actions that don't analyze.
+    *   A proposed workflow's card describes a merge task as code that runs no model, for example "Merges the input files below, in order, into one Excel file with code. No model runs.", and lists its files under "Files to merge, in order".
+    *   The classic workflow editor doesn't open a workflow with a Merge files task, which it can't represent, and points to V2 instead; Run and Cancel still work there.
+    *   (Ref: `application/v2_ui/src/lib/workflowEditor.ts`, `WorkflowTaskFields.tsx`, `WorkflowFileSyncFields.tsx`, `workflowProposals.ts`, `WorkflowProposalCard.tsx`, `static/js/workspace/workspace_workflows.js`)
+
 ### **(v0.261.219)**
 
 #### New Features
