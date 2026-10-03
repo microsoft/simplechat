@@ -97,7 +97,7 @@ separate.
 5. Upload bytes and create an immutable file message privately. Reauthorize
    ownership, the retained result's producer and run, capability, deadline, and
    lease throughout. The documents behind the retained result are not reread.
-   A merged document (profile `assembled_document_v1`, **0.261.239**) is the one
+   A merged document (profile `assembled_document_v1`, **0.261.240**) is the one
    exception: its file is assembled from the original files when it renders, so
    those files are read with the user's current access and the file is delivered
    only if it matches the bytes the merge step checked. See

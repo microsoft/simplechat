@@ -1,12 +1,12 @@
 # V2 File Merge — Phase 1: Same-Structure Spreadsheets
 
-Version: **0.261.233**
+Version: **0.261.234**
 
-Implemented in version: **0.261.233**, recorded in `application/single_app/config.py`.
+Implemented in version: **0.261.234**, recorded in `application/single_app/config.py`.
 
 GitHub issue: [#1619](https://github.com/microsoft/simplechat/issues/1619). Part of
 [V2 File Merge](V2_FILE_MERGE.md). [Phase 2](V2_FILE_MERGE_PHASE_2_RECONCILIATION.md)
-(0.261.234) builds on this phase to reconcile files whose columns differ.
+(0.261.235) builds on this phase to reconcile files whose columns differ.
 
 Dependencies: Chat Orchestration (V2), at least one workspace type, `openpyxl` and
 `xlrd` (already in `requirements.txt`).

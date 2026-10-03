@@ -1,6 +1,6 @@
 // test_v2_workflow_merge_task.mjs
-// Version: 0.261.238
-// Implemented in: 0.261.235
+// Version: 0.261.239
+// Implemented in: 0.261.236
 // Exercises the V2 workflow editor's pure merge-task helpers: action construction, option cleanup,
 // alias parsing, and client-side validation for the backend merge document_action contract.
 
@@ -98,7 +98,7 @@ test('alias parse and format round trip and parse errors are explicit', () => {
 });
 
 test('a loaded kind the editor withholds is preserved but fails validation', () => {
-    // Every kind is available from 0.261.238; a kind left out of the available list is still refused.
+    // Every kind is available from 0.261.239; a kind left out of the available list is still refused.
     const action = workflowMergeActionFromSelection(documents, { mergeKind: 'pptx' });
     assert.equal(action.merge_kind, 'pptx');
     assert.equal(action.output_format, 'pptx');

@@ -2,8 +2,8 @@
 # test_workflow_merge_word.py
 """
 Functional test for Word Merge tasks in workflows.
-Version: 0.261.237
-Implemented in: 0.261.237
+Version: 0.261.238
+Implemented in: 0.261.238
 Refs: microsoft/simplechat#1619
 
 This test ensures that a workflow Merge task can append Word documents, in order, into one
@@ -76,7 +76,7 @@ def texts(content):
 
 
 def test_version_includes_word_merge_tasks():
-    assert_app_version_at_least("0.261.237")
+    assert_app_version_at_least("0.261.238")
 
 
 def test_a_word_task_takes_only_word_options_and_creates_docx(app):

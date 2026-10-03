@@ -1,10 +1,10 @@
 # test_orchestration_output_lifecycle.py
 """
 Real retained-result/render/transport/commit/download lifecycle integration.
-Version: 0.261.239
+Version: 0.261.240
 Implemented in: 0.261.127
 Container-only generated-file access covered in: 0.261.232
-Merged documents rendered from their own lineage added in: 0.261.239
+Merged documents rendered from their own lineage added in: 0.261.240
 
 Production modules (including the complete upload and download modules) run with
 external Azure I/O doubled. No AST-extracted service, model call, or provider is
@@ -59,6 +59,7 @@ from functions_orchestration_output_store import (
 )
 from functions_orchestration_rendering import OrchestrationRenderingService, execute_render_file
 from functions_orchestration_results import NamedOutput, OrchestrationResultReader
+from functions_temp_files import scratch_file_dir
 from test_support import offline_bootstrap
 from test_support.orchestration_results import COLUMNS, ROWS, ResultFixture, complete, source
 from test_support.orchestration_revisions import AtomicMemoryContainer
@@ -1729,8 +1730,8 @@ def test_output_bounds_and_all_private_streams_close_on_failure(lifecycle, monke
     original = tempfile.TemporaryFile
 
     def tracked(*args, **kwargs):
-        if kwargs.get("dir") != ".":
-            raise AssertionError("Output scratch files must stay in the project.")
+        if kwargs.get("dir") != scratch_file_dir():
+            raise AssertionError("Output scratch files must use the scratch directory, never the working directory.")
         stream = original(*args, **kwargs)
         created.append(stream)
         return stream

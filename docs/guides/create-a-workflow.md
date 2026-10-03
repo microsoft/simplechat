@@ -84,7 +84,7 @@ The card shows what the workflow would do:
   whether it can send email or calendar invitations, and whose account it uses.
 - Each task, with the agent or model that runs it and the documents it reads.
   Expand **Instructions** to read exactly what the task is told to do on every
-  run. From version **0.261.235**, a task that merges spreadsheets says so
+  run. From version **0.261.236**, a task that merges spreadsheets says so
   instead, for example "Merges the input files below, in order, into one Excel
   file with code. No model runs.", and lists the files under **Files to merge,
   in order**.
@@ -203,7 +203,7 @@ sources to choose from:
   decide whether the workflow waits, and whether it runs when nothing changed.
 - **Use changed files as Analyze targets** lets an Analyze task with no
   selected documents work on the files each sync changed. From version
-  **0.261.235**, it also lets a **Merge files** task merge them; see
+  **0.261.236**, it also lets a **Merge files** task merge them; see
   [Merge files in a workflow](#merge-files-in-a-workflow).
 
 A group workflow uses between 1 and 10 of the group's own sources. A source the
@@ -227,10 +227,10 @@ same message as for a group, and a source you're no longer allowed to use with
 
 ## Merge files in a workflow
 
-From version **0.261.235**, a task can merge many CSV and Excel files into one CSV
-or Excel file, from **0.261.236** it can also join PDFs into one PDF or put
-several spreadsheets on separate sheets of one workbook, from **0.261.237** it
-can append Word documents into one Word document, and from **0.261.238** it can
+From version **0.261.236**, a task can merge many CSV and Excel files into one CSV
+or Excel file, from **0.261.237** it can also join PDFs into one PDF or put
+several spreadsheets on separate sheets of one workbook, from **0.261.238** it
+can append Word documents into one Word document, and from **0.261.239** it can
 append PowerPoint decks into one deck. Use it for a merge that's
 too big for one chat turn, such as a year of weekly exports, or one that should
 happen on its own, such as every Monday or whenever a synced folder gets a new

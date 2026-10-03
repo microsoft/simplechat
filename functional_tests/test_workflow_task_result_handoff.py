@@ -1,7 +1,7 @@
 # test_workflow_task_result_handoff.py
 """
 Functional regression for workflow result production, persistence, and handoff.
-Version: 0.261.236
+Version: 0.261.237
 Implemented in: 0.261.106
 
 Fictional inventory records pass through the production document analysis,

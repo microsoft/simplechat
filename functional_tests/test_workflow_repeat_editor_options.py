@@ -1,7 +1,7 @@
 # test_workflow_repeat_editor_options.py
 """
 Functional tests for Repeat administration and non-secret editor capabilities.
-Version: 0.261.236
+Version: 0.261.237
 Implemented in: 0.261.120
 
 Exercises real registry normalization, Classic POST validation, editor projection,

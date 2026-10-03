@@ -1,7 +1,7 @@
 # functions_document_merge.py
 """Ordered assembly of several PDF, Word, PowerPoint or spreadsheet files into one file.
 
-Version: 0.261.239
+Version: 0.261.240
 
 The engine is pure: it receives already-authorized byte loaders, never resolves
 documents, settings, storage or routes, and performs no model work. Each assembler reads
