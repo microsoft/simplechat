@@ -114,11 +114,12 @@ pointing at the item.
 
 | Rail | Placement |
 |---|---|
-| Expanded | Drops down below My Workspace and overlays the items under it rather than pushing them, so the conversation list never jumps |
+| Expanded | Drops down below My Workspace and overlays the items under it rather than pushing them, so the conversation list never jumps. An alert that needs acknowledgment takes its own room instead, pushing the items under it down, because it stays until someone acknowledges it |
 | Collapsed to the icon strip | Flies out to the right of the icon |
 | Mobile | Flies out from the strip's icon, as when collapsed, and waits while the navigation drawer is open |
 
-It shows one entry at a time: the loudest waiting, and then the newest. Each entry
+It shows one entry at a time: one that needs acknowledgment first, then the loudest
+waiting, and then the newest. Each entry
 shows:
 
 - a priority tag with its icon, which always names the priority in words
@@ -145,7 +146,9 @@ stays unread in the bell and, having been claimed, doesn't pop up again.
 - The notice never takes focus, so typing is never interrupted.
 - It sits in the tab order right after **My Workspace**, the item it hangs from.
 - Moving focus onto something the notice covers, such as the rail items under it,
-  tucks the notice, so it never hides what has focus.
+  tucks the notice, so it never hides what has focus. A notice that needs
+  acknowledgment can't tuck. In the full rail it covers nothing, and as a flyout it
+  steps aside, invisible, until focus moves somewhere it doesn't cover.
 - Each new notice is announced once through a live region. The announcement is
   polite, or assertive when the loudest alert is critical. For example:
   "Critical priority workflow alert: Ledger totals do not match, from Payments
@@ -266,7 +269,7 @@ A workflow that fails on every run for an hour is one thing to know, not twelve.
 waiting alerts from one workflow become one entry with a count. The entry leads with
 its loudest alert, and the newest of those. Its line reads "Failed N times since
 *time*" when every alert is a failed run, and "N alerts since *time*" otherwise.
-Entries are ordered loudest first. Alerts that arrive while the notice or card is
+Entries that need acknowledgment come first, then the loudest. Alerts that arrive while the notice or card is
 up join it and are re-sorted, so a critical alert takes the notice over from a
 medium one. The card keeps the entry it is showing.
 

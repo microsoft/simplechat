@@ -25,7 +25,7 @@ import type { NotificationTarget } from '../lib/notificationLinks';
 import type { NotificationNavigationContext } from '../lib/notificationNavigation';
 import { claimWorkflowAlerts, resetWorkflowAlertClaims } from '../lib/workflowAlertClaims';
 import { tuckIntoTarget } from '../lib/workflowAlertMotion';
-import { startWorkflowAlertSoundForEntries, stopWorkflowAlertSound } from '../lib/workflowAlertSound';
+import { playWorkflowAlertOnce, resetWorkflowAlertSoundForLab, syncWorkflowAlertSound } from '../lib/workflowAlertSound';
 import {
     WORKFLOW_ALERT_PRIORITY_LABELS,
     describeWorkflowAlertGroup,
@@ -71,6 +71,11 @@ interface WorkflowAlertState {
 
     receiveAlerts: (alerts: WorkflowAlert[], options?: { complete?: boolean }) => void;
     removeAlerts: (ids: Iterable<string>) => void;
+    /**
+     * Let go of alerts someone acknowledged: here, in another tab or as the bell reports. They
+     * are never shown again on this page, even by a read that left before the acknowledgment.
+     */
+    retireAcknowledged: (ids: Iterable<string>) => void;
     setSuspended: (suspended: boolean) => void;
     openCard: () => void;
     closeCard: () => void;
@@ -89,6 +94,10 @@ interface WorkflowAlertState {
 
 // Ids that must not be presented again: claimed by any tab, or acted on here.
 const settled = new Set<string>();
+// Alerts acknowledged here, in another tab or as the bell reports. An alert that needs
+// acknowledgment is otherwise offered again by every read, so a read that left before the
+// acknowledgment must not bring it back.
+const acknowledgedIds = new Set<string>();
 let claiming = false;
 // Bumped by a reset, so a claim that was on its way does not present into the new slate.
 let epoch = 0;
@@ -171,7 +180,7 @@ export const useWorkflowAlertStore = create<WorkflowAlertState>((set, get) => {
     const present = (winners: WorkflowAlert[], queue: WorkflowAlert[]): void => {
         const current = get();
         const entries = groupWorkflowAlerts([...current.entries.flatMap((entry) => entry.alerts), ...winners]);
-        startWorkflowAlertSoundForEntries(groupWorkflowAlerts(winners.filter((alert) => alert.sound !== 'off' && !alert.requireAcknowledgment)));
+        playWorkflowAlertOnce(winners);
         if (current.phase === 'idle') {
             announceWhenShown = current.suspended;
             set({
@@ -272,7 +281,6 @@ export const useWorkflowAlertStore = create<WorkflowAlertState>((set, get) => {
         for (const id of gone) {
             settled.add(id);
         }
-        stopWorkflowAlertSound(gone);
         const state = get();
         heldWinners = heldWinners.filter((alert) => !gone.has(alert.id));
         const queue = state.queue.filter((alert) => !gone.has(alert.id));
@@ -323,13 +331,9 @@ export const useWorkflowAlertStore = create<WorkflowAlertState>((set, get) => {
         receiveAlerts: (alerts, { complete = false } = {}) => {
             const now = Date.now();
             const queue = alerts.filter((alert) =>
-                (!settled.has(alert.id) || (alert.requireAcknowledgment && !alert.acknowledged))
+                !acknowledgedIds.has(alert.id)
+                && (!settled.has(alert.id) || (alert.requireAcknowledgment && !alert.acknowledged))
                 && isWorkflowAlertPopupEligible(alert, now));
-            const mustAckSound = alerts.filter((alert) =>
-                alert.requireAcknowledgment && !alert.acknowledged && alert.sound !== 'off' && alert.delivery === 'popup');
-            if (mustAckSound.length) {
-                startWorkflowAlertSoundForEntries(groupWorkflowAlerts(mustAckSound), { mustOnly: true });
-            }
             set({ queue });
             if (complete) {
                 // A short answer is every unread pop-up alert there is, so one missing from it
@@ -342,6 +346,12 @@ export const useWorkflowAlertStore = create<WorkflowAlertState>((set, get) => {
         },
 
         removeAlerts: (ids) => drop(ids),
+
+        retireAcknowledged: (ids) => {
+            const acknowledged = [...ids];
+            acknowledged.forEach((id) => acknowledgedIds.add(id));
+            drop(acknowledged);
+        },
 
         setSuspended: (suspended) => {
             if (get().suspended === suspended) {
@@ -423,7 +433,11 @@ export const useWorkflowAlertStore = create<WorkflowAlertState>((set, get) => {
             if (entry) {
                 await act(
                     entry.alerts.filter((alert) => alert.requireAcknowledgment && !alert.acknowledged).map((alert) => alert.id),
-                    (ids) => actions.acknowledge(ids),
+                    async (ids) => {
+                        const done = await actions.acknowledge(ids);
+                        done.forEach((id) => acknowledgedIds.add(id));
+                        return done;
+                    },
                 );
             }
         },
@@ -453,8 +467,17 @@ export const useWorkflowAlertStore = create<WorkflowAlertState>((set, get) => {
                 return;
             }
             const read = ordinary.length ? actions.markRead(ordinary).catch(() => [] as string[]) : Promise.resolve([] as string[]);
+            acknowledged.forEach((id) => acknowledgedIds.add(id));
             ids.forEach((id) => settled.add(id));
-            finish();
+            // Other alerts that need acknowledgment stay up, in the notice, rather than going with
+            // the one opened; anything else ends with it, unread in the bell, as before.
+            const waiting = withoutIds(get().entries, new Set(ids)).filter((item) => item.requireAcknowledgment);
+            if (waiting.length) {
+                set({ entries: waiting, phase: 'notice', cardIndex: 0, growFrom: null, busy: false });
+                pump();
+            } else {
+                finish();
+            }
             // A full page load would cancel a request still on its way, so a link that leaves
             // the application waits for the read first. Inside it the read carries on regardless.
             if (target.kind === 'classic') {
@@ -471,7 +494,7 @@ if (typeof BroadcastChannel !== 'undefined') {
         channel.addEventListener('message', (event) => {
             const data = event.data;
             if (data && data.type === 'acknowledged' && Array.isArray(data.ids)) {
-                useWorkflowAlertStore.getState().removeAlerts(
+                useWorkflowAlertStore.getState().retireAcknowledged(
                     data.ids.filter((id: unknown): id is string => typeof id === 'string'),
                 );
             }
@@ -481,14 +504,24 @@ if (typeof BroadcastChannel !== 'undefined') {
     }
 }
 
+// The sound follows what this tab holds, waiting or shown, so it stops with the last alert that
+// wanted it however that alert went: acknowledged, retired by a read, or reset.
+useWorkflowAlertStore.subscribe((state, previous) => {
+    if (state.queue !== previous.queue || state.entries !== previous.entries) {
+        syncWorkflowAlertSound([...state.queue, ...state.entries.flatMap((entry) => entry.alerts)]);
+    }
+});
+
 /** Back to a clean slate: nothing waiting, nothing claimed. Only the alert lab and tests call this. */
 export function resetWorkflowAlertsForLab(): void {
     epoch += 1;
     settled.clear();
+    acknowledgedIds.clear();
     claiming = false;
     announceWhenShown = false;
     heldWinners = [];
     resetWorkflowAlertClaims();
+    resetWorkflowAlertSoundForLab();
     useWorkflowAlertStore.setState({
         queue: [],
         entries: [],

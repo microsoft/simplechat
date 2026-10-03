@@ -100,6 +100,65 @@ def _alert(
     }
 
 
+# The page is served over plain http, where browsers leave navigator.locks out, so each harness
+# supplies one. This one grants every request at once.
+ALWAYS_GRANTED_LOCKS_STUB = """
+            Object.defineProperty(navigator, 'locks', {
+                configurable: true,
+                value: {
+                    request: async (_name, _options, callback) => callback({ name: _name })
+                }
+            });
+"""
+
+# This one behaves as the Web Locks API does: one holder per name, held until the callback's
+# promise settles, ifAvailable answered with null while it is held, and other requests queued.
+REALISTIC_LOCKS_STUB = """
+            (() => {
+                const held = new Set();
+                const waiting = [];
+                window.__heldWorkflowAlertLocks = () => Array.from(held);
+                function run(name, callback) {
+                    held.add(name);
+                    let result;
+                    try {
+                        result = Promise.resolve(callback({ name }));
+                    } catch (error) {
+                        result = Promise.reject(error);
+                    }
+                    const release = () => {
+                        held.delete(name);
+                        const nextIndex = waiting.findIndex(item => item.name === name);
+                        if (nextIndex >= 0) {
+                            const next = waiting.splice(nextIndex, 1)[0];
+                            run(next.name, next.callback).then(next.resolve, next.reject);
+                        }
+                    };
+                    return result.then(
+                        value => { release(); return value; },
+                        error => { release(); throw error; }
+                    );
+                }
+                Object.defineProperty(navigator, 'locks', {
+                    configurable: true,
+                    value: {
+                        request(name, optionsOrCallback, maybeCallback) {
+                            const callback = typeof optionsOrCallback === 'function' ? optionsOrCallback : maybeCallback;
+                            const options = typeof optionsOrCallback === 'function' ? {} : (optionsOrCallback || {});
+                            if (held.has(name)) {
+                                if (options.ifAvailable) {
+                                    return Promise.resolve().then(() => callback(null));
+                                }
+                                return new Promise((resolve, reject) => waiting.push({ name, callback, resolve, reject }));
+                            }
+                            return run(name, callback);
+                        }
+                    }
+                });
+            })();
+"""
+
+
 class OfflineWorkflowAlertHarness:
     """Serve a minimal SimpleChat page with real static JavaScript."""
 
@@ -114,6 +173,8 @@ class OfflineWorkflowAlertHarness:
         use_clock=False,
         reject_play=False,
         complete=True,
+        realistic_locks=False,
+        sounded_once_ids=(),
     ):
         self.page = page
         self.playwright_sync = playwright_sync
@@ -126,6 +187,8 @@ class OfflineWorkflowAlertHarness:
         self.use_clock = use_clock
         self.reject_play = reject_play
         self.complete = complete
+        self.realistic_locks = realistic_locks
+        self.sounded_once_ids = list(sounded_once_ids)
         self.alert_reads = 0
         self.count_override = None
         self.browser = None
@@ -144,12 +207,17 @@ class OfflineWorkflowAlertHarness:
             window.__workflowAlertPlayed = [];
             window.__workflowAlertStopped = 0;
             window.__rejectWorkflowAlertPlay = REJECT_PLAY;
-            Object.defineProperty(navigator, 'locks', {
-                configurable: true,
-                value: {
-                    request: async (_name, _options, callback) => callback({ name: _name })
+            LOCKS_STUB
+            (() => {
+                const soundedOnceIds = SOUNDED_ONCE_IDS;
+                if (soundedOnceIds.length) {
+                    const soundedAt = Date.now();
+                    localStorage.setItem(
+                        'simplechat.workflowAlerts.soundedOnce',
+                        JSON.stringify(Object.fromEntries(soundedOnceIds.map(id => [id, soundedAt])))
+                    );
                 }
-            });
+            })();
             HTMLMediaElement.prototype.play = function() {
                 window.__workflowAlertPlayed.push(this.currentSrc || this.src || '');
                 if (window.__rejectWorkflowAlertPlay) {
@@ -167,7 +235,10 @@ class OfflineWorkflowAlertHarness:
                     close: function() {}
                 };
             };
-            """.replace("REJECT_PLAY", "true" if self.reject_play else "false")
+            """
+            .replace("REJECT_PLAY", "true" if self.reject_play else "false")
+            .replace("LOCKS_STUB", REALISTIC_LOCKS_STUB if self.realistic_locks else ALWAYS_GRANTED_LOCKS_STUB)
+            .replace("SOUNDED_ONCE_IDS", json.dumps(self.sounded_once_ids))
         )
         self.page.route("**/*", self._route)
         self.page.goto("http://simplechat.test/notifications", wait_until="networkidle")
@@ -426,10 +497,12 @@ def test_repeat_sound_interval_stops_and_sound_gates_disable_playback():
         page.clock.fast_forward(5100)
         assert page.evaluate("window.__workflowAlertPlayed.length") >= 2
         page.locator("#workflow-alert-acknowledge-btn").click()
+        # The modal closes once the acknowledgment has been saved and has retired the alert.
+        expect(page.locator("#workflowAlertModal")).not_to_be_visible()
+        assert harness.acknowledged_ids == ["repeat-sound"]
         played_after_ack = page.evaluate("window.__workflowAlertPlayed.length")
         page.clock.fast_forward(5100)
         assert page.evaluate("window.__workflowAlertPlayed.length") == played_after_ack
-        expect(page.locator("#workflowAlertModal")).not_to_be_visible()
 
     with OfflineWorkflowAlertHarness(None, playwright_sync, [repeating_alert], sounds_enabled=False) as admin_off:
         assert admin_off.page.evaluate("window.__workflowAlertPlayed.length") == 0
@@ -592,3 +665,94 @@ def test_polls_skip_workflow_alerts_when_nothing_needs_them():
         page.clock.fast_forward(45000)
         page.wait_for_timeout(100)
         assert tracked.alert_reads > reads_after_load
+
+
+@pytest.mark.ui
+def test_a_refused_repeating_sound_gives_up_the_lock_until_sound_is_allowed():
+    playwright_sync = _require_playwright()
+    repeating_alert = _alert("refused-lock", require_acknowledgment=True, sound="repeat", priority="critical")
+
+    with OfflineWorkflowAlertHarness(
+        None, playwright_sync, [repeating_alert], reject_play=True, realistic_locks=True
+    ) as harness:
+        page = harness.page
+        expect = playwright_sync.expect
+
+        expect(page.locator("#workflowAlertModal")).to_be_visible()
+        page.wait_for_function("window.__workflowAlertPlayed.length >= 1", timeout=3000)
+        # The browser refused, so the lock is free for a tab that may play.
+        page.wait_for_function("window.__heldWorkflowAlertLocks().length === 0", timeout=3000)
+        enable = page.locator("#workflow-alert-modal-enable-sound-btn")
+        expect(enable).to_be_visible()
+
+        # Allowed again, the loop takes the lock back and keeps it while it sounds.
+        page.evaluate("window.__rejectWorkflowAlertPlay = false")
+        played = page.evaluate("window.__workflowAlertPlayed.length")
+        enable.click()
+        page.wait_for_function(f"window.__workflowAlertPlayed.length > {played}", timeout=3000)
+        page.wait_for_function("window.__heldWorkflowAlertLocks().length === 1", timeout=3000)
+        expect(enable).not_to_be_visible()
+
+
+@pytest.mark.ui
+def test_enable_sound_retries_a_refused_one_off_chime_once():
+    playwright_sync = _require_playwright()
+    once_alert = _alert("refused-once", require_acknowledgment=True, sound="once")
+
+    with OfflineWorkflowAlertHarness(None, playwright_sync, [once_alert], reject_play=True) as harness:
+        page = harness.page
+        expect = playwright_sync.expect
+
+        expect(page.locator("#workflowAlertModal")).to_be_visible()
+        page.wait_for_function("window.__workflowAlertPlayed.length === 1", timeout=3000)
+        enable = page.locator("#workflow-alert-modal-enable-sound-btn")
+        expect(enable).to_be_visible()
+
+        page.evaluate("window.__rejectWorkflowAlertPlay = false")
+        enable.click()
+        page.wait_for_function("window.__workflowAlertPlayed.length === 2", timeout=3000)
+        expect(enable).not_to_be_visible()
+
+        # It played, so later key presses don't play it again, and the browser remembers it.
+        page.keyboard.press("Shift")
+        page.wait_for_timeout(200)
+        assert page.evaluate("window.__workflowAlertPlayed.length") == 2
+        sounded = json.loads(page.evaluate("localStorage.getItem('simplechat.workflowAlerts.soundedOnce')"))
+        assert "refused-once" in sounded
+
+
+@pytest.mark.ui
+def test_a_chime_another_tab_already_played_is_not_played_again():
+    playwright_sync = _require_playwright()
+    once_alert = _alert("chimed-elsewhere", require_acknowledgment=True, sound="once")
+
+    with OfflineWorkflowAlertHarness(
+        None, playwright_sync, [once_alert], sounded_once_ids=["chimed-elsewhere"]
+    ) as harness:
+        page = harness.page
+        expect = playwright_sync.expect
+
+        expect(page.locator("#workflowAlertModal")).to_be_visible()
+        page.wait_for_timeout(300)
+        assert page.evaluate("window.__workflowAlertPlayed.length") == 0
+
+
+@pytest.mark.ui
+def test_mark_as_read_is_offered_for_an_ordinary_alert_without_links():
+    playwright_sync = _require_playwright()
+    unlinked_alert = _alert("no-links")
+    unlinked_alert["link_url"] = ""
+    unlinked_alert["link_context"] = {}
+    unlinked_alert["metadata"]["link_targets"] = []
+
+    with OfflineWorkflowAlertHarness(None, playwright_sync, [unlinked_alert]) as harness:
+        page = harness.page
+        expect = playwright_sync.expect
+
+        expect(page.locator("#workflowAlertModal")).to_be_visible()
+        mark_read = page.locator("#workflow-alert-mark-read-btn")
+        expect(mark_read).to_be_visible()
+        expect(page.locator("#workflow-alert-acknowledge-btn")).not_to_be_visible()
+        mark_read.click()
+        page.wait_for_function("document.querySelector('#workflowAlertModal').classList.contains('show') === false")
+        assert harness.read_ids == ["no-links"]

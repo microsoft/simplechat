@@ -15,6 +15,11 @@
 // opened or closed. Closing tucks it into the bell straight away. Either way the alert stays
 // unread there.
 //
+// An alert that needs acknowledgment never tucks away, so it must never cover anything for
+// long: in the full rail it takes its own room below My Workspace, pushing the items under it
+// down, and as a flyout it steps aside -- invisible, out of the pointer's way -- while focus is
+// on something it would cover, and comes back when focus moves on.
+//
 // Everything shown is the alert's own text, rendered as text.
 
 import { useEffect, useRef, useState, type KeyboardEvent } from 'react';
@@ -109,7 +114,7 @@ function NoticeBody({
     const rootRef = useRef<HTMLDivElement>(null);
     const [hovered, setHovered] = useState(false);
     const [focused, setFocused] = useState(false);
-    const [compact, setCompact] = useState(false);
+    const [steppedAside, setSteppedAside] = useState(false);
     const soundBlocked = useWorkflowAlertSoundBlocked();
 
     // Hidden while something else has the page, the pointer and focus cannot be said to have
@@ -118,6 +123,7 @@ function NoticeBody({
         if (suspended) {
             setHovered(false);
             setFocused(false);
+            setSteppedAside(false);
         }
     }, [suspended]);
 
@@ -131,7 +137,9 @@ function NoticeBody({
     // The notice overlays the rail items below My Workspace, or the page beside the strip, so
     // tabbing on from it lands on something it covers. Focus must never sit hidden under it
     // (WCAG 2.2, 2.4.11), so it tucks into the bell and leaves focus where it went. The alert
-    // stays unread there, like any other tuck.
+    // stays unread there, like any other tuck. One that needs acknowledgment can't tuck away,
+    // so it steps aside instead, until focus is somewhere it doesn't cover.
+    const mustAcknowledge = entry.requireAcknowledgment;
     useEffect(() => {
         if (phase !== 'notice' || suspended) {
             return undefined;
@@ -139,7 +147,11 @@ function NoticeBody({
         const onFocusIn = (event: FocusEvent) => {
             const root = rootRef.current;
             const target = event.target;
-            if (!root || !(target instanceof Element) || root.contains(target)) {
+            if (!root || !(target instanceof Element)) {
+                return;
+            }
+            if (root.contains(target)) {
+                setSteppedAside(false);
                 return;
             }
             const notice = root.getBoundingClientRect();
@@ -147,17 +159,26 @@ function NoticeBody({
             const covered = landed.width > 0 && landed.height > 0
                 && landed.left < notice.right && notice.left < landed.right
                 && landed.top < notice.bottom && notice.top < landed.bottom;
-            if (covered) {
-                if (entry.requireAcknowledgment) {
-                    setCompact(true);
-                } else {
-                    void tuck();
-                }
+            if (mustAcknowledge) {
+                setSteppedAside(covered);
+            } else if (covered) {
+                void tuck();
+            }
+        };
+        // Focus that goes nowhere -- a click on the page's background -- covers nothing.
+        const onFocusOut = (event: FocusEvent) => {
+            if (event.relatedTarget === null) {
+                setSteppedAside(false);
             }
         };
         document.addEventListener('focusin', onFocusIn);
-        return () => document.removeEventListener('focusin', onFocusIn);
-    }, [phase, suspended, tuck]);
+        document.addEventListener('focusout', onFocusOut);
+        return () => {
+            document.removeEventListener('focusin', onFocusIn);
+            document.removeEventListener('focusout', onFocusOut);
+        };
+    }, [phase, suspended, tuck, mustAcknowledge]);
+    const asideNow = steppedAside && mustAcknowledge;
 
     const close = async () => {
         const hadFocus = rootRef.current?.contains(document.activeElement) ?? false;
@@ -202,7 +223,7 @@ function NoticeBody({
             data-state={phase}
             data-count={entry.count}
             data-requires-acknowledgment={entry.requireAcknowledgment ? 'true' : 'false'}
-            data-compact={compact ? 'true' : 'false'}
+            data-stepped-aside={asideNow ? 'true' : 'false'}
             onPointerEnter={() => setHovered(true)}
             onPointerLeave={() => setHovered(false)}
             onFocus={() => setFocused(true)}
@@ -217,6 +238,7 @@ function NoticeBody({
                 tone.outline,
                 reduced ? 'wf-alert-enter-fade' : ENTRANCE[placement],
                 phase === 'tucking' && 'pointer-events-none',
+                asideNow && 'invisible',
                 suspended && 'hidden',
             )}
         >
@@ -334,21 +356,26 @@ export function WorkflowAlertNotice({ placement }: { placement: WorkflowAlertNot
 
 /**
  * The notice's anchor, inside the My Workspace item. Below the item in the full rail; beside
- * its icon when the rail is a strip, capped so a phone's narrow screen still fits it.
+ * its icon when the rail is a strip, capped so a phone's narrow screen still fits it. In the
+ * full rail an alert that needs acknowledgment takes its own room, since it stays until it is
+ * acknowledged and must not sit over the items under it.
  */
 export function WorkflowAlertCalloutSlot({ collapsed }: { collapsed: boolean }) {
     const shown = useNoticeShown();
+    const mustAcknowledge = useWorkflowAlertStore((state) => state.entries.some((entry) => entry.requireAcknowledgment));
     if (!shown) {
         return null;
     }
+    const inFlow = !collapsed && mustAcknowledge;
     return (
         <div
             data-workflow-alert-slot="callout"
+            data-in-flow={inFlow ? 'true' : 'false'}
             className={clsx(
-                'absolute z-50',
+                inFlow ? 'relative mt-2' : 'absolute z-50',
                 collapsed
                     ? 'top-0 left-full ml-3 w-72 max-w-[calc(100vw_-_68px_-_1rem)]'
-                    : 'top-full right-0 left-0 mt-2',
+                    : !inFlow && 'top-full right-0 left-0 mt-2',
             )}
         >
             <WorkflowAlertNotice placement={collapsed ? 'flyout' : 'below'} />

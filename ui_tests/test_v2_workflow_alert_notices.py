@@ -1773,8 +1773,9 @@ def test_medium_and_large_sizes_open_directly_and_large_minimizes(tab, server, a
     server.add(must_ack_alert(alert, "large", title="Large alert", size="large", priority="critical"))
     tab.poll()
     expect(tab.card).to_be_visible()
-    box = tab.card.evaluate("""(card) => {
-        const rect = card.getBoundingClientRect();
+    # The marker sits on the dialog's backdrop, which always fills the window; measure the panel.
+    box = tab.card.locator(":scope > div").first.evaluate("""(panel) => {
+        const rect = panel.getBoundingClientRect();
         return {width: rect.width, height: rect.height, vw: innerWidth, vh: innerHeight};
     }""")
     assert box["width"] >= box["vw"] - 40 and box["height"] >= box["vh"] - 40, box
@@ -2045,3 +2046,196 @@ def test_a_large_alert_is_set_in_large_type_and_open_stays_the_one_green_action(
     acknowledge_fill = tab.card.locator("[data-workflow-alert-acknowledge]").evaluate(background)
     open_fill = tab.card.locator("[data-workflow-alert-primary]").evaluate(background)
     assert acknowledge_fill != open_fill, (acknowledge_fill, open_fill)
+
+
+BROADCAST_ACKNOWLEDGED = r"""
+(ids) => {
+    const channel = new BroadcastChannel('simplechat.workflowAlerts');
+    channel.postMessage({type: 'acknowledged', ids});
+    channel.close();
+}
+"""
+
+
+def sources(tab):
+    return [item["src"] for item in tab.js("() => window.__audioPlays")]
+
+
+def test_a_waiting_alert_acknowledged_elsewhere_stops_its_sound(tab, server, alert, now):
+    tab.open(clock=now)
+    install_audio_stub(tab)
+    tab.hide()
+    server.add(must_ack_alert(alert, "queued", title="Waiting alarm", sound="repeat", priority="critical"))
+    tab.poll()
+    state = tab.state()
+    assert state["suspended"] and state["queue"] == ["queued"] and state["entries"] == [], state
+    # It sounds while it waits for the tab to be seen.
+    tab.wait_for(lambda: plays(tab) == 1, "The waiting alert did not sound.")
+
+    server.acknowledge("queued", name="Morgan Lee")
+    reads = len(tab.alert_queries())
+    tab.run_for(20_100)
+    tab.wait_for(lambda: len(tab.alert_queries()) > reads, "The pending alert was not read again.")
+    tab.wait_for(lambda: tab.state()["queue"] == [], f"The acknowledged alert still waits: {tab.state()}")
+    played = plays(tab)
+    tab.run_for(5_100)
+    tab.page.wait_for_timeout(200)
+    assert plays(tab) == played
+
+
+def test_a_refused_sound_is_not_retried_for_an_alert_acknowledged_elsewhere(tab, server, alert, now):
+    tab.open(clock=now)
+    install_audio_stub(tab, reject=True)
+    server.add(must_ack_alert(alert, "refused-acked", title="Refused alarm", sound="repeat"))
+    tab.poll()
+    expect(tab.notice.locator("[data-workflow-alert-enable-sound]")).to_be_visible()
+
+    tab.js(BROADCAST_ACKNOWLEDGED, ["refused-acked"])
+    tab.wait_for(lambda: tab.notice.count() == 0, "The broadcast acknowledgment did not retire the alert.")
+
+    # Sound is allowed now, but nothing is left to sound for.
+    install_audio_stub(tab)
+    tab.page.mouse.click(700, 600)
+    tab.page.keyboard.press("Shift")
+    tab.page.wait_for_timeout(200)
+    tab.run_for(5_100)
+    tab.page.wait_for_timeout(200)
+    assert plays(tab) == 0
+
+
+def test_opening_one_alert_leaves_the_others_waiting_for_acknowledgment(tab, server, alert, now):
+    tab.open(clock=now)
+    install_audio_stub(tab)
+    server.add(
+        must_ack_alert(alert, "first", workflow_id="wf-a", title="First alarm", sound="repeat",
+                       priority="critical", minutes_ago=5),
+        must_ack_alert(alert, "second", workflow_id="wf-b", title="Second alarm", sound="repeat",
+                       priority="high", minutes_ago=6),
+    )
+    tab.poll()
+    expect(tab.notice).to_contain_text("First alarm")
+    tab.open_button.click()
+    expect(tab.card).to_be_visible()
+    tab.card.locator("[data-workflow-alert-primary]").click()
+    tab.wait_for(lambda: server.acknowledge_calls == ["first"], f"Ack calls: {server.acknowledge_calls}")
+    tab.wait_for(lambda: tab.route_text() == "/chat?conversationId=conv-wf-a", f"Open went to {tab.route_text()}.")
+
+    # The other one stays up, in the notice, and keeps sounding.
+    expect(tab.card).to_have_count(0)
+    expect(tab.notice).to_contain_text("Second alarm")
+    assert tab.state()["entries"] == [["second"]]
+    played = plays(tab)
+    tab.run_for(5_100)
+    tab.wait_for(lambda: plays(tab) > played, "The alert still waiting stopped sounding.")
+
+
+def test_acknowledging_one_alert_keeps_the_next_one_sounding(tab, server, alert, now):
+    tab.open(clock=now)
+    install_audio_stub(tab)
+    server.add(
+        must_ack_alert(alert, "loud", workflow_id="wf-a", title="Loud alarm", sound="repeat",
+                       priority="critical", minutes_ago=5),
+        must_ack_alert(alert, "quiet", workflow_id="wf-b", title="Quiet alarm", sound="repeat",
+                       priority="low", minutes_ago=6),
+    )
+    tab.poll()
+    tab.wait_for(lambda: plays(tab) == 1, "The repeating sound did not start.")
+    assert sources(tab)[-1].endswith("/alarm.wav"), sources(tab)
+
+    tab.open_button.click()
+    tab.card.locator("[data-workflow-alert-acknowledge]").click()
+    tab.wait_for(lambda: server.acknowledge_calls == ["loud"], f"Ack calls: {server.acknowledge_calls}")
+    expect(tab.card).to_contain_text("Quiet alarm")
+
+    # The quieter alert still waits, so the sound carries on in its tone, without a pause.
+    played = plays(tab)
+    tab.run_for(5_100)
+    tab.wait_for(lambda: plays(tab) > played, "The alert still waiting stopped sounding.")
+    assert sources(tab)[-1].endswith("/chime.wav"), sources(tab)
+
+
+def test_two_tabs_play_a_one_off_chime_once_between_them(tab, another_tab, server, alert):
+    tab.open()
+    other = another_tab("tab-2").open()
+    install_audio_stub(tab)
+    install_audio_stub(other)
+    server.add(must_ack_alert(alert, "shared-once", title="Chime once for the browser", sound="once"))
+
+    first, second = tab.start_poll(), other.start_poll()
+    tab.finish_poll(first)
+    other.finish_poll(second)
+    # Both tabs show an alert that needs acknowledgment; only one of them chimes.
+    expect(tab.notice).to_be_visible()
+    expect(other.notice).to_be_visible()
+    tab.wait_for(lambda: plays(tab) + plays(other) >= 1, "Neither tab chimed.")
+    tab.page.wait_for_timeout(500)
+    assert (plays(tab), plays(other)) in {(1, 0), (0, 1)}, (plays(tab), plays(other))
+    assert "shared-once" in tab.js(
+        "() => JSON.parse(localStorage.getItem('simplechat.workflowAlerts.soundedOnce') || '{}')"
+    )
+
+
+def test_an_alert_waiting_for_acknowledgment_leads_whatever_its_priority(tab, server, alert):
+    tab.open()
+    server.add(
+        alert("ordinary-critical", workflow_id="wf-a", priority="critical", title="Ordinary critical alert"),
+        must_ack_alert(alert, "low-ack", workflow_id="wf-b", priority="low", title="Low, needs acknowledgment"),
+    )
+    tab.poll()
+    expect(tab.notice).to_contain_text("Low, needs acknowledgment")
+    assert tab.state()["entries"] == [["low-ack"], ["ordinary-critical"]]
+
+
+def test_a_notice_waiting_for_acknowledgment_takes_its_own_room_in_the_rail(tab, server, alert):
+    tab.open()
+    server.add(must_ack_alert(alert, "roomy", title="Needs its own room"))
+    tab.poll()
+    expect(tab.notice).to_be_visible()
+    expect(tab.page.locator("[data-workflow-alert-slot]")).to_have_attribute("data-in-flow", "true")
+
+    group_workspaces = tab.page.get_by_role("link", name="Group Workspaces", exact=True)
+    notice_bottom = tab.notice.evaluate("(notice) => notice.getBoundingClientRect().bottom")
+    item_top = group_workspaces.evaluate("(link) => link.getBoundingClientRect().top")
+    assert item_top >= notice_bottom, (item_top, notice_bottom)
+
+    # Focus on the item under it is in plain sight, and the notice stays.
+    group_workspaces.focus()
+    tab.page.wait_for_timeout(200)
+    expect(group_workspaces).to_be_focused()
+    expect(tab.notice).to_be_visible()
+    expect(tab.notice).to_have_attribute("data-stepped-aside", "false")
+
+
+PLACE_UNDER_NOTICE = r"""
+() => {
+    const rect = document.querySelector('[data-workflow-alert-notice]').getBoundingClientRect();
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.id = 'under-the-notice';
+    button.textContent = 'Under the notice';
+    Object.assign(button.style, {
+        position: 'fixed', left: `${rect.left + 8}px`, top: `${rect.top + 8}px`,
+        width: '120px', height: '32px', zIndex: '1',
+    });
+    document.body.append(button);
+}
+"""
+
+
+def test_a_flyout_waiting_for_acknowledgment_steps_aside_from_focus_it_covers(tab, server, alert):
+    tab.open(rail_collapsed=True)
+    server.add(must_ack_alert(alert, "flyout", title="Flyout alarm"))
+    tab.poll()
+    expect(tab.notice).to_have_attribute("data-placement", "flyout")
+    expect(tab.page.locator("[data-workflow-alert-slot]")).to_have_attribute("data-in-flow", "false")
+
+    tab.js(PLACE_UNDER_NOTICE)
+    tab.focus("#under-the-notice")
+    expect(tab.notice).to_have_attribute("data-stepped-aside", "true")
+    expect(tab.notice).to_be_hidden()
+    assert tab.state()["phase"] == "notice", tab.state()
+
+    # Focus somewhere it doesn't cover brings it back.
+    tab.my_workspace.focus()
+    expect(tab.notice).to_have_attribute("data-stepped-aside", "false")
+    expect(tab.notice).to_be_visible()

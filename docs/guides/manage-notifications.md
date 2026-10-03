@@ -154,17 +154,22 @@ An alert that needs acknowledgment is marked **Needs acknowledgment**, and:
 
 - **It keeps coming back.** It pops up again after you refresh, in every tab, and on
   every device, however old it is, until someone acknowledges it. Closing it, or
-  pressing Escape, only shrinks it: V2 keeps its notice under **My Workspace**, and
-  classic keeps a banner at the top of the page with **Review**. It never tucks into
-  the bell, and **Mark all read** doesn't clear it.
+  pressing Escape, only shrinks it: V2 keeps its notice under **My Workspace**, where
+  it takes its own room rather than covering the items below it, and classic keeps a
+  banner at the bottom of the page with **Review**. It never tucks into the bell,
+  and **Mark all read** doesn't clear it. Alerts that need acknowledgment are shown
+  before any others, whatever their severity.
 - **Select Acknowledge to clear it.** **Acknowledge** replaces **Dismiss**. Selecting
-  **Open** acknowledges the alert too, because you're responding to it. The alert then
+  **Open** acknowledges the alert too, because you're responding to it. Any other alert
+  that needs acknowledgment stays up. The alert then
   disappears from your other tabs straight away, and from other devices when they next
   check. In the bell, the alert has its own **Acknowledge** button, and opening it from
   the bell acknowledges it too. Marking it read or dismissing it there leaves it waiting.
 - **It may sound.** The tone gets more urgent with the severity, and may repeat every
   five seconds until someone acknowledges the alert. Only one tab in your browser plays
-  it.
+  it, and when several alerts repeat you hear one tone, the most urgent one's. An alert
+  set to **Play once** chimes once in your browser, not again in another tab or after a
+  refresh.
 - **It may be larger.** A medium alert opens in full straight away. A large alert fills
   the screen.
 
@@ -177,7 +182,8 @@ rules that matched, and **Open** to what the run created in the group.
 
 Browsers don't play sound on a page nobody has clicked or typed in since it loaded.
 If that stops an alert's sound, the alert shows **Enable sound**. Select it, or click
-anywhere on the page, and the sound starts.
+anywhere on the page, and the sound starts. **Enable sound** goes away once a sound
+has played.
 
 To silence workflow alert sounds on one device, turn off **Play alert sounds** under
 **Workflow alerts on this device** in V2 **Preferences**, or **Play workflow alert

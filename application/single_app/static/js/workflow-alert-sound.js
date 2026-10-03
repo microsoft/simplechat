@@ -1,25 +1,50 @@
 // workflow-alert-sound.js
+// Workflow alert sounds for the classic pages, played from local files, so that only one tab in a
+// browser sounds. Classic shares the Web Lock and the "sounded once" record with the V2 frame
+// (application/v2_ui/src/lib/workflowAlertSound.ts), so classic and V2 tabs take turns too.
+//
+// - Alerts that need acknowledgment and repeat keep one loop going, every five seconds, in the
+//   tone of the loudest of them, until none is left. The loop holds the lock while it sounds, so
+//   another tab stays quiet. Each tick checks the administrator's and the device's switches, so
+//   turning sound off silences it at once and turning it back on resumes it.
+// - "Play once" is a one-off. It is checked and recorded for the whole browser under the lock,
+//   so another tab doesn't chime for the same alert, and it skips while another sound holds it.
+// - A sound the browser refuses (autoplay) is kept, and the next click or key press, or Enable
+//   sound, tries it again. A refused loop gives up the lock, so a tab that may play takes over.
 
 (function() {
     'use strict';
 
     const WORKFLOW_ALERT_SOUND_REPEAT_MS = 5000;
     const playSoundsStorageKey = 'simplechat.workflowAlerts.playSounds';
+    const soundedOnceStorageKey = 'simplechat.workflowAlerts.soundedOnce';
+    const soundedOnceTtlMs = 25 * 60 * 60 * 1000;
+    const soundedOnceMax = 500;
     const lockName = 'simplechat.workflowAlertSound';
-    const alertTimers = new Map();
-    const activeAlerts = new Map();
+    const priorityRank = { info: 0, low: 1, medium: 2, high: 3, critical: 4 };
+
+    // Pending alerts that repeat until acknowledged, by id.
+    const repeatingAlerts = new Map();
+    // One-off sounds the browser refused, by id, tried again on the next click or key press.
+    const refusedOnceAlerts = new Map();
+    // One-off sounds this page has started, so an alert read again doesn't chime again.
+    const triedOnceIds = new Set();
     let adminSoundsEnabled = true;
-    let blockedPlayback = false;
-    let lockHeld = false;
-    let releaseLock = null;
-    let retryPending = false;
+    let loopTimer = null;
+    // The browser refused the loop's tone, and it hasn't played since.
+    let loopRefused = false;
+    let loopReleaseLock = null;
+    let loopLockPending = false;
+    let loopTickPending = false;
+    let retryInFlight = false;
+
+    function normalizeId(notificationId) {
+        return String(notificationId || '').trim();
+    }
 
     function normalizePriority(priority) {
         const normalizedPriority = String(priority || '').trim().toLowerCase();
-        if (['critical', 'high', 'medium', 'low', 'info'].includes(normalizedPriority)) {
-            return normalizedPriority;
-        }
-        return 'medium';
+        return Object.prototype.hasOwnProperty.call(priorityRank, normalizedPriority) ? normalizedPriority : 'medium';
     }
 
     function normalizeSoundMode(sound) {
@@ -57,14 +82,15 @@
             console.warn('Unable to save workflow alert sound preference:', error);
         }
         updateProfileControls();
+        announceState();
     }
 
-    function shouldAttemptPlayback(notification) {
-        return (
-            adminSoundsEnabled === true
-            && isDeviceEnabled()
-            && getNotificationSoundMode(notification) !== 'off'
-        );
+    function canPlay() {
+        return adminSoundsEnabled === true && isDeviceEnabled();
+    }
+
+    function isBlocked() {
+        return canPlay() && (loopRefused || refusedOnceAlerts.size > 0);
     }
 
     function getSoundUrl(priority) {
@@ -81,192 +107,304 @@
     function announceState() {
         window.dispatchEvent(new CustomEvent('workflow-alert-sound-state-changed', {
             detail: {
-                blocked: blockedPlayback,
+                blocked: isBlocked(),
                 deviceEnabled: isDeviceEnabled(),
                 adminEnabled: adminSoundsEnabled,
             },
         }));
     }
 
-    function setBlockedPlayback(blocked) {
-        if (blockedPlayback === blocked) {
-            return;
-        }
-        blockedPlayback = blocked;
-        announceState();
+    function isRefusal(error) {
+        return Boolean(error) && error.name === 'NotAllowedError';
     }
 
-    function playAudio(priority) {
-        return new Promise((resolve, reject) => {
-            const audio = new Audio(getSoundUrl(priority));
-            let settled = false;
-            const playbackTimeout = window.setTimeout(() => {
-                settle(resolve, false);
-            }, 3000);
-
-            function settle(callback, value) {
-                if (settled) {
-                    return;
-                }
-                settled = true;
-                window.clearTimeout(playbackTimeout);
-                callback(value);
+    // Resolves once the tone starts. Rejects only when the browser refuses to play it; a file that
+    // can't be played is not a refusal, since there is nothing to enable or retry.
+    function startPlayback(priority) {
+        let playResult;
+        try {
+            playResult = new Audio(getSoundUrl(priority)).play();
+        } catch (error) {
+            playResult = Promise.reject(error);
+        }
+        return Promise.resolve(playResult).catch(error => {
+            if (isRefusal(error)) {
+                throw error;
             }
-
-            audio.addEventListener('ended', () => settle(resolve, true), { once: true });
-            audio.addEventListener(
-                'error',
-                () => settle(reject, new Error('Workflow alert sound could not be played.')),
-                { once: true }
-            );
-
-            try {
-                const playResult = audio.play();
-                if (playResult && typeof playResult.catch === 'function') {
-                    playResult.catch(error => settle(reject, error));
-                }
-            } catch (error) {
-                settle(reject, error);
-            }
+            console.warn('Workflow alert sound could not be played:', error);
         });
     }
 
-    function acquireLock() {
-        if (lockHeld) {
-            return Promise.resolve(true);
-        }
-
+    function getLockManager() {
         const lockManager = typeof navigator !== 'undefined' ? navigator.locks : null;
-        if (!lockManager?.request) {
-            lockHeld = true;
-            return Promise.resolve(true);
+        return lockManager && typeof lockManager.request === 'function' ? lockManager : null;
+    }
+
+    function readSoundedOnce() {
+        try {
+            const parsed = JSON.parse(localStorage.getItem(soundedOnceStorageKey) || '{}');
+            return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
+        } catch (error) {
+            return {};
+        }
+    }
+
+    function hasSoundedOnce(notificationId) {
+        const soundedAt = readSoundedOnce()[notificationId];
+        return typeof soundedAt === 'number' && Date.now() - soundedAt < soundedOnceTtlMs;
+    }
+
+    function markSoundedOnce(notificationId) {
+        try {
+            const now = Date.now();
+            const kept = Object.entries(readSoundedOnce())
+                .filter(([, soundedAt]) => typeof soundedAt === 'number' && now - soundedAt < soundedOnceTtlMs)
+                .sort((left, right) => right[1] - left[1])
+                .slice(0, soundedOnceMax - 1);
+            localStorage.setItem(
+                soundedOnceStorageKey,
+                JSON.stringify(Object.fromEntries([[notificationId, now], ...kept]))
+            );
+        } catch (error) {
+            console.warn('Unable to record a workflow alert sound:', error);
+        }
+    }
+
+    // Checked and recorded under the lock, so two tabs can't both decide to chime. A one-off never
+    // interrupts a loop: while this tab's loop, or another tab's sound, holds the lock it skips.
+    function playOnce(notification) {
+        const notificationId = normalizeId(notification?.id);
+        if (!notificationId || !canPlay()) {
+            return Promise.resolve(false);
         }
 
+        const run = () => {
+            if (hasSoundedOnce(notificationId)) {
+                // Another tab chimed it, so there is nothing left here to enable.
+                if (refusedOnceAlerts.delete(notificationId)) {
+                    announceState();
+                }
+                return false;
+            }
+            return startPlayback(getNotificationPriority(notification))
+                .then(() => {
+                    markSoundedOnce(notificationId);
+                    refusedOnceAlerts.delete(notificationId);
+                    return true;
+                })
+                .catch(error => {
+                    console.warn('Workflow alert sound playback was blocked:', error);
+                    refusedOnceAlerts.set(notificationId, notification);
+                    return false;
+                })
+                .finally(announceState);
+        };
+        // Another sound holds the lock, so the browser may sound and this one would only talk over it.
+        const skip = () => {
+            if (refusedOnceAlerts.delete(notificationId)) {
+                announceState();
+            }
+            return false;
+        };
+
+        const lockManager = getLockManager();
+        if (!lockManager) {
+            return Promise.resolve().then(run);
+        }
+        if (loopReleaseLock) {
+            return Promise.resolve().then(skip);
+        }
+        return lockManager.request(lockName, { ifAvailable: true }, lock => (lock ? run() : skip()))
+            .catch(error => {
+                console.warn('Unable to acquire workflow alert sound lock:', error);
+                return false;
+            });
+    }
+
+    function acquireLoopLock() {
+        const lockManager = getLockManager();
+        if (!lockManager || loopReleaseLock) {
+            return Promise.resolve(true);
+        }
+        if (loopLockPending) {
+            return Promise.resolve(false);
+        }
+
+        loopLockPending = true;
         return new Promise(resolve => {
-            lockManager.request(lockName, { ifAvailable: true }, async lock => {
+            lockManager.request(lockName, { ifAvailable: true }, lock => {
+                loopLockPending = false;
                 if (!lock) {
                     resolve(false);
-                    return;
+                    return undefined;
                 }
-
-                lockHeld = true;
-                resolve(true);
-                await new Promise(lockResolve => {
-                    releaseLock = lockResolve;
+                // Held until the loop stops or the browser refuses it.
+                return new Promise(release => {
+                    loopReleaseLock = () => {
+                        loopReleaseLock = null;
+                        release();
+                    };
+                    resolve(true);
                 });
-                lockHeld = false;
-                releaseLock = null;
             }).catch(error => {
+                loopLockPending = false;
                 console.warn('Unable to acquire workflow alert sound lock:', error);
                 resolve(false);
             });
         });
     }
 
-    function releaseLockIfIdle() {
-        if (activeAlerts.size || !releaseLock) {
-            return;
+    function releaseLoopLock() {
+        if (loopReleaseLock) {
+            loopReleaseLock();
         }
-
-        releaseLock();
     }
 
-    function attemptPlayback(notification) {
-        if (!shouldAttemptPlayback(notification)) {
-            return Promise.resolve(false);
-        }
+    function loudestRepeatingPriority() {
+        let loudest = null;
+        repeatingAlerts.forEach(notification => {
+            const priority = getNotificationPriority(notification);
+            if (loudest === null || priorityRank[priority] > priorityRank[loudest]) {
+                loudest = priority;
+            }
+        });
+        return loudest;
+    }
 
-        return acquireLock()
+    function playLoopTone() {
+        loopTickPending = true;
+        return acquireLoopLock()
             .then(hasLock => {
                 if (!hasLock) {
-                    return false;
+                    // Another tab is sounding, so nothing here waits for a click.
+                    if (loopRefused) {
+                        loopRefused = false;
+                        announceState();
+                    }
+                    return undefined;
                 }
-                return playAudio(getNotificationPriority(notification))
-                    .then(() => {
-                        setBlockedPlayback(false);
-                        return true;
-                    })
-                    .catch(error => {
-                        console.warn('Workflow alert sound playback was blocked or failed:', error);
-                        setBlockedPlayback(true);
-                        return false;
-                    })
-                    .finally(releaseLockIfIdle);
+                const priority = loudestRepeatingPriority();
+                if (priority === null) {
+                    releaseLoopLock();
+                    return undefined;
+                }
+                return startPlayback(priority).then(
+                    () => {
+                        if (loopRefused) {
+                            loopRefused = false;
+                            announceState();
+                        }
+                    },
+                    error => {
+                        console.warn('Workflow alert sound playback was blocked:', error);
+                        // Let go of the lock, so a tab that may play takes over.
+                        loopRefused = true;
+                        releaseLoopLock();
+                        announceState();
+                    }
+                );
+            })
+            .finally(() => {
+                loopTickPending = false;
             });
     }
 
-    // A repeating alert keeps its loop while it is pending, and every tick checks the admin, device
-    // and rule gates, so turning sound off silences it at once and turning it back on resumes it.
-    function start(notification, options = {}) {
-        const notificationId = String(notification?.id || '').trim();
+    function tick() {
+        if (!repeatingAlerts.size) {
+            stopLoop();
+            return;
+        }
+        if (loopRefused || loopTickPending || !canPlay()) {
+            return;
+        }
+        playLoopTone();
+    }
+
+    function startLoop() {
+        if (loopTimer !== null) {
+            return;
+        }
+        loopRefused = false;
+        loopTimer = window.setInterval(tick, WORKFLOW_ALERT_SOUND_REPEAT_MS);
+        tick();
+    }
+
+    function stopLoop() {
+        if (loopTimer !== null) {
+            window.clearInterval(loopTimer);
+            loopTimer = null;
+        }
+        loopRefused = false;
+        releaseLoopLock();
+    }
+
+    function play(notification, options = {}) {
+        const notificationId = normalizeId(notification?.id);
         if (!notificationId) {
             return Promise.resolve(false);
         }
 
         const mode = normalizeSoundMode(options.mode || getNotificationSoundMode(notification));
-        if (mode === 'off') {
-            return Promise.resolve(false);
-        }
-
-        activeAlerts.set(notificationId, notification);
         if (mode === 'repeat') {
-            if (!alertTimers.has(notificationId)) {
-                const timer = window.setInterval(() => {
-                    if (activeAlerts.has(notificationId)) {
-                        attemptPlayback(notification);
-                    }
-                }, WORKFLOW_ALERT_SOUND_REPEAT_MS);
-                alertTimers.set(notificationId, timer);
-            }
-            return attemptPlayback(notification);
+            repeatingAlerts.set(notificationId, notification);
+            startLoop();
+            return Promise.resolve(true);
         }
-
-        return attemptPlayback(notification).finally(() => {
-            if (!alertTimers.has(notificationId)) {
-                activeAlerts.delete(notificationId);
-                releaseLockIfIdle();
-            }
-        });
+        if (mode === 'once' && !triedOnceIds.has(notificationId)) {
+            triedOnceIds.add(notificationId);
+            return playOnce(notification);
+        }
+        return Promise.resolve(false);
     }
 
     function stop(notificationId) {
-        const normalizedId = String(notificationId || '').trim();
+        const normalizedId = normalizeId(notificationId);
         if (!normalizedId) {
             return;
         }
 
-        const timer = alertTimers.get(normalizedId);
-        if (timer) {
-            window.clearInterval(timer);
-            alertTimers.delete(normalizedId);
+        repeatingAlerts.delete(normalizedId);
+        refusedOnceAlerts.delete(normalizedId);
+        if (!repeatingAlerts.size) {
+            stopLoop();
         }
-        activeAlerts.delete(normalizedId);
-        releaseLockIfIdle();
+        announceState();
     }
 
     function stopAll() {
-        Array.from(alertTimers.keys()).forEach(stop);
-        activeAlerts.clear();
-        releaseLockIfIdle();
+        repeatingAlerts.clear();
+        refusedOnceAlerts.clear();
+        stopLoop();
+        announceState();
     }
 
+    // Called from a click or key press. Acts only while a sound waits for one, so a sound that is
+    // already playing is never started again, and Enable sound stays up until a retried sound
+    // plays, so it never vanishes under the pointer or flickers on another refusal.
     function retryBlockedPlayback() {
-        if (!blockedPlayback || retryPending) {
+        if (retryInFlight || !isBlocked()) {
             return;
         }
 
-        retryPending = true;
-        const alerts = Array.from(activeAlerts.values());
-        alerts.reduce(
-            (chain, notification) => chain.then(() => attemptPlayback(notification)),
-            Promise.resolve()
-        ).finally(() => {
-            retryPending = false;
+        retryInFlight = true;
+        const attempts = [];
+        if (loopRefused && repeatingAlerts.size && !loopTickPending) {
+            attempts.push(playLoopTone());
+        }
+        Array.from(refusedOnceAlerts.values()).forEach(notification => {
+            attempts.push(playOnce(notification));
+        });
+        Promise.allSettled(attempts).finally(() => {
+            retryInFlight = false;
         });
     }
 
     function setAdminEnabled(enabled) {
-        adminSoundsEnabled = enabled === true;
+        const nextEnabled = enabled === true;
+        if (adminSoundsEnabled === nextEnabled) {
+            return;
+        }
+        adminSoundsEnabled = nextEnabled;
         announceState();
         updateProfileControls();
     }
@@ -323,13 +461,13 @@
     window.simpleChatWorkflowAlertSound = {
         WORKFLOW_ALERT_SOUND_REPEAT_MS,
         get blocked() {
-            return blockedPlayback;
+            return isBlocked();
         },
         get adminEnabled() {
             return adminSoundsEnabled;
         },
         isDeviceEnabled,
-        play: start,
+        play,
         retryBlockedPlayback,
         setAdminEnabled,
         setDeviceEnabled,
@@ -339,6 +477,13 @@
 
     window.addEventListener('pointerdown', retryBlockedPlayback);
     window.addEventListener('keydown', retryBlockedPlayback);
+    // The device switch is shared by every tab, classic and V2.
+    window.addEventListener('storage', event => {
+        if (event.key === playSoundsStorageKey) {
+            updateProfileControls();
+            announceState();
+        }
+    });
 
     if (document.readyState === 'loading') {
         document.addEventListener('DOMContentLoaded', initializeProfileControls);

@@ -271,11 +271,12 @@ export function useWorkflowAlertRuntime(ready: boolean): void {
             }
             const items = new Map(state.items.map((item) => [item.id, item]));
             const handled: string[] = [];
+            const acknowledged: string[] = [];
             for (const [id, alert] of tracked) {
                 const item = items.get(id);
                 if (alert.requireAcknowledgment && !alert.acknowledged) {
                     if (item?.acknowledged) {
-                        handled.push(id);
+                        acknowledged.push(id);
                     }
                 } else if (item?.is_read) {
                     handled.push(id);
@@ -285,6 +286,9 @@ export function useWorkflowAlertRuntime(ready: boolean): void {
             }
             if (handled.length) {
                 store.getState().removeAlerts(handled);
+            }
+            if (acknowledged.length) {
+                store.getState().retireAcknowledged(acknowledged);
             }
         });
 

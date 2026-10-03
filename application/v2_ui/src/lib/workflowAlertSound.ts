@@ -1,33 +1,48 @@
 // workflowAlertSound.ts
-// Local workflow alert sounds, coordinated so only one tab in a browser plays them.
+// Workflow alert sounds, played from local files, so that only one tab in a browser sounds.
+//
+// The sound follows the alerts this tab holds rather than keeping its own list of them: the
+// store reports every change (syncWorkflowAlertSound), so an alert acknowledged here, in another
+// tab or on another device stops sounding as soon as the store lets it go, however it went.
+//
+// - Alerts that need acknowledgment and repeat keep one loop going, every five seconds, in the
+//   tone of the loudest of them, until none is left. The loop holds the Web Lock
+//   `simplechat.workflowAlertSound`, which classic shares, so another tab waits its turn and
+//   takes over only when this one stops. Each tick checks the administrator's and the device's
+//   switches, so turning sound off silences it at once and turning it on resumes it.
+// - "Play once" is a one-off. It never interrupts the loop, skips while another sound holds the
+//   lock, and is recorded for the whole browser, so another tab doesn't chime for the same alert.
+// - A sound the browser refuses (autoplay) is kept, and the next click or key press, or Enable
+//   sound, tries it again. A refused loop gives up the lock, so a tab that may play takes over.
+//   A sound that is playing is never restarted by a click.
 
 import { useSyncExternalStore } from 'react';
 import { useBootstrapStore } from '../stores/bootstrapStore';
-import { workflowAlertSoundsDeviceEnabled, subscribeWorkflowAlertDevicePreferences } from './workflowAlertDevicePreferences';
-import { workflowAlertPriorityRank, type WorkflowAlert, type WorkflowAlertEntry } from './workflowAlertNotices';
+import { subscribeWorkflowAlertDevicePreferences, workflowAlertSoundsDeviceEnabled } from './workflowAlertDevicePreferences';
+import { workflowAlertPriorityRank, type WorkflowAlert } from './workflowAlertNotices';
 
 export const WORKFLOW_ALERT_SOUND_REPEAT_MS = 5_000;
 
 const LOCK_NAME = 'simplechat.workflowAlertSound';
+const SOUNDED_ONCE_KEY = 'simplechat.workflowAlerts.soundedOnce';
+const SOUNDED_ONCE_TTL_MS = 25 * 3_600_000;
+const SOUNDED_ONCE_MAX = 500;
 
 type Listener = () => void;
-type SoundMode = 'once' | 'repeat';
-
-interface SoundRequest {
-    ids: string[];
-    url: string;
-    mode: SoundMode;
-}
 
 const listeners = new Set<Listener>();
-let blocked = false;
-let soundsEnabledOverride: boolean | null = null;
-let activeRequest: SoundRequest | null = null;
-let blockedRequest: SoundRequest | null = null;
-let abortController: AbortController | null = null;
-// Alerts whose one-off sound has played on this page. Every read returns a pending alert again,
-// and "Play once" must not chime on each of them.
-const playedOnceIds = new Set<string>();
+let adminOverride: boolean | null = null;
+/** The tone the loop plays while one is wanted, kept while a refused loop waits for a retry. */
+let loopUrl: string | null = null;
+let loopController: AbortController | null = null;
+/** The browser refused the loop's tone, and it hasn't played since. */
+let loopRefused = false;
+/** A retry of refused one-off sounds is on its way. */
+let retryingOnce = false;
+/** One-off sounds this page has started for, so an alert read again doesn't chime again. */
+const triedOnce = new Set<string>();
+/** One-off sounds the browser refused, tried again on the next click or key press. */
+const refusedOnce = new Map<string, WorkflowAlert>();
 
 function emit(): void {
     for (const listener of [...listeners]) {
@@ -35,16 +50,9 @@ function emit(): void {
     }
 }
 
-function setBlocked(next: boolean): void {
-    if (blocked !== next) {
-        blocked = next;
-        emit();
-    }
-}
-
 function adminEnabled(): boolean {
-    if (soundsEnabledOverride !== null) {
-        return soundsEnabledOverride;
+    if (adminOverride !== null) {
+        return adminOverride;
     }
     return useBootstrapStore.getState().data?.features?.enable_workflow_alert_sounds !== false;
 }
@@ -53,20 +61,8 @@ function canPlay(): boolean {
     return adminEnabled() && workflowAlertSoundsDeviceEnabled();
 }
 
-function wait(ms: number, signal: AbortSignal): Promise<void> {
-    return new Promise((resolve, reject) => {
-        const timer = setTimeout(resolve, ms);
-        signal.addEventListener('abort', () => {
-            clearTimeout(timer);
-            reject(new DOMException('Aborted', 'AbortError'));
-        }, { once: true });
-    });
-}
-
-async function playUrl(url: string): Promise<void> {
-    const audio = new Audio(url);
-    audio.preload = 'auto';
-    await audio.play();
+function needsAcknowledgment(alert: WorkflowAlert): boolean {
+    return alert.requireAcknowledgment && !alert.acknowledged && alert.delivery === 'popup';
 }
 
 function soundUrl(alert: WorkflowAlert): string {
@@ -79,142 +75,240 @@ function soundUrl(alert: WorkflowAlert): string {
     return '/static/audio/workflow-alerts/chime.wav';
 }
 
-function strongestSoundEntry(entries: WorkflowAlertEntry[], mustOnly: boolean): SoundRequest | null {
-    const candidates = entries
-        .flatMap((entry) => entry.alerts)
-        .filter((alert) => alert.sound !== 'off' && (!mustOnly || (alert.requireAcknowledgment && !alert.acknowledged)));
-    if (!candidates.length) {
-        return null;
+function loudest(alerts: WorkflowAlert[]): WorkflowAlert {
+    return [...alerts].sort((left, right) => workflowAlertPriorityRank(right.priority) - workflowAlertPriorityRank(left.priority))[0];
+}
+
+function isRefusal(error: unknown): boolean {
+    return error instanceof DOMException && error.name === 'NotAllowedError';
+}
+
+/** Start a tone. Resolves once it plays; rejects only when the browser refuses to play it. */
+async function startPlayback(url: string): Promise<void> {
+    try {
+        await new Audio(url).play();
+    } catch (error) {
+        if (isRefusal(error)) {
+            throw error;
+        }
+        // A file that can't be played is not a refusal: there is nothing to enable or retry.
     }
-    candidates.sort((left, right) => {
-        const repeat = (right.sound === 'repeat' ? 1 : 0) - (left.sound === 'repeat' ? 1 : 0);
-        return repeat || workflowAlertPriorityRank(right.priority) - workflowAlertPriorityRank(left.priority);
+}
+
+function wait(ms: number, signal: AbortSignal): Promise<void> {
+    return new Promise((resolve, reject) => {
+        const timer = setTimeout(resolve, ms);
+        signal.addEventListener('abort', () => {
+            clearTimeout(timer);
+            reject(new DOMException('Aborted', 'AbortError'));
+        }, { once: true });
     });
-    const lead = candidates[0];
-    return {
-        ids: candidates.map((alert) => alert.id),
-        url: soundUrl(lead),
-        mode: lead.sound === 'repeat' ? 'repeat' : 'once',
-    };
 }
 
-function stopLoop(): void {
-    abortController?.abort();
-    abortController = null;
-    activeRequest = null;
+function lockManager(): LockManager | null {
+    const locks = typeof navigator !== 'undefined' ? navigator.locks : undefined;
+    return locks && typeof locks.request === 'function' ? locks : null;
 }
 
-async function runSound(request: SoundRequest, signal: AbortSignal): Promise<void> {
-    do {
-        if (!canPlay() || signal.aborted) {
+function readSoundedOnce(): Record<string, number> {
+    try {
+        const parsed: unknown = JSON.parse(localStorage.getItem(SOUNDED_ONCE_KEY) || '{}');
+        return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed as Record<string, number> : {};
+    } catch {
+        return {};
+    }
+}
+
+function soundedOnce(id: string): boolean {
+    const at = readSoundedOnce()[id];
+    return typeof at === 'number' && Date.now() - at < SOUNDED_ONCE_TTL_MS;
+}
+
+function markSoundedOnce(id: string): void {
+    try {
+        const now = Date.now();
+        const kept = Object.entries(readSoundedOnce())
+            .filter(([, at]) => typeof at === 'number' && now - at < SOUNDED_ONCE_TTL_MS)
+            .sort((left, right) => right[1] - left[1])
+            .slice(0, SOUNDED_ONCE_MAX - 1);
+        localStorage.setItem(SOUNDED_ONCE_KEY, JSON.stringify(Object.fromEntries([[id, now], ...kept])));
+    } catch {
+        /* Without storage, this page's own record still keeps it to one chime here. */
+    }
+}
+
+async function playOnce(alert: WorkflowAlert): Promise<void> {
+    if (!canPlay()) {
+        return;
+    }
+    const run = async (): Promise<void> => {
+        if (soundedOnce(alert.id)) {
+            // Another tab chimed it, so there is nothing left here to enable.
+            refusedOnce.delete(alert.id);
+            emit();
             return;
         }
         try {
-            await playUrl(request.url);
-            blockedRequest = null;
-            setBlocked(false);
-        } catch (error) {
-            if ((error as DOMException).name !== 'AbortError') {
-                blockedRequest = request;
-                setBlocked(true);
-            }
-            return;
+            await startPlayback(soundUrl(alert));
+            markSoundedOnce(alert.id);
+            refusedOnce.delete(alert.id);
+        } catch {
+            refusedOnce.set(alert.id, alert);
         }
-        if (request.mode !== 'repeat') {
-            return;
+        emit();
+    };
+    const locks = lockManager();
+    if (!locks) {
+        await run();
+        return;
+    }
+    // Checked and recorded under the lock, so two tabs can't both decide to chime.
+    await locks.request(LOCK_NAME, { ifAvailable: true }, async (lock) => {
+        if (lock) {
+            await run();
+        } else if (refusedOnce.delete(alert.id)) {
+            // Another sound is playing, so the browser may sound and this one would only talk over it.
+            emit();
         }
-        await wait(WORKFLOW_ALERT_SOUND_REPEAT_MS, signal);
-    } while (!signal.aborted);
+    });
 }
 
-async function withSoundLock(task: (signal: AbortSignal) => Promise<void>, signal: AbortSignal): Promise<void> {
-    const locks = typeof navigator !== 'undefined' ? navigator.locks : undefined;
-    if (!locks || typeof locks.request !== 'function') {
-        await task(signal);
+async function runLoop(url: string, signal: AbortSignal): Promise<void> {
+    const body = async (): Promise<void> => {
+        while (!signal.aborted) {
+            const startedAt = Date.now();
+            if (canPlay()) {
+                try {
+                    await startPlayback(url);
+                } catch {
+                    // Refused: let go of the lock, so a tab that may play takes over.
+                    loopRefused = true;
+                    emit();
+                    return;
+                }
+                if (loopRefused) {
+                    loopRefused = false;
+                    emit();
+                }
+            }
+            await wait(Math.max(0, WORKFLOW_ALERT_SOUND_REPEAT_MS - (Date.now() - startedAt)), signal);
+        }
+    };
+    const locks = lockManager();
+    if (!locks) {
+        await body();
         return;
     }
     await locks.request(LOCK_NAME, { mode: 'exclusive', signal }, async () => {
-        if (signal.aborted || !activeRequest) {
-            return;
+        if (!signal.aborted) {
+            await body();
         }
-        await task(signal);
     });
 }
 
-function startRequest(request: SoundRequest): void {
-    if (!canPlay()) {
-        stopLoop();
-        setBlocked(false);
-        return;
-    }
-    const key = `${request.mode}:${request.url}:${request.ids.join(',')}`;
-    const activeKey = activeRequest ? `${activeRequest.mode}:${activeRequest.url}:${activeRequest.ids.join(',')}` : '';
-    if (key === activeKey && abortController && !abortController.signal.aborted) {
-        return;
-    }
-    stopLoop();
-    activeRequest = request;
+/**
+ * Start the loop. A loop the browser refused stays refused -- Enable sound stays up -- until a
+ * tone of the new one plays, so the control never flickers while the browser still says no.
+ */
+function startLoop(url: string, refused: boolean): void {
     const controller = new AbortController();
-    abortController = controller;
-    void withSoundLock(async (signal) => {
-        await runSound(request, signal);
-        if (activeRequest === request) {
-            stopLoop();
-        }
-    }, controller.signal).catch(() => {
-        if (!controller.signal.aborted) {
-            stopLoop();
-        }
-    });
+    loopController = controller;
+    loopUrl = url;
+    loopRefused = refused;
+    void runLoop(url, controller.signal)
+        .catch(() => undefined)
+        .finally(() => {
+            if (loopController === controller) {
+                loopController = null;
+                if (!loopRefused) {
+                    // Ended some other way; the next report from the store starts it again.
+                    loopUrl = null;
+                }
+            }
+        });
 }
 
+function stopLoop(): void {
+    loopController?.abort();
+    loopController = null;
+    loopUrl = null;
+    loopRefused = false;
+}
+
+/**
+ * Make the sound match the alerts this tab holds: everything waiting and everything shown. The
+ * store calls this on every change, so a sound stops with the last alert that wanted it.
+ */
+export function syncWorkflowAlertSound(alerts: WorkflowAlert[]): void {
+    const held = new Set(alerts.map((alert) => alert.id));
+    for (const id of [...refusedOnce.keys()]) {
+        if (!held.has(id)) {
+            refusedOnce.delete(id);
+        }
+    }
+
+    const waiting = alerts.filter((alert) => needsAcknowledgment(alert) && alert.sound !== 'off');
+    const repeating = waiting.filter((alert) => alert.sound === 'repeat');
+    const url = repeating.length ? soundUrl(loudest(repeating)) : null;
+    if (url === null) {
+        if (loopUrl !== null) {
+            stopLoop();
+        }
+    } else if (url !== loopUrl) {
+        const refused = loopRefused;
+        stopLoop();
+        startLoop(url, refused);
+    }
+
+    for (const alert of waiting) {
+        if (alert.sound === 'once' && !triedOnce.has(alert.id)) {
+            triedOnce.add(alert.id);
+            void playOnce(alert);
+        }
+    }
+    emit();
+}
+
+/** Chime once for alerts this tab has just shown that don't need acknowledgment. */
+export function playWorkflowAlertOnce(alerts: WorkflowAlert[]): void {
+    for (const alert of alerts) {
+        if (alert.sound === 'once' && !needsAcknowledgment(alert) && !triedOnce.has(alert.id)) {
+            triedOnce.add(alert.id);
+            void playOnce(alert);
+        }
+    }
+}
+
+/** The administrator's setting, from the latest alerts read; null falls back to the bootstrap. */
 export function setWorkflowAlertSoundsEnabled(enabled: boolean | null): void {
-    soundsEnabledOverride = enabled;
-    if (!canPlay()) {
-        stopLoop();
-        setBlocked(false);
+    if (adminOverride !== enabled) {
+        adminOverride = enabled;
+        emit();
     }
 }
 
-export function startWorkflowAlertSoundForEntries(entries: WorkflowAlertEntry[], options: { mustOnly?: boolean } = {}): void {
-    const request = strongestSoundEntry(entries, options.mustOnly === true);
-    if (!request) {
-        return;
-    }
-    if (request.mode === 'once') {
-        if (request.ids.every((id) => playedOnceIds.has(id))) {
-            return;
-        }
-        request.ids.forEach((id) => playedOnceIds.add(id));
-    }
-    startRequest(request);
-}
-
-export function stopWorkflowAlertSound(ids?: Iterable<string>): void {
-    if (!ids || !activeRequest) {
-        stopLoop();
-        return;
-    }
-    const gone = new Set(ids);
-    if (activeRequest.ids.some((id) => gone.has(id))) {
-        stopLoop();
-    }
-}
-
-/** Try a sound the browser refused again; called from a user's click or key press. */
+/**
+ * Try the sounds the browser refused again. Called from a click or key press. Enable sound stays
+ * up until one of them plays, so it never vanishes under the pointer or flickers on a refusal.
+ */
 export function retryWorkflowAlertSound(): void {
-    // Only a refused sound is retried. Restarting a sound that is playing would add a beep on
-    // every click or key press while a repeating alert waits.
-    if (!blocked || !blockedRequest) {
+    if (!workflowAlertSoundBlocked()) {
         return;
     }
-    const request = blockedRequest;
-    activeRequest = null;
-    startRequest(request);
+    if (loopRefused && loopUrl !== null && loopController === null) {
+        startLoop(loopUrl, true);
+    }
+    if (refusedOnce.size && !retryingOnce) {
+        retryingOnce = true;
+        void Promise.allSettled([...refusedOnce.values()].map((alert) => playOnce(alert))).finally(() => {
+            retryingOnce = false;
+        });
+    }
 }
 
+/** Whether a sound waits for a click or key press: "Enable sound" shows while it does. */
 export function workflowAlertSoundBlocked(): boolean {
-    return blocked;
+    return canPlay() && (loopRefused || refusedOnce.size > 0);
 }
 
 export function subscribeWorkflowAlertSound(listener: Listener): () => void {
@@ -228,6 +322,20 @@ export function subscribeWorkflowAlertSound(listener: Listener): () => void {
 
 export function useWorkflowAlertSoundBlocked(): boolean {
     return useSyncExternalStore(subscribeWorkflowAlertSound, workflowAlertSoundBlocked, () => false);
+}
+
+/** Silence everything and forget what has played. Only the alert lab and tests call this. */
+export function resetWorkflowAlertSoundForLab(): void {
+    stopLoop();
+    triedOnce.clear();
+    refusedOnce.clear();
+    retryingOnce = false;
+    try {
+        localStorage.removeItem(SOUNDED_ONCE_KEY);
+    } catch {
+        /* Nothing recorded to forget. */
+    }
+    emit();
 }
 
 if (typeof window !== 'undefined') {

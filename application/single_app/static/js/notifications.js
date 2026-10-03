@@ -672,10 +672,7 @@
             workflowAlertDismissBtn.classList.toggle('d-none', mustAcknowledge);
         }
         if (workflowAlertMarkReadBtn) {
-            workflowAlertMarkReadBtn.classList.toggle(
-                'd-none',
-                mustAcknowledge || activeWorkflowAlertTargets.length === 0
-            );
+            workflowAlertMarkReadBtn.classList.toggle('d-none', mustAcknowledge);
         }
         if (workflowAlertAcknowledgeBtn) {
             workflowAlertAcknowledgeBtn.classList.toggle('d-none', !mustAcknowledge);
@@ -1597,6 +1594,10 @@
                 && !suppressAckBannerOnce
             ) {
                 showWorkflowAlertAckBanner();
+            }
+            if (activeWorkflowAlert && !isMustAcknowledgeWorkflowAlert(activeWorkflowAlert)) {
+                // A one-off chime the browser refused has nothing left to announce once its alert is closed.
+                stopWorkflowAlertSound(activeWorkflowAlert.id);
             }
             suppressAckBannerOnce = false;
             activeWorkflowAlert = null;

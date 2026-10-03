@@ -458,10 +458,12 @@ function compareAlerts(left: WorkflowAlert, right: WorkflowAlert): number {
 }
 
 /**
- * Group alerts by workflow, loudest first.
+ * Group alerts by workflow: those waiting for acknowledgment first, then loudest first.
  *
- * An entry is as loud as its loudest alert, and among equals the one with the newest alert
- * leads, so a storm never hides a fresh critical alert from another workflow behind it.
+ * An entry that needs acknowledgment comes first whatever its priority, because it is the one
+ * that won't go away and may be sounding. Otherwise an entry is as loud as its loudest alert,
+ * and among equals the one with the newest alert leads, so a storm never hides a fresh critical
+ * alert from another workflow behind it.
  */
 export function groupWorkflowAlerts(alerts: WorkflowAlert[]): WorkflowAlertEntry[] {
     const groups = new Map<string, WorkflowAlert[]>();
@@ -496,7 +498,8 @@ export function groupWorkflowAlerts(alerts: WorkflowAlert[]): WorkflowAlertEntry
             sinceMs: times.length ? Math.min(...times) : null,
         });
     }
-    return entries.sort((left, right) => compareAlerts(left.lead, right.lead));
+    return entries.sort((left, right) =>
+        Number(right.requireAcknowledgment) - Number(left.requireAcknowledgment) || compareAlerts(left.lead, right.lead));
 }
 
 /** Every notification id an entry stands for. */

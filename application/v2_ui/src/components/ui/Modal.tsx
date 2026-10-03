@@ -197,7 +197,8 @@ export function Modal({
                 tabIndex={-1}
                 onClick={(event) => event.stopPropagation()}
                 className={clsx(
-                    'glass-modal flex max-h-[85vh] w-full flex-col rounded-2xl outline-none',
+                    'glass-modal flex w-full flex-col rounded-2xl outline-none',
+                    size === 'full' ? 'max-h-[calc(100vh_-_2rem)]' : 'max-h-[85vh]',
                     SIZE_CLASS[size],
                     tall && 'h-[85vh]',
                 )}
