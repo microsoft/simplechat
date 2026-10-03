@@ -7,7 +7,7 @@ doesn't change the version. Each phase records the version it ships in.
 
 Planning branch: `paullizer-orchestration-workflows-capability`.
 
-Status updated: **2026-10-03**, with `paullizer-react-v2-ui` at 0.261.228. The PRs for this work target that branch
+Status updated: **2026-10-03**, with `paullizer-react-v2-ui` at 0.261.232. The PRs for this work target that branch
 (§10).
 
 This is the master plan for letting chat orchestration propose, create, run and hand off saved workflows. It's the
@@ -30,7 +30,7 @@ Dependencies: V2 chat orchestration (`functions_orchestration*.py`), durable wor
 | 4 | Orchestration proposes workflows (`workflow_propose` + Approve / Deny / Edit card) | [#1547](https://github.com/microsoft/simplechat/issues/1547) | 2 | **Done**: [#1580](https://github.com/microsoft/simplechat/pull/1580), v0.261.207, behind **Propose Workflows From Chat** (off by default). It includes personal File Sync authoring in the V2 editor (gotcha 58) |
 | 5 | Orchestration runs existing workflows (`workflow_run`, start-and-link) | [#1551](https://github.com/microsoft/simplechat/issues/1551) | 4 | **Done**: [#1594](https://github.com/microsoft/simplechat/pull/1594), v0.261.212, behind **Run Workflows From Chat** (off by default) |
 | 6 | Results back in chat: 6a results reader + **Follow up**; 6b post-back delivery, run card and chat-list indicator; 6c in-plan wait (later) | [#1546](https://github.com/microsoft/simplechat/issues/1546) | 6a: 4 · 6b: 5, 6a, N1 | **6a done**: [#1592](https://github.com/microsoft/simplechat/pull/1592), v0.261.214, behind **Use Workflow Results In Chat** (off by default). **The `workflow_results` planner capability is done**: [#1607](https://github.com/microsoft/simplechat/pull/1607), v0.261.217, under the same setting. **6b-1 done**: [#1610](https://github.com/microsoft/simplechat/pull/1610), v0.261.227 (server delivery and the status route). **In progress**: 6b-2 (V2 run card, tracker and chat-list indicator). 6c not started |
-| 7 | Hand-off of big one-time jobs | [#1549](https://github.com/microsoft/simplechat/issues/1549) | 4, 6b | **In progress**: 7a, the server part of the hand-off. 7b, the V2 part, follows |
+| 7 | Hand-off of big one-time jobs | [#1549](https://github.com/microsoft/simplechat/issues/1549) | 4, 6b | **In progress**: 7a, the server part of the hand-off, behind `enable_chat_orchestration_workflow_handoff` (off by default). §6 has its settled design. 7b, the V2 part, follows |
 | 8 | Follow-ons: group workflows, #1347 parity, plan-replay task | [#1550](https://github.com/microsoft/simplechat/issues/1550) | 4+ | Not started |
 | A1 | Shared AI-assist thread: immediate send, Cancel/Retry, one component for every assist editor | [#1552](https://github.com/microsoft/simplechat/issues/1552) | — | **Done**: [#1564](https://github.com/microsoft/simplechat/pull/1564), v0.261.200 |
 | A2 | `#` document references in AI-assist inputs: plan editor now, workflow assistant via Phase 3. Not the artifact editors (Mermaid, chart, image) | [#1556](https://github.com/microsoft/simplechat/issues/1556) | A1 | **Done**: [#1568](https://github.com/microsoft/simplechat/pull/1568), v0.261.201. It merged into A1's branch and landed with #1564 |
@@ -46,12 +46,15 @@ lets chat answer from a finished run's stored result, with **Follow up**. The `w
 (#1607) lets a plan read a finished run, and 6b-1 (#1610) posts a run's results back into the private chat that
 started it. 6b-2 (the V2 run card, tracker and chat-list indicator) and 7a (the server part of Phase 7's hand-off) are
 in progress. Tracks N (V2 notifications) and P (document provenance) are independent too, and all three of their items
-have landed, so 6b can rely on the V2 bell for undeliverable results.
+have landed, so 6b can rely on the V2 bell for undeliverable results. Two related changes have also landed: saved
+results take their access from the workflow, run or chat that holds them (#1621: #1628, #1631 and #1632), and a
+revision the Run as user saved runs as them without a separate approval (#1630). §7 and gotchas 4, 15 and 36
+reflect both.
 
 Repository follow-ups found along the way, not tied to one phase:
 
 - The generated release-notes pages under `docs/explanation/release-notes/` are stale, so
-  `test_docs_release_notes_integrity.py` fails on the base, with 164 stale releases at 0.261.228. The PRs above leave
+  `test_docs_release_notes_integrity.py` fails on the base, with 168 stale releases at 0.261.232. The PRs above leave
   them alone; regenerate them once, in a docs-only change, after the in-flight PRs land.
 - Other docs pages have pre-existing broken relative links (`test_docs_link_integrity.py`).
 - **Fixed in [#1576](https://github.com/microsoft/simplechat/pull/1576)** (#1571): the PR guardrail workflows (broken
@@ -129,6 +132,15 @@ Repository follow-ups found along the way, not tied to one phase:
   that doesn't have `enabled_required` yet. The app isn't affected, because `app.py` loads `functions_authentication`
   (through `semantic_kernel_loader`) before `functions_settings`. A test that imports a route module directly has to
   import `functions_authentication` first, as #1597's import test does.
+- Cancelling a durable workflow run answers 500 when the runtime reports a conflict or is unavailable. All four
+  cancel routes catch only `LookupError` and `WorkflowCancellationConflictError`, while the runtime raises
+  `WorkflowRuntimeConflict` and `RuntimeUnavailable`, which subclass `RuntimeError`. The fix is to map them the way
+  `_workflow_runtime_response` already does: 409 with a `code` for a conflict, and a logged 503 when the runtime is
+  unavailable.
+- A v3 For each loop can allow up to 5,000 items, but a run admits at most 5,000 executions, and each item uses one
+  plus one per task attempt. A loop with one task pauses with `execution_budget_exceeded` after about 2,500 items,
+  after that work is done, and nothing checks this when the workflow is saved. 7a caps its hand-off loops at 2,000
+  for this reason.
 
 ## 1. Goal
 
@@ -1199,6 +1211,9 @@ chat later (decision #11). Nothing stays connected, and closing the browser does
     Gather step reads one finished run, either the workflow's latest or the one that finished on a named day in the
     user's local time. The server picks the run, the result reaches the compose step as fenced, untrusted notes (never
     evidence), and the answer names each run it read (`CHAT_ORCHESTRATION_WORKFLOW_RESULTS.md`).
+  - Since 0.261.231 (#1631), the reader checks each stored task result's identity, lineage and hashes, but no
+    longer looks up the documents the run's tasks read. "Lost access" in the Done when above now means access to
+    the workflow or run (`CHAT_WORKFLOW_RESULTS_FOLLOW_UP.md`).
 
 #### 6b — Post-back delivery, run card and chat-list indicator
 
@@ -1315,6 +1330,31 @@ merged.
   (gotcha #55).
 - One-time lifecycle: auto-disable after completion, marked in provenance.
 - **Done when** a 200-document review is handed off, runs durably, and posts one summary back.
+- **7a in progress**, the server part; 7b adds the V2 card. Its approved plan settles these points, and its PR
+  records any that change:
+  - A new admin setting, `enable_chat_orchestration_workflow_handoff`, off by default. Hand-off also needs Chat
+    Orchestration, personal workflows, **Propose Workflows From Chat**, **Run Workflows From Chat** and **Use Workflow
+    Results In Chat** on, and it's offered only to users with the WorkflowUser role, in their own private
+    conversations.
+  - A `workflow_handoff` step (Reason role) dry-runs a v3 For each blueprint: up to 25 named `#` documents, or a
+    keyword workspace query over scopes the turn already authorized, then one per-item task with a current-item
+    Analyze, a complete Collect and one report task. The tasks run on a model or a local agent, because loop bodies
+    and saved-record reporting require one.
+  - Two approvals: a plan with a hand-off always waits for the user (the manual approval floor), and the hand-off
+    card is the second. The step isn't a deliverable; the server adds a fixed note to the reply.
+  - Accept creates the workflow **disabled**, with a deterministic ID and a one-time marker in its origin, then
+    queues exactly one durable run that 6b-1 posts back to the chat. A retried accept returns the same workflow and
+    run. Chat's `workflow_run` won't start a one-time workflow again; the user can open it in Workflows to run it
+    again or delete it.
+  - Hand-offs don't count toward Phase 4's cap of 20. A rolling 24-hour limit applies instead, checked at accept
+    (default 5, range 1–100).
+  - A loop takes at most 2,000 items, or the admin's loop limit when that's lower, because each item uses two of a
+    run's 5,000 execution admissions. When a query matches more, the run pauses before it reviews any item, and the
+    user can only cancel it.
+  - The 6a reader gains a narrow branch for a hand-off run's v3 report, so the post-back and Follow up can read it.
+    Other v3 runs still answer `workflow_result_unsupported`.
+  - Where it differs from the bullets above: the workflow is created disabled, so nothing needs disabling after it
+    runs, and the run records how it ended in a `one_time_status`.
 
 ### Phase 8 — Follow-ons (separately scoped)
 
@@ -1332,8 +1372,9 @@ merged.
   definitions, and creation happens only in request-thread routes with fresh authorization.
 - **Idempotency** everywhere a side effect happens: deterministic workflow IDs, run `request_id`s, and notification
   keys.
-- **Workflow results in chat** are private-chat only, re-authorized on every read and every delivery, and treated as
-  untrusted content.
+- **Workflow results in chat** are private-chat only and treated as untrusted content. Every read and every delivery
+  re-checks access to the chat, workflow and run that hold them. Since 0.261.231 (#1631), the documents a run's
+  tasks read are provenance only and aren't re-checked, so losing access to one doesn't withhold the result.
 - **Every new route** needs `@swagger_route(security=get_auth_security())` plus auth decorators and route policy tests.
 - **Settings safety.** Every new `enable_*` key defaults off and is documented: the `docs/admin/*` table,
   `docs/_data/features.yml`, and `python .\scripts\build_docs_inventory.py`. Settings sent to the frontend are
@@ -1355,9 +1396,12 @@ merged.
    - Key Vault key `M365_WORKFLOW_TOKEN_KEY_SECRET_NAME` and the `/api/m365/connections/callback` redirect
    - Profile → Connect Microsoft 365 with offline consent
    - Run as = self
-   - Approval of the exact revision
-   - Any material edit invalidates approval. The first run pauses in `waiting_m365` and notifies. Large mailboxes can
-     hit extended-analysis approval waits.
+   - Approval of the exact revision, unless the Run as user saved it. Since 0.261.229 (#1630), a revision the Run as
+     user saved runs as them without a separate approval
+     ([Run as approval for a revision you saved](M365_RUN_AS_SELF_AUTHORED_APPROVAL.md)).
+   - A material edit by someone else, or a later change by someone else to an agent or action it uses, needs
+     approval again. The first run after it pauses in `waiting_m365` and notifies. Large mailboxes can hit
+     extended-analysis approval waits.
 5. **Persistent prompt injection.** Email, documents, or web content could shape standing instructions. Mitigations:
    - a static blueprint
    - no free-form destinations
@@ -1380,8 +1424,9 @@ merged.
     adds the current date and time for calendar-scheduled workflows only (§6).
 14. **Brittle LLM definitions.** Keep blueprints and change sets small, use deterministic builders, allow one repair,
     and fall back to Edit.
-15. **Fingerprint sensitivity.** Don't reshape the legacy `schedule`. Assistant edits trigger re-approval, and the UI
-    warns first.
+15. **Fingerprint sensitivity.** Don't reshape the legacy `schedule`. A fingerprinted change that someone other than
+    the Run as user saves triggers re-approval, and the UI warns first. Since 0.261.229 (#1630), the Run as user's
+    own saves, assistant edits included, need no separate approval.
 16. **Classic UI** can't edit v2/v3 or calendar workflows, so it routes to V2. Orchestration and the assistant are
     V2-only.
 17. **Stale proposals.** Agents and sources change, and accept re-validates. Consider expiring proposals. An old card
@@ -1427,8 +1472,9 @@ merged.
     `create_chat_response_notification` (`route_backend_chats.py:25686-25700`). Delivery must do both, idempotently.
 35. **The chat changes after the run starts.** It may be deleted, made shared, or no longer accessible. Then don't
     post; send one bell notice instead. The result stays in the workflow's conversation.
-36. **Authorization drift at delivery.** Re-check chat ownership and run read access at delivery, and withhold (and
-    name) any source the requester can no longer read.
+36. **Authorization drift at delivery.** Re-check chat ownership and run read access at delivery. Since 0.261.231
+    (#1631), a stored result takes its access from its workflow and run, so a document the requester can no longer
+    read doesn't withhold it (`WORKFLOW_SAVED_RESULT_SOURCE_RECHECK_FIX.md`).
 37. **Exactly once.** A lease on `chat_delivery`, a deterministic message ID, create-if-absent, and an idempotent
     notice. Retries and concurrent sweeps must still produce one message.
 38. **Mid-stream delivery.** Posting while a reply streams breaks message order, so wait for the next sweep.
@@ -1528,7 +1574,7 @@ merged.
 | N2 | Keep the alert lab after the choice? | **Settled in #1567**: kept, dev-only, at `/v2/dev/alert-lab`, as the test bed for later alert changes |
 | P | Search-index provenance fields | **Deferred in #1562** until a search use case appears. It needs the index schema and deployer change |
 | — | Detached orchestration answers don't mark the chat unread today (gotcha #34) | A small, separate fix that reuses 6b's helper |
-| 7 | Auto-archive vs. disable one-time workflows | Disable and label; the user can delete |
+| 7 | Auto-archive vs. disable one-time workflows | **Decided for 7a**: the workflow is created disabled, with a one-time marker in its origin, and is never archived or deleted automatically. The user can delete it. |
 
 ## 10. How to resume in a new conversation
 
