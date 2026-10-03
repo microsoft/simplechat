@@ -798,6 +798,18 @@ def _map_handoff_schema_error(error):
         yield from _map_schema_error(error)
 
 
+def validate_handoff_blueprint(blueprint):
+    """Check a hand-off blueprint against its closed schema alone. Returns draft errors, empty when valid.
+
+    This reads nothing: settings, handles, agents, documents and workspaces are checked by
+    ``check_handoff_blueprint`` and ``dry_run_handoff_workflow``.
+    """
+    _prepared, errors = _prepare_blueprint(
+        blueprint, validator=_HANDOFF_BLUEPRINT_VALIDATOR, map_error=_map_handoff_schema_error,
+    )
+    return _finalize_errors(errors)
+
+
 # ---------------------------------------------------------------------------
 # Read-only seams
 # ---------------------------------------------------------------------------

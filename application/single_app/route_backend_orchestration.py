@@ -2086,6 +2086,13 @@ def register_route_backend_orchestration(bp):
                         ),
                         # Ranks a workflow the request names first when a plan may start one.
                         request_text=f'{message}\n{effective_request}',
+                        # The workspaces a hand-off's workspace query may search, each rechecked
+                        # on the server; only read when hand-offs are open to the user.
+                        scope_seeds={
+                            'doc_scope': seeds.get('doc_scope') or 'all',
+                            'active_group_ids': list(seeds.get('active_group_ids') or []),
+                            'active_public_workspace_ids': list(seeds.get('active_public_workspace_ids') or []),
+                        },
                     )
                     turn_context['workflow_planning'] = workflow_planning
 
