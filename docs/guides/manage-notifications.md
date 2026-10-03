@@ -115,17 +115,22 @@ tucks it into the bell, where it stays unread; it doesn't pop up again.
                       capture="Capture the V2 rail with a high priority workflow alert notice under My Workspace, using realistic sample alerts. Redact workflow and conversation names." %}
 
 Select the notice to open the full alert. It says why you are seeing it and which
-rules matched, what went wrong for a failed run, the summary and details, and the
-links the alert carries. From there you can:
+rules matched, the summary, and what went wrong for a failed run. From there you
+can:
 
-- Select **Open workflow** to go to the workflow in its personal or group workspace,
-  with the run that raised the alert open. This marks the alert read.
-- Select **Ask about this**, on an alert about a completed run of one of your
-  personal workflows, to ask chat about that run's stored result without running
-  the workflow again. The alert closes and stays unread. See
-  [Ask about workflow results]({{ '/guides/ask-about-workflow-results/' | relative_url }}).
-- Select **Mark read** or **Dismiss**. When the notice stands for several alerts
-  from one workflow, both act on all of them.
+- Select **Open** to go to what the workflow made: the conversation it created, or
+  else the conversation it posted into, its run or the workflow itself. This marks
+  the alert read. An alert with nothing to open offers **Mark read** instead.
+- Select **Dismiss** to dismiss it. When the notice stands for several alerts from
+  one workflow, Open and Dismiss both act on all of them.
+- Select **Show more** for the details, the alert's facts, and the other ways in:
+  - **Open workflow** goes to the workflow in its personal or group workspace,
+    with the run that raised the alert open. This marks the alert read.
+  - Other links the alert carries, such as **Open workflow conversation**.
+  - **Ask about this**, on an alert about a completed run of one of your personal
+    workflows, asks chat about that run's stored result without running the
+    workflow again. The alert closes and stays unread. See
+    [Ask about workflow results]({{ '/guides/ask-about-workflow-results/' | relative_url }}).
 - Select **Next** to step through the other waiting alerts, or **Mark all read** to
   clear them all. Both appear when more than one alert is waiting.
 

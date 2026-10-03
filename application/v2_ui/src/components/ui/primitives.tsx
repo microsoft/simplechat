@@ -44,12 +44,14 @@ export function GlassPanel({
     );
 }
 
-type ButtonVariant = 'primary' | 'ghost' | 'subtle' | 'danger';
+type ButtonVariant = 'primary' | 'success' | 'ghost' | 'subtle' | 'danger';
 type ButtonSize = 'sm' | 'md' | 'lg' | 'icon';
 
 const variantClass: Record<ButtonVariant, string> = {
     primary:
         'bg-accent text-on-accent hover:bg-accent-hover shadow-sm disabled:hover:bg-accent',
+    success:
+        'bg-ok-strong text-on-ok hover:bg-ok-strong-hover shadow-sm disabled:hover:bg-ok-strong',
     ghost: 'text-text-2 hover:text-text-1 hover:bg-surface-2',
     subtle: 'glass-flat text-text-1 hover:bg-surface-2 rounded-xl',
     danger: 'bg-danger-soft text-danger hover:bg-danger hover:text-white',

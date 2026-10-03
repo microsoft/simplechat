@@ -1,8 +1,9 @@
 # test_v2_workflow_alert_notices.py
 """
 Browser regressions for the V2 workflow alert notice, its alert card and their runtime.
-Version: 0.261.199
+Version: 0.261.228
 Implemented in: 0.261.199
+Open and Dismiss up front, everything else under Show more: 0.261.228
 
 Exercises the real rail, bell, notice, card, live region, stores and both notification
 runtimes, bundled by fixtures/workflow_alerts. Only HTTP answers and the browser APIs a
@@ -1308,22 +1309,20 @@ def test_card_actions_act_on_every_alert_of_an_entry(tab, server, alert):
     position = card.locator("[data-workflow-alert-position]")
     expect(card).to_be_visible()
     expect(position).to_contain_text("1 of 4")
-    mark_read = card.locator("[data-workflow-alert-mark-read]")
-    expect(mark_read).to_have_attribute("title", "Acts on all 2 alerts from this workflow.")
-    mark_read.click()
-    tab.wait_for(lambda: sorted(server.read_calls) == ["a1", "a2"], f"Mark read sent {server.read_calls}.")
+    # Open took Mark read's place, and like Dismiss it acts on every alert of the entry.
+    expect(card.locator("[data-workflow-alert-mark-read]")).to_have_count(0)
+    expect(card.locator("[data-workflow-alert-primary]")).to_have_attribute("title", "Acts on all 2 alerts from this workflow.")
+    dismiss = card.locator("[data-workflow-alert-dismiss]")
+    expect(dismiss).to_have_attribute("title", "Acts on all 2 alerts from this workflow.")
+    dismiss.click()
+    tab.wait_for(lambda: sorted(server.dismiss_calls) == ["a1", "a2"], f"Dismiss sent {server.dismiss_calls}.")
     tab.wait_not_busy()
     expect(position).to_contain_text("1 of 3")
     expect(card.get_by_role("heading", level=2)).to_have_text("Deploy gate is red")
 
-    card.locator("[data-workflow-alert-dismiss]").click()
-    tab.wait_for(lambda: server.dismiss_calls == ["b1"], f"Dismiss sent {server.dismiss_calls}.")
-    tab.wait_not_busy()
-    expect(position).to_contain_text("1 of 2")
-
     card.locator("[data-workflow-alert-mark-all]").click()
     tab.wait_for(
-        lambda: sorted(server.read_calls) == ["a1", "a2", "c1", "d1"],
+        lambda: sorted(server.read_calls) == ["b1", "c1", "d1"],
         f"Mark all read sent {server.read_calls}.",
     )
     expect(card).to_have_count(0)
@@ -1333,6 +1332,49 @@ def test_card_actions_act_on_every_alert_of_an_entry(tab, server, alert):
     expect(tab.notes).to_have_value("Keep this")
     tab.settle()
     expect(tab.bell).to_have_attribute("data-unread-count", "0")
+
+
+def test_open_is_the_one_big_action_and_the_rest_waits_under_show_more(tab, server, alert):
+    tab.open()
+    posted = workflow_alert_conversation_target("conv-wf-1")
+    created = workflow_alert_conversation_target("conv-created", label="Open created conversation")
+    server.add(
+        alert("s1", workflow_id="wf-1", priority="critical", title="Response cell stood up",
+              detail="Group, conversation and briefing are ready.",
+              enrichments=["Group conversation: Leadership Coordination", "Word file: Initial Briefing.docx"],
+              link_targets=[posted, created]),
+        alert("s2", minutes_ago=2, workflow_id="wf-1", title="An earlier run", link_targets=[posted]),
+    )
+    tab.poll()
+    tab.open_button.click()
+    card = tab.card
+    expect(card).to_be_visible()
+
+    # Up front: the reason, the summary, Dismiss, and one Open to what the workflow created.
+    primary = card.locator("[data-workflow-alert-primary]")
+    expect(primary).to_have_text("Open")
+    expect(primary).to_have_accessible_name("Open created conversation")
+    expect(primary).to_have_class(re.compile(r"(^|\s)bg-ok-strong(\s|$)"))
+    expect(card.locator("[data-workflow-alert-mark-read]")).to_have_count(0)
+    expect(card.get_by_role("button")).to_have_count(4)
+    for name in ("Close alert", "Show more", "Dismiss", "Open created conversation"):
+        expect(card.get_by_role("button", name=name, exact=True)).to_be_visible()
+    for waiting in ("[data-workflow-alert-detail]", "[data-workflow-alert-chip]", "[data-workflow-alert-links]"):
+        expect(card.locator(waiting).first).to_be_hidden()
+
+    # Show more holds the detail, the pills and every other way in.
+    card.locator("[data-workflow-alert-show-more]").click()
+    expect(card.locator("[data-workflow-alert-detail]")).to_have_text("Group, conversation and briefing are ready.")
+    expect(card.locator("[data-workflow-alert-chip]").filter(has_text="Word file: Initial Briefing.docx")).to_be_visible()
+    others = card.locator("[data-workflow-alert-links]")
+    expect(others.locator("[data-workflow-alert-link]")).to_have_text(["Open workflow conversation"])
+    expect(others.locator("[data-workflow-alert-open-workflow]")).to_have_text("Open workflow")
+
+    # Open settles every alert of the entry and goes to the conversation the workflow created.
+    primary.click()
+    tab.wait_for(lambda: tab.route_text() == "/chat?conversationId=conv-created", f"Open went to {tab.route_text()}.")
+    tab.wait_for(lambda: sorted(server.read_calls) == ["s1", "s2"], f"Open marked {server.read_calls} as read.")
+    expect(card).to_have_count(0)
 
 
 # Keyboard and focus ----------------------------------------------------------------------------
@@ -1552,7 +1594,8 @@ def test_alert_text_is_plain_text_and_links_stay_on_this_site(tab, server, alert
     expect(card.locator("[data-workflow-alert-link-note]")).to_have_text(OFF_SITE)
     links = card.locator("[data-workflow-alert-link]")
     expect(links).to_have_count(1)
-    expect(links).to_contain_text("Open workflow conversation")
+    # The one link this site can open is the alert's Open button.
+    expect(links).to_have_accessible_name("Open workflow conversation")
     card.locator("[data-workflow-alert-next]").click()
     expect(card.locator("[data-workflow-alert-server-reason]")).to_have_text("Deploy freeze window is active.")
     card.locator("[data-workflow-alert-next]").click()
@@ -1577,6 +1620,10 @@ def test_open_workflow_goes_to_the_run_in_its_workspace(tab, server, alert):
         # In Chat, which this bootstrap leaves off (ui_tests/test_chat_workflow_results.py).
         expect(tab.card.locator("[data-workflow-alert-open-run]")).to_have_count(0)
         expect(tab.card.locator("[data-workflow-alert-follow-up]")).to_have_count(0)
+        # Open goes to the conversation; Open workflow waits under Show more.
+        show_more = tab.card.locator("[data-workflow-alert-show-more]")
+        if show_more.count():
+            show_more.click()
         return tab.card.locator("[data-workflow-alert-open-workflow]")
 
     personal = open_card("o1", workflow_id="wf-nightly", title="Deploy gate is red")
