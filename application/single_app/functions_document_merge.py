@@ -1,7 +1,7 @@
 # functions_document_merge.py
-"""Ordered assembly of several PDF, Word or spreadsheet files into one file.
+"""Ordered assembly of several PDF, Word, PowerPoint or spreadsheet files into one file.
 
-Version: 0.261.222
+Version: 0.261.223
 
 The engine is pure: it receives already-authorized byte loaders, never resolves
 documents, settings, storage or routes, and performs no model work. Each assembler reads
@@ -24,8 +24,8 @@ MERGE_KIND_PDF = "pdf"
 MERGE_KIND_DOCX = "docx"
 MERGE_KIND_PPTX = "pptx"
 MERGE_KIND_WORKBOOK = "workbook"
-# The kinds that have an assembler. PowerPoint joins with its assembler.
-DOCUMENT_MERGE_KINDS = (MERGE_KIND_PDF, MERGE_KIND_DOCX, MERGE_KIND_WORKBOOK)
+# The kinds that have an assembler.
+DOCUMENT_MERGE_KINDS = (MERGE_KIND_PDF, MERGE_KIND_DOCX, MERGE_KIND_PPTX, MERGE_KIND_WORKBOOK)
 
 DOCUMENT_MERGE_SOURCE_EXTENSIONS = {
     MERGE_KIND_PDF: (".pdf",),
@@ -299,6 +299,14 @@ def new_output_spool():
     return tempfile.SpooledTemporaryFile(max_size=_SPOOL_MEMORY_BYTES, mode="w+b")
 
 
+def fixed_zip_entry(name):
+    """A deflated ZIP entry with a fixed date and attributes, so the same input gives the same bytes."""
+    info = zipfile.ZipInfo(name, date_time=_PACKAGE_DATE_TIME)
+    info.compress_type = zipfile.ZIP_DEFLATED
+    info.create_system = 0
+    return info
+
+
 def normalized_package(package, context):
     """Copy a written Office package into a new spool with fixed ZIP dates and attributes.
 
@@ -313,9 +321,7 @@ def normalized_package(package, context):
         ) as target:
             for entry in source.infolist():
                 context.check_cancel()
-                info = zipfile.ZipInfo(entry.filename, date_time=_PACKAGE_DATE_TIME)
-                info.compress_type = zipfile.ZIP_DEFLATED
-                info.create_system = 0
+                info = fixed_zip_entry(entry.filename)
                 # A known size lets zipfile add ZIP64 fields only to entries that need them.
                 info.file_size = entry.file_size
                 with source.open(entry) as reader, target.open(info, "w") as writer:
@@ -416,6 +422,8 @@ def merge_documents(
         from functions_document_merge_pdf import assemble_pdf as assemble
     elif kind == MERGE_KIND_DOCX:
         from functions_document_merge_docx import assemble_docx as assemble
+    elif kind == MERGE_KIND_PPTX:
+        from functions_document_merge_pptx import assemble_pptx as assemble
     else:
         from functions_document_merge_workbook import assemble_workbook as assemble
     try:

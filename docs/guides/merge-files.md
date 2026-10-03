@@ -4,7 +4,7 @@ title: "Merge files in chat"
 description: "Combine several CSV or Excel files into one CSV or Excel file, even when their columns differ."
 section: "Guides"
 audience: user
-version: "0.261.222"
+version: "0.261.223"
 ---
 
 ## What this does
@@ -178,17 +178,18 @@ A run with nothing to merge, such as a sync that brought no spreadsheets, finish
 says so without creating a file. If a selected file is gone or isn't a spreadsheet, or
 more files match than the workflow limit allows, the task fails and says which.
 
-## Merge PDFs, Word documents or workbooks
+## Merge PDFs, Word documents, decks or workbooks
 
 From version **0.261.221**, a workflow merge task has a **Merge type**. Besides combining
 rows, it can join PDFs into one PDF, with a bookmark for each file, or put each CSV or
 Excel file on its own sheet of one Excel workbook, so the tables stay separate but travel
 as one file. From **0.261.222** it can also append Word documents into one Word document,
-keeping each document's styles or using the first document's. Choose the type after
-choosing **Merge files**; the rest works the same way. You can also ask chat, for example
-"every month, combine the signed contracts into one PDF", and it proposes a workflow that
-does it. Merging PDFs or Word documents inside a chat turn, without a workflow, is planned
-for a later release. See
+keeping each document's styles or using the first document's, and from **0.261.223**
+append PowerPoint decks into one deck, keeping each deck's look or the first deck's theme.
+Choose the type after choosing **Merge files**; the rest works the same way. You can also
+ask chat, for example "every month, combine the signed contracts into one PDF", and it
+proposes a workflow that does it. Merging PDFs, Word documents or decks inside a chat turn,
+without a workflow, is planned for a later release. See
 [Create a workflow]({{ '/guides/create-a-workflow/' | relative_url }}#merge-files-in-a-workflow).
 
 ## Related

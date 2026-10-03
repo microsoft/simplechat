@@ -479,7 +479,8 @@ def _merge_schema():
             'Makes this task merge files with code instead of running a model. kind tabular appends the '
             'rows of CSV and Excel files into one CSV or Excel file; workbook puts each CSV or Excel file '
             'on its own sheet of one Excel workbook; pdf joins PDFs, in order, into one PDF; docx appends '
-            'Word documents, in order, into one Word document. files: inputs '
+            'Word documents, in order, into one Word document; pptx appends the slides of PowerPoint decks, '
+            'in order, into one deck. files: inputs '
             "merges the task's inputs (two or more document handles) in order; changed merges the files a "
             "File Sync trigger added or changed; all merges every matching file in the user's personal "
             'workspace; recent merges those added in the last recent_window_minutes. Rows are appended; '
@@ -507,13 +508,14 @@ def _merge_options_schema():
         'description': (
             'The same column, sheet, duplicate and sort settings a chat merge accepts, for kind tabular. '
             'kind workbook takes only sheets and sheet; kind pdf takes only bookmarks; kind docx takes only '
-            'formatting, page_breaks and source_headings.'
+            'formatting, page_breaks and source_headings; kind pptx takes only formatting and sections.'
         ),
         'properties': {
             'bookmarks': {'type': 'boolean'},
             'formatting': {'enum': ['keep_source', 'use_first']},
             'page_breaks': {'type': 'boolean'},
             'source_headings': {'type': 'boolean'},
+            'sections': {'type': 'boolean'},
             'schema_policy': {'enum': ['by_name', 'exact_order', 'union', 'mapped']},
             'columns': {**names, 'maxItems': 255},
             # A list of closed objects rather than a map, so every object in the blueprint stays closed.

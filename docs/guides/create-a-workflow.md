@@ -229,8 +229,9 @@ same message as for a group, and a source you're no longer allowed to use with
 
 From version **0.261.220**, a task can merge many CSV and Excel files into one CSV
 or Excel file, from **0.261.221** it can also join PDFs into one PDF or put
-several spreadsheets on separate sheets of one workbook, and from **0.261.222**
-it can append Word documents into one Word document. Use it for a merge that's
+several spreadsheets on separate sheets of one workbook, from **0.261.222** it
+can append Word documents into one Word document, and from **0.261.223** it can
+append PowerPoint decks into one deck. Use it for a merge that's
 too big for one chat turn, such as a year of weekly exports, or one that should
 happen on its own, such as every Monday or whenever a synced folder gets a new
 export. A merge task runs with code, not a model or agent: rows and pages are
@@ -248,6 +249,8 @@ copied exactly and the task's answer summarizes what was merged.
    - **Combine PDFs** joins PDFs into one PDF, with a bookmark for each file.
    - **Combine Word documents** appends Word documents into one Word document,
      each keeping its own styles, numbering and images.
+   - **Combine PowerPoint decks** appends the slides of PowerPoint decks into one
+     deck, with a section for each deck.
 3. Under **Files to merge**, choose:
    - **Selected files, in this order** to merge files you pick, at least two.
      Set their order under **Merge order**.
@@ -261,8 +264,9 @@ copied exactly and the task's answer summarizes what was merged.
 
    Files found when the run starts are merged in file-name order.
 4. For row merges, choose **Output format**, CSV or Excel workbook. Workbook
-   merges create an Excel workbook, PDF merges a PDF and Word merges a Word
-   document. Optionally set an **Output file name** without an extension.
+   merges create an Excel workbook, PDF merges a PDF, Word merges a Word
+   document and PowerPoint merges a deck. Optionally set an **Output file name**
+   without an extension.
 5. Open **More merge options**. For row merges, decide how columns are matched,
    add column aliases, choose sheets or a header row, leave out files whose
    columns don't match, remove duplicates, or sort; these are the same settings
@@ -272,17 +276,21 @@ copied exactly and the task's answer summarizes what was merged.
    file. For Word documents, **Word formatting** keeps each document's look or
    uses the first document's styles for all of them; **Page break between
    documents** starts each one on a new page; and **Add source headings** puts a
-   heading with the file name before each one.
+   heading with the file name before each one. For PowerPoint decks,
+   **PowerPoint formatting** keeps each deck's look or puts every slide on the
+   first deck's theme, and **Create one section per deck** groups each deck's
+   slides.
 
 Each run attaches the merged file to the run's conversation, and later tasks
 can read the merge task's summary. A workflow merges up to 100 files and
 1,000,000 rows by default; your administrator sets these limits under
 [Document Action Capabilities]({{ '/admin/agents-actions/' | relative_url }}#document-action-capabilities-card).
-A PDF or Word merge reads at most 300 MB of files in total. Merged PDFs keep
-links to pages and to web and email addresses, but not scripts, form actions, or
-links that open other files or programs, and the task's answer says when any
-were removed. A merged Word document uses the first document's headers, footers
-and page setup, and leaves out comments.
+A PDF, Word or PowerPoint merge reads at most 300 MB of files in total. Merged
+PDFs keep links to pages and to web and email addresses, but not scripts, form
+actions, or links that open other files or programs, and the task's answer says
+when any were removed. A merged Word document uses the first document's headers,
+footers and page setup, and leaves out comments. A merged deck uses the first
+deck's slide size and leaves out slide comments.
 
 A run with nothing to merge finishes and says so without creating a file.
 Files that can't be merged are handled by how they were chosen:

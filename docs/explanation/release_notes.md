@@ -2,6 +2,18 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.223)**
+
+#### New Features
+
+*   **Merge PowerPoint Decks In Workflows**
+    *   A workflow **Merge files** task can use **Combine PowerPoint decks** as its **Merge type**: the slides of PowerPoint decks are appended, in order, into one deck with code and no model, choosing files the same four ways as every merge. Every merge type is now available in workflows.
+    *   **PowerPoint formatting** keeps each deck's layouts, masters and themes (reusing identical ones) or places every slide on the first deck's matching layout and theme. **Create one section per deck** groups each deck's slides under its file name. Pictures, media, charts with their workbooks, diagrams, tables and speaker notes come along.
+    *   The first deck decides the slide size, and a deck with a different size is reported; embedded fonts of later decks and slide comments aren't carried over. Encrypted, damaged, oversized and macro-enabled decks are refused, and a merge assembles up to 2,000 slides from at most 300 MB of decks.
+    *   The same decks always produce the same bytes, so a retried task reuses the file it attached, and errors name only the file. Run activity reports slides per deck.
+    *   Chat can propose PowerPoint merges (blueprint `merge.kind` `pptx`, with `formatting` and `sections`).
+    *   (Ref: #1619, `functions_document_merge_pptx.py`, `functions_document_merge.py`, `functions_document_actions.py`, `functions_workflow_drafts.py`, `functions_orchestration_planner.py`, [Phase 6](features/V2_FILE_MERGE_PHASE_6_POWERPOINT.md), [Create a workflow](../guides/create-a-workflow.md#merge-files-in-a-workflow))
+
 ### **(v0.261.222)**
 
 #### New Features

@@ -1,6 +1,6 @@
 // test_v2_workflow_proposal_merge.mjs
-// Version: 0.261.222
-// Implemented in: 0.261.220; merge kinds added in 0.261.221; Word in 0.261.222
+// Version: 0.261.223
+// Implemented in: 0.261.220; merge kinds added in 0.261.221; Word in 0.261.222; PowerPoint in 0.261.223
 // Checks that the workflow proposal card's response parser accepts a proposed merge task, fails
 // closed on a merge it cannot describe, and words each merge as code that runs no model.
 
@@ -75,6 +75,10 @@ test('a proposed merge task keeps which files it merges and what it creates', ()
         statusResponse({ ...baseTask, merge: { kind: 'docx', files: 'inputs', output_format: 'docx' } }), 'run-1',
     );
     assert.deepEqual(word.proposals[0].summary.tasks[0].merge, { kind: 'docx', files: 'inputs', output_format: 'docx' });
+    const deck = parseWorkflowProposalList(
+        statusResponse({ ...baseTask, merge: { kind: 'pptx', files: 'changed', output_format: 'pptx' } }), 'run-1',
+    );
+    assert.deepEqual(deck.proposals[0].summary.tasks[0].merge, { kind: 'pptx', files: 'changed', output_format: 'pptx' });
 });
 
 test('a task without a merge is parsed exactly as before', () => {
@@ -129,6 +133,10 @@ test('each merge is described as code that runs no model', () => {
         workflowProposalMergeText({ merge: { kind: 'docx', files: 'recent', output_format: 'docx' } }),
         'Merges the Word documents added or changed recently in your personal workspace into one Word document '
             + 'with code. No model runs.',
+    );
+    assert.equal(
+        workflowProposalMergeText({ merge: { kind: 'pptx', files: 'all', output_format: 'pptx' } }),
+        'Merges every PowerPoint deck in your personal workspace into one PowerPoint deck with code. No model runs.',
     );
     assert.equal(workflowProposalMergeText({}), '');
 });

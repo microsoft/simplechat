@@ -1,11 +1,12 @@
 # V2 File Merge
 
-Version: **0.261.222**
+Version: **0.261.223**
 
 Implemented in version: **0.261.218** (Phase 1, same-structure spreadsheets),
 **0.261.219** (Phase 2, reconciling different structures), **0.261.220** (Phase 3,
-workflow merges), **0.261.221** (Phase 4, PDF and workbook merges) and **0.261.222**
-(Phase 5, Word merges), recorded in `application/single_app/config.py`.
+workflow merges), **0.261.221** (Phase 4, PDF and workbook merges), **0.261.222**
+(Phase 5, Word merges) and **0.261.223** (Phase 6, PowerPoint merges), recorded in
+`application/single_app/config.py`.
 
 GitHub issue: [#1619](https://github.com/microsoft/simplechat/issues/1619)
 
@@ -30,7 +31,7 @@ request and the easiest to verify exactly; documents and decks follow.
 | 3 | Large and recurring merges (100+ files) as V2 workflow tasks: selected files, every matching file, recent files or the files File Sync changed; chat-proposed merge workflows | Implemented in **0.261.220** — see [Phase 3](V2_FILE_MERGE_PHASE_3_WORKFLOWS.md) |
 | 4 | Document merge engine; PDF merges (a bookmark per file) and workbooks with one sheet per file, as workflow merge types | Implemented in **0.261.221** — see [Phase 4](V2_FILE_MERGE_PHASE_4_PDF_WORKBOOKS.md) |
 | 5 | Word merge, keeping each document's styles or the first document's, as a workflow merge type | Implemented in **0.261.222** — see [Phase 5](V2_FILE_MERGE_PHASE_5_WORD.md) |
-| 6 | PowerPoint merge, keeping each deck's look or the first deck's theme, as a workflow merge type | Planned |
+| 6 | PowerPoint merge, keeping each deck's look or the first deck's theme, as a workflow merge type | Implemented in **0.261.223** — see [Phase 6](V2_FILE_MERGE_PHASE_6_POWERPOINT.md) |
 | 7 | Document merges directly in chat (`document_merge` with assembled Render profiles) for every document kind; scale and security hardening, final documentation | Planned |
 
 Document merges reach workflows first, kind by kind, so every file type is usable as soon as
@@ -63,10 +64,11 @@ default, on a schedule or whenever File Sync brings new files, without anyone as
 the V2 workflow editor a task's **Document action** can be **Merge files**: the task runs
 the same engine with code, no model, and attaches the merged CSV or Excel file to the run.
 Since **0.261.221** its **Merge type** can also join PDFs into one PDF or put spreadsheets on
-separate sheets of one workbook, and since **0.261.222** append Word documents into one Word
-document. Chat can propose such a workflow when a user asks for a recurring merge. See
-[Phase 3](V2_FILE_MERGE_PHASE_3_WORKFLOWS.md), [Phase 4](V2_FILE_MERGE_PHASE_4_PDF_WORKBOOKS.md)
-and [Phase 5](V2_FILE_MERGE_PHASE_5_WORD.md).
+separate sheets of one workbook, since **0.261.222** append Word documents into one Word
+document, and since **0.261.223** append PowerPoint decks into one deck. Chat can propose
+such a workflow when a user asks for a recurring merge. See
+[Phase 3](V2_FILE_MERGE_PHASE_3_WORKFLOWS.md), [Phase 4](V2_FILE_MERGE_PHASE_4_PDF_WORKBOOKS.md),
+[Phase 5](V2_FILE_MERGE_PHASE_5_WORD.md) and [Phase 6](V2_FILE_MERGE_PHASE_6_POWERPOINT.md).
 
 ## Technical specifications
 
@@ -82,7 +84,7 @@ and [Phase 5](V2_FILE_MERGE_PHASE_5_WORD.md).
 | `functions_orchestration_services.py` | The `tabular_column_mapping_v1` prepared-content profile and its validator. |
 | `functions_document_actions.py` | The `merge` document action: enablement, file limits and row limits for chat and workflows, and the workflow Merge task contract. |
 | `functions_workflow_merge.py`, `functions_workflow_runner.py` | Workflow Merge tasks: finding the files, authorizing them again, merging, rendering and attaching the file to the run. |
-| `functions_document_merge.py`, `functions_document_merge_pdf.py`, `functions_document_merge_workbook.py`, `functions_document_merge_docx.py` | The document merge engine and its PDF, workbook and Word assemblers. Word composition uses `docxcompose`. |
+| `functions_document_merge.py`, `functions_document_merge_pdf.py`, `functions_document_merge_workbook.py`, `functions_document_merge_docx.py`, `functions_document_merge_pptx.py` | The document merge engine and its PDF, workbook, Word and PowerPoint assemblers. Word composition uses `docxcompose`; decks are merged at the package level. |
 | `functions_workflow_drafts.py` | The `merge` field of workflow blueprints proposed from chat. |
 | `functions_generated_export_registry.py`, `functions_structured_file_renderers.py`, `functions_generated_office_adapters.py` | The `exact_tabular_records_v1` (CSV) and `exact_tabular_workbook_v1` (XLSX) profiles. |
 | `application/v2_ui/src/lib/orchestrationMerge.ts` | The plan review's wording for merge and inspection settings. |
@@ -162,6 +164,7 @@ and the orchestration Capabilities list
 | `functional_tests/test_workflow_merge_task.py`, `functional_tests/test_v2_workflow_merge_task.mjs`, `functional_tests/test_v2_workflow_proposal_merge.mjs`, `ui_tests/test_v2_workflow_merge_task.py` | Workflow Merge tasks, their editor, and proposed merge tasks (Phase 3). |
 | `functional_tests/test_document_merge_pdf_workbook.py`, `functional_tests/test_workflow_merge_pdf_workbook.py` | The PDF and workbook assemblers, and PDF and workbook workflow merges (Phase 4). |
 | `functional_tests/test_document_merge_docx.py`, `functional_tests/test_workflow_merge_word.py` | The Word assembler and Word workflow merges (Phase 5). |
+| `functional_tests/test_document_merge_pptx.py`, `functional_tests/test_workflow_merge_powerpoint.py` | The PowerPoint assembler and PowerPoint workflow merges (Phase 6). |
 
 ## Known limitations
 

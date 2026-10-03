@@ -86,14 +86,14 @@ DOCUMENT_ACTION_TYPES_WITH_PAYLOAD_SUPPORT = (
 )
 
 # A workflow Merge task combines many files into one output file. The kind decides which
-# files it reads and what it produces; later phases add kinds to MERGE_KINDS_AVAILABLE.
+# files it reads and what it produces; a kind missing from MERGE_KINDS_AVAILABLE is refused.
 MERGE_KIND_TABULAR = 'tabular'
 MERGE_KIND_WORKBOOK = 'workbook'
 MERGE_KIND_PDF = 'pdf'
 MERGE_KIND_DOCX = 'docx'
 MERGE_KIND_PPTX = 'pptx'
 MERGE_KINDS = (MERGE_KIND_TABULAR, MERGE_KIND_WORKBOOK, MERGE_KIND_PDF, MERGE_KIND_DOCX, MERGE_KIND_PPTX)
-MERGE_KINDS_AVAILABLE = (MERGE_KIND_TABULAR, MERGE_KIND_WORKBOOK, MERGE_KIND_PDF, MERGE_KIND_DOCX)
+MERGE_KINDS_AVAILABLE = MERGE_KINDS
 MERGE_KIND_LABELS = {
     MERGE_KIND_TABULAR: 'spreadsheet',
     MERGE_KIND_WORKBOOK: 'workbook',
