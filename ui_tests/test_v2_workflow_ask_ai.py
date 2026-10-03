@@ -438,9 +438,13 @@ def test_done_when_instruction_is_highlighted_undone_reverted_and_confirmed(ask_
     page.wait_for_timeout(100)
 
 
-def test_run_as_warnings_and_review_before_saving(ask_ui):
+@pytest.mark.parametrize("run_as, warned", [
+    ("runas-colleague", True),
+    (OWNER_ID, False),
+], ids=["someone else's account", "your own account"])
+def test_run_as_warnings_and_review_before_saving(ask_ui, run_as, warned):
     ui = ask_ui
-    ui.personal_workflows[WORKFLOW_ID]["m365_run_as_user_id"] = OWNER_ID
+    ui.personal_workflows[WORKFLOW_ID]["m365_run_as_user_id"] = run_as
     instructions = "Collect only signed evidence."
     ui.assist.queue(with_warnings(
         ui.assist.changed({"op": "set_task_instructions", "task": "task_1", "instructions": instructions}),
@@ -449,17 +453,19 @@ def test_run_as_warnings_and_review_before_saving(ask_ui):
         {"code": "draft_has_errors", "message": DRAFT_ERRORS_MESSAGE},
     ))
     editor = open_classic(ui)
-    expect(editor.get_by_label("Microsoft 365 Run as", exact=True)).to_have_value(OWNER_ID)
+    expect(editor.get_by_label("Microsoft 365 Run as", exact=True)).to_have_value(run_as)
     panel = open_ask_ai(editor)
     found = answered(panel, ask(ui, panel, "Collect only signed evidence in the first task."))
 
     assert change_keys(found) == ["task:task-a:instructions"]
+    # Only another person's account must approve the change; your own save is your own revision.
+    run_as_codes, run_as_texts = (["run_as_reapproval"], [RUN_AS_WARNING]) if warned else ([], [])
     warnings = found.get_by_role("list", name="Warnings").locator("li[data-workflow-assist-warning]")
-    expect(warnings).to_have_count(4)
+    expect(warnings).to_have_count(len(run_as_codes) + 3)
     assert warnings.evaluate_all("items => items.map((item) => item.dataset.workflowAssistWarning)") == [
-        "run_as_reapproval", "email_requires_m365_agent", "m365_not_connected", "draft_has_errors",
+        *run_as_codes, "email_requires_m365_agent", "m365_not_connected", "draft_has_errors",
     ]
-    expect(warnings).to_have_text([RUN_AS_WARNING, f"{EMAIL_MESSAGE}Jump to", M365_MESSAGE, DRAFT_ERRORS_MESSAGE])
+    expect(warnings).to_have_text([*run_as_texts, f"{EMAIL_MESSAGE}Jump to", M365_MESSAGE, DRAFT_ERRORS_MESSAGE])
     frame = changed(editor, "task:task-a:instructions")
     expect(author(frame)).to_have_text("AI assist")
     expect(frame.get_by_label("Instructions", exact=True)).to_have_value(instructions)
@@ -467,8 +473,8 @@ def test_run_as_warnings_and_review_before_saving(ask_ui):
     found.get_by_role("button", name=f"Jump to: {EMAIL_MESSAGE}", exact=True).click()
     expect(task_item(editor, "task-b").get_by_label("Task name", exact=True)).to_be_focused()
 
-    payload = confirm_save(ui, editor, run_as=True)
-    assert payload["m365_run_as_user_id"] == OWNER_ID
+    payload = confirm_save(ui, editor, run_as=warned)
+    assert payload["m365_run_as_user_id"] == run_as
     assert payload["tasks"][0]["instructions"] == instructions
 
 

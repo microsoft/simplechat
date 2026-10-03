@@ -6,6 +6,7 @@ Implemented in: 0.261.029
 In-chat onboarding regression coverage implemented in: 0.261.032
 Independent Profile chat reconnect coverage implemented in: 0.261.034
 Shared pending-action renderer coverage implemented in: 0.261.038
+Self-authored Run as binding coverage implemented in: 0.261.229
 
 Uses the real local templates, Bootstrap, and browser modules with deterministic
 same-origin API fixtures. Set AZURE_PLAYWRIGHT_WS_ENDPOINT, AZURE_SUBSCRIPTION_ID,
@@ -22,6 +23,7 @@ import copy
 import json
 import mimetypes
 import os
+import sys
 from pathlib import Path
 from urllib.parse import parse_qs, quote, unquote, urlencode, urlsplit
 
@@ -33,6 +35,11 @@ from playwright.sync_api import expect
 
 
 APP_ROOT = Path(__file__).resolve().parents[1] / "application" / "single_app"
+sys.path.insert(0, str(APP_ROOT))
+
+# The approval projection the server sends; a pure policy module with no cloud I/O at import.
+from functions_m365_approvals import sanitize_m365_approval  # noqa: E402
+
 ORIGIN = "http://simplechat.test"
 CSRF_TOKEN = "ui-test-only-m365-anti-forgery-token-not-a-credential"
 SOURCES = ("calendar", "email", "onedrive", "spo")
@@ -887,7 +894,12 @@ def test_workflow_run_as_selection_preserves_an_unavailable_saved_account(ui):
     }""")
     select = page.get_by_label("Microsoft 365 Run as", exact=True)
     expect(select).to_have_value("removed-reader")
-    expect(page.locator("#workflow-m365-run-as-help")).to_contain_text("manual and scheduled")
+    help_text = page.locator("#workflow-m365-run-as-help")
+    expect(help_text).to_contain_text("manual and scheduled")
+    # Since 0.261.229 only someone else's revision needs the selected person's approval.
+    expect(help_text).to_contain_text("When someone else saves the workflow")
+    expect(help_text).to_contain_text("A revision they saved themselves needs no separate approval.")
+    expect(help_text).not_to_contain_text("require approval again")
     select.select_option("data-user")
     selected = page.evaluate("window.runAsControl.getValue()")
     assert selected == "data-user"
@@ -1582,6 +1594,45 @@ def test_profile_own_connection_disconnect_and_binding_revoke(ui):
     expect(page.locator("#m365RevokeModal")).to_be_hidden()
     expect(page.locator("#m365-connection-status")).to_contain_text("disconnected")
     assert api.revocations[-1] == ("/api/m365/connections/disconnect", {"connection_id": "own-connection"})
+    assert not api.errors
+
+
+@pytest.mark.ui
+def test_self_authored_binding_reads_as_your_own_save_everywhere(ui):
+    """Since 0.261.229 a revision its Run as user saved is approved without a request or a decision."""
+    page, api = ui
+    status = "Decision: approved automatically because you saved this workflow revision yourself."
+    record = approval("self-authored", "m365_workflow_run_as", shared=False)
+    record.pop("expires_at")
+    record.update({
+        "status": "approved", "self_authored": True, "execution_status": "not_required",
+        "continuation_status": "delivered",
+    })
+    record["context"]["workflow_id"] = "own-workflow"
+    record = sanitize_m365_approval(record)
+    assert (record["can_approve"], record["can_deny"]) == (False, False)
+    api.records[record["id"]] = record
+
+    page.goto(f"{ORIGIN}/profile")
+    bindings = page.locator("#m365-workflow-bindings")
+    expect(bindings).to_contain_text(f"Workflow own-workflow: {status}")
+    expect(bindings.get_by_role("button", name="Revoke workflow authorization", exact=True)).to_be_visible()
+
+    page.goto(f"{ORIGIN}/approvals")
+    page.evaluate("""record => {
+        document.getElementById('approvalsTableBody').appendChild(
+            window.SimpleChatM365ApprovalList.renderRow(record)
+        );
+    }""", record)
+    expect(page.locator("#approvalsTableBody")).to_contain_text(status)
+    page.get_by_role("button", name="View saved decision", exact=True).click()
+    saved = page.locator("#m365-approval-records")
+    expect(saved).to_contain_text(status)
+    expect(saved).to_contain_text(record["reason"])
+    expect(saved).not_to_contain_text("Request expires")
+    expect(page.get_by_role("button", name="Allow this workflow revision", exact=True)).to_have_count(0)
+    expect(page.locator("#m365-approvals-apply")).to_be_disabled()
+    assert api.decisions == []
     assert not api.errors
 
 

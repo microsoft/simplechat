@@ -187,7 +187,7 @@ without echoing the value.
 
 | Code | When |
 | --- | --- |
-| `run_as_reapproval` | The workflow has Run as (`m365_run_as_user_id`) and the change alters a key in `workflow_execution_fingerprint`, so saving asks to re-approve Run as. A change that leaves every fingerprinted key alone, such as an alert change, doesn't warn, matching the editor's `workflowRunAsConsequence`. |
+| `run_as_reapproval` | The workflow runs as someone other than the caller (`m365_run_as_user_id`), and the change alters a key in `workflow_execution_fingerprint`, so saving asks that person to re-approve Run as. Since 0.261.229 a workflow that runs as the caller doesn't warn: the caller's save is their own revision, which needs no separate approval. A change that leaves every fingerprinted key alone, such as an alert change, doesn't warn either, matching the editor's `workflowRunAsConsequence`. |
 | `email_requires_m365_agent` | A task this turn added or changed sends email, and the agent that runs it doesn't have the Microsoft 365 action (or no agent runs it). Targets the task. |
 | `m365_not_connected` | A task sends email, the workflow has no Run as or runs as the caller, and the caller's stored Microsoft 365 connection says they aren't connected. It reads the stored record only and never calls Microsoft Graph. |
 | `draft_has_errors` | The draft already failed a save check before this change, and the change caused no new failure. |

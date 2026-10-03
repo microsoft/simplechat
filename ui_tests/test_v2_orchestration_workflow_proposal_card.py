@@ -61,6 +61,11 @@ HOSTILE_TITLE = "Review <b>email</b>"
 CONNECT_HREF = "/profile?tab=settings#m365-connection-status"
 CLOCK_START = datetime(2026, 9, 28, 12, 0, tzinfo=timezone.utc)
 URL_ACCESS_NOTE = "Create the workflow first, then turn on URL Access in the workflow editor."
+RUN_AS_SELF = "You. Microsoft 365 steps use your account."
+SELF_AUTHORED_NOTE = (
+    "so it needs no separate Run as approval. "
+    "If someone else changes it or an agent it uses, its next run waits for your approval."
+)
 
 # The draft route's answer for the Monday email proposal, as the server returns it.
 DRAFT = {
@@ -215,7 +220,7 @@ def agent_proposal():
     )
     value["m365"] = {
         "required": True, "can_send": True, "run_as": "self", "sources": ["email", "calendar"],
-        "connected": False, "approval_state": None,
+        "connected": False, "approval_state": "self_authored",
     }
     value["similar_workflows"] = [{
         "workflow_id": "wf-existing", "name": "Weekly <i>digest</i>",
@@ -479,7 +484,7 @@ def test_pending_card_discloses_everything_and_renders_planner_text_inert(card_u
         "About 4 runs a month.",
         "A notification after every run, severity Info. It appears in your notifications and never pops up.",
         "Uses Email, Calendar. Can send email or calendar invitations.",
-        "You. Microsoft 365 steps use your account. Before its first run, you approve Run as.",
+        f"{RUN_AS_SELF} You create it, {SELF_AUTHORED_NOTE}",
         "Each run saves checkpoints and can resume after an interruption.",
         "Runs with the agent Inbox helper.",
         "Needs: Email.",
@@ -522,6 +527,42 @@ def test_pending_card_discloses_everything_and_renders_planner_text_inert(card_u
     expect(page.get_by_role("button", name=re.compile("^Download"))).to_have_count(0)
     expect(page.get_by_role("article", name=NAME)).to_have_count(1)
     assert article.evaluate("(element) => element.scrollWidth <= element.clientWidth + 1")
+    assert not api.writes()
+
+
+def run_as_proposal(state, approval_state):
+    """A proposal that runs as the requester, in ``state``, with the server's Run as approval state."""
+    value = proposal(state)
+    value["m365"] = {
+        "required": True, "can_send": False, "run_as": "self", "sources": ["email"],
+        "connected": True, "approval_state": approval_state,
+    }
+    return value
+
+
+@pytest.mark.parametrize("state,approval_state,expected", [
+    ("pending", "self_authored", f"{RUN_AS_SELF} You create it, {SELF_AUTHORED_NOTE}"),
+    ("pending", None, f"{RUN_AS_SELF} Before its first run, you approve Run as."),
+    ("created_enabled", "self_authored", f"{RUN_AS_SELF} You saved it, {SELF_AUTHORED_NOTE}"),
+    ("created_paused", None, f"{RUN_AS_SELF} The first run will wait for you to approve Run as."),
+    ("created_enabled", "waiting", f"{RUN_AS_SELF} A run is waiting for your approval. Review Run as approval"),
+    ("created_enabled", "approved", f"{RUN_AS_SELF} Run as is approved."),
+], ids=[
+    "pending, created by the requester", "pending, state unknown", "created and saved by the requester",
+    "created, saved by someone else", "a run waits for approval", "approved",
+])
+def test_run_as_line_follows_the_servers_approval_state(card_ui, state, approval_state, expected):
+    page, api = card_ui
+    api.proposal = run_as_proposal(state, approval_state)
+    mount(page, api)
+    article = card(page)
+    run_as = article.locator("div:has(> dt:text-is('Run as')) > dd")
+    expect(run_as).to_have_text(expected)
+    # A revision the requester saved never claims its first run waits for approval.
+    if approval_state == "self_authored":
+        expect(run_as).not_to_contain_text("The first run will wait")
+        expect(run_as).not_to_contain_text("Before its first run")
+        expect(article.get_by_role("link", name="Review Run as approval")).to_have_count(0)
     assert not api.writes()
 
 

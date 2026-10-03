@@ -232,7 +232,9 @@ requester of a run in their own private conversation. Anyone else gets 404
 
 An accept needs `mode`, `workflow`, or both. With a `workflow` draft, the
 workflow is enabled when the draft enables it, unless `mode` says otherwise.
-Accept records the creation in the activity log; Run as is never approved here.
+Accept records the creation in the activity log. It records no Run as approval:
+the requester saves the workflow it creates, so its own revision runs as them
+without one (since 0.261.229).
 
 ### States and actions
 
@@ -303,10 +305,20 @@ A task on an agent with Microsoft 365 actions runs as the requester. The card
 says which Microsoft 365 data the workflow uses and whether it can send email or
 calendar invitations. Whether Microsoft 365 is connected comes from the stored
 connection record only, with no token refresh or Graph call. When it isn't
-connected, the card links to the profile's Microsoft 365 connection. Accepting
-never approves Run as: the workflow's first run waits for the requester's
-approval, as any workflow's does, and the card links to Approvals while a run is
-waiting.
+connected, the card links to the profile's Microsoft 365 connection.
+
+Since 0.261.229, Run as follows the server's `approval_state`:
+
+| `approval_state` | When | The card says |
+| --- | --- | --- |
+| `self_authored` | Before Create, when the workflow runs as the requester; after Create, when its stored `modified_by` and Run as account are both the requester | It needs no separate Run as approval, and its next run waits for approval only if someone else changes it or an agent it uses. |
+| `waiting` | The workflow's last run is waiting on Microsoft 365 | A run is waiting, with a link to Approvals. |
+| `approved` | The workflow records an approved Run as binding | Run as is approved. |
+| `null` | Anything else, such as a revision someone else saved | The first run waits for the requester's approval. |
+
+Accepting never records a Run as approval. A revision the requester saved runs
+as them without one, as any workflow does. See
+[Run as approval for a revision you saved](M365_RUN_AS_SELF_AUTHORED_APPROVAL.md).
 
 ### URL Access
 

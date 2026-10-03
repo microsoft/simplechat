@@ -968,18 +968,31 @@ def test_microsoft_365_needs_are_shown_from_stored_records_only(h):
     }})
     login(h)
     proposal = only(h)
+    # Accepting creates the workflow in the requester's name, so its Run as needs no separate approval.
     assert proposal["m365"] == {
         "required": True, "can_send": True, "run_as": "self", "sources": ["email"], "connected": True,
-        "approval_state": None,
+        "approval_state": "self_authored",
     }
     assert h.record.connections == [(OWNER, TENANT)]
     h.record.connected = False
     assert only(h)["m365"]["connected"] is False
 
     assert accept(h, mode="enabled").status_code == 201
-    stored_workflow(h)["last_run_status"] = "awaiting_run_as_approval"
+    workflow = stored_workflow(h)
+    assert workflow["modified_by"] == OWNER
+    # A created workflow is described from its stored record: this blueprint runs as no one.
+    assert workflow["m365_run_as_user_id"] == ""
+    assert only(h)["m365"]["approval_state"] is None
+    workflow["m365_run_as_user_id"] = OWNER
+    assert only(h)["m365"]["approval_state"] == "self_authored"
+    workflow["modified_by"] = OTHER
+    assert only(h)["m365"]["approval_state"] is None
+    workflow.pop("modified_by")
+    assert only(h)["m365"]["approval_state"] is None
+    workflow["modified_by"] = OWNER
+    workflow["last_run_status"] = "awaiting_run_as_approval"
     assert only(h)["m365"]["approval_state"] == "waiting"
-    stored_workflow(h)["m365_binding_approval_id"] = "approval-1"
+    workflow["m365_binding_approval_id"] = "approval-1"
     assert only(h)["m365"]["approval_state"] == "approved"
 
 

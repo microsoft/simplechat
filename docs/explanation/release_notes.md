@@ -2,6 +2,20 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.229)**
+
+#### Breaking Changes
+
+*   **Microsoft 365 Workflow Run As Approval Only When Someone Else Authored The Revision**
+    *   A workflow revision saved by its own Run as user now runs as them without a separate approval, including on its first run. SimpleChat records an approved, audited Run as authorization for that exact revision and connection, sends no notification, and never shows it as pending. Before, every edit asked the Run as user to approve again, even their own.
+    *   Approval is still required when someone else is responsible for what runs: someone else saved the current revision, `modified_by` is missing, or someone else changed an agent or action the workflow uses after the Run as user's save. A new connection or connection generation asks again for a revision someone else saved.
+    *   Conversation audience changes no longer ask for Run as approval again; the authorization still records the audience. Source-sharing approvals and the runtime checks that guard runs and deliveries already in progress are unchanged.
+    *   Explicit decisions still win. A denial or cancellation recorded for a run still stops that run. Revoking a Run as authorization in Profile revokes every approved authorization for that revision, which then waits for approval even if its Run as user saved it.
+    *   Raw edits of workflows, agents and actions in the Data Management Cosmos DB editor now record the administrator as the last author, so an edited record can't run as someone else without asking them.
+    *   The V2 workflow proposal card, the editor's **Saving requires re-approving Run as** note, the AI assistant's `run_as_reapproval` warning, the Run as help text in both editors, and the classic Profile and Approvals labels follow the new rule.
+    *   **Migration**: None. Existing approvals keep working. A workflow its Run as user saved last is authorized automatically the next time it needs a new authorization. To require approval for such a revision, revoke its authorization in Profile.
+    *   (Ref: #1621, `functions_m365_approvals.py`, `functions_m365_execution.py`, `functions_m365_workflow_binding.py`, `functions_m365_runtime.py`, `functions_m365_data_lifecycle.py`, `functions_data_management.py`, `functions_orchestration_workflow_proposals.py`, `functions_workflow_assist.py`, `WorkflowProposalCard.tsx`, `WorkflowChangeTracking.tsx`, [Run as approval for a revision you saved](features/M365_RUN_AS_SELF_AUTHORED_APPROVAL.md))
+
 ### **(v0.261.228)**
 
 #### User Interface Enhancements

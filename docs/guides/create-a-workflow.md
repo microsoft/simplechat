@@ -267,10 +267,13 @@ Native V2 **Run as** authoring is implemented in version **0.261.122**. Use
 account; group workflows load eligible choices for the selected group.
 
 New workflows start with **No Microsoft 365 account selected**. Neither workflow
-ownership nor having an account in the list grants consent. The selected person
-must connect Microsoft 365 and approve the workflow. Changes to instructions,
-capabilities, or destinations require approval again; choosing an account does
-not establish that the current revision is approved.
+ownership nor having an account in the list grants consent; the selected person
+must connect Microsoft 365. Since version **0.261.229**, a revision the selected
+person saved themselves runs as them without a separate approval: their save is
+their review. When someone else saves the workflow, or changes an agent or
+action it uses, the selected person approves that revision before it runs as
+them. A change to the conversation audience never asks again. See
+[Microsoft 365 data and approvals]({{ '/guides/microsoft-365-conversation-data/' | relative_url }}).
 
 Save the workflow to persist your choice. To explicitly remove it, choose **No
 Microsoft 365 account selected** and save. If the list cannot load or a saved

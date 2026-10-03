@@ -1237,13 +1237,18 @@ export function workflowSaveNeedsConfirmation(changes: readonly WorkflowChange[]
 /**
  * Whether saving changes the Microsoft 365 execution fingerprint of a workflow that runs as an
  * account, so the account holder has to approve Run as again. Mirrors the server's fingerprint keys.
+ * A save by the Run as account itself is that person's own revision, so it asks nothing; pass the
+ * signed-in user as `currentUserId`.
  */
 export function workflowRunAsConsequence(
     baseline: WorkflowDefinition,
     draft: WorkflowDefinition,
     changes: readonly WorkflowChange[],
+    currentUserId?: string | null,
 ): boolean {
-    if (!textOf(baseline.m365_run_as_user_id) || !textOf(draft.m365_run_as_user_id)) return false;
+    const runAs = textOf(draft.m365_run_as_user_id).trim();
+    if (!textOf(baseline.m365_run_as_user_id) || !runAs) return false;
+    if (currentUserId && runAs === currentUserId.trim()) return false;
     return changes.some((change) => workflowChangeFields(change.key).some((field) => isWorkflowRunAsFingerprintField(field)));
 }
 

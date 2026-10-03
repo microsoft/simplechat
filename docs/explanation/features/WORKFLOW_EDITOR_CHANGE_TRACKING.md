@@ -17,6 +17,7 @@ what makes AI-authored edits reviewable later: each change records whether you o
 turn made it, and a save that includes AI changes asks you to review them first.
 
 Implemented in version: **0.261.203**, tracked in `application/single_app/config.py`.
+The Run as note leaves out your own Run as account since version **0.261.229**.
 Phase 3a of the [chat orchestration workflows roadmap](CHAT_ORCHESTRATION_WORKFLOWS_ROADMAP.md)
 (#1548, part of #1543).
 
@@ -118,9 +119,12 @@ and moves focus to the list of changes.
 
 When the saved workflow runs as a Microsoft 365 account and the draft still does, the top of the
 Changes tab shows **Saving requires re-approving Run as** whenever a change touches a field the
-server fingerprints. The note is informational and appears whoever made the change. Saving such a
-change clears the stored Run as approval, as it always has, so the account holder must approve the
-new revision before it runs as them again; the note says so before you save rather than after.
+server fingerprints. The note is informational and appears whoever made the change, unless the
+draft's Run as account is the signed-in user (since 0.261.229). Saving such a change makes a new
+revision; when someone else saves it, the account holder must approve it before it runs as them
+again, and the note says so before you save rather than after. A revision the Run as account
+holder saved themselves needs no separate approval, so their own saves show no note. See
+[Run as approval for a revision you saved](M365_RUN_AS_SELF_AUTHORED_APPROVAL.md).
 
 ### When nothing is shown
 
@@ -234,8 +238,11 @@ answer, and **Draft with AI** calls it with drafted task instructions.
 `lib/workflowRunAsFingerprint.ts` mirrors the fields the server hashes in
 `workflow_execution_fingerprint` (`functions_m365_workflow_binding.py`): `M365_WORKFLOW_FIELDS`,
 the optional structured fields, and the Run as account itself. `workflowRunAsConsequence` is true
-when the saved workflow and the draft both have a Run as account and a change covers one of those
-fields. `test_workflow_run_as_fingerprint_parity.py` fails when the two lists drift.
+when the saved workflow and the draft both have a Run as account, a change covers one of those
+fields, and the draft's Run as account is not `currentUserId`, the signed-in user from the
+bootstrap (0.261.229). The server's AI assist `run_as_reapproval` warning uses the same rule, and
+`test_workflow_assist_candidate_parity.py` holds the two to it.
+`test_workflow_run_as_fingerprint_parity.py` fails when the field lists drift.
 
 ### Performance
 
@@ -300,7 +307,8 @@ session measured 0.17 ms in the logic tests.
 - `ui_tests/test_v2_workflow_change_tracking.py` (Playwright with stubbed routes): badges,
   Previously, Revert, and Removed · Restore on List and Flow; the Changes tab's Jump, Revert and
   Restore to here; highlights following Undo and Redo; structured alert edits; one-click save;
-  the Run as note; read-only editors, including one opened read-only for a stored schedule it
+  the Run as note, shown when another member must approve and not for your own Run as account;
+  read-only editors, including one opened read-only for a stored schedule it
   can't show; a group workflow; light and dark themes; a narrow viewport;
   a new workflow; and keyboard focus staying in a schedule, Run when, output contract or final
   outputs control, with every typed character kept, while its highlight appears or clears.

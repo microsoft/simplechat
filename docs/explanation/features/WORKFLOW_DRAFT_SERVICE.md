@@ -521,6 +521,8 @@ Known limitations:
   should stay spent is left to #1547, which owns proposal state.
 - The service checks that an agent is available, not that it has the actions a
   task needs, such as sending email.
-- `run_as: self` records the Run as user without an approval. As for any
-  workflow, the user must approve Microsoft 365 access before the workflow can
-  act as them.
+- `run_as: self` records the Run as user without an approval. The user creates
+  the workflow, so since 0.261.229 that revision runs as them without a separate
+  Run as approval; a later change by someone else, to the workflow or to an
+  agent or action it runs, asks them first. Microsoft 365 must still be
+  connected before the workflow can act as them.

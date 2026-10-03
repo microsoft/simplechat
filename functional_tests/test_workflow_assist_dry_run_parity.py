@@ -194,8 +194,9 @@ def test_a_store_outage_is_a_503_never_a_missing_workflow(status, expected):
 # The save check is the save
 # ---------------------------------------------------------------------------------------------
 
-@pytest.mark.parametrize("run_as", ["", OWNER_ID], ids=["without Run as", "with Run as"])
-def test_the_weekday_schedule_and_urgent_alert_pass_the_real_check_and_save_as_checked(harness, run_as):
+@pytest.mark.parametrize("run_as, warned", [("", False), (OWNER_ID, False), (wa.RUN_AS_ID, True)],
+                         ids=["without Run as", "with the owner as Run as", "with someone else as Run as"])
+def test_the_weekday_schedule_and_urgent_alert_pass_the_real_check_and_save_as_checked(harness, run_as, warned):
     stored = _seed(harness, m365_run_as_user_id=run_as)
     assert stored["m365_run_as_user_id"] == run_as
     writes = harness.writes()
@@ -210,7 +211,8 @@ def test_the_weekday_schedule_and_urgent_alert_pass_the_real_check_and_save_as_c
 
     assert harness.writes() == writes
     assert result["outcome"] == "changed"
-    assert [warning["code"] for warning in result["warnings"]] == (["run_as_reapproval"] if run_as else [])
+    # Only someone else's Run as account has to approve the owner's change again.
+    assert [warning["code"] for warning in result["warnings"]] == (["run_as_reapproval"] if warned else [])
     candidate = result["candidate"]
     # The assistant checked the editor's save projection of the candidate, once.
     [checked] = _checked(bundle)
