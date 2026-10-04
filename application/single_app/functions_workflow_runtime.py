@@ -276,6 +276,34 @@ def _reconcile_chat_delivery(body, control, run_id):
     return bool(ready)
 
 
+def _one_time_status_value(workflow, run, state, run_id, completed_at):
+    origin = workflow.get("origin")
+    if not isinstance(origin, dict) or origin.get("one_time") is not True:
+        return None
+    invocation = run.get("chat_invocation")
+    handoff_id = invocation.get("handoff_id") if isinstance(invocation, dict) else None
+    if not isinstance(handoff_id, str) or not handoff_id or origin.get("proposal_id") != handoff_id:
+        return None
+    return {"state": state, "run_id": run_id, "completed_at": completed_at}
+
+
+def _one_time_status(workflow, run, state, run_id, completed_at):
+    """How the run a one-time workflow was handed off for ended, or None. Never raises.
+
+    Only the hand-off's own run records it: the stored run carries the hand-off id the workflow
+    was created for. The value is runtime progress, outside the definition revision and the
+    execution fingerprint, and a failure here never stops the run from being finalized.
+    """
+    try:
+        return _one_time_status_value(workflow, run, state, run_id, completed_at)
+    except Exception as exc:
+        log_event(
+            "[WORKFLOW_RUNTIME] A one-time workflow status was not recorded.",
+            extra={"error_type": type(exc).__name__}, level=logging.WARNING,
+        )
+        return None
+
+
 def _project_runtime_run(services, workflow, run_id, control, *, result=None, attempt=0):
     latest = workflow_runtime_store(workflow, run_id).read()
     if latest["version"] > control["version"]:
@@ -340,6 +368,9 @@ def _project_runtime_run(services, workflow, run_id, control, *, result=None, at
             )
             if current.get("last_run_id") != run_id:
                 updated["run_count"] = int(current.get("run_count") or 0) + 1
+            one_time_status = _one_time_status(current, existing, control["state"], run_id, updated["last_run_at"])
+            if one_time_status is not None:
+                updated["one_time_status"] = one_time_status
         else:
             updated.update(status=control["state"], last_run_status=control["state"])
         updated["updated_at"] = _now()
