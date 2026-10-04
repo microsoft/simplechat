@@ -392,8 +392,9 @@ def _note_lines(plan, execution_steps):
             continue
         sidecar = record.get('workflow_handoff')
         if not isinstance(sidecar, dict) or sidecar.get('status') not in WORKFLOW_HANDOFF_STATUSES:
-            continue
-        if sidecar['status'] == WORKFLOW_HANDOFF_STATUS_READY:
+            # A completed step whose sidecar could not be described again has no card to accept.
+            line = f'{NO_WORKFLOW_HANDED_OFF} {workflow_handoff_reason_text(REASON_PREPARE_FAILED)}'
+        elif sidecar['status'] == WORKFLOW_HANDOFF_STATUS_READY:
             line = WORKFLOW_HANDOFF_NOTE
         else:
             line = f'{NO_WORKFLOW_HANDED_OFF} {workflow_handoff_reason_text(sidecar.get("reason"))}'
