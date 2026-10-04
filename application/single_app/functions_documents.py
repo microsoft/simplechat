@@ -37,7 +37,12 @@ from functions_authentication import *
 from functions_debug import *
 from functions_keyvault import SecretReturnType, keyvault_model_endpoint_get_helper
 from functions_model_endpoint_identity_header import build_model_endpoint_identity_headers
-from functions_model_endpoint_runtime import MODEL_ENDPOINT_PROVIDER_ALLOWLIST, build_model_endpoint_sync_chat_client
+from functions_model_endpoint_runtime import (
+    MODEL_ENDPOINT_PROVIDER_ALLOWLIST,
+    build_model_endpoint_sync_chat_client,
+    resolve_model_endpoint_from_context,
+)
+from functions_model_endpoint_urls import routing_schema_version
 from functions_xsd_schema import (
     ERR_COMPILE_FAILED,
     ERR_DEPENDENCY_LOCATIONLESS_IMPORT,
@@ -183,6 +188,7 @@ def _build_model_endpoint_client(
     settings=None,
     endpoint_config=None,
     identity_context=None,
+    resolved_route=None,
 ):
     client, _ = build_model_endpoint_sync_chat_client(
         auth_settings,
@@ -193,9 +199,12 @@ def _build_model_endpoint_client(
         api_type=api_type,
         anthropic_version=anthropic_version,
         allow_private_custom_endpoints=allow_private_custom_endpoints,
+        allow_insecure_custom_endpoints=(settings or {}).get('allow_insecure_custom_model_endpoints') is True,
+        custom_endpoint_ca_bundle_path=str((settings or {}).get('custom_model_endpoint_ca_bundle_path') or ''),
         settings=settings,
         endpoint_config=endpoint_config,
         identity_context=identity_context,
+        resolved_route=resolved_route,
     )
     return client
 
@@ -215,12 +224,29 @@ def _resolve_metadata_extraction_client(settings, identity_context=None):
         if not endpoint_cfg.get("enabled", True):
             raise ValueError("Selected metadata extraction endpoint is disabled.")
 
-        endpoint_cfg = keyvault_model_endpoint_get_helper(
-            endpoint_cfg,
-            endpoint_cfg.get("id") or selection["endpoint_id"],
-            scope="global",
-            return_type=SecretReturnType.VALUE,
-        )
+        resolved_route = None
+        if routing_schema_version(endpoint_cfg) == 2:
+            identity = identity_context if isinstance(identity_context, dict) else {}
+            endpoint_cfg = resolve_model_endpoint_from_context(settings, {
+                "routing_schema_version": 2,
+                "scope_type": "global",
+                "scope_id": "global",
+                "endpoint_id": selection["endpoint_id"],
+                "model_id": selection["model_id"],
+                "user_id": str(identity.get("user_id") or "").strip(),
+            })
+            if not isinstance(endpoint_cfg, dict):
+                raise LookupError("Selected metadata extraction endpoint could not be authorized.")
+            resolved_route = endpoint_cfg.get("_resolved_route")
+            if not isinstance(resolved_route, dict):
+                raise ValueError("Selected metadata extraction route could not be resolved.")
+        else:
+            endpoint_cfg = keyvault_model_endpoint_get_helper(
+                endpoint_cfg,
+                endpoint_cfg.get("id") or selection["endpoint_id"],
+                scope="global",
+                return_type=SecretReturnType.VALUE,
+            )
 
         models = endpoint_cfg.get("models", []) or []
         model_cfg = next((m for m in models if m.get("id") == selection["model_id"]), None)
@@ -232,17 +258,27 @@ def _resolve_metadata_extraction_client(settings, identity_context=None):
         provider = str(endpoint_cfg.get("provider") or selection["provider"] or "aoai").lower()
         connection = endpoint_cfg.get("connection", {}) or {}
         auth_settings = endpoint_cfg.get("auth", {}) or {}
-        deployment = resolve_model_endpoint_request_model(endpoint_cfg, model_cfg)
-        endpoint = str(connection.get("endpoint") or "").strip()
-        api_version = str(connection.get("openai_api_version") or connection.get("api_version") or "").strip()
-        api_type = get_model_endpoint_api_type(endpoint_cfg)
-        anthropic_version = str(connection.get("anthropic_version") or "").strip()
-        runtime_protocol = infer_model_endpoint_protocol(
-            provider,
-            endpoint,
-            deployment,
-            api_type,
+        deployment = (
+            resolved_route["request_model"]
+            if resolved_route
+            else resolve_model_endpoint_request_model(endpoint_cfg, model_cfg)
         )
+        endpoint = str(connection.get("endpoint") or "").strip()
+        if resolved_route:
+            api_version = resolved_route["api_version"]
+            api_type = resolved_route["api_type"]
+            anthropic_version = resolved_route["anthropic_version"]
+            runtime_protocol = resolved_route["protocol"]
+        else:
+            api_version = str(connection.get("openai_api_version") or connection.get("api_version") or "").strip()
+            api_type = get_model_endpoint_api_type(endpoint_cfg)
+            anthropic_version = str(connection.get("anthropic_version") or "").strip()
+            runtime_protocol = infer_model_endpoint_protocol(
+                provider,
+                endpoint,
+                deployment,
+                api_type,
+            )
 
         if provider not in MODEL_ENDPOINT_PROVIDER_ALLOWLIST:
             raise ValueError(f"Selected metadata extraction provider '{provider}' is not supported.")
@@ -265,6 +301,7 @@ def _resolve_metadata_extraction_client(settings, identity_context=None):
             settings=settings,
             endpoint_config=endpoint_cfg,
             identity_context=identity_context,
+            resolved_route=resolved_route,
         ), deployment
 
     gpt_model = settings.get('metadata_extraction_model')

@@ -31,6 +31,10 @@ interactive delivery were added in **0.261.038**. See the
 Related version update: `application/single_app/config.py`.
 Associated issue: #1493. Related future work: #954 and #956.
 
+JSON request finalization was corrected in **0.261.048** to leave static files,
+downloads, and streams untouched while retaining buffered API completion behavior.
+See the [response passthrough fix](../fixes/M365_JSON_RESPONSE_PASSTHROUGH_FIX.md).
+
 ## Overview
 
 Calendar, Email, OneDrive, and SharePoint Online are separate actions. They

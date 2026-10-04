@@ -2,10 +2,12 @@
 """
 Azure Playwright-ready endpoint/model capacity editor workflows.
 
-Version: 0.261.042
+Version: 0.261.046
 Implemented in: 0.261.035
 
 Per-model routing round trips added in: 0.261.042
+Live schema-v2 model test coverage added in: 0.261.044
+Explicit activation/deactivation coverage added in: 0.261.046
 
 Exercises the real shared modal, local Bootstrap/assets, and admin/personal/group
 editors with same-origin API fixtures. Uses the existing AZURE_PLAYWRIGHT_*
@@ -112,6 +114,7 @@ class EndpointApiFixture:
         self.discovered_models = []
         self.fetch_payloads = []
         self.preview_payloads = []
+        self.test_payloads = []
         self.page_errors = []
         self.console_errors = []
         self.nonlocal_requests = []
@@ -145,18 +148,39 @@ class EndpointApiFixture:
         elif path == f"{prefix}/models/fetch":
             self.fetch_payloads.append(copy.deepcopy(body))
             payload = {"models": self.discovered_models}
-        elif path == f"{prefix}/models/test-model" and body.get("preview_only") is True:
-            self.preview_payloads.append(copy.deepcopy(body))
-            try:
-                resolved = resolve_model_endpoint_route({**body, "id": body.get("id") or "preview"}, body["model"])
-            except ValueError:
-                self.expected_preview_error = True
-                route.fulfill(status=400, content_type="application/json", body=json.dumps({"error": "Invalid model routing."}))
-                return
-            payload = {"preview_only": True, "resolved": {"method": "POST", **resolved}}
-            if self.defer_preview:
-                self.deferred_previews.append((route, payload))
-                return
+        elif path == f"{prefix}/models/test-model":
+            if body.get("preview_only") is True:
+                self.preview_payloads.append(copy.deepcopy(body))
+                try:
+                    resolved = resolve_model_endpoint_route({**body, "id": body.get("id") or "preview"}, body["model"])
+                except ValueError:
+                    self.expected_preview_error = True
+                    route.fulfill(status=400, content_type="application/json", body=json.dumps({"error": "Invalid model routing."}))
+                    return
+                payload = {"preview_only": True, "resolved": {"method": "POST", **resolved}}
+                if self.defer_preview:
+                    self.deferred_previews.append((route, payload))
+                    return
+            else:
+                self.test_payloads.append(copy.deepcopy(body))
+                endpoint_id = str(body.get("id") or body.get("endpoint_id") or "")
+                saved_endpoint = next((item for item in self.endpoints if item.get("id") == endpoint_id), None)
+                requested_model = body.get("model") if isinstance(body.get("model"), dict) else {}
+                saved_model = next((item for item in (saved_endpoint or {}).get("models", []) if item.get("id") == requested_model.get("id")), None)
+                if not saved_endpoint or not saved_model:
+                    route.fulfill(status=404, content_type="application/json", body=json.dumps({"error": "Saved endpoint or model not found."}))
+                    return
+                if body.get("connection", {}).get("endpoint") != saved_endpoint.get("connection", {}).get("endpoint"):
+                    route.fulfill(status=409, content_type="application/json", body=json.dumps({"error": "Save endpoint changes before testing."}))
+                    return
+                if any(
+                    field in requested_model and requested_model.get(field) != saved_model.get(field)
+                    for field in ("api_type", "api_path", "url_mode", "modelName", "deploymentName", "api_version", "anthropic_version")
+                ):
+                    route.fulfill(status=409, content_type="application/json", body=json.dumps({"error": "Save model changes before testing."}))
+                    return
+                resolved = resolve_model_endpoint_route(saved_endpoint, saved_model)
+                payload = {"success": True, "resolved": {"request_url": resolved["operation_url"]}}
         else:
             route.fulfill(status=404, content_type="application/json", body="{}")
             return
@@ -357,7 +381,7 @@ def test_routing_preview_validation_and_mobile_layout(capacity_ui, width):
     row.get_by_role("button", name="Preview Route", exact=True).click()
     output = row.get_by_test_id("model-route-preview")
     expect(output).to_contain_text("POST https://gateway.example/team/shared/v1/messages")
-    expect(row.get_by_role("button", name="Test Connection", exact=True)).to_be_disabled()
+    expect(row.get_by_role("button", name="Test Connection", exact=True)).to_be_enabled()
     body = api.preview_payloads[-1]
     assert body["routing_schema_version"] == 2
     assert body["model"]["api_type"] == "anthropic"
@@ -380,6 +404,31 @@ def test_routing_preview_validation_and_mobile_layout(capacity_ui, width):
     artifact = Path(__file__).parent / "artifacts" / f"model-routing-{api.scope}-{width}.png"
     artifact.parent.mkdir(parents=True, exist_ok=True)
     page.screenshot(path=str(artifact))
+
+
+def test_schema_v2_live_connection_uses_saved_model_route(capacity_ui):
+    page, api = capacity_ui
+    endpoint = api.endpoints[0]
+    endpoint["routing_schema_version"] = 2
+    endpoint["connection"]["endpoint"] = "https://gateway.example/shared/v1"
+    endpoint["models"][0].update({
+        "api_type": "openai",
+        "api_path": "aoai-global-team",
+        "url_mode": "auto",
+    })
+    _open_editor(page, api)
+    row = page.locator("[data-model-row-id]").first
+    test_button = row.get_by_role("button", name="Test Connection", exact=True)
+    expect(test_button).to_be_enabled()
+    test_button.click()
+    expect(page.locator(".toast-body").filter(
+        has_text="Model connection successful. Called https://gateway.example/aoai-global-team/shared/v1/chat/completions"
+    )).to_be_visible()
+    assert len(api.test_payloads) == 1
+    request = api.test_payloads[0]
+    assert request["routing_schema_version"] == 2
+    assert request["id"] == "endpoint-one"
+    assert request["model"]["id"] == "model-one"
 
 
 def test_new_endpoints_use_explicit_routing_without_migrating_legacy(capacity_ui):
@@ -409,6 +458,24 @@ def test_new_endpoints_use_explicit_routing_without_migrating_legacy(capacity_ui
     assert endpoints[1]["models"][0]["url_mode"] == "auto"
     assert "api_type" not in endpoints[1]
     assert "url_mode" not in endpoints[1]["connection"]
+
+    saved_model = copy.deepcopy(endpoints[1]["models"][0])
+    toggle = page.locator('#model-endpoints-tbody [data-action="toggle"]').nth(1)
+    for enabled in (True, False):
+        expect(toggle).to_be_enabled()
+        if api.scope == "admin":
+            toggle.click()
+            updated = json.loads(page.locator("#model_endpoints_json").input_value())
+        else:
+            with page.expect_response(
+                lambda response: response.url == f"{ORIGIN}/api/{api.scope}/model-endpoints" and response.request.method == "POST"
+            ):
+                toggle.click()
+            updated = api.saved_payloads[-1]["endpoints"]
+        expect(toggle).to_have_text("Disable" if enabled else "Enable")
+        assert updated[1]["enabled"] is enabled
+        assert updated[1]["models"][0] == saved_model
+        assert "routing_schema_version" not in updated[0]
 
 
 def test_model_library_preserves_explicit_routing_and_capabilities(capacity_ui):

@@ -15,6 +15,7 @@ from functions_model_endpoint_types import (
     get_model_endpoint_api_type,
     resolve_model_endpoint_request_model,
 )
+from functions_model_endpoint_urls import routing_schema_version
 from functions_activity_logging import (
     log_admin_feedback_email_submission,
     log_general_admin_action,
@@ -1425,6 +1426,18 @@ def _test_multimodal_vision_connection(payload):
                     or ''
                 ).strip(),
             }
+            selected_endpoint = next((
+                endpoint for endpoint in settings.get('model_endpoints', []) or []
+                if isinstance(endpoint, dict)
+                and str(endpoint.get('id') or '').strip() == model_context['endpoint_id']
+            ), None)
+            if selected_endpoint and routing_schema_version(selected_endpoint) == 2:
+                model_context.update({
+                    'routing_schema_version': 2,
+                    'scope_type': 'global',
+                    'scope_id': 'global',
+                    'user_id': identity_context['user_id'],
+                })
             resolved_endpoint = resolve_model_endpoint_from_context(settings, model_context)
             if not resolved_endpoint:
                 return jsonify({'error': 'Selected vision model endpoint could not be resolved from saved settings'}), 400
@@ -1451,7 +1464,13 @@ def _test_multimodal_vision_connection(payload):
             if not matched_model:
                 return jsonify({'error': 'Selected vision model could not be resolved from saved settings'}), 400
 
-            vision_model = resolve_model_endpoint_request_model(resolved_endpoint, matched_model)
+            resolved_route = resolved_endpoint.get('_resolved_route')
+            if resolved_route:
+                if not resolved_route.get('capabilities', {}).get('processesImages', False):
+                    return jsonify({'error': 'Selected model is not approved for image input.'}), 400
+                vision_model = resolved_route['request_model']
+            else:
+                vision_model = resolve_model_endpoint_request_model(resolved_endpoint, matched_model)
             vision_model_name = str(matched_model.get('modelName') or vision_model).strip()
             connection = resolved_endpoint.get('connection', {}) or {}
             gpt_client, _ = build_model_endpoint_sync_chat_client(
@@ -1460,7 +1479,7 @@ def _test_multimodal_vision_connection(payload):
                 connection.get('endpoint'),
                 connection.get('openai_api_version') or connection.get('api_version'),
                 deployment_name=vision_model,
-                api_type=get_model_endpoint_api_type(resolved_endpoint),
+                api_type=(resolved_route['api_type'] if resolved_route else get_model_endpoint_api_type(resolved_endpoint)),
                 anthropic_version=connection.get('anthropic_version') or '',
                 allow_private_custom_endpoints=bool(
                     settings.get('allow_private_custom_model_endpoints', False)
@@ -1468,6 +1487,7 @@ def _test_multimodal_vision_connection(payload):
                 settings=settings,
                 endpoint_config=resolved_endpoint,
                 identity_context=identity_context,
+                resolved_route=resolved_route,
             )
         elif enable_apim:
             settings = get_settings()

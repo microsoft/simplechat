@@ -614,11 +614,6 @@ function renderEndpoints() {
         row.appendChild(statusCell);
         row.appendChild(actionsCell);
 
-        const toggleButton = row.querySelector('[data-action="toggle"]');
-        if (endpoint.routing_schema_version === 2 && !endpoint.enabled) {
-            toggleButton.disabled = true;
-            toggleButton.title = "Per-model routing is configuration-only until runtime integration is available.";
-        }
         endpointsTbody.appendChild(row);
     });
 
@@ -1442,10 +1437,6 @@ function renderModalModels(models) {
         testButton.dataset.action = "test-model";
         testButton.dataset.modelId = modelId;
         testButton.textContent = "Test Connection";
-        testButton.disabled = modalEndpoint.routing_schema_version === 2;
-        if (testButton.disabled) {
-            testButton.title = "Live testing for per-model routing is not available yet.";
-        }
         const removeButton = document.createElement("button");
         removeButton.type = "button";
         removeButton.className = "btn btn-sm btn-outline-danger";

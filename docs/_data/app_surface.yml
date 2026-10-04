@@ -146,7 +146,7 @@ capabilities:
 - key: enable_multi_agent_orchestration
   default: false
 - key: enable_multi_model_endpoints
-  default: false
+  default: true
 - key: enable_multimodal_vision
   default: false
 - key: enable_no_auth_external_healthcheck

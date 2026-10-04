@@ -16,6 +16,7 @@ import { applyScopeLock } from './chat-documents.js';
 import { beginStreamingThoughtSession, clearStreamingThoughtSession, handleStreamingThought, markStreamingThoughtContentStarted, stopThoughtPolling } from './chat-thoughts.js';
 import { destroyInlineCharts, hydrateInlineCharts } from './chat-inline-charts.js';
 import { hydrateInlineImageProposals } from './chat-inline-image-proposals.js';
+import { hydrateMath } from './chat-math.js';
 import { escapeHtml } from './chat-utils.js';
 import { requestDesktopNotificationPermissionIfNeeded, showDesktopConversationNotification } from './chat-desktop-notifications.js';
 
@@ -1372,6 +1373,7 @@ export function updateStreamingMessage(messageId, content) {
             const renderedContent = renderAiMessageContent(content);
             contentElement.innerHTML = renderedContent.htmlContent;
             restoreStableStreamingChartNodes(contentElement, stableChartNodes);
+            void hydrateMath(contentElement);
             hydrateInlineCharts(messageElement);
             hydrateInlineImageProposals(messageElement);
         } else {
@@ -1489,6 +1491,7 @@ function renderStoppedContent(messageElement, partialContent) {
         if (typeof marked !== 'undefined' && typeof DOMPurify !== 'undefined') {
             const renderedContent = renderAiMessageContent(normalizedContent);
             contentElement.innerHTML = renderedContent.htmlContent;
+            void hydrateMath(contentElement);
             hydrateInlineCharts(messageElement);
         } else {
             contentElement.textContent = normalizedContent;
@@ -1618,6 +1621,7 @@ function handleStreamError(messageId, partialContent, errorMessage, errorDetails
         // Parse markdown for partial content
         if (typeof marked !== 'undefined' && typeof DOMPurify !== 'undefined') {
             contentElement.innerHTML = renderAiMessageContent(finalContent).htmlContent;
+            void hydrateMath(contentElement);
         } else {
             contentElement.textContent = finalContent;
         }

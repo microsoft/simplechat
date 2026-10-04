@@ -2,23 +2,37 @@
 # test_terms_of_use.py
 """
 Functional test for Terms of Use recurrence and persistence helpers.
-Version: 0.250.057
+Version: 0.261.051
 Implemented in: 0.250.055
 Redirect hardening updated in: 0.250.057
+Disabled-setting and activity revision regressions: 0.261.050 (#1615, #1616)
 
 This test ensures Terms of Use hashes, redirect validation,
 pre-auth session acceptance, and user-settings persistence behave consistently.
 """
 
-import os
+import ast
+from copy import deepcopy
+from datetime import datetime
+import logging
 import sys
 import types
 import importlib.util
 from pathlib import Path
+from typing import Optional
+from unittest.mock import Mock
+import uuid
+
+import pytest
+from werkzeug.datastructures import MultiDict
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 APP_DIR = REPO_ROOT / "application" / "single_app"
+if str(APP_DIR) not in sys.path:
+    sys.path.insert(0, str(APP_DIR))
+
+from functions_terms_of_use_config import format_terms_of_use_version, normalize_terms_of_use_revision
 
 
 class FakeSession(dict):
@@ -189,28 +203,173 @@ def test_daily_user_settings_acceptance_requires_today():
         terms.get_user_settings = original_get_user_settings
 
 
-if __name__ == "__main__":
-    os.environ.setdefault("DISABLE_FLASK_INSTRUMENTATION", "1")
-    tests = [
-        test_hash_and_redirect_normalization,
-        test_pre_auth_session_acceptance_unblocks_login_for_daily_mode,
-        test_once_acceptance_persists_to_user_settings_and_activity_log,
-        test_daily_user_settings_acceptance_requires_today,
+def _load_functions(path, names, namespace):
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    functions = [
+        node for node in tree.body
+        if isinstance(node, ast.FunctionDef) and node.name in names
     ]
-    results = []
-    for test in tests:
-        print(f"\nRunning {test.__name__}...")
-        try:
-            test()
-            print("PASS")
-            results.append(True)
-        except Exception as exc:
-            print(f"FAIL: {exc}")
-            import traceback
+    assert {node.name for node in functions} == set(names)
+    exec(compile(ast.Module(body=functions, type_ignores=[]), str(path), "exec"), namespace)
+    return namespace
 
-            traceback.print_exc()
-            results.append(False)
 
-    passed = sum(results)
-    print(f"\nResults: {passed}/{len(results)} tests passed")
-    sys.exit(0 if all(results) else 1)
+@pytest.fixture
+def recorded_terms(monkeypatch):
+    records = []
+    users = {}
+    logger = Mock()
+    container = Mock()
+    container.create_item.side_effect = lambda *, body: records.append(deepcopy(body))
+    namespace = _load_functions(
+        APP_DIR / "functions_activity_logging.py",
+        {"log_terms_of_use_accepted", "log_terms_of_use_declined"},
+        {
+            "uuid": uuid, "datetime": datetime, "Optional": Optional,
+            "cosmos_activity_logs_container": container,
+            "log_event": logger, "logging": logging, "debug_print": Mock(),
+        },
+    )
+    monkeypatch.setattr(terms, "log_terms_of_use_accepted", namespace["log_terms_of_use_accepted"])
+    monkeypatch.setattr(terms, "log_terms_of_use_declined", namespace["log_terms_of_use_declined"])
+    monkeypatch.setattr(terms, "get_user_settings", lambda user: {"settings": deepcopy(users.get(user, {}))})
+
+    def save_user(user, changes):
+        users.setdefault(user, {}).update(deepcopy(changes))
+        return True
+
+    monkeypatch.setattr(terms, "update_user_settings", save_user)
+    fake_session.clear()
+    yield records, users, logger
+    fake_session.clear()
+
+
+@pytest.mark.parametrize("frequency", ["once", "daily", "every_session"])
+@pytest.mark.parametrize("source", ["pre_auth", "post_auth"])
+def test_activity_records_identify_each_accepted_terms_revision(recorded_terms, frequency, source):
+    records, users, logger = recorded_terms
+    first = _enabled_settings(frequency, message="First **revision**.")
+    normalize_terms_of_use_revision(first)
+    second = _enabled_settings(frequency, message="Second **revision**.")
+    second["terms_of_use_revision"] = deepcopy(first["terms_of_use_revision"])
+    normalize_terms_of_use_revision(second)
+    for version, settings in enumerate((first, second), start=1):
+        if source == "pre_auth":
+            terms.mark_pre_auth_terms_of_use_acceptance(settings)
+            accepted = terms.apply_pending_pre_auth_terms_of_use("reader", settings)
+        else:
+            accepted = terms.record_terms_of_use_acceptance("reader", settings)
+        assert records[-1]["terms_hash"] == accepted["hash"]
+        assert records[-1]["terms_version"] == accepted["version"] == version
+        assert records[-1]["terms_hash"] == terms.get_terms_of_use_config(settings)["hash"]
+        assert records[-1]["source"] == source
+        assert records[-1]["frequency"] == frequency
+        assert records[-1]["activity_type"] == "terms_of_use_accepted"
+        assert "message" not in records[-1]
+        if frequency != "every_session":
+            assert users["reader"]["termsOfUse"]["hash"] == records[-1]["terms_hash"]
+
+    assert len(records) == 2
+    assert records[0]["terms_hash"] != records[1]["terms_hash"]
+    assert len(records[0]["terms_hash"]) == 64
+    assert not any(call.kwargs["level"] == logging.ERROR for call in logger.call_args_list)
+
+
+def test_changed_terms_do_not_publish_stale_pre_auth_acceptance(recorded_terms):
+    records, _, _ = recorded_terms
+    terms.mark_pre_auth_terms_of_use_acceptance(_enabled_settings(message="Old terms"))
+    assert terms.apply_pending_pre_auth_terms_of_use("reader", _enabled_settings(message="New terms")) is None
+    assert records == []
+
+
+def test_decline_records_current_terms_revision(recorded_terms):
+    records, _, _ = recorded_terms
+    settings = _enabled_settings()
+    normalize_terms_of_use_revision(settings)
+    terms.record_terms_of_use_decline("reader", settings)
+    assert records[0]["activity_type"] == "terms_of_use_declined"
+    assert records[0]["terms_hash"] == terms.get_terms_of_use_config(settings)["hash"]
+    assert records[0]["terms_version"] == 1
+
+
+@pytest.mark.parametrize("activity_type", ["terms_of_use_accepted", "terms_of_use_declined"])
+def test_activity_csv_includes_recorded_revision_not_current_settings(activity_type):
+    formatter = _load_functions(
+        APP_DIR / "route_backend_control_center.py",
+        {"format_activity_log_details_for_csv"}, {"format_terms_of_use_version": format_terms_of_use_version},
+    )["format_activity_log_details_for_csv"]
+    revisions = [terms.get_terms_of_use_config(_enabled_settings(message=text))["hash"] for text in ("Old", "New")]
+    for version, revision in enumerate(revisions, start=1):
+        details = formatter({
+            "activity_type": activity_type, "terms_hash": revision,
+            "terms_version": version,
+            "frequency": "once", "source": "pre_auth",
+        })
+        assert f"Terms version: v{version}" in details
+        assert revision not in details
+        assert "Frequency: once" in details
+        assert "Source: pre_auth" in details
+    assert "Terms version: Legacy" in formatter({"activity_type": activity_type, "terms_hash": revisions[0]})
+
+
+def test_legacy_pre_auth_acceptance_is_not_given_an_invented_version(recorded_terms):
+    records, _, _ = recorded_terms
+    settings = _enabled_settings()
+    pending = terms.mark_pre_auth_terms_of_use_acceptance(settings)
+    pending.pop("version")
+    normalize_terms_of_use_revision(settings)
+    terms.apply_pending_pre_auth_terms_of_use("reader", settings)
+    assert records[0]["terms_version"] is None
+    assert records[0]["terms_hash"] == terms.get_terms_of_use_config(settings)["hash"]
+
+
+def test_revision_metadata_does_not_invalidate_existing_acceptance(recorded_terms):
+    records, users, _ = recorded_terms
+    settings = _enabled_settings()
+    terms.record_terms_of_use_acceptance("reader", settings)
+    original_hash = users["reader"]["termsOfUse"]["hash"]
+    normalize_terms_of_use_revision(settings)
+    assert terms.has_terms_of_use_acceptance(settings, "reader")
+    assert terms.record_terms_of_use_acceptance("reader", settings) is None
+    assert len(records) == 1
+    assert original_hash == settings["terms_of_use_revision"]["hash"]
+
+
+@pytest.mark.parametrize("enabled", [False, True])
+def test_admin_terms_parsing_includes_edits_when_disabled(enabled):
+    """Exercise the actual route's Terms statements and saved-field mapping offline."""
+    tree = ast.parse((APP_DIR / "route_frontend_admin_settings.py").read_text(encoding="utf-8"))
+    registrar = next(node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == "register_route_frontend_admin_settings")
+    route = next(node for node in registrar.body if isinstance(node, ast.FunctionDef) and node.name == "admin_settings")
+    post = next(node for node in route.body if isinstance(node, ast.If) and ast.unparse(node.test) == "request.method == 'POST'")
+    start = next(index for index, node in enumerate(post.body) if isinstance(node, ast.Assign) and any(isinstance(target, ast.Name) and target.id == "enable_terms_of_use" for target in node.targets))
+    end = next(index for index, node in enumerate(post.body) if isinstance(node, ast.Assign) and any(isinstance(target, ast.Name) and target.id == "enable_ai_notice" for target in node.targets))
+    settings_assignment = next(node for node in post.body if isinstance(node, ast.Assign) and any(isinstance(target, ast.Name) and target.id == "new_settings" for target in node.targets))
+    pairs = [(key, value) for key, value in zip(settings_assignment.value.keys, settings_assignment.value.values) if isinstance(key, ast.Constant) and (key.value.startswith("terms_of_use_") or key.value == "enable_terms_of_use")]
+    projection = ast.Return(value=ast.Dict(
+        keys=[key for key, _ in pairs], values=[value for _, value in pairs],
+    ))
+    form = MultiDict({
+        "terms_of_use_title": "Updated title",
+        "terms_of_use_message": "Updated **terms** while disabled.",
+        "terms_of_use_frequency": "daily",
+        "terms_of_use_decline_redirect_url": "/goodbye",
+        "terms_of_use_accept_button_text": "Agree",
+        "terms_of_use_decline_button_text": "Decline",
+    })
+    if enabled:
+        form["enable_terms_of_use"] = "on"
+    namespace = {**vars(terms), "form_data": form, "flash": Mock()}
+    wrapper = ast.parse("def parse_terms():\n    pass\n").body[0]
+    wrapper.body = post.body[start:end] + [projection]
+    module = ast.fix_missing_locations(ast.Module(body=[wrapper], type_ignores=[]))
+    exec(compile(module, "admin_terms_save", "exec"), namespace)
+    assert namespace["parse_terms"]() == {
+        **{key: value for key, value in form.items() if key != "enable_terms_of_use"},
+        "enable_terms_of_use": enabled,
+    }
+    namespace["flash"].assert_not_called()
+
+
+if __name__ == "__main__":
+    sys.exit(pytest.main([str(Path(__file__).resolve())]))

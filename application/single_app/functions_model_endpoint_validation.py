@@ -11,6 +11,7 @@ from functions_model_endpoint_providers import (
     AUTH_TYPE_API_KEY,
     AUTH_TYPE_BEARER,
     AUTH_TYPE_OAUTH2_CLIENT_CREDENTIALS,
+    MODEL_ENDPOINT_API_TYPE_AZURE_OPENAI,
     get_model_endpoint_provider,
     normalize_custom_endpoint_auth_type,
 )
@@ -384,7 +385,12 @@ def validate_custom_model_endpoint(
         if registered_provider.default_version:
             version_value = version_value or registered_provider.default_version
         if registered_provider.requires_api_version or version_value:
-            _validate_version(version_value, f"{registered_provider.display_name} version")
+            version_label = (
+                "Azure OpenAI API"
+                if registered_provider.api_type == MODEL_ENDPOINT_API_TYPE_AZURE_OPENAI
+                else registered_provider.display_name
+            )
+            _validate_version(version_value, f"{version_label} version")
 
     seen_model_names = set()
     models: Iterable[Any] = endpoint.get("models") or []

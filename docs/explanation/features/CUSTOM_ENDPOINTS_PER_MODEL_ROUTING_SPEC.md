@@ -2,16 +2,16 @@
 
 ## Status and Version
 
-- Status: Phases 0-2 implemented locally; Phases 3-5 remain planned. The backend contract and endpoint editors support per-model routing. Model-chat dispatch does not yet use the new contract.
+- Status: Phases 0-2 are implemented and pushed to draft PR #1514. Phase 3 runtime hardening and explicit activation are implemented locally in **0.261.046**. Beta deployment validation is blocked by Azure resource authorization; no build or deployment ran. Live provider acceptance is not complete. Phase 4 GenAI.mil and Phase 5 release/rollout remain planned.
 - Date: 2026-09-21.
-- Decisions last reviewed: 2026-09-22; Azure/Foundry presentation and initial GenAI.mil scope confirmed. The 21-script guarded baseline passes after Phase 1 implementation.
+- Decisions last reviewed: 2026-09-25; beta selected for Phase 3 live testing of Foundry Claude/GPT through APIM and AOAI. Agents remain excluded; UI refinements and CA bundle management are recorded as post-Phase 3 work. GenAI.mil remains planned in Phase 4, with live access unavailable to the current tester.
 - Baseline application version: **0.261.039**, from `application/single_app/config.py`.
 - Phase 0 closeout version: **0.261.040**, for test-fixture repairs and required version metadata only; that version did not implement new routing.
-- Implemented in version: **0.261.041** for the Phase 1 contract, migration planner, and resolver; **0.261.042** for Phase 2 editors, library selection, and previews, matching `application/single_app/config.py`. End-to-end inference remains unimplemented.
+- Implemented in version: **0.261.041** for the Phase 1 contract, migration planner, and resolver; **0.261.042** for Phase 2 editors, library selection, and previews; **0.261.044** for initial local Phase 3 runtime wiring; **0.261.045** for workflow authorization, deferred context, and adapter-boundary repairs; **0.261.046** for request capability enforcement, queued owner binding, protocol-consistent budgets, cancellation cleanup, and explicit activation. `application/single_app/config.py` is **0.261.046**.
 - Working branch: `feature/customendpoints`, created from refreshed `origin/Development`.
 - Baseline commit: `f1be106ec2088cf9105293a7b1dac16e668e2685`.
 - Source reviewed: [Paullizer's React v2 branch in the main repository](https://github.com/microsoft/simplechat/tree/3f896d7b6c45800c593599f3100b9aa7c7251159), `origin/paullizer-react-v2-ui`, commit `3f896d7b6c45800c593599f3100b9aa7c7251159`, version **0.261.126** at inspection. The user identified the deployed UI as **0.261.123**; pin the source commit rather than assuming the deployed UI is the latest branch tip.
-- Tracking: [issue #1518](https://github.com/microsoft/simplechat/issues/1518), assigned to `Bionic711`, with roadmap priority **P0**, size **L**, and status **In progress**. [Draft PR #1514](https://github.com/microsoft/simplechat/pull/1514) contains the original specification; Phase 0/1 changes remain local and uncommitted. Existing issue #1222 is not the tracker for this new scope.
+- Tracking: [issue #1518](https://github.com/microsoft/simplechat/issues/1518), assigned to `Bionic711`, with roadmap priority **P0**, size **L**, and status **In progress**. [Draft PR #1514](https://github.com/microsoft/simplechat/pull/1514) contains the specification and pushed Phase 0-2 implementation at `87c0891f`; Phase 3 work remains local and uncommitted. Existing issue #1222 is not the tracker for this scope.
 
 ## Problem and Evidence
 
@@ -67,7 +67,7 @@ Reviewed on 2026-09-22. In this table, **D** is Development commit `f1be106ec208
 
 In scope: global, personal, and group endpoint editing; model-library metadata; model selection; configuration normalization; model-chat streaming and existing supported tool behavior; capability gates; GenAI.mil model discovery; documentation and regression coverage.
 
-Out of scope: Responses model inference; custom calls (custom request bodies, URL templates, or arbitrary HTTP dispatch); agent integration or behavior changes; a React UI migration; unrelated source-branch features; new embedding/image/audio APIs; automatic key unlock; GenAI.mil key provisioning; and changes to APIM policies or live deployments. Existing supported capabilities must not be removed. Responses and custom calls require separate future plans and explicit implementation approval.
+Out of scope: Responses model inference; custom calls (custom request bodies, URL templates, or arbitrary HTTP dispatch); agent integration or behavior changes; a React UI migration; unrelated source-branch features; new embedding/image/audio APIs; automatic key unlock; GenAI.mil key provisioning; changes to APIM policies; and deployments beyond the explicitly selected beta validation target below. Existing supported capabilities must not be removed. Responses and custom calls require separate future plans and explicit implementation approval.
 
 Agent scope boundary: preserve existing agent behavior and configuration. Do not wire new routing modes into agent defaults, overrides, selectors, hosted-agent integrations, or tool loops. Shared helper/settings changes must not silently opt agent consumers into schema-v2 routing; retain their compatibility path and verify non-regression where shared code is touched. Any boundary that cannot preserve that behavior is a scope blocker, not permission to extend agent support.
 
@@ -81,7 +81,7 @@ Agent scope boundary: preserve existing agent behavior and configuration. Do not
 | Model | Stable `id`, display metadata, existing model/deployment identifier, enabled/capability settings, `api_path`, explicit `api_type` and `url_mode` for Custom models, `api_version`, and `anthropic_version` where applicable. |
 | Library/profile | Defaults, supported protocol options, URL policy, credential header defaults, and verified capabilities. Metadata is not permission to invoke a model. |
 
-New endpoint records use `routing_schema_version: 2`. New Custom model records persist explicit `api_type` and `url_mode` values; missing and unsupported values are rejected on new saves. Library suggestions become visible, saved model values, not runtime inheritance from an endpoint default. Existing records without the marker use the compatibility reader until explicitly migrated. These fields are implemented for configuration and preview; runtime adoption remains Phase 3.
+New endpoint records use `routing_schema_version: 2`. New Custom model records persist explicit `api_type` and `url_mode` values; missing and unsupported values are rejected on new saves. Library suggestions become visible, saved model values, not runtime inheritance from an endpoint default. Existing records without the marker use the compatibility reader until explicitly migrated. Schema-v2 test, chat, and audited helper dispatch is implemented locally in Phase 3.
 
 `api_path` defaults to an empty string and is the gateway API suffix. For schema v2, insert its complete segment sequence immediately after the origin (scheme, host, and optional port), before the endpoint's remaining path and the API-specific route: `origin / model API suffix / endpoint path / protocol route`. The suffix may contain multiple segments; "first level" describes its insertion point, not a one-segment limit. API type selects a calling adapter, not a literal path segment bearing a provider name.
 
@@ -94,7 +94,7 @@ Per-model versions take precedence over compatible legacy endpoint versions. Do 
 | UI label | Persisted value | Identifier | Native operation and version behavior |
 |---|---|---|---|
 | Azure OpenAI (Deployments) | `azure_openai` | `deploymentName` | `chat/completions` beneath `openai/deployments/{deployment}`; requires an approved `api-version`. |
-| Chat Completions (Azure/Foundry) | `azure_openai_v1` (configuration and preview implemented; dispatch remains Phase 3) | `modelName` | `/openai/v1/chat/completions` in Auto mode; Azure deployment/model identifier in the JSON `model` field, not the URL; no implicit dated query version. Shares the OpenAI-compatible adapter. |
+| Chat Completions (Azure/Foundry) | `azure_openai_v1` (configuration, preview, and local dispatch implemented in 0.261.044) | `modelName` | `/openai/v1/chat/completions` in Auto mode; Azure deployment/model identifier in the JSON `model` field, not the URL; no implicit dated query version. Shares the OpenAI-compatible adapter. |
 | OpenAI API (Chat Completions) | `openai` | `modelName` | `chat/completions` beneath the API base; model in JSON; no implicit dated query version. |
 | Messages (Anthropic-compatible) | `anthropic` | `modelName` | `messages` beneath the API base; Anthropic-compatible Messages request, response, and event contract, independent of model vendor; applicable `anthropic-version` header. |
 
@@ -503,11 +503,10 @@ mixed records. An implicit schema downgrade is rejected.
   token-budget, synthetic streaming, summary, tabular, and existing agent-adapter
   behavior remained covered by the baseline. No transport implementation changed.
 
-Limits: no full repository suite, browser test, live authorization/provider call,
-APIM deployment, saved migration, or GenAI.mil validation was performed. This
-completes the Phase 1 foundation, not all CE-01 through CE-13 end-to-end gates.
-The APIM regression is fixed in the explicit resolver, but legacy runtime dispatch
-continues unchanged until the separately authorized Phase 3 integration.
+Limits: no full repository suite, deployed/live provider call, APIM deployment,
+saved migration, or GenAI.mil validation was performed. This completes the Phase 1
+foundation, not all CE-01 through CE-13 end-to-end gates. Phase 3 local dispatch is
+now implemented; deployment and live verification remain pending.
 
 ### Phase 2: Endpoint Editor and Model Library
 
@@ -543,12 +542,13 @@ policy. Invalid routes and duplicate request-identifier/URL pairs block the save
 Edits, row additions/removals, and modal closure invalidate pending validation.
 Errors are safely rendered inside the modal rather than replacing its contents.
 
-Model-test payload preparation retains schema-v2 model metadata, but live v2
-testing deliberately returns HTTP 501 and its button is disabled. Newly created
-v2 endpoints are saved disabled, and the editor cannot enable them in this phase.
-Previously saved enabled state is preserved; do not import or manually enable a
-v2 record for production inference. Existing legacy endpoint tests and dispatch
-remain unchanged. Persist feature/scope enablement before using previews. Global
+Schema-v2 live **Test Connection** now resolves the saved endpoint/model route,
+rechecks governance and personal/group scope, compares submitted route fields with
+saved values, and rejects stale edits before dispatch. An authorized one-off test
+can run before activation; it may incur provider usage charges. Preview remains
+network-free. Newly created endpoints still start disabled and require explicit
+activation for chat. Existing legacy endpoint tests and dispatch retain their
+compatibility behavior. Persist feature/scope enablement before testing. Global
 **Save Endpoint** changes the settings form; the main settings save persists it.
 
 #### Selective Library Integration
@@ -588,23 +588,142 @@ Library selection is not evidence that a particular gateway supports that protoc
   migration, or full repository suite was run. Local Playwright used mocked APIs
   and real local assets; its preview fixture calls the actual pure resolver.
 
-After deployment, first persist multi-endpoint and applicable workspace enablement.
-Create a new disabled Custom endpoint with two manually configured models, select
-different API types/paths, and compare each preview with the intended gateway
-route. Save/reopen in each authorized scope, confirm independent values and
-library precedence, then verify a traversal path blocks saving. Keep production
-legacy records unchanged. **This tests Phase 2 configuration, not the original
-APIM inference fix end to end.** Runtime dispatch, live model tests, and activation
-are Phase 3. Agents and GenAI.mil integration remain outside this implementation.
+In a deployed nonproduction instance, persist multi-endpoint and applicable
+workspace enablement. Create a disabled endpoint with two configured models,
+compare previews, save/reopen, then run **Test Connection** against each saved
+route. Since **0.261.046**, explicit Enable/Disable controls are available in all
+three editors; new endpoints still start disabled. Persist global changes with
+the main settings save, and use only new nonproduction records for live testing.
+Keep production legacy records unchanged. **The current local tests use mocked
+providers; they do not verify a live APIM deployment.** Agents and GenAI.mil remain
+outside this implementation.
 
 ### Phase 3: Runtime and Model Chat
 
-- Wire test-model, model chat, and all audited non-agent helper/background consumers to the shared resolver, including chat-service builders only where those callers use them. Preserve existing agent behavior where implementation ownership is shared.
-- Reuse existing OpenAI/Azure/Messages adapters where their behavior fits the contract and verify request/response/stream handling with recorded or mocked fixtures. Do not develop Responses, custom calls, or agent integrations.
-- Apply capability checks, state isolation, cancellation, safe errors, and route-aware caching consistently.
+The runtime/model-test/helper integration is implemented locally in **0.261.046**.
+Deployment validation and signed-in beta acceptance remain pending. Local
+regressions do not replace an actual APIM request comparison with the preview.
+
+- [x] Wire saved schema-v2 model tests and explicitly selected non-agent model chat to the shared route resolver; reject explicit agent selections and preserve legacy fallback for agent default selection.
+- [x] Wire summary generation, metadata extraction, multimodal vision tests, and chat-owned queued helpers through saved endpoint/model IDs and scoped reauthorization. Endpoint URLs and secrets are not serialized in schema-v2 background routing context.
+- [x] Reuse OpenAI-compatible, Azure deployment, and Messages adapters with captured mock requests for resolver-matched operation URLs. Deferred Responses/custom calls remain unregistered and rejected.
+- [x] Wire Direct Model workflows and both deferred tabular handoffs to saved scoped contexts; enforce feature/item governance before endpoint-store reads and recheck group membership.
+- [ ] Complete end-to-end workflow/helper acceptance beyond isolated function and adapter tests; verify saved-context owner binding, scoped credential sources, and policy changes between queued work and execution.
+- [x] Allow deliberate activation/deactivation in admin/personal/group editors while new records remain disabled by default; preserve legacy records and agent-default fallback.
+- [x] Enforce resolved identity and capabilities at sync/async dispatch, bind queued export contexts to their verified run owner, use saved routing for tabular budgets, and cover Messages cleanup before/during streaming and cancellation.
+- [ ] Complete streaming/request-body/capability and state/cancellation coverage for all in-scope consumers, plus deployed nonproduction validation.
 - Exit: actual captured request URLs/headers/bodies match previews for model chat and in-scope helpers across the supported contracts. Deferred and unsupported combinations fail clearly before outbound dispatch; shared changes preserve existing excluded consumers.
 
+#### Phase 3 Continuation (2026-09-25)
+
+Fixed/Implemented in version: **0.261.045**, recorded in `config.py`.
+Source, tests, and docs remain local and uncommitted on `feature/customendpoints`.
+No deployment, commit, push, or issue update was performed in this continuation.
+The separate publisher work, unrelated identity-binding specification, and local
+browser artifacts remain outside the runtime work.
+
+The four workflow failures at the previous checkpoint are resolved. The workflow
+mock now accepts `include_context`; the legacy protocol fixture uses the existing
+isolated runtime loader with restored modules; the historical version assertion
+uses `assert_app_version_at_least`.
+
+Regression-backed corrections include pre-read feature/item governance for every
+workflow endpoint scope, current group membership checks, stable allowlisted
+contexts for both deferred tabular handoffs, and avoiding an unused synchronous
+client during context-only resolution. The real chat wrapper now accepts and
+forwards TLS policy; model tests and summaries read the canonical plaintext-policy
+key; vision testing supplies the authenticated actor; actual agent default
+requests preserve legacy fallback without opting agents into schema v2.
+
+Validation: **149 tests passed** across 20 explicit endpoint, workflow, tabular,
+settings, auth, and streaming test files under deployment-environment-file and
+external-socket guards. Only Python's internal Windows asyncio socketpair was
+allowed through the socket guard. The directly changed seven suites also passed
+**46/46** after the final version and agent-fallback changes. Earlier checkpoint
+results were 53 browser cases, 12 route-policy checks, and 13 documentation checks;
+these are not evidence of a full live workflow.
+
+A guarded repository-wide collection attempt failed on app-bootstrap/import
+conflicts, including test-injected modules missing `build_safe_csv_headers` and
+`TABLE_EXPORT_REQUEST_MARKERS`. There is no full-suite pass. Do not load `.env`
+or run live services merely to make collection succeed.
+
+Next: finish the open capability, streaming/body/header, cancellation, context
+ownership, and activation acceptance gates above, then run a controlled
+nonproduction APIM comparison with Preview Route. No provider calls were made by
+the tests. See [workflow handoff repairs](../fixes/SCHEMA_V2_WORKFLOW_HANDOFF_FIX.md).
+
+#### Phase 3 Runtime Hardening (0.261.046)
+
+Fixed/Implemented in version: **0.261.046**, recorded in `config.py`.
+Failing-first regressions demonstrated and now guard these gaps:
+
+- Saved global endpoints selected through personal/group test routes retain their verified credential scope.
+- Sync and async schema-v2 clients reject unsupported tools, images, structured output, streaming, and request-model substitutions before inference. Each client holds an isolated copy of the resolved policy. Messages settings are checked before translation can drop unsupported options.
+- Queued export model/chunk contexts cannot impersonate a different run owner or personal scope. Actor-less contexts bind to the conversation owner only after the existing ownership check. Legacy contexts retain their compatibility path.
+- Tabular budgets use the authorized request model/protocol and saved limits rather than stale context overrides or model-name inference. Metadata extraction forwards the canonical plaintext and CA settings.
+- Messages streams own their response/client even before the first chunk. Early close, parser failure, in-flight-read cancellation, and streams arriving after cancellation release resources. A canceled synchronous read is not force-killed; cleanup occurs when it finishes within the existing transport timeout.
+- Explicit activation/deactivation is covered in all three browser scopes. New endpoints remain disabled, and legacy records are not migrated. Agent requests retain their existing default fallback.
+
+Final validation: the expanded 22-file guarded selection passed **235** tests
+(47 warnings), with deployment environment reads and external sockets blocked.
+Run this selection from the repository root; a wrong-directory attempt was
+blocked by the dotenv guard and was rerun without weakening the guard. The
+editor suite passed **53/53** in local Chromium with mocked APIs, both changed
+JavaScript syntax checks passed, documentation checks passed **13/13**, and
+route-policy checks passed **12/12**. Editor diagnostics were clear. Existing
+repository-wide collection conflicts remain a disclosed limitation; this is not
+a full-suite or cold-bootstrap pass.
+
+Beta preflight is blocked: the current Azure CLI context is AzureCloud with the
+recorded beta subscription, but direct reads of both `simplechat2026betaacr` and
+`simplechat-2026beta-app` return **AuthorizationFailed**. Resource Graph also
+returns no matches across accessible subscriptions; do not interpret that as
+proof of deletion. The read-only publisher preview stopped before any ACR build.
+No image was pushed, no webhook was triggered, and no application settings,
+credentials, role assignments, or Azure context were changed. Restore beta access
+or use the intended signed-in account, then re-run preflight and record the
+previous digest before publishing. Signed-in APIM/AOAI tests remain outstanding.
+No commit, push, release-note edit, or issue comment was made in this continuation.
+
+#### Beta Live Test Decisions (2026-09-25)
+
+- Target: beta, `simplechat-2026beta-app` in `simplechat-2026beta-rg`, using `simplechat2026betaacr`. Do not deploy to dev or production as part of this validation.
+- The user will exercise Foundry Claude and GPT through APIM, plus AOAI. Record each tested route's actual API type and URL mode; a model name alone does not identify its wire protocol. Do not assume all API-type combinations are covered by these deployments.
+- Finish the remaining local Phase 3 runtime/security and activation gates before publishing for live testing. Use the existing remote ACR build/webhook workflow; record the new and previous image digests and retain configuration backups for rollback.
+- Use new test records and synthetic prompts. Preserve existing legacy records and keep credentials in approved application/Key Vault settings. Compare Preview Route with the actual request URL and safe header/body metadata without logging credentials or sensitive content.
+- Agents remain excluded. This work must not introduce agent routing through APIM or change existing agent configurations; preserving compatibility is not an expansion of agent support.
+- UI refinements and the CA bundle manager below are deferred until after Phase 3; they do not block this beta runtime test. Existing TLS and outbound-network protections remain mandatory.
+- GenAI.mil cannot be tested live by the current tester. Keep its named integration in Phase 4 and report live verification as unavailable, not passed. Beta results for Foundry/APIM or AOAI do not establish GenAI.mil compatibility.
+
+#### Post-Phase 3 Follow-Up: Endpoint Usability and CA Bundles
+
+Recorded from the lead's review and the user's deferral on 2026-09-25. These are
+pending work items, not implemented features or changes to Phase 3 acceptance.
+Complete Phase 3 runtime validation first; implement the editor refinements and
+CA registry as separately testable increments afterward. Track with issue #1518.
+
+- [ ] Move advanced Custom endpoint network/trust controls after the endpoint configuration. Retain admin-controlled private-host and plaintext-HTTP opt-ins, their dependency, secure defaults, and existing blocked-address protections.
+- [ ] Replace the user-entered global CA path with an admin-managed expandable CA bundle table: add/upload PEM certificates, give bundles friendly names, edit/replace, list multiple bundles, and delete unused bundles. Show certificate fingerprints, expiry information, and references. Endpoint editors select a stable bundle ID or public certificate authorities rather than a filesystem path.
+- [ ] Design durable shared CA storage, authorization, certificate-only validation, upload limits, audit history, revision-based client refresh, and deletion/reference protection across endpoint scopes. Reject private keys and preserve hostname verification. Migrate existing path configurations without silent trust changes: today's supplied bundle replaces public roots, rather than extending them. Validate replacement, restart, scale-out, and sync/async consumers before rollout; do not use ephemeral container files as the source of truth.
+- [ ] Clarify API Path as an optional additional gateway prefix, inserted after the origin and before the endpoint's existing path. Add accessible explanatory controls and make the resolved request preview prominent. Clarify Automatic as the default protocol-based composition, and Exact as the configured API base plus the known operation. Neither mode requires an additional API Path, and Exact is not an arbitrary full-request URL. Preserve persisted values and the agreed routing contract.
+- [ ] Clarify required request model/deployment identifiers versus optional catalog model selection. Preserve Manual entry, do not overwrite entered identifiers or explicit API types, and do not infer a mismatch from an arbitrary deployment alias. Use verified metadata for suggestions; avoid filling Azure deployment aliases from publisher IDs. Remove duplicate editable catalog identity controls while preserving saved values.
+- [ ] Make model capacity primary, rename endpoint capacity to Default model limits, and collapse endpoint defaults. Display effective values and their source. Preserve per-field precedence of model override, endpoint default, then verified catalog value; do not turn endpoint defaults into hard overrides. Keep Response Length distinct from capacity and throughput quotas.
+- [ ] Extend existing global/personal/group browser and regression coverage, update admin/user documentation and the generated surface inventory where applicable, and verify the CA transport changes independently before deployment. No automatic migration or agent integration is implied by these follow-ups.
+
 ### Phase 4: GenAI.mil
+
+GenAI.mil is deferred from Phase 3, not removed from the overall plan and not
+excluded because of a protocol mismatch. The supplied documentation maps its
+inference to the existing `openai` Chat Completions contract, using
+`https://api.genai.mil/v1` and bearer-key authentication. Reuse that adapter rather
+than adding a new wire protocol. Generic Custom configuration alone is not proof
+of complete GenAI.mil support: the named profile must constrain request fields,
+capabilities, discovery, and error handling to the documented service contract.
+The current tester has no live access; implement and validate locally with mocks,
+then retain an explicit live-verification gap until an authorized tester is
+available. Do not register a selectable unfinished profile or claim live support
+from the beta APIM/AOAI tests.
 
 - Add the named provider profile, bearer-key defaults, documented request filtering, and scoped backend model discovery.
 - Add safe locked-key handling, nullable usage, and bounded rate-limit behavior. No automatic unlock or speculative Messages/Responses support.
@@ -647,8 +766,8 @@ For route changes, run the policy inventory, unauthenticated contract, and polic
 - Confirmed suffix placement (2026-09-21): insert the model's entire API suffix immediately after the origin and before the endpoint's remaining path/API route. API type chooses the library/calling contract, not the model vendor or a mandatory vendor-named URL segment.
 - Confirmed API-type meaning (2026-09-21): API type selects the library/calling and wire-format contract, independently of the model vendor. Messages-compatible endpoints can serve non-Anthropic models; versioned paths alone do not establish schema compatibility.
 - Confirmed display naming (2026-09-21): **Messages (Anthropic-compatible)** for the in-scope adapter and **Responses (OpenAI-compatible)** for future planning only. These name compatibility contracts, not vendor restrictions. Keep legacy `anthropic`; do not register the proposed future `responses` identifier. Provider/profile stays separate.
-- Confirmed Azure API presentation (2026-09-22): separate **Chat Completions (Azure/Foundry)** choice sharing the existing OpenAI-compatible adapter. Phase 1 implements the `azure_openai_v1` schema-v2 descriptor, model-local normalization, and URL policy; editor exposure and dispatch remain pending. Preserve existing choices rather than inferring migration from URLs.
-- Phase 0/1 closeout (2026-09-22): baseline fixture repairs completed in **0.261.040**; Phase 1 backend foundation completed locally in **0.261.041**. All **21/21** guarded baseline scripts pass. Phase 2 is the next implementation step and is not started automatically.
+- Confirmed Azure API presentation (2026-09-22): separate **Chat Completions (Azure/Foundry)** choice sharing the existing OpenAI-compatible adapter. The schema-v2 descriptor, editor, URL policy, and local dispatch are implemented. Preserve existing choices rather than inferring migration from URLs.
+- Phase 0-2 closeout: test-fixture repairs and route foundation are in **0.261.040/0.261.041**; editor/library/preview work is **0.261.042** and pushed to draft PR #1514. Phase 3 runtime work is local in **0.261.044**; no live Azure validation or deployment has occurred.
 - Confirmed future-work decision (2026-09-21): Responses and custom calls are excluded from current development and belong in separate future plans. Keep existing routing/adapter/policy boundaries extensible, but add no dormant feature implementation, selectable option, persisted mappings, or dispatch for either.
 - Confirmed agent scope (2026-09-21): agent changes are excluded. Preserve existing integrations and compatibility; new model-routing work does not authorize agent defaults, overrides, selectors, or tool-loop changes.
 - Confirmed GenAI.mil scope (2026-09-22): named SimpleChat provider integration with model discovery and Chat Completions only, including streaming and documented authentication/error handling. Messages, tools, vision, structured output, and Responses remain excluded. No claim of vendor endorsement, live certification, or approval for particular data.

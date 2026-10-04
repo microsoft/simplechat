@@ -5,6 +5,9 @@ import json
 import asyncio
 import re
 import ssl
+from copy import deepcopy
+from contextvars import copy_context
+from inspect import iscoroutinefunction
 from types import SimpleNamespace
 from typing import Any, Dict, Iterable, Iterator, List
 from urllib.parse import urlparse
@@ -76,6 +79,76 @@ ANTHROPIC_MODEL_MARKERS = ("claude",)
 OPENAI_REASONING_MODEL_PREFIXES = ("gpt-5", "o1", "o3", "o4")
 MODEL_CONTEXT_MODE_SYSTEM = "system"
 MODEL_CONTEXT_MODE_FOLD_LATEST_USER = "fold_latest_user"
+
+
+def validate_model_endpoint_request(route, request):
+    """Enforce the saved schema-v2 identity and capabilities before dispatch."""
+    if not route:
+        return
+    extra_body = request.get("extra_body") or {}
+    if not isinstance(extra_body, dict):
+        raise ModelEndpointValidationError("Invalid model request extensions.")
+    payload = {**request, **extra_body}
+    if payload.get("model") != route.get("request_model"):
+        raise ModelEndpointValidationError("The request must use the selected model.")
+    capabilities = route.get("capabilities") or {}
+
+    def require(capability):
+        if capabilities.get(capability) is not True:
+            raise ModelEndpointValidationError("The selected model does not support this request capability.")
+
+    require("processesText")
+    require("generatesText")
+    if payload.get("stream"):
+        require("supportsStreaming")
+    if payload.get("tools") or payload.get("functions") or payload.get("tool_choice") not in (None, "none", "") or payload.get("function_call") not in (None, "none", ""):
+        require("toolCalling")
+    response_format = payload.get("response_format")
+    if response_format and response_format != {"type": "text"}:
+        require("structuredOutput")
+    if payload.get("audio") or "audio" in (payload.get("modalities") or []):
+        require("generatesAudio")
+    messages = payload.get("messages") or []
+    if not isinstance(messages, (list, tuple)):
+        raise ModelEndpointValidationError("Model messages must be a list.")
+    for message in messages:
+        if not isinstance(message, dict):
+            raise ModelEndpointValidationError("Invalid model message.")
+        if message.get("role") in ("tool", "function") or message.get("tool_calls") or message.get("function_call"):
+            require("toolCalling")
+        content = message.get("content")
+        if content is None or isinstance(content, str):
+            continue
+        if not isinstance(content, (list, tuple)):
+            raise ModelEndpointValidationError("Invalid model message content.")
+        for part in content:
+            part_type = part.get("type") if isinstance(part, dict) else None
+            capability = {
+                "text": "processesText", "image_url": "processesImages", "image": "processesImages",
+                "input_audio": "processesAudio", "file": "processesBinaryFiles",
+                "tool_use": "toolCalling", "tool_result": "toolCalling",
+            }.get(part_type)
+            if capability is None:
+                raise ModelEndpointValidationError("Unsupported model message content.")
+            require(capability)
+
+
+def bind_model_endpoint_request_policy(client, route):
+    """Bind an isolated route policy to one sync or async SDK client."""
+    if route is None:
+        return client
+    policy = deepcopy(route)
+    original_create = client.chat.completions.create
+    if iscoroutinefunction(original_create):
+        async def guarded_create(**kwargs):
+            validate_model_endpoint_request(policy, kwargs)
+            return await original_create(**kwargs)
+    else:
+        def guarded_create(**kwargs):
+            validate_model_endpoint_request(policy, kwargs)
+            return original_create(**kwargs)
+    client.chat.completions.create = guarded_create
+    return client
 
 
 class ModelEndpointBehavior:
@@ -410,21 +483,30 @@ def build_openai_style_chat_client(
     api_type: Any = "",
     url_mode: Any = "",
     ca_bundle_path: Any = "",
+    resolved_base_url: Any = "",
+    request_url: Any = "",
+    client_cert: Any = None,
 ):
     """Build an OpenAI-compatible chat client for Foundry data-plane endpoints."""
     request_api_version = resolve_openai_style_request_api_version(api_version)
-    client_kwargs: Dict[str, Any] = {
-        "api_key": token_or_key,
-        "base_url": (
+    explicit_base_url = str(resolved_base_url or "").strip()
+    if explicit_base_url:
+        client_base_url = explicit_base_url.rstrip("/") + "/"
+    else:
+        client_base_url = (
             resolve_custom_openai_base_url(base_url, api_type, url_mode)
             if direct_custom
             else normalize_openai_style_base_url(base_url)
-        ),
+        )
+    client_kwargs: Dict[str, Any] = {
+        "api_key": token_or_key,
+        "base_url": client_base_url,
     }
     if direct_custom:
         client_kwargs["http_client"] = build_custom_openai_sync_http_client(
             allow_private=allow_private_custom_endpoints,
             ca_bundle_path=ca_bundle_path,
+            client_cert=client_cert,
         )
     if default_headers:
         client_kwargs["default_headers"] = default_headers
@@ -434,7 +516,7 @@ def build_openai_style_chat_client(
         OpenAI(**client_kwargs),
         sanitize_errors=direct_custom,
         api_type=api_type,
-        request_url=client_kwargs["base_url"],
+        request_url=request_url or client_kwargs["base_url"],
     )
 
 
@@ -661,6 +743,8 @@ def build_anthropic_chat_client(
     direct_custom: bool = False,
     allow_private_custom_endpoints: bool = False,
     custom_endpoint_ca_bundle_path: str = "",
+    operation_url: str = "",
+    client_cert: Any = None,
 ):
     """Build a chat-completions-shaped adapter over the Anthropic messages protocol."""
     return AnthropicChatCompletionClient(
@@ -673,7 +757,42 @@ def build_anthropic_chat_client(
         direct_custom=direct_custom,
         allow_private_custom_endpoints=allow_private_custom_endpoints,
         custom_endpoint_ca_bundle_path=custom_endpoint_ca_bundle_path,
+        operation_url=operation_url,
+        client_cert=client_cert,
     )
+
+
+class _OwnedMessagesStream:
+    def __init__(self, iterator, response, http_client=None):
+        self._iterator = iterator
+        self._response = response
+        self._http_client = http_client
+        self._closed = False
+
+    def __iter__(self):
+        return self
+
+    def __next__(self):
+        if self._closed:
+            raise StopIteration
+        try:
+            return next(self._iterator)
+        except BaseException:
+            self.close()
+            raise
+
+    def close(self):
+        if self._closed:
+            return
+        self._closed = True
+        try:
+            self._iterator.close()
+        finally:
+            try:
+                self._response.close()
+            finally:
+                if self._http_client is not None:
+                    self._http_client.close()
 
 
 class AnthropicChatCompletionClient:
@@ -691,10 +810,11 @@ class AnthropicChatCompletionClient:
         direct_custom: bool = False,
         allow_private_custom_endpoints: bool = False,
         custom_endpoint_ca_bundle_path: str = "",
+        operation_url: str = "",
+        client_cert: Any = None,
     ):
-        self.endpoint = normalize_anthropic_messages_url(
-            endpoint,
-            direct_custom=direct_custom,
+        self.endpoint = str(operation_url or "").strip() or normalize_anthropic_messages_url(
+            endpoint, direct_custom=direct_custom,
         )
         self.api_key = api_key
         self.bearer_token = bearer_token
@@ -706,6 +826,7 @@ class AnthropicChatCompletionClient:
         self.direct_custom = direct_custom
         self.allow_private_custom_endpoints = allow_private_custom_endpoints
         self.custom_endpoint_ca_bundle_path = custom_endpoint_ca_bundle_path
+        self.client_cert = client_cert
         self.chat = SimpleNamespace(completions=SimpleNamespace(create=self.create))
 
     def create(self, **kwargs: Any):
@@ -726,7 +847,7 @@ class AnthropicChatCompletionClient:
             self._raise_response_error(response)
 
         if stream:
-            return self._iter_stream_chunks(response)
+            return _OwnedMessagesStream(self._iter_stream_chunks(response), response)
 
         return self._build_completion_response(response.json())
 
@@ -734,6 +855,7 @@ class AnthropicChatCompletionClient:
         http_client = build_custom_openai_sync_http_client(
             allow_private=self.allow_private_custom_endpoints,
             ca_bundle_path=self.custom_endpoint_ca_bundle_path,
+            client_cert=self.client_cert,
         )
         request = http_client.build_request(
             "POST",
@@ -780,9 +902,9 @@ class AnthropicChatCompletionClient:
             )
 
         if stream:
-            return self._iter_stream_chunks(
-                response,
-                http_client=http_client,
+            return _OwnedMessagesStream(
+                self._iter_stream_chunks(response, http_client=http_client),
+                response, http_client,
             )
 
         try:
@@ -1149,6 +1271,7 @@ class AnthropicSemanticKernelChatCompletion(ChatCompletionClientBase):
     SUPPORTS_FUNCTION_CALLING = True
 
     endpoint: str
+    operation_url: str = ""
     api_key: str = ""
     bearer_token: str = ""
     extra_headers: Dict[str, str] = Field(default_factory=dict)
@@ -1157,6 +1280,8 @@ class AnthropicSemanticKernelChatCompletion(ChatCompletionClientBase):
     direct_custom: bool = False
     allow_private_custom_endpoints: bool = False
     custom_endpoint_ca_bundle_path: str = ""
+    client_cert: Any = None
+    resolved_route: Dict[str, Any] | None = Field(default=None, exclude=True)
     prompt_execution_settings: OpenAIChatPromptExecutionSettings | None = Field(default=None)
 
     def __init__(
@@ -1165,6 +1290,7 @@ class AnthropicSemanticKernelChatCompletion(ChatCompletionClientBase):
         service_id: str,
         deployment_name: str,
         endpoint: str,
+        operation_url: str = "",
         api_key: str = "",
         bearer_token: str = "",
         extra_headers: Dict[str, str] | None = None,
@@ -1173,11 +1299,13 @@ class AnthropicSemanticKernelChatCompletion(ChatCompletionClientBase):
         direct_custom: bool = False,
         allow_private_custom_endpoints: bool = False,
         custom_endpoint_ca_bundle_path: str = "",
+        client_cert: Any = None,
     ):
         super().__init__(
             ai_model_id=deployment_name,
             service_id=service_id,
             endpoint=endpoint,
+            operation_url=operation_url,
             api_key=api_key,
             bearer_token=bearer_token,
             extra_headers=extra_headers or {},
@@ -1186,6 +1314,7 @@ class AnthropicSemanticKernelChatCompletion(ChatCompletionClientBase):
             direct_custom=direct_custom,
             allow_private_custom_endpoints=allow_private_custom_endpoints,
             custom_endpoint_ca_bundle_path=custom_endpoint_ca_bundle_path,
+            client_cert=client_cert,
         )
 
     def get_prompt_execution_settings_class(self):
@@ -1286,22 +1415,55 @@ class AnthropicSemanticKernelChatCompletion(ChatCompletionClientBase):
 
         request_kwargs = self._build_request_kwargs(chat_history, settings, stream=True)
         client = self._build_client()
-        stream = await asyncio.to_thread(client.chat.completions.create, **request_kwargs)
+        pending_stream = asyncio.get_running_loop().run_in_executor(
+            None, copy_context().run, lambda: client.chat.completions.create(**request_kwargs),
+        )
+        try:
+            stream = await asyncio.shield(pending_stream)
+        except asyncio.CancelledError:
+            def close_late_stream(completed):
+                if not completed.cancelled() and completed.exception() is None:
+                    close_stream = getattr(completed.result(), "close", None)
+                    if callable(close_stream):
+                        close_stream()
+            pending_stream.add_done_callback(close_late_stream)
+            raise
         sentinel = object()
         iterator = iter(stream)
 
-        while True:
-            chunk = await asyncio.to_thread(next, iterator, sentinel)
-            if chunk is sentinel:
-                break
+        pending_read = None
+        try:
+            while True:
+                pending_read = asyncio.get_running_loop().run_in_executor(
+                    None, copy_context().run, next, iterator, sentinel,
+                )
+                chunk = await asyncio.shield(pending_read)
+                if chunk is sentinel:
+                    break
 
-            metadata = self._build_usage_metadata(chunk)
-            if not getattr(chunk, "choices", None):
-                if metadata:
+                metadata = self._build_usage_metadata(chunk)
+                if not getattr(chunk, "choices", None):
+                    if metadata:
+                        yield [
+                            StreamingChatMessageContent(
+                                role=AuthorRole.ASSISTANT,
+                                content="",
+                                choice_index=0,
+                                ai_model_id=self.ai_model_id,
+                                inner_content=chunk,
+                                metadata=metadata,
+                                function_invoke_attempt=function_invoke_attempt,
+                            )
+                        ]
+                    continue
+
+                delta = getattr(chunk.choices[0], "delta", None)
+                content = getattr(delta, "content", "") if delta else ""
+                if content:
                     yield [
                         StreamingChatMessageContent(
                             role=AuthorRole.ASSISTANT,
-                            content="",
+                            content=content,
                             choice_index=0,
                             ai_model_id=self.ai_model_id,
                             inner_content=chunk,
@@ -1309,22 +1471,17 @@ class AnthropicSemanticKernelChatCompletion(ChatCompletionClientBase):
                             function_invoke_attempt=function_invoke_attempt,
                         )
                     ]
-                continue
-
-            delta = getattr(chunk.choices[0], "delta", None)
-            content = getattr(delta, "content", "") if delta else ""
-            if content:
-                yield [
-                    StreamingChatMessageContent(
-                        role=AuthorRole.ASSISTANT,
-                        content=content,
-                        choice_index=0,
-                        ai_model_id=self.ai_model_id,
-                        inner_content=chunk,
-                        metadata=metadata,
-                        function_invoke_attempt=function_invoke_attempt,
-                    )
-                ]
+        finally:
+            close_stream = getattr(stream, "close", None)
+            if callable(close_stream):
+                if pending_read is not None and not pending_read.done():
+                    def close_after_read(completed):
+                        if not completed.cancelled():
+                            completed.exception()
+                            close_stream()
+                    pending_read.add_done_callback(close_after_read)
+                else:
+                    await asyncio.to_thread(close_stream)
 
     def _iter_synthetic_stream_messages(
         self,
@@ -1411,7 +1568,7 @@ class AnthropicSemanticKernelChatCompletion(ChatCompletionClientBase):
         )
 
     def _build_client(self):
-        return build_anthropic_chat_client(
+        return bind_model_endpoint_request_policy(build_anthropic_chat_client(
             endpoint=self.endpoint,
             api_key=self.api_key,
             bearer_token=self.bearer_token,
@@ -1421,7 +1578,9 @@ class AnthropicSemanticKernelChatCompletion(ChatCompletionClientBase):
             direct_custom=self.direct_custom,
             allow_private_custom_endpoints=self.allow_private_custom_endpoints,
             custom_endpoint_ca_bundle_path=self.custom_endpoint_ca_bundle_path,
-        )
+            operation_url=self.operation_url,
+            client_cert=self.client_cert,
+        ), self.resolved_route)
 
     def _build_request_kwargs(self, chat_history, settings, *, stream: bool) -> Dict[str, Any]:
         request_kwargs: Dict[str, Any] = {
@@ -1446,7 +1605,11 @@ class AnthropicSemanticKernelChatCompletion(ChatCompletionClientBase):
             tool_choice = getattr(source_settings, "tool_choice", None)
             if tool_choice not in (None, "", [], {}):
                 request_kwargs["tool_choice"] = tool_choice
+            if self.resolved_route is not None:
+                self._copy_setting(source_settings, request_kwargs, "response_format")
+                self._copy_setting(source_settings, request_kwargs, "extra_body")
 
+        validate_model_endpoint_request(self.resolved_route, request_kwargs)
         return request_kwargs
 
     def _copy_setting(self, settings, request_kwargs: Dict[str, Any], field_name: str) -> None:

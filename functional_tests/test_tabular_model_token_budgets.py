@@ -1,8 +1,9 @@
 # test_tabular_model_token_budgets.py
 """
 Functional tests for scoped tabular model budgets and generation ceilings.
-Version: 0.261.035
+Version: 0.261.046
 Implemented in: 0.261.035
+Schema-v2 saved-route budget enforcement implemented in: 0.261.046
 
 The principal regressions use the shipped catalog and real shared resolver.
 Only endpoint retrieval and model I/O are replaced with in-memory boundaries;
@@ -849,6 +850,38 @@ def test_real_catalog_terra_selected_deployment_and_wire_ceiling():
     _require('max_tokens' not in recording_service.requests[0], 'Only one output parameter may reach the provider.')
     _require_equal(original.max_tokens, 32000)
     _require_equal(len(reads), 2)
+
+
+def test_schema_v2_budget_uses_saved_protocol_and_ignores_context_overrides():
+    selected = {
+        'id': 'endpoint', 'provider': 'custom', 'routing_schema_version': 2,
+        'api_type': 'openai',
+        'connection': {'endpoint': 'https://gateway.example'},
+        'outputTokenAccounting': 'total_generation',
+        'models': [{
+            'id': 'model', 'modelName': 'gpt-compatible-messages',
+            'contextWindow': 16000, 'outputTokenLimit': 256, 'responseLength': 128,
+        }],
+        '_resolved_route': {
+            'api_type': 'anthropic', 'protocol': 'anthropic',
+            'request_model': 'gpt-compatible-messages',
+        },
+    }
+    helpers, reads = _load_budget_helpers(selected)
+    limits = helpers['_resolve_tabular_model_token_limits'](
+        'stale-alias', {'enable_multi_model_endpoints': True},
+        model_context={
+            'routing_schema_version': 2, 'endpoint_id': 'endpoint', 'model_id': 'model',
+            'scope_type': 'global', 'scope_id': 'global', 'user_id': 'owner',
+            'api_type': 'openai', 'outputTokenLimit': 8192, 'responseLength': 1024,
+        },
+    )
+    budget = limits['model_token_budget']
+    _require_equal(budget.protocol, 'messages')
+    _require_equal(budget.output_limit, 256)
+    _require_equal(budget.request_output_limit, 128)
+    _require_equal(budget.model_id, 'gpt-compatible-messages')
+    _require_equal(len(reads), 1)
 
 
 def test_real_catalog_partial_model_endpoint_catalog_inheritance():

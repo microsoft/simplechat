@@ -2,8 +2,8 @@
 # test_tabular_analyze_shared_preflight_adapter.py
 """
 Functional test for the Analyze shared tabular preflight adapter.
-Version: 0.250.199
-Implemented in: 0.250.160; updated in 0.250.161 and 0.250.199
+Version: 0.261.045
+Implemented in: 0.250.160; updated in 0.250.161 and 0.250.199; scoped model context in 0.261.045
 
 This test ensures Phase 4 routes pure single-source tabular Analyze durable
 work through the shared planner before foreground tabular tools or immediate
@@ -133,7 +133,7 @@ def load_workflow_namespace(orchestration_result=None, manifest=None):
         "SELECTION_MODE_SELECTED": "selected",
         "_get_document_action_source_ids": lambda config: (list(config.get("document_ids") or []), {}),
         "_resolve_tabular_document_action_model_name": lambda workflow, settings: "gpt-4o",
-        "_build_workflow_model_context": lambda workflow, deployment_name, provider: {
+        "_build_workflow_model_context": lambda workflow, deployment_name, provider, *, settings=None: {
             "endpoint_id": workflow.get("model_endpoint_id"),
             "model_id": workflow.get("model_id"),
             "model_deployment": deployment_name,

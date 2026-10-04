@@ -33,6 +33,8 @@ import { renderInlineVideoGalleries } from './chat-inline-videos.js';
 import { renderInlineImageGalleries } from './chat-inline-images.js';
 import { renderInlineAzureMaps } from './chat-inline-maps.js';
 import { getCitedHybridCitations, getCitedWebCitations } from './chat-citation-tracking.js';
+import { parseMath, restoreMathSource } from './chat-math-segments.js';
+import { getMathAwareSelection, hydrateMath, injectMathPlaceholders } from './chat-math.js';
 
 // Conditionally import TTS if enabled
 let ttsModule = null;
@@ -2753,7 +2755,8 @@ function renderReplyQuoteHtml(fullMessageObject = null) {
 
   export function renderAiMessageContent(messageContent) {
     const followUpRenderModel = buildFollowUpRenderModel(messageContent);
-    let cleaned = stripInlineAzureMapsBlocks(followUpRenderModel.visibleMarkdown).trim().replace(/\n{3,}/g, "\n\n");
+    const parsedMath = parseMath(followUpRenderModel.visibleMarkdown);
+    let cleaned = stripInlineAzureMapsBlocks(parsedMath.text).trim().replace(/\n{3,}/g, "\n\n");
     cleaned = cleaned.replace(/(\bhttps?:\/\/\S+)(%5D|\])+/gi, (_, url) => url);
 
     const chartExtraction = extractInlineChartBlocks(cleaned);
@@ -2764,7 +2767,8 @@ function renderReplyQuoteHtml(fullMessageObject = null) {
     const withPSVTables = convertPSVCodeBlockToMarkdown(withMarkdownTables);
     const withASCIITables = convertASCIIDashTableToMarkdown(withPSVTables);
     const sanitizedHtml = DOMPurify.sanitize(marked.parse(withASCIITables));
-    const htmlWithCharts = injectInlineChartHtml(sanitizedHtml, chartExtraction.blocks);
+    const htmlWithMath = injectMathPlaceholders(sanitizedHtml, parsedMath);
+    const htmlWithCharts = injectInlineChartHtml(htmlWithMath, chartExtraction.blocks);
     const htmlWithImageProposals = injectInlineImageProposalHtml(htmlWithCharts, imageProposalExtraction.blocks);
     const copyMarkdown = restoreInlineChartTokens(
       restoreInlineImageProposalTokens(withInlineCitations, imageProposalExtraction.blocks),
@@ -2773,8 +2777,8 @@ function renderReplyQuoteHtml(fullMessageObject = null) {
 
     return {
       htmlContent: addTargetBlankToExternalLinks(htmlWithImageProposals),
-      copyMarkdown,
-      previewMarkdown: imageProposalExtraction.markdown,
+      copyMarkdown: restoreMathSource(copyMarkdown, parsedMath),
+      previewMarkdown: restoreMathSource(imageProposalExtraction.markdown, parsedMath),
       followUpSuggestions: followUpRenderModel.suggestions,
     };
   }
@@ -6061,6 +6065,7 @@ export function appendMessage(
     } else {
       hydrateInlineCharts(messageDiv);
       hydrateInlineImageProposals(messageDiv);
+      void hydrateMath(messageDiv);
     }
 
     // --- Attach Event Listeners specifically for AI message ---
@@ -9052,7 +9057,7 @@ export function applySearchHighlight(searchTerm) {
     const textNodes = [];
     let node;
     while (node = walker.nextNode()) {
-      if (node.nodeValue.trim() !== '') {
+      if (node.nodeValue.trim() !== '' && !node.parentElement?.closest('.sc-math')) {
         textNodes.push(node);
       }
     }
@@ -9349,6 +9354,7 @@ function applyMaskedState(messageDiv, metadata = {}) {
 
   hydrateInlineCharts(messageDiv);
   hydrateInlineImageProposals(messageDiv);
+  void hydrateMath(messageDiv);
   updateMaskControls(messageDiv, nextMetadata);
 }
 
@@ -9364,16 +9370,9 @@ function getSelectionInfoForMessage(messageDiv) {
     return null;
   }
 
-  const preSelectionRange = range.cloneRange();
-  preSelectionRange.selectNodeContents(messageText);
-  preSelectionRange.setEnd(range.startContainer, range.startOffset);
-  const selectedText = selection.toString();
-  const start = preSelectionRange.toString().length;
   return {
     selection,
-    start,
-    end: start + selectedText.length,
-    text: selectedText,
+    ...getMathAwareSelection(messageText, range),
   };
 }
 
@@ -9404,7 +9403,7 @@ function buildMaskPayload(messageDiv, action, selectionInfo = null) {
     payload.selection = {
       start: selectionInfo.start,
       end: selectionInfo.end,
-      text: selectionInfo.text,
+      text: selectionInfo.sourceText ?? selectionInfo.text,
       display_start: selectionInfo.start,
       display_end: selectionInfo.end,
       display_text: selectionInfo.text,

@@ -6,7 +6,7 @@ menubar: docs_menu
 accent: teal
 eyebrow: "Admin How-To"
 description: "Assign managed identity or service principal access for Azure OpenAI, Foundry (classic), and New Foundry model endpoints in the multi-endpoint modal."
-version: "0.261.042"
+version: "0.261.046"
 keywords:
   - model endpoints
   - multi endpoint
@@ -38,16 +38,19 @@ redirect_from:
 
 Use this guide when admins need to configure the shared **Model Endpoint** modal for Azure OpenAI, Foundry (classic), or New Foundry without depending on legacy single-endpoint settings.
 
-Documented for version **0.261.042**. Model capacity overrides implemented in
+Documented for version **0.261.046**. Model capacity overrides implemented in
 version: **0.261.035**, tracked by `application/single_app/config.py`.
 
-Per-model editors implemented in version: **0.261.042** are configuration-only.
-New schema-v2 endpoints stay disabled, and live connection tests are unavailable
-until runtime integration. The inference and discovery guidance below describes
-existing legacy endpoints; it does not enable new schema-v2 dispatch. For new
-global, personal, and group rows, follow the
-[per-model preview workflow]({{ '/admin/ai-models/#per-model-routing-preview' | relative_url }})
-and keep production legacy configurations unchanged.
+Per-model editors were added in **0.261.042**; schema-v2 model tests and local
+runtime dispatch were added in **0.261.044**. **Test Connection** sends a real
+request using the saved endpoint and model route after scope/governance checks;
+unsaved route edits are rejected. New schema-v2 endpoints start disabled. In
+**0.261.046**, test a saved nonproduction endpoint, then explicitly enable it
+through the endpoint list. Global changes also require the main settings save.
+Signed-in beta testing is still required to establish live provider acceptance. For configuration,
+preview, and test behavior, see the
+[per-model routing workflow]({{ '/admin/ai-models/#multi-endpoint-configuration' | relative_url }}).
+Existing schema-v1 endpoints retain their legacy inference behavior.
 
 The multi-endpoint UI also includes a **Setup Guide** button beside endpoint actions and inside the Model Endpoint modal. Use that in-product guidance for quick RBAC reminders, and use this page when you need the full setup sequence.
 

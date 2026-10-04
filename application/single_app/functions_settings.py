@@ -53,6 +53,7 @@ from functions_rate_limit import (
     build_rate_limit_message,
 )
 from functions_service_health import get_default_service_health
+from functions_terms_of_use_config import TERMS_OF_USE_REVISION_KEY, normalize_terms_of_use_revision
 from json_schema_validation import validate_legacy_plugin_settings_update
 import app_settings_cache
 import copy
@@ -1966,7 +1967,7 @@ def get_settings(use_cosmos=False, include_source=False):
             return settings_payload, source
         return settings_payload
 
-    def normalize_loaded_settings(settings_item):
+    def normalize_loaded_settings(settings_item, *, include_terms_revision=True):
         legacy_multi_endpoint_setting_missing = 'enable_multi_model_endpoints' not in settings_item
         legacy_control_center_schedule = (
             'control_center_auto_refresh_timezone' not in settings_item
@@ -2013,6 +2014,8 @@ def get_settings(use_cosmos=False, include_source=False):
         normalize_key_vault_reminder_settings(merged)
         normalize_model_endpoint_identity_header_settings(merged)
         normalize_tabular_parity_durable_preflight_defaults(merged)
+        if include_terms_revision:
+            normalize_terms_of_use_revision(merged)
 
         merged['enable_tabular_processing_plugin'] = is_tabular_processing_enabled(merged)
 
@@ -2035,7 +2038,7 @@ def get_settings(use_cosmos=False, include_source=False):
             except (SettingsUnavailableError, SettingsConflictError) as error:
                 # Reads remain available during an outage; migrations are deferred,
                 # not reported as persisted or written via a second version source.
-                merged = normalize_loaded_settings(store.read(use_cosmos=True))
+                merged = normalize_loaded_settings(store.read(use_cosmos=True), include_terms_revision=False)
                 log_event(
                     "[ASC] Settings migration deferred; shared writes are unavailable.",
                     extra={"error_type": type(error).__name__},
@@ -2078,12 +2081,14 @@ def update_settings(new_settings, *, expected_etag=None):
     updates = {
         key: copy.deepcopy(value)
         for key, value in new_settings.items()
-        if key not in COSMOS_METADATA_FIELDS | {SETTINGS_REVISION_FIELD, "id"}
+        if key not in COSMOS_METADATA_FIELDS | {SETTINGS_REVISION_FIELD, TERMS_OF_USE_REVISION_KEY, "id"}
     }
 
     def apply_updates(settings_item):
         existing_multi_endpoint_enabled = settings_item.get('enable_multi_model_endpoints', False)
+        normalize_terms_of_use_revision(settings_item)
         settings_item.update(updates)
+        normalize_terms_of_use_revision(settings_item)
         normalize_group_workflow_assignment_settings(settings_item)
         normalize_agents_page_promoted_popular_settings(settings_item)
         normalize_document_access_index_required_settings(settings_item)

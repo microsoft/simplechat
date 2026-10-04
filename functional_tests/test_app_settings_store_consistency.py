@@ -1,9 +1,10 @@
 # test_app_settings_store_consistency.py
 """
 Regression tests for shared settings and conditional writes.
-Version: 0.261.043
+Version: 0.261.051
 Implemented in: 0.261.025
 Multi-endpoint new-instance default coverage added in: 0.261.043
+Disabled Terms of Use persistence regression: 0.261.050 (#1615)
 
 Independent store objects represent workers. Fake services exercise ETag conflicts,
 interrupted publication and lease expiry without network access or wall-clock sleeps.
@@ -17,6 +18,7 @@ import logging
 from pathlib import Path
 import socket
 import secrets
+import sys
 from types import SimpleNamespace
 
 import pytest
@@ -32,6 +34,14 @@ from test_support.versioning import assert_app_version_at_least
 
 ROOT = Path(__file__).resolve().parents[1]
 APP = ROOT / "application" / "single_app"
+if str(APP) not in sys.path:
+    sys.path.insert(0, str(APP))
+
+from functions_terms_of_use_config import (
+    TERMS_OF_USE_REVISION_KEY,
+    get_terms_of_use_config,
+    normalize_terms_of_use_revision,
+)
 SPEC = importlib.util.spec_from_file_location("settings_store_under_test", APP / "app_settings_store.py")
 store_module = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(store_module)
@@ -159,6 +169,28 @@ def test_no_redis_mode_has_no_worker_snapshot(world):
     a.write(change(enabled=True))
     after = b.read()
     assert after["enabled"]
+
+
+@pytest.mark.parametrize("initial_enabled", [False, True])
+@pytest.mark.parametrize("shared_cache", [False, True])
+def test_disabled_terms_edits_survive_save_and_other_worker_reload(world, initial_enabled, shared_cache):
+    writer = world.a if shared_cache else AppSettingsStore(world.cosmos)
+    reader = world.b if shared_cache else AppSettingsStore(world.cosmos)
+    writer.write(change(enable_terms_of_use=initial_enabled, terms_of_use_message="Original terms"))
+    original = reader.read()
+    edits = {
+        "enable_terms_of_use": False,
+        "terms_of_use_title": "Revised title",
+        "terms_of_use_message": "Updated **terms** while disabled.",
+        "terms_of_use_frequency": "daily",
+        "terms_of_use_decline_redirect_url": "/goodbye",
+        "terms_of_use_accept_button_text": "Agree",
+        "terms_of_use_decline_button_text": "Decline",
+    }
+    saved = writer.write(change(**edits), expected_etag=original["_etag"])
+    for observed in (reader.read(), writer.read(), reader.read(use_cosmos=True)):
+        assert {key: observed[key] for key in edits} == edits
+        assert observed["_etag"] == saved["_etag"]
 
 
 def test_returned_settings_do_not_mutate_shared_document(world):
@@ -302,6 +334,8 @@ def load_update_settings(store):
         "copy": copy, "logging": logging,
         "COSMOS_METADATA_FIELDS": store_module.COSMOS_METADATA_FIELDS,
         "SETTINGS_REVISION_FIELD": store_module.SETTINGS_REVISION_FIELD,
+        "TERMS_OF_USE_REVISION_KEY": TERMS_OF_USE_REVISION_KEY,
+        "normalize_terms_of_use_revision": normalize_terms_of_use_revision,
         "_get_app_settings_store": lambda: store,
         "log_event": lambda *_args, **_kwargs: None,
         "is_tabular_processing_enabled": lambda _settings: False,
@@ -334,6 +368,145 @@ def test_real_update_settings_rejects_old_full_snapshot_and_merges_deltas(world)
     assert observed["enabled"]
 
 
+def test_terms_revision_baseline_is_published_once_without_enabling_terms(world):
+    world.cosmos.document.update(terms_of_use_message="Existing terms", enable_terms_of_use=False)
+    getter = load_get_settings(world.a)
+    settings = getter()
+    config = get_terms_of_use_config(settings)
+    observed = world.b.read()
+    assert config["version"] == 1
+    assert settings["enable_terms_of_use"] is False
+    assert observed[TERMS_OF_USE_REVISION_KEY] == settings[TERMS_OF_USE_REVISION_KEY]
+    writes = world.cosmos.writes
+    reloaded = getter()
+    assert reloaded == settings
+    assert world.cosmos.writes == writes
+
+
+def test_first_terms_message_starts_at_v1_and_metadata_is_server_owned(world):
+    initial = load_get_settings(world.a)()
+    assert TERMS_OF_USE_REVISION_KEY not in initial
+    update = load_update_settings(world.a)
+    saved = update({
+        "terms_of_use_message": "First terms",
+        TERMS_OF_USE_REVISION_KEY: {"version": 999, "hash": "a" * 64},
+    })
+    config = get_terms_of_use_config(world.b.read())
+    assert saved
+    assert config["version"] == 1
+    saved = update({TERMS_OF_USE_REVISION_KEY: {"version": 0}})
+    config = get_terms_of_use_config(world.b.read())
+    assert saved
+    assert config["version"] == 1
+
+
+@pytest.mark.parametrize("field,value", [
+    ("terms_of_use_title", "New title"),
+    ("terms_of_use_message", "Changed text"),
+    ("terms_of_use_frequency", "daily"),
+])
+def test_saved_revision_advances_only_for_changed_terms_including_when_disabled(world, field, value):
+    original = {
+        "enable_terms_of_use": False, "terms_of_use_title": "Title",
+        "terms_of_use_message": "Original terms", "terms_of_use_frequency": "once",
+    }
+    update = load_update_settings(world.a)
+    saved = update(original)
+    config = get_terms_of_use_config(world.b.read())
+    assert saved
+    assert config["version"] == 1
+    saved = update({field: value})
+    revised = world.b.read()
+    config = get_terms_of_use_config(revised)
+    assert saved
+    assert config["version"] == 2
+    assert revised["enable_terms_of_use"] is False
+    saved = update({field: value})
+    config = get_terms_of_use_config(world.b.read())
+    assert saved
+    assert config["version"] == 2
+    saved = update({field: original[field]})
+    config = get_terms_of_use_config(world.b.read())
+    assert saved
+    assert config["version"] == 3
+
+
+def test_unrelated_changes_toggles_and_normalized_equivalents_keep_revision(world):
+    update = load_update_settings(world.a)
+    saved = update({"terms_of_use_title": "Title", "terms_of_use_message": "Line 1\nLine 2"})
+    assert saved
+    saved = update({
+        "app_title": "Other setting", "enable_terms_of_use": True,
+        "terms_of_use_title": " Title ", "terms_of_use_message": " Line 1\r\nLine 2 ",
+        "terms_of_use_frequency": "one-time",
+        "terms_of_use_accept_button_text": "Agree",
+        "terms_of_use_decline_redirect_url": "/goodbye",
+    })
+    config = get_terms_of_use_config(world.b.read())
+    assert saved
+    assert config["version"] == 1
+    saved = update({"enable_terms_of_use": False})
+    config = get_terms_of_use_config(world.b.read())
+    assert saved
+    assert config["version"] == 1
+    saved = update({"terms_of_use_message": ""})
+    config = get_terms_of_use_config(world.b.read())
+    assert saved
+    assert config["version"] == 2
+
+
+@pytest.mark.parametrize("competing_message,expected_version", [("Same edit", 2), ("Other edit", 3)])
+def test_revision_is_assigned_against_authoritative_state_on_write_retry(world, competing_message, expected_version):
+    update_a = load_update_settings(AppSettingsStore(world.cosmos))
+    update_b = load_update_settings(AppSettingsStore(world.cosmos))
+    saved = update_a({"terms_of_use_message": "Original"})
+    assert saved
+
+    def competing_writer():
+        saved = update_b({"terms_of_use_message": competing_message})
+        assert saved
+
+    world.cosmos.before_replace = competing_writer
+    saved = update_a({"terms_of_use_message": "Same edit"})
+    config = get_terms_of_use_config(world.cosmos.document)
+    assert saved
+    assert config["version"] == expected_version
+    assert config["hash"] == world.cosmos.document[TERMS_OF_USE_REVISION_KEY]["hash"]
+
+
+def test_stale_terms_form_cannot_advance_the_counter(world):
+    update = load_update_settings(world.a)
+    saved = update({"terms_of_use_message": "Original"})
+    assert saved
+    stale = world.b.read()
+    saved = update({"terms_of_use_message": "New"})
+    assert saved
+    saved = update({"terms_of_use_message": "Stale"}, expected_etag=stale["_etag"])
+    assert saved is False
+    config = get_terms_of_use_config(world.c.read())
+    assert config["version"] == 2
+    assert config["message"] == "New"
+
+
+def test_unpublished_baseline_during_redis_outage_is_not_reported_as_v1(world):
+    world.cosmos.document["terms_of_use_message"] = "Existing legacy terms"
+    world.redis.failed = True
+    settings = load_get_settings(world.a)()
+    assert settings is not None
+    assert TERMS_OF_USE_REVISION_KEY not in world.cosmos.document
+    config = get_terms_of_use_config(settings)
+    assert config["version"] is None
+
+
+def test_invalid_persisted_revision_is_not_silently_reset(world):
+    world.cosmos.document[TERMS_OF_USE_REVISION_KEY] = {"version": True, "hash": "a" * 64}
+    before = copy.deepcopy(world.cosmos.document)
+    saved = load_update_settings(world.a)({"terms_of_use_message": "New"})
+    assert saved is False
+    assert world.cosmos.document == before
+    assert world.cosmos.writes == 0
+
+
 def test_startup_does_not_publish_bootstrap_snapshot():
     for filename in ("app.py", "simplechat_scheduler.py"):
         source = (APP / filename).read_text(encoding="utf-8-sig")
@@ -356,6 +529,7 @@ def load_get_settings(store):
         "attach_public_workspace_label_context": lambda settings: settings,
         "normalize_document_intelligence_pdf_image_extraction_mode": lambda mode: mode,
         "is_tabular_processing_enabled": lambda settings: False,
+        "normalize_terms_of_use_revision": normalize_terms_of_use_revision,
     }
     for node in ast.walk(getter.body[0]):
         if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load) and node.id not in namespace:

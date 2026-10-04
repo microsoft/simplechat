@@ -138,6 +138,7 @@ from functions_debug import debug_print
 from functions_document_analysis import run_document_analysis
 from functions_file_sync import get_authorized_sync_source, queue_file_sync_source_run
 from functions_group import assert_group_role, get_group_model_endpoints, get_user_groups
+from functions_governance import ensure_governance_access
 from functions_group_workflows import (
     get_group_workflow,
     get_group_workflow_run,
@@ -184,11 +185,13 @@ from functions_model_endpoint_identity_header import build_model_endpoint_identi
 from functions_model_endpoint_runtime import (
     build_model_endpoint_sync_chat_client,
     build_semantic_kernel_chat_service_for_model,
+    resolve_model_endpoint_from_context,
 )
 from functions_model_endpoint_types import (
     get_model_endpoint_api_type,
     resolve_model_endpoint_request_model,
 )
+from functions_model_endpoint_urls import routing_schema_version
 from functions_notifications import create_workflow_priority_notification
 from functions_workflow_alerts import (
     build_workflow_alert_facts,
@@ -2772,6 +2775,7 @@ def _maybe_execute_pure_tabular_analyze_preflight(
         workflow,
         gpt_model,
         workflow.get('model_provider'),
+        settings=settings,
     )
 
     file_contexts = build_tabular_file_contexts_from_manifest(tabular_sources)
@@ -3947,6 +3951,7 @@ def _maybe_execute_tabular_document_action(
         workflow,
         gpt_model,
         workflow.get('model_provider'),
+        settings=settings,
     )
 
     # Import lazily to avoid a circular dependency during workflow startup.
@@ -6203,16 +6208,35 @@ def _create_assistant_message(conversation, workflow, result, trigger_source, ru
     return assistant_doc
 
 
-def _build_multi_endpoint_client(user_id, endpoint_id, model_id, settings, group_id=None):
+def _build_multi_endpoint_client(user_id, endpoint_id, model_id, settings, group_id=None, *, include_context=False):
+    if not user_id:
+        raise PermissionError('Direct model workflows require an owning user.')
+
+    def scope_is_permitted(scope):
+        try:
+            ensure_governance_access(f'governance_{scope}_endpoints', user_id)
+            ensure_governance_access(
+                f'governance_{scope}_endpoints', user_id,
+                item_entity_type='global_endpoint', item_id=endpoint_id,
+            )
+        except PermissionError:
+            return False
+        return True
+
     candidates = []
     group_id = str(group_id or '').strip()
-    if group_id and settings.get('allow_group_custom_endpoints', False):
+    if group_id and settings.get('allow_group_custom_endpoints', False) and scope_is_permitted('group'):
+        assert_group_role(
+            user_id,
+            group_id,
+            allowed_roles=('Owner', 'Admin', 'DocumentManager', 'User'),
+        )
         group_endpoints, _ = normalize_model_endpoints(get_group_model_endpoints(group_id) or [])
         for endpoint in group_endpoints:
             item = dict(endpoint)
             item['scope'] = 'group'
             candidates.append(item)
-    elif settings.get('allow_user_custom_endpoints', False):
+    elif not group_id and settings.get('allow_user_custom_endpoints', False) and scope_is_permitted('user'):
         user_settings = get_user_settings(user_id)
         personal_endpoints, _ = normalize_model_endpoints(
             user_settings.get('settings', {}).get('personal_model_endpoints', []) or []
@@ -6222,7 +6246,9 @@ def _build_multi_endpoint_client(user_id, endpoint_id, model_id, settings, group
             item['scope'] = 'user'
             candidates.append(item)
 
-    global_endpoints, _ = normalize_model_endpoints(settings.get('model_endpoints', []) or [])
+    global_endpoints = []
+    if scope_is_permitted('global'):
+        global_endpoints, _ = normalize_model_endpoints(settings.get('model_endpoints', []) or [])
     for endpoint in global_endpoints:
         item = dict(endpoint)
         item['scope'] = 'global'
@@ -6235,22 +6261,52 @@ def _build_multi_endpoint_client(user_id, endpoint_id, model_id, settings, group
     model_cfg = next((model for model in endpoint_cfg.get('models', []) if model.get('id') == model_id), None)
     if not model_cfg:
         raise ValueError('Selected model was not found on the endpoint.')
+    if endpoint_cfg.get('enabled', True) is not True or model_cfg.get('enabled', True) is not True:
+        raise ValueError('Selected model endpoint is disabled.')
 
     scope = endpoint_cfg.get('scope', 'global')
-    resolved_endpoint = keyvault_model_endpoint_get_helper(
-        endpoint_cfg,
-        endpoint_cfg.get('id'),
-        scope=scope,
-        return_type=SecretReturnType.VALUE,
-    )
+    scope_type = 'user' if scope == 'user' else scope
+    scope_id = group_id if scope_type == 'group' else user_id if scope_type == 'user' else 'global'
+    resolved_route = None
+    routing_context = None
+    if routing_schema_version(endpoint_cfg) == 2:
+        routing_context = {
+            'routing_schema_version': 2,
+            'scope_type': scope_type,
+            'scope_id': str(scope_id or '').strip(),
+            'endpoint_id': str(endpoint_cfg.get('id') or '').strip(),
+            'model_id': str(model_cfg.get('id') or '').strip(),
+        }
+        resolved_endpoint = resolve_model_endpoint_from_context(
+            settings,
+            {**routing_context, 'user_id': user_id},
+        )
+        if not isinstance(resolved_endpoint, dict):
+            raise ValueError('Selected model endpoint could not be authorized.')
+        resolved_route = resolved_endpoint.get('_resolved_route')
+        if not isinstance(resolved_route, dict):
+            raise ValueError('Selected model route could not be resolved.')
+        model_cfg = next(
+            model for model in resolved_endpoint.get('models', [])
+            if str(model.get('id') or '').strip() == routing_context['model_id']
+        )
+    else:
+        resolved_endpoint = keyvault_model_endpoint_get_helper(
+            endpoint_cfg,
+            endpoint_cfg.get('id'),
+            scope=scope,
+            return_type=SecretReturnType.VALUE,
+        )
     connection = resolved_endpoint.get('connection', {}) if isinstance(resolved_endpoint, dict) else {}
     auth = resolved_endpoint.get('auth', {}) if isinstance(resolved_endpoint, dict) else {}
     provider = str(resolved_endpoint.get('provider') or endpoint_cfg.get('provider') or 'aoai').strip().lower()
-    deployment_name = resolve_model_endpoint_request_model(resolved_endpoint, model_cfg)
-    api_version = connection.get('api_version') or connection.get('openai_api_version') or ''
+    deployment_name = resolved_route['request_model'] if resolved_route else resolve_model_endpoint_request_model(resolved_endpoint, model_cfg)
+    api_version = resolved_route['api_version'] if resolved_route else connection.get('api_version') or connection.get('openai_api_version') or ''
     endpoint = connection.get('endpoint')
-    api_type = get_model_endpoint_api_type(resolved_endpoint)
-    anthropic_version = connection.get('anthropic_version') or ''
+    api_type = resolved_route['api_type'] if resolved_route else get_model_endpoint_api_type(resolved_endpoint)
+    anthropic_version = resolved_route['anthropic_version'] if resolved_route else connection.get('anthropic_version') or ''
+    if include_context:
+        return None, deployment_name, provider, routing_context
     auth_type = str(auth.get('type') or 'api_key').strip().lower()
     auth_settings = {
         **auth,
@@ -6270,9 +6326,14 @@ def _build_multi_endpoint_client(user_id, endpoint_id, model_id, settings, group
         allow_private_custom_endpoints=bool(
             settings.get('allow_private_custom_model_endpoints', False)
         ),
+        allow_insecure_custom_endpoints=bool(
+            settings.get('allow_insecure_custom_model_endpoints', False)
+        ),
+        custom_endpoint_ca_bundle_path=str(settings.get('custom_model_endpoint_ca_bundle_path') or ''),
         settings=settings,
         endpoint_config=resolved_endpoint,
         identity_context={'user_id': user_id},
+        resolved_route=resolved_route,
     )
 
     return client, deployment_name, provider
@@ -6329,7 +6390,7 @@ def _build_legacy_default_client(settings, identity_context=None):
     return client, deployment_name, 'aoai'
 
 
-def _resolve_model_workflow_client(workflow, settings):
+def _resolve_model_workflow_client(workflow, settings, *, include_context=False):
     user_id = str(workflow.get('user_id') or '').strip()
     group_id = _get_workflow_group_id(workflow)
     binding_summary = workflow.get('model_binding_summary') if isinstance(workflow.get('model_binding_summary'), dict) else {}
@@ -6338,19 +6399,34 @@ def _resolve_model_workflow_client(workflow, settings):
     legacy_model_deployment = str(workflow.get('legacy_model_deployment') or '').strip()
 
     if endpoint_id and model_id:
-        return _build_multi_endpoint_client(user_id, endpoint_id, model_id, settings, group_id=group_id)
+        return _build_multi_endpoint_client(
+            user_id,
+            endpoint_id,
+            model_id,
+            settings,
+            group_id=group_id,
+            include_context=include_context,
+        )
 
     if legacy_model_deployment:
         client, _, provider = _build_legacy_default_client(settings, identity_context={'user_id': user_id})
-        return client, legacy_model_deployment, provider
+        result = (client, legacy_model_deployment, provider)
+        return (*result, None) if include_context else result
 
     default_selection = settings.get('default_model_selection', {}) if isinstance(settings, dict) else {}
     default_endpoint_id = str(default_selection.get('endpoint_id') or '').strip()
     default_model_id = str(default_selection.get('model_id') or '').strip()
     if default_endpoint_id and default_model_id:
-        return _build_multi_endpoint_client(user_id, default_endpoint_id, default_model_id, settings)
+        return _build_multi_endpoint_client(
+            user_id,
+            default_endpoint_id,
+            default_model_id,
+            settings,
+            include_context=include_context,
+        )
 
-    return _build_legacy_default_client(settings, identity_context={'user_id': user_id})
+    result = _build_legacy_default_client(settings, identity_context={'user_id': user_id})
+    return (*result, None) if include_context else result
 
 
 def _chain_activity_callbacks(*callbacks):
@@ -8033,12 +8109,31 @@ def _workflow_model_chat_capabilities_enabled(workflow):
     return bool(value)
 
 
-def _build_workflow_model_context(workflow, deployment_name, provider):
+def _build_workflow_model_context(workflow, deployment_name, provider, routing_context=None, *, settings=None):
     """Build non-secret model selection identifiers for deferred execution."""
     workflow = workflow if isinstance(workflow, dict) else {}
     binding_summary = workflow.get('model_binding_summary') if isinstance(workflow.get('model_binding_summary'), dict) else {}
     endpoint_id = str(workflow.get('model_endpoint_id') or binding_summary.get('endpoint_id') or '').strip()
     model_id = str(workflow.get('model_id') or binding_summary.get('model_id') or '').strip()
+    default_selection = (settings or {}).get('default_model_selection') or {}
+    has_default_selection = (
+        isinstance(default_selection, dict)
+        and bool(str(default_selection.get('endpoint_id') or '').strip())
+        and bool(str(default_selection.get('model_id') or '').strip())
+    )
+    if routing_context is None and settings is not None and (
+        (endpoint_id and model_id) or has_default_selection
+    ):
+        _, deployment_name, provider, routing_context = _resolve_model_workflow_client(
+            workflow, settings, include_context=True,
+        )
+    if isinstance(routing_context, dict) and routing_context.get('routing_schema_version') == 2:
+        return {
+            **{field: routing_context[field] for field in (
+                'routing_schema_version', 'scope_type', 'scope_id', 'endpoint_id', 'model_id',
+            )},
+            'user_id': str(workflow.get('user_id') or '').strip(),
+        }
     model_context = {
         'user_id': str(workflow.get('user_id') or '').strip(),
         'model_deployment': str(deployment_name or '').strip(),
@@ -8134,8 +8229,17 @@ def _execute_model_workflow_with_core_capabilities(
             status='running',
         )
 
-    _, deployment_name, provider = _resolve_model_workflow_client(workflow, settings)
-    model_context = _build_workflow_model_context(workflow, deployment_name, provider)
+    _, deployment_name, provider, routing_context = _resolve_model_workflow_client(
+        workflow,
+        settings,
+        include_context=True,
+    )
+    model_context = _build_workflow_model_context(
+        workflow,
+        deployment_name,
+        provider,
+        routing_context=routing_context,
+    )
     workflow_kernel_settings = get_workflow_kernel_settings(settings)
 
     with _workflow_model_core_execution_context(workflow, conversation_id, run_id):

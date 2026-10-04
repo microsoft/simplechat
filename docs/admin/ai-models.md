@@ -5,7 +5,7 @@ description: "AI Models configures chat, embedding, image generation, APIM, mult
 section: "Administration"
 audience: admin
 admin_tab: ai-models
-version: "0.261.043"
+version: "0.261.046"
 ---
 
 
@@ -35,16 +35,23 @@ Model endpoints are production dependencies for every generated answer, embeddin
 
 The Model Endpoints section belongs to the Model Endpoints tab. Use it with the adjacent settings in this group so related rollout, access, and operational choices stay aligned.
 
-### Per-model routing preview
+### Per-model routing and live tests
 
-Implemented in version: **0.261.042**, tracked in
+Live-test wiring introduced in **0.261.044**, with workflow and adapter handoff
+repairs in **0.261.045** and capability, cancellation, and activation support in
+**0.261.046**, tracked in
 `application/single_app/config.py`.
 
 New endpoints use per-model routing so one gateway can host different API
-contracts and paths. This release supports configuration and route preview only:
-new endpoints stay disabled, and their live **Test Connection** and activation
-are unavailable until runtime integration. Existing legacy endpoints are not
-migrated and retain their previous behavior.
+contracts and paths. **Preview Route** shows the server-computed POST URL without
+contacting the provider. **Test Connection** sends a live request using the saved
+endpoint and model route after existing feature, scope, and governance checks;
+unsaved route changes must be saved first. The test prompt can incur provider
+usage charges. New endpoints start disabled. After saving and testing a
+nonproduction endpoint, use **Enable** to make its enabled models available;
+**Disable** removes that endpoint from normal model selection. Global changes
+must also be persisted with the main settings save. Existing legacy endpoints
+are not migrated. Live beta acceptance remains separate from local validation.
 
 | Control | Purpose |
 | --- | --- |
@@ -61,14 +68,16 @@ For example, an endpoint `https://gateway.example/shared/v1`, an API Path of
 origin, query, fragment, or traversal segments. Preview is structural validation,
 not proof of authentication, availability, or network policy approval.
 
-Persist multi-endpoint and applicable personal/group enablement before previewing.
+Persist multi-endpoint and applicable personal/group enablement before previewing
+or testing.
 Configure two rows, compare their previews against the gateway contract, then
 save/reopen to verify independent routing. Invalid or duplicate routes block the
 save; changing the form while validation runs requires saving again. Global
 **Save Endpoint** updates the form until the main settings save. Personal/group
-editors use their existing scoped save APIs and role restrictions. Do not enable
-schema-v2 records manually or migrate production endpoints for this editor-only
-release. See the [identity and scope requirements]({{ '/guides/model-endpoint-identity-setup/' | relative_url }}).
+editors use their existing scoped save APIs and role restrictions. The server
+rejects live tests if the submitted route differs from the saved route. Use a
+nonproduction endpoint for testing; schema-v1 records keep
+their compatibility behavior. See the [identity and scope requirements]({{ '/guides/model-endpoint-identity-setup/' | relative_url }}).
 
 ### Verified model capacity
 

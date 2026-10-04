@@ -1,8 +1,11 @@
+# test_tabular_background_generated_exports.py
 #!/usr/bin/env python3
 """
 Functional test for durable tabular generated-output background exports.
-Version: 0.261.023
+Version: 0.261.046
 Implemented in: 0.241.060; throughput and timeout hardening in: 0.250.070; unified durable run contract in: 0.250.128; Phase 6 rolling worker pool compatibility in: 0.250.142; safe retry reason status text in: 0.250.147; collapsed operational details in: 0.250.150; simplified completed artifact cards in: 0.250.151; balanced batches and foreground JSON/XML cards in: 0.250.152; plural artifact-set completion rendering in: 0.250.176; valid XML stream serialization in: 0.261.023
+
+Schema-v2 execution owner binding implemented in: 0.261.046
 
 This test ensures that large tabular structured exports are wired through the
 durable background queue, status API, queued retry recovery, and chat progress
@@ -17,6 +20,9 @@ import json
 import re
 import sys
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import Mock
+import pytest
 from xml.etree import ElementTree
 from xml.sax.saxutils import escape as escape_xml_text
 
@@ -55,6 +61,39 @@ def assert_contains(source_text, needle, description):
     """Assert that a source file contains an expected implementation marker."""
     if needle not in source_text:
         raise AssertionError(f'Missing {description}: {needle}')
+
+
+@pytest.mark.parametrize("context_field", ("model_context", "chunk_model_context"))
+@pytest.mark.parametrize("tampered_field", ("user_id", "scope_id"))
+def test_background_model_context_cannot_impersonate_another_owner(context_field, tampered_field):
+    node = get_function(parse_python(EXPORT_MODULE), '_authorize_tabular_export_run_execution')
+    store = Mock(return_value={'user_id': 'owner'})
+    namespace = {'cosmos_conversations_container': SimpleNamespace(read_item=store)}
+    exec(compile(ast.Module(body=[node], type_ignores=[]), str(EXPORT_MODULE), 'exec'), namespace)
+    context = {
+        'routing_schema_version': 2, 'scope_type': 'user', 'scope_id': 'owner',
+        'user_id': 'owner', 'endpoint_id': 'endpoint', 'model_id': 'model',
+    }
+    context[tampered_field] = 'other-user'
+    run = {'user_id': 'owner', 'conversation_id': 'conversation', context_field: context}
+    with pytest.raises(PermissionError):
+        namespace['_authorize_tabular_export_run_execution'](run)
+    store.assert_called_once_with(item='conversation', partition_key='conversation')
+
+
+def test_background_model_context_binds_verified_owner_without_mutating_snapshot():
+    node = get_function(parse_python(EXPORT_MODULE), '_authorize_tabular_export_run_execution')
+    namespace = {'cosmos_conversations_container': SimpleNamespace(read_item=lambda **_kwargs: {'user_id': 'owner'})}
+    exec(compile(ast.Module(body=[node], type_ignores=[]), str(EXPORT_MODULE), 'exec'), namespace)
+    context = {
+        'routing_schema_version': 2, 'scope_type': 'global', 'scope_id': 'global',
+        'endpoint_id': 'endpoint', 'model_id': 'model',
+    }
+    run = {'user_id': 'owner', 'conversation_id': 'conversation', 'model_context': context}
+    conversation = namespace['_authorize_tabular_export_run_execution'](run)
+    assert conversation['user_id'] == 'owner'
+    assert run['model_context']['user_id'] == 'owner'
+    assert 'user_id' not in context
 
 
 def test_export_runner_module():

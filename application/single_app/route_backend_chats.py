@@ -48,6 +48,8 @@ from functions_model_endpoint_types import (
     get_model_endpoint_api_type,
     resolve_model_endpoint_request_model,
 )
+from functions_model_endpoint_urls import normalize_model_endpoint_routing, resolve_model_endpoint_route, routing_schema_version
+from functions_model_endpoint_validation import validate_custom_model_endpoint, validate_model_endpoint_routing
 from functions_mixed_source_orchestration import (
     MixedSourceCancellationError,
     MixedSourceFinalizationError,
@@ -149,7 +151,7 @@ from functions_source_review import (
     URL_ACCESS_CONTEXT_CHAT,
 )
 from functions_agents import get_agent_id_by_name
-from functions_group import find_group_by_id, get_group_model_endpoints, get_user_role_in_group
+from functions_group import assert_group_role, find_group_by_id, get_group_model_endpoints, get_user_role_in_group
 from functions_chat import *
 from functions_content import generate_embedding, generate_embeddings_batch
 from functions_documents import (
@@ -14345,9 +14347,12 @@ def build_streaming_multi_endpoint_client(
     api_type='',
     anthropic_version='',
     allow_private_custom_endpoints=False,
+    allow_insecure_custom_endpoints=False,
+    custom_endpoint_ca_bundle_path='',
     settings=None,
     endpoint_config=None,
     identity_context=None,
+    resolved_route=None,
 ):
     """Create an inference client for a resolved streaming model endpoint."""
     client, _ = build_model_endpoint_sync_chat_client(
@@ -14359,9 +14364,12 @@ def build_streaming_multi_endpoint_client(
         api_type=api_type,
         anthropic_version=anthropic_version,
         allow_private_custom_endpoints=allow_private_custom_endpoints,
+        allow_insecure_custom_endpoints=allow_insecure_custom_endpoints,
+        custom_endpoint_ca_bundle_path=custom_endpoint_ca_bundle_path,
         settings=settings,
         endpoint_config=endpoint_config,
         identity_context=identity_context,
+        resolved_route=resolved_route,
     )
     return client
 
@@ -14378,11 +14386,25 @@ def get_streaming_model_endpoint_candidates(settings, user_id, active_group_ids=
         try:
             ensure_governance_access('governance_user_endpoints', user_id)
             personal_endpoints, _ = normalize_model_endpoints(user_settings.get('personal_model_endpoints', []) or [])
-            endpoints.extend([
-                {**endpoint, '_endpoint_scope': 'user'}
-                for endpoint in personal_endpoints
-                if isinstance(endpoint, dict)
-            ])
+            for endpoint in personal_endpoints:
+                if not isinstance(endpoint, dict):
+                    continue
+                endpoint_id = str(endpoint.get('id') or '').strip()
+                if endpoint_id:
+                    try:
+                        ensure_governance_access(
+                            'governance_user_endpoints',
+                            user_id,
+                            item_entity_type='global_endpoint',
+                            item_id=endpoint_id,
+                        )
+                    except PermissionError:
+                        continue
+                endpoints.append({
+                    **endpoint,
+                    '_endpoint_scope': 'user',
+                    '_endpoint_scope_id': user_id,
+                })
         except PermissionError:
             debug_print('[STREAMING][Model Resolution] User endpoint governance policy denied access to personal endpoints.')
 
@@ -14397,6 +14419,11 @@ def get_streaming_model_endpoint_candidates(settings, user_id, active_group_ids=
                 seen_group_ids.add(group_key)
 
                 try:
+                    assert_group_role(
+                        user_id,
+                        group_key,
+                        allowed_roles=("Owner", "Admin", "DocumentManager", "User"),
+                    )
                     group_endpoints, _ = normalize_model_endpoints(get_group_model_endpoints(group_key) or [])
                 except Exception as group_error:
                     debug_print(
@@ -14404,11 +14431,25 @@ def get_streaming_model_endpoint_candidates(settings, user_id, active_group_ids=
                     )
                     continue
 
-                endpoints.extend([
-                    {**endpoint, '_endpoint_scope': 'group'}
-                    for endpoint in group_endpoints
-                    if isinstance(endpoint, dict)
-                ])
+                for endpoint in group_endpoints:
+                    if not isinstance(endpoint, dict):
+                        continue
+                    endpoint_id = str(endpoint.get('id') or '').strip()
+                    if endpoint_id:
+                        try:
+                            ensure_governance_access(
+                                'governance_group_endpoints',
+                                user_id,
+                                item_entity_type='global_endpoint',
+                                item_id=endpoint_id,
+                            )
+                        except PermissionError:
+                            continue
+                    endpoints.append({
+                        **endpoint,
+                        '_endpoint_scope': 'group',
+                        '_endpoint_scope_id': group_key,
+                    })
         except PermissionError:
             debug_print('[STREAMING][Model Resolution] Group endpoint governance policy denied access to group endpoints.')
 
@@ -14429,7 +14470,11 @@ def get_streaming_model_endpoint_candidates(settings, user_id, active_group_ids=
                     )
                 except PermissionError:
                     continue
-            endpoints.append({**endpoint, '_endpoint_scope': 'global'})
+            endpoints.append({
+                **endpoint,
+                '_endpoint_scope': 'global',
+                '_endpoint_scope_id': 'global',
+            })
     except PermissionError:
         debug_print('[STREAMING][Model Resolution] Global endpoint governance policy denied access to global endpoints.')
 
@@ -14484,6 +14529,14 @@ def resolve_streaming_multi_endpoint_gpt_config(settings, data, user_id, active_
         )
         return None
 
+    explicit_routing = routing_schema_version(endpoint_cfg) == 2
+    if explicit_routing and selection_source == 'default' and data.get('agent_info'):
+        return None
+    if explicit_routing and data.get('agent_info'):
+        raise ValueError('Explicit model endpoint routing is not available for agent requests.')
+    if explicit_routing and not requested_model_id:
+        raise ValueError('Explicit model endpoint requests require a saved model ID.')
+
     if not endpoint_cfg.get('enabled', True):
         if selection_source == 'request':
             raise ValueError('Selected model endpoint is disabled.')
@@ -14493,8 +14546,13 @@ def resolve_streaming_multi_endpoint_gpt_config(settings, data, user_id, active_
         return None
 
     endpoint_scope = endpoint_cfg.get('_endpoint_scope', 'global')
+    endpoint_scope_id = str(
+        endpoint_cfg.get('_endpoint_scope_id')
+        or (user_id if endpoint_scope == 'user' else 'global')
+    ).strip()
     resolved_endpoint_cfg = dict(endpoint_cfg)
     resolved_endpoint_cfg.pop('_endpoint_scope', None)
+    resolved_endpoint_cfg.pop('_endpoint_scope_id', None)
     resolved_endpoint_cfg = keyvault_model_endpoint_get_helper(
         resolved_endpoint_cfg,
         resolved_endpoint_cfg.get('id') or requested_endpoint_id,
@@ -14506,7 +14564,7 @@ def resolve_streaming_multi_endpoint_gpt_config(settings, data, user_id, active_
     model_cfg = None
     if requested_model_id:
         model_cfg = next((model for model in models if model.get('id') == requested_model_id), None)
-    if model_cfg is None and requested_deployment:
+    if model_cfg is None and requested_deployment and not explicit_routing:
         model_cfg = next(
             (
                 model for model in models
@@ -14531,6 +14589,20 @@ def resolve_streaming_multi_endpoint_gpt_config(settings, data, user_id, active_
         )
         return None
 
+    resolved_route = None
+    if explicit_routing:
+        routes = validate_model_endpoint_routing(
+            resolved_endpoint_cfg,
+            settings,
+            require_resolvable=True,
+        )
+        resolved_route = next(
+            (route for route in routes if route['model_id'] == requested_model_id),
+            None,
+        )
+        if resolved_route is None:
+            raise LookupError('Selected model could not be found on the configured endpoint.')
+
     provider = str(resolved_endpoint_cfg.get('provider') or requested_provider or 'aoai').lower()
     if provider not in MODEL_ENDPOINT_PROVIDER_ALLOWLIST:
         if selection_source == 'request':
@@ -14542,12 +14614,24 @@ def resolve_streaming_multi_endpoint_gpt_config(settings, data, user_id, active_
 
     connection = resolved_endpoint_cfg.get('connection', {}) or {}
     auth_settings = resolved_endpoint_cfg.get('auth', {}) or {}
-    deployment = resolve_model_endpoint_request_model(resolved_endpoint_cfg, model_cfg)
+    deployment = (
+        resolved_route['request_model']
+        if explicit_routing
+        else resolve_model_endpoint_request_model(resolved_endpoint_cfg, model_cfg)
+    )
     endpoint = str(connection.get('endpoint') or '').strip()
-    api_version = str(connection.get('openai_api_version') or connection.get('api_version') or '').strip()
-    api_type = get_model_endpoint_api_type(resolved_endpoint_cfg)
-    anthropic_version = str(connection.get('anthropic_version') or '').strip()
-    runtime_protocol = infer_model_endpoint_protocol(provider, endpoint, deployment, api_type)
+    if explicit_routing:
+        api_version = resolved_route['api_version']
+        api_type = resolved_route['api_type']
+        anthropic_version = resolved_route['anthropic_version']
+        runtime_protocol = resolved_route['protocol']
+        if provider == 'custom':
+            validate_custom_model_endpoint(resolved_endpoint_cfg, settings)
+    else:
+        api_version = str(connection.get('openai_api_version') or connection.get('api_version') or '').strip()
+        api_type = get_model_endpoint_api_type(resolved_endpoint_cfg)
+        anthropic_version = str(connection.get('anthropic_version') or '').strip()
+        runtime_protocol = infer_model_endpoint_protocol(provider, endpoint, deployment, api_type)
     model_icon = _normalize_model_icon_payload(model_cfg.get('icon'))
     model_response_length = normalize_model_response_length_from_model(model_cfg)
     model_behavior_name = _build_model_endpoint_behavior_name(model_cfg, deployment)
@@ -14586,9 +14670,14 @@ def resolve_streaming_multi_endpoint_gpt_config(settings, data, user_id, active_
         allow_private_custom_endpoints=bool(
             settings.get('allow_private_custom_model_endpoints', False)
         ),
+        allow_insecure_custom_endpoints=bool(
+            settings.get('allow_insecure_custom_model_endpoints', False)
+        ),
+        custom_endpoint_ca_bundle_path=str(settings.get('custom_model_endpoint_ca_bundle_path') or ''),
         settings=settings,
         endpoint_config=resolved_endpoint_cfg,
         identity_context={'user_id': user_id},
+        resolved_route=resolved_route,
     )
     debug_print(
         f"[STREAMING][Model Resolution] Resolved {selection_source} multi-endpoint model | "
@@ -14611,6 +14700,9 @@ def resolve_streaming_multi_endpoint_gpt_config(settings, data, user_id, active_
         model_icon,
         model_response_length,
         model_response_length_parameter,
+        resolved_route,
+        endpoint_scope,
+        endpoint_scope_id,
     )
 
 
@@ -17198,6 +17290,9 @@ def register_route_backend_chats(bp):
             gpt_model_icon = None
             gpt_response_length = None
             gpt_response_length_parameter = None
+            gpt_model_route = None
+            gpt_endpoint_scope = None
+            gpt_endpoint_scope_id = None
             tabular_model_context = None
             enable_gpt_apim = settings.get('enable_gpt_apim', False)
             enable_image_gen_apim = settings.get('enable_image_gen_apim', False)
@@ -17238,6 +17333,9 @@ def register_route_backend_chats(bp):
                         gpt_model_icon,
                         gpt_response_length,
                         gpt_response_length_parameter,
+                        gpt_model_route,
+                        gpt_endpoint_scope,
+                        gpt_endpoint_scope_id,
                     ) = multi_endpoint_config
                 elif enable_gpt_apim:
                     # read raw comma-delimited deployments
@@ -17337,6 +17435,9 @@ def register_route_backend_chats(bp):
                     request_model=gpt_model,
                     user_id=user_id,
                     active_group_ids=active_group_ids,
+                    routing_schema_version=2 if gpt_model_route else None,
+                    scope_type=gpt_endpoint_scope,
+                    scope_id=gpt_endpoint_scope_id,
                 )
 
             except Exception as e:
@@ -21843,6 +21944,9 @@ def register_route_backend_chats(bp):
                 gpt_model_icon = None
                 gpt_response_length = None
                 gpt_response_length_parameter = None
+                gpt_model_route = None
+                gpt_endpoint_scope = None
+                gpt_endpoint_scope_id = None
                 tabular_model_context = None
                 enable_gpt_apim = settings.get('enable_gpt_apim', False)
                 should_use_default_model = (
@@ -21884,6 +21988,9 @@ def register_route_backend_chats(bp):
                             gpt_model_icon,
                             gpt_response_length,
                             gpt_response_length_parameter,
+                            gpt_model_route,
+                            gpt_endpoint_scope,
+                            gpt_endpoint_scope_id,
                         ) = streaming_multi_endpoint_config
                     elif enable_gpt_apim:
                         raw = settings.get('azure_apim_gpt_deployment', '')
@@ -21966,6 +22073,9 @@ def register_route_backend_chats(bp):
                         request_model=gpt_model,
                         user_id=user_id,
                         active_group_ids=active_group_ids,
+                        routing_schema_version=2 if gpt_model_route else None,
+                        scope_type=gpt_endpoint_scope,
+                        scope_id=gpt_endpoint_scope_id,
                     )
 
                     debug_print(

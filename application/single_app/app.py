@@ -1047,12 +1047,12 @@ def add_security_headers(response):
     return response
 
 # Register a custom Jinja filter for Markdown
-def markdown_filter(text):
+def markdown_filter(text, extras=None, safe_mode=None):
     if not text:
         text = ""
 
     # Convert Markdown to HTML
-    html = markdown2.markdown(text)
+    html = markdown2.markdown(text, extras=extras, safe_mode=safe_mode)
 
     # Add target="_blank" to all <a> links
     html = re.sub(r'(<a\s+href=["\'](https?://.*?)["\'])', r'\1 target="_blank" rel="noopener noreferrer"', html)
@@ -1067,6 +1067,7 @@ def markdown_filter(text):
         'h5',
         'h6',
         'br',
+        'hr',
         'table',
         'thead',
         'tbody',
@@ -1344,6 +1345,9 @@ register_route_blueprint('backend_m365', register_route_backend_m365, user_requi
 
 @app.after_request
 def finalize_m365_json_request(response):
+    # File delivery and streams must not be consumed by JSON request finalization.
+    if response.direct_passthrough or response.is_streamed:
+        return response
     if response.is_json:
         payload = response.get_json()
         success = response.status_code < 400 and isinstance(payload, dict) and not (

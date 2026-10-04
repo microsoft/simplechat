@@ -2,8 +2,9 @@
 #!/usr/bin/env python3
 """
 Functional test for conversation summary model endpoint protocol routing.
-Version: 0.261.040
-Implemented in: 0.241.182; identity-header fixture repaired in 0.261.040
+Version: 0.261.045
+Implemented in: 0.241.182; identity-header fixture repaired in 0.261.040; schema-v2 summaries in 0.261.044
+Canonical transport-policy handoff coverage added in: 0.261.045
 
 This test ensures export summary intros and Chat Details summary generation can
 resolve Claude deployments from configured model endpoints and build the
@@ -12,6 +13,7 @@ Anthropic messages adapter instead of the legacy Azure OpenAI client.
 
 import ast
 import copy
+import importlib
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -23,6 +25,8 @@ APP_DIR = ROOT / "application" / "single_app"
 sys.path.insert(0, str(APP_DIR))
 
 from functions_model_endpoint_identity_header import build_model_endpoint_identity_headers
+from functions_model_endpoint_types import resolve_model_endpoint_request_model
+from functions_model_endpoint_urls import resolve_model_endpoint_route
 from model_endpoint_clients import (  # noqa: E402
     MODEL_ENDPOINT_PROTOCOL_ANTHROPIC,
     MODEL_ENDPOINT_PROTOCOL_AZURE_OPENAI,
@@ -112,6 +116,8 @@ def load_summary_helpers():
         "build_openai_style_chat_client": build_openai_style_chat_client,
         "cognitive_services_scope": "https://cognitiveservices.azure.com/.default",
         "debug_print": lambda *args, **kwargs: None,
+        "ensure_governance_access": lambda *args, **kwargs: None,
+        "assert_group_role": lambda *args, **kwargs: "User",
         "get_bearer_token_provider": lambda *args, **kwargs: None,
         "get_group_model_endpoints": lambda group_id: [],
         "get_user_groups": lambda user_id: [],
@@ -119,6 +125,11 @@ def load_summary_helpers():
         "infer_model_endpoint_protocol": infer_model_endpoint_protocol,
         "keyvault_model_endpoint_get_helper": lambda endpoint, *args, **kwargs: endpoint,
         "normalize_model_endpoints": normalize_model_endpoints_for_test,
+        "resolve_model_endpoint_request_model": resolve_model_endpoint_request_model,
+        "resolve_model_endpoint_route": resolve_model_endpoint_route,
+        "resolve_model_endpoint_from_context": lambda *_args, **_kwargs: None,
+        "build_model_endpoint_sync_chat_client": lambda *_args, **_kwargs: (None, ""),
+        "routing_schema_version": importlib.import_module("functions_model_endpoint_urls").routing_schema_version,
         "resolve_authority": lambda auth_settings: None,
     }
     exec(compile(helper_module, export_source_path, "exec"), namespace)
@@ -237,6 +248,59 @@ def test_summary_matches_personal_claude_deployment_for_user():
     return True
 
 
+def test_summary_dispatches_saved_schema_v2_model_route():
+    """Schema-v2 summary calls should share authorized runtime route resolution."""
+    helpers = load_summary_helpers()
+    endpoint = {
+        "id": "summary-v2", "name": "Summary route", "provider": "custom",
+        "routing_schema_version": 2, "enabled": True,
+        "connection": {"endpoint": "https://gateway.example/shared/v1"},
+        "auth": {"type": "api_key", "key_vault_reference": "secret-ref"},
+        "models": [{
+            "id": "model-v2", "enabled": True, "api_type": "openai",
+            "api_path": "summary-team", "url_mode": "auto",
+            "modelName": "claude-as-openai-compatible",
+        }],
+    }
+    route = resolve_model_endpoint_route(endpoint, endpoint["models"][0])
+    settings = build_settings([endpoint])
+    settings["allow_insecure_custom_model_endpoints"] = True
+    resolved_contexts = []
+    client_calls = []
+    sentinel_client = object()
+
+    def resolve_context(current_settings, context):
+        assert current_settings is settings
+        resolved_contexts.append(context)
+        return {**copy.deepcopy(endpoint), "auth": {"api_key": "server-only"}, "_resolved_route": route}
+
+    def build_client(*args, **kwargs):
+        client_calls.append((args, kwargs))
+        return sentinel_client, route["protocol"]
+
+    helpers["resolve_model_endpoint_from_context"] = resolve_context
+    helpers["build_model_endpoint_sync_chat_client"] = build_client
+    result = helpers["_resolve_summary_multi_endpoint_client"](
+        settings,
+        user_id="summary-user",
+        requested_endpoint_id="summary-v2",
+        requested_model_id="model-v2",
+    )
+    assert result == (sentinel_client, "claude-as-openai-compatible")
+    assert resolved_contexts == [{
+        "routing_schema_version": 2,
+        "scope_type": "global",
+        "scope_id": "global",
+        "endpoint_id": "summary-v2",
+        "model_id": "model-v2",
+        "user_id": "summary-user",
+    }]
+    assert client_calls[0][1]["resolved_route"] == route
+    assert client_calls[0][1]["allow_insecure_custom_endpoints"] is True
+    assert route["operation_url"] == "https://gateway.example/summary-team/shared/v1/chat/completions"
+    return True
+
+
 def test_summary_frontend_sends_endpoint_metadata():
     """Export and Chat Details summary requests should include endpoint metadata fields."""
     print("Testing summary frontend request payload metadata...")
@@ -272,6 +336,7 @@ if __name__ == "__main__":
         test_summary_resolves_explicit_claude_endpoint,
         test_summary_matches_global_claude_deployment_without_endpoint_id,
         test_summary_matches_personal_claude_deployment_for_user,
+        test_summary_dispatches_saved_schema_v2_model_route,
         test_summary_frontend_sends_endpoint_metadata,
     ]
     results = []

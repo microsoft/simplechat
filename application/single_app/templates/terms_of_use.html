@@ -30,6 +30,7 @@
             border-radius: 12px;
             box-shadow: 0 16px 48px rgba(32, 41, 64, 0.12);
             max-width: 760px;
+            min-width: 0;
             padding: 2rem;
             width: 100%;
         }
@@ -69,8 +70,42 @@
             line-height: 1.6;
             max-height: min(52vh, 520px);
             overflow: auto;
+            overflow-wrap: anywhere;
             padding: 1.25rem;
-            white-space: pre-wrap;
+        }
+
+        .terms-message > :last-child {
+            margin-bottom: 0;
+        }
+
+        .terms-message pre {
+            background: #eef2f6;
+            border-radius: 6px;
+            overflow: auto;
+            padding: 0.75rem;
+            white-space: pre;
+        }
+
+        .terms-message blockquote {
+            border-left: 3px solid #98a2b3;
+            padding-left: 1rem;
+        }
+
+        .terms-message table {
+            border-collapse: collapse;
+            margin-bottom: 1rem;
+            width: 100%;
+        }
+
+        .terms-message th,
+        .terms-message td {
+            border: 1px solid #d0d5dd;
+            padding: 0.5rem;
+            vertical-align: top;
+        }
+
+        .terms-message th {
+            background: #eef2f6;
         }
 
         .terms-actions {
@@ -99,7 +134,7 @@
         </section>
 
         <h1 id="terms-of-use-title" class="terms-title">{{ terms.title }}</h1>
-        <div class="terms-message">{{ terms.message }}</div>
+        <div class="terms-message" role="region" aria-labelledby="terms-of-use-title" tabindex="0">{{ terms.message | markdown(extras=['break-on-newline', 'fenced-code-blocks', 'tables'], safe_mode='escape') }}</div>
 
         <div class="terms-actions">
             <form method="post" action="{{ url_for('frontend_terms_of_use.decline_terms_of_use') }}">

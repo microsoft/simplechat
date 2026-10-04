@@ -61,6 +61,7 @@ from functions_terms_of_use import (
     normalize_terms_of_use_redirect_url,
     normalize_terms_of_use_text,
 )
+from functions_terms_of_use_config import format_terms_of_use_version, get_terms_of_use_config
 from swagger_wrapper import swagger_route, get_auth_security
 from datetime import datetime, timedelta, timezone
 from admin_settings_int_utils import safe_int_with_source
@@ -995,6 +996,10 @@ def register_route_frontend_admin_settings(bp):
             user_id = get_current_user_id()
             user_settings = get_user_settings(user_id)
             settings_for_template = dict(settings)
+            terms_version = get_terms_of_use_config(settings)["version"]
+            settings_for_template['terms_of_use_version_label'] = (
+                format_terms_of_use_version(terms_version) if terms_version is not None else "Not numbered"
+            )
             normalize_inbound_mcp_settings(settings_for_template)
             settings_for_template['model_endpoints'] = frontend_model_endpoints
             audio_runtime_capabilities = get_audio_runtime_capabilities()

@@ -9,7 +9,7 @@ from functions_group import assert_group_role, get_group_model_endpoints, requir
 from functions_keyvault import SecretReturnType, keyvault_model_endpoint_cleanup_helper, keyvault_model_endpoint_delete_helper, keyvault_model_endpoint_get_helper, keyvault_model_endpoint_save_helper
 from functions_model_capabilities import ModelTokenBudgetError
 from functions_model_endpoint_runtime import build_model_endpoint_sync_chat_client
-from functions_model_endpoint_urls import normalize_model_endpoint_routing, resolve_model_endpoint_route
+from functions_model_endpoint_urls import normalize_model_endpoint_routing, resolve_model_endpoint_route, routing_schema_version
 from functions_model_endpoint_types import (
     DEFAULT_ANTHROPIC_VERSION,
     MODEL_ENDPOINT_PROVIDER_CUSTOM,
@@ -20,6 +20,7 @@ from functions_model_endpoint_validation import (
     ModelEndpointValidationError,
     validate_custom_model_endpoint,
     validate_custom_model_endpoints,
+    validate_model_endpoint_routing,
 )
 from functions_settings import *
 from foundry_agent_runtime import FoundryAgentUserAuthenticationRequired, list_foundry_agents_from_endpoint, list_foundry_workflows_from_endpoint, list_new_foundry_agents_from_endpoint, resolve_foundry_project_base, resolve_foundry_project_api_version, build_project_credential, resolve_authority
@@ -160,6 +161,8 @@ def register_route_backend_models(bp):
                 item_entity_type="global_endpoint",
                 item_id=endpoint_id,
             )
+            if routing_schema_version(endpoint) == 2:
+                endpoint["_governance_endpoint_scope"] = endpoint_scope
         return endpoint
 
     def resolve_endpoint_scope_value(endpoint_cfg, fallback_endpoint_id=""):
@@ -536,13 +539,117 @@ def register_route_backend_models(bp):
             "resolved": {"method": "POST", **{field: resolved[field] for field in fields}},
         }), 200
 
+    def handle_explicit_model_test(data, scope, saved_endpoint=None):
+        settings = get_settings()
+        scope_flag = {"user": "allow_user_custom_endpoints", "group": "allow_group_custom_endpoints"}.get(scope)
+        if settings.get("enable_multi_model_endpoints") is not True or (
+            scope_flag and settings.get(scope_flag) is not True
+        ):
+            return build_safe_error_response("Model endpoints are disabled for this scope.", 403)
+
+        user_id = get_current_user_id()
+        endpoint_id = str(data.get("endpoint_id") or data.get("id") or "").strip()
+        requested_model = data.get("model") if isinstance(data.get("model"), dict) else {}
+        model_id = str(data.get("model_id") or requested_model.get("id") or "").strip()
+        if not endpoint_id or not model_id:
+            return build_safe_error_response("Save the endpoint and select a configured model before testing.", 400)
+
+        endpoint = saved_endpoint or resolve_endpoint_by_id(user_id, scope, endpoint_id)
+        if not isinstance(endpoint, dict) or str(endpoint.get("id") or "").strip() != endpoint_id:
+            raise LookupError("Model endpoint not found.")
+        endpoint = dict(endpoint)
+        endpoint_scope = endpoint.pop("_governance_endpoint_scope", scope)
+        if endpoint_scope not in ("global", "user", "group"):
+            raise ValueError("Invalid model endpoint scope.")
+        if routing_schema_version(endpoint) != 2:
+            return build_safe_error_response("The selected endpoint does not use explicit model routing.", 400)
+
+        models = [
+            model for model in (endpoint.get("models") or [])
+            if isinstance(model, dict) and str(model.get("id") or "").strip() == model_id
+        ]
+        if len(models) != 1:
+            raise LookupError("Model endpoint model not found.")
+        requested_connection = data.get("connection") if isinstance(data.get("connection"), dict) else {}
+        saved_connection = endpoint.get("connection") if isinstance(endpoint.get("connection"), dict) else {}
+        if (
+            "endpoint" in requested_connection
+            and requested_connection.get("endpoint") != saved_connection.get("endpoint")
+        ):
+            return build_safe_error_response("Save the endpoint changes before testing this route.", 409)
+        requested_route_model = data.get("model") if isinstance(data.get("model"), dict) else {}
+        for field in (
+            "id", "api_type", "api_path", "url_mode", "modelName", "deploymentName",
+            "api_version", "anthropic_version",
+        ):
+            if field in requested_route_model and requested_route_model.get(field) != models[0].get(field):
+                return build_safe_error_response("Save the model changes before testing this route.", 409)
+
+        endpoint = keyvault_model_endpoint_get_helper(
+            endpoint,
+            endpoint_id,
+            scope=endpoint_scope,
+            return_type=SecretReturnType.VALUE,
+        )
+        endpoint = normalize_model_endpoint_routing(endpoint)
+        model = next(
+            candidate for candidate in endpoint["models"]
+            if str(candidate.get("id") or "").strip() == model_id
+        )
+        routes = validate_model_endpoint_routing(
+            endpoint,
+            settings,
+            require_resolvable=True,
+        )
+        route = next(candidate for candidate in routes if candidate["model_id"] == model_id)
+        if endpoint.get("provider") == MODEL_ENDPOINT_PROVIDER_CUSTOM:
+            validate_custom_model_endpoint(endpoint, settings)
+
+        connection = endpoint.get("connection") or {}
+        client, runtime_protocol = build_model_endpoint_sync_chat_client(
+            auth_settings=endpoint.get("auth") or {},
+            provider=endpoint.get("provider") or "aoai",
+            endpoint=connection.get("endpoint") or "",
+            api_version=route["api_version"],
+            deployment_name=route["request_model"],
+            api_type=route["api_type"],
+            url_mode=route["url_mode"],
+            anthropic_version=route["anthropic_version"] or DEFAULT_ANTHROPIC_VERSION,
+            allow_private_custom_endpoints=settings.get("allow_private_custom_model_endpoints") is True,
+            allow_insecure_custom_endpoints=settings.get("allow_insecure_custom_model_endpoints") is True,
+            custom_endpoint_ca_bundle_path=str(settings.get("custom_model_endpoint_ca_bundle_path") or ""),
+            settings=settings,
+            endpoint_config=endpoint,
+            resolved_route=route,
+        )
+        response = client.chat.completions.create(
+            model=route["request_model"],
+            messages=[{"role": "user", "content": "Testing access."}],
+        )
+        if not response:
+            return jsonify({"error": "No response returned from model."}), 400
+        return jsonify({
+            "success": True,
+            "resolved": {
+                "request_url": route["operation_url"],
+                "protocol": runtime_protocol,
+                "api_type": route["api_type"],
+                "request_model": route["request_model"],
+            },
+        }), 200
+
     def handle_test_model_connection(scope="global"):
         try:
             data = request.get_json() or {}
             if data.get("preview_only") is True:
                 return handle_model_routing_preview(data, scope)
             if data.get("routing_schema_version") == 2:
-                return build_safe_error_response("Live testing for per-model routing is not available yet. Use Preview Route.", 501)
+                return handle_explicit_model_test(data, scope)
+            endpoint_id = str(data.get("endpoint_id") or data.get("id") or "").strip()
+            if endpoint_id:
+                saved_endpoint = resolve_endpoint_by_id(get_current_user_id(), scope, endpoint_id)
+                if saved_endpoint and routing_schema_version(saved_endpoint) == 2:
+                    return handle_explicit_model_test(data, scope, saved_endpoint)
             data = resolve_request_endpoint_payload(data, scope=scope)
             provider = (data.get("provider") or "aoai").lower()
             connection = data.get("connection") or {}
@@ -632,6 +739,13 @@ def register_route_backend_models(bp):
 
             return jsonify({"error": "No response returned from model."}), 400
 
+        except PermissionError as exc:
+            log_event(
+                "[MODELS] Test model request blocked by endpoint authorization",
+                extra={"scope": scope},
+                level=logging.WARNING,
+            )
+            return build_safe_error_response("You do not have access to test this model endpoint.", 403)
         except LookupError as exc:
             log_event(
                 "[MODELS] Test model request blocked because the model endpoint was not found",

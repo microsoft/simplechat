@@ -2,6 +2,47 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.051)**
+
+#### Bug Fixes
+
+*   **Readable Terms of Use Versions in Activity Logs**
+    *   Activity Log rows, detail modals, and CSV exports show the recorded Terms version as v1, v2, and so on, without needing to inspect JSON. Admin Settings shows the current saved version.
+    *   Version numbers advance automatically when a saved title, message, or frequency changes, including while disabled. Unchanged saves and enable/disable toggles do not advance them.
+    *   Existing configured terms receive a persisted v1 baseline. Historical events without a recorded number display "Legacy"; hashes remain in raw audit data. Acceptance and recurrence behavior are unchanged.
+    *   Added acceptance and decline filters, plus concurrency-safe revision assignment and regression coverage.
+    *   (Ref: [Terms of Use Audit Revision Fix](fixes/TERMS_OF_USE_AUDIT_REVISION_FIX.md), [#1616](https://github.com/microsoft/simplechat/issues/1616))
+
+### **(v0.261.049)**
+
+#### User Interface Enhancements
+
+*   **Markdown Formatting for Terms of Use**
+    *   Terms of Use messages now render headings, emphasis, lists, links, blockquotes, horizontal rules, tables, and code blocks, including before sign-in and without JavaScript.
+    *   Preserves plain-text line breaks, adds keyboard-accessible scrolling, and keeps long content contained on mobile screens.
+    *   Escapes raw HTML and sanitizes rendered Markdown; unsafe link protocols and images are not rendered. Titles, button labels, stored terms, acceptance hashes, and recurrence behavior remain unchanged.
+    *   (Ref: [Terms of Use](features/TERMS_OF_USE.md), [UI regression tests](../../ui_tests/test_terms_of_use_ui.py))
+
+### **(v0.261.048)**
+
+#### Bug Fixes
+
+*   **Static JSON Files No Longer Fail During M365 Response Finalization**
+    *   Fixed the plugin schema endpoint failing with a direct-passthrough exception when the M365 after-request hook attempted to parse a file response as JSON.
+    *   File downloads and streamed responses are now left untouched, preserving conditional requests, byte ranges, and streaming behavior. Buffered JSON API responses retain their existing M365 completion behavior.
+    *   (Ref: [M365 JSON Response Passthrough Fix](fixes/M365_JSON_RESPONSE_PASSTHROUGH_FIX.md), [#1602](https://github.com/microsoft/simplechat/issues/1602))
+
+### **(v0.261.047)**
+
+#### User Interface Enhancements
+
+*   **LaTeX Mathematics in V1 Chat**
+    *   Backported V2's KaTeX-based rendering for inline equations, display equations, fractions, and matrices without adding React or changing model requests.
+    *   Preserves TeX before Markdown parsing, including matrix row separators, while keeping code blocks, currency, citations, and Copy as Markdown intact.
+    *   Supports streaming, saved-message replay, stopped/interrupted responses, light/dark themes, MathML accessibility, and horizontally scrollable wide equations.
+    *   Preserves existing text-mask offsets and sends original TeX when masking a selected equation. Math assets and fonts are pinned and hosted locally; rendered output remains sanitized, with visible source-text fallbacks on failure.
+    *   (Ref: [V1 LaTeX Math Rendering](features/V1_LATEX_MATH_RENDERING.md), [math parser](../../application/single_app/static/js/chat/chat-math-segments.js), [math renderer](../../application/single_app/static/js/chat/chat-math.js), [UI regression tests](../../ui_tests/test_chat_math_rendering.py))
+
 ### **(v0.261.043)**
 
 #### New Features

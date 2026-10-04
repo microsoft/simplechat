@@ -71,7 +71,16 @@ The Chat AI Notice section belongs to the Notices & Agreements tab. Use it with 
 
 ### Terms of Use {#terms-of-use-section}
 
-The Terms of Use section belongs to the Notices & Agreements tab. Use it with the adjacent settings in this group so related rollout, access, and operational choices stay aligned.
+Terms of Use controls the acceptance notice before application access. The current
+saved version is displayed as `v1`, `v2`, and so on. Saving changed title, message,
+or frequency advances it automatically, including while Terms is disabled.
+Toggling the feature or saving unchanged text does not advance it.
+
+Activity Logs and CSV exports display the number captured at acceptance or
+decline, without requiring JSON inspection. Older events without a recorded
+number display **Legacy**; their original hashes remain in raw audit data.
+See [Terms of Use](../explanation/features/TERMS_OF_USE.md) for baseline migration
+and recurrence behavior.
 
 ### User Agreement {#user-agreement-section}
 
@@ -90,8 +99,8 @@ The User Agreement section belongs to the Notices & Agreements tab. Use it with 
 | Display Behavior | Changing the notice text or display behavior creates a new message version and shows it again. | non_dismissible | `ai_notice_frequency` |
 | Require terms of use | Exposes the capability after required services, permissions, and rollout policy are ready. | Off | `enable_terms_of_use`; capability toggle |
 | Popup Title | Provides displayed text that users see in the affected interface. | Terms of Use | `terms_of_use_title` |
-| Show Frequency | Changing the title, message, or frequency creates a new terms version that users must accept again. | once | `terms_of_use_frequency` |
-| Terms of Use Message | Plain text is shown to users with line breaks preserved. | Empty | `terms_of_use_message` |
+| Show Frequency | A changed title, message, or frequency advances the saved Terms version. Acceptance is enforced when Terms is enabled. | once | `terms_of_use_frequency` |
+| Terms of Use Message | Renders Markdown headings, emphasis, lists, links, tables, and code blocks. Plain-text line breaks are preserved; raw HTML is escaped and images are not rendered. | Empty | `terms_of_use_message` |
 | Cancel Redirect URL | Use a local path such as / or an admin-approved HTTP(S) URL. Signed-in users are locally logged out before this redirect. | / | `terms_of_use_decline_redirect_url` |
 | Accept Button Text | Provides displayed text that users see in the affected interface. | Accept and continue | `terms_of_use_accept_button_text` |
 | Cancel Button Text | Provides displayed text that users see in the affected interface. | Cancel | `terms_of_use_decline_button_text` |

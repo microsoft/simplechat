@@ -36,7 +36,8 @@ from functions_citation_tracking import (
 )
 from functions_conversation_metadata import update_conversation_with_metadata
 from functions_debug import debug_print
-from functions_group import get_group_model_endpoints, get_user_groups
+from functions_group import assert_group_role, get_group_model_endpoints, get_user_groups
+from functions_governance import ensure_governance_access
 from functions_image_generation import INLINE_IMAGE_PROPOSAL_BLOCK_LANGUAGE
 from functions_image_messages import (
     decode_image_content,
@@ -52,7 +53,8 @@ from functions_message_artifacts import (
 )
 from functions_settings import *
 from functions_keyvault import SecretReturnType, keyvault_model_endpoint_get_helper
-from functions_model_endpoint_runtime import build_model_endpoint_sync_chat_client
+from functions_model_endpoint_runtime import build_model_endpoint_sync_chat_client, resolve_model_endpoint_from_context
+from functions_model_endpoint_urls import resolve_model_endpoint_route, routing_schema_version
 from functions_model_endpoint_types import (
     get_model_endpoint_api_type,
     resolve_model_endpoint_request_model,
@@ -1105,18 +1107,42 @@ def _append_summary_endpoint_candidates(
     candidates: List[Dict[str, Any]],
     endpoints: List[Dict[str, Any]],
     endpoint_scope: str,
+    endpoint_scope_id: str = '',
+    user_id: str = None,
 ) -> None:
     normalized_endpoints, _ = normalize_model_endpoints(endpoints or [])
     for endpoint in normalized_endpoints:
-        if isinstance(endpoint, dict):
-            candidates.append({**endpoint, '_endpoint_scope': endpoint_scope})
+        if not isinstance(endpoint, dict):
+            continue
+        if routing_schema_version(endpoint) == 2:
+            if not user_id:
+                continue
+            endpoint_id = _normalize_summary_model_value(endpoint.get('id'))
+            try:
+                ensure_governance_access(f'governance_{endpoint_scope}_endpoints', user_id)
+                if endpoint_id:
+                    ensure_governance_access(
+                        f'governance_{endpoint_scope}_endpoints',
+                        user_id,
+                        item_entity_type='global_endpoint',
+                        item_id=endpoint_id,
+                    )
+            except PermissionError:
+                continue
+        candidates.append({
+            **endpoint,
+            '_endpoint_scope': endpoint_scope,
+            '_endpoint_scope_id': endpoint_scope_id or ('global' if endpoint_scope == 'global' else user_id or ''),
+        })
 
 
 def _get_summary_model_endpoint_candidates(settings: Dict[str, Any], user_id: str = None) -> List[Dict[str, Any]]:
     candidates: List[Dict[str, Any]] = []
     settings = settings or {}
 
-    _append_summary_endpoint_candidates(candidates, settings.get('model_endpoints', []) or [], 'global')
+    _append_summary_endpoint_candidates(
+        candidates, settings.get('model_endpoints', []) or [], 'global', 'global', user_id,
+    )
 
     if not user_id:
         return candidates
@@ -1129,6 +1155,8 @@ def _get_summary_model_endpoint_candidates(settings: Dict[str, Any], user_id: st
                 candidates,
                 user_settings.get('personal_model_endpoints', []) or [],
                 'user',
+                user_id,
+                user_id,
             )
         except Exception as exc:
             debug_print(f"[SUMMARY][Model Resolution] Failed to load personal endpoints: {exc}")
@@ -1145,10 +1173,17 @@ def _get_summary_model_endpoint_candidates(settings: Dict[str, Any], user_id: st
             if not group_id:
                 continue
             try:
+                assert_group_role(
+                    user_id,
+                    group_id,
+                    allowed_roles=('Owner', 'Admin', 'DocumentManager', 'User'),
+                )
                 _append_summary_endpoint_candidates(
                     candidates,
                     get_group_model_endpoints(group_id) or [],
                     'group',
+                    group_id,
+                    user_id,
                 )
             except Exception as exc:
                 debug_print(
@@ -1165,7 +1200,11 @@ def _summary_model_matches(
     requested_model_id: str,
 ) -> bool:
     request_model = ''
-    if _normalize_summary_model_value(endpoint_cfg.get('provider')).lower() == 'custom':
+    if routing_schema_version(endpoint_cfg) == 2:
+        request_model = _normalize_summary_model_value(
+            resolve_model_endpoint_route(endpoint_cfg, model_cfg).get('request_model')
+        )
+    elif _normalize_summary_model_value(endpoint_cfg.get('provider')).lower() == 'custom':
         request_model = _normalize_summary_model_value(
             resolve_model_endpoint_request_model(endpoint_cfg, model_cfg)
         )
@@ -1241,8 +1280,27 @@ def _build_summary_model_endpoint_client(
     settings: Dict[str, Any] = None,
     endpoint_config: Dict[str, Any] = None,
     identity_context: Dict[str, Any] = None,
+    resolved_route: Dict[str, Any] = None,
 ):
     auth_settings = auth_settings or {}
+    if resolved_route is not None:
+        client, _ = build_model_endpoint_sync_chat_client(
+            auth_settings,
+            provider,
+            endpoint,
+            api_version,
+            deployment_name=deployment_name,
+            api_type=api_type,
+            anthropic_version=anthropic_version,
+            allow_private_custom_endpoints=allow_private_custom_endpoints,
+            allow_insecure_custom_endpoints=bool((settings or {}).get('allow_insecure_custom_model_endpoints', False)),
+            custom_endpoint_ca_bundle_path=str((settings or {}).get('custom_model_endpoint_ca_bundle_path') or ''),
+            settings=settings,
+            endpoint_config=endpoint_config,
+            identity_context=identity_context,
+            resolved_route=resolved_route,
+        )
+        return client
     extra_headers = build_model_endpoint_identity_headers(
         settings,
         endpoint_config=endpoint_config,
@@ -1397,6 +1455,55 @@ def _resolve_summary_multi_endpoint_client(
             continue
 
         endpoint_scope = endpoint_cfg.get('_endpoint_scope', 'global')
+        if routing_schema_version(endpoint_cfg) == 2:
+            endpoint_scope_id = _normalize_summary_model_value(
+                endpoint_cfg.get('_endpoint_scope_id')
+                or ('global' if endpoint_scope == 'global' else user_id)
+            )
+            model_context = {
+                'routing_schema_version': 2,
+                'scope_type': endpoint_scope,
+                'scope_id': endpoint_scope_id,
+                'endpoint_id': _normalize_summary_model_value(endpoint_cfg.get('id')),
+                'model_id': _normalize_summary_model_value(model_cfg.get('id')),
+                'user_id': _normalize_summary_model_value(user_id),
+            }
+            resolved_endpoint_cfg = resolve_model_endpoint_from_context(settings, model_context)
+            if not isinstance(resolved_endpoint_cfg, dict):
+                if selection_source == 'request':
+                    raise ValueError('Selected summary model endpoint could not be resolved from saved settings.')
+                continue
+            route = resolved_endpoint_cfg.get('_resolved_route')
+            if not isinstance(route, dict):
+                raise ValueError('Selected summary model route could not be resolved.')
+            connection = resolved_endpoint_cfg.get('connection', {}) or {}
+            provider = _normalize_summary_model_value(resolved_endpoint_cfg.get('provider') or 'aoai').lower()
+            deployment = route['request_model']
+            endpoint = _normalize_summary_model_value(connection.get('endpoint'))
+            api_version = route['api_version']
+            api_type = route['api_type']
+            anthropic_version = route['anthropic_version']
+            gpt_client = _build_summary_model_endpoint_client(
+                resolved_endpoint_cfg.get('auth', {}) or {},
+                provider,
+                endpoint,
+                api_version,
+                deployment,
+                api_type=api_type,
+                anthropic_version=anthropic_version,
+                allow_private_custom_endpoints=bool(settings.get('allow_private_custom_model_endpoints', False)),
+                settings=settings,
+                endpoint_config=resolved_endpoint_cfg,
+                identity_context={'user_id': user_id},
+                resolved_route=route,
+            )
+            debug_print(
+                f"[SUMMARY][Model Resolution] Resolved schema-v2 summary route | "
+                f"endpoint_id={route['endpoint_id']} | model_id={route['model_id']} | "
+                f"api_type={api_type} | protocol={route['protocol']}"
+            )
+            return gpt_client, deployment
+
         resolved_endpoint_cfg = dict(endpoint_cfg)
         resolved_endpoint_cfg.pop('_endpoint_scope', None)
         endpoint_id = _normalize_summary_model_value(resolved_endpoint_cfg.get('id'))

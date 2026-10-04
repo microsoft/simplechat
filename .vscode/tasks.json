@@ -1,0 +1,116 @@
+{
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "label": "SimpleChat: Publish container (interactive)",
+            "type": "process",
+            "command": "pwsh",
+            "args": [
+                "-NoProfile",
+                "-File",
+                "${workspaceFolder}/deployers/azurecli/publish-simplechat.ps1",
+                "-ImageName",
+                "${input:containerImage}"
+            ],
+            "options": {
+                "cwd": "${workspaceFolder}"
+            },
+            "presentation": {
+                "reveal": "always",
+                "focus": true,
+                "panel": "dedicated"
+            },
+            "problemMatcher": []
+        },
+        {
+            "label": "SimpleChat: Preview container publish (interactive)",
+            "type": "process",
+            "command": "pwsh",
+            "args": [
+                "-NoProfile",
+                "-File",
+                "${workspaceFolder}/deployers/azurecli/publish-simplechat.ps1",
+                "-ImageName",
+                "${input:containerImage}",
+                "-WhatIf"
+            ],
+            "options": {
+                "cwd": "${workspaceFolder}"
+            },
+            "presentation": {
+                "reveal": "always",
+                "focus": true,
+                "panel": "dedicated"
+            },
+            "problemMatcher": []
+        },
+        {
+            "label": "SimpleChat: Publish beta container (confirm)",
+            "type": "process",
+            "command": "pwsh",
+            "args": [
+                "-NoProfile",
+                "-File",
+                "${workspaceFolder}/deployers/azurecli/publish-simplechat.ps1",
+                "-ImageName",
+                "${input:containerImage}",
+                "-SubscriptionId",
+                "8a60416d-813d-4904-b115-2cebaaf63fea",
+                "-ResourceGroupName",
+                "simplechat-2026beta-rg",
+                "-AcrName",
+                "simplechat2026betaacr",
+                "-WebAppName",
+                "simplechat-2026beta-app",
+                "-UseWebhook"
+            ],
+            "options": {
+                "cwd": "${workspaceFolder}"
+            },
+            "presentation": {
+                "reveal": "always",
+                "focus": true,
+                "panel": "dedicated"
+            },
+            "problemMatcher": []
+        },
+        {
+            "label": "SimpleChat: Publish dev container (confirm)",
+            "type": "process",
+            "command": "pwsh",
+            "args": [
+                "-NoProfile",
+                "-File",
+                "${workspaceFolder}/deployers/azurecli/publish-simplechat.ps1",
+                "-ImageName",
+                "${input:containerImage}",
+                "-SubscriptionId",
+                "8c7e0020-34d5-4be4-ac62-5c744df2700b",
+                "-ResourceGroupName",
+                "simplechat-2026dev-rg",
+                "-AcrName",
+                "simplechat2026devacr",
+                "-WebAppName",
+                "simplechat-2026dev-app",
+                "-UseWebhook"
+            ],
+            "options": {
+                "cwd": "${workspaceFolder}"
+            },
+            "presentation": {
+                "reveal": "always",
+                "focus": true,
+                "panel": "dedicated"
+            },
+            "problemMatcher": []
+        }
+    ],
+    "inputs": [
+        {
+            "id": "containerImage",
+            "type": "promptString",
+            "description": "Container image (repository:tag, without registry hostname)",
+            "default": "simplechat:latest"
+        }
+    ]
+}

@@ -1,9 +1,10 @@
 # test_workflow_model_core_capabilities.py
 """
 Functional test for Direct Model workflow core capabilities.
-Version: 0.250.172
+Version: 0.261.045
 Implemented in: 0.250.063
-Enhanced in: 0.250.064; updated in 0.250.172
+Enhanced in: 0.250.064; updated in 0.250.172; schema-v2 scope context in 0.261.044
+Saved workflow context handoffs and allowlisting fixed in: 0.261.045
 
 This test ensures new Direct Model workflows bind their saved model selection
 to a Semantic Kernel service and pass the kernel to auto-invoked core tools.
@@ -114,11 +115,11 @@ def load_model_core_helpers():
         "_extract_message_text": lambda message_content: str(message_content or ""),
         "_get_workflow_group_id": lambda workflow: str(workflow.get("group_id") or ""),
         "_raise_if_workflow_run_cancelled": lambda workflow, run_id: None,
-        "_resolve_model_workflow_client": lambda workflow, settings: (
+        "_resolve_model_workflow_client": lambda workflow, settings, *, include_context=False: (
             object(),
             "workflow-deployment",
             "aoai",
-        ),
+        ) + ((None,) if include_context else ()),
         "build_semantic_kernel_chat_service_for_model": lambda deployment_name, settings, **kwargs: (
             semantic_service_requests.append({
                 "deployment_name": deployment_name,
@@ -234,11 +235,61 @@ def test_default_model_selection_context_retains_saved_endpoint() -> None:
     print("PASS: default model selection context retains saved endpoint")
 
 
+def test_schema_v2_workflow_context_contains_only_saved_scope_ids() -> None:
+    """Schema-v2 workflow work carries stable route IDs, never endpoints or secrets."""
+    helpers, *_ = load_model_core_helpers()
+    routing_context = {
+        "routing_schema_version": 2,
+        "scope_type": "group",
+        "scope_id": "group-1",
+        "endpoint_id": "endpoint-1",
+        "model_id": "model-1",
+    }
+    model_context = helpers["_build_workflow_model_context"](
+        {"user_id": "user-1"},
+        "selected-model",
+        "custom",
+        routing_context={**routing_context, "endpoint": "https://untrusted.example", "auth": {"api_key": "discard"}},
+    )
+    assert model_context == {**routing_context, "user_id": "user-1"}
+
+
+def test_deferred_workflow_context_resolves_saved_selection() -> None:
+    helpers, *_ = load_model_core_helpers()
+    routing_context = {
+        "routing_schema_version": 2, "scope_type": "global", "scope_id": "global",
+        "endpoint_id": "selected-endpoint", "model_id": "selected-model",
+    }
+    calls = []
+
+    def resolve_selection(workflow, settings, *, include_context=False):
+        calls.append((workflow, settings, include_context))
+        return None, "fresh-deployment", "custom", routing_context
+
+    helpers["_resolve_model_workflow_client"] = resolve_selection
+    workflow = {"user_id": "owner", "model_endpoint_id": "selected-endpoint", "model_id": "selected-model"}
+    settings = {"enable_multi_model_endpoints": True}
+    context = helpers["_build_workflow_model_context"](
+        workflow, "old-deployment", "custom", settings=settings,
+    )
+    assert context == {**routing_context, "user_id": "owner"}
+    assert calls == [(workflow, settings, True)]
+    calls.clear()
+    legacy_context = helpers["_build_workflow_model_context"](
+        {"user_id": "owner"}, "legacy-deployment", "aoai",
+        settings={"default_model_selection": {"endpoint_id": "", "model_id": "", "provider": ""}},
+    )
+    assert legacy_context["model_deployment"] == "legacy-deployment"
+    assert calls == [], "An empty default selection must not initialize a client during context construction."
+
+
 def run_tests() -> bool:
     tests = [
         test_direct_model_workflow_binds_core_capabilities_to_saved_model,
         test_legacy_direct_model_workflow_retains_raw_completion,
         test_default_model_selection_context_retains_saved_endpoint,
+        test_schema_v2_workflow_context_contains_only_saved_scope_ids,
+        test_deferred_workflow_context_resolves_saved_selection,
     ]
     results = []
 

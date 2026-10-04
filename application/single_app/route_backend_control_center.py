@@ -17,6 +17,7 @@ from functions_control_center import (
     parse_control_center_auto_refresh_datetime,
 )
 from functions_settings import *
+from functions_terms_of_use_config import format_terms_of_use_version
 from functions_logging import *
 from functions_activity_logging import *
 from functions_approvals import *
@@ -516,6 +517,13 @@ def build_activity_log_user_map(logs):
 def format_activity_log_details_for_csv(log_record):
     """Format activity log details as a plain string suitable for CSV export."""
     activity_type = log_record.get('activity_type', '')
+
+    if activity_type in {'terms_of_use_accepted', 'terms_of_use_declined'}:
+        return (
+            f"Terms version: {format_terms_of_use_version(log_record.get('terms_version'))}, "
+            f"Frequency: {log_record.get('frequency') or 'Not recorded'}, "
+            f"Source: {log_record.get('source') or 'Not recorded'}"
+        )
 
     if activity_type == 'user_login':
         return f"Login method: {log_record.get('login_method') or log_record.get('details', {}).get('login_method', 'N/A')}"
