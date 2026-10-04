@@ -54,6 +54,14 @@ function Invoke-AzCommand {
     return (($output | Out-String).Trim())
 }
 
+function Invoke-AzJson {
+    param([Parameter(Mandatory)] [string[]] $Arguments, [switch] $AllowFailure)
+    # az is a .cmd on Windows, so JMESPath filters with parentheses get mangled; filter JSON in PowerShell instead.
+    $raw = Invoke-AzCommand -Arguments ($Arguments + @('-o', 'json')) -AllowFailure:$AllowFailure
+    if (-not $raw) { return $null }
+    return ($raw | ConvertFrom-Json)
+}
+
 function Write-Step {
     param([string] $Message)
     Write-Host "==> $Message" -ForegroundColor Cyan
@@ -69,7 +77,7 @@ function Invoke-ImageBuild {
         Get-ChildItem -Path $staging -Recurse -Directory -Filter '__pycache__' | Remove-Item -Recurse -Force
 
         $queued = & az acr build --registry $RegistryName --resource-group $RegistryResourceGroup --image $Image `
-            --file 'application/map_server/Dockerfile' --no-wait $staging 2>&1 | Out-String
+            --file (Join-Path $staging 'application/map_server/Dockerfile') --no-wait $staging 2>&1 | Out-String
         if ($queued -notmatch 'Queued a build with ID:\s*(\S+)') {
             throw "The image build wasn't queued: $queued"
         }
@@ -101,12 +109,14 @@ function Invoke-ImageBuild {
 
 function Grant-AzureRole {
     param([string] $PrincipalId, [string] $Role, [string] $Scope)
-    $existing = Invoke-AzCommand -Arguments @(
-        'role', 'assignment', 'list', '--assignee', $PrincipalId, '--role', $Role, '--scope', $Scope, '--query', 'length(@)', '-o', 'tsv')
-    if ($existing -ne '0') { return }
+    # Match by object ID: --assignee looks the principal up in Entra ID, which lags for a new identity.
+    $existing = @(Invoke-AzJson -Arguments @('role', 'assignment', 'list', '--role', $Role, '--scope', $Scope) |
+            Where-Object { $_.principalId -eq $PrincipalId })
+    if ($existing.Count -gt 0) { return $false }
     Invoke-AzCommand -Arguments @(
         'role', 'assignment', 'create', '--assignee-object-id', $PrincipalId, '--assignee-principal-type', 'ServicePrincipal',
         '--role', $Role, '--scope', $Scope) | Out-Null
+    return $true
 }
 
 try {
@@ -128,10 +138,9 @@ try {
     }
 
     Write-Step 'Preparing Cosmos DB'
-    $cosmosEndpoint = Invoke-AzCommand -Arguments @('cosmosdb', 'show', '-n', $CosmosAccountName, '-g', $CosmosResourceGroup, '--query', 'documentEndpoint', '-o', 'tsv')
-    $serverless = Invoke-AzCommand -Arguments @(
-        'cosmosdb', 'show', '-n', $CosmosAccountName, '-g', $CosmosResourceGroup,
-        '--query', "length(capabilities[?name=='EnableServerless'])", '-o', 'tsv')
+    $cosmosAccount = Invoke-AzJson -Arguments @('cosmosdb', 'show', '-n', $CosmosAccountName, '-g', $CosmosResourceGroup)
+    $cosmosEndpoint = $cosmosAccount.documentEndpoint
+    $serverless = @($cosmosAccount.capabilities | Where-Object { $_.name -eq 'EnableServerless' }).Count -gt 0
     if (-not (Invoke-AzCommand -AllowFailure -Arguments @('cosmosdb', 'sql', 'database', 'show', '-a', $CosmosAccountName, '-g', $CosmosResourceGroup, '-n', 'mapserver', '--query', 'name', '-o', 'tsv'))) {
         Invoke-AzCommand -Arguments @('cosmosdb', 'sql', 'database', 'create', '-a', $CosmosAccountName, '-g', $CosmosResourceGroup, '-n', 'mapserver') | Out-Null
     }
@@ -142,7 +151,7 @@ try {
         if (-not $exists) {
             $arguments = @('cosmosdb', 'sql', 'container', 'create', '-a', $CosmosAccountName, '-g', $CosmosResourceGroup,
                 '-d', 'mapserver', '-n', $container.Name, '-p', $container.Key)
-            if ($serverless -eq '0') { $arguments += @('--max-throughput', '1000') }
+            if (-not $serverless) { $arguments += @('--max-throughput', '1000') }
             Invoke-AzCommand -Arguments $arguments | Out-Null
         }
     }
@@ -154,12 +163,13 @@ try {
         $identityJson = Invoke-AzCommand -Arguments @('identity', 'create', '-n', $identityName, '-g', $ResourceGroup, '-o', 'json')
     }
     $identity = $identityJson | ConvertFrom-Json
-    Grant-AzureRole -PrincipalId $identity.principalId -Role 'AcrPull' -Scope $registryId
+    $rolesGranted = Grant-AzureRole -PrincipalId $identity.principalId -Role 'AcrPull' -Scope $registryId
 
-    $cosmosAssigned = Invoke-AzCommand -Arguments @(
-        'cosmosdb', 'sql', 'role', 'assignment', 'list', '-a', $CosmosAccountName, '-g', $CosmosResourceGroup,
-        '--query', "length([?principalId=='$($identity.principalId)' && ends_with(roleDefinitionId, '$CosmosDataContributorRole')])", '-o', 'tsv')
-    if ($cosmosAssigned -eq '0') {
+    $cosmosAssignments = @(Invoke-AzJson -Arguments @('cosmosdb', 'sql', 'role', 'assignment', 'list', '-a', $CosmosAccountName, '-g', $CosmosResourceGroup))
+    $cosmosAssigned = @($cosmosAssignments | Where-Object {
+            $_.principalId -eq $identity.principalId -and $_.roleDefinitionId.EndsWith($CosmosDataContributorRole)
+        }).Count -gt 0
+    if (-not $cosmosAssigned) {
         Invoke-AzCommand -Arguments @(
             'cosmosdb', 'sql', 'role', 'assignment', 'create', '-a', $CosmosAccountName, '-g', $CosmosResourceGroup,
             '--role-definition-id', $CosmosDataContributorRole, '--principal-id', $identity.principalId, '--scope', '/dbs/mapserver') | Out-Null
@@ -170,7 +180,7 @@ try {
         Write-Step 'Granting Azure Maps access'
         $mapsAccount = Invoke-AzCommand -Arguments @('maps', 'account', 'show', '-n', $MapsAccountName, '-g', $MapsResourceGroup, '-o', 'json') | ConvertFrom-Json
         $mapsClientId = $mapsAccount.properties.uniqueId
-        Grant-AzureRole -PrincipalId $identity.principalId -Role 'Azure Maps Data Reader' -Scope $mapsAccount.id
+        $rolesGranted = (Grant-AzureRole -PrincipalId $identity.principalId -Role 'Azure Maps Data Reader' -Scope $mapsAccount.id) -or $rolesGranted
     }
     else {
         Write-Host '    no Maps account given; the map viewer will show a black background'
@@ -196,13 +206,14 @@ try {
     if (-not (Invoke-AzCommand -AllowFailure -Arguments @('ad', 'sp', 'show', '--id', $ApiAppId, '--query', 'id', '-o', 'tsv'))) {
         Invoke-AzCommand -Arguments @('ad', 'sp', 'create', '--id', $ApiAppId) | Out-Null
     }
-    $apiPrincipalId = Invoke-AzCommand -Arguments @('ad', 'sp', 'show', '--id', $ApiAppId, '--query', 'id', '-o', 'tsv')
-    $roleId = Invoke-AzCommand -Arguments @('ad', 'sp', 'show', '--id', $ApiAppId, '--query', "appRoles[?value=='$RoleValue'].id | [0]", '-o', 'tsv')
+    $apiPrincipal = Invoke-AzJson -Arguments @('ad', 'sp', 'show', '--id', $ApiAppId)
+    $apiPrincipalId = $apiPrincipal.id
+    $roleId = @($apiPrincipal.appRoles | Where-Object { $_.value -eq $RoleValue })[0].id
+    if (-not $roleId) { throw "The map server API has no $RoleValue app role." }
 
     $assignmentsUri = "https://graph.microsoft.com/v1.0/servicePrincipals/$SimpleChatPrincipalId/appRoleAssignments"
-    $assigned = Invoke-AzCommand -AllowFailure -Arguments @(
-        'rest', '--method', 'GET', '--uri', $assignmentsUri,
-        '--query', "length(value[?resourceId=='$apiPrincipalId' && appRoleId=='$roleId'])", '-o', 'tsv')
+    $existingGrants = Invoke-AzJson -AllowFailure -Arguments @('rest', '--method', 'GET', '--uri', $assignmentsUri)
+    $assigned = if (@($existingGrants.value | Where-Object { $_.resourceId -eq $apiPrincipalId -and $_.appRoleId -eq $roleId }).Count -gt 0) { '1' } else { '0' }
     if ($assigned -ne '1') {
         $bodyFile = New-TemporaryFile
         @{ principalId = $SimpleChatPrincipalId; resourceId = $apiPrincipalId; appRoleId = $roleId } |
@@ -231,6 +242,10 @@ try {
     if ($mapsClientId) { $envVars += "AZURE_MAPS_CLIENT_ID=$mapsClientId" }
 
     $appExists = Invoke-AzCommand -AllowFailure -Arguments @('containerapp', 'show', '-n', $ContainerAppName, '-g', $ResourceGroup, '--query', 'name', '-o', 'tsv')
+    if ($rolesGranted -and -not $appExists) {
+        Write-Host '    waiting 60 seconds for the new role assignments to take effect'
+        Start-Sleep -Seconds 60
+    }
     if ($appExists) {
         Invoke-AzCommand -Arguments (@('containerapp', 'update', '-n', $ContainerAppName, '-g', $ResourceGroup,
                 '--image', "$loginServer/$image", '--set-env-vars') + $envVars) | Out-Null
