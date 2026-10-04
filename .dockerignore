@@ -6,6 +6,8 @@
 !application/single_app/**
 !application/v2_ui/
 !application/v2_ui/**
+!application/map_server/
+!application/map_server/**
 !docker-customization/
 !docker-customization/**
 !LICENSE

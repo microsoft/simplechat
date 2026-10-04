@@ -1,6 +1,6 @@
 # SimpleChat Logging Tags
 
-This reference lists the bracketed logging tags currently used in Python logging-style calls under `application/single_app`.
+This reference lists the bracketed logging tags currently used in Python logging-style calls under `application/single_app` and `application/map_server`.
 
 Logging tags must use the normalized `[UPPERCASE_WITH_UNDERSCORES]` format. Prefer static tags and move dynamic values into the message body or `extra` metadata.
 
@@ -155,6 +155,10 @@ Last inventoried: 2026-08-10
 - `[MASK]`
 - `[MASK_API_ERROR]`
 - `[MASK_MESSAGE]`
+- `[MAP_SERVER]`
+- `[MAP_SERVER_AUTH]`
+- `[MAP_SERVER_STORE]`
+- `[MAP_SERVER_TILES]`
 - `[MCP_DESTINATION_POLICY]`
 - `[MCP_DISCOVERY]`
 - `[MCP_OUTBOUND]`

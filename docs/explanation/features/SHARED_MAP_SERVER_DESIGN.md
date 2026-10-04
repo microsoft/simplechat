@@ -5,8 +5,8 @@ Prepared: **2026-10-04**. Repository: **microsoft/simplechat**.
 Planned against version: **0.261.233** (`application\single_app\config.py`). This design is documentation only, so it
 doesn't change the version. Each build phase records the version it ships in.
 
-Planning branch: `paullizer-map-server-design`. Status: **reviewed 2026-10-04, scoped as a proof of concept**. No GitHub
-issue.
+Planning branch: `paullizer-map-server`. Status: **Phase 1 (map server core) built in 0.261.254**, scoped as a proof
+of concept. No GitHub issue.
 
 Dependencies: the Azure Maps action (`semantic_kernel_plugins/azure_maps_openlayers_plugin.py`,
 `functions_azure_maps.py`), the Simple Chat action (`semantic_kernel_plugins/simplechat_plugin.py`,
@@ -54,6 +54,9 @@ Made 2026-10-04 in review. This is a proof of concept, so version 1 stays small:
 8. **No deletion rules yet.** Retention, archiving and deleting maps are out of scope for now.
 9. **Black background without Azure Maps.** When map tiles aren't available, the map draws its features on a plain
    black background. No other basemaps are offered.
+10. **Agents use the shared map instead of the Azure Maps action.** An agent that maps its work gets the Shared map
+    action in place of the Azure Maps action (`create_map_visualization`). The Azure Maps action stays in SimpleChat
+    for agents that don't use shared maps.
 
 ## Concepts
 
@@ -98,7 +101,9 @@ flowchart LR
 
 - **Service.** Python with FastAPI: async, with a generated OpenAPI document. An MCP endpoint can be mounted in the same
   app later. Source in `application/map_server/`, its own container image.
-- **Hosting.** Azure Container Apps or an App Service container, with a managed identity and internal ingress.
+- **Hosting.** Azure Container Apps or an App Service container, with a managed identity. Ingress is internal when
+  SimpleChat can reach the environment's network, and external otherwise. Either way every request needs an Entra token
+  from an allowed caller.
 - **Browser traffic goes through SimpleChat.** The browser talks only to SimpleChat, which checks access and proxies
   map reads, live events and tiles to the map server. This keeps the map server private, needs no CORS or CSP change,
   and works in deployments that use private endpoints. A direct browser-to-server option is listed under alternatives.
@@ -154,54 +159,64 @@ Cosmos DB for NoSQL, in its own database (`mapserver`), so deployments reuse an 
 never cross partitions. Items carry a `type` discriminator and a `schema_version`:
 
 - `map`: title, description, `owner_scope`, basemap (an Azure Maps tileset), `current_phase_id`, `version`, counts,
-  created and updated stamps.
-- `phase`: name, description, color, order, status, started by and at, closed at.
+  created and updated stamps, and two short lists kept on the map so they change under its ETag:
+  - `phases`: name, description, color, order, status, started by and at, started and closed versions. Up to 50.
+  - `links`: the conversations the map is linked to, with who linked them and when. Up to 50.
 - `feature`: the current state of one feature (example below).
-- `feature_rev`: an earlier state of an updated feature, so the map can be shown as of an earlier version.
-- `change`: one log entry, with `version`, phase, actor, origin (conversation, message, run) and the IDs it touched.
+- `feature_rev`: an earlier state of an updated feature, valid from one version to another, so the map can be shown as
+  of an earlier version.
+- `change`: one log entry, with `version`, action, phase, actor, origin (conversation, message, run), the IDs it
+  added, updated or retracted, and up to five labels.
 
 Features are separate items, not embedded in the map document, so a large map never nears the 2 MB item limit and each
 feature updates on its own. At about 2 KB a feature, a map with 10,000 features and its log is well under the 20 GB
 logical partition limit.
 
 **Container `map_links`, partition key `/scope_key`.** Small rows that answer "which maps can I see here" in one
-partition: `user:<id>` and `group:<id>` rows for ownership, and `conversation:<id>` rows for links. Each row holds
-`map_id`, title and `updated_at`.
+partition: `user:<id>` and `group:<id>` rows for ownership, and `conversation:<id>` rows for links. Each row holds the
+`map_id`. A row is written before the map changes and every read checks the map itself, so a failed write can leave an
+extra row but never hides a map or shows one outside its scope.
 
 ```json
 {
   "type": "feature",
   "schema_version": 1,
-  "id": "f-01J9ZK3Q6A",
-  "map_id": "map-01J9ZJ8M2C",
+  "id": "F-0007",
+  "map_id": "map-3f6c1a9e2b7d4c8e0a15",
   "kind": "point",
   "geometry": { "type": "Point", "coordinates": [-73.9368, 40.7393] },
   "label": "Storage facility gate",
   "category": "location",
   "description": "Entry recorded by the facility's gate log.",
   "observed_at": "2026-10-04T06:36:00-04:00",
-  "phase_id": "ph-2",
-  "source": { "system": "records", "record_id": "R-004512", "url": null },
+  "phase_id": "P2",
+  "last_phase_id": "P2",
+  "source": { "system": "records", "record_id": "R-004512" },
+  "dup_key": "point|records|R-004512",
   "media": { "image_url": "https://example.org/still.png", "caption": "Gate camera" },
   "fields": [{ "label": "Unit", "value": "214" }],
-  "style": { "color": null, "icon": null },
+  "style": {},
   "status": "active",
   "created_version": 7,
+  "version_start": 7,
   "retracted_version": null,
+  "retract_reason": null,
   "revision": 1,
-  "created_by": { "type": "agent", "name": "Field analyst", "on_behalf_of_user_id": "user-123", "run_id": null },
+  "created_by": { "user_id": "user-123", "agent": { "name": "Field analyst" }, "conversation_id": "conv-1" },
   "created_at": "2026-10-04T10:22:41Z"
 }
 ```
 
 ### Versions and concurrency
 
-Each write is one Cosmos transactional batch in the map's partition. It bumps the map's `version` (conditioned on its
-ETag), writes the features and any `feature_rev` items, and appends the `change`. Concurrent writers retry when the ETag
-check fails, so versions never skip or repeat.
+Each write is one Cosmos transactional batch in the map's partition. It replaces the map document with the next
+`version` on the condition that its ETag hasn't changed, writes the features and any `feature_rev` items, and creates the
+`change`. When another write lands first the ETag check fails, and the write starts again from a fresh read, up to six
+times, so versions never skip or repeat. Linking or unlinking a conversation also goes through the ETag check but
+doesn't add a version, because the map's content doesn't change.
 
-Showing the map **as of version N** means: features with `created_version <= N` that weren't retracted at N, each at
-its latest revision up to N.
+Showing the map **as of version N** means: features with `created_version <= N` that weren't retracted at N, each in
+the state it had at N. A feature updated after N is shown from the `feature_rev` that was current at N.
 
 ### Duplicates
 
@@ -211,9 +226,11 @@ record are never treated as duplicates.
 
 ### Limits
 
-These are proposed and checked on the server:
+These are checked on the server:
 
-- Up to 100 features per call and 10,000 active features per map (configurable).
+- Up to 40 features per call, configurable up to 49. A Cosmos transactional batch holds 100 operations, and updating a
+  feature takes two: its revision and its new state.
+- Up to 10,000 active features, 50 phases and 50 linked conversations per map.
 - Labels up to 160 characters and descriptions up to 1,000.
 - Up to 12 labelled fields, with 60-character labels and 300-character values.
 - Photos must be https links of up to 2,048 characters, with captions up to 200. This matches the current map action.
@@ -230,7 +247,7 @@ These are proposed and checked on the server:
 | `PATCH /v1/maps/{id}` | Title, description or basemap, with `If-Match`. |
 | `POST /v1/maps/{id}/links`, `DELETE /v1/maps/{id}/links/{conversation_id}` | Link or unlink a conversation. |
 | `POST /v1/maps/{id}/phases` | Start a phase and make it current. |
-| `PATCH /v1/maps/{id}/phases/{phase_id}` | Rename or close a phase. |
+| `PATCH /v1/maps/{id}/phases/{phase_id}` | Rename a phase or change its description or color. A phase closes when the next one starts. |
 | `POST /v1/maps/{id}/features:batch` | Add features to a phase, with a duplicate rule. Returns the new version and what changed. |
 | `PATCH /v1/maps/{id}/features/{feature_id}` | Update a feature, with `If-Match`. |
 | `POST /v1/maps/{id}/features/{feature_id}:retract` | Retract a feature with a reason. |
@@ -274,7 +291,7 @@ color), counts added, updated and retracted, a few labels, and the change ID. It
 small in `agent_citations`. Because it has a `render_type`, the workflow visualization mirror
 (`_is_visualization_citation`) already copies it into conversations a workflow creates.
 
-`create_map_visualization` stays as it is for one-off maps.
+`create_map_visualization` stays as it is for agents that don't use shared maps (decision 10).
 
 ### SimpleChat routes
 
@@ -337,8 +354,11 @@ Phases are what turn a series of updates into an operating picture you can expla
 - Access is checked on every read and write in SimpleChat and again in the map server. Map and feature IDs aren't
   secrets.
 - The change log records the actor, the user it acted for, and the conversation or run, for audit.
-- Each caller is rate limited.
-- The map server has internal ingress only.
+- Ingress is internal where SimpleChat can reach it, and external otherwise. Every request except the health check needs
+  an Entra token from an allowed caller.
+- Errors return a stable code and a safe message, never exception text, and request bodies are capped at 1 MB.
+- The map server logs to standard output with `[MAP_SERVER]`, `[MAP_SERVER_AUTH]`, `[MAP_SERVER_STORE]` and
+  `[MAP_SERVER_TILES]` tags. It doesn't use SimpleChat's `log_event`, which needs SimpleChat's own configuration.
 
 ## Deployment
 
@@ -356,8 +376,8 @@ Each phase is its own change and PR, and records the version it ships in.
 
 | Phase | Scope | Depends on |
 |---|---|---|
-| 0 | This design, reviewed and agreed. | None |
-| 1 | Map server core: data model, REST API, actor-context and role checks, Cosmos store, tile proxy, OpenAPI, local run, deploy script, tests. | 0 |
+| 0 | This design, reviewed and agreed. **Done.** | None |
+| 1 | Map server core: data model, REST API, actor-context and role checks, Cosmos store, tile proxy, OpenAPI, local run, deploy script, tests. **Built in 0.261.254.** | 0 |
 | 2 | Shared map action, read-only SimpleChat routes, change cards in V2 and classic, workflow linking, admin setting, docs. | 1 |
 | 3 | V2 live map panel: phase layers, timeline replay, live updates. | 2 |
 
@@ -369,14 +389,94 @@ Out of scope for the proof of concept:
 - Editing the map from the panel.
 - Sharing maps across groups or with other users.
 - Retention, archiving and deletion.
+- Rate limiting per caller and per person.
 - Other basemaps, including for clouds without Azure Maps.
 - GeoJSON and KML export, a static map image for documents, geocoding and routing.
 - Deployer modules and private networking.
 
+## Phase 1 as built
+
+Phase 1 shipped in version **0.261.254**. The map server reports its own version, starting at `0.1.0`.
+
+### Code layout
+
+All under `application/map_server/`:
+
+| Path | What it holds |
+|---|---|
+| `mapserver/app.py` | FastAPI app factory (`create_app`), routes, error handlers, the request guard and the event stream. |
+| `mapserver/auth.py` | Entra token validation (`TokenValidator`) and the actor context (`Actor`, `X-Map-Actor`). |
+| `mapserver/engine.py` | Map operations, access checks, versioned writes and as-of reads. |
+| `mapserver/validation.py` | Normalizes features, enforces limits, and keeps photos and source links to safe https URLs. |
+| `mapserver/store.py`, `mapserver/cosmos_store.py` | The storage interface, an in-memory store and the Cosmos DB store. |
+| `mapserver/tiles.py` | The Azure Maps tile proxy and its cache. |
+| `mapserver/settings.py`, `mapserver/models.py`, `mapserver/errors.py` | Configuration, request bodies and error codes. |
+| `Dockerfile`, `requirements.txt` | The image, built from the repository root with the same Azure Linux pattern as SimpleChat. |
+| `deploy/Deploy-MapServer.ps1` | The proof-of-concept deployment to Azure Container Apps. |
+
+### Calling the map server
+
+Every request except `GET /healthz` sends:
+
+- `Authorization: Bearer <token>`: an Entra token for the map server's audience, from a caller holding the
+  `MapServer.ActOnBehalf` app role, or from an object ID in `MAP_SERVER_ALLOWED_CALLER_IDS`.
+- `X-Map-Actor: <base64url JSON>`: the person the caller acts for, as `user_id`, `display_name`, `scope` (`user:<id>` or
+  `group:<id>`), `access` (`read` or `write`), and optionally `conversation_id`, `message_id`, `run_id` and
+  `agent` (`id`, `name`). The map server reads it only after the token passes, and refuses unknown fields.
+
+Tiles need only the token.
+
+### Configuration
+
+| Variable | Purpose |
+|---|---|
+| `MAP_SERVER_TENANT_ID`, `MAP_SERVER_AUDIENCES` | Required. The tenant and the accepted token audiences, such as `api://<app id>,<app id>`. |
+| `MAP_SERVER_REQUIRED_ROLE` | The app role callers need. Defaults to `MapServer.ActOnBehalf`. |
+| `MAP_SERVER_ALLOWED_CALLER_IDS` | Optional object IDs allowed without the role, for tenants where the role can't be assigned. |
+| `MAP_SERVER_ISSUERS`, `MAP_SERVER_AUTHORITY_HOST`, `MAP_SERVER_JWKS_URL` | Optional overrides. By default the v1 and v2 issuers of the tenant are accepted. |
+| `MAP_SERVER_STORE` | `cosmos` (default) or `memory`. |
+| `MAP_SERVER_COSMOS_ENDPOINT` | Required for the Cosmos store. The managed identity signs in unless `MAP_SERVER_COSMOS_KEY` is set. |
+| `MAP_SERVER_COSMOS_DATABASE`, `MAP_SERVER_MAPS_CONTAINER`, `MAP_SERVER_LINKS_CONTAINER` | Default to `mapserver`, `maps` and `map_links`. |
+| `AZURE_CLIENT_ID` | The user-assigned managed identity's client ID. |
+| `AZURE_MAPS_CLIENT_ID` or `AZURE_MAPS_KEY` | Azure Maps with the managed identity, or with a key. Without either, tiles answer 404 and the viewer stays black. |
+| `MAP_SERVER_DEFAULT_BASEMAP` | Defaults to `microsoft.base.road`. |
+| `MAP_SERVER_MAX_FEATURES_PER_CALL`, `MAP_SERVER_MAX_ACTIVE_FEATURES`, `MAP_SERVER_TILE_CACHE_ENTRIES` | Limits: 40, 10,000 and 1,024 by default. |
+| `MAP_SERVER_EVENTS_POLL_SECONDS`, `MAP_SERVER_EVENTS_KEEPALIVE_SECONDS`, `MAP_SERVER_EVENTS_MAX_SECONDS` | Event stream timing: 2, 15 and 600 seconds by default. |
+| `MAP_SERVER_LOCAL_DEV_KEY` | Local runs only. A shared key of at least 32 characters, accepted only with `MAP_SERVER_STORE=memory`. |
+
+### Running it locally
+
+```powershell
+cd application\map_server
+python -m pip install -r requirements.txt
+$env:MAP_SERVER_STORE = 'memory'
+$env:MAP_SERVER_LOCAL_DEV_KEY = [Convert]::ToBase64String((1..32 | ForEach-Object { Get-Random -Maximum 256 }))
+python -m mapserver
+```
+
+The server listens on `http://127.0.0.1:8080`. Send the developer key as the bearer token. The API description is at
+`/openapi.json`. There's no `/docs` page, because FastAPI's page loads its scripts from a CDN.
+
+### Deploying the proof of concept
+
+```powershell
+./application/map_server/deploy/Deploy-MapServer.ps1 -ResourceGroup <rg> -RegistryName <acr> `
+    -ContainerAppsEnvironment <environment> -CosmosAccountName <cosmos> -SimpleChatPrincipalId <object id> `
+    -MapsAccountName <maps account>
+```
+
+The script uses your Azure CLI sign-in and can be run again safely. It builds the image in the registry from a staged
+context, creates the `mapserver` database and containers, and creates a managed identity with AcrPull, Cosmos DB data
+access and Azure Maps Data Reader. It then registers the API with its app role, assigns the role to SimpleChat's
+identity, deploys the container app, and prints the URL and token audience SimpleChat needs in Phase 2. If you can't
+assign app roles in the directory, it allowlists SimpleChat's object ID instead.
+
 ## Testing and validation
 
-- **Map server.** Unit tests for validation, duplicates, versioning, as-of reconstruction and access checks. Contract
-  tests for the REST API. A concurrency test showing that several writers on one map never skip or repeat a version.
+- **Map server.** `functional_tests/test_map_server_api.py` and `functional_tests/test_map_server_storage_tiles_events.py`
+  cover validation, duplicates, versioning, as-of reconstruction, access checks, the REST contract, the Cosmos batch and
+  query shapes, tiles and live events. A concurrency test shows that several writers on one map never skip or repeat a
+  version.
 - **SimpleChat.** Functional tests for the action against a fake map server, route policy tests for the new routes, and
   UI tests for the change card and the live panel.
 - **Docs.** The documentation coverage and site quality tests.
@@ -394,10 +494,7 @@ Out of scope for the proof of concept:
 
 ## Open questions
 
-Decisions 5 to 9 settled the rest.
-
-1. Should an agent with a linked shared map be steered away from `create_map_visualization`? Until this is decided, the
-   agent's instructions choose, and there's no admin option.
+None. Decisions 5 to 10 settled the review questions.
 
 ## Related
 

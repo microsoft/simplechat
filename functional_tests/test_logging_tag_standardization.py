@@ -2,11 +2,12 @@
 # test_logging_tag_standardization.py
 """
 Functional test for logging tag standardization.
-Version: 0.250.125
+Version: 0.261.254
 Implemented in: 0.250.125
 
 This test ensures Python logging prefixes use `[UPPERCASE_WITH_UNDERSCORES]`
-and that the logging tag reference document stays synchronized with source.
+and that the logging tag reference document stays synchronized with source
+in SimpleChat and the map server.
 """
 
 import ast
@@ -16,7 +17,10 @@ from pathlib import Path
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-APP_ROOT = REPO_ROOT / "application" / "single_app"
+APP_ROOTS = (
+    REPO_ROOT / "application" / "single_app",
+    REPO_ROOT / "application" / "map_server",
+)
 LOGGING_TAG_DOC = REPO_ROOT / "docs" / "reference" / "logging-tags.md"
 
 TAG_RE = re.compile(r"^\s*\[([^\]\n]{1,100})\]")
@@ -81,7 +85,7 @@ class LoggingTagScanner(ast.NodeVisitor):
 
 def _collect_source_tags():
     source_tags = {}
-    for path in APP_ROOT.rglob("*.py"):
+    for path in (path for app_root in APP_ROOTS for path in app_root.rglob("*.py")):
         tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
         scanner = LoggingTagScanner()
         scanner.visit(tree)
