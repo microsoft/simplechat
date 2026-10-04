@@ -581,6 +581,7 @@ class ProposalDecisionBusy(Exception):
 
 
 WORKFLOW_PROPOSAL_DECISIONS_FIELD = 'workflow_proposal_decisions'
+WORKFLOW_HANDOFF_DECISIONS_FIELD = 'workflow_handoff_decisions'
 _DECISION_WRITE_ATTEMPTS = 8
 
 
@@ -599,6 +600,25 @@ def update_workflow_proposal_decision(run_id, user_id, conversation_id, proposal
     """
     if not run_id or not user_id or not conversation_id or not proposal_id or not callable(mutate):
         raise ValueError('Run, user, conversation and proposal ids and a change are required.')
+    return _update_run_decision(
+        WORKFLOW_PROPOSAL_DECISIONS_FIELD, run_id, user_id, conversation_id, proposal_id, mutate,
+    )
+
+
+def update_workflow_handoff_decision(run_id, user_id, conversation_id, handoff_id, mutate):
+    """Change one workflow hand-off's decision on the run that produced it.
+
+    The hand-off counterpart of ``update_workflow_proposal_decision``, with the same contract;
+    only the run's ``workflow_handoff_decisions`` map changes.
+    """
+    if not run_id or not user_id or not conversation_id or not handoff_id or not callable(mutate):
+        raise ValueError('Run, user, conversation and hand-off ids and a change are required.')
+    return _update_run_decision(
+        WORKFLOW_HANDOFF_DECISIONS_FIELD, run_id, user_id, conversation_id, handoff_id, mutate,
+    )
+
+
+def _update_run_decision(field, run_id, user_id, conversation_id, key, mutate):
     for _ in range(_DECISION_WRITE_ATTEMPTS):
         try:
             current = cosmos_orchestration_runs_container.read_item(item=run_id, partition_key=conversation_id)
@@ -609,18 +629,18 @@ def update_workflow_proposal_decision(run_id, user_id, conversation_id, proposal
             or current.get('conversation_id') != conversation_id or current.get('checkpoints_deleted')
         ):
             raise LookupError('The run is not available.')
-        stored = current.get(WORKFLOW_PROPOSAL_DECISIONS_FIELD)
+        stored = current.get(field)
         decisions = deepcopy(stored) if isinstance(stored, dict) else {}
-        previous = decisions.get(proposal_id) if isinstance(decisions.get(proposal_id), dict) else None
+        previous = decisions.get(key) if isinstance(decisions.get(key), dict) else None
         decision = mutate(deepcopy(previous))
         if decision == previous:
             return deepcopy(previous), deepcopy(decision)
         if decision is None:
-            decisions.pop(proposal_id, None)
+            decisions.pop(key, None)
         else:
-            decisions[proposal_id] = deepcopy(decision)
+            decisions[key] = deepcopy(decision)
         body = _strip_cosmos_metadata(deepcopy(current))
-        body[WORKFLOW_PROPOSAL_DECISIONS_FIELD] = decisions
+        body[field] = decisions
         try:
             cosmos_orchestration_runs_container.replace_item(
                 item=run_id, body=body, etag=current['_etag'],

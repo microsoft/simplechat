@@ -9,14 +9,17 @@ This test ensures that the workflow hand-off step module and the one-time workfl
 fresh normal and optimized interpreters in the orders the application uses: during the web
 bootstrap, between the settings module and the orchestration routes, after the scheduler that runs
 background continuations, before and after the plan schema and the executor, and before and after
-the draft service, with the builder loaded first. Each order then resolves every import made inside
-a function of a hand-off module, and every one into a hand-off module, as a plan check, a step, a
-recovery and the reply would once the settings are loaded. The draft service cannot load before
-the settings module on any branch (a cycle through the document actions that predates hand-off),
-so the probe never loads it first. Only Cosmos DB is doubled; every network socket is blocked. It
-also checks that the
+the draft service, with the builder loaded first. The hand-off decisions module behind the
+accept-and-run routes loads after the settings module, before and after the routes, the step module
+and the proposal decisions, and the routes' accessor returns that same module. Each order then
+resolves every import made inside a function of a hand-off module, and every one into a hand-off
+module, as a plan check, a step, a recovery, a decision and the reply would once the settings are
+loaded. The draft service and the decisions module cannot load before the settings module on any
+branch (a cycle through the document actions that predates hand-off), so the probe never loads
+them first. Only Cosmos DB is doubled; every network socket is blocked. It also checks that the
 schema, the executor, the reply, the planner and the step adapter reach the step module only from
-inside a function, so loading any of them never imports the step module back.
+inside a function, so loading any of them never imports the step module back, and that the proposal
+decisions reach it the same way.
 
 Checks use explicit raises, so they hold under ``python -O``.
 """
@@ -34,6 +37,8 @@ APP = ROOT / "application" / "single_app"
 TESTS = ROOT / "functional_tests"
 HANDOFFS_MODULE = "functions_orchestration_workflow_handoffs"
 BUILDER_MODULE = "functions_workflow_handoff_builder"
+DECISIONS_MODULE = "functions_orchestration_workflow_handoff_decisions"
+PROPOSALS_MODULE = "functions_orchestration_workflow_proposals"
 PROBE = r'''
 import ast
 import importlib
@@ -43,7 +48,11 @@ import sys
 sys.path[:0] = sys.argv[1:3]
 from test_support.offline_bootstrap import offline_app_imports
 
-HANDOFF_MODULES = ("functions_orchestration_workflow_handoffs", "functions_workflow_handoff_builder")
+HANDOFF_MODULES = (
+    "functions_orchestration_workflow_handoffs",
+    "functions_workflow_handoff_builder",
+    "functions_orchestration_workflow_handoff_decisions",
+)
 
 
 def lazy_imports(path):
@@ -61,18 +70,31 @@ with offline_app_imports() as environment:
         importlib.import_module(name)
     handoffs = importlib.import_module(HANDOFF_MODULES[0])
     builder = importlib.import_module(HANDOFF_MODULES[1])
-    # A step, a plan check, a recovery and the reply run after the application loaded its settings,
-    # and the draft service loads only after them, as it does in the application.
+    # A step, a plan check, a recovery, a decision and the reply run after the application loaded
+    # its settings, and the draft service and the decisions load only after them, as they do in the
+    # application.
     importlib.import_module("functions_settings")
     drafts = importlib.import_module("functions_workflow_drafts")
     schema = importlib.import_module("functions_orchestration_schema")
     registry = importlib.import_module("functions_orchestration_registry")
+    decisions = importlib.import_module(HANDOFF_MODULES[2])
+    proposals = importlib.import_module("functions_orchestration_workflow_proposals")
+    workflow_runs = importlib.import_module("functions_orchestration_workflow_runs")
+    routes = importlib.import_module("route_backend_orchestration")
     if drafts.build_handoff_definition is not builder.build_handoff_definition:
         raise AssertionError("The draft service resolved a different builder")
     if handoffs.WORKFLOW_HANDOFF_INVALID_CODE != schema.WORKFLOW_HANDOFF_INVALID_CODE:
         raise AssertionError("The step and the schema resolved different hand-off codes")
     if handoffs.CAPABILITY_WORKFLOW_HANDOFF != registry.CAPABILITY_WORKFLOW_HANDOFF:
         raise AssertionError("The step and the registry resolved different capability ids")
+    if decisions.workflow_handoff_id is not handoffs.workflow_handoff_id:
+        raise AssertionError("The decisions resolved a different hand-off id")
+    if decisions.chat_delivery_seed_for is not workflow_runs.chat_delivery_seed_for:
+        raise AssertionError("The decisions resolved a different chat delivery seed")
+    if decisions.URL_ACCESS_NOTE != proposals.URL_ACCESS_NOTE:
+        raise AssertionError("The decisions resolved a different URL access note")
+    if routes._workflow_handoffs() is not decisions:
+        raise AssertionError("The routes resolved a different decisions module")
     app_dir = Path(sys.argv[1])
     edges = set()
     for path in sorted(app_dir.glob("functions_*.py")):
@@ -117,6 +139,12 @@ def run_probe(order, optimized):
     ("functions_orchestration_executor", HANDOFFS_MODULE),
     (BUILDER_MODULE, "functions_settings", "functions_workflow_drafts"),
     ("functions_settings", "functions_workflow_drafts", BUILDER_MODULE),
+    ("functions_settings", DECISIONS_MODULE, "route_backend_orchestration"),
+    ("functions_settings", "route_backend_orchestration", DECISIONS_MODULE),
+    ("functions_settings", HANDOFFS_MODULE, DECISIONS_MODULE),
+    ("functions_settings", DECISIONS_MODULE, HANDOFFS_MODULE),
+    ("functions_settings", PROPOSALS_MODULE, DECISIONS_MODULE),
+    ("functions_settings", DECISIONS_MODULE, PROPOSALS_MODULE),
 ], ids=lambda order: "+".join(
     name.removeprefix("functions_orchestration_").removeprefix("functions_") for name in order
 ))
@@ -152,6 +180,22 @@ def test_the_plan_modules_reach_the_step_module_only_from_inside_a_function():
     planner = _imports_of(_module("functions_orchestration_planner"), HANDOFFS_MODULE)
     if not planner or any(at_load for _name, at_load in planner):
         raise AssertionError(f"The planner reaches the step module as {planner}")
+    proposals = _imports_of(_module(PROPOSALS_MODULE), HANDOFFS_MODULE)
+    if proposals != [("workflow_handoff_id", False)]:
+        raise AssertionError(f"The proposal decisions reach the step module as {proposals}")
+
+
+def test_the_routes_reach_the_decisions_module_only_through_their_accessor():
+    tree = _module("route_backend_orchestration")
+    found = sorted(
+        (owner.name if owner is not tree else "<module>")
+        for owner in [tree, *(item for item in ast.walk(tree) if isinstance(item, ast.FunctionDef))]
+        for node in (owner.body if owner is not tree else tree.body)
+        if (isinstance(node, ast.Import) and any(alias.name == DECISIONS_MODULE for alias in node.names))
+        or (isinstance(node, ast.ImportFrom) and node.module == DECISIONS_MODULE)
+    )
+    if found != ["_workflow_handoffs"]:
+        raise AssertionError(f"The routes reach the decisions module from {found}")
 
 
 def test_the_builder_imports_no_application_service():

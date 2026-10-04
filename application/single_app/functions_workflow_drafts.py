@@ -90,6 +90,7 @@ from functions_workflow_handoff_builder import (
     handoff_effective_loop_limit,
     handoff_handle_uses,
     handoff_loop_bound,
+    handoff_loop_preview,
 )
 from functions_workflow_limits import (
     WorkflowLoopLimitError,
@@ -1496,12 +1497,13 @@ def create_personal_workflow_from_payload(user_id, workflow_data, *, origin, set
 # Hand-off drafts
 # ---------------------------------------------------------------------------
 #
-# A hand-off is a one-time workflow chat orchestration creates, paused, for work too large for a
+# A hand-off is a one-time workflow chat orchestration creates, disabled, for work too large for a
 # chat plan. Its blueprint names a loop and two tasks; ``functions_workflow_handoff_builder`` maps
 # it to a durable version 3 workflow. These functions apply the draft service's checks to it and
-# create it at most once per hand-off, always paused and always marked one-time.
+# create it at most once per hand-off, always disabled and always marked one-time.
 
 HANDOFF_SERVER_FIELDS = ('origin', 'one_time', 'conversation_id')
+HANDOFF_EDIT_LOOP_MESSAGE = 'A hand-off must keep its For each over named documents or a workspace search.'
 _HANDOFF_UNKNOWN_HANDLE_MESSAGES = {
     **_UNKNOWN_HANDLE_MESSAGES,
     'scopes': 'No workspace was provided for this handle.',
@@ -1625,22 +1627,31 @@ def _handoff_agent_errors(uses, handles, *, user_id, settings, reader):
     return errors
 
 
+def _scope_authorizer(authorize_scope):
+    if authorize_scope is not None:
+        return authorize_scope
+    # The workspace stores initialize clients, so they load only when a query names a workspace.
+    from functions_workflow_loop_inputs import _default_authorize_scope
+
+    return _default_authorize_scope
+
+
+def _handoff_scope_allowed(scope, *, user_id, authorize_scope):
+    try:
+        return authorize_scope(
+            {'scope_type': scope['scope_type'], 'scope_id': scope['scope_id']}, actor_user_id=user_id,
+        ) is not False
+    except Exception:
+        return False
+
+
 def _handoff_scope_errors(uses, handles, *, user_id, authorize_scope):
     if not uses['scopes']:
         return []
-    if authorize_scope is None:
-        # The workspace stores initialize clients, so they load only when a query names a workspace.
-        from functions_workflow_loop_inputs import _default_authorize_scope as authorize_scope
+    authorize_scope = _scope_authorizer(authorize_scope)
     errors = []
     for handle, paths in uses['scopes'].items():
-        scope = handles['scopes'][handle]
-        try:
-            allowed = authorize_scope(
-                {'scope_type': scope['scope_type'], 'scope_id': scope['scope_id']}, actor_user_id=user_id,
-            ) is not False
-        except Exception:
-            allowed = False
-        if not allowed:
+        if not _handoff_scope_allowed(handles['scopes'][handle], user_id=user_id, authorize_scope=authorize_scope):
             errors.extend(draft_error('scope_unavailable', path) for path in paths)
     return errors
 
@@ -1671,7 +1682,7 @@ def _handoff_payload(prepared, handles, *, workflow_id, max_items):
         prepared, handles, workflow_id=workflow_id, max_items=max_items,
         derived_id=_derived_id, alert_fields=_alert_fields,
     )
-    # Always paused: a hand-off runs once, from its accept, and never on a schedule.
+    # Always disabled: a hand-off runs once, from its accept, and never on a schedule.
     payload['is_enabled'] = False
     return payload
 
@@ -1785,7 +1796,7 @@ def dry_run_handoff_workflow(user_id, blueprint, handles, *, origin, settings, u
 def create_personal_handoff_workflow(user_id, blueprint, handles, *, origin, settings, user_info=None,
                                      loop_limit=None, resolve_document=None, user_settings_reader=None,
                                      authorize_scope=None):
-    """Create the one-time workflow a hand-off describes, paused, at most once per hand-off.
+    """Create the one-time workflow a hand-off describes, disabled, at most once per hand-off.
 
     Applies every ``dry_run_handoff_workflow`` check, then stores the workflow under
     ``orchestration_workflow_id(user_id, origin['proposal_id'])`` with a one-time ``origin``.
@@ -1853,21 +1864,90 @@ def _handoff_edit_errors(workflow, *, user_id, settings):
     return errors
 
 
+def _flow_loops(value, path):
+    """Yield ``(path parts, node)`` for every For each node in a built flow, in document order."""
+    if isinstance(value, dict):
+        if value.get('kind') == 'for_each' and isinstance(value.get('iterable'), dict):
+            yield path, value
+        for key, child in value.items():
+            yield from _flow_loops(child, (*path, key))
+    elif isinstance(value, list):
+        for index, child in enumerate(value):
+            yield from _flow_loops(child, (*path, index))
+
+
+def _handoff_edit_loop_errors(workflow, *, user_id, settings, loop_limit, resolver, authorize_scope):
+    """Refuse an edited hand-off whose loop is gone, is over the limit, or reads what the user cannot.
+
+    The save itself authorizes no loop source (the runner does, when it reads them), so the
+    accept authorizes each named document and each searched workspace again, as it does for the
+    blueprint.
+    """
+    preview = handoff_loop_preview(workflow)
+    if preview is None or not isinstance(preview['iterable'], dict) \
+            or preview['iterable'].get('kind') not in HANDOFF_LOOP_SOURCES:
+        # A hand-off reviews named documents or a workspace query, and nothing else.
+        return [draft_error('handoff_edit_invalid', ('flow',), HANDOFF_EDIT_LOOP_MESSAGE)]
+    limit = handoff_effective_loop_limit(settings)
+    errors = []
+    for path, node in _flow_loops(workflow.get('flow'), ('flow',)):
+        max_items = node.get('max_items')
+        if type(max_items) is int and max_items > limit:
+            if loop_limit is not None and max_items <= loop_limit:
+                # The edit kept the disclosed N; the administrator lowered the limit since.
+                errors.append(draft_error('handoff_limit_changed', (*path, 'max_items')))
+            else:
+                errors.append(draft_error(
+                    'handoff_loop_limit', (*path, 'max_items'), f'One hand-off can cover up to {limit:,} documents.',
+                ))
+        iterable = node['iterable']
+        if iterable.get('kind') == HANDOFF_LOOP_SOURCE_DOCUMENTS:
+            for position, document in enumerate(iterable.get('documents') or ()):
+                reference = {
+                    'id': 'draft-reference',
+                    'name': 'document',
+                    'document_id': document.get('document_id'),
+                    'scope_type': document.get('scope_type'),
+                    # The loop schema reads a personal document as the running user's own.
+                    'scope_id': document.get('scope_id') or str(user_id),
+                }
+                try:
+                    authorize_workflow_reference(
+                        {'user_id': user_id}, reference, actor_user_id=user_id, resolve_document=resolver,
+                    )
+                except (ValueError, PermissionError, LookupError, DocumentHeldError):
+                    errors.append(draft_error('reference_unauthorized', (*path, 'iterable', 'documents', position)))
+        elif iterable.get('kind') == HANDOFF_LOOP_SOURCE_QUERY:
+            authorize_scope = _scope_authorizer(authorize_scope)
+            for position, scope in enumerate(iterable.get('scopes') or ()):
+                scope = {'scope_type': scope.get('scope_type'), 'scope_id': scope.get('scope_id') or str(user_id)}
+                if not _handoff_scope_allowed(scope, user_id=user_id, authorize_scope=authorize_scope):
+                    errors.append(draft_error('scope_unavailable', (*path, 'iterable', 'scopes', position)))
+    return errors
+
+
 def create_personal_handoff_workflow_from_payload(user_id, workflow_data, *, origin, settings, user_info=None,
-                                                  resolve_document=None, user_settings_reader=None):
-    """Create a hand-off's one-time workflow from an editor payload, paused, at most once.
+                                                  loop_limit=None, resolve_document=None, user_settings_reader=None,
+                                                  authorize_scope=None):
+    """Create a hand-off's one-time workflow from an editor payload, disabled, at most once.
 
     For a hand-off the user edited before accepting: built exactly as a save builds it, under the
-    id and one-time ``origin`` the blueprint create would use. The workflow is always paused;
+    id and one-time ``origin`` the blueprint create would use. The workflow is always disabled;
     ``origin``, ``one_time`` and ``conversation_id`` in the payload are ignored, and a payload
     ``id`` other than the derived one is ``workflow_conflict``. URL Access is refused
     (``unsupported_field``) and its authorization fields dropped, as for a proposal. The edit
-    must keep a manual trigger, durable execution and no Microsoft 365 Run as
-    (``handoff_edit_invalid``), and every agent must be local. Returns ``{'ok', 'workflow',
-    'created', 'errors'}``.
+    must keep a manual trigger, durable execution, no Microsoft 365 Run as and the hand-off's
+    For each (``handoff_edit_invalid``), and every agent must be local. Every loop must fit the
+    hand-off loop limit: ``loop_limit`` is the N the hand-off disclosed, so a loop within it that
+    a lowered limit no longer allows is ``handoff_limit_changed``. Each loop document and
+    workspace is authorized again (``reference_unauthorized``, ``scope_unavailable``);
+    ``authorize_scope`` replaces the workspace access check, for tests. Returns ``{'ok',
+    'workflow', 'created', 'errors'}``.
     """
     user_id = _required_id(user_id, 'user id')
     settings = _required_settings(settings)
+    if loop_limit is not None and (type(loop_limit) is not int or loop_limit < 1):
+        raise ValueError('A hand-off loop limit must be a positive whole number.')
     origin = normalize_workflow_origin(origin, one_time=True)
     handoff_id = origin['proposal_id']
     workflow_id = orchestration_workflow_id(user_id, handoff_id)
@@ -1900,6 +1980,10 @@ def create_personal_handoff_workflow_from_payload(user_id, workflow_data, *, ori
             one_time=True,
         )
         errors = _handoff_edit_errors(built, user_id=user_id, settings=settings)
+        errors.extend(_handoff_edit_loop_errors(
+            built, user_id=user_id, settings=settings, loop_limit=loop_limit,
+            resolver=resolver, authorize_scope=authorize_scope,
+        ))
         if errors:
             return _log_handoff_outcome('create_from_payload', _failure(errors, created=False))
         workflow, created = create_personal_workflow_if_absent(

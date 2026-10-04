@@ -13,6 +13,7 @@ Workflow proposal policy coverage: 0.261.207
 Workflow assistant policy coverage: 0.261.208
 Workflow result context policy coverage: 0.261.214
 Workflow run status policy coverage: 0.261.227
+Workflow hand-off policy coverage: 0.261.233
 
 This test ensures every SimpleChat route is assigned to a Blueprint-based
 security policy or an explicit reviewed route exemption.
@@ -561,6 +562,36 @@ def test_workflow_run_status_route_keeps_the_personal_workflow_security_policy()
         raise AssertionError(f"Status route decorators changed: {route.decorator_names}.")
 
 
+def test_workflow_handoff_routes_keep_the_personal_workflow_security_policy() -> None:
+    """Every hand-off read and decision stays requester-only, behind the personal workflow gates.
+
+    Explicit raises keep this check under ``python -O``.
+    """
+    prefix = "/api/v2/orchestration/runs/<run_id>/workflow-handoffs"
+    expected_routes = {
+        prefix: "orchestration_workflow_handoffs",
+        f"{prefix}/<handoff_id>/accept": "orchestration_accept_workflow_handoff",
+        f"{prefix}/<handoff_id>/deny": "orchestration_deny_workflow_handoff",
+        f"{prefix}/<handoff_id>/draft": "orchestration_workflow_handoff_draft",
+    }
+    routes = [
+        route for route in iter_route_functions()
+        if route.file_name == "route_backend_orchestration.py" and route.path.startswith(prefix)
+    ]
+    found = {route.path: route.function_name for route in routes}
+    if len(routes) != len(expected_routes) or found != expected_routes:
+        raise AssertionError(f"Unexpected hand-off routes: {sorted(found.items())}.")
+    expected = (
+        "bp.route", "swagger_route", "login_required", "user_required",
+        "enabled_required", "workflow_user_required",
+    )
+    for route in routes:
+        if route.route_target != "bp":
+            raise AssertionError(f"{route.function_name} is registered on {route.route_target}.")
+        if route.decorator_names != expected:
+            raise AssertionError(f"{route.function_name} decorators changed: {route.decorator_names}.")
+
+
 def test_content_screening_routes_keep_authenticated_blueprint_guards() -> None:
     """Evidence and decisions never become public, even while enrollment is off."""
     routes = [
@@ -596,6 +627,7 @@ if __name__ == "__main__":
         test_workflow_proposal_routes_keep_the_orchestration_security_policy,
         test_workflow_run_link_route_keeps_the_orchestration_security_policy,
         test_workflow_run_status_route_keeps_the_personal_workflow_security_policy,
+        test_workflow_handoff_routes_keep_the_personal_workflow_security_policy,
         test_content_screening_routes_keep_authenticated_blueprint_guards,
     ]
     results = []

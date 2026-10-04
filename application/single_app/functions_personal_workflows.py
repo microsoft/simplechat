@@ -1175,15 +1175,17 @@ def create_personal_workflow_if_absent(user_id, workflow_data, *, workflow_id, o
 def count_personal_orchestration_workflows(user_id, source='orchestration'):
     """Count a user's personal workflows that chat orchestration created, for its per-user cap.
 
-    A workflow being deleted no longer counts. A failed count raises, so a caller enforcing the cap
-    fails closed rather than treating an unknown count as zero.
+    A workflow being deleted no longer counts, and neither does a one-time hand-off workflow, which
+    has its own rolling daily limit. A failed count raises, so a caller enforcing the cap fails
+    closed rather than treating an unknown count as zero.
     """
     try:
         results = list(cosmos_personal_workflows_container.query_items(
             query=(
                 'SELECT VALUE COUNT(1) FROM c '
                 'WHERE c.user_id = @user_id AND c.origin.source = @source '
-                'AND (NOT IS_DEFINED(c.deleting) OR c.deleting != true)'
+                'AND (NOT IS_DEFINED(c.deleting) OR c.deleting != true) '
+                'AND (NOT IS_DEFINED(c.origin.one_time) OR c.origin.one_time != true)'
             ),
             parameters=[
                 {'name': '@user_id', 'value': user_id},
@@ -1195,6 +1197,37 @@ def count_personal_orchestration_workflows(user_id, source='orchestration'):
         log_event(
             f'[WORKFLOW_STORE] Error counting orchestration workflows: {exc}',
             extra={'user_id': user_id},
+            level=logging.ERROR,
+            exceptionTraceback=True,
+        )
+        raise
+    return int(results[0]) if results else 0
+
+
+def count_personal_handoff_workflows_since(user_id, since_iso, source='orchestration'):
+    """Count a user's one-time hand-off workflows created at or after ``since_iso``.
+
+    For the rolling daily hand-off limit. ``since_iso`` is a UTC ISO 8601 timestamp in the format
+    the store writes ``created_at`` in, so the strings compare in time order. A workflow being
+    deleted still counts until it is gone. A failed count raises, so the limit fails closed.
+    """
+    try:
+        results = list(cosmos_personal_workflows_container.query_items(
+            query=(
+                'SELECT VALUE COUNT(1) FROM c '
+                'WHERE c.user_id = @user_id AND c.origin.source = @source '
+                'AND c.origin.one_time = true AND c.created_at >= @since'
+            ),
+            parameters=[
+                {'name': '@user_id', 'value': user_id},
+                {'name': '@source', 'value': source},
+                {'name': '@since', 'value': since_iso},
+            ],
+            partition_key=user_id,
+        ))
+    except Exception:
+        log_event(
+            '[WORKFLOW_STORE] Error counting hand-off workflows.',
             level=logging.ERROR,
             exceptionTraceback=True,
         )

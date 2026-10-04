@@ -1464,6 +1464,13 @@ def _workflow_run_status():
     return functions_workflow_chat_delivery_status
 
 
+def _workflow_handoffs():
+    """The workflow hand-off decisions module, imported on first use like the proposal decisions module."""
+    import functions_orchestration_workflow_handoff_decisions
+
+    return functions_orchestration_workflow_handoff_decisions
+
+
 def _proposal_identity(user_id):
     """The requester's id, email, roles and tenant for a workflow proposal request.
 
@@ -2902,6 +2909,127 @@ def register_route_backend_orchestration(bp):
             )
 
         return _workflow_proposal_response(run_id, _text(request.args.get('conversation_id')), draft)
+
+    def _workflow_handoff_response(run_id, conversation_id, decide):
+        """Authorize a workflow hand-off request's conversation and run, then answer it with ``decide``.
+
+        A conversation or run the requester cannot open is indistinguishable from a missing one.
+        Logs carry hashed ids and the error type only.
+        """
+        user_id = get_current_user_id()
+        if not user_id:
+            return jsonify({'error': 'User not authenticated'}), 401
+        handoffs = _workflow_handoffs()
+        if not conversation_id:
+            body, code = handoffs.error_payload('invalid_request')
+            return jsonify(body), code
+        try:
+            conversation = _authorize_context_conversation(conversation_id, user_id)
+            record = get_orchestration_run(run_id, user_id, conversation_id=conversation_id, strict=True)
+            if not record or record.get('conversation_id') != conversation_id:
+                body, code = handoffs.error_payload('run_not_found')
+                return jsonify(body), code
+            if is_legacy_plan(record.get('plan')):
+                return _legacy_plan_response()
+            status, payload = decide(handoffs, record, conversation, _proposal_identity(user_id), get_settings())
+        except ConversationContextError:
+            body, code = handoffs.error_payload('run_not_found')
+            return jsonify(body), code
+        except handoffs.HandoffError as exc:
+            return jsonify(exc.payload()), exc.status
+        except Exception as exc:
+            log_event(
+                '[ORCHESTRATION] A workflow hand-off request could not be completed.', level=logging.ERROR,
+                extra={
+                    **workflow_log_context(run_id=run_id, conversation_id=conversation_id),
+                    'stage': 'workflow_handoff', 'error_type': type(exc).__name__,
+                },
+            )
+            body, code = handoffs.error_payload(handoffs.SERVICE_UNAVAILABLE_CODE)
+            return jsonify(body), code
+        return jsonify(payload), status
+
+    @bp.route("/api/v2/orchestration/runs/<run_id>/workflow-handoffs", methods=["GET"])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    @enabled_required('allow_user_workflows')
+    @workflow_user_required
+    def orchestration_workflow_handoffs(run_id):
+        """The workflow hand-offs a run shows, with each one's state and the actions its card offers.
+
+        Only the requester can read them. The summary and the document disclosure are returned
+        only while the requester may still hand work off in this private conversation.
+        """
+        def status(handoffs, record, conversation, identity, settings):
+            return 200, handoffs.handoff_status(
+                record, conversation, identity=identity, settings=settings,
+                response_removed=lambda: _run_response_removed(record),
+            )
+
+        return _workflow_handoff_response(run_id, _text(request.args.get('conversation_id')), status)
+
+    @bp.route("/api/v2/orchestration/runs/<run_id>/workflow-handoffs/<handoff_id>/accept", methods=["POST"])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    @enabled_required('allow_user_workflows')
+    @workflow_user_required
+    def orchestration_accept_workflow_handoff(run_id, handoff_id):
+        """Create a hand-off's one-time workflow disabled, as proposed or as edited, and queue its one run."""
+        body = _proposal_body()
+
+        def accept(handoffs, record, conversation, identity, settings):
+            status, payload, created = handoffs.accept_handoff(
+                record, conversation, handoff_id, body, identity=identity, settings=settings,
+                response_removed=lambda: _run_response_removed(record),
+            )
+            if created is not None:
+                log_workflow_creation(
+                    user_id=identity['user_id'],
+                    workflow_id=created.get('id', ''),
+                    workflow_name=created.get('name', ''),
+                    runner_type=created.get('runner_type'),
+                    trigger_type=created.get('trigger_type'),
+                )
+            return status, payload
+
+        conversation_id = _text(body.get('conversation_id')) if body is not None else ''
+        return _workflow_handoff_response(run_id, conversation_id, accept)
+
+    @bp.route("/api/v2/orchestration/runs/<run_id>/workflow-handoffs/<handoff_id>/deny", methods=["POST"])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    @enabled_required('allow_user_workflows')
+    @workflow_user_required
+    def orchestration_deny_workflow_handoff(run_id, handoff_id):
+        """Record that the requester declined a hand-off. Nothing is created or queued."""
+        body = _proposal_body()
+
+        def deny(handoffs, record, conversation, identity, settings):
+            return handoffs.deny_handoff(
+                record, conversation, handoff_id, body, identity=identity, settings=settings,
+            )
+
+        conversation_id = _text(body.get('conversation_id')) if body is not None else ''
+        return _workflow_handoff_response(run_id, conversation_id, deny)
+
+    @bp.route("/api/v2/orchestration/runs/<run_id>/workflow-handoffs/<handoff_id>/draft", methods=["GET"])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    @enabled_required('allow_user_workflows')
+    @workflow_user_required
+    def orchestration_workflow_handoff_draft(run_id, handoff_id):
+        """A pending hand-off as a workflow editor draft, for Edit before accepting. Writes nothing."""
+        def draft(handoffs, record, conversation, identity, settings):
+            return 200, handoffs.handoff_draft(
+                record, conversation, handoff_id, identity=identity, settings=settings,
+                response_removed=lambda: _run_response_removed(record),
+            )
+
+        return _workflow_handoff_response(run_id, _text(request.args.get('conversation_id')), draft)
 
     @bp.route("/api/v2/orchestration/runs/<run_id>/workflow-runs", methods=["GET"])
     @swagger_route(security=get_auth_security())

@@ -812,13 +812,134 @@ def test_an_edited_hand_off_stays_a_paused_manual_durable_workflow(harness):
     _same(refusals, {
         "interval": [("handoff_edit_invalid", "/trigger_type")],
         "not_durable": [("invalid_workflow_definition", "")],
-        "plain": [("handoff_edit_invalid", "/durable_execution")],
+        "plain": [("handoff_edit_invalid", "/durable_execution"), ("handoff_edit_invalid", "/flow")],
         "run_as": [("handoff_edit_invalid", "/m365_run_as_user_id")],
         "version_2": [("invalid_workflow", "")],
         "url_access": [("unsupported_field", "/url_access_enabled")],
         "other_id": [("workflow_conflict", "/id")],
     }, "the refused edits")
     _same(refused_harness.writes(), {}, "the refused edits' writes")
+
+
+def _edited_loop(draft, **changes):
+    edited = copy.deepcopy(draft)
+    edited["flow"]["nodes"][0].update(copy.deepcopy(changes))
+    return edited
+
+
+def _renamed_loop(value, name):
+    """Rename the hand-off's For each everywhere a node or binding names it."""
+    if isinstance(value, dict):
+        renamed = {key: _renamed_loop(child, name) for key, child in value.items()}
+        if renamed.get("loop_id") == "each":
+            renamed["loop_id"] = name
+        if renamed.get("kind") == "for_each" and renamed.get("id") == "each":
+            renamed["id"] = name
+        return renamed
+    if isinstance(value, list):
+        return [_renamed_loop(child, name) for child in value]
+    return value
+
+
+def test_an_edited_hand_off_keeps_a_readable_loop_within_the_limit(harness):
+    docs = _dry_run(harness, DOCS, DOC_HANDLES)
+    query = _dry_run(harness, ALL, SCOPE_HANDLES, authorize_scope=_allow_all)
+    _require(docs["ok"] is True and query["ok"] is True, "The hand-off dry runs failed.")
+    docs_draft = _editor_payload(docs["workflow"])
+    query_draft = _editor_payload(query["workflow"])
+    documents = docs_draft["flow"]["nodes"][0]["iterable"]["documents"]
+
+    edits = {
+        "renamed": (_renamed_loop(docs_draft, "other"), {}),
+        "over": (_edited_loop(docs_draft, max_items=600), {}),
+        "over_disclosed": (_edited_loop(docs_draft, max_items=600), {"loop_limit": 2}),
+        "unreadable": (_edited_loop(docs_draft, max_items=3, iterable={"kind": "documents", "documents": [
+            *documents, {"scope_type": "personal", "document_id": "doc-missing"},
+        ]}), {}),
+        "other_group": (_edited_loop(docs_draft, iterable={"kind": "documents", "documents": [
+            {"scope_type": "group", "scope_id": "group-other", "document_id": "doc-team"},
+        ]}), {}),
+        "denied_group": (query_draft, {
+            "authorize_scope": lambda scope, actor_user_id=None: scope["scope_type"] != "group",
+        }),
+        "raising": (query_draft, {"authorize_scope": _raise_permission}),
+    }
+    refused = DraftHarness()
+    results = {
+        label: _codes(_create_from_payload(refused, payload, **kwargs)) for label, (payload, kwargs) in edits.items()
+    }
+    over_message = _create_from_payload(refused, edits["over"][0])["errors"][0]["message"]
+    with refused.active():
+        # A saved-input loop needs an upstream node, so the check is called on the built shape.
+        saved_input = refused.drafts._handoff_edit_loop_errors(
+            {"flow": {"nodes": [{
+                "id": "each", "kind": "for_each", "iterable": {"kind": "input", "name": "items"}, "max_items": 5,
+            }]}},
+            user_id=OWNER_ID, settings=refused.settings, loop_limit=None, resolver=None, authorize_scope=_allow_all,
+        )
+
+    lowered = DraftHarness()
+    lowered.settings["workflow_max_loop_items"] = 100
+    changed = _codes(_create_from_payload(lowered, query_draft, loop_limit=500, authorize_scope=_allow_all))
+    undisclosed = _codes(_create_from_payload(lowered, query_draft, authorize_scope=_allow_all))
+    lowered_writes = lowered.writes()
+
+    scope_calls = []
+
+    def recording(scope, actor_user_id=None):
+        scope_calls.append((dict(scope), actor_user_id))
+        return None
+
+    accepted = DraftHarness()
+    as_is = _create_from_payload(accepted, query_draft, loop_limit=500, authorize_scope=recording)
+    accepted_docs = DraftHarness()
+    docs_as_is = _create_from_payload(accepted_docs, docs_draft, loop_limit=2)
+    resolved = [call[1]["document_id"] for call in accepted_docs.called("resolve_document_context")]
+
+    invalid_limits = []
+    for loop_limit in (0, -1, True, "5", 2.0):
+        try:
+            _create_from_payload(DraftHarness(), docs_draft, loop_limit=loop_limit)
+        except ValueError:
+            invalid_limits.append(loop_limit)
+
+    _same(results, {
+        "renamed": [("handoff_edit_invalid", "/flow")],
+        "over": [("handoff_loop_limit", "/flow/nodes/0/max_items")],
+        "over_disclosed": [("handoff_loop_limit", "/flow/nodes/0/max_items")],
+        "unreadable": [("reference_unauthorized", "/flow/nodes/0/iterable/documents/2")],
+        "other_group": [("reference_unauthorized", "/flow/nodes/0/iterable/documents/0")],
+        "denied_group": [("scope_unavailable", "/flow/nodes/0/iterable/scopes/1")],
+        "raising": [
+            ("scope_unavailable", "/flow/nodes/0/iterable/scopes/0"),
+            ("scope_unavailable", "/flow/nodes/0/iterable/scopes/1"),
+        ],
+    }, "the refused loop edits")
+    _same(_pairs(saved_input), [("handoff_edit_invalid", "/flow")], "a loop over a saved input")
+    _same(over_message, "One hand-off can cover up to 500 documents.", "the loop limit message")
+    _same(refused.writes(), {}, "the refused loop edits' writes")
+    _same(changed, [("handoff_limit_changed", "/flow/nodes/0/max_items")], "a limit lowered since the dry run")
+    _same(undisclosed, [("handoff_loop_limit", "/flow/nodes/0/max_items")], "a lowered limit with no disclosure")
+    _same(lowered_writes, {}, "the lowered limit's writes")
+    _require(as_is["ok"] is True and as_is["created"] is True, f"The edited query failed: {as_is['errors']!r}")
+    _same(
+        scope_calls,
+        [
+            ({"scope_type": "personal", "scope_id": OWNER_ID}, OWNER_ID),
+            ({"scope_type": "group", "scope_id": GROUP_ID}, OWNER_ID),
+        ],
+        "the workspaces authorized again",
+    )
+    _require(docs_as_is["ok"] is True, f"The edited documents failed: {docs_as_is['errors']!r}")
+    _require(
+        resolved.count("doc-checklist") >= 1 and resolved.count("doc-team") >= 1,
+        f"Each loop document must be authorized again: {resolved!r}",
+    )
+    _same(invalid_limits, [0, -1, True, "5", 2.0], "the refused loop limits")
+
+
+def _raise_permission(scope, actor_user_id=None):
+    raise PermissionError("denied")
 
 
 def test_a_dry_run_writes_nothing_on_an_executor_thread(harness):
