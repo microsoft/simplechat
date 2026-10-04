@@ -15,8 +15,12 @@ This test ensures that a one-time workflow handed off from chat orchestration:
 * is refused, with stable codes, for unknown handles, unauthorized documents or workspaces, hosted
   agents, disabled analysis, edits that stop being a manual durable workflow, and a record under
   its id that a chat proposal made, and the reverse;
-* is created at most once, dry-runs with no write, logs only codes, and its builder imports
-  nothing from Flask, Azure or the settings store;
+* is created at most once, even when a create loses the race for its id, while a record being
+  deleted under that id stays a conflict;
+* when edited, builds exactly what a save of the same payload builds, and refuses a reference that
+  a save refuses;
+* dry-runs with no write, logs only codes, and its builder imports nothing from Flask, Azure or the
+  settings store;
 * leaves the Phase 4 blueprint schema, payloads, validation and dry run byte-identical.
 
 Checks use explicit raises, so they hold under ``python -O``.
@@ -1076,6 +1080,165 @@ def test_the_loop_preview_reads_the_built_for_each(harness):
     _same(builder.handoff_loop_preview(result["workflow"]), {"iterable": DOCS_ITERABLE, "max_items": 2}, "the preview")
     _require(builder.handoff_loop_preview({}) is None, "A workflow without a flow has no preview.")
     _require(builder.handoff_loop_preview(None) is None, "No workflow has no preview.")
+
+
+PARITY_IGNORED = frozenset({
+    "id", "origin", "created_at", "modified_at", "updated_at", "definition_revision", "m365_revision",
+})
+SECRET_REFERENCE = {"id": "secret", "name": "secret", "document_id": "forbidden-doc", "scope_type": "personal"}
+RACE_CREATES = {
+    "blueprint": lambda harness, payload: _create(harness, DOCS, DOC_HANDLES),
+    "payload": lambda harness, payload: _create_from_payload(harness, payload),
+}
+
+
+def _handoff_payload(harness):
+    dry = _dry_run(harness, DOCS, DOC_HANDLES)
+    _require(dry["ok"] is True, f"The dry run failed: {dry['errors']!r}")
+    return _editor_payload(dry["workflow"])
+
+
+def _parity_view(record):
+    return {key: value for key, value in (record or {}).items() if key not in PARITY_IGNORED and key[:1] != "_"}
+
+
+def _with_reference(payload, document_id):
+    changed = copy.deepcopy(payload)
+    changed["reference_inputs"] = [{**SECRET_REFERENCE, "document_id": document_id}]
+    changed["tasks"][0]["reference_ids"] = [SECRET_REFERENCE["id"]]
+    return changed
+
+
+def _count_creates(harness):
+    """Record every create attempt, including one the container refuses with a 409 before it writes."""
+    container = harness.containers["personal_workflows"]
+    attempts = []
+    create_item = container.create_item
+
+    def counted(body, **kwargs):
+        attempts.append(body["id"])
+        return create_item(body, **kwargs)
+
+    container.create_item = counted
+    return attempts
+
+
+def _miss_lookups(harness, *, recover):
+    """Make the lookups before the create miss, as when another accept stores the hand-off in between.
+
+    With ``recover`` only the first hand-off lookup misses, so the conflict path's re-read finds
+    the stored record; without it every lookup misses.
+    """
+    lookup = harness.drafts.get_personal_workflow
+    calls = []
+
+    def missed(*args, **kwargs):
+        calls.append(args)
+        if recover and len(calls) > 1:
+            return lookup(*args, **kwargs)
+        return None
+
+    harness.drafts.get_personal_workflow = missed
+    harness.personal.get_personal_workflow = lambda *args, **kwargs: None
+    return calls
+
+
+@pytest.mark.parametrize("path", sorted(RACE_CREATES))
+def test_a_create_that_loses_the_race_returns_the_stored_hand_off(path):
+    race = DraftHarness()
+    payload = _handoff_payload(race)
+    first = _create(race, DOCS, DOC_HANDLES)
+    attempts = _count_creates(race)
+    lookups = _miss_lookups(race, recover=False)
+    second = RACE_CREATES[path](race, payload)
+    writes = race.writes()
+    stored = race.containers["personal_workflows"].items.get((OWNER_ID, HANDOFF_WORKFLOW_ID)) or {}
+
+    _require(first["ok"] is True and first["created"] is True, f"The first create failed: {first['errors']!r}")
+    _require(second["ok"] is True, f"The create that lost the race failed: {second['errors']!r}")
+    _require(second["created"] is False, "The create that lost the race must not report a create.")
+    _same(second["workflow"]["id"], HANDOFF_WORKFLOW_ID, "the losing create's workflow id")
+    _require((second["workflow"].get("origin") or {}).get("one_time") is True, "The stored hand-off is one-time.")
+    _require(second["workflow"]["is_enabled"] is False, "The stored hand-off is paused.")
+    _same(attempts, [HANDOFF_WORKFLOW_ID], "the losing create's attempts")
+    _require(len(lookups) >= 1, "The hand-off lookup must run before the create.")
+    _same(writes, {"personal_workflows": [("create_item", HANDOFF_WORKFLOW_ID)]}, "the writes after the race")
+    _require(stored.get("is_enabled") is False, "The race must leave the stored hand-off paused.")
+
+
+@pytest.mark.parametrize("path", sorted(RACE_CREATES))
+def test_a_hand_off_deleted_during_the_race_is_a_conflict(path):
+    outcomes = {}
+    for recover in (True, False):
+        race = DraftHarness()
+        payload = _handoff_payload(race)
+        first = _create(race, DOCS, DOC_HANDLES)
+        _require(first["ok"] is True and first["created"] is True, f"The first create failed: {first['errors']!r}")
+        race.containers["personal_workflows"].items[(OWNER_ID, HANDOFF_WORKFLOW_ID)]["deleting"] = True
+        attempts = _count_creates(race)
+        _miss_lookups(race, recover=recover)
+        result = RACE_CREATES[path](race, payload)
+        outcomes[recover] = (result, attempts, race.writes())
+
+    found, found_attempts, found_writes = outcomes[True]
+    blind, blind_attempts, blind_writes = outcomes[False]
+    one_create = {"personal_workflows": [("create_item", HANDOFF_WORKFLOW_ID)]}
+
+    _same(_codes(found), [("workflow_conflict", "")], "a hand-off deleted during the race")
+    _same(found["errors"][0]["message"], "This workflow is being deleted.", "the re-read deleting message")
+    _same(found_attempts, [HANDOFF_WORKFLOW_ID], "the attempts against a record being deleted")
+    _same(found_writes, one_create, "the writes against a record being deleted")
+    _same(_codes(blind), [("workflow_conflict", "")], "a deleting record whose re-read also misses")
+    _same(blind_attempts, [HANDOFF_WORKFLOW_ID], "the attempts when every lookup misses")
+    _same(blind_writes, one_create, "the writes when every lookup misses")
+
+
+def test_an_edited_hand_off_builds_what_a_save_of_the_same_payload_builds():
+    payload = _handoff_payload(DraftHarness())
+    saver = DraftHarness()
+    saved = saver.save_personal("save", copy.deepcopy(payload))
+    hand = DraftHarness()
+    made = _create_from_payload(hand, payload)
+    stored_save = saver.containers["personal_workflows"].items.get((OWNER_ID, (saved or {}).get("id"))) or {}
+    stored_hand = hand.containers["personal_workflows"].items.get((OWNER_ID, HANDOFF_WORKFLOW_ID)) or {}
+
+    _same(saver.steps[-1]["error"], None, "the save's error")
+    _require(made["ok"] is True and made["created"] is True, f"The edited hand-off failed: {made['errors']!r}")
+    _same(_parity_view(made["workflow"]), _parity_view(saved), "the edited hand-off and the save")
+    _same(_parity_view(stored_hand), _parity_view(stored_save), "the stored hand-off and the stored save")
+    _same((stored_hand.get("created_by"), stored_hand.get("modified_by")), (OWNER_ID, OWNER_ID), "the hand-off actors")
+    _same(stored_hand.get("conversation_id"), "", "the hand-off's workflow conversation")
+    _require(stored_hand.get("is_enabled") is False, "The edited hand-off must be paused.")
+    _require((stored_hand.get("origin") or {}).get("one_time") is True, "The edited hand-off must be one-time.")
+    _require(not stored_save.get("origin"), "A save of the same payload has no origin.")
+
+
+def test_an_edited_hand_off_refuses_a_reference_a_save_refuses():
+    payload = _handoff_payload(DraftHarness())
+    forbidden = _with_reference(payload, "forbidden-doc")
+    readable = _with_reference(payload, "doc-checklist")
+
+    refused_save = DraftHarness()
+    refused_save.save_personal("forbidden", forbidden)
+    refused_hand = DraftHarness()
+    refused = _create_from_payload(refused_hand, forbidden)
+    readable_save = DraftHarness()
+    saved = readable_save.save_personal("readable", readable)
+    readable_hand = DraftHarness()
+    made = _create_from_payload(readable_hand, readable)
+    save_error = refused_save.steps[-1]["error"] or {}
+
+    _same(save_error.get("type"), "PermissionError", "the save's refusal")
+    _same(refused_save.writes(), {}, "the refused save's writes")
+    _same(_codes(refused), [("not_allowed", "")], "the edited hand-off's refusal")
+    _same(refused_hand.writes(), {}, "the refused hand-off's writes")
+    _same(readable_save.steps[-1]["error"], None, "the readable save's error")
+    _require(made["ok"] is True and made["created"] is True, f"The readable hand-off failed: {made['errors']!r}")
+    _same(
+        [item.get("document_id") for item in made["workflow"].get("reference_inputs") or []], ["doc-checklist"],
+        "the hand-off's reference",
+    )
+    _same(_parity_view(made["workflow"]), _parity_view(saved), "the hand-off and the save with a reference")
 
 
 if __name__ == "__main__":

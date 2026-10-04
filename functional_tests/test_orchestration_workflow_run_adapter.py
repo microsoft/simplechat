@@ -16,8 +16,8 @@ queued, so a later active run never hides it.
 Every refusal maps to a closed reason and no exception text: settings, role, a shared chat, a
 missing, foreign, deleting, not durable or Microsoft 365-waiting workflow, runtime conflicts,
 a tombstoned request, lost access and an unrunnable definition. A hand-off's one-time workflow
-is refused with its own closed reason, while a run the plan already started is still linked and a
-paused workflow still starts. Storage outages fail the step retryably. The run records who asked in chat_invocation and leaves mcp_invocation to MCP. The
+is refused with its own closed reason, even after its owner edits it in Workflows, while a run the
+plan already started is still linked and a paused workflow still starts. Storage outages fail the step retryably. The run records who asked in chat_invocation and leaves mcp_invocation to MCP. The
 step's workflow and run ids stay on the server, its retained result carries only the name and
 status, and the adapter runs on a plain thread with no Flask context.
 """
@@ -758,6 +758,22 @@ def test_a_run_this_plan_started_is_linked_even_when_its_workflow_is_one_time(ad
         raise AssertionError(f"Unexpected link: {linked['workflow_run']!r}")
     if len(world.queued) != 1:
         raise AssertionError(f"Expected one queued run, found {len(world.queued)}.")
+
+
+def test_an_edited_one_time_workflow_is_still_refused(adapter, world, chat, planning):
+    """Editing a hand-off's workflow in Workflows marks it edited and keeps it one-time, so chat still refuses it."""
+    module, _logs = adapter
+    definitions = importlib.import_module("functions_workflow_definitions")
+    stored = {**world.definitions.get(OWNER, DIGEST_ID), "origin": _handoff_origin()}
+    saved = definitions.apply_workflow_origin({**stored, "name": "Renamed digest"}, stored)
+    if saved["origin"] != _handoff_origin(edited=True):
+        raise AssertionError(f"An editor save changed the one-time origin: {saved['origin']!r}")
+    world.definitions.patch(OWNER, DIGEST_ID, origin=saved["origin"])
+    result, _service = _call(module, planning)
+    if result["workflow_run"] != _sidecar(planning, "unavailable", reason="workflow_one_time"):
+        raise AssertionError(f"Unexpected outcome: {result['workflow_run']!r}")
+    if world.queued != [] or world.runs.items != {} or world.controls.items != {}:
+        raise AssertionError("An edited one-time workflow was started from chat.")
 
 
 @pytest.mark.parametrize("change", [{"tasks": ["not a task"]}, {"definition_version": 4}, {"definition_version": "1"}])
