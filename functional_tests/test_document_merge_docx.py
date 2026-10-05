@@ -2,9 +2,9 @@
 # test_document_merge_docx.py
 """
 Functional test for Word assembly in V2 file merge.
-Version: 0.261.240
-Implemented in: 0.261.238
-Derived list IDs added in: 0.261.240
+Version: 0.261.241
+Implemented in: 0.261.239
+Derived list IDs added in: 0.261.241
 
 This test ensures that functions_document_merge appends Word documents in order with
 docxcompose: keep_source formatting keeps a differently styled document's look by
@@ -89,7 +89,7 @@ def merged(parts, **options):
 
 
 def test_version_includes_word_merges():
-    assert_app_version_at_least("0.261.238")
+    assert_app_version_at_least("0.261.239")
 
 
 def test_keep_source_formatting_copies_clashing_styles():

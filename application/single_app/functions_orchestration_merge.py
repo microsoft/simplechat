@@ -1,9 +1,9 @@
 # functions_orchestration_merge.py
 """Deterministic spreadsheet merging and inspection for Gather / Reason / Render orchestration.
 
-Version: 0.261.237
-Implemented in: 0.261.234
-Inspection, reconciliation policies and prepared column mappings added in: 0.261.235
+Version: 0.261.238
+Implemented in: 0.261.235
+Inspection, reconciliation policies and prepared column mappings added in: 0.261.236
 
 ``tabular_merge`` is a Reason capability and ``tabular_inspect`` a Gather capability. Their
 adapters in ``functions_orchestration_adapters`` authorize the sources. This module reads

@@ -1,7 +1,7 @@
 # functions_document_merge_docx.py
 """Word assembly for V2 file merge: documents appended in order into one .docx.
 
-Version: 0.261.240
+Version: 0.261.241
 
 Composition uses docxcompose, which carries over each document's styles, numbering,
 images, footnotes, diagrams and shapes. With ``keep_source`` formatting, a style that

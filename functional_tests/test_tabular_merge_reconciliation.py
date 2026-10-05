@@ -2,8 +2,8 @@
 # test_tabular_merge_reconciliation.py
 """
 Functional test for reconciling differently structured spreadsheets in the merge engine.
-Version: 0.261.235
-Implemented in: 0.261.235
+Version: 0.261.236
+Implemented in: 0.261.236
 
 This test ensures that functions_tabular_merge can merge files whose columns differ:
 union keeps every column and leaves missing ones null, mapped keeps exactly the requested
@@ -70,7 +70,7 @@ def merged(sources, **options):
 
 
 def test_version_includes_reconciliation():
-    assert_app_version_at_least("0.261.235")
+    assert_app_version_at_least("0.261.236")
 
 
 def test_union_keeps_every_column_and_leaves_missing_values_null():

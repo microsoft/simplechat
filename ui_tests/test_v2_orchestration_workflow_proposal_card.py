@@ -1,8 +1,8 @@
 # test_v2_orchestration_workflow_proposal_card.py
 """
 Real-component browser tests for the workflow proposal card under an orchestration answer.
-Version: 0.261.239
-Implemented in: 0.261.207; merge task wording added in 0.261.236; merge kinds in 0.261.237; Word in 0.261.238; PowerPoint in 0.261.239
+Version: 0.261.240
+Implemented in: 0.261.207; merge task wording added in 0.261.237; merge kinds in 0.261.238; Word in 0.261.239; PowerPoint in 0.261.240
 Refs: microsoft/simplechat#1547, microsoft/simplechat#1619
 
 The production MessageList, WorkflowProposalCards, ConfirmDialog and WorkflowEditorDialog run in

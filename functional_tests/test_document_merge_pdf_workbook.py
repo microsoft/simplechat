@@ -2,8 +2,8 @@
 # test_document_merge_pdf_workbook.py
 """
 Functional test for PDF and workbook assembly in V2 file merge.
-Version: 0.261.237
-Implemented in: 0.261.237
+Version: 0.261.238
+Implemented in: 0.261.238
 
 This test ensures that functions_document_merge assembles PDFs in order with one
 bookmark per source (keeping each source's own bookmarks beneath it), honors page
@@ -161,7 +161,7 @@ def xlsx_bytes(sheets):
 
 
 def test_version_includes_pdf_and_workbook_merges():
-    assert_app_version_at_least("0.261.237")
+    assert_app_version_at_least("0.261.238")
 
 
 def test_pdfs_merge_in_order_with_a_bookmark_per_file():

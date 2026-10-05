@@ -2,7 +2,7 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
-### **(v0.261.242)**
+### **(v0.261.243)**
 
 #### Bug Fixes
 
@@ -11,7 +11,7 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
     *   Where `/sc-temp-files` doesn't exist or can't be written, such as on a development machine, merges still use the platform temp directory, and never the working directory. Spilling doesn't change the merged file.
     *   (Ref: #1619, `functions_document_merge.py`, `functions_tabular_merge.py`, `functions_temp_files.py`, `test_file_merge_scratch_dir.py`, [Phase 7](features/V2_FILE_MERGE_PHASE_7_CHAT_DOCUMENTS.md#where-merges-spill-to-disk))
 
-### **(v0.261.241)**
+### **(v0.261.242)**
 
 #### User Interface Enhancements
 
@@ -22,7 +22,7 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
     *   The planner's general rule to prefer a stated assumption over a question now names its exceptions: capability guidance, deliverables facts and workflow instructions that say to ask.
     *   (Ref: #1619, `functions_orchestration_deliverables.py`, `functions_orchestration_planner.py`, [Phase 7](features/V2_FILE_MERGE_PHASE_7_CHAT_DOCUMENTS.md#one-sheet-or-a-sheet-per-file), [Merge files](../guides/merge-files.md#one-sheet-or-a-sheet-per-file))
 
-### **(v0.261.240)**
+### **(v0.261.241)**
 
 #### New Features
 
@@ -47,7 +47,7 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
     *   docxcompose gave every list it copied from a later document a random ID, so a Word merge whose later documents had ordinary bulleted or numbered lists produced different bytes on each run. A retried workflow Word merge could attach a second copy, and a chat merge of such documents could never be delivered. The ID is now derived and unique within the document, so each document's list still restarts and the same documents always give the same file.
     *   (Ref: #1619, `functions_document_merge_docx.py`, [Phase 5](features/V2_FILE_MERGE_PHASE_5_WORD.md))
 
-### **(v0.261.239)**
+### **(v0.261.240)**
 
 #### New Features
 
@@ -59,7 +59,7 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
     *   Chat can propose PowerPoint merges (blueprint `merge.kind` `pptx`, with `formatting` and `sections`).
     *   (Ref: #1619, `functions_document_merge_pptx.py`, `functions_document_merge.py`, `functions_document_actions.py`, `functions_workflow_drafts.py`, `functions_orchestration_planner.py`, [Phase 6](features/V2_FILE_MERGE_PHASE_6_POWERPOINT.md), [Create a workflow](../guides/create-a-workflow.md#merge-files-in-a-workflow))
 
-### **(v0.261.238)**
+### **(v0.261.239)**
 
 #### New Features
 
@@ -71,7 +71,7 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
     *   Adds the `docxcompose` 2.2.0 dependency (MIT).
     *   (Ref: #1619, `functions_document_merge_docx.py`, `functions_document_merge.py`, `functions_document_actions.py`, `functions_workflow_drafts.py`, `functions_orchestration_planner.py`, `requirements.txt`, [Phase 5](features/V2_FILE_MERGE_PHASE_5_WORD.md), [Create a workflow](../guides/create-a-workflow.md#merge-files-in-a-workflow))
 
-### **(v0.261.237)**
+### **(v0.261.238)**
 
 #### New Features
 
@@ -83,7 +83,7 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
     *   Merging PDFs or workbooks directly in a chat turn, without a workflow, is planned with Word and PowerPoint for a later release.
     *   (Ref: #1619, `functions_document_merge.py`, `functions_document_merge_pdf.py`, `functions_document_merge_workbook.py`, `functions_workflow_merge.py`, `functions_document_actions.py`, `functions_workflow_drafts.py`, [Phase 4](features/V2_FILE_MERGE_PHASE_4_PDF_WORKBOOKS.md), [Create a workflow](../guides/create-a-workflow.md#merge-files-in-a-workflow))
 
-### **(v0.261.236)**
+### **(v0.261.237)**
 
 #### New Features
 
@@ -104,7 +104,7 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
     *   The classic workflow editor doesn't open a workflow with a Merge files task, which it can't represent, and points to V2 instead; Run and Cancel still work there.
     *   (Ref: `application/v2_ui/src/lib/workflowEditor.ts`, `WorkflowTaskFields.tsx`, `WorkflowFileSyncFields.tsx`, `workflowProposals.ts`, `WorkflowProposalCard.tsx`, `static/js/workspace/workspace_workflows.js`)
 
-### **(v0.261.235)**
+### **(v0.261.236)**
 
 #### New Features
 
@@ -127,7 +127,7 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
     *   The V2 plan review now states merge and inspection settings in plain words, such as "Keep every column from every file" or "Remove rows with the same Customer ID, keeping the last", leaves out values that only repeat a default, and shows column and sheet names as plain text.
     *   (Ref: `application/v2_ui/src/lib/orchestrationMerge.ts`, `OrchestrationRunView.tsx`)
 
-### **(v0.261.234)**
+### **(v0.261.235)**
 
 #### New Features
 
@@ -142,6 +142,19 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
 *   **Exact-Schema CSV And Excel Exports**
     *   Two new generated-file profiles, `exact_tabular_records_v1` (CSV) and `exact_tabular_workbook_v1` (XLSX, optional sheet name), export every retained column in its retained order. They let a plan deliver a table whose columns are only known when it runs, such as a merge of files a search found, without the planner having to name the columns.
     *   (Ref: `functions_generated_export_registry.py`, `functions_structured_file_renderers.py`, `functions_generated_office_adapters.py`, [Generated File Export Framework](features/GENERATED_FILE_EXPORT_FRAMEWORK.md))
+
+### **(v0.261.234)**
+
+#### Bug Fixes
+
+*   **Clearer Messages When A Saved Result Can't Be Used**
+    *   Errors about saved and generated results no longer say that source access could not be confirmed. Since saved results stopped re-checking their source documents, most of these errors mean something else, and the message now says which kind of problem it is.
+    *   A source document that can't be read now, or that changed while it was read: "A source document for this analysis is no longer available or has changed." Only reading an uploaded document as an input can raise this.
+    *   A conversation, workflow or run that no longer exists or isn't yours: "The conversation, workflow or run that holds this result no longer exists or isn't available to you."
+    *   A saved result whose earlier result, record or loop and Repeat state is missing or changed: "This saved result can't be used because something it depends on is missing or has changed."
+    *   Workflow task errors, a task result that couldn't be saved, a paused loop item, saved analysis explanations, Analyze saves, the Analyze publication check and the workflow progress view now show the matching message. Placeholders in chat history for an unavailable saved analysis or saved workflow output no longer mention access confirmation.
+    *   Error codes and HTTP statuses are unchanged, apart from two internal codes for a message or workflow binding mismatch (`analysis_message_unavailable` and `analysis_workflow_unavailable`) that map to the same response codes as before.
+    *   (Ref: #1621, `functions_analysis_access.py`, `functions_workflow_runner.py`, `functions_workflow_flow_runner.py`, `route_backend_chats.py`, `route_backend_workflows.py`, `test_analysis_unavailable_message_families.py`, [Saved-Result Error Messages Fix](fixes/ANALYSIS_RESULT_UNAVAILABLE_MESSAGES_FIX.md))
 
 ### **(v0.261.233)**
 

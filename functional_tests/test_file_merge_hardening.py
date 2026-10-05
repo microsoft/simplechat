@@ -2,8 +2,8 @@
 # test_file_merge_hardening.py
 """
 Functional test for V2 file merge hardening against hostile files.
-Version: 0.261.240
-Implemented in: 0.261.240
+Version: 0.261.241
+Implemented in: 0.261.241
 
 This test ensures that merging never turns a hostile file into a merged file that
 starts programs, fetches content or leaks server data. Word documents with fields that
@@ -170,7 +170,7 @@ UNSEPARATED = (
 
 
 def test_version_includes_file_merge_hardening():
-    assert_app_version_at_least("0.261.240")
+    assert_app_version_at_least("0.261.241")
 
 
 @pytest.mark.parametrize("hostile", [

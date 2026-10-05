@@ -1,7 +1,7 @@
 # functions_orchestration_workflows.py
 """Workflow proposals from chat orchestration: plan checks, the proposal step and degrading.
 
-Version: 0.261.237
+Version: 0.261.238
 Implemented in: 0.261.207
 
 A plan proposes a personal workflow with one ``workflow_propose`` step. Its ``blueprint``

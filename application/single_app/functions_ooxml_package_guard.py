@@ -1,8 +1,8 @@
 # functions_ooxml_package_guard.py
 """Checks of an Office Open XML package's XML parts before any library parses them.
 
-Version: 0.261.240
-Implemented in: 0.261.240
+Version: 0.261.241
+Implemented in: 0.261.241
 
 Office Open XML requires its XML parts to be UTF-8 or UTF-16 and forbids document type
 declarations in them, and Office refuses files that break either rule. A declaration is

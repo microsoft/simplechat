@@ -1,8 +1,9 @@
 # test_workflow_task_result_handoff.py
 """
 Functional regression for workflow result production, persistence, and handoff.
-Version: 0.261.237
+Version: 0.261.238
 Implemented in: 0.261.106
+Harness dependencies restored in: 0.261.234
 
 Fictional inventory records pass through the production document analysis,
 artifact presentation, task dispatch, and sequence implementations. Only
@@ -27,8 +28,10 @@ from azure.core.exceptions import ServiceRequestError
 from test_document_analysis_lossless_artifacts import build_window, load_module_functions
 from test_workflow_result_store import FakeBlobService, FakeCosmosContainer
 from test_support.workflow_results import workflow_result_helpers
+from functions_orchestration_execution_policy import generated_file_publication_allowed
 from functions_workflow_alert_safety import sanitize_workflow_alert_record
 from functions_workflow_result_store import WorkflowResultStore
+from functions_workflow_schedules import WORKFLOW_SCHEDULED_TRIGGER_TYPES, workflow_run_time_context
 from functions_workflow_results import (
     build_workflow_task_result,
     load_workflow_task_input,
@@ -166,6 +169,8 @@ def build_inventory_run(record_count=1, note_size=0, *, blob=True):
         "normalize_search_scope": lambda value: value or "personal",
         "PROVENANCE_FIELD": screening_access.PROVENANCE_FIELD,
         "ScreeningError": ScreeningError,
+        # The real dependency-free policy: no orchestration task restricts these runs' files.
+        "generated_file_publication_allowed": generated_file_publication_allowed,
         "guard_model_callable": screened_model,
         "assert_evidence_available": partial(screening_access.assert_evidence_available, metadata_reader=screening_metadata),
     })
@@ -217,6 +222,9 @@ def build_inventory_run(record_count=1, note_size=0, *, blob=True):
         "build_generated_file_output_guidance": lambda prompt: "",
         "upload_generated_document_for_current_user": unexpected_workspace_write,
         "queue_generated_document_processing": unexpected_workspace_write,
+        # Real, dependency-free schedule rules used when a run entrypoint prepares its workflow.
+        "WORKFLOW_SCHEDULED_TRIGGER_TYPES": WORKFLOW_SCHEDULED_TRIGGER_TYPES,
+        "workflow_run_time_context": workflow_run_time_context,
     })
     runner.update({
         "_result_reads": loaded_refs,

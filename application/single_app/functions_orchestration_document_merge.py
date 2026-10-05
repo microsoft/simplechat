@@ -1,8 +1,8 @@
 # functions_orchestration_document_merge.py
 """Deterministic document merging for Gather / Reason / Render orchestration.
 
-Version: 0.261.240
-Implemented in: 0.261.240
+Version: 0.261.241
+Implemented in: 0.261.241
 
 ``document_merge`` is a Reason capability. Its adapter in ``functions_orchestration_adapters``
 authorizes the sources; this module reads each original file through the screening-aware
