@@ -477,7 +477,7 @@ encoded as query values. It doesn't
 poll; the status is as of the read, and **Try again** reloads after a failed
 read. A 404 renders nothing.
 
-Since **0.261.237**, while `allow_user_workflows` and
+Since **0.261.239**, while `allow_user_workflows` and
 `enable_chat_orchestration_workflow_runs` are both on, Phase 6b-2's
 `WorkflowRunCard` shows the same runs from the same read, with their live status
 and **Check now**, **Cancel run** and **Retry**. These links are what shows when
@@ -599,7 +599,7 @@ See [Orchestration settings](../../admin/orchestration.md).
    as started, already started or not started with the reason.
 5. Under the answer, **Started workflows** shows each run's status. **Open run**
    opens the workflow in Workflows with its run history open at that run. Since
-   **0.261.237** the status stays current while the run is in flight; see
+   **0.261.239** the status stays current while the run is in flight; see
    [V2 experience (6b-2)](CHAT_WORKFLOW_RESULT_DELIVERY.md#v2-experience-6b-2).
 
 The user guide is
@@ -634,7 +634,7 @@ Ranking sorts the
 same bounded list proposals already read. A run step makes point reads of the
 conversation, the workflow and the run, and at most one queue call. The link
 route makes two point reads per started workflow, and none when the links are
-unavailable. The links don't poll. Live status since **0.261.237** comes from
+unavailable. The links don't poll. Live status since **0.261.239** comes from
 one tracker per browser tab and Phase 6b-1's batched status route, never a
 request per run.
 

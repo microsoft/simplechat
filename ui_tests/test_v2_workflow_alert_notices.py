@@ -1,13 +1,13 @@
 # test_v2_workflow_alert_notices.py
 """
 Browser regressions for the V2 workflow alert notice, its alert card and their runtime.
-Version: 0.261.237
+Version: 0.261.239
 Implemented in: 0.261.199
 Open and Dismiss up front, everything else under Show more: 0.261.228
 Must-acknowledge alerts, sounds and team delivery: 0.261.235
 Hanging from the bell rather than My Workspace, whatever the chat rail's scroll, with a row of
 its own under the rail's header for an alert that needs acknowledgment: 0.261.236
-Open run in Open workflow's place for an alert that names its run: 0.261.237
+Open run in Open workflow's place for an alert that names its run: 0.261.239
 
 Exercises the real rail, bell, notice, card, live region, stores and both notification
 runtimes, bundled by fixtures/workflow_alerts. Only HTTP answers and the browser APIs a
