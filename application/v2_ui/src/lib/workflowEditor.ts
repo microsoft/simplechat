@@ -1728,7 +1728,7 @@ export function workflowValidationErrors(
     });
     if (original !== undefined) {
         // The editor passes the loaded record so alerts are checked exactly as the server will see them.
-        errors.push(...workflowAlertDraftErrors(draft, original));
+        errors.push(...workflowAlertDraftErrors(draft, original, options.scope.type));
     }
     return [...new Set(errors)];
 }

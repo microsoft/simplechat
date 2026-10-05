@@ -1,8 +1,8 @@
 # test_v2_sidebar_conversation_scroll.py
 """
 Browser regressions for the V2 chat rail scrolling as one panel.
-Version: 0.261.235
-Implemented in: 0.261.235
+Version: 0.261.236
+Implemented in: 0.261.236
 
 On the chat page, the rail kept its whole height for the navigation and the administrator's
 link groups, and the conversation list scrolled in what was left: two rows in a 720px-tall

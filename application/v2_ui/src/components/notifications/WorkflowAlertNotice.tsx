@@ -8,7 +8,7 @@
 // clickable beside it. With the rail collapsed to its icon strip, including mobile's, it flies
 // out to the right of the bell instead.
 //
-// It used to hang from My Workspace, where workflows live. It moved to the bell (0.261.235)
+// It used to hang from My Workspace, where workflows live. It moved to the bell (0.261.236)
 // because the chat page's rail scrolls its navigation out of view as the conversation list is
 // read, which could carry the item, and the notice with it, off screen; the bell never
 // scrolls. (A top-centre pill was also built and compared in the alert lab; the callout was
@@ -21,9 +21,16 @@
 // opened or closed. Closing tucks it into the bell straight away. Either way the alert stays
 // unread there.
 //
+// An alert that needs acknowledgment never tucks away, so it must never cover anything for
+// long: in the full rail it takes a row of its own under the rail's header, still pointing at
+// the bell, and pushes New chat and the navigation down; as a flyout it steps aside --
+// invisible, out of the pointer's way -- when focus moves onto something it would cover, and
+// comes back when focus moves on. A new alert taking the lead is shown, whatever focus did
+// before it arrived.
+//
 // Everything shown is the alert's own text, rendered as text.
 
-import { useEffect, useRef, useState, type KeyboardEvent } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type KeyboardEvent } from 'react';
 import { clsx } from 'clsx';
 import { BellRing, X } from 'lucide-react';
 import {
@@ -33,6 +40,7 @@ import {
     type WorkflowAlertEntry,
 } from '../../lib/workflowAlertNotices';
 import { useReducedMotion } from '../../lib/workflowAlertMotion';
+import { retryWorkflowAlertSound, useWorkflowAlertSoundBlocked } from '../../lib/workflowAlertSound';
 import {
     useWorkflowAlertStore,
     workflowAlertReturnFocusTarget,
@@ -62,6 +70,20 @@ function useNoticeShown(): boolean {
     return useWorkflowAlertStore(
         (state) => state.entries.length > 0 && (state.phase === 'notice' || state.phase === 'tucking'),
     );
+}
+
+/** Whether an alert waiting to be shown needs acknowledgment, and so never tucks away. */
+function useMustAcknowledge(): boolean {
+    return useWorkflowAlertStore((state) => state.entries.some((entry) => entry.requireAcknowledgment));
+}
+
+/** Whether `notice` lies over `target`, so that focus on `target` would be hidden under it. */
+function liesOver(notice: Element, target: Element): boolean {
+    const box = notice.getBoundingClientRect();
+    const landed = target.getBoundingClientRect();
+    return landed.width > 0 && landed.height > 0
+        && landed.left < box.right && box.left < landed.right
+        && landed.top < box.bottom && box.top < landed.bottom;
 }
 
 /**
@@ -114,6 +136,10 @@ function NoticeBody({
     const rootRef = useRef<HTMLDivElement>(null);
     const [hovered, setHovered] = useState(false);
     const [focused, setFocused] = useState(false);
+    // Whether focus last landed on something the notice lies over, measured for one lead in one
+    // placement. A new lead, or the rail changing shape, starts it shown until focus next moves.
+    const [focusCover, setFocusCover] = useState<{ key: string; covered: boolean } | null>(null);
+    const soundBlocked = useWorkflowAlertSoundBlocked();
 
     // Hidden while something else has the page, the pointer and focus cannot be said to have
     // left it; they start fresh when it is back.
@@ -121,11 +147,12 @@ function NoticeBody({
         if (suspended) {
             setHovered(false);
             setFocused(false);
+            setFocusCover(null);
         }
     }, [suspended]);
 
     useTuckTimer(
-        phase === 'notice' && !workflowAlertStays(entry.priority),
+        phase === 'notice' && !entry.requireAcknowledgment && !workflowAlertStays(entry.priority),
         hovered || focused || suspended,
         `${entry.key}:${entry.priority}:${batchToken}`,
         () => void tuck(),
@@ -134,7 +161,11 @@ function NoticeBody({
     // The notice overlays the rail items under the bell, or the page beside the rail, so
     // tabbing on from it can land on something it covers. Focus must never sit hidden under it
     // (WCAG 2.2, 2.4.11), so it tucks into the bell and leaves focus where it went. The alert
-    // stays unread there, like any other tuck.
+    // stays unread there, like any other tuck. One that needs acknowledgment can't tuck away,
+    // so as a flyout it steps aside instead, until focus is somewhere it doesn't cover. Every
+    // move is measured, whatever leads, so the record never outlives the focus it describes.
+    const mustAcknowledge = entry.requireAcknowledgment;
+    const coverKey = `${entry.key}:${placement}`;
     useEffect(() => {
         if (phase !== 'notice' || suspended) {
             return undefined;
@@ -142,21 +173,31 @@ function NoticeBody({
         const onFocusIn = (event: FocusEvent) => {
             const root = rootRef.current;
             const target = event.target;
-            if (!root || !(target instanceof Element) || root.contains(target)) {
+            if (!root || !(target instanceof Element)) {
                 return;
             }
-            const notice = root.getBoundingClientRect();
-            const landed = target.getBoundingClientRect();
-            const covered = landed.width > 0 && landed.height > 0
-                && landed.left < notice.right && notice.left < landed.right
-                && landed.top < notice.bottom && notice.top < landed.bottom;
-            if (covered) {
+            const covered = !root.contains(target) && liesOver(root, target);
+            setFocusCover({ key: coverKey, covered });
+            if (covered && !mustAcknowledge) {
                 void tuck();
             }
         };
+        // Focus that goes nowhere -- a click on the page's background -- covers nothing.
+        const onFocusOut = (event: FocusEvent) => {
+            if (event.relatedTarget === null) {
+                setFocusCover({ key: coverKey, covered: false });
+            }
+        };
         document.addEventListener('focusin', onFocusIn);
-        return () => document.removeEventListener('focusin', onFocusIn);
-    }, [phase, suspended, tuck]);
+        document.addEventListener('focusout', onFocusOut);
+        return () => {
+            document.removeEventListener('focusin', onFocusIn);
+            document.removeEventListener('focusout', onFocusOut);
+        };
+    }, [phase, suspended, tuck, mustAcknowledge, coverKey]);
+    // In the full rail it has room of its own and covers nothing, so only the flyout steps aside.
+    const asideNow = mustAcknowledge && placement === 'flyout'
+        && focusCover?.key === coverKey && focusCover.covered;
 
     const close = async () => {
         const hadFocus = rootRef.current?.contains(document.activeElement) ?? false;
@@ -170,7 +211,9 @@ function NoticeBody({
     const onKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
         if (event.key === 'Escape') {
             event.stopPropagation();
-            void close();
+            if (!entry.requireAcknowledgment) {
+                void close();
+            }
         }
     };
 
@@ -183,6 +226,7 @@ function NoticeBody({
         `Open ${label.toLowerCase()} priority ${kind}: ${alert.title}, from ${alert.workflowName}.`,
         group ? `${group}.` : '',
         more > 0 ? `${more} more waiting.` : '',
+        entry.requireAcknowledgment ? 'Needs acknowledgment.' : '',
     ].filter(Boolean).join(' ');
 
     return (
@@ -197,6 +241,8 @@ function NoticeBody({
             data-category={alert.category}
             data-state={phase}
             data-count={entry.count}
+            data-requires-acknowledgment={entry.requireAcknowledgment ? 'true' : 'false'}
+            data-stepped-aside={asideNow ? 'true' : 'false'}
             onPointerEnter={() => setHovered(true)}
             onPointerLeave={() => setHovered(false)}
             onFocus={() => setFocused(true)}
@@ -211,6 +257,7 @@ function NoticeBody({
                 tone.outline,
                 reduced ? 'wf-alert-enter-fade' : ENTRANCE[placement],
                 phase === 'tucking' && 'pointer-events-none',
+                asideNow && 'invisible',
                 suspended && 'hidden',
             )}
         >
@@ -244,6 +291,14 @@ function NoticeBody({
                         {alert.category === 'failure' && (
                             <span className="shrink-0 text-[11px] font-semibold text-text-2">Run failed</span>
                         )}
+                        {entry.requireAcknowledgment && (
+                            <span
+                                data-workflow-alert-ack-tag=""
+                                className="shrink-0 rounded bg-danger-soft px-1.5 py-0.5 text-[11px] font-semibold text-danger"
+                            >
+                                Needs acknowledgment
+                            </span>
+                        )}
                         <span
                             data-workflow-alert-workflow=""
                             title={alert.workflowName}
@@ -255,9 +310,10 @@ function NoticeBody({
                     <span className="mt-1 line-clamp-2 block text-sm font-medium break-words text-text-1">
                         {alert.title}
                     </span>
-                    {(group || more > 0) && (
+                    {(group || more > 0 || entry.audience === 'group') && (
                         <span className="mt-0.5 flex flex-wrap gap-x-2 text-xs text-text-3">
                             {group && <span data-workflow-alert-group="">{group}</span>}
+                            {entry.audience === 'group' && <span data-workflow-alert-team="">Sent to everyone in the group</span>}
                             {more > 0 && (
                                 <span data-workflow-alert-more="" className="font-semibold text-text-2">
                                     +{more} more
@@ -266,16 +322,29 @@ function NoticeBody({
                         </span>
                     )}
                 </button>
-                <button
-                    type="button"
-                    data-workflow-alert-close=""
-                    onClick={() => void close()}
-                    aria-label="Close alert notice"
-                    title="Close"
-                    className="shrink-0 rounded-lg p-1 text-text-3 transition-colors hover:bg-surface-2 hover:text-text-1"
-                >
-                    <X size={15} aria-hidden="true" />
-                </button>
+                {/* A control of its own beside the notice, never nested in the notice's button. */}
+                {soundBlocked && (
+                    <button
+                        type="button"
+                        data-workflow-alert-enable-sound=""
+                        onClick={retryWorkflowAlertSound}
+                        className="shrink-0 rounded-lg px-1.5 py-1 text-xs font-semibold text-accent underline transition-colors hover:bg-surface-2"
+                    >
+                        Enable sound
+                    </button>
+                )}
+                {!entry.requireAcknowledgment && (
+                    <button
+                        type="button"
+                        data-workflow-alert-close=""
+                        onClick={() => void close()}
+                        aria-label="Close alert notice"
+                        title="Close"
+                        className="shrink-0 rounded-lg p-1 text-text-3 transition-colors hover:bg-surface-2 hover:text-text-1"
+                    >
+                        <X size={15} aria-hidden="true" />
+                    </button>
+                )}
             </div>
         </div>
     );
@@ -312,15 +381,21 @@ export function WorkflowAlertNotice({ placement }: { placement: WorkflowAlertNot
  * centre. In the collapsed strip, including a phone's, it flies out from the strip's edge with
  * its notch (16px down, centred 22px down) level with the bell, capped so a phone's narrow
  * screen still fits it.
+ *
+ * An alert that needs acknowledgment stays until it is acknowledged, so in the full rail it must
+ * not sit over anything. There WorkflowAlertRowSlot gives it a row of its own, and this slot
+ * stands aside.
  */
 export function WorkflowAlertCalloutSlot({ collapsed }: { collapsed: boolean }) {
     const shown = useNoticeShown();
-    if (!shown) {
+    const mustAcknowledge = useMustAcknowledge();
+    if (!shown || (!collapsed && mustAcknowledge)) {
         return null;
     }
     return (
         <div
             data-workflow-alert-slot="callout"
+            data-in-flow="false"
             className={clsx(
                 'absolute z-50 w-72',
                 collapsed
@@ -329,6 +404,64 @@ export function WorkflowAlertCalloutSlot({ collapsed }: { collapsed: boolean }) 
             )}
         >
             <WorkflowAlertNotice placement={collapsed ? 'flyout' : 'below'} />
+        </div>
+    );
+}
+
+/**
+ * The full rail's room for an alert that needs acknowledgment: a row of its own under the rail's
+ * header, the row the bell sits in. It hangs from the bell like any other notice but pushes New
+ * chat and the navigation down instead of covering them, and, being outside the chat page's
+ * scroll region, it can't be scrolled away either.
+ *
+ * The row spans the rail rather than sitting under the bell, so the slot measures where the
+ * bell is and hands the notch that position (`--wf-alert-notch-centre`, from the slot's left).
+ */
+export function WorkflowAlertRowSlot({ collapsed }: { collapsed: boolean }) {
+    const shown = useNoticeShown();
+    const mustAcknowledge = useMustAcknowledge();
+    const suspended = useWorkflowAlertStore((state) => state.suspended);
+    const slotRef = useRef<HTMLDivElement>(null);
+    const [notchCentre, setNotchCentre] = useState<number | null>(null);
+    const active = shown && !collapsed && mustAcknowledge;
+
+    // Measured before paint, so the notch never shows pointing anywhere but the bell.
+    useLayoutEffect(() => {
+        const slot = slotRef.current;
+        const bell = slot?.closest('nav')?.querySelector('[data-notification-bell]');
+        if (!active || !slot || !bell) {
+            return undefined;
+        }
+        const measure = () => {
+            const slotBox = slot.getBoundingClientRect();
+            const bellBox = bell.getBoundingClientRect();
+            setNotchCentre(bellBox.left + bellBox.width / 2 - slotBox.left);
+        };
+        measure();
+        if (typeof ResizeObserver === 'undefined') {
+            return undefined;
+        }
+        const observer = new ResizeObserver(measure);
+        observer.observe(slot);
+        return () => observer.disconnect();
+    }, [active]);
+
+    if (!active) {
+        return null;
+    }
+    const notchStyle = notchCentre === null
+        ? undefined
+        : ({ '--wf-alert-notch-centre': `${notchCentre}px` } as CSSProperties);
+    return (
+        <div
+            ref={slotRef}
+            data-workflow-alert-slot="callout"
+            data-in-flow="true"
+            style={notchStyle}
+            // While something else has the page the notice is hidden, and its gap goes with it.
+            className={clsx('relative mx-3', !suspended && 'mb-3')}
+        >
+            <WorkflowAlertNotice placement="below" />
         </div>
     );
 }

@@ -4,7 +4,7 @@ title: "Chat interface controls"
 description: "Reference for every documented control in the SimpleChat chat interface."
 section: "Reference"
 audience: user
-version: "0.261.235"
+version: "0.261.236"
 ---
 
 ## How to use this reference
@@ -44,7 +44,7 @@ chat; wide result tables keep their scrolling inside the table.
 
 ### React V2 conversation list scrolling
 
-Since **0.261.235**, the V2 navigation rail on the chat page scrolls as one panel
+Since **0.261.236**, the V2 navigation rail on the chat page scrolls as one panel
 between **New chat** and the theme and account controls. As you read down the
 conversation list, the navigation and any **External Links** or **Custom Pages**
 groups move up out of view. **Search chats** stays right under **New chat**, along
@@ -60,7 +60,7 @@ application's name. It shows the unread count, or a dot when the rail is collaps
 and opens a panel where you can follow, mark read, or dismiss notifications without
 leaving the chat. On narrow screens the bell is on the collapsed strip and in the
 open navigation, and Escape closes the panel before the navigation. Since
-**0.261.235**, a workflow alert that needs attention pops up from the bell as well.
+**0.261.236**, a workflow alert that needs attention pops up from the bell as well.
 See [Manage notifications]({{ '/guides/manage-notifications/' | relative_url }}).
 
 ### Foundry sign-in requests

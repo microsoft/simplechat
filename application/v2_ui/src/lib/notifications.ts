@@ -37,6 +37,22 @@ export interface AppNotification {
     priority?: string;
     /** Workflow alerts only; `failure` marks a run that errored. */
     category?: string;
+    /** Workflow alerts only. Kept open until someone acknowledges it. */
+    require_acknowledgment?: boolean;
+    /** Workflow alerts only. */
+    sound?: string;
+    /** Workflow alerts only. */
+    size?: string;
+    /** Workflow alerts only. */
+    audience?: string;
+    /** Workflow alerts only. */
+    acknowledged?: boolean;
+    /** Workflow alerts only. */
+    acknowledged_at?: string | null;
+    /** Workflow alerts only. */
+    acknowledged_by_name?: string | null;
+    /** Workflow alerts only. */
+    content_scope?: string;
 }
 
 export interface NotificationPage {
@@ -88,6 +104,14 @@ export function normalizeNotification(raw: unknown): AppNotification | null {
         },
         priority: text(raw.priority) || undefined,
         category: text(raw.category) || undefined,
+        require_acknowledgment: raw.require_acknowledgment === true,
+        sound: text(raw.sound) || undefined,
+        size: text(raw.size) || undefined,
+        audience: text(raw.audience) || undefined,
+        acknowledged: raw.acknowledged === true,
+        acknowledged_at: text(raw.acknowledged_at) || null,
+        acknowledged_by_name: text(raw.acknowledged_by_name) || null,
+        content_scope: text(raw.content_scope) || undefined,
     };
 }
 
@@ -138,6 +162,9 @@ export const dismissNotification = (notificationId: string) =>
     api.delete<unknown>(`/api/notifications/${encodeURIComponent(notificationId)}/dismiss`);
 
 export const markAllNotificationsRead = () => api.post<unknown>('/api/notifications/mark-all-read');
+
+export const acknowledgeNotification = (notificationId: string) =>
+    api.post<unknown>(`/api/notifications/${encodeURIComponent(notificationId)}/acknowledge`);
 
 /** How the badge reads a count: the number itself, or `9+` at and above the server's cap. */
 export function formatNotificationCount(count: number): string {

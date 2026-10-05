@@ -15,7 +15,7 @@ scrolls as one panel, and the **Conversations** heading stays pinned.
 
 Tracked in #1642.
 
-**Fixed in version:** 0.261.235
+**Fixed in version:** 0.261.236
 
 ## Root cause
 
@@ -37,12 +37,12 @@ screen with it.
 
 | File | Change |
 |---|---|
-| `application/v2_ui/src/components/layout/Sidebar.tsx` | One scroll region wraps the navigation list, `NavExtras` and `ConversationRail`. It scrolls only on the chat page with the rail expanded. The old flex wrapper and spacer are gone, and the alert slot and its `relative` are removed from **My Workspace**. |
+| `application/v2_ui/src/components/layout/Sidebar.tsx` | One scroll region wraps the navigation list, `NavExtras` and `ConversationRail`. It scrolls only on the chat page with the rail expanded. The old flex wrapper and spacer are gone, the alert slot and its `relative` are removed from **My Workspace**, and the acknowledgment row is rendered under the header. |
 | `application/v2_ui/src/components/chat/ConversationRail.tsx` | No scroller of its own. The search header is `sticky` and marked `data-stuck` while held. Paging watches the rail's region. The section keeps the region's height while a search is active, and keyboard focus is kept clear of the held header. |
 | `application/v2_ui/src/components/layout/NotificationBell.tsx` | The bell's wrapper takes the layout classes and renders the workflow alert notice's slot right after the bell. |
-| `application/v2_ui/src/components/notifications/WorkflowAlertNotice.tsx` | The slot positions the notice from the bell: dropping from it when the rail is expanded, flying out beside it when collapsed. |
-| `application/v2_ui/src/components/notifications/WorkflowAlertNotice.css` | The notch comment names its new target and the offsets the slot relies on. |
-| `application/single_app/config.py` | Version to 0.261.235. |
+| `application/v2_ui/src/components/notifications/WorkflowAlertNotice.tsx` | The slot positions the notice from the bell: dropping from it when the rail is expanded, flying out beside it when collapsed. `WorkflowAlertRowSlot` gives an alert that needs acknowledgment its own row under the rail's header. |
+| `application/v2_ui/src/components/notifications/WorkflowAlertNotice.css` | The notch comment names its new target and the offsets the slot relies on. In the acknowledgment row, the notch and the entrance follow the measured bell position. |
+| `application/single_app/config.py` | Version to 0.261.236. |
 | `functional_tests/test_v2_sidebar_conversation_scroll.py` | New source-level test. |
 | `ui_tests/test_v2_sidebar_conversation_scroll.py` | New browser test. |
 | `ui_tests/test_v2_workflow_alert_notices.py` | Updated for the bell anchor, plus a scrolled-rail regression. |
@@ -108,6 +108,20 @@ from it:
 The notice follows the bell in the tab order. Its timers, claims, tuck, card and live
 region are unchanged.
 
+**Alerts that need acknowledgment keep their own room.** Must-acknowledge alerts (0.261.235,
+[Workflow Alert Acknowledgment](../features/WORKFLOW_ALERT_ACKNOWLEDGMENT.md)) never tuck
+away, so in the expanded rail they used to take room of their own below **My Workspace**,
+pushing the items under it down rather than covering them. That room is now a row under the
+rail's header, the row the bell sits in, rendered by `WorkflowAlertRowSlot`. It pushes
+**New chat** and the navigation down. It sits outside the chat page's scroll region, so it
+can't be scrolled away. It also never covers the page, as a bell overlay held there until
+someone acknowledged it would.
+
+While that row is in use, the bell's overlay slot stands aside. The row spans the rail, so it
+measures where the bell is (before paint, and again whenever the row resizes) and hands the
+position to the notch through `--wf-alert-notch-centre`. As a flyout, collapsed or on a phone,
+a must-acknowledge notice still steps aside from focus it would cover.
+
 ### Testing approach
 
 - Source-level assertions guard the structure, observer roots, the focus handler and the
@@ -125,7 +139,9 @@ region are unchanged.
 - Collapsed rail and other pages: no layout change.
 - Workflow alert notices appear beside the bell rather than under **My Workspace**. With
   the rail expanded, the notice now overlaps the top of the page next to the rail while it
-  shows. As before, moving focus onto anything it covers tucks it into the bell.
+  shows. As before, moving focus onto anything it covers tucks it into the bell. An alert
+  that needs acknowledgment never overlaps anything in the expanded rail: its row under the
+  header pushes **New chat** and the navigation down while it waits.
 
 ## Validation
 
@@ -133,9 +149,9 @@ region are unchanged.
 
 | Command | Result |
 |---|---|
-| `python functional_tests/test_v2_sidebar_conversation_scroll.py` | 7/7 passed |
-| `python -m pytest ui_tests/test_v2_sidebar_conversation_scroll.py` | 9 passed |
-| `python -m pytest ui_tests/test_v2_workflow_alert_notices.py` | 30 passed |
+| `python functional_tests/test_v2_sidebar_conversation_scroll.py` | 8/8 passed |
+| `python -m pytest ui_tests/test_v2_sidebar_conversation_scroll.py ui_tests/test_v2_notifications_bell.py ui_tests/test_v2_new_chat_reset.py ui_tests/test_v2_workflow_alerts.py` | 90 passed |
+| `python -m pytest ui_tests/test_v2_workflow_alert_notices.py` | 60 passed |
 | `npm --prefix application/v2_ui run typecheck` | Passed |
 
 The rail browser test measures the panel at 1280×720 with 75 conversations and two external
@@ -164,6 +180,7 @@ links:
 | Navigation and External Links after scrolling | Fixed in place | Scrolled out of view, back on scrolling up |
 | Next page of conversations | Requested once the end is on screen | Requested 120 pixels before the end |
 | Workflow alert notice with the rail scrolled | Would scroll away with **My Workspace** | Hangs from the bell, always on screen |
+| Alert that needs acknowledgment, expanded rail | Its own room below **My Workspace**, which could scroll away | Its own row under the bell, above **New chat**, never scrolled away |
 | Collapsed rail, other pages | Unchanged | Unchanged |
 
 ## Related

@@ -975,7 +975,8 @@ export function WorkflowEditorDialog({
                         {/* Rules watch tasks by ID, so alerts follow the tasks they can refer to. */}
                         {options.can_manage && !readOnly ? (
                             <WorkflowChangedField changeKey="alerts">
-                            <WorkflowAlertEditor workflow={draft} onChange={(update) => setWorkflow((current) => update(current))} />
+                            <WorkflowAlertEditor workflow={draft} scope={scope}
+                                onChange={(update) => setWorkflow((current) => update(current))} />
                             </WorkflowChangedField>
                         ) : (
                             <WorkflowAlertSummary workflow={draft} />

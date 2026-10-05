@@ -44,7 +44,7 @@ import { ConversationRail } from '../chat/ConversationRail';
 import { NavExtras } from './NavExtras';
 import { NotificationBell } from './NotificationBell';
 import { UserAvatar } from './UserAvatar';
-import { useWorkflowAlertCalloutShown } from '../notifications/WorkflowAlertNotice';
+import { useWorkflowAlertCalloutShown, WorkflowAlertRowSlot } from '../notifications/WorkflowAlertNotice';
 
 interface NavItem {
     to: string;
@@ -381,6 +381,11 @@ export function Sidebar({ mobile = false }: { mobile?: boolean }) {
                     </>
                 )}
             </div>
+
+            {/* An alert that needs acknowledgment stays until someone acknowledges it, so in the
+                full rail it takes a row of its own here, under the bell it hangs from, rather
+                than covering New chat and the page as an ordinary notice briefly does. */}
+            <WorkflowAlertRowSlot collapsed={collapsed} />
 
             {collapsed && (
                 <>

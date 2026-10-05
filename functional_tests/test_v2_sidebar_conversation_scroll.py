@@ -3,8 +3,8 @@
 """
 Functional test for the V2 chat rail scrolling as one panel, and the workflow alert notice
 hanging from the bell.
-Version: 0.261.235
-Implemented in: 0.261.235
+Version: 0.261.236
+Implemented in: 0.261.236
 
 On the V2 chat page the rail used to keep its whole height for the navigation and the
 administrator's link groups, and the conversation list scrolled in whatever was left. With a
@@ -21,7 +21,8 @@ This test ensures that:
   - paging and the held-header marker watch the region rather than the viewport;
   - keyboard focus on a row is moved out from under the held header, so it is never hidden;
   - the workflow alert notice hangs from the bell rather than from My Workspace, which the
-    region can now scroll out of view.
+    region can now scroll out of view, and an alert that needs acknowledgment gets a row of
+    its own under the rail's header instead of covering anything.
 
 These are source-level assertions, the convention for the V2 rail, so they run without a
 build. ui_tests/test_v2_sidebar_conversation_scroll.py drives the rendered rail.
@@ -260,12 +261,55 @@ def test_the_workflow_alert_notice_hangs_from_the_bell():
     return True
 
 
+def test_an_alert_that_needs_acknowledgment_takes_a_row_under_the_bell():
+    """It never tucks away, so in the full rail it gets room of its own rather than covering."""
+    print("Testing the acknowledgment row...")
+
+    notice = _read(NOTICE_TSX)
+    assert "if (!shown || (!collapsed && mustAcknowledge)) {" in notice, (
+        "In the full rail the bell's overlay slot must stand aside for an alert that needs "
+        "acknowledgment: it stays until acknowledged and must not sit over New chat or the page"
+    )
+    row = re.search(r"export function WorkflowAlertRowSlot\((.|\n)*?\n}\n", notice)
+    assert row, "WorkflowAlertRowSlot should be defined beside the overlay slot"
+    body = row.group(0)
+    assert "const active = shown && !collapsed && mustAcknowledge;" in body, (
+        "The row is used only in the full rail, and only for an alert that needs acknowledgment"
+    )
+    assert 'data-in-flow="true"' in body, "The row is the in-flow room #1636 gave these alerts"
+    assert "querySelector('[data-notification-bell]')" in body, "The row measures where the bell is"
+    assert "'--wf-alert-notch-centre'" in body, "and hands the notch that position"
+    assert "useLayoutEffect(" in body, "Measured before paint, so the notch never points elsewhere"
+    assert "<WorkflowAlertNotice placement=\"below\" />" in body
+
+    sidebar = _sidebar_component()
+    header_end = sidebar.find("<ChevronLeft size={17} />")
+    row_slot = sidebar.find("<WorkflowAlertRowSlot collapsed={collapsed} />")
+    new_chat = sidebar.find('title="Start a new chat"')
+    start, _, _ = _scroll_region(sidebar)
+    assert -1 not in (header_end, row_slot, new_chat), "The Sidebar must render the row"
+    assert header_end < row_slot < new_chat < start, (
+        "The row sits under the rail's header, above New chat and outside the scroll region, "
+        "so it can't be scrolled away"
+    )
+
+    css = _read(NOTICE_CSS)
+    assert re.search(
+        r"\[data-in-flow='true'\] > \[data-placement='below'\] > \.wf-alert-notch \{\s*"
+        r"left: calc\(var\(--wf-alert-notch-centre, 24px\) - 7px\);",
+        css,
+    ), "In the row, the notch is placed from the measured bell position"
+
+    print("Acknowledgment row test passed!")
+    return True
+
+
 def test_version_is_at_least_the_implementation_version():
     """The application carries at least the version this behaviour arrived in."""
     print("Testing version...")
     assert_app_version_at_least(
-        "0.261.235",
-        reason="The V2 rail scroll region and the bell-anchored alert notice landed in 0.261.235.",
+        "0.261.236",
+        reason="The V2 rail scroll region and the bell-anchored alert notice landed in 0.261.236.",
     )
     print("Version test passed!")
     return True
@@ -279,6 +323,7 @@ if __name__ == "__main__":
         test_paging_and_the_marker_watch_the_rail_region,
         test_rows_keep_clear_of_the_held_header,
         test_the_workflow_alert_notice_hangs_from_the_bell,
+        test_an_alert_that_needs_acknowledgment_takes_a_row_under_the_bell,
         test_version_is_at_least_the_implementation_version,
     ]
 

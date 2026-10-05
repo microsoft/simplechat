@@ -715,6 +715,9 @@ def register_route_backend_v2(bp):
                 "enable_chat_workflow_results": is_chat_workflow_results_enabled_for_user(
                     settings, user_roles=current_user_roles
                 ),
+                "enable_workflow_alert_sounds": (
+                    settings.get("enable_workflow_alert_sounds", True) is not False
+                ),
                 "enable_source_review": is_source_review_enabled_for_user(
                     settings,
                     user_id,

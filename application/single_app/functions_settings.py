@@ -1539,6 +1539,8 @@ def get_settings(use_cosmos=False, include_source=False):
         'enable_workflow_ai_assistant': True,
         # Lets users ask chat about the stored results of their personal workflow runs.
         'enable_chat_workflow_results': False,
+        # Lets workflow alert rules play one-shot or repeating browser sounds.
+        'enable_workflow_alert_sounds': True,
         'workflow_max_tasks': 50,
         'workflow_max_loop_items': WORKFLOW_LOOP_ITEMS_DEFAULT,
         'workflow_max_repeat_iterations': WORKFLOW_REPEAT_ITERATIONS_DEFAULT,
@@ -2286,6 +2288,12 @@ def update_settings(new_settings, *, expected_etag=None):
         new_settings = {
             **new_settings,
             'enable_chat_workflow_results': new_settings['enable_chat_workflow_results'] is True,
+        }
+    if isinstance(new_settings, dict) and 'enable_workflow_alert_sounds' in new_settings:
+        # Only a real boolean false silences workflow alert sounds; a string or number keeps the default on.
+        new_settings = {
+            **new_settings,
+            'enable_workflow_alert_sounds': new_settings['enable_workflow_alert_sounds'] is not False,
         }
     if isinstance(new_settings, dict) and 'workflow_min_schedule_interval_seconds' in new_settings:
         new_settings = {
