@@ -608,6 +608,10 @@ The answer itself lists what happened to each workflow: started, already started
 this request, or not started with the reason. Stopping the plan doesn't stop a
 workflow it already started; use **Cancel run** or cancel the run in Workflows.
 
+A run takes one action at a time. While its **Cancel run** or **Retry** is waiting
+on the server, that run's **Cancel run**, **Retry** and **Review and approve** stay
+in place but do nothing, on the card and on the run's note in the chat.
+
 Runs are tracked since **0.261.234**. While a tracked run is in flight, V2
 checks on it from any page, so the chat list and the bell stay current: first
 after 15 seconds, then less often, up to every 5 minutes. It pauses while the

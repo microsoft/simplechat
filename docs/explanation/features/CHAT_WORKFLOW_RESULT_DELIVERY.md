@@ -801,9 +801,13 @@ as plain text, and only the response's `code` is read, never its sentence:
 | Another error status, no answer, or a runtime read that can't be used | Couldn't retry the run. Try again. |
 | A success whose answer couldn't be read | Couldn't confirm the retry. Check its status. |
 
-One action runs per run at a time, shared by the card and the run's note. The
-chat's runs are read again after every answer, and the answer's sentence stays
-until the run's status changes.
+One action runs per run at a time, shared by the card and the run's note. Until
+the server answers and the chat's runs have been read again, that run's
+**Cancel run**, **Retry** and **Review and approve** stay in place with
+`aria-disabled` set, and a click or Enter does nothing. So a read that lands
+mid-Retry and finds the run waiting for approval can't open the gate while the
+Retry is still under way. The chat's runs are read again after every answer,
+and the answer's sentence stays until the run's status changes.
 
 #### Check now
 

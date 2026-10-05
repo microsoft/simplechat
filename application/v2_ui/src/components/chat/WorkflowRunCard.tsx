@@ -172,10 +172,16 @@ function LiveRunRow({
         details.push(<p key="waiting" className="break-words text-text-2">{workflowWaitingText(row.waiting.reason)}</p>);
         if (controls?.approve) {
             // The run's own page shows the gate's prompt and choices; nothing is approved from here.
+            // Like Cancel and Retry, it waits while another action on this run is in flight.
+            const busy = pending !== null;
             openRun = false;
             actions.push(
                 <Link key="approve" to={workflowRunHref(run.workflowId, run.runId)}
-                    aria-label={`Review and approve ${name}`} className={LINK_CLASS}>
+                    aria-label={`Review and approve ${name}`} aria-disabled={busy || undefined}
+                    className={clsx(LINK_CLASS, BUSY_CLASS)}
+                    onClick={(event) => {
+                        if (busy) event.preventDefault();
+                    }}>
                     Review and approve
                 </Link>,
             );

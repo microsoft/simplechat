@@ -9,8 +9,9 @@ correctly in V2. It mounts the real app shell, chat list and chat page with the 
 real run tracker, stubs every server route at the network layer, and checks:
 
 - the live run card under the plan's answer: each state the status route reports, Check now and
-  its time, Cancel behind a confirmation, and Retry as the durable runtime resume from a fresh
-  runtime read with a fresh request id (never /resume-failed);
+  its time, Cancel behind a confirmation, Retry as the durable runtime resume from a fresh
+  runtime read with a fresh request id (never /resume-failed), and Review and approve held while
+  another action on the same run is under way;
 - the running tag in the chat list, and how it gives way to the unread dot;
 - how a delivery that lands during the page session is settled: in another chat, and in the open
   chat after any active stream or orchestration turn ends, without overriding the user's choice
@@ -236,6 +237,8 @@ class RunHarness(Harness):
         self.resume_status = 200
         self.resume_code = None
         self.resume_bodies = []
+        self.hold_resume = False
+        self.held_resumes = []
         self.cancel_status = 200
         self.cancel_calls = 0
         self.retry_calls = []
@@ -271,6 +274,9 @@ class RunHarness(Harness):
             return self.answer(route, path, self.runtime_status, self.runtime_payload)
         if method == "POST" and path == f"{RUN_BASE}/runtime/resume":
             self.resume_bodies.append(route.request.post_data_json)
+            if self.hold_resume:
+                self.held_resumes.append(route)
+                return True
             if self.resume_status == 200:
                 return self.answer(route, path, 200, RUNTIME_RESUMED)
             payload = {"error": "Raw server text that must not be shown."}
@@ -293,6 +299,13 @@ class RunHarness(Harness):
             self.expected_http_failures.add((path, status))
         route.fulfill(status=status, json=payload)
         return True
+
+    def release_resumes(self):
+        """Answer the held resumes the way the server accepts one."""
+        assert self.held_resumes, "No resume was held."
+        held, self.held_resumes = self.held_resumes, []
+        for route in held:
+            self.answer(route, f"{RUN_BASE}/runtime/resume", 200, RUNTIME_RESUMED)
 
     def answer_status(self, route, path, query):
         if self.status_error:
@@ -931,6 +944,45 @@ def test_a_plain_retry_that_gets_through_shows_the_servers_refusal(ui):
     ui.wait_for(lambda: ui.chat_state("streamError") == RETRY_REFUSAL, "the server's refusal was shown")
     assert ui.retry_calls == [note["id"]]
     expect(ui.page.get_by_text(RETRY_REFUSAL)).to_be_visible()
+
+
+def test_review_and_approve_waits_while_a_retry_is_under_way(ui):
+    """A read that lands mid-Retry and finds a gate can't open it until the Retry is answered."""
+    ui.status_rows = [status_row("failed", actions={"retry": True})]
+    ui.open()
+    row = ui.live_row
+    ui.hold_resume = True
+    row.get_by_role("button", name=f"Retry run of {NAME}", exact=True).click()
+    ui.wait_for(lambda: ui.held_resumes, "Retry sent its resume")
+
+    ui.status_rows = [status_row("waiting", waiting=APPROVAL, actions={"approve": True})]
+    ui.check_now()
+    expect(row.get_by_role("status").first).to_contain_text("Needs you")
+    approve = row.get_by_role("link", name=f"Review and approve {NAME}", exact=True)
+    expect(approve).to_have_attribute("aria-disabled", "true")
+    expect(approve).to_have_attribute("href", RUN_HREF)
+    cancel = row.get_by_role("button", name=f"Cancel run of {NAME}", exact=True)
+    expect(cancel).to_have_attribute("aria-disabled", "true")
+
+    # Neither a click nor Enter opens the run while the Retry is under way.
+    workflows_page = ui.page.locator("[data-workflows-page]")
+    approve.click(force=True)
+    ui.page.wait_for_timeout(300)
+    expect(workflows_page).to_have_count(0)
+    approve.focus()
+    ui.page.keyboard.press("Enter")
+    ui.page.wait_for_timeout(300)
+    expect(workflows_page).to_have_count(0)
+    expect(approve).to_be_visible()
+
+    ui.hold_resume = False
+    ui.release_resumes()
+    expect(row).to_contain_text("Retry requested.")
+    expect(approve).not_to_have_attribute("aria-disabled", "true")
+    expect(cancel).not_to_have_attribute("aria-disabled", "true")
+    assert len(ui.resume_bodies) == 1
+    approve.click()
+    expect(workflows_page).to_contain_text(f"?workflow_id={WORKFLOW}&run_id={RUN}")
 
 
 if __name__ == "__main__":
