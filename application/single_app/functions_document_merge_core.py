@@ -16,7 +16,7 @@ from dataclasses import dataclass, field
 import io
 import os
 import tempfile
-from typing import Callable, Optional, Sequence, Tuple
+from typing import Callable, Optional, Tuple
 import zipfile
 
 from functions_ooxml_package_guard import UnreadablePackageError, first_unsafe_xml_part
