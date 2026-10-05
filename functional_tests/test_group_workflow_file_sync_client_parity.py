@@ -590,6 +590,7 @@ def test_the_alert_summary_resolves_stored_alerts_like_the_server(parity):
     for name, record in ALERT_RECORDS.items():
         server = resolve(copy.deepcopy(record))
         summary = client["alerts"][name]
-        assert summary == {
+        assert {key: summary[key] for key in ("mode", "priority", "ruleCount")} == {
             "mode": server["alert_mode"], "priority": server["alert_priority"], "ruleCount": len(server["alert_rules"]),
         }, name
+        assert isinstance(summary["optionSummary"], list), name

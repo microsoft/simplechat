@@ -14,6 +14,9 @@ export const WORKFLOW_ALERT_MODES = ['off', 'every_run', 'rules'] as const;
 export const WORKFLOW_ALERT_PRIORITIES = ['none', 'low', 'medium', 'high'] as const;
 export const WORKFLOW_ALERT_SEVERITIES = ['info', 'low', 'medium', 'high', 'critical'] as const;
 export const WORKFLOW_ALERT_DELIVERIES = ['default', 'notify_only', 'popup'] as const;
+export const WORKFLOW_ALERT_SOUNDS = ['off', 'once', 'repeat'] as const;
+export const WORKFLOW_ALERT_SIZES = ['small', 'medium', 'large'] as const;
+export const WORKFLOW_ALERT_AUDIENCES = ['owner', 'group'] as const;
 export const WORKFLOW_ALERT_SCOPE_TYPES = ['final', 'any_task', 'task'] as const;
 export const WORKFLOW_ALERT_CONDITION_TYPES = [
     'run_status', 'task_status', 'text_match', 'file_sync', 'no_output', 'model_evaluation', 'agent_signal',
@@ -56,6 +59,10 @@ export type WorkflowAlertPriority = typeof WORKFLOW_ALERT_PRIORITIES[number];
 export type WorkflowAlertSeverity = typeof WORKFLOW_ALERT_SEVERITIES[number];
 export type WorkflowAlertConditionType = typeof WORKFLOW_ALERT_CONDITION_TYPES[number];
 export type WorkflowAlertField = typeof WORKFLOW_ALERT_FIELDS[number];
+export type WorkflowAlertSound = typeof WORKFLOW_ALERT_SOUNDS[number];
+export type WorkflowAlertSize = typeof WORKFLOW_ALERT_SIZES[number];
+export type WorkflowAlertAudience = typeof WORKFLOW_ALERT_AUDIENCES[number];
+export type WorkflowAlertScope = 'personal' | 'group';
 
 /** A stored rule. Fields the editor does not know are kept on the object and sent back. */
 export interface WorkflowAlertRule {
@@ -64,6 +71,10 @@ export interface WorkflowAlertRule {
     enabled?: unknown;
     severity?: string;
     delivery?: string;
+    require_acknowledgment?: boolean;
+    sound?: WorkflowAlertSound;
+    size?: WorkflowAlertSize;
+    audience?: WorkflowAlertAudience;
     scope?: Record<string, unknown>;
     condition?: Record<string, unknown>;
     order?: number;
@@ -82,6 +93,7 @@ export interface WorkflowAlertSummary {
     mode: WorkflowAlertMode;
     priority: WorkflowAlertPriority;
     ruleCount: number;
+    optionSummary: string[];
 }
 
 /** Python's `str(value or fallback)`: falsy values take the fallback, and other values never match a keyword. */
@@ -104,6 +116,14 @@ function textLength(text: string): number {
 /** Python's `str.strip()` with no arguments, which removes Unicode whitespace from both ends. */
 export function pyStrip(text: string): string {
     return text.replace(PY_STRIP, '');
+}
+
+function pyTruthy(value: unknown): boolean {
+    if (typeof value === 'string') return value.length > 0;
+    if (value === null || value === undefined || value === false || value === 0) return false;
+    if (Array.isArray(value)) return value.length > 0;
+    if (isRecord(value)) return Object.keys(value).length > 0;
+    return true;
 }
 
 function includes<T extends string>(values: readonly T[], value: string): value is T {
@@ -146,11 +166,61 @@ export function workflowAlertConfig(workflow: Record<string, unknown> | null): W
 
 export function workflowAlertSummary(workflow: Record<string, unknown> | null): WorkflowAlertSummary {
     const config = workflowAlertConfig(workflow);
+    const ruleOptions = workflowAlertOptionSummary(config.alert_rules);
     return {
         mode: config.alert_mode as WorkflowAlertMode,
         priority: config.alert_priority as WorkflowAlertPriority,
         ruleCount: config.alert_rules.length,
+        optionSummary: ruleOptions,
     };
+}
+
+function normalizedOption<T extends string>(
+    value: unknown,
+    allowed: readonly T[],
+    position: number,
+    label: string,
+): T {
+    const normalized = pyStrip(pyText(value, allowed[0])).toLowerCase() || allowed[0];
+    if (!includes(allowed, normalized)) {
+        refuse(`Alert rule ${position} ${label} must be ${allowed.slice(0, -1).join(', ')} or ${allowed[allowed.length - 1]}.`);
+    }
+    return normalized;
+}
+
+function optionValue<T extends string>(rule: Record<string, unknown>, key: string, allowed: readonly T[]): T {
+    const value = pyStrip(pyText(rule[key], allowed[0])).toLowerCase() || allowed[0];
+    return includes(allowed, value) ? value : allowed[0];
+}
+
+function workflowAlertFlag(value: unknown): boolean {
+    if (typeof value === 'string') return ['1', 'true', 'yes', 'on'].includes(pyStrip(value).toLowerCase());
+    return pyTruthy(value);
+}
+
+export function workflowAlertOptionSummary(rules: unknown[]): string[] {
+    let requireAcknowledgment = false;
+    let strongestSound = 0;
+    let strongestSize = 0;
+    let strongestAudience = 0;
+    for (const raw of rules) {
+        if (!isRecord(raw)) continue;
+        requireAcknowledgment = requireAcknowledgment || workflowAlertFlag(raw.require_acknowledgment);
+        const sound = optionValue(raw, 'sound', WORKFLOW_ALERT_SOUNDS);
+        strongestSound = Math.max(strongestSound, WORKFLOW_ALERT_SOUNDS.indexOf(sound));
+        const size = optionValue(raw, 'size', WORKFLOW_ALERT_SIZES);
+        strongestSize = Math.max(strongestSize, WORKFLOW_ALERT_SIZES.indexOf(size));
+        const audience = optionValue(raw, 'audience', WORKFLOW_ALERT_AUDIENCES);
+        strongestAudience = Math.max(strongestAudience, WORKFLOW_ALERT_AUDIENCES.indexOf(audience));
+    }
+    const summary: string[] = [];
+    if (requireAcknowledgment) summary.push('Must be acknowledged');
+    if (strongestSound === 1) summary.push('Plays sound');
+    if (strongestSound === 2) summary.push('Repeats sound');
+    if (strongestSize === 1) summary.push('Medium');
+    if (strongestSize === 2) summary.push('Large');
+    if (strongestAudience === 1) summary.push('Everyone in the group');
+    return summary;
 }
 
 /** The alert fields exactly as stored on a record, for comparison and for the save payload. */
@@ -209,7 +279,32 @@ export function workflowAlertRuleEnabled(rule: Record<string, unknown>): boolean
     if (!Object.hasOwn(rule, 'enabled')) return true;
     const value = rule.enabled;
     if (typeof value === 'string') return ['1', 'true', 'yes', 'on'].includes(pyStrip(value).toLowerCase());
-    return pyText(value) !== '';
+    return pyTruthy(value);
+}
+
+export function workflowAlertRuleWithFlagOption(
+    rule: Record<string, unknown>,
+    key: 'require_acknowledgment',
+    value: boolean,
+): WorkflowAlertRule {
+    const next = { ...rule } as WorkflowAlertRule;
+    if (value) next[key] = true;
+    else delete next[key];
+    return next;
+}
+
+export function workflowAlertRuleWithSelectOption(
+    rule: Record<string, unknown>,
+    key: 'sound' | 'size' | 'audience',
+    value: WorkflowAlertSound | WorkflowAlertSize | WorkflowAlertAudience,
+): WorkflowAlertRule {
+    const defaults = { sound: 'off', size: 'small', audience: 'owner' } as const;
+    const next = { ...rule } as WorkflowAlertRule;
+    if (value === defaults[key]) delete next[key];
+    else if (key === 'sound') next.sound = value as WorkflowAlertSound;
+    else if (key === 'size') next.size = value as WorkflowAlertSize;
+    else next.audience = value as WorkflowAlertAudience;
+    return next;
 }
 
 // Condition fields some condition type uses; any other key on a condition is carried across a type change.
@@ -370,7 +465,7 @@ export function describeWorkflowAlertCondition(raw: unknown): string {
 }
 
 /** Validate one rule the way `normalize_alert_rule` does, returning its normalized condition. */
-function checkRule(raw: unknown, taskIds: string[] | null, position: number): void {
+function checkRule(raw: unknown, taskIds: string[] | null, position: number, workflowScope?: WorkflowAlertScope): void {
     if (!isRecord(raw)) refuse(`Alert rule ${position} is invalid.`);
     const condition = normalizedCondition(raw.condition, position);
     normalizedScope(raw.scope, taskIds, position);
@@ -383,6 +478,20 @@ function checkRule(raw: unknown, taskIds: string[] | null, position: number): vo
     const severity = pyStrip(pyText(raw.severity, 'medium')).toLowerCase();
     if (!includes(WORKFLOW_ALERT_SEVERITIES, severity)) {
         refuse(`Alert rule ${position} severity must be info, low, medium, high or critical.`);
+    }
+    const requireAcknowledgment = workflowAlertFlag(Object.hasOwn(raw, 'require_acknowledgment') ? raw.require_acknowledgment : false);
+    const sound = normalizedOption(raw.sound, WORKFLOW_ALERT_SOUNDS, position, 'sound');
+    const size = normalizedOption(raw.size, WORKFLOW_ALERT_SIZES, position, 'size');
+    const audience = normalizedOption(raw.audience, WORKFLOW_ALERT_AUDIENCES, position, 'audience');
+    if (audience === 'group' && workflowScope && workflowScope !== 'group') {
+        refuse(`Alert rule ${position} can alert the whole group only in a group workflow.`);
+    }
+    const resolvedDelivery = delivery === 'default' ? WORKFLOW_ALERT_SEVERITY_DELIVERY[severity] : delivery;
+    if (resolvedDelivery === 'notify_only' && (requireAcknowledgment || sound !== 'off' || size !== 'small')) {
+        refuse(`Alert rule ${position} must pop up to require acknowledgment, play a sound or change its size.`);
+    }
+    if (sound === 'repeat' && !requireAcknowledgment) {
+        refuse(`Alert rule ${position} can repeat its sound only when it requires acknowledgment.`);
     }
 }
 
@@ -397,7 +506,11 @@ function refusal(check: () => void): string | null {
 }
 
 /** Every rule's first problem, in rule order, as `{position, message}` so a row can show its own. */
-export function workflowAlertRuleErrors(rules: unknown, taskIds: string[] | null): { position: number; message: string }[] {
+export function workflowAlertRuleErrors(
+    rules: unknown,
+    taskIds: string[] | null,
+    workflowScope?: WorkflowAlertScope,
+): { position: number; message: string }[] {
     if (rules === null || rules === undefined) return [];
     if (!Array.isArray(rules)) return [{ position: 0, message: 'Alert rules must be a list.' }];
     const errors: { position: number; message: string }[] = [];
@@ -405,7 +518,7 @@ export function workflowAlertRuleErrors(rules: unknown, taskIds: string[] | null
         errors.push({ position: 0, message: `A workflow can have up to ${WORKFLOW_ALERT_MAX_RULES} alert rules.` });
     }
     rules.forEach((rule, index) => {
-        const message = refusal(() => checkRule(rule, taskIds, index + 1));
+        const message = refusal(() => checkRule(rule, taskIds, index + 1, workflowScope));
         if (message) errors.push({ position: index + 1, message });
     });
     return errors;
@@ -419,6 +532,7 @@ export function workflowAlertErrors(
     sent: Partial<Record<WorkflowAlertField, unknown>>,
     existing: Record<string, unknown> | null,
     taskIds: string[],
+    workflowScope?: WorkflowAlertScope,
 ): string[] {
     const errors: string[] = [];
     const stored = workflowAlertConfig(existing);
@@ -430,7 +544,7 @@ export function workflowAlertErrors(
     const sendsRules = Object.hasOwn(sent, 'alert_rules');
     const rules = sendsRules ? sent.alert_rules : stored.alert_rules;
     // The server checks task scopes only for rules the request sends, not for stored ones.
-    const ruleErrors = workflowAlertRuleErrors(rules, sendsRules ? taskIds : null);
+    const ruleErrors = workflowAlertRuleErrors(rules, sendsRules ? taskIds : null, sendsRules ? workflowScope : undefined);
     errors.push(...ruleErrors.map((error) => error.message));
     let ruleCount = Array.isArray(rules) ? rules.length : 0;
 
@@ -462,7 +576,11 @@ export function workflowAlertErrors(
 }
 
 /** The problems in the alert fields this draft would save, checked against its current tasks. */
-export function workflowAlertDraftErrors(draft: WorkflowDefinition, original: WorkflowDefinition | null): string[] {
+export function workflowAlertDraftErrors(
+    draft: WorkflowDefinition,
+    original: WorkflowDefinition | null,
+    workflowScope?: WorkflowAlertScope,
+): string[] {
     const sent = { ...storedAlertFields(original), ...workflowAlertsForSave(draft, original) };
-    return workflowAlertErrors(sent, original, draft.tasks.map((task) => task.id));
+    return workflowAlertErrors(sent, original, draft.tasks.map((task) => task.id), workflowScope);
 }

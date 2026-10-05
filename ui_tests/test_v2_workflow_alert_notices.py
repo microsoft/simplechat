@@ -416,6 +416,7 @@ class AlertServer:
         self.list_queries = []
         self.read_calls = []
         self.dismiss_calls = []
+        self.acknowledge_calls = []
         self.mark_all_calls = 0
         self.settings_posts = []
         self.errors = []
@@ -428,6 +429,7 @@ class AlertServer:
         self.alerts_failing = False
         # When not None, the count route answers this, as it answers 0 when it cannot count.
         self.count_override = None
+        self.sounds_enabled = True
         # While set, alert reads are answered as of their arrival, but only on release().
         self.holding = False
         self.held = []
@@ -446,6 +448,14 @@ class AlertServer:
     def mark_read(self, notice_id):
         """Read the notice somewhere else: in classic, or in another tab."""
         record = self.find(notice_id)
+        record["is_read"] = True
+        record["read_by"] = [USER_ID]
+
+    def acknowledge(self, notice_id, *, name="Riley Chen"):
+        record = self.find(notice_id)
+        record["acknowledged"] = True
+        record["acknowledged_at"] = iso(datetime.now(timezone.utc))
+        record["acknowledged_by_name"] = name
         record["is_read"] = True
         record["read_by"] = [USER_ID]
 
@@ -515,6 +525,8 @@ class AlertServer:
             self.answer_change(route, unquote(match.group(1)), "read")
         elif method == "DELETE" and (match := re.fullmatch(r"/api/notifications/([^/]+)/dismiss", path)):
             self.answer_change(route, unquote(match.group(1)), "dismiss")
+        elif method == "POST" and (match := re.fullmatch(r"/api/notifications/([^/]+)/acknowledge", path)):
+            self.answer_acknowledge(route, unquote(match.group(1)))
         else:
             return False
         return True
@@ -581,14 +593,25 @@ class AlertServer:
         items = [
             record for record in self.notices
             if record["notification_type"] == WORKFLOW_ALERT_NOTIFICATION_TYPE
-            and not record["is_read"] and not record["is_dismissed"]
+            and (
+                (record.get("require_acknowledgment") and not record.get("acknowledged"))
+                or (not record["is_read"] and not record["is_dismissed"])
+            )
         ]
         if not self.leaky:
             items = [record for record in items if record["metadata"].get("delivery") != "notify_only"]
             if since is not None:
-                items = [record for record in items if datetime.fromisoformat(record["created_at"]) >= since]
+                items = [
+                    record for record in items
+                    if record.get("require_acknowledgment") and not record.get("acknowledged")
+                    or datetime.fromisoformat(record["created_at"]) >= since
+                ]
         items.sort(key=lambda record: record["created_at"], reverse=True)
-        payload = workflow_alerts_payload(copy.deepcopy(items[:limit]))
+        payload = workflow_alerts_payload(
+            copy.deepcopy(items[:limit]),
+            complete=len(items) <= limit,
+            sounds_enabled=self.sounds_enabled,
+        )
         if self.holding:
             self.held.append((route, payload))
             return
@@ -624,6 +647,26 @@ class AlertServer:
             record["is_dismissed"] = True
             record["dismissed_by"] = [USER_ID]
             route.fulfill(json={"success": True, "message": "Notification dismissed"})
+
+    def answer_acknowledge(self, route, notice_id):
+        self.acknowledge_calls.append(notice_id)
+        record = self.find(notice_id)
+        if record is None:
+            route.fulfill(status=404, json={"success": False, "error": "Alert not found."})
+            return
+        if not record.get("require_acknowledgment"):
+            route.fulfill(status=400, json={"success": False, "error": "This alert does not need acknowledgment."})
+            return
+        already = bool(record.get("acknowledged"))
+        if not already:
+            self.acknowledge(notice_id)
+        route.fulfill(json={
+            "success": True,
+            "notification_id": notice_id,
+            "acknowledged_at": record.get("acknowledged_at"),
+            "acknowledged_by_name": record.get("acknowledged_by_name"),
+            "already_acknowledged": already,
+        })
 
     def answer_mark_all(self, route):
         self.mark_all_calls += 1
@@ -1670,3 +1713,628 @@ def test_open_run_goes_to_the_run_in_its_workspace(tab, server, alert):
     tab.page.keyboard.press("Escape")
     expect(tab.card).to_have_count(0)
     assert server.read_calls == ["o1", "o2", "o4"]
+
+
+# Must-acknowledge, sizes, sound and device switches --------------------------------------------
+
+
+def must_ack_alert(alert, notice_id, **fields):
+    fields.setdefault("require_acknowledgment", True)
+    fields.setdefault("minutes_ago", 60 * 48)
+    return alert(notice_id, **fields)
+
+
+def test_must_ack_bypasses_claims_and_is_not_tuckable(tab, server, alert):
+    tab.open()
+    server.add(must_ack_alert(alert, "ack-1", title="Operations alarm"))
+    tab.poll()
+    expect(tab.notice).to_be_visible()
+    expect(tab.notice.locator("[data-workflow-alert-close]")).to_have_count(0)
+    expect(tab.notice.locator("[data-workflow-alert-ack-tag]")).to_have_text("Needs acknowledgment")
+    assert tab.claims() == {}
+
+    tab.page.keyboard.press("Escape")
+    expect(tab.notice).to_be_visible()
+    tab.open_button.click()
+    expect(tab.card).to_be_visible()
+    tab.page.keyboard.press("Escape")
+    expect(tab.card).to_have_count(0)
+    expect(tab.notice).to_be_visible()
+
+    tab.page.reload()
+    tab.js(SEED, {"path": "/work", "railCollapsed": False, "theme": "light"})
+    tab.settle()
+    expect(tab.notice).to_contain_text("Operations alarm")
+
+
+def test_acknowledge_and_open_acknowledge_then_retire(tab, server, alert):
+    tab.open()
+    server.add(must_ack_alert(alert, "ack-button", title="Ack from card"))
+    tab.poll()
+    tab.open_button.click()
+    tab.card.locator("[data-workflow-alert-acknowledge]").click()
+    tab.wait_for(lambda: server.acknowledge_calls == ["ack-button"], f"Ack calls: {server.acknowledge_calls}")
+    expect(tab.card).to_have_count(0)
+
+    server.add(must_ack_alert(alert, "ack-open", title="Ack on open"))
+    tab.poll()
+    tab.open_button.click()
+    tab.card.locator("[data-workflow-alert-primary]").click()
+    tab.wait_for(lambda: "ack-open" in server.acknowledge_calls, f"Ack calls: {server.acknowledge_calls}")
+    tab.wait_for(lambda: tab.route_text() == "/chat?conversationId=conv-wf-ack-open", f"Open went to {tab.route_text()}.")
+
+
+def test_mark_all_read_skips_must_ack_entries(tab, server, alert):
+    tab.open()
+    server.add(
+        must_ack_alert(alert, "ack-stays", workflow_id="wf-a", title="Needs owner"),
+        alert("ordinary", workflow_id="wf-b", priority="medium", title="Ordinary alert"),
+    )
+    tab.poll()
+    tab.open_button.click()
+    tab.card.locator("[data-workflow-alert-mark-all]").click()
+    tab.wait_for(lambda: server.read_calls == ["ordinary"], f"Read calls: {server.read_calls}")
+    expect(tab.card).to_contain_text("Needs owner")
+    assert server.find("ack-stays")["is_read"] is False
+
+
+def test_medium_and_large_sizes_open_directly_and_large_minimizes(tab, server, alert):
+    tab.open()
+    server.add(must_ack_alert(alert, "medium", title="Medium alert", size="medium"))
+    tab.poll()
+    expect(tab.card).to_be_visible()
+    expect(tab.notice).to_have_count(0)
+    tab.card.locator("[data-workflow-alert-acknowledge]").click()
+    tab.wait_for(lambda: "medium" in server.acknowledge_calls, "Medium alert was not acknowledged.")
+    expect(tab.card).to_have_count(0)
+
+    server.add(must_ack_alert(alert, "large", title="Large alert", size="large", priority="critical"))
+    tab.poll()
+    expect(tab.card).to_be_visible()
+    # The marker sits on the dialog's backdrop, which always fills the window; measure the panel.
+    box = tab.card.locator(":scope > div").first.evaluate("""(panel) => {
+        const rect = panel.getBoundingClientRect();
+        return {width: rect.width, height: rect.height, vw: innerWidth, vh: innerHeight};
+    }""")
+    assert box["width"] >= box["vw"] - 40 and box["height"] >= box["vh"] - 40, box
+    tab.page.keyboard.press("Escape")
+    expect(tab.card).to_have_count(0)
+    expect(tab.notice).to_be_visible()
+
+
+def install_audio_stub(tab, reject=False):
+    tab.js("""(reject) => {
+        window.__audioPlays = [];
+        HTMLMediaElement.prototype.play = function () {
+            window.__audioPlays.push({src: this.currentSrc || this.src, at: Date.now()});
+            if (reject) {
+                const error = new DOMException('blocked', 'NotAllowedError');
+                return Promise.reject(error);
+            }
+            return Promise.resolve();
+        };
+    }""", reject)
+
+
+def test_sound_once_repeat_blocked_and_device_gates(tab, server, alert, now):
+    tab.open(clock=now)
+    install_audio_stub(tab)
+    server.add(alert("once", title="Chime once", sound="once"))
+    tab.poll()
+    tab.wait_for(lambda: len(tab.js("() => window.__audioPlays")) == 1, "Once sound did not play.")
+    assert len(tab.js("() => window.__audioPlays")) == 1
+    tab.close_button.click()
+    tab.wait_tucked()
+
+    server.add(must_ack_alert(alert, "repeat", title="Repeat", sound="repeat", priority="critical"))
+    tab.poll()
+    tab.run_for(5_100)
+    tab.wait_for(lambda: len(tab.js("() => window.__audioPlays")) >= 3, "Repeating sound did not repeat.")
+    tab.open_button.click()
+    tab.card.locator("[data-workflow-alert-acknowledge]").click()
+    tab.wait_for(lambda: "repeat" in server.acknowledge_calls, "Repeat alert was not acknowledged.")
+    expect(tab.card).to_have_count(0)
+    played = len(tab.js("() => window.__audioPlays"))
+    tab.run_for(5_100)
+    assert len(tab.js("() => window.__audioPlays")) == played
+
+    install_audio_stub(tab, reject=True)
+    server.add(must_ack_alert(alert, "blocked", title="Blocked", sound="once"))
+    tab.poll()
+    expect(tab.notice.locator("[data-workflow-alert-enable-sound]")).to_be_visible()
+    install_audio_stub(tab, reject=False)
+    tab.notice.locator("[data-workflow-alert-enable-sound]").click()
+    tab.wait_for(lambda: len(tab.js("() => window.__audioPlays")) == 1, "Enable sound did not retry.")
+
+    tab.js("() => localStorage.setItem('simplechat.workflowAlerts.playSounds', 'false')")
+    server.add(must_ack_alert(alert, "muted-device", title="Muted device", sound="once"))
+    tab.poll()
+    assert len(tab.js("() => window.__audioPlays")) == 1
+
+    tab.js("() => localStorage.setItem('simplechat.workflowAlerts.playSounds', 'true')")
+    server.sounds_enabled = False
+    server.add(must_ack_alert(alert, "muted-admin", title="Muted admin", sound="once"))
+    tab.poll()
+    assert len(tab.js("() => window.__audioPlays")) == 1
+
+
+def test_pending_must_ack_rereads_and_broadcast_retires(tab, server, alert, now):
+    tab.open(clock=now)
+    server.add(must_ack_alert(alert, "pending", title="Team alarm"))
+    tab.poll()
+    expect(tab.notice).to_be_visible()
+    server.acknowledge("pending", name="Morgan Lee")
+    tab.run_for(20_100)
+    tab.wait_for(lambda: tab.notice.count() == 0, "Pending must-ack alert did not retire after re-read.")
+    tab.wait_for(lambda: tab.state()["phase"] == "idle", "Store did not become idle after retirement.")
+
+    tab.js(RECEIVE_DIRECT, [must_ack_alert(alert, "broadcasted", title="Acked in another tab")])
+    expect(tab.notice).to_be_visible()
+    tab.js("""() => {
+        const channel = new BroadcastChannel('simplechat.workflowAlerts');
+        channel.postMessage({type: 'acknowledged', ids: ['broadcasted']});
+        channel.close();
+    }""")
+    tab.wait_for(lambda: tab.notice.count() == 0, "Broadcast acknowledgment did not retire the alert.")
+
+
+def test_member_scope_and_team_copy(tab, server, alert):
+    tab.open()
+    server.add(must_ack_alert(
+        alert,
+        "member",
+        title="Group workflow needs review",
+        summary="Build watcher matched the failed-runs rule.",
+        audience="group",
+        content_scope="member",
+    ))
+    tab.poll()
+    expect(tab.notice.locator("[data-workflow-alert-team]")).to_have_text("Sent to everyone in the group")
+    tab.open_button.click()
+    expect(tab.card.locator("[data-workflow-alert-team]")).to_have_text("Sent to everyone in the group")
+
+
+def test_preferences_switches_persist_per_device(tab, server):
+    tab.open(path="/settings")
+    sounds = tab.page.get_by_label("Play alert sounds")
+    monitor = tab.page.get_by_label("Alert monitor")
+    expect(sounds).to_be_checked()
+    expect(monitor).not_to_be_checked()
+    sounds.click(force=True)
+    monitor.click(force=True)
+    assert tab.js("() => localStorage.getItem('simplechat.workflowAlerts.playSounds')") == "false"
+    assert tab.js("() => localStorage.getItem('simplechat.workflowAlerts.monitor')") == "true"
+
+
+def test_monitor_mode_polls_and_reads_alerts_while_hidden(tab, server, alert, now):
+    tab.open(clock=now)
+    tab.hide()
+    before_count = tab.count_fetches()
+    tab.js("""() => {
+        localStorage.setItem('simplechat.workflowAlerts.monitor', 'true');
+        window.dispatchEvent(new StorageEvent('storage', {key: 'simplechat.workflowAlerts.monitor', newValue: 'true'}));
+    }""")
+    server.add(alert("hidden-monitor", title="Hidden monitor alert"))
+    tab.run_for(30_100)
+    tab.wait_for(lambda: tab.count_fetches() > before_count, "Monitor mode did not poll while hidden.")
+    tab.wait_for(lambda: tab.alert_queries(), "Monitor mode did not read workflow alerts on its poll.")
+
+
+BATCH_TOKEN = "() => window.WorkflowAlertHarness.stores.workflowAlert.useWorkflowAlertStore.getState().batchToken"
+
+
+def plays(tab):
+    return len(tab.js("() => window.__audioPlays"))
+
+
+def test_clicks_and_key_presses_do_not_replay_a_repeating_sound(tab, server, alert, now):
+    tab.open(clock=now)
+    install_audio_stub(tab)
+    server.add(must_ack_alert(alert, "steady", title="Steady alarm", sound="repeat", priority="critical"))
+    tab.poll()
+    tab.wait_for(lambda: plays(tab) == 1, "The repeating sound did not start.")
+
+    # Typing elsewhere on the page while the alert waits must not add beeps.
+    for key in ("a", "b", "Shift", "Enter"):
+        tab.page.keyboard.press(key)
+    tab.page.mouse.click(700, 600)
+    tab.page.wait_for_timeout(300)
+    assert plays(tab) == 1
+
+    tab.run_for(5_100)
+    tab.wait_for(lambda: plays(tab) == 2, "The repeating sound did not keep its five-second beat.")
+
+
+def test_play_once_sounds_once_however_often_a_pending_alert_is_read(tab, server, alert, now):
+    tab.open(clock=now)
+    install_audio_stub(tab)
+    server.add(must_ack_alert(alert, "once-pending", title="Chime once, keep waiting", sound="once"))
+    tab.poll()
+    tab.wait_for(lambda: plays(tab) == 1, "The one-off sound did not play.")
+    reads = len(tab.alert_queries())
+
+    tab.run_for(20_100)
+    tab.wait_for(lambda: len(tab.alert_queries()) > reads, "The pending alert was not read again.")
+    tab.run_for(20_100)
+    tab.wait_for(lambda: len(tab.alert_queries()) > reads + 1, "The pending alert was not read a third time.")
+    tab.page.wait_for_timeout(200)
+    assert plays(tab) == 1
+
+
+def test_a_showing_alert_is_not_presented_again_by_each_read(tab, server, alert, now):
+    tab.open(clock=now)
+    server.add(must_ack_alert(alert, "on-screen", title="Already on screen"))
+    tab.poll()
+    expect(tab.notice).to_be_visible()
+    token = tab.js(BATCH_TOKEN)
+    reads = len(tab.alert_queries())
+
+    tab.run_for(20_100)
+    tab.wait_for(lambda: len(tab.alert_queries()) > reads, "The pending alert was not read again.")
+    tab.settle()
+    # Presenting it again would replay the notice's bell swing on every read.
+    assert tab.js(BATCH_TOKEN) == token
+    assert tab.state()["entries"] == [["on-screen"]]
+
+
+def test_enable_sound_is_a_control_of_its_own_beside_the_notice(tab, server, alert):
+    tab.open()
+    install_audio_stub(tab, reject=True)
+    server.add(must_ack_alert(alert, "refused", title="Sound refused", sound="once"))
+    tab.poll()
+    enable = tab.notice.locator("[data-workflow-alert-enable-sound]")
+    expect(enable).to_be_visible()
+    assert enable.evaluate("(element) => element.tagName") == "BUTTON"
+    expect(tab.open_button.locator("[data-workflow-alert-enable-sound]")).to_have_count(0)
+
+    install_audio_stub(tab, reject=False)
+    enable.click()
+    tab.wait_for(lambda: plays(tab) == 1, "Enable sound did not retry the refused sound.")
+    expect(tab.card).to_have_count(0)
+
+
+def test_acknowledging_from_the_bell_stops_the_alert_in_this_tab(tab, server, alert, now):
+    tab.open(clock=now)
+    install_audio_stub(tab)
+    server.add(must_ack_alert(alert, "from-bell", title="Acknowledge me from the bell", sound="repeat"))
+    tab.poll()
+    expect(tab.notice).to_be_visible()
+    tab.wait_for(lambda: plays(tab) == 1, "The repeating sound did not start.")
+
+    tab.bell.click()
+    expect(tab.panel).to_be_visible()
+    tab.panel.locator('[data-notification-action="acknowledge"]').first.click()
+    tab.wait_for(lambda: server.acknowledge_calls == ["from-bell"], f"Ack calls: {server.acknowledge_calls}")
+    tab.page.keyboard.press("Escape")
+    expect(tab.panel).to_have_count(0)
+
+    tab.wait_for(lambda: tab.notice.count() == 0, "The notice stayed after the bell acknowledged it.")
+    played = plays(tab)
+    tab.run_for(5_100)
+    tab.page.wait_for_timeout(200)
+    assert plays(tab) == played
+
+
+def test_reading_a_pending_alert_in_the_bell_keeps_its_notice_and_sound(tab, server, alert, now):
+    tab.open(clock=now)
+    install_audio_stub(tab)
+    server.add(must_ack_alert(alert, "read-in-bell", title="Read but not acknowledged", sound="repeat"))
+    tab.poll()
+    expect(tab.notice).to_be_visible()
+    tab.wait_for(lambda: plays(tab) == 1, "The repeating sound did not start.")
+
+    tab.bell.click()
+    expect(tab.panel).to_be_visible()
+    tab.panel.locator('[data-notification-action="read"]').first.click()
+    tab.wait_for(lambda: server.read_calls == ["read-in-bell"], f"Read calls: {server.read_calls}")
+    tab.page.keyboard.press("Escape")
+    expect(tab.panel).to_have_count(0)
+
+    # Reading doesn't acknowledge it, so the notice and its sound stay.
+    expect(tab.notice).to_be_visible()
+    assert server.acknowledge_calls == []
+    played = plays(tab)
+    tab.run_for(5_100)
+    tab.wait_for(lambda: plays(tab) > played, "The repeating sound stopped when the alert was only read.")
+
+
+def test_opening_a_pending_alert_from_the_bell_acknowledges_it(tab, server, alert):
+    tab.open()
+    server.add(must_ack_alert(alert, "open-in-bell", title="Open me from the bell"))
+    tab.poll()
+    tab.bell.click()
+    expect(tab.panel).to_be_visible()
+    tab.panel.locator('[data-notification-action="open"]').first.click()
+    tab.wait_for(lambda: server.acknowledge_calls == ["open-in-bell"], f"Ack calls: {server.acknowledge_calls}")
+    assert server.read_calls == []
+
+
+def test_a_large_alert_is_set_in_large_type_and_open_stays_the_one_green_action(tab, server, alert):
+    tab.open()
+    server.add(must_ack_alert(alert, "wall", title="Wall display alarm", size="large", priority="critical"))
+    tab.poll()
+    expect(tab.card).to_be_visible()
+    title_size = tab.card.locator("[data-workflow-alert-title]").evaluate(
+        "(element) => parseFloat(getComputedStyle(element).fontSize)"
+    )
+    assert title_size >= 28, title_size
+
+    # Open acknowledges too, so it keeps the one green button; Acknowledge is secondary beside it.
+    background = "(element) => getComputedStyle(element).backgroundColor"
+    acknowledge_fill = tab.card.locator("[data-workflow-alert-acknowledge]").evaluate(background)
+    open_fill = tab.card.locator("[data-workflow-alert-primary]").evaluate(background)
+    assert acknowledge_fill != open_fill, (acknowledge_fill, open_fill)
+
+
+BROADCAST_ACKNOWLEDGED = r"""
+(ids) => {
+    const channel = new BroadcastChannel('simplechat.workflowAlerts');
+    channel.postMessage({type: 'acknowledged', ids});
+    channel.close();
+}
+"""
+
+
+def sources(tab):
+    return [item["src"] for item in tab.js("() => window.__audioPlays")]
+
+
+def test_a_waiting_alert_acknowledged_elsewhere_stops_its_sound(tab, server, alert, now):
+    tab.open(clock=now)
+    install_audio_stub(tab)
+    tab.hide()
+    server.add(must_ack_alert(alert, "queued", title="Waiting alarm", sound="repeat", priority="critical"))
+    tab.poll()
+    state = tab.state()
+    assert state["suspended"] and state["queue"] == ["queued"] and state["entries"] == [], state
+    # It sounds while it waits for the tab to be seen.
+    tab.wait_for(lambda: plays(tab) == 1, "The waiting alert did not sound.")
+
+    server.acknowledge("queued", name="Morgan Lee")
+    reads = len(tab.alert_queries())
+    tab.run_for(20_100)
+    tab.wait_for(lambda: len(tab.alert_queries()) > reads, "The pending alert was not read again.")
+    tab.wait_for(lambda: tab.state()["queue"] == [], f"The acknowledged alert still waits: {tab.state()}")
+    played = plays(tab)
+    tab.run_for(5_100)
+    tab.page.wait_for_timeout(200)
+    assert plays(tab) == played
+
+
+def test_a_refused_sound_is_not_retried_for_an_alert_acknowledged_elsewhere(tab, server, alert, now):
+    tab.open(clock=now)
+    install_audio_stub(tab, reject=True)
+    server.add(must_ack_alert(alert, "refused-acked", title="Refused alarm", sound="repeat"))
+    tab.poll()
+    expect(tab.notice.locator("[data-workflow-alert-enable-sound]")).to_be_visible()
+
+    tab.js(BROADCAST_ACKNOWLEDGED, ["refused-acked"])
+    tab.wait_for(lambda: tab.notice.count() == 0, "The broadcast acknowledgment did not retire the alert.")
+
+    # Sound is allowed now, but nothing is left to sound for.
+    install_audio_stub(tab)
+    tab.page.mouse.click(700, 600)
+    tab.page.keyboard.press("Shift")
+    tab.page.wait_for_timeout(200)
+    tab.run_for(5_100)
+    tab.page.wait_for_timeout(200)
+    assert plays(tab) == 0
+
+
+def test_opening_one_alert_leaves_the_others_waiting_for_acknowledgment(tab, server, alert, now):
+    tab.open(clock=now)
+    install_audio_stub(tab)
+    server.add(
+        must_ack_alert(alert, "first", workflow_id="wf-a", title="First alarm", sound="repeat",
+                       priority="critical", minutes_ago=5),
+        must_ack_alert(alert, "second", workflow_id="wf-b", title="Second alarm", sound="repeat",
+                       priority="high", minutes_ago=6),
+    )
+    tab.poll()
+    expect(tab.notice).to_contain_text("First alarm")
+    tab.open_button.click()
+    expect(tab.card).to_be_visible()
+    tab.card.locator("[data-workflow-alert-primary]").click()
+    tab.wait_for(lambda: server.acknowledge_calls == ["first"], f"Ack calls: {server.acknowledge_calls}")
+    tab.wait_for(lambda: tab.route_text() == "/chat?conversationId=conv-wf-a", f"Open went to {tab.route_text()}.")
+
+    # The other one stays up, in the notice, and keeps sounding.
+    expect(tab.card).to_have_count(0)
+    expect(tab.notice).to_contain_text("Second alarm")
+    assert tab.state()["entries"] == [["second"]]
+    played = plays(tab)
+    tab.run_for(5_100)
+    tab.wait_for(lambda: plays(tab) > played, "The alert still waiting stopped sounding.")
+
+
+def test_acknowledging_one_alert_keeps_the_next_one_sounding(tab, server, alert, now):
+    tab.open(clock=now)
+    install_audio_stub(tab)
+    server.add(
+        must_ack_alert(alert, "loud", workflow_id="wf-a", title="Loud alarm", sound="repeat",
+                       priority="critical", minutes_ago=5),
+        must_ack_alert(alert, "quiet", workflow_id="wf-b", title="Quiet alarm", sound="repeat",
+                       priority="low", minutes_ago=6),
+    )
+    tab.poll()
+    tab.wait_for(lambda: plays(tab) == 1, "The repeating sound did not start.")
+    assert sources(tab)[-1].endswith("/alarm.wav"), sources(tab)
+
+    tab.open_button.click()
+    tab.card.locator("[data-workflow-alert-acknowledge]").click()
+    tab.wait_for(lambda: server.acknowledge_calls == ["loud"], f"Ack calls: {server.acknowledge_calls}")
+    expect(tab.card).to_contain_text("Quiet alarm")
+
+    # The quieter alert still waits, so the sound carries on in its tone, without a pause.
+    played = plays(tab)
+    tab.run_for(5_100)
+    tab.wait_for(lambda: plays(tab) > played, "The alert still waiting stopped sounding.")
+    assert sources(tab)[-1].endswith("/chime.wav"), sources(tab)
+
+
+def test_two_tabs_play_a_one_off_chime_once_between_them(tab, another_tab, server, alert):
+    tab.open()
+    other = another_tab("tab-2").open()
+    install_audio_stub(tab)
+    install_audio_stub(other)
+    server.add(must_ack_alert(alert, "shared-once", title="Chime once for the browser", sound="once"))
+
+    first, second = tab.start_poll(), other.start_poll()
+    tab.finish_poll(first)
+    other.finish_poll(second)
+    # Both tabs show an alert that needs acknowledgment; only one of them chimes.
+    expect(tab.notice).to_be_visible()
+    expect(other.notice).to_be_visible()
+    tab.wait_for(lambda: plays(tab) + plays(other) >= 1, "Neither tab chimed.")
+    tab.page.wait_for_timeout(500)
+    assert (plays(tab), plays(other)) in {(1, 0), (0, 1)}, (plays(tab), plays(other))
+    assert "shared-once" in tab.js(
+        "() => JSON.parse(localStorage.getItem('simplechat.workflowAlerts.soundedOnce') || '{}')"
+    )
+
+
+def test_an_alert_waiting_for_acknowledgment_leads_whatever_its_priority(tab, server, alert):
+    tab.open()
+    server.add(
+        alert("ordinary-critical", workflow_id="wf-a", priority="critical", title="Ordinary critical alert"),
+        must_ack_alert(alert, "low-ack", workflow_id="wf-b", priority="low", title="Low, needs acknowledgment"),
+    )
+    tab.poll()
+    expect(tab.notice).to_contain_text("Low, needs acknowledgment")
+    assert tab.state()["entries"] == [["low-ack"], ["ordinary-critical"]]
+
+
+def test_a_notice_waiting_for_acknowledgment_takes_its_own_room_in_the_rail(tab, server, alert):
+    tab.open()
+    server.add(must_ack_alert(alert, "roomy", title="Needs its own room"))
+    tab.poll()
+    expect(tab.notice).to_be_visible()
+    expect(tab.page.locator("[data-workflow-alert-slot]")).to_have_attribute("data-in-flow", "true")
+
+    group_workspaces = tab.page.get_by_role("link", name="Group Workspaces", exact=True)
+    notice_bottom = tab.notice.evaluate("(notice) => notice.getBoundingClientRect().bottom")
+    item_top = group_workspaces.evaluate("(link) => link.getBoundingClientRect().top")
+    assert item_top >= notice_bottom, (item_top, notice_bottom)
+
+    # Focus on the item under it is in plain sight, and the notice stays.
+    group_workspaces.focus()
+    tab.page.wait_for_timeout(200)
+    expect(group_workspaces).to_be_focused()
+    expect(tab.notice).to_be_visible()
+    expect(tab.notice).to_have_attribute("data-stepped-aside", "false")
+
+
+PLACE_UNDER_NOTICE = r"""
+() => {
+    const rect = document.querySelector('[data-workflow-alert-notice]').getBoundingClientRect();
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.id = 'under-the-notice';
+    button.textContent = 'Under the notice';
+    Object.assign(button.style, {
+        position: 'fixed', left: `${rect.left + 8}px`, top: `${rect.top + 8}px`,
+        width: '120px', height: '32px', zIndex: '1',
+    });
+    document.body.append(button);
+}
+"""
+
+
+def test_a_flyout_waiting_for_acknowledgment_steps_aside_from_focus_it_covers(tab, server, alert):
+    tab.open(rail_collapsed=True)
+    server.add(must_ack_alert(alert, "flyout", title="Flyout alarm"))
+    tab.poll()
+    expect(tab.notice).to_have_attribute("data-placement", "flyout")
+    expect(tab.page.locator("[data-workflow-alert-slot]")).to_have_attribute("data-in-flow", "false")
+
+    tab.js(PLACE_UNDER_NOTICE)
+    tab.focus("#under-the-notice")
+    expect(tab.notice).to_have_attribute("data-stepped-aside", "true")
+    expect(tab.notice).to_be_hidden()
+    assert tab.state()["phase"] == "notice", tab.state()
+
+    # Focus somewhere it doesn't cover brings it back.
+    tab.my_workspace.focus()
+    expect(tab.notice).to_have_attribute("data-stepped-aside", "false")
+    expect(tab.notice).to_be_visible()
+
+
+def test_a_flyout_that_stepped_aside_shows_the_next_alert_that_needs_acknowledgment(tab, server, alert):
+    tab.open(rail_collapsed=True)
+    server.add(
+        must_ack_alert(alert, "first-ack", workflow_id="wf-a", priority="high", title="First alarm"),
+        alert("ordinary", workflow_id="wf-b", priority="critical", title="Ordinary critical alert"),
+    )
+    tab.poll()
+    expect(tab.notice).to_contain_text("First alarm")
+    tab.js(PLACE_UNDER_NOTICE)
+    tab.focus("#under-the-notice")
+    expect(tab.notice).to_have_attribute("data-stepped-aside", "true")
+
+    # Acknowledged in another tab: the ordinary alert leads, and focus moves somewhere it doesn't cover.
+    server.acknowledge("first-ack", name="Morgan Lee")
+    tab.js(BROADCAST_ACKNOWLEDGED, ["first-ack"])
+    expect(tab.notice).to_contain_text("Ordinary critical alert")
+    tab.poll()
+    tab.my_workspace.focus()
+    tab.page.wait_for_timeout(200)
+
+    # The next alert that needs acknowledgment is in plain sight, not hidden by what focus did before.
+    server.add(must_ack_alert(alert, "second-ack", workflow_id="wf-c", priority="high", title="Second alarm"))
+    tab.poll()
+    expect(tab.notice).to_contain_text("Second alarm")
+    expect(tab.notice).to_have_attribute("data-stepped-aside", "false")
+    expect(tab.notice).to_be_visible()
+
+    # It steps aside when focus moves under it; a new alert taking the lead is shown all the same.
+    tab.focus("#under-the-notice")
+    expect(tab.notice).to_have_attribute("data-stepped-aside", "true")
+    server.add(must_ack_alert(alert, "third-ack", workflow_id="wf-d", priority="critical", title="Third alarm"))
+    tab.poll()
+    expect(tab.notice).to_contain_text("Third alarm")
+    expect(tab.notice).to_have_attribute("data-stepped-aside", "false")
+    expect(tab.notice).to_be_visible()
+
+
+@pytest.mark.parametrize("must_acknowledge", [False, True], ids=["ordinary", "must-acknowledge"])
+def test_alerts_that_arrive_together_chime_once_in_the_loudest_tone(tab, server, alert, now, must_acknowledge):
+    tab.open(clock=now)
+    install_audio_stub(tab)
+
+    def make(notice_id, **fields):
+        return must_ack_alert(alert, notice_id, **fields) if must_acknowledge else alert(notice_id, **fields)
+
+    # Newest first, as the server lists them: the quiet alert would otherwise ask first.
+    server.add(
+        make("older-critical", workflow_id="wf-a", priority="critical", title="Critical chime", sound="once",
+             minutes_ago=5),
+        make("newer-low", workflow_id="wf-b", priority="low", title="Low chime", sound="once", minutes_ago=1),
+    )
+    tab.poll()
+    expect(tab.notice).to_contain_text("Critical chime")
+    tab.wait_for(lambda: plays(tab) >= 1, "Neither alert chimed.")
+    tab.page.wait_for_timeout(300)
+    assert len(sources(tab)) == 1 and sources(tab)[0].endswith("/alarm.wav"), sources(tab)
+    sounded = tab.js("() => JSON.parse(localStorage.getItem('simplechat.workflowAlerts.soundedOnce') || '{}')")
+    assert {"older-critical", "newer-low"} <= set(sounded), sounded
+
+
+def test_enable_sound_retries_refused_chimes_as_one_in_the_loudest_tone(tab, server, alert):
+    tab.open()
+    install_audio_stub(tab, reject=True)
+    server.add(
+        must_ack_alert(alert, "refused-critical", workflow_id="wf-a", priority="critical", title="Refused critical",
+                       sound="once", minutes_ago=5),
+        must_ack_alert(alert, "refused-low", workflow_id="wf-b", priority="low", title="Refused low", sound="once",
+                       minutes_ago=1),
+    )
+    tab.poll()
+    enable = tab.notice.locator("[data-workflow-alert-enable-sound]")
+    expect(enable).to_be_visible()
+
+    install_audio_stub(tab)
+    enable.click()
+    tab.wait_for(lambda: plays(tab) >= 1, "Enable sound did not retry the refused chimes.")
+    tab.page.wait_for_timeout(300)
+    assert len(sources(tab)) == 1 and sources(tab)[0].endswith("/alarm.wav"), sources(tab)
+    expect(enable).to_have_count(0)

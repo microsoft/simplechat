@@ -10,7 +10,7 @@
 // Links are followed by the bell's own navigation (notificationNavigation.ts), after the
 // bell's resolver has checked them, so the card never builds an address of its own.
 
-import { dismissNotification, markNotificationRead } from './notifications';
+import { acknowledgeNotification, dismissNotification, markNotificationRead } from './notifications';
 import type { NotificationTarget } from './notificationLinks';
 import { openNotificationTarget, type NotificationNavigationContext } from './notificationNavigation';
 import { refreshNotificationCount, useNotificationStore } from '../stores/notificationStore';
@@ -21,11 +21,14 @@ export interface WorkflowAlertActions {
     markRead: (ids: string[]) => Promise<string[]>;
     /** Resolves to the ids that are now dismissed. */
     dismiss: (ids: string[]) => Promise<string[]>;
+    /** Resolves to the ids that are now acknowledged. */
+    acknowledge: (ids: string[]) => Promise<string[]>;
     /** Follow a resolved link, or an open action's route. */
     open: (target: NotificationTarget, context: NotificationNavigationContext) => Promise<void>;
 }
 
 let lastActionAt = 0;
+const BROADCAST_CHANNEL = 'simplechat.workflowAlerts';
 
 /**
  * When the card last changed a notice. The bell count falls after each change, and the
@@ -33,6 +36,19 @@ let lastActionAt = 0;
  */
 export function lastWorkflowAlertActionAt(): number {
     return lastActionAt;
+}
+
+function broadcastAcknowledged(ids: string[]): void {
+    if (!ids.length || typeof BroadcastChannel === 'undefined') {
+        return;
+    }
+    try {
+        const channel = new BroadcastChannel(BROADCAST_CHANNEL);
+        channel.postMessage({ type: 'acknowledged', ids });
+        channel.close();
+    } catch {
+        /* Broadcast is best-effort; the server read still resolves state. */
+    }
 }
 
 async function apply(
@@ -81,5 +97,26 @@ export const workflowAlertServerActions: WorkflowAlertActions = {
         dismissNotification,
         ids.length > 1 ? 'Those alerts could not all be dismissed.' : 'That alert could not be dismissed.',
     ),
+    acknowledge: async (ids) => {
+        lastActionAt = Date.now();
+        let failed = false;
+        const results = await Promise.all(ids.map(async (id) => {
+            try {
+                await acknowledgeNotification(id);
+                return id;
+            } catch {
+                failed = true;
+                return null;
+            }
+        }));
+        lastActionAt = Date.now();
+        void refreshNotificationCount('action');
+        const done = results.filter((id): id is string => id !== null);
+        if (failed) {
+            toast.error(ids.length > 1 ? 'Those alerts could not all be acknowledged.' : 'That alert could not be acknowledged.');
+        }
+        broadcastAcknowledged(done);
+        return done;
+    },
     open: openNotificationTarget,
 };
