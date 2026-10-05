@@ -11,6 +11,10 @@
 //
 // The bulk bar appears only while something is selected, in the slot the old "Select" button
 // used to occupy permanently.
+//
+// The list has no scrollbar of its own. It scrolls with the rail around it, so reading down
+// it carries the navigation above out of view, and the search (with the bulk bar under it)
+// is held at the top of the rail's scroll region instead of scrolling away.
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { clsx } from 'clsx';
@@ -49,8 +53,11 @@ import {
 import { ConfirmDialog } from '../ui/ConfirmDialog';
 import { Skeleton } from '../ui/primitives';
 import { ConversationExportDialog } from './ConversationExportDialog';
-import type { ReactNode } from 'react';
+import type { FocusEvent, ReactNode, RefObject } from 'react';
 import type { Conversation } from '../../lib/types';
+
+/** Space left between the held search and a row control focus has been moved out from under it. */
+const FOCUS_CLEARANCE_PX = 8;
 
 /**
  * Tag colours, matching the badges shown beside an open conversation's title so the list
@@ -451,7 +458,12 @@ function BulkAction({
     );
 }
 
-export function ConversationRail() {
+export function ConversationRail({
+    scrollRootRef,
+}: {
+    /** The rail's scroll region, which this list scrolls with rather than on its own. */
+    scrollRootRef: RefObject<HTMLElement>;
+}) {
     const {
         conversations,
         conversationsLoading,
@@ -472,6 +484,8 @@ export function ConversationRail() {
 
     const sentinelRef = useRef<HTMLDivElement>(null);
     const selectAllRef = useRef<HTMLInputElement>(null);
+    const headerRef = useRef<HTMLDivElement>(null);
+    const stuckMarkerRef = useRef<HTMLDivElement>(null);
 
     /**
      * The export in flight, or null.
@@ -534,7 +548,10 @@ export function ConversationRail() {
     }, []);
 
     // Paging is driven by an IntersectionObserver rather than a scroll handler so it does
-    // not fire on every scroll frame.
+    // not fire on every scroll frame. It watches the rail's scroll region rather than the
+    // viewport: measured against the viewport, the region's edge clipped the end of the list
+    // before the look-ahead margin could reach it, so the next page waited until the last
+    // row was already on screen.
     useEffect(() => {
         const sentinel = sentinelRef.current;
         if (!sentinel || !hasMore) {
@@ -547,12 +564,74 @@ export function ConversationRail() {
                     void loadMore();
                 }
             },
-            { rootMargin: '120px' },
+            { root: scrollRootRef.current, rootMargin: '120px' },
         );
 
         observer.observe(sentinel);
         return () => observer.disconnect();
-    }, [hasMore, loadMore]);
+    }, [hasMore, loadMore, scrollRootRef]);
+
+    /**
+     * Mark the search header while it is stuck to the top of the rail.
+     *
+     * Stuck, the header needs a solid backing so rows passing beneath it do not show through
+     * the glass, and an edge where the list starts. At rest it stays transparent, so the rail
+     * looks as it always has. The marker is written to the node rather than held in state:
+     * state would re-render every row each time the header crossed the threshold.
+     *
+     * "Stuck" rather than "pinned", which in this list means a pinned conversation.
+     */
+    useEffect(() => {
+        const marker = stuckMarkerRef.current;
+        const header = headerRef.current;
+        const root = scrollRootRef.current;
+        if (!marker || !header || !root) {
+            return;
+        }
+
+        const observer = new IntersectionObserver(
+            (entries) => {
+                const entry = entries[0];
+                if (!entry) {
+                    return;
+                }
+                const rootTop = entry.rootBounds?.top ?? root.getBoundingClientRect().top;
+                // Out of view because it scrolled up past the region's top, not because the
+                // whole list sits below a short rail.
+                const stuck = !entry.isIntersecting && entry.boundingClientRect.top < rootTop;
+                header.toggleAttribute('data-stuck', stuck);
+            },
+            { root },
+        );
+
+        observer.observe(marker);
+        return () => observer.disconnect();
+    }, [scrollRootRef]);
+
+    /**
+     * Keep keyboard focus clear of the held header (WCAG 2.4.11).
+     *
+     * A row control reached with Tab or Shift+Tab that sits under the held search is moved
+     * just below it. CSS cannot do this here: Chromium ignores a control's scroll-margin when
+     * the control is already inside the scroll region, and scroll-padding on the region also
+     * applies to the held search box, so focusing the search threw the list hundreds of pixels.
+     *
+     * Only keyboard focus is moved. A click lands on the part of the row the reader can see,
+     * and scrolling the row out from under the pointer between press and release would leave
+     * the release on another row and swallow the click.
+     */
+    const keepFocusClearOfHeader = (event: FocusEvent<HTMLElement>) => {
+        const header = headerRef.current;
+        const root = scrollRootRef.current;
+        const target = event.target;
+        if (!header || !root || !(target instanceof HTMLElement) || !target.matches(':focus-visible')) {
+            return;
+        }
+        const covered = header.getBoundingClientRect().bottom - target.getBoundingClientRect().top;
+        if (covered > 0) {
+            root.scrollTop -= covered + FOCUS_CLEARANCE_PX;
+        }
+    };
 
     const confirmRemoval = () => {
         if (!pendingRemoval) {
@@ -578,7 +657,14 @@ export function ConversationRail() {
 
     return (
         <div
-            className="flex h-full min-h-0 flex-col"
+            className={clsx(
+                'relative mt-4 border-t border-edge',
+                // While a search is narrowing the list, the section keeps at least the rail's
+                // height. Otherwise a short result list would shrink the scroll range, drag the
+                // navigation back into view and pull the search box out from under the
+                // reader's cursor as they type.
+                searchTerm && 'min-h-full',
+            )}
             onKeyDown={(event) => {
                 // A dialog opened from the rail portals out of it, but focus stays on the
                 // control that opened it — so without this guard, Escape would dismiss the
@@ -603,7 +689,24 @@ export function ConversationRail() {
                 }
             }}
         >
-            <div className="px-3 pb-2">
+            {/* Where the header sits at rest. Once this has scrolled up past the top of the
+                rail, the header is being held there. */}
+            <div
+                ref={stuckMarkerRef}
+                aria-hidden="true"
+                className="pointer-events-none absolute inset-x-0 top-0 h-px"
+            />
+
+            {/* Holds to the top of the rail's scroll region, right under New chat, so search
+                and the bulk bar stay in reach however far down the list the reader is. */}
+            <div
+                ref={headerRef}
+                data-conversation-rail-header=""
+                className={clsx(
+                    'sticky top-0 z-10 px-3 pt-3 pb-2',
+                    'data-stuck:bg-surface-solid data-stuck:shadow-[0_1px_0_var(--edge-strong)]',
+                )}
+            >
                 <div className="relative">
                     <Search
                         size={14}
@@ -698,7 +801,7 @@ export function ConversationRail() {
                 </span>
             </div>
 
-            <div className="min-h-0 flex-1 overflow-y-auto px-3 pb-2">
+            <div className="px-3 pb-2">
                 {conversationsError && (
                     <p className="px-1 py-2 text-xs text-danger">{conversationsError}</p>
                 )}
@@ -717,7 +820,11 @@ export function ConversationRail() {
                     </p>
                 )}
 
-                <ul className="space-y-0.5">
+                {/* Each row control is a stop in the tab order, and the browser only brings one
+                    into view when it lies outside the rail's scroll region. A row just under the
+                    held search lies inside it, so Shift+Tab can otherwise land on a control the
+                    header covers (WCAG 2.4.11). */}
+                <ul className="space-y-0.5" onFocus={keepFocusClearOfHeader}>
                     {conversations.map((conversation) => (
                         <ConversationRow
                             key={conversation.id}

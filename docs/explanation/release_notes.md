@@ -2,7 +2,7 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
-### **(v0.261.237)**
+### **(v0.261.238)**
 
 #### Bug Fixes
 
@@ -22,7 +22,7 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
     *   A step that stopped for approval links to Approvals instead.
     *   (Ref: `v2_ui/src/lib/m365Connect.ts`, `OrchestrationM365Notice.tsx`, `OrchestrationRecoveryNotice.tsx`, `test_v2_orchestration_m365_recovery.py`, [Microsoft 365 data and approvals](../guides/microsoft-365-conversation-data.md))
 
-### **(v0.261.236)**
+### **(v0.261.237)**
 
 #### Bug Fixes
 
@@ -31,6 +31,23 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
     *   Orchestration rechecks a kept result's access with the current admin settings, and that check requires exactly a `dict`. Settings read from the shared Redis copy were a `dict`, but settings read from Cosmos DB came back as the SDK's `CosmosDict` type, so the check refused them. Cosmos serves the read while any settings save is in progress, such as the Cosmos throughput autoscale saving its status, when the shared copy is repaired or unreachable, and on every read when Redis is off.
     *   The settings store now returns a plain `dict` from every read and write, whichever backend served it. The orchestration check is unchanged. No setting or deployment change is needed.
     *   (Ref: `app_settings_store.py`, `functions_orchestration_external_sources.py`, `test_app_settings_store_plain_dict_reads.py`, [Orchestration Settings Document Type Fix](fixes/ORCHESTRATION_SETTINGS_DOCUMENT_TYPE_FIX.md))
+
+### **(v0.261.236)**
+
+#### User Interface Enhancements
+
+*   **V2 Chat Rail Scrolls As One Panel**
+    *   On the V2 chat page, everything between **New chat** and the theme and account controls now scrolls as one panel, as the classic sidebar does. As you read down the conversation list, the navigation and any **External Links** or **Custom Pages** groups move out of view, and **Search chats** stays right under **New chat**. The list gets nearly the whole rail: a 720-pixel-tall window with two external links went from two visible conversations to twelve.
+    *   The held search box gets a solid backing and an edge only while it is held, so the rail looks as it did at rest. Searching while it is held no longer makes the box jump. Keyboard focus on a conversation is never hidden under it. The next page of conversations now loads just before you reach the end of the list.
+    *   The collapsed icon strip and other pages are unchanged.
+    *   (Ref: #1642, `Sidebar.tsx`, `ConversationRail.tsx`, `test_v2_sidebar_conversation_scroll.py`, [V2 Sidebar Conversation Scroll Fix](fixes/V2_SIDEBAR_CONVERSATION_SCROLL_FIX.md))
+
+*   **V2 Workflow Alerts Pop Up From The Bell**
+    *   Workflow alert notices now hang from the notification bell instead of **My Workspace**. With the rail expanded, the notice drops down from the bell the way the bell's panel does, hanging past the rail's edge so most of **New chat** stays clickable. When the rail is collapsed or on a phone, it flies out beside the bell.
+    *   An alert that needs acknowledgment still never covers anything in the expanded rail. It now takes a row of its own right under the rail's header, pointing up at the bell and pushing **New chat** and the navigation down, instead of a space under **My Workspace**. As a flyout it still steps aside from focus it would cover.
+    *   The notice comes right after the bell in the tab order. Because the bell never scrolls, a notice can no longer be carried off screen with the navigation.
+    *   Timers, claims, the tuck into the bell, the alert card and the announcements are unchanged.
+    *   (Ref: #1642, `NotificationBell.tsx`, `WorkflowAlertNotice.tsx`, `test_v2_workflow_alert_notices.py`, [V2 Workflow Alert Notices](features/V2_WORKFLOW_ALERT_NOTICES.md))
 
 ### **(v0.261.235)**
 
