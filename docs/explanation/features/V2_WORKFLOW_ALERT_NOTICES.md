@@ -5,8 +5,8 @@
 A workflow alert that needs attention now pops up in V2. Until this release, V2 only
 counted workflow alerts in the bell (added in 0.261.195), so a critical alert
 waited there until someone happened to open the panel. Classic has always popped
-these alerts up as a modal. V2 shows a small notice instead, anchored to
-**My Workspace** in the navigation rail. The notice doesn't take focus, so it never
+these alerts up as a modal. V2 shows a small notice instead, hanging from the
+notification bell in the navigation rail. The notice doesn't take focus, so it never
 interrupts typing. Opening it grows it into the full alert card, and closing it
 tucks it into the bell, where the alert stays unread.
 
@@ -16,6 +16,8 @@ Implemented in version: **0.261.199**, tracked in
 (#1553, part of #1543).
 
 Open and Dismiss up front, with everything else under Show more, since version: **0.261.228** (#1624).
+
+Hanging from the bell rather than **My Workspace** since version: **0.261.236** (#1642).
 
 **Open run** in Open workflow's place, for an alert that names its run, since version: **0.261.237**
 (Phase 6b-2, #1546).
@@ -112,14 +114,17 @@ doesn't flash up on return.
 
 ## The notice
 
-The notice is a callout from **My Workspace**, where workflows live, with a notch
-pointing at the item.
+The notice is a callout from the notification bell, the place every notice can be found
+again, with a notch pointing at the bell. It used to hang from **My Workspace**, where
+workflows live. Since 0.261.236 the chat page's rail scrolls its navigation out of view as
+the conversation list is read, which could carry that item, and the notice with it, off
+screen. The bell never scrolls.
 
 | Rail | Placement |
 |---|---|
-| Expanded | Drops down below My Workspace and overlays the items under it rather than pushing them, so the conversation list never jumps. An alert that needs acknowledgment takes its own room instead, pushing the items under it down, because it stays until someone acknowledges it |
-| Collapsed to the icon strip | Flies out to the right of the icon |
-| Mobile | Flies out from the strip's icon, as when collapsed, and waits while the navigation drawer is open |
+| Expanded | Drops 8 px below the bell, as the bell's own panel does, with its notch under the bell. It hangs past the rail's edge over the top of the page, so most of **New chat** stays clickable, and it overlays what is under it rather than pushing it, so the conversation list never jumps. An alert that needs acknowledgment takes a row of its own under the rail's header instead, still pointing at the bell, and pushes **New chat** and the navigation down, because it stays until someone acknowledges it |
+| Collapsed to the icon strip | Flies out to the right of the strip, level with the bell |
+| Mobile | Flies out from the strip's bell, as when collapsed, and waits while the navigation drawer is open |
 
 It shows one entry at a time: one that needs acknowledgment first, then the loudest
 waiting, and then the newest. Each entry
@@ -147,12 +152,15 @@ stays unread in the bell and, having been claimed, doesn't pop up again.
 ### Focus and announcements
 
 - The notice never takes focus, so typing is never interrupted.
-- It sits in the tab order right after **My Workspace**, the item it hangs from.
-- Moving focus onto something the notice covers, such as the rail items under it,
-  tucks the notice, so it never hides what has focus. A notice that needs
-  acknowledgment can't tuck. In the full rail it covers nothing, and as a flyout it
-  steps aside, invisible, until focus moves somewhere it doesn't cover. A new alert
-  that takes the lead is shown whatever focus did before it arrived.
+- It sits in the tab order right after the bell, the control it hangs from. An alert
+  that needs acknowledgment, in its own row in the full rail, comes after the rail's
+  header controls and before **New chat**.
+- Moving focus onto something the notice covers, such as the rail items under the bell
+  or the top of the page beside the rail, tucks the notice, so it never hides what has
+  focus. A notice that needs acknowledgment can't tuck. In the full rail it covers
+  nothing, and as a flyout it steps aside, invisible, until focus moves somewhere it
+  doesn't cover. A new alert that takes the lead is shown whatever focus did before it
+  arrived.
 - Each new notice is announced once through a live region. The announcement is
   polite, or assertive when the loudest alert is critical. For example:
   "Critical priority workflow alert: Ledger totals do not match, from Payments
@@ -284,8 +292,8 @@ medium one. The card keeps the entry it is showing.
 
 ## Motion
 
-- **Entrance.** CSS keyframes: `wf-alert-drop` below the item, `wf-alert-flyout`
-  beside the icon (220 ms).
+- **Entrance.** CSS keyframes: `wf-alert-drop` below the bell, `wf-alert-flyout`
+  beside it (220 ms).
 - **The bell's swing.** `wf-bell-swing` (720 ms), on the notice's icon as it arrives
   and on the bell when a notice tucks into it.
 - **Grow and tuck.** Web Animations, because they run between boxes only script can
@@ -413,7 +421,7 @@ as Flask does in production. Before, it answered those with Vite's "did you mean
 | `application/v2_ui/src/components/notifications/WorkflowAlertLiveRegion.tsx` | New: the announcements |
 | `application/v2_ui/src/components/notifications/workflowAlertTone.ts` | New: priority colors and icons |
 | `application/v2_ui/src/components/ui/Modal.tsx` | A header that replaces the title row, for the card's band |
-| `application/v2_ui/src/components/layout/Sidebar.tsx`, `AppShell.tsx`, `NotificationBell.tsx` | The notice's slot under My Workspace, the card and live region, the bell's swing |
+| `application/v2_ui/src/components/layout/Sidebar.tsx`, `AppShell.tsx`, `NotificationBell.tsx` | The card and live region, the bell's swing, and (since 0.261.236) the notice's slot beside the bell and the row under the rail's header for an alert that needs acknowledgment |
 | `application/v2_ui/src/App.tsx` | Mounts the runtime, and loads the lab route lazily in development only |
 | `application/v2_ui/src/dev/AlertLabPage.tsx`, `alertLabSamples.ts` | New: the alert lab |
 | `application/v2_ui/src/pages/workspace/WorkflowsSection.tsx` | Acts on each navigation that names a workflow once, read from the router, so Open workflow works while the list is open |
@@ -445,7 +453,7 @@ as Flask does in production. Before, it answered those with Vite's "did you mean
 | `functional_tests/route_tests/test_workflow_alert_since_hours_policy.py` | 8 functions | The route keeps its Blueprint, Swagger and authentication policy; classic's request is unchanged; V2's window is validated and passed through; out-of-range limits fall back as before; invalid windows are refused without reading; a reader failure keeps the existing error shape; through the real reader with a failing Cosmos query, V2's read answers `500` and classic's still answers an empty list |
 | `functional_tests/test_v2_alert_lab_excluded_from_build.py` | 4 | The lab's markers exist only in lab code; the reference scanner recognizes every import form; the only reference to the lab is App.tsx's lazy import inside the `import.meta.env.DEV` branch; an existing production build has no file named for the lab and no lab marker (skipped without a build) |
 | `functional_tests/test_workflow_priority_alerts.py` | Existing | Classic's workflow alert contract, with the new signature |
-| `ui_tests/test_v2_workflow_alert_notices.py` | 29 | Pop-up versus notify-only and the 24-hour window against a server that leaves both filters out; one claim across two tabs of one browser, and a tab opened later; waiting behind a dialog, the bell's panel and a hidden tab; only a successful read retiring an alert, through a failed read on return and a zero count whose confirming read fails; a rise on return read behind a read already on its way; the eight-second tuck, its hover and focus pause, and high and critical staying; storm grouping; every card action; only Close, Show more, Dismiss and the green Open shown up front, with Open going to the created conversation and settling every alert of the entry, and the detail, chips and other actions under Show more; keyboard focus, Escape and the tuck on covering focus; motion with and without reduced motion, including the Web Animations' properties and every `wf-*` keyframe; the rail expanded, collapsed and on a 360 px phone in both themes; text contrast for every priority and category in both themes, with and without reduced transparency; hostile text rendered as text; refused off-site links; and Open run's personal and group cases, Open workflow for an alert that names no run, and neither for an alert that can't be placed |
+| `ui_tests/test_v2_workflow_alert_notices.py` | 60 | Pop-up versus notify-only and the 24-hour window against a server that leaves both filters out; one claim across two tabs of one browser, and a tab opened later; waiting behind a dialog, the bell's panel and a hidden tab; only a successful read retiring an alert, through a failed read on return and a zero count whose confirming read fails; a rise on return read behind a read already on its way; the eight-second tuck, its hover and focus pause, and high and critical staying; storm grouping; every card action; only Close, Show more, Dismiss and the green Open shown up front, with Open going to the created conversation and settling every alert of the entry, and the detail, chips and other actions under Show more; keyboard focus right after the bell, Escape and the tuck on covering focus; motion with and without reduced motion, including the Web Animations' properties and every `wf-*` keyframe; the rail expanded, collapsed and on a 360 px phone in both themes, with the notch pointing at the bell in each; the notice staying under the bell while the chat rail is scrolled, for an ordinary alert and one that needs acknowledgment; an alert that needs acknowledgment taking a row of its own under the rail's header, pointing at the bell, after the header controls in the tab order and back in its row after the rail is collapsed and expanded; text contrast for every priority and category in both themes, with and without reduced transparency; hostile text rendered as text; refused off-site links; Open run's personal and group cases, Open workflow for an alert that names no run, and neither for an alert that can't be placed; and the acknowledgment, sound, size and team cases listed in [Workflow Alert Acknowledgment](WORKFLOW_ALERT_ACKNOWLEDGMENT.md) |
 | `ui_tests/test_v2_document_provenance.py` | 6 added | Against the real workflows section, personal and group: Open run while the list is open expands the run; a second Open run for the same run opens it again; running another workflow afterwards doesn't reopen it; a workflow created after the list was read is found with exactly one more list read, which opens its run; a workflow missing from that read too costs one list read per navigation and no more, opens nothing, shows no error and leaves the list usable |
 
 The UI suite mounts the real V2 frame in a harness build, following

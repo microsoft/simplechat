@@ -163,7 +163,7 @@ Every workflow alert, here and in `GET /api/notifications`, carries top-level
 
 | Size | V2 | Classic |
 |---|---|---|
-| Small | The notice under **My Workspace**, which opens into the full alert | The usual centered dialog |
+| Small | The notice from the notification bell, which opens into the full alert | The usual centered dialog |
 | Medium | The full alert opens straight away, in a wider dialog | A wider dialog (`modal-lg`) with larger type |
 | Large | A full-screen takeover with large type and the severity band | A full-screen dialog (`modal-fullscreen`) |
 
@@ -177,9 +177,11 @@ A must-acknowledge alert:
 - comes first. V2 puts alerts that need acknowledgment ahead of every other alert, whatever their
   severity, because they are the ones that won't go away and may be sounding;
 - shrinks to a persistent notice when it is closed or Escape is pressed. In V2 the notice has no
-  close button and doesn't time out. In the full rail it takes its own room below
-  **My Workspace**, pushing the items under it down, rather than covering them as an ordinary
-  notice does for a few seconds. As a flyout beside the collapsed rail it steps aside, invisible,
+  close button and doesn't time out. In the full rail it takes a row of its own under the rail's
+  header, pointing up at the bell, and pushes **New chat** and the navigation down, rather than
+  covering them as an ordinary notice does for a few seconds. (Until 0.261.236 that room was
+  below **My Workspace**, which the chat page's rail can now scroll out of view.) As a flyout
+  beside the collapsed rail it steps aside, invisible,
   when focus moves onto something it covers, and comes back when focus moves on. A new alert that
   takes the lead is shown whatever focus did before it arrived. Classic keeps a slim
   banner at the bottom of the page, "*N* workflow alerts need acknowledgment", with **Review**;
@@ -288,7 +290,7 @@ and doesn't check while the tab is hidden.
 | `functional_tests/test_workflow_alert_sound_parity.py` | Classic and V2 share the lock, storage keys, limits, timing, channel and tones |
 | `functional_tests/test_workflow_alert_notifications_import_cycle.py` | CodeQL's `py/cyclic-import` counts imports made inside functions, so it reports the existing chain `functions_notifications` → `functions_group` → `functions_settings` → `content_screening.service` → `functions_notifications`, which closes only through such imports. The test keeps any module-level cycle out of `functions_notifications`, and loads the real modules cold and offline in every order the app reaches them (web routes, the scheduler's workflow runner, settings, screening and the group helpers first), with and without `-O` |
 | `ui_tests/test_v2_workflow_alerts.py`, `ui_tests/test_workspace_workflow_alert_rules.py` | Both editors |
-| `ui_tests/test_v2_workflow_alert_notices.py` | V2: bypassing claims and the 24-hour window, no tuck, Escape minimizing, Acknowledge and Open acknowledging, Mark all read skipping, medium and large sizes and the large dialog's height, large type, the sound's once, repeat, blocked and gated paths, no extra beeps on clicks or key presses, Play once playing once across reads and once between two tabs, alerts arriving together chiming once in the loudest tone, Enable sound retrying refused chimes as one, a showing alert not presented again, Enable sound as its own control, re-reads every 20 seconds, broadcast retirement, a waiting alert acknowledged elsewhere going quiet, no retry for a refused alert acknowledged elsewhere, Open and Acknowledge leaving the next pending alert up and sounding in its tone, pending alerts leading, the notice taking its own room in the full rail and stepping aside as a flyout, a flyout that stepped aside showing the next alert that leads, the member view, the Preferences switches, the Alert monitor while hidden, and the bell's Acknowledge, read and open |
+| `ui_tests/test_v2_workflow_alert_notices.py` | V2: bypassing claims and the 24-hour window, no tuck, Escape minimizing, Acknowledge and Open acknowledging, Mark all read skipping, medium and large sizes and the large dialog's height, large type, the sound's once, repeat, blocked and gated paths, no extra beeps on clicks or key presses, Play once playing once across reads and once between two tabs, alerts arriving together chiming once in the loudest tone, Enable sound retrying refused chimes as one, a showing alert not presented again, Enable sound as its own control, re-reads every 20 seconds, broadcast retirement, a waiting alert acknowledged elsewhere going quiet, no retry for a refused alert acknowledged elsewhere, Open and Acknowledge leaving the next pending alert up and sounding in its tone, pending alerts leading, the notice taking its own room in the full rail (a row under the bell since 0.261.236) and stepping aside as a flyout, a flyout that stepped aside showing the next alert that leads, the member view, the Preferences switches, the Alert monitor while hidden, and the bell's Acknowledge, read and open |
 | `ui_tests/test_v2_notifications_bell.py` | The bell's Acknowledge and "Acknowledged by" |
 | `ui_tests/test_workflow_alert_classic_acknowledgment.py` | The real classic scripts on an offline page: a must-acknowledge alert returning after a reload while an ordinary one stays suppressed, Acknowledge, the banner and **Review**, staying in the banner across polls, acknowledgment elsewhere by poll or broadcast, a capped read not retiring an alert, the repeat interval and every sound gate, resuming sound when it is turned back on, **Play once** playing once, **Enable sound** in the dialog and banner, a refused sound giving up the lock, **Enable sound** retrying a refused chime once, alerts arriving together chiming once in the loudest tone, refused chimes retried as one, a chime another tab played not repeated, **Mark as read** for an alert without links, sizes, the team line, and polls skipping the alerts read when nothing needs it |
 
