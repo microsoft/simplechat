@@ -13,8 +13,10 @@ This test ensures that a one-time workflow handed off from chat orchestration:
   on every run at info severity;
 * discloses the exact document count, or "up to N" for a query, and respects the loop limits;
 * is refused, with stable codes, for unknown handles, unauthorized documents or workspaces, hosted
-  agents, disabled analysis, edits that stop being a manual durable workflow, and a record under
-  its id that a chat proposal made, and the reverse;
+  agents (including one an edit adds outside the loop), disabled analysis, and edits that stop
+  being a manual durable workflow;
+* never shares an id with a chat proposal's workflow, either way, and never adopts a one-time
+  record under its id that is not this user's hand-off from chat;
 * is created at most once, even when a create loses the race for its id, while a record being
   deleted under that id stays a conflict;
 * when edited, builds exactly what a save of the same payload builds, and refuses a reference that
@@ -637,6 +639,44 @@ def test_a_hand_off_and_a_chat_proposal_never_share_a_workflow(harness):
     _same(plain.writes(), {}, "the refused create's writes")
 
 
+def test_a_one_time_record_is_adopted_only_as_this_users_hand_off_from_chat():
+    def one_time_record(**changes):
+        record = {
+            "id": HANDOFF_WORKFLOW_ID, "user_id": OWNER_ID, "name": "Old",
+            "origin": {"source": "orchestration", "proposal_id": HANDOFF_ID, "one_time": True},
+        }
+        record.update(changes)
+        return record
+
+    records = {
+        "own": one_time_record(),
+        "no_source": one_time_record(origin={"proposal_id": HANDOFF_ID, "one_time": True}),
+        "other_owner": one_time_record(user_id="someone-else"),
+    }
+    results = {}
+    for label, record in records.items():
+        seeded = DraftHarness()
+        seeded.containers["personal_workflows"].items[(OWNER_ID, HANDOFF_WORKFLOW_ID)] = record
+        create = _create(seeded, DOCS, DOC_HANDLES)
+        edited = _create_from_payload(seeded, {"name": "Edited"})
+        results[label] = {
+            "create": (create["ok"], create["created"], _codes(create)),
+            "edited": (edited["ok"], edited["created"], _codes(edited)),
+            "writes": seeded.writes(),
+        }
+
+    adopted = {"create": (True, False, []), "edited": (True, False, []), "writes": {}}
+    refused = {
+        "create": (False, False, [("handoff_kind_mismatch", "")]),
+        "edited": (False, False, [("handoff_kind_mismatch", "")]),
+        "writes": {},
+    }
+    _same(
+        results, {"own": adopted, "no_source": refused, "other_owner": refused},
+        "a one-time record under the hand-off's id",
+    )
+
+
 def test_a_workspace_the_user_cannot_read_is_refused(harness):
     deny_group = _dry_run(
         harness, ALL, SCOPE_HANDLES, authorize_scope=lambda scope, actor_user_id=None: scope["scope_type"] != "group",
@@ -742,6 +782,57 @@ def test_only_local_agents_may_run_a_hand_off(harness):
     )
     _same(_codes(hosted), [("handoff_agent_unsupported", "/tasks/0/runner/agent_ref")], "a hosted agent")
     _same(_codes(unknown), [("agent_unavailable", "/tasks/0/runner/agent_ref")], "an unknown agent")
+
+
+def _with_follow_up_task(draft):
+    """Add a task after the report, outside the loop, that the researcher agent runs."""
+    edited = copy.deepcopy(draft)
+    edited["tasks"].append({
+        "id": "follow-up",
+        "type": "instructions",
+        "name": "Follow up",
+        "instructions": "Summarize the report for the team.",
+        "order": len(edited["tasks"]) + 1,
+        "runner": {"type": "agent", "selected_agent": {
+            "id": "agent-researcher", "name": "researcher", "is_global": False,
+        }},
+        "document_action": {"type": "none"},
+        "inputs": [],
+        "reference_ids": [],
+        "output_contract": {"kind": "text", "allow_partial": False, "require_complete_coverage": False},
+    })
+    edited["flow"]["nodes"].append({"id": "follow-up-node", "kind": "task", "task_id": "follow-up"})
+    return edited
+
+
+def test_an_edit_may_not_add_a_hosted_agent_outside_the_loop(harness):
+    # The save itself refuses a hosted agent only inside a loop or on a saved-record report, so an
+    # agent the edit adds after the report is checked by the hand-off alone.
+    dry = _dry_run(harness, DOCS, DOC_HANDLES)
+    _require(dry["ok"] is True, f"The dry run failed: {dry['errors']!r}")
+    edited = _with_follow_up_task(_editor_payload(dry["workflow"]))
+
+    hosted_harness = DraftHarness()
+    hosted_harness.personal.get_personal_agents = lambda user_id: [{
+        "id": "agent-researcher", "name": "researcher", "display_name": "R", "description": "",
+        "is_enabled": True, "agent_type": "aifoundry",
+    }]
+    hosted = _create_from_payload(hosted_harness, edited)
+    local_harness = DraftHarness()
+    local = _create_from_payload(local_harness, edited)
+
+    _same(_codes(hosted), [("handoff_agent_unsupported", "/tasks/2/runner")], "a hosted agent added by an edit")
+    _same(hosted_harness.writes(), {}, "the refused edit's writes")
+    _require(local["ok"] is True and local["created"] is True, f"A local agent edit failed: {local['errors']!r}")
+    _same(
+        [task["runner"].get("selected_agent", {}).get("id") for task in local["workflow"]["tasks"]],
+        [None, None, "agent-researcher"],
+        "the edited tasks' agents",
+    )
+    _same(
+        local_harness.writes(), {"personal_workflows": [("create_item", HANDOFF_WORKFLOW_ID)]},
+        "the local agent edit's writes",
+    )
 
 
 def test_a_hand_off_needs_analysis_two_tasks_and_workflows():

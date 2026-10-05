@@ -11,8 +11,10 @@ This test ensures that the requester-only routes under
 - re-authorize every request: a signed-in user with the user role, Allow User Workflows, the
   workflow role, the requester's own private conversation, the run and its hand-off step, and
   every hand-off gate;
-- refuse a Phase 4 workflow proposal, while Phase 4's accept refuses a hand-off;
-- rebuild and revalidate the blueprint before anything is written;
+- refuse a Phase 4 workflow proposal, while Phase 4's accept refuses a hand-off and never takes a
+  one-time workflow at a proposal's id for that proposal's workflow;
+- rebuild and revalidate the blueprint before anything is written, with the bound the card
+  disclosed: a loop limit lowered below it refuses the accept, and a raised one never widens it;
 - claim the hand-off before the create and release the claim when the create fails;
 - create the one-time workflow disabled, with a deterministic id and a one-time origin, and queue
   exactly one durable run through the real durable queue, with the chat invocation and delivery
@@ -1406,6 +1408,47 @@ def test_a_workflow_at_the_handoff_id_that_is_not_one_time_is_refused_as_another
     require_no_leak(hw, *refused)
 
 
+def test_a_one_time_workflow_at_a_proposals_id_is_never_taken_for_the_proposals_workflow(hw):
+    seed_proposal_run(hw, SECOND)
+    login(hw)
+    proposal_id = hw.ow.workflow_proposal_id(SECOND, PROPOSAL_STEP)
+    workflow_id = hw.drafts.orchestration_workflow_id(OWNER, proposal_id)
+    hw.workflows.create_item({
+        "id": workflow_id, "user_id": OWNER, "name": "A hand-off workflow", "is_enabled": False,
+        "origin": {
+            "source": "orchestration", "proposal_id": proposal_id, "one_time": True,
+            "conversation_id": CONVERSATION, "orchestration_run_id": SECOND,
+        },
+        "created_at": hw.clock.now.isoformat(),
+    })
+    original = deepcopy(stored_workflow(hw, workflow_id))
+
+    def proposal_card(label):
+        proposals = expect(proposal_status_route(hw, SECOND), 200)["proposals"]
+        _same(len(proposals), 1, f"the proposals {label}")
+        row = proposals[0]
+        _same((row["proposal_id"], row["state"], row["workflow"]), (proposal_id, "pending", None),
+              f"the proposal's card {label}")
+        _same(row["actions"]["open_workflow"], False, f"the card's open-workflow action {label}")
+        return row
+
+    proposal_card("before any decision")
+    expect(draft_proposal_route(hw, proposal_id, run_id=SECOND), 200)
+    refused = accept_proposal_route(hw, proposal_id, run_id=SECOND, mode="paused")
+
+    expect(refused, 409, "workflow_conflict")
+    _same(stored_workflow(hw, workflow_id), original, "the one-time workflow after Phase 4's accept")
+    _same((run(hw, SECOND).get("workflow_proposal_decisions") or {}).get(proposal_id), None,
+          "the proposal's decision after the refused accept")
+    proposal_card("after the refused accept")
+    denied = expect(deny_proposal_route(hw, proposal_id, run_id=SECOND), 200)
+    _same(denied, {"proposal_id": proposal_id, "state": "denied"}, "the deny")
+    _same(stored_workflow(hw, workflow_id), original, "the one-time workflow after the deny")
+    _same(hw.workflows.records(OWNER), [original], "workflows")
+    _same(hw.record.queued, [], "queue calls")
+    require_no_leak(hw, refused)
+
+
 # ---------------------------------------------------------------------------
 # Expiry, integrity and the card
 # ---------------------------------------------------------------------------
@@ -1634,6 +1677,28 @@ def test_a_workspace_query_is_disclosed_as_up_to_its_bound_with_workspace_names(
     _require(names and all(isinstance(name, str) and name for name in names), f"Unnamed workspaces: {names!r}")
     _same(len(names), disclosure["scope_count"], "a name for every workspace")
     require_no_leak(hw, shown)
+
+
+def test_an_accept_creates_the_disclosed_bound_and_refuses_a_limit_lowered_below_it(hw):
+    sidecar = seed_handoff_run(hw, loop=query_loop(hw))
+    login(hw)
+    disclosed = sidecar["loop_limit"]
+    _require(type(disclosed) is int and 1 < disclosed < 2000, f"The disclosed bound must leave room: {disclosed!r}")
+
+    # A limit lowered below what the card disclosed refuses the accept, so the card never overstates the run.
+    hw.settings["workflow_max_loop_items"] = disclosed - 1
+    refused = accept(hw)
+
+    expect(refused, 409, "handoff_limit_changed")
+    nothing_left(hw, "what a lowered limit left")
+    _same(stored_runs(hw), [], "durable runs after a lowered limit")
+    require_no_leak(hw, refused)
+
+    # A raised limit still creates the bound the card disclosed, never the new one.
+    hw.settings["workflow_max_loop_items"] = disclosed + 1
+    expect(accept(hw), 201)
+    loop = stored_workflow(hw)["flow"]["nodes"][0]
+    _same((loop["kind"], loop["max_items"]), ("for_each", disclosed), "the stored loop's bound")
 
 
 def test_a_workflow_deleted_after_its_accept_is_not_created_again(hw):
