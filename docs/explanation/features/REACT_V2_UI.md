@@ -280,6 +280,20 @@ and the conversation list sit beneath, and the theme toggle and user menu are pi
 bottom. The rail collapses to a 68px icon strip, and the collapse state is persisted. All
 content lives in the right-hand pane.
 
+On the chat page, with the rail expanded, everything between **New chat** and the footer
+scrolls as one panel, as the classic sidebar does. Reading down the conversation list
+carries the navigation and the administrator's link groups up out of view. The list's
+**Search chats** box, with the selection bar under it when conversations are selected, is
+held right under **New chat**, so the list gets nearly the whole rail rather than whatever
+the navigation leaves it. Scrolling back up brings the navigation back.
+
+The held search gets a solid backing and an edge line only while it is held, so the resting
+rail looks as it always did. While a search is narrowing the list, the panel keeps its scroll
+range, so the search box doesn't jump as results shrink. Keyboard focus moved onto a row
+under the held search is brought out from under it. The collapsed strip and every other page
+don't scroll. See the [V2 Sidebar Conversation Scroll Fix](../fixes/V2_SIDEBAR_CONVERSATION_SCROLL_FIX.md)
+(0.261.235, #1642).
+
 The brand mark is the link to the home page; there is no separate **Home** navigation item,
 because the logo is where a reader looks for that destination anyway. What it draws depends
 on what is configured and how much room there is:
@@ -1175,6 +1189,8 @@ this entirely and is the recommended layout.
 | `functional_tests/test_v2_sidebar_account_menu.py` | Admin Settings has left the primary navigation for the account menu and is gated on the admin flag, the menu is not gated on the rail being expanded and dismisses on Escape and an outside click, the nav groups collapse with no entry-count threshold, `sidebarMenuState` is writable in both the client key list and the route whitelist and uses the same key names as the classic interface, and the profile photo reaches both the rail and the settings page header |
 | `functional_tests/test_v2_sidebar_menu_state_logic.mjs` | Executes the shared menu-state helpers: the whitelist matching the classic interface, boolean and legacy string forms, unknown keys and unusable values dropped, an untouched group defaulting to open, and a write carrying the whole object so a V2 toggle cannot reset the classic interface's own menus |
 | `functional_tests/test_v2_brand_mark_home_link.py` | The **Home** nav item, its icon import and the exact-match field it needed all removed; the brand mark carrying the home destination with the exact matching that keeps it off every other route; the link naming itself for the collapsed rail; and the letter square gated on the title being absent rather than on the logo being absent |
+| `functional_tests/test_v2_sidebar_conversation_scroll.py` | One scroll region holding the navigation, the link groups and the conversation list between **New chat** and the footer, scrolling only on the chat page with the rail expanded; no scroller in the list itself; the search header held and marked without React state; paging and the marker rooted on the region; the search section keeping the region's height while searching; keyboard-only focus clearance under the held header; and the workflow alert notice rendered by the bell rather than by **My Workspace** |
+| `ui_tests/test_v2_sidebar_conversation_scroll.py` | The production rail at 1280×720 and on a 360px phone: an unchanged resting layout; the navigation scrolling away and the search held right under **New chat** with at least ten rows showing; one scrollbar; the next page requested before the end is on screen; Shift+Tab never landing under the held search; a click on a partly covered row still opening it; a narrowing search not moving the search box; no scroller in the collapsed rail or on the home page; and the held backing in both themes |
 | `functional_tests/test_csrf_state_changing_route_guard.py` | Cross-site mutations require an explicitly trusted origin; CORS preflights answered before authentication and never wildcarded |
 | `functional_tests/route_tests/` | Blueprint policy classification for `frontend_v2`, `backend_v2`, `backend_v2_admin` |
 

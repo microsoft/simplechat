@@ -10,7 +10,7 @@ audience: user
 
 The Notifications page lists app notifications, filters read and unread items, searches the list, and opens notification details. You can mark everything read or follow a link when one is provided.
 
-In the V2 interface, a bell in the navigation rail shows how many notifications are unread and opens the same notifications in a panel, where you can follow, read, and dismiss them without leaving the page you are on. Workflow alerts that need attention now also pop up in V2, beside **My Workspace**.
+In the V2 interface, a bell in the navigation rail shows how many notifications are unread and opens the same notifications in a panel, where you can follow, read, and dismiss them without leaving the page you are on. Workflow alerts that need attention now also pop up in V2, from the bell.
 
 {% include media.html type="video"
                       title="Manage notifications walkthrough"
@@ -79,10 +79,11 @@ conversation.
 ## Workflow alerts that pop up in V2
 
 Since **0.261.199**, a workflow alert that needs attention pops up in V2 as a
-small notice hanging from **My Workspace**, where your workflows live. When the rail
-is collapsed to icons, or on a phone, the notice flies out beside the **My Workspace**
-icon instead. It never moves the cursor away from what you are typing, so you can
-finish your sentence before you look.
+small notice. Since **0.261.235** it hangs from the notification bell, where you can
+always find it again. With the rail expanded, it drops down from the bell the way the
+bell's panel does. When the rail is collapsed to icons, or on a phone, it flies out
+beside the bell instead. It never moves the cursor away from what you are typing, so
+you can finish your sentence before you look.
 
 An alert pops up only when all of these are true:
 
@@ -110,9 +111,9 @@ notices stay until you open or close them. Closing a notice with **×** or Escap
 tucks it into the bell, where it stays unread; it doesn't pop up again.
 
 {% include media.html src="guides/manage-notifications-v2-alert-notice.png"
-                      alt="The V2 navigation rail with a high priority workflow alert notice hanging below My Workspace, showing its priority tag, the alert's title, the workflow's name, a Failed 3 times line, and a close button."
+                      alt="The V2 navigation rail with a high priority workflow alert notice hanging below the notification bell, showing its priority tag, the alert's title, the workflow's name, a Failed 3 times line, and a close button."
                       title="V2 workflow alert notice"
-                      capture="Capture the V2 rail with a high priority workflow alert notice under My Workspace, using realistic sample alerts. Redact workflow and conversation names." %}
+                      capture="Capture the V2 rail with a high priority workflow alert notice under the notification bell, using realistic sample alerts. Redact workflow and conversation names." %}
 
 Select the notice to open the full alert. It says why you are seeing it and which
 rules matched, the summary, and what went wrong for a failed run. From there you
@@ -137,7 +138,7 @@ can:
 Closing the full alert without choosing anything leaves its alerts unread in the
 bell.
 
-With a keyboard, the notice comes right after **My Workspace** in the tab order.
+With a keyboard, the notice comes right after the bell in the tab order.
 Press Enter on it to open the full alert. Focus moves into the alert, and returns to
 where you were when it closes. Screen readers announce each notice once, after what
 they are reading; a critical alert is announced straight away.

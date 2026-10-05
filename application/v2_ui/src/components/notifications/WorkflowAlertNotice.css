@@ -90,7 +90,9 @@
     transform-origin: 50% 12%;
 }
 
-/* The callout's pointer at My Workspace, drawn in the notice's own surface and edge. */
+/* The callout's pointer at the bell, drawn in the notice's own surface and edge. Its offsets
+ * are what WorkflowAlertCalloutSlot lines the notice up by: 18px in below the bell, 16px down
+ * beside it. */
 .wf-alert-notch {
     position: absolute;
     width: 12px;
