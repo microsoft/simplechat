@@ -1,6 +1,6 @@
 # V2 File Merge — Phase 4: PDF and Workbook Merges
 
-Version: **0.261.238**
+Version: **0.261.244**
 
 Implemented in version: **0.261.238**, recorded in `application/single_app/config.py`.
 
@@ -45,6 +45,14 @@ resolves documents or settings, and performs no model work.
 | `DocumentMergeLimits` | Files, bytes per file and in total, output bytes, pages, slides, sheets, rows, cells, and package expansion. |
 | `guard_ooxml_package` | Refuses encrypted, damaged or oversized Office packages before they are parsed. |
 | `document-merge-report-v1` | Kind, options, one entry per file (status, pages or sheets, sheet names, warnings), totals, warnings, and limitations. |
+
+Since **0.261.244**, `functions_document_merge.py` keeps only `merge_documents`, its checks
+of the parts, and `document_merge_kind_for_extension`. Everything the assemblers share moved to
+`functions_document_merge_core.py`: the parts, options, limits, errors and result, the merge
+context and report, the output spools, and `guard_ooxml_package`. The assemblers import that
+module, so none of them imports `functions_document_merge.py`, which loads them.
+`functions_document_merge.py` still exports the kinds, parts, options, limits, errors and
+result, so the code that calls it didn't change.
 
 `min_parts` is 1 only for a workflow merge of files found at run time, so one PDF that
 arrived with a sync is still delivered.

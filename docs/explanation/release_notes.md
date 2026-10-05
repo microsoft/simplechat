@@ -6,10 +6,11 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
 
 #### Bug Fixes
 
-*   **CodeQL Alerts Fixed For Merge File Support**
-    *   Fixed new CodeQL alerts from the V2 merge file PR by separating shared document merge primitives from the merge dispatcher, avoiding import cycles while keeping lazy loading of PDF, Word, PowerPoint and workbook assemblers.
-    *   Cleaned up merge tests and workbook handling so assertions do not call side-effecting helpers, result cleanup uses context managers, NaN checks are explicit, and intentionally ignored cleanup failures are documented.
-    *   (Ref: #1619, `functions_document_merge.py`, `functions_document_merge_core.py`, `functions_document_merge_workbook.py`, `functions_tabular_merge.py`, `test_file_merge_hardening.py`, `test_tabular_merge_engine.py`, `test_file_merge_scratch_dir.py`, `test_workflow_merge_task.py`)
+*   **Merge Code Passes CodeQL Analysis**
+    *   CodeQL flagged import cycles and small code-quality issues in the new merge code. The code that the PDF, Word, PowerPoint and workbook assemblers share moved to `functions_document_merge_core.py`, so no assembler imports `functions_document_merge.py`, the module that loads them. Each assembler still loads only when its kind of file is merged.
+    *   The workflow runner imports the upload function for merged files along with its other upload functions. Cleanup errors that are deliberately ignored now say why, the workbook check for NaN uses `math.isnan`, and the merge tests no longer call helpers with side effects inside `assert`, use both `import` and `from ... import` for one module, or close results by hand.
+    *   Merges behave exactly as before.
+    *   (Ref: #1619, `functions_document_merge.py`, `functions_document_merge_core.py`, `functions_document_merge_workbook.py`, `functions_tabular_merge.py`, `functions_workflow_runner.py`, [Phase 4](features/V2_FILE_MERGE_PHASE_4_PDF_WORKBOOKS.md#document-merge-engine))
 
 ### **(v0.261.243)**
 

@@ -1,10 +1,11 @@
 # V2 File Merge — Phase 7: Document Merges in Chat and Hardening
 
-Version: **0.261.243**
+Version: **0.261.244**
 
 Implemented in version: **0.261.241**, recorded in `application/single_app/config.py`.
 The one-sheet or sheet-per-file question was added in **0.261.242**, and merges spill to
-disk in the container's scratch directory since **0.261.243**.
+disk in the container's scratch directory since **0.261.243**. The assemblers' shared code
+moved to `functions_document_merge_core.py` in **0.261.244**.
 
 GitHub issue: [#1619](https://github.com/microsoft/simplechat/issues/1619). Umbrella document:
 [V2 File Merge](V2_FILE_MERGE.md). Builds on [Phase 4](V2_FILE_MERGE_PHASE_4_PDF_WORKBOOKS.md),
@@ -194,6 +195,7 @@ to the platform temp directory and are removed once the sheet is written.
 | `functions_generated_export_registry.py`, `functions_generated_office_adapters.py`, `functions_generated_file_exports.py` | The `assembled_document_v1` profile on the PDF, Word, PowerPoint and Excel formats, and the assembled renderer. |
 | `functions_orchestration_rendering.py`, `functions_orchestration_services.py`, `functions_orchestration_bootstrap.py`, `functions_orchestration_results.py` | The lineage-bound document reader, `ResultReader.lineage_sources()`, and one shared translation of source read failures for the reader and every other source Render opens. |
 | `functions_document_merge.py`, `functions_document_merge_docx.py`, `functions_document_merge_pptx.py`, `functions_document_merge_workbook.py`, `functions_tabular_merge.py` | The hardening above, derived Word list IDs, and (0.261.243) spools that spill into the scratch directory. |
+| `functions_document_merge_core.py` | New in 0.261.244. The parts, options, limits, errors, result, merge context, report, output spools and package guard that every assembler shares, moved out of `functions_document_merge.py` so no assembler imports the module that loads it. |
 | `application/v2_ui/src/lib/orchestrationMerge.ts` | The plan card says what a document merge creates and which settings it changes. |
 
 ## Usage

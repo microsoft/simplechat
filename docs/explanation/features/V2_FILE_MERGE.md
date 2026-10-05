@@ -1,6 +1,6 @@
 # V2 File Merge
 
-Version: **0.261.243**
+Version: **0.261.244**
 
 Implemented in version: **0.261.235** (Phase 1, same-structure spreadsheets),
 **0.261.236** (Phase 2, reconciling different structures), **0.261.237** (Phase 3,
@@ -96,7 +96,7 @@ way to merge on a schedule, on every sync, or more files than chat allows
 | `functions_orchestration_services.py` | The `tabular_column_mapping_v1` prepared-content profile and its validator. |
 | `functions_document_actions.py` | The `merge` document action: enablement, file limits and row limits for chat and workflows, and the workflow Merge task contract. |
 | `functions_workflow_merge.py`, `functions_workflow_runner.py` | Workflow Merge tasks: finding the files, authorizing them again, merging, rendering and attaching the file to the run. |
-| `functions_document_merge.py`, `functions_document_merge_pdf.py`, `functions_document_merge_workbook.py`, `functions_document_merge_docx.py`, `functions_document_merge_pptx.py` | The document merge engine and its PDF, workbook, Word and PowerPoint assemblers. Word composition uses `docxcompose`; decks are merged at the package level. |
+| `functions_document_merge.py`, `functions_document_merge_core.py`, `functions_document_merge_pdf.py`, `functions_document_merge_workbook.py`, `functions_document_merge_docx.py`, `functions_document_merge_pptx.py` | The document merge engine and its PDF, workbook, Word and PowerPoint assemblers. Word composition uses `docxcompose`; decks are merged at the package level. Since 0.261.244, the code every assembler shares is in `functions_document_merge_core.py`, so no assembler imports `functions_document_merge.py`, the module that loads them. |
 | `functions_document_merge_assembly.py`, `functions_orchestration_document_merge.py` | The `document_assembly_v1` description and its byte-identical re-assembly, and the chat `document_merge` glue (Phase 7). |
 | `functions_ooxml_package_guard.py` | Refuses Office packages whose XML parts declare a document type or aren't UTF-8 or UTF-16, for the document and spreadsheet engines (Phase 7). |
 | `functions_workflow_drafts.py` | The `merge` field of workflow blueprints proposed from chat. |
