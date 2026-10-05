@@ -7,7 +7,7 @@ import re
 from azure.core.exceptions import ResourceNotFoundError
 from azure.cosmos.exceptions import CosmosResourceNotFoundError
 
-from functions_analysis_access import AnalysisResultUnavailable
+from functions_analysis_access import ANALYSIS_UNAVAILABLE_SAVED_RESULT, AnalysisResultUnavailable
 from functions_appinsights import log_event
 from functions_generated_artifact_sources import generated_chat_artifact_address
 from functions_generated_file_exports import GeneratedFileExportRequest, build_generated_file_export
@@ -180,7 +180,10 @@ def load_workflow_artifact_binding(user_id, value, *, require_ready=True, for_pu
             "[SIMPLE_CHAT] Saved-output artifact source unavailable",
             {"exception_type": type(exc).__name__},
         )
-        raise AnalysisResultUnavailable("generated_artifact_source_unavailable") from exc
+        # The saved output's run records could not be loaded; the scope checks raise their own error.
+        raise AnalysisResultUnavailable(
+            "generated_artifact_source_unavailable", family=ANALYSIS_UNAVAILABLE_SAVED_RESULT,
+        ) from exc
 
 
 def _load_workflow_artifact_binding(user_id, value, *, require_ready, for_publication):

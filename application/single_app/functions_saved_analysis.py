@@ -39,7 +39,10 @@ SAVED_ANALYSIS_VERSION = "analyze-final-v1"
 MAX_ANALYSIS_PAGE_RECORDS = 100
 MAX_ANALYSIS_PAGE_BYTES = 256 * 1024
 MAX_ANALYSIS_DIAGNOSTIC_PAGE_BYTES = 65536
-UNAVAILABLE_ANALYSIS_MESSAGE = "This saved analysis is unavailable because its access could not be confirmed."
+UNAVAILABLE_ANALYSIS_MESSAGE = (
+    "This saved analysis is unavailable because it or something it depends on is missing, "
+    "has changed or can't be read right now."
+)
 UNVERIFIED_WORKFLOW_OUTPUT_MESSAGE = "This saved task output is unavailable because it could not be read or verified."
 
 
@@ -164,7 +167,7 @@ def _load_authorized_message(user_id, conversation_id, message_id):
             raise AnalysisResultUnavailable("analysis_conversation_deleted")
         message = get_collaboration_message(message_id)
     if message.get("conversation_id") != conversation_id or message.get("id") != message_id:
-        raise AnalysisResultUnavailable()
+        raise AnalysisResultUnavailable("analysis_message_unavailable")
     return message
 
 
@@ -199,7 +202,7 @@ def _load_authorized_workflow(user_id, binding):
         or not item or item.get("workflow_id") != workflow["id"]
         or item.get("run_id") != binding["run_id"] or item.get("task_id") != binding["task_id"]
     ):
-        raise AnalysisResultUnavailable()
+        raise AnalysisResultUnavailable("analysis_workflow_unavailable")
     if binding.get("execution_id") and any(
         item.get(key) != binding.get(key) for key in ("node_id", "execution_id", "iteration_path")
     ):

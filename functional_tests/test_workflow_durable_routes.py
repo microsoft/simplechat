@@ -1,8 +1,9 @@
 # test_workflow_durable_routes.py
 """
 Functional tests for durable workflow HTTP control boundaries.
-Version: 0.261.111
+Version: 0.261.234
 Implemented in: 0.261.111
+Saved-record refusal wording covered in: 0.261.234
 
 Production route helpers run in Flask with isolated runtime services. Decisions
 are scope-authorized and version/request-bound; native runs return queued202.
@@ -21,6 +22,7 @@ from flask import Flask, jsonify, request
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "application" / "single_app"))
 
 # Application imports follow the worktree module-path setup.
+from functions_analysis_access import AnalysisResultUnavailable
 from functions_workflow_runtime_store import RuntimeUnavailable, WorkflowRuntimeConflict
 
 
@@ -50,6 +52,8 @@ def runtime_api():
     def status(workflow, run_id, **kwargs):
         if state.get("unavailable"):
             raise RuntimeUnavailable()
+        if state.get("saved_record_error"):
+            raise state["saved_record_error"]
         calls.append(("read", run_id, kwargs))
         return runtime
 
@@ -64,6 +68,7 @@ def runtime_api():
         "CosmosResourceNotFoundError": CosmosResourceNotFoundError,
         "WorkflowRuntimeConflict": WorkflowRuntimeConflict,
         "RuntimeUnavailable": RuntimeUnavailable,
+        "AnalysisResultUnavailable": AnalysisResultUnavailable,
         "get_current_user_id": lambda: "owner",
         "get_personal_workflow": lambda user_id, workflow_id: workflow if workflow_id == workflow["id"] else None,
         "get_group_workflow": lambda group_id, workflow_id: workflow if workflow_id == workflow["id"] else None,
@@ -137,8 +142,25 @@ def test_readonly_group_members_can_view_but_not_approve(runtime_api):
 def test_group_membership_is_checked_again_after_reload(runtime_api):
     client, state, calls = runtime_api
     state["allowed"] = False
-    assert client.get("/group/workflow/run/runtime").status_code == 403
+    response = client.get("/group/workflow/run/runtime")
+    assert response.status_code == 403
+    assert response.json == {"error": "Workflow progress is unavailable because current access could not be confirmed."}
     assert calls == []
+
+
+@pytest.mark.parametrize("code,expected", [
+    ("analysis_lineage_invalid", "This saved result can't be used because something it depends on is missing or has changed."),
+    ("generated_artifact_source_unavailable", "The conversation, workflow or run that holds this result no longer exists"),
+])
+def test_saved_record_failure_names_the_record_not_the_callers_access(runtime_api, code, expected):
+    client, state, calls = runtime_api
+    state["saved_record_error"] = AnalysisResultUnavailable(code)
+    response = client.get("/user/workflow/run/runtime")
+    assert response.status_code == 403
+    assert response.json["error"].startswith("Workflow progress is unavailable. ")
+    assert expected in response.json["error"]
+    assert "access could not be confirmed" not in response.json["error"]
+    assert set(response.json) == {"error"}
 
 
 def test_runtime_decisions_cannot_inject_private_claim_fields(runtime_api):

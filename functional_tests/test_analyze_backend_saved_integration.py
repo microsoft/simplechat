@@ -1,9 +1,10 @@
 # test_analyze_backend_saved_integration.py
 """
 Behavioral integration tests for Analyze presentation and saved-data chat reuse.
-Version: 0.261.232
+Version: 0.261.234
 Implemented in: 0.261.109
 Container-only saved-result access covered in: 0.261.232
+Message family constants added to the chat harness in: 0.261.234
 
 Real adapter, artifact, history, chat route and shared section-reader functions
 run against serialized storage, Flask requests and deterministic model doubles.
@@ -456,6 +457,8 @@ def chat(saved_chat, monkeypatch):
         "authorize_analysis_conversation": lambda *args: deepcopy(conversation),
         "AnalysisWorkUnitConflictError": result_storage.AnalysisWorkUnitConflictError,
         "AnalysisResultUnavailable": saved.AnalysisResultUnavailable,
+        "ANALYSIS_UNAVAILABLE_CONTAINER": access.ANALYSIS_UNAVAILABLE_CONTAINER,
+        "ANALYSIS_UNAVAILABLE_SAVED_RESULT": access.ANALYSIS_UNAVAILABLE_SAVED_RESULT,
         "load_saved_analysis_input": lambda user_id, context, **kwargs: saved.load_saved_analysis_input(
             user_id, context, **options, **kwargs,
         ),

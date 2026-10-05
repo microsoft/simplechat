@@ -8,7 +8,11 @@ import re
 import unicodedata
 from copy import deepcopy
 
-from functions_analysis_access import AnalysisResultUnavailable, analysis_source_snapshot
+from functions_analysis_access import (
+    ANALYSIS_UNAVAILABLE_SOURCE,
+    AnalysisResultUnavailable,
+    analysis_source_snapshot,
+)
 from functions_analysis_deliverables import apply_analysis_calculations
 from functions_tabular_transformations import normalize_tabular_transformation_spec
 
@@ -198,7 +202,8 @@ def index_analysis_source_manifest(source_manifest, document_ids):
         if source['document_id'].strip() not in assigned_ids:
             continue
         if 'authorization_status' in source and source['authorization_status'] != 'authorized':
-            raise AnalysisResultUnavailable('analysis_source_manifest_invalid')
+            # An assigned document the current source lookup did not authorize can't be read now.
+            raise AnalysisResultUnavailable('analysis_source_manifest_invalid', family=ANALYSIS_UNAVAILABLE_SOURCE)
         snapshot = analysis_source_snapshot([source])[0]
         previous = snapshots.get(snapshot['document_id'])
         if previous is not None and previous != snapshot:

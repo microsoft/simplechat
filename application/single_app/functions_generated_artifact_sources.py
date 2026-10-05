@@ -28,7 +28,10 @@ from functions_workflow_runtime_store import RuntimeUnavailable
 _HISTORY_SOURCE_ERRORS = (PermissionError, LookupError, ValueError, AzureError,
                           WorkflowResultStorageUnavailableError, RuntimeUnavailable, ScreeningError,
                           OutputConflictError, OutputStorageError)
-_UNAVAILABLE_HISTORY = "Saved workflow output is unavailable because current access could not be confirmed."
+_UNAVAILABLE_HISTORY = (
+    "Saved workflow output is unavailable because it or the workflow run it came from is missing, "
+    "has changed or can't be read right now."
+)
 _ORCHESTRATION_UNAVAILABLE_HISTORY = "Generated file is unavailable because current access or publication could not be confirmed."
 _RETAINED_SOURCE_KINDS = frozenset({"workflow_saved_output", ORCHESTRATION_ARTIFACT_KIND})
 _ORCHESTRATION_HISTORY_DENIAL_CODES = frozenset({
