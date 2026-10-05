@@ -19,6 +19,9 @@ This test ensures that a workflow blueprint proposed from chat:
   be counted, the check and both creates raise and write nothing.
 
 The real workflow modules run over the recorded, deterministic doubles of the save parity test.
+Building either harness, or calling through one, leaves every ``sys.modules`` entry bound as it was,
+including modules imported before the harness ran, so no later test imports a module bound to the
+doubles.
 """
 
 import copy
@@ -47,8 +50,11 @@ from test_group_workflow_round_trip_preservation import (  # noqa: E402
 from test_support.versioning import assert_app_version_at_least  # noqa: E402
 from test_workflow_draft_save_parity import (  # noqa: E402
     GROUP_ID,
+    LAZY_MODULES,
     OWNER_ID,
+    REAL_MODULES,
     SaveParityHarness,
+    _restored_modules,
     _task,
     _v2,
 )
@@ -156,7 +162,9 @@ class DraftHarness(SaveParityHarness):
             "workflow_min_schedule_interval_seconds": 300,
             "document_action_capabilities": {"analyze": {"enabled": True}},
         })
-        with _installed((*self.stubs, *DRAFT_MODULES, "functions_analysis_access")):
+        # The workflow modules are installed only while the draft modules load, then restored, so
+        # none of these doubles stays in ``sys.modules`` for a later test to import.
+        with _installed((*self.stubs, *REAL_MODULES, *DRAFT_MODULES, "functions_analysis_access")):
             sys.modules.update(self.stubs)
             sys.modules.update(self.modules)
             # The draft checks use the real reference authorizer, so its read-only resolver seam is
@@ -417,6 +425,125 @@ def test_the_default_document_resolver_reads_through_the_search_service_seam(har
     first["document"]["id"] = "changed"
     assert second["document"]["id"] == "doc-checklist", "The resolver must hand out copies."
     assert len(harness.called("resolve_document_context")) == 1, "The resolver must memoize per draft."
+
+
+_ABSENT = object()
+# A hand-off shaped like the hand-off builder test's agent review. Saving its agent-run loop task
+# imports ``functions_agent_delegation`` lazily, and the call stubs it as that test does.
+HANDOFF_GUARD = {
+    "name": "Agent review",
+    "loop": {"source": "documents", "documents": ["doc-a", "doc-b"]},
+    "tasks": [
+        {
+            "title": "Review one", "instructions": "Review this contract.",
+            "runner": {"type": "agent", "agent_ref": "reviewer"},
+        },
+        {"title": "Report", "instructions": "Write the report."},
+    ],
+}
+HANDOFF_GUARD_HANDLES = {
+    "documents": {
+        "doc-a": {"document_id": "doc-checklist", "scope_type": "personal", "scope_id": OWNER_ID},
+        "doc-b": {"document_id": "doc-team", "scope_type": "group", "scope_id": GROUP_ID},
+    },
+    "agents": {"reviewer": {"id": "agent-researcher", "name": "researcher", "is_global": False}},
+}
+
+
+def _tracked(harness):
+    """Every name a harness installs while it loads or calls: its doubles and the real modules."""
+    return {
+        *harness.stubs, *REAL_MODULES, *LAZY_MODULES, *DRAFT_MODULES,
+        "functions_analysis_access", "functions_workflow_bindings", "functions_workflow_chat_delivery",
+    }
+
+
+def _application_module(name, module, tracked):
+    if name in tracked:
+        return True
+    source = getattr(module, "__file__", None)
+    return bool(source) and Path(source).resolve().is_relative_to(APP_ROOT.resolve())
+
+
+def _module_changes(before, tracked=None):
+    """The names bound differently than in ``before``, whether added, removed or replaced.
+
+    With ``tracked``, only doubles and application modules count, because a call may import a library
+    such as ``tzdata`` for the first time, and no library imports a double.
+    """
+    changed = sorted(
+        name for name in set(before) | set(sys.modules)
+        if before.get(name, _ABSENT) is not sys.modules.get(name, _ABSENT)
+    )
+    if tracked is None:
+        return changed
+    return [
+        name for name in changed
+        if _application_module(name, before.get(name), tracked)
+        or _application_module(name, sys.modules.get(name), tracked)
+    ]
+
+
+def _dry_run_guard_handoff(harness):
+    """Dry-run the agent hand-off with a delegation double installed only for the call."""
+    with harness.active():
+        sys.modules["functions_agent_delegation"] = _module(
+            "functions_agent_delegation",
+            resolve_delegation_agent=lambda agent, user_id=None, settings=None: {"agent_type": "local", **agent},
+        )
+        return harness.drafts.dry_run_handoff_workflow(
+            OWNER_ID, copy.deepcopy(HANDOFF_GUARD), copy.deepcopy(HANDOFF_GUARD_HANDLES),
+            origin={**ORIGIN, "proposal_id": "handoff-guard"}, settings=harness.settings, user_info=USER_INFO,
+        )
+
+
+def _require_modules_restored(before, imported=None):
+    """Build both harnesses and call through one, then require every entry to be bound as before."""
+    SaveParityHarness()
+    built_save = _module_changes(before)
+    harness = DraftHarness()
+    built_draft = _module_changes(before)
+    results = [
+        harness.dry_run(EMAIL_DIGEST, EMAIL_HANDLES),
+        harness.create(EMAIL_DIGEST, EMAIL_HANDLES),
+        _dry_run_guard_handoff(harness),
+    ]
+    called = _module_changes(before, _tracked(harness))
+    replaced = sorted(name for name, module in (imported or {}).items() if sys.modules.get(name) is not module)
+
+    failed = [result["errors"] for result in results if not result["ok"]]
+    if failed:
+        raise AssertionError(f"A harness call failed: {failed!r}")
+    if built_save:
+        raise AssertionError(f"Building the save parity harness left these entries changed: {built_save}")
+    if built_draft:
+        raise AssertionError(f"Building the draft harness left these entries changed: {built_draft}")
+    if called:
+        raise AssertionError(f"Calling through the draft harness left these entries changed: {called}")
+    if replaced:
+        raise AssertionError(f"A harness rebound these modules, imported before it ran: {replaced}")
+
+
+def test_building_or_calling_a_harness_leaves_every_module_entry_as_it_was():
+    """No double, real module or module they import stays installed for a later test to import."""
+    with _restored_modules():
+        _require_modules_restored(dict(sys.modules))
+
+
+def test_a_harness_puts_back_the_modules_imported_before_it_ran():
+    """Modules imported before a harness ran, a real chat delivery module among them, stay bound."""
+    earlier = DraftHarness()
+    with _restored_modules():
+        sys.modules.update(earlier.stubs)
+        sys.modules.update(earlier.modules)
+        delivery = _load("functions_workflow_chat_delivery", APP_ROOT / "functions_workflow_chat_delivery.py")
+    imported = {
+        **earlier.stubs, **earlier.modules, **earlier.draft_modules,
+        "functions_workflow_chat_delivery": delivery,
+    }
+    with _restored_modules():
+        sys.modules.update(imported)
+        _require_modules_restored(dict(sys.modules), imported)
 
 
 def test_blueprint_invalid_covers_shape_bounds_and_non_json_input(harness):

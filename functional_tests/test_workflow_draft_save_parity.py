@@ -118,6 +118,24 @@ def _digest(text):
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
+@contextmanager
+def _restored_modules():
+    """Undo every ``sys.modules`` change made inside the block, including transitive imports.
+
+    A module first imported inside the block is removed and a replaced one is put back, so afterwards
+    each name is bound to the same module object as before the block.
+    """
+    before = dict(sys.modules)
+    try:
+        yield
+    finally:
+        for name in set(sys.modules) - set(before):
+            sys.modules.pop(name, None)
+        for name, module in before.items():
+            if sys.modules.get(name) is not module:
+                sys.modules[name] = module
+
+
 class SaveParityHarness:
     """The real personal and group workflow stores over recorded, deterministic I/O."""
 
@@ -162,7 +180,10 @@ class SaveParityHarness:
         self._clock = itertools.count()
         self._uuids = itertools.count(1)
         self.stubs = self._build_stubs()
-        with _installed((*self.stubs, *REAL_MODULES)):
+        # The real modules import others in turn, such as ``functions_workflow_chat_delivery``, which
+        # would bind to the doubles. Every change is undone once loading is complete, so no module
+        # stays installed for a later test to import.
+        with _restored_modules():
             sys.modules.update(self.stubs)
             self.modules = {name: _load(name, APP_ROOT / f"{name}.py") for name in REAL_MODULES}
         self.personal = self.modules["functions_personal_workflows"]
