@@ -1,7 +1,7 @@
 # test_workflow_alert_since_hours_policy.py
 """
 Functional policy tests for the workflow alert pop-up route's since_hours window.
-Version: 0.261.234
+Version: 0.261.235
 Implemented in: 0.261.199
 
 The real route body runs on a closed Flask app with the real since_hours parser, and with
@@ -169,7 +169,7 @@ def test_v2_request_passes_a_validated_window(alerts_api):
 
 def test_sounds_enabled_follows_the_admin_setting():
     """Clients silence workflow alert sounds when the administrator turns them off."""
-    assert_app_version_at_least("0.261.234")
+    assert_app_version_at_least("0.261.235")
     parser = load_notifications_module().parse_workflow_alert_since_hours
     client = route_client(
         lambda user_id, **kwargs: {"notifications": [], "complete": True},

@@ -1,4 +1,4 @@
-# Workflow Alert Acknowledgment, Sounds, Sizes and Team Delivery (v0.261.234)
+# Workflow Alert Acknowledgment, Sounds, Sizes and Team Delivery (v0.261.235)
 
 ## Overview
 
@@ -20,7 +20,7 @@ alert rule can now:
 - in a group workflow, alert **everyone in the group**, with one acknowledgment that clears
   the alert for all of them.
 
-Implemented in version: **0.261.234**, tracked in `application/single_app/config.py`.
+Implemented in version: **0.261.235**, tracked in `application/single_app/config.py`.
 Issue: [#1634](https://github.com/microsoft/simplechat/issues/1634).
 
 Dependencies:

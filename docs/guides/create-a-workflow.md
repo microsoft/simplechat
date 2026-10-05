@@ -261,7 +261,7 @@ in V2 can no longer be opened by the classic editor.
 
 ### Make an alert hard to miss
 
-From version **0.261.234**, each rule also has **Pop-up options**. Use them for
+From version **0.261.235**, each rule also has **Pop-up options**. Use them for
 alerts someone must see and act on, such as a failure that an operations team has to
 pick up:
 

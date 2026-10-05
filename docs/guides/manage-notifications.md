@@ -144,7 +144,7 @@ they are reading; a critical alert is announced straight away.
 
 ## Alerts that need acknowledgment
 
-Since **0.261.234**, a workflow's owner can make an alert rule require
+Since **0.261.235**, a workflow's owner can make an alert rule require
 acknowledgment, play a sound, take more of the screen, or reach everyone in a group
 workflow's group. These alerts are for things someone has to act on, such as a failure
 an operations team must pick up, so they stay in front of you until someone responds.

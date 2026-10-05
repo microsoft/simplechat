@@ -72,10 +72,10 @@ Alert settings live on the workflow document:
       "enabled": true,
       "severity": "info | low | medium | high | critical",
       "delivery": "default | notify_only | popup",
-      "require_acknowledgment": true,           // stored only when true (0.261.234)
-      "sound": "once | repeat",                 // stored only when not "off" (0.261.234)
-      "size": "medium | large",                 // stored only when not "small" (0.261.234)
-      "audience": "group",                      // group workflows only, stored only when not "owner" (0.261.234)
+      "require_acknowledgment": true,           // stored only when true (0.261.235)
+      "sound": "once | repeat",                 // stored only when not "off" (0.261.235)
+      "size": "medium | large",                 // stored only when not "small" (0.261.235)
+      "audience": "group",                      // group workflows only, stored only when not "owner" (0.261.235)
       "scope": { "type": "final | any_task | task", "task_id": "" },
       "condition": { "type": "...", /* type specific fields */ }
     }
@@ -149,7 +149,7 @@ One run produces at most one notification no matter how many rules match.
 
 ### Pop-up options and audience
 
-From **0.261.234** a rule can also ask for acknowledgment, a sound, a size and, in a group
+From **0.261.235** a rule can also ask for acknowledgment, a sound, a size and, in a group
 workflow, the whole group as its audience. See
 [Workflow Alert Acknowledgment, Sounds, Sizes and Team Delivery](WORKFLOW_ALERT_ACKNOWLEDGMENT.md).
 

@@ -2,8 +2,8 @@
 # test_workflow_alert_acknowledgment.py
 """
 Functional test for must-acknowledge workflow alerts, sound, size and team delivery.
-Version: 0.261.234
-Implemented in: 0.261.234
+Version: 0.261.235
+Implemented in: 0.261.235
 
 This test ensures that alert rules accept and validate the new pop-up options with reviewed
 messages; that a run's decision takes the strongest option any matched rule asked for and
@@ -79,7 +79,7 @@ def refusal(rules, scope=None):
 
 
 def test_default_options_are_not_stored_so_existing_rules_keep_their_shape():
-    assert_app_version_at_least("0.261.234")
+    assert_app_version_at_least("0.261.235")
     stored = save([rule(require_acknowledgment=False, sound="off", size="small", audience="owner")], scope="group")
 
     assert set(stored["alert_rules"][0]) == {

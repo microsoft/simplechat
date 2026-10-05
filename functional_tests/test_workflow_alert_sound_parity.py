@@ -2,8 +2,8 @@
 # test_workflow_alert_sound_parity.py
 """
 Functional test for the workflow alert sound contract shared by classic and V2.
-Version: 0.261.234
-Implemented in: 0.261.234
+Version: 0.261.235
+Implemented in: 0.261.235
 
 Classic pages and the V2 frame take turns sounding through one Web Lock, share the per-device
 "Play alert sounds" switch and the browser-wide "sounded once" record, and announce

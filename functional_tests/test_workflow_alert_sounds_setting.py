@@ -2,8 +2,8 @@
 # test_workflow_alert_sounds_setting.py
 """
 Functional test for the workflow alert sounds admin setting.
-Version: 0.261.234
-Implemented in: 0.261.234
+Version: 0.261.235
+Implemented in: 0.261.235
 
 This test ensures that the app-wide workflow alert sound gate defaults on,
 appears in both admin setting surfaces, reaches the V2 bootstrap contract, and

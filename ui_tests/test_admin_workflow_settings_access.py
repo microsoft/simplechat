@@ -8,7 +8,7 @@ Updated in: 0.241.179
 Updated in: 0.241.193
 Updated in: 0.241.194
 Updated in: 0.250.129
-Updated in: 0.261.234
+Updated in: 0.261.235
 
 This test ensures admins can see the dedicated Workspace settings sections with
 consistent app-role labels for workflow, group workflow assignment, group creation,

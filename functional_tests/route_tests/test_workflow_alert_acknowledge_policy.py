@@ -1,8 +1,8 @@
 # test_workflow_alert_acknowledge_policy.py
 """
 Functional policy tests for the workflow alert acknowledgment route.
-Version: 0.261.234
-Implemented in: 0.261.234
+Version: 0.261.235
+Implemented in: 0.261.235
 
 POST /api/notifications/<notification_id>/acknowledge clears a must-acknowledge workflow alert
 for everyone who receives it. The real route body runs on a closed Flask app with a recording
@@ -91,7 +91,7 @@ def acknowledged(notification_id="alert-1", already=False):
 
 
 def test_route_keeps_its_blueprint_swagger_and_auth_policy():
-    assert_app_version_at_least("0.261.234")
+    assert_app_version_at_least("0.261.235")
     decorators = [ast.unparse(value) for value in route_function().decorator_list]
 
     assert decorators == [

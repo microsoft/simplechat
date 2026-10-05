@@ -1,8 +1,8 @@
 # test_workflow_alert_classic_acknowledgment.py
 """
 UI test for classic workflow alert acknowledgment.
-Version: 0.261.234
-Implemented in: 0.261.234
+Version: 0.261.235
+Implemented in: 0.261.235
 
 This test runs the real classic workflow alert JavaScript against a minimal
 offline page and validates must-acknowledge modal, banner, sizing, sound, and

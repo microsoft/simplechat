@@ -32,7 +32,7 @@ lives on the alerts it creates, so **Open workflow** can find it.
 
 ## When a notice appears
 
-From **0.261.234**, an alert whose rule requires acknowledgment is an exception to
+From **0.261.235**, an alert whose rule requires acknowledgment is an exception to
 several rules below. It skips the one-tab claim and the 24-hour window, pops up again
 after every reload until someone acknowledges it, and is never tucked into the bell.
 It can also sound, and open as a larger dialog or a full-screen takeover. See

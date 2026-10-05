@@ -1,8 +1,8 @@
 # test_workflow_alert_sound_assets.py
 """
 Functional test for workflow alert sound assets.
-Version: 0.261.234
-Implemented in: 0.261.234
+Version: 0.261.235
+Implemented in: 0.261.235
 
 This test ensures local workflow alert WAV assets are valid, distinct, and
 byte-identical when regenerated.
