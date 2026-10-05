@@ -5,8 +5,8 @@ When the request asks for a chart, a separate chart sub-step runs after gatherin
 kernel holds only the built-in chart tools, never the action's own functions, so saved
 visual preferences can be applied there without reaching calls to the integration.
 
-Version: 0.261.236
-Microsoft 365 actions authorized for their own step in: 0.261.236
+Version: 0.261.237
+Microsoft 365 actions authorized for their own step in: 0.261.237
 """
 
 import asyncio

@@ -12,8 +12,8 @@ application-owned step failures, instead of findings the model reports as data.
 Agent steps need no scope: a plan runs only Foundry agents, whose tools run in Foundry,
 and refuses local agents, the only agents that load Microsoft 365 actions.
 
-Version: 0.261.236
-Implemented in: 0.261.236
+Version: 0.261.237
+Implemented in: 0.261.237
 """
 
 import hashlib

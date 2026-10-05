@@ -1,8 +1,8 @@
 # test_app_settings_store_plain_dict_reads.py
 """
 Regression tests for the type of the settings that orchestration access checks receive.
-Version: 0.261.235
-Implemented in: 0.261.235
+Version: 0.261.236
+Implemented in: 0.261.236
 
 azure-cosmos returns the settings document as ``CosmosDict``, a ``dict`` subclass, and
 ``copy.deepcopy`` keeps that subclass. Orchestration's retained-result access checks
