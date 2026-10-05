@@ -43,6 +43,16 @@ WORKFLOW_ALERT_DELIVERIES = {'default', 'notify_only', 'popup'}
 WORKFLOW_ALERT_RESOLVED_DELIVERIES = {'notify_only', 'popup'}
 WORKFLOW_ALERT_LEGACY_PRIORITIES = {'none', 'low', 'medium', 'high'}
 
+# Pop-up options a rule can ask for, each ordered from the default to the strongest. When
+# several rules match one run, every option takes the strongest value any of them asked for.
+WORKFLOW_ALERT_SOUND_ORDER = ('off', 'once', 'repeat')
+WORKFLOW_ALERT_SIZE_ORDER = ('small', 'medium', 'large')
+WORKFLOW_ALERT_AUDIENCE_ORDER = ('owner', 'group')
+WORKFLOW_ALERT_DEFAULT_SOUND = WORKFLOW_ALERT_SOUND_ORDER[0]
+WORKFLOW_ALERT_DEFAULT_SIZE = WORKFLOW_ALERT_SIZE_ORDER[0]
+WORKFLOW_ALERT_DEFAULT_AUDIENCE = WORKFLOW_ALERT_AUDIENCE_ORDER[0]
+WORKFLOW_ALERT_WORKFLOW_SCOPES = {'personal', 'group'}
+
 # Quiet severities land in the notification bell; louder ones interrupt with the modal.
 WORKFLOW_ALERT_SEVERITY_DELIVERY = {
     'info': 'notify_only',
@@ -125,6 +135,42 @@ def resolve_alert_delivery(severity, delivery):
     if normalized in WORKFLOW_ALERT_RESOLVED_DELIVERIES:
         return normalized
     return get_default_alert_delivery(severity)
+
+
+def normalize_alert_flag(value):
+    """Read a stored or posted on/off value the way ``enabled`` has always been read."""
+    if isinstance(value, str):
+        return value.strip().lower() in {'1', 'true', 'yes', 'on'}
+    return bool(value)
+
+
+def resolve_alert_option(value, order):
+    """Return a supported option from ``order``, or its default (the first) when unsupported.
+
+    Used when reading rules and alerts that were already saved, so a damaged value falls back
+    quietly; the save path rejects it instead.
+    """
+    normalized = str(value or '').strip().lower()
+    return normalized if normalized in order else order[0]
+
+
+def strongest_alert_option(values, order):
+    """Return the strongest supported value in ``values`` by its position in ``order``."""
+    strongest = 0
+    for value in values:
+        normalized = str(value or '').strip().lower()
+        if normalized in order:
+            strongest = max(strongest, order.index(normalized))
+    return order[strongest]
+
+
+def alert_options_need_popup(require_acknowledgment, sound, size):
+    """Return True when an alert's options only make sense as a pop-up."""
+    return (
+        bool(require_acknowledgment)
+        or sound != WORKFLOW_ALERT_DEFAULT_SOUND
+        or size != WORKFLOW_ALERT_DEFAULT_SIZE
+    )
 
 
 def _truncate(text, limit):
@@ -378,8 +424,20 @@ def describe_alert_condition(condition):
     return label
 
 
-def normalize_alert_rule(raw_rule, task_ids=None, index=0):
-    """Normalize and validate a single alert rule."""
+def _normalize_rule_option(raw_rule, key, order, position, label):
+    """Read one pop-up option on the save path, rejecting unsupported values by position."""
+    value = str(raw_rule.get(key) or order[0]).strip().lower() or order[0]
+    if value not in order:
+        raise WorkflowAlertValidationError(f'Alert rule {position} {label} must be {_or_list(order)}.')
+    return value
+
+
+def normalize_alert_rule(raw_rule, task_ids=None, index=0, workflow_scope=None):
+    """Normalize and validate a single alert rule.
+
+    ``workflow_scope`` is ``'personal'`` or ``'group'`` when the caller knows where the workflow
+    lives; ``None`` skips the check that only group workflows can alert the whole group.
+    """
     position = index + 1
     if not isinstance(raw_rule, dict):
         raise WorkflowAlertValidationError(f'Alert rule {position} is invalid.')
@@ -411,19 +469,56 @@ def normalize_alert_rule(raw_rule, task_ids=None, index=0):
     if isinstance(enabled, str):
         enabled = enabled.strip().lower() in {'1', 'true', 'yes', 'on'}
 
-    return {
+    require_acknowledgment = normalize_alert_flag(raw_rule.get('require_acknowledgment', False))
+    sound = _normalize_rule_option(raw_rule, 'sound', WORKFLOW_ALERT_SOUND_ORDER, position, 'sound')
+    size = _normalize_rule_option(raw_rule, 'size', WORKFLOW_ALERT_SIZE_ORDER, position, 'size')
+    audience = _normalize_rule_option(raw_rule, 'audience', WORKFLOW_ALERT_AUDIENCE_ORDER, position, 'audience')
+    if (
+        audience == 'group'
+        and workflow_scope in WORKFLOW_ALERT_WORKFLOW_SCOPES
+        and workflow_scope != 'group'
+    ):
+        raise WorkflowAlertValidationError(
+            f'Alert rule {position} can alert the whole group only in a group workflow.'
+        )
+    if (
+        resolve_alert_delivery(severity, delivery) == 'notify_only'
+        and alert_options_need_popup(require_acknowledgment, sound, size)
+    ):
+        raise WorkflowAlertValidationError(
+            f'Alert rule {position} must pop up to require acknowledgment, play a sound or change its size.'
+        )
+    if sound == 'repeat' and not require_acknowledgment:
+        raise WorkflowAlertValidationError(
+            f'Alert rule {position} can repeat its sound only when it requires acknowledgment.'
+        )
+
+    normalized_rule = {
         'id': str(raw_rule.get('id') or '').strip() or str(uuid.uuid4()),
         'name': name,
         'enabled': bool(enabled),
         'severity': severity,
         'delivery': delivery,
+    }
+    # Pop-up options are stored only when they differ from the default, so rules saved before
+    # they existed keep exactly the shape they had.
+    if require_acknowledgment:
+        normalized_rule['require_acknowledgment'] = True
+    if sound != WORKFLOW_ALERT_DEFAULT_SOUND:
+        normalized_rule['sound'] = sound
+    if size != WORKFLOW_ALERT_DEFAULT_SIZE:
+        normalized_rule['size'] = size
+    if audience != WORKFLOW_ALERT_DEFAULT_AUDIENCE:
+        normalized_rule['audience'] = audience
+    normalized_rule.update({
         'scope': scope,
         'condition': condition,
         'order': index + 1,
-    }
+    })
+    return normalized_rule
 
 
-def normalize_alert_rules(raw_rules, task_ids=None):
+def normalize_alert_rules(raw_rules, task_ids=None, workflow_scope=None):
     """Normalize a list of alert rules, enforcing the rule limit and unique ids."""
     if raw_rules is None:
         return []
@@ -435,7 +530,12 @@ def normalize_alert_rules(raw_rules, task_ids=None):
     normalized_rules = []
     seen_rule_ids = set()
     for index, raw_rule in enumerate(raw_rules):
-        normalized_rule = normalize_alert_rule(raw_rule, task_ids=task_ids, index=index)
+        normalized_rule = normalize_alert_rule(
+            raw_rule,
+            task_ids=task_ids,
+            index=index,
+            workflow_scope=workflow_scope,
+        )
         if normalized_rule['id'] in seen_rule_ids:
             normalized_rule['id'] = str(uuid.uuid4())
         seen_rule_ids.add(normalized_rule['id'])
@@ -525,22 +625,31 @@ def resolve_workflow_alert_config(workflow):
     }
 
 
-def normalize_workflow_alert_settings(workflow_data, existing_workflow=None, task_ids=None):
+def normalize_workflow_alert_settings(workflow_data, existing_workflow=None, task_ids=None, workflow_scope=None):
     """Normalize the alert fields for a workflow save request.
 
     Returns a dict with ``alert_mode``, ``alert_priority``, ``alert_rules`` and
-    ``alert_evaluation`` ready to persist on the workflow document.
+    ``alert_evaluation`` ready to persist on the workflow document. ``workflow_scope``
+    (``'personal'`` or ``'group'``) lets the rules sent with the request be checked against
+    where the workflow lives; stored rules that were not sent are carried over unchecked,
+    as their task references already are.
     """
     workflow_data = workflow_data if isinstance(workflow_data, dict) else {}
     existing_workflow = existing_workflow if isinstance(existing_workflow, dict) else {}
     existing_config = resolve_workflow_alert_config(existing_workflow)
+    if workflow_scope not in WORKFLOW_ALERT_WORKFLOW_SCOPES:
+        workflow_scope = None
 
     alert_priority = _normalize_legacy_alert_priority(
         workflow_data.get('alert_priority', existing_config.get('alert_priority', 'none'))
     )
 
     if 'alert_rules' in workflow_data:
-        alert_rules = normalize_alert_rules(workflow_data.get('alert_rules'), task_ids=task_ids)
+        alert_rules = normalize_alert_rules(
+            workflow_data.get('alert_rules'),
+            task_ids=task_ids,
+            workflow_scope=workflow_scope,
+        )
     else:
         alert_rules = normalize_alert_rules(existing_config.get('alert_rules'), task_ids=None)
 
@@ -935,6 +1044,10 @@ def _build_match(rule, evaluation, source='rule'):
         'rule_name': rule.get('name'),
         'severity': severity,
         'delivery': rule.get('delivery') or 'default',
+        'require_acknowledgment': normalize_alert_flag(rule.get('require_acknowledgment', False)),
+        'sound': resolve_alert_option(rule.get('sound'), WORKFLOW_ALERT_SOUND_ORDER),
+        'size': resolve_alert_option(rule.get('size'), WORKFLOW_ALERT_SIZE_ORDER),
+        'audience': resolve_alert_option(rule.get('audience'), WORKFLOW_ALERT_AUDIENCE_ORDER),
         'condition_type': str(condition.get('type') or '').strip().lower(),
         'reason': _normalize_reason(evaluation.get('reason')),
         'category': evaluation.get('category') or 'alert',
@@ -956,6 +1069,10 @@ def _build_decision(should_alert, mode, matches=None, model_evaluation=None, eva
             'severity': '',
             'category': 'alert',
             'delivery': '',
+            'require_acknowledgment': False,
+            'sound': WORKFLOW_ALERT_DEFAULT_SOUND,
+            'size': WORKFLOW_ALERT_DEFAULT_SIZE,
+            'audience': WORKFLOW_ALERT_DEFAULT_AUDIENCE,
             'mode': mode,
             'matched_rules': matches,
             'reasons': [match.get('reason') for match in matches if match.get('reason')],
@@ -967,11 +1084,25 @@ def _build_decision(should_alert, mode, matches=None, model_evaluation=None, eva
     winning_match = matches[0]
     severity = normalize_alert_severity(winning_match.get('severity'))
 
+    # Severity and category follow the winning rule, but a pop-up option any matched rule asked
+    # for is never quietened by a louder rule that did not ask for it.
+    require_acknowledgment = any(normalize_alert_flag(match.get('require_acknowledgment')) for match in matches)
+    sound = strongest_alert_option((match.get('sound') for match in matches), WORKFLOW_ALERT_SOUND_ORDER)
+    size = strongest_alert_option((match.get('size') for match in matches), WORKFLOW_ALERT_SIZE_ORDER)
+    audience = strongest_alert_option((match.get('audience') for match in matches), WORKFLOW_ALERT_AUDIENCE_ORDER)
+    delivery = resolve_alert_delivery(severity, winning_match.get('delivery'))
+    if alert_options_need_popup(require_acknowledgment, sound, size):
+        delivery = 'popup'
+
     return {
         'should_alert': True,
         'severity': severity,
         'category': winning_match.get('category') or 'alert',
-        'delivery': resolve_alert_delivery(severity, winning_match.get('delivery')),
+        'delivery': delivery,
+        'require_acknowledgment': require_acknowledgment,
+        'sound': sound,
+        'size': size,
+        'audience': audience,
         'mode': mode,
         'winning_rule_id': winning_match.get('rule_id'),
         'winning_rule_name': winning_match.get('rule_name'),
@@ -980,6 +1111,24 @@ def _build_decision(should_alert, mode, matches=None, model_evaluation=None, eva
         'evaluated_rule_count': evaluated_rule_count,
         'model_evaluation': model_evaluation,
     }
+
+
+def _rule_strengthens_alert_options(rule, matches):
+    """Return True when ``rule`` asks for a pop-up option stronger than ``matches`` already give."""
+    if (
+        normalize_alert_flag(rule.get('require_acknowledgment', False))
+        and not any(normalize_alert_flag(match.get('require_acknowledgment')) for match in matches)
+    ):
+        return True
+    for key, order in (
+        ('sound', WORKFLOW_ALERT_SOUND_ORDER),
+        ('size', WORKFLOW_ALERT_SIZE_ORDER),
+        ('audience', WORKFLOW_ALERT_AUDIENCE_ORDER),
+    ):
+        current = strongest_alert_option((match.get(key) for match in matches), order)
+        if order.index(resolve_alert_option(rule.get(key), order)) > order.index(current):
+            return True
+    return False
 
 
 def evaluate_workflow_alert_rules(workflow, facts, model_evaluator=None):
@@ -1049,11 +1198,14 @@ def evaluate_workflow_alert_rules(workflow, facts, model_evaluator=None):
         (get_alert_severity_rank(match.get('severity')) for match in matches),
         default=-1,
     )
-    # A model call cannot change the outcome when a deterministic rule already
-    # matched at or above the severity of every remaining model-evaluated rule.
+    # A model call cannot change the outcome when a deterministic rule already matched at or
+    # above a model-evaluated rule's severity and the matches already carry every pop-up
+    # option that rule asks for. Options merge across every matched rule, so a lower-severity
+    # rule asking for acknowledgment, a louder sound, a larger size or the group still counts.
     pending_model_rules = [
         rule for rule in model_rules
         if get_alert_severity_rank(rule.get('severity')) > best_rank
+        or _rule_strengthens_alert_options(rule, matches)
     ]
 
     model_evaluation_state = {

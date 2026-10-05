@@ -28,6 +28,7 @@
     let activeWorkflowAlert = null;
     let activeWorkflowAlertTargets = [];
     let isLoadingWorkflowAlerts = false;
+    let hasLoadedWorkflowAlerts = false;
     let isLoadingChatCompletionEvents = false;
     const shownWorkflowAlertsStorageKey = 'simplechat-shown-workflow-alerts';
     const workflowAlertModalEl = document.getElementById('workflowAlertModal');
@@ -48,6 +49,21 @@
     const workflowAlertLinks = document.getElementById('workflow-alert-links');
     const workflowAlertMarkReadBtn = document.getElementById('workflow-alert-mark-read-btn');
     const workflowAlertDismissBtn = document.getElementById('workflow-alert-dismiss-btn');
+    const workflowAlertAcknowledgeBtn = document.getElementById('workflow-alert-acknowledge-btn');
+    const workflowAlertModalDialog = workflowAlertModalEl?.querySelector('.workflow-alert-modal-dialog') || null;
+    const workflowAlertAckBanner = document.getElementById('workflowAlertAckBanner');
+    const workflowAlertAckBannerCount = document.getElementById('workflow-alert-ack-banner-count');
+    const workflowAlertAckBannerReviewBtn = document.getElementById('workflow-alert-ack-banner-review-btn');
+    const workflowAlertEnableSoundBtn = document.getElementById('workflow-alert-enable-sound-btn');
+    const workflowAlertModalEnableSoundBtn = document.getElementById('workflow-alert-modal-enable-sound-btn');
+    const pendingMustAcknowledgeAlerts = new Map();
+    // Alerts that need acknowledgment and were already shown on this page. Closing one keeps it in
+    // the banner rather than popping it up on every poll; a reload shows it again.
+    const shownMustAcknowledgeIds = new Set();
+    let suppressAckBannerOnce = false;
+    const workflowAlertBroadcastChannel = typeof BroadcastChannel !== 'undefined'
+        ? new BroadcastChannel('simplechat.workflowAlerts')
+        : null;
     
     /**
      * Get randomized poll interval
@@ -216,6 +232,112 @@
         const metadata = notification?.metadata || {};
         const delivery = String(metadata.delivery || notification?.delivery || '').trim().toLowerCase();
         return delivery === 'notify_only' ? 'notify_only' : 'popup';
+    }
+
+    function isMustAcknowledgeWorkflowAlert(notification) {
+        const metadata = notification?.metadata || {};
+        return (
+            (notification?.require_acknowledgment === true || metadata.require_acknowledgment === true)
+            && notification?.acknowledged !== true
+        );
+    }
+
+    function getWorkflowAlertSoundMode(notification) {
+        const metadata = notification?.metadata || {};
+        const sound = String(notification?.sound || metadata.sound || 'off').trim().toLowerCase();
+        return ['once', 'repeat'].includes(sound) ? sound : 'off';
+    }
+
+    function getWorkflowAlertSize(notification) {
+        const metadata = notification?.metadata || {};
+        const size = String(notification?.size || metadata.size || 'small').trim().toLowerCase();
+        return ['small', 'medium', 'large'].includes(size) ? size : 'small';
+    }
+
+    function getWorkflowAlertAudience(notification) {
+        const metadata = notification?.metadata || {};
+        const audience = String(notification?.audience || metadata.audience || 'owner').trim().toLowerCase();
+        return audience === 'group' ? 'group' : 'owner';
+    }
+
+    function formatAcknowledgedText(notification) {
+        const acknowledgedByName = normalizeWorkflowAlertText(notification?.acknowledged_by_name || '');
+        const acknowledgedAt = notification?.acknowledged_at
+            ? formatRelativeTime(notification.acknowledged_at)
+            : '';
+        if (acknowledgedByName && acknowledgedAt) {
+            return `Acknowledged by ${acknowledgedByName} ${acknowledgedAt}`;
+        }
+        if (acknowledgedByName) {
+            return `Acknowledged by ${acknowledgedByName}`;
+        }
+        if (acknowledgedAt) {
+            return `Acknowledged ${acknowledgedAt}`;
+        }
+        return 'Acknowledged';
+    }
+
+    function getWorkflowAlertSoundManager() {
+        return window.simpleChatWorkflowAlertSound || null;
+    }
+
+    function updateWorkflowAlertSoundGate(soundsEnabled) {
+        const soundManager = getWorkflowAlertSoundManager();
+        if (soundManager?.setAdminEnabled) {
+            soundManager.setAdminEnabled(soundsEnabled === true);
+        }
+    }
+
+    function updateWorkflowAlertAckBanner() {
+        const soundBlocked = getWorkflowAlertSoundManager()?.blocked === true;
+        if (workflowAlertModalEnableSoundBtn) {
+            workflowAlertModalEnableSoundBtn.classList.toggle('d-none', !soundBlocked);
+        }
+        if (!workflowAlertAckBanner || !workflowAlertAckBannerCount) {
+            return;
+        }
+
+        const count = pendingMustAcknowledgeAlerts.size;
+        if (count <= 0) {
+            workflowAlertAckBanner.classList.add('d-none');
+            return;
+        }
+
+        workflowAlertAckBannerCount.textContent = `${count} workflow alert${count === 1 ? '' : 's'} need acknowledgment`;
+        workflowAlertAckBanner.classList.toggle('d-none', Boolean(activeWorkflowAlert));
+        if (workflowAlertEnableSoundBtn) {
+            workflowAlertEnableSoundBtn.classList.toggle('d-none', !soundBlocked);
+        }
+    }
+
+    function showWorkflowAlertAckBanner() {
+        updateWorkflowAlertAckBanner();
+    }
+
+    function broadcastWorkflowAlertAcknowledgment(notificationId) {
+        if (!notificationId) {
+            return;
+        }
+
+        workflowAlertBroadcastChannel?.postMessage({
+            type: 'acknowledged',
+            ids: [notificationId],
+        });
+    }
+
+    function playWorkflowAlertSound(notification, options = {}) {
+        const soundManager = getWorkflowAlertSoundManager();
+        if (!soundManager?.play) {
+            return;
+        }
+
+        soundManager.play(notification, {
+            mode: options.mode || getWorkflowAlertSoundMode(notification),
+        });
+    }
+
+    function stopWorkflowAlertSound(notificationId) {
+        getWorkflowAlertSoundManager()?.stop?.(notificationId);
     }
 
     function formatWorkflowTriggeredTime(isoString) {
@@ -455,7 +577,25 @@
         if (metadata.runner_type) {
             metaParts.push(`Runner: ${String(metadata.runner_type).trim()}`);
         }
+        if (getWorkflowAlertAudience(notification) === 'group') {
+            metaParts.push('Sent to everyone in the group');
+        }
         metaParts.push(formatRelativeTime(notification.created_at));
+
+        if (workflowAlertModalDialog) {
+            workflowAlertModalDialog.classList.remove(
+                'modal-lg',
+                'modal-fullscreen',
+                'workflow-alert-size-medium',
+                'workflow-alert-size-large'
+            );
+            const size = getWorkflowAlertSize(notification);
+            if (size === 'medium') {
+                workflowAlertModalDialog.classList.add('modal-lg', 'workflow-alert-size-medium');
+            } else if (size === 'large') {
+                workflowAlertModalDialog.classList.add('modal-fullscreen', 'workflow-alert-size-large');
+            }
+        }
 
         if (workflowAlertModalContent) {
             workflowAlertModalContent.dataset.priority = priority || 'medium';
@@ -522,10 +662,85 @@
                 `).join('');
             }
         }
+
+        const mustAcknowledge = isMustAcknowledgeWorkflowAlert(notification);
+        if (workflowAlertDismissBtn) {
+            workflowAlertDismissBtn.classList.toggle('d-none', mustAcknowledge);
+        }
+        if (workflowAlertMarkReadBtn) {
+            workflowAlertMarkReadBtn.classList.toggle('d-none', mustAcknowledge);
+        }
+        if (workflowAlertAcknowledgeBtn) {
+            workflowAlertAcknowledgeBtn.classList.toggle('d-none', !mustAcknowledge);
+        }
+    }
+
+    function retireWorkflowAlerts(notificationIds) {
+        const ids = new Set((notificationIds || []).map(id => String(id || '').trim()).filter(Boolean));
+        if (!ids.size) {
+            return;
+        }
+
+        let shouldHideActiveModal = false;
+        ids.forEach(notificationId => {
+            pendingMustAcknowledgeAlerts.delete(notificationId);
+            shownMustAcknowledgeIds.delete(notificationId);
+            stopWorkflowAlertSound(notificationId);
+            if (activeWorkflowAlert?.id === notificationId) {
+                shouldHideActiveModal = true;
+            }
+        });
+
+        workflowAlertQueue = workflowAlertQueue.filter(notification => !ids.has(notification.id));
+        if (shouldHideActiveModal && workflowAlertModal) {
+            suppressAckBannerOnce = true;
+            workflowAlertModal.hide();
+        }
+        updateWorkflowAlertAckBanner();
+    }
+
+    function retireMissingMustAcknowledgeAlerts(notifications) {
+        const returnedIds = new Set((notifications || []).map(notification => notification?.id).filter(Boolean));
+        const trackedIds = new Set([
+            ...pendingMustAcknowledgeAlerts.keys(),
+            ...workflowAlertQueue
+                .filter(notification => isMustAcknowledgeWorkflowAlert(notification))
+                .map(notification => notification.id),
+        ]);
+        if (activeWorkflowAlert && isMustAcknowledgeWorkflowAlert(activeWorkflowAlert)) {
+            trackedIds.add(activeWorkflowAlert.id);
+        }
+
+        const missingIds = Array.from(trackedIds).filter(notificationId => !returnedIds.has(notificationId));
+        retireWorkflowAlerts(missingIds);
+    }
+
+    function rememberPendingMustAcknowledgeAlert(notification) {
+        if (!isMustAcknowledgeWorkflowAlert(notification) || !notification?.id) {
+            return;
+        }
+
+        // Every poll returns a pending alert again; its sound starts only when this page first sees it.
+        const isNewlyTracked = !pendingMustAcknowledgeAlerts.has(notification.id);
+        pendingMustAcknowledgeAlerts.set(notification.id, notification);
+        if (isNewlyTracked && getWorkflowAlertSoundMode(notification) !== 'off') {
+            playWorkflowAlertSound(notification, {
+                mode: getWorkflowAlertSoundMode(notification),
+            });
+        }
+    }
+
+    function hasTrackedMustAcknowledgeAlerts() {
+        return (
+            pendingMustAcknowledgeAlerts.size > 0
+            || Boolean(activeWorkflowAlert && isMustAcknowledgeWorkflowAlert(activeWorkflowAlert))
+            || workflowAlertQueue.some(notification => isMustAcknowledgeWorkflowAlert(notification))
+        );
     }
 
     function enqueueWorkflowAlerts(notifications) {
         if (!Array.isArray(notifications) || !notifications.length) {
+            updateWorkflowAlertAckBanner();
             return;
         }
 
@@ -534,7 +749,16 @@
             if (!notification?.id) {
                 return;
             }
-            if (queuedIds.has(notification.id) || activeWorkflowAlert?.id === notification.id || hasShownWorkflowAlert(notification.id)) {
+            const mustAcknowledge = isMustAcknowledgeWorkflowAlert(notification);
+            if (mustAcknowledge) {
+                rememberPendingMustAcknowledgeAlert(notification);
+            }
+            if (
+                queuedIds.has(notification.id)
+                || activeWorkflowAlert?.id === notification.id
+                || (!mustAcknowledge && hasShownWorkflowAlert(notification.id))
+                || (mustAcknowledge && shownMustAcknowledgeIds.has(notification.id))
+            ) {
                 return;
             }
             // Quiet severities stay in the notification bell instead of interrupting.
@@ -547,6 +771,7 @@
         });
 
         showNextWorkflowAlert();
+        updateWorkflowAlertAckBanner();
     }
 
     function showNextWorkflowAlert() {
@@ -556,8 +781,16 @@
 
         activeWorkflowAlert = workflowAlertQueue.shift();
         activeWorkflowAlertTargets = [];
-        rememberShownWorkflowAlert(activeWorkflowAlert.id);
+        if (isMustAcknowledgeWorkflowAlert(activeWorkflowAlert)) {
+            shownMustAcknowledgeIds.add(activeWorkflowAlert.id);
+        } else {
+            rememberShownWorkflowAlert(activeWorkflowAlert.id);
+            if (getWorkflowAlertSoundMode(activeWorkflowAlert) === 'once') {
+                playWorkflowAlertSound(activeWorkflowAlert, { mode: 'once' });
+            }
+        }
         populateWorkflowAlertModal(activeWorkflowAlert);
+        updateWorkflowAlertAckBanner();
         workflowAlertModal.show();
     }
 
@@ -577,6 +810,13 @@
             .then(data => {
                 if (data.success) {
                     consecutivePollFailures = 0;
+                    hasLoadedWorkflowAlerts = true;
+                    updateWorkflowAlertSoundGate(data.sounds_enabled === true);
+                    // A capped answer can leave out an alert that still needs acknowledgment,
+                    // so only a complete one may retire what this page is tracking.
+                    if (data.complete === true) {
+                        retireMissingMustAcknowledgeAlerts(data.notifications || []);
+                    }
                     enqueueWorkflowAlerts(data.notifications || []);
                 }
             })
@@ -646,7 +886,9 @@
                         data.chat_completion_audio_updated_at
                     );
                     const followUpRequests = [loadChatCompletionEvents()];
-                    if (data.count > 0) {
+                    // Alerts that need acknowledgment can be read and still pending, so they are
+                    // read once per page load and while this page tracks one, not only on a count.
+                    if (data.count > 0 || !hasLoadedWorkflowAlerts || hasTrackedMustAcknowledgeAlerts()) {
                         followUpRequests.push(loadWorkflowAlerts());
                     }
                     return Promise.all(followUpRequests);
@@ -781,6 +1023,13 @@
     function renderNotification(notification) {
         const isUnread = !notification.is_read;
         const typeConfig = notification.type_config || { icon: 'bi-bell', color: 'secondary' };
+        const mustAcknowledge = isMustAcknowledgeWorkflowAlert(notification);
+        const acknowledged = notification.acknowledged === true;
+        const acknowledgmentHtml = mustAcknowledge
+            ? '<span class="badge text-bg-warning ms-2">Needs acknowledgment</span>'
+            : acknowledged
+                ? `<div class="small text-success mt-1">${escapeHtml(formatAcknowledgedText(notification))}</div>`
+                : '';
         
         return `
             <div class="card mb-2 notification-item ${isUnread ? 'unread' : ''}" data-notification-id="${notification.id}">
@@ -790,13 +1039,18 @@
                             <i class="bi ${typeConfig.icon}"></i>
                         </div>
                         <div class="flex-grow-1">
-                            <div class="notification-title">${escapeHtml(notification.title)}</div>
+                            <div class="notification-title">${escapeHtml(notification.title)}${acknowledgmentHtml}</div>
                             <div class="notification-message">${escapeHtml(notification.message)}</div>
                             <div class="notification-time">
                                 <i class="bi bi-clock me-1"></i>${formatRelativeTime(notification.created_at)}
                             </div>
                         </div>
                         <div class="notification-actions ms-3">
+                            ${mustAcknowledge ? `
+                                <button class="btn btn-sm btn-primary acknowledge-btn me-1" data-notification-id="${notification.id}">
+                                    Acknowledge
+                                </button>
+                            ` : ''}
                             ${!isUnread ? '' : `
                                 <button class="btn btn-sm btn-outline-primary mark-read-btn me-1" data-notification-id="${notification.id}">
                                     <i class="bi bi-check"></i>
@@ -967,7 +1221,7 @@
         document.querySelectorAll('.notification-item').forEach(item => {
             item.addEventListener('click', function(e) {
                 // Don't navigate if clicking action buttons
-                if (e.target.closest('.mark-read-btn') || e.target.closest('.dismiss-btn')) {
+                if (e.target.closest('.mark-read-btn') || e.target.closest('.dismiss-btn') || e.target.closest('.acknowledge-btn')) {
                     return;
                 }
                 
@@ -995,6 +1249,14 @@
                 e.stopPropagation();
                 const notificationId = this.dataset.notificationId;
                 dismissNotification(notificationId);
+            });
+        });
+
+        document.querySelectorAll('.acknowledge-btn').forEach(btn => {
+            btn.addEventListener('click', function(e) {
+                e.stopPropagation();
+                const notificationId = this.dataset.notificationId;
+                acknowledgeWorkflowAlert(notificationId, { broadcast: true });
             });
         });
     }
@@ -1090,8 +1352,12 @@
             showNotificationNavigationError(error);
             return;
         }
-        // Mark as read
-        if (!notification.is_read) {
+        if (isMustAcknowledgeWorkflowAlert(notification)) {
+            await acknowledgeWorkflowAlert(notification.id, {
+                refreshCurrentPage: !navigation,
+                broadcast: true,
+            });
+        } else if (!notification.is_read) {
             await markNotificationRead(notification.id, !navigation);
         }
 
@@ -1144,6 +1410,38 @@
             console.error('Error marking notification as read:', error);
             return false;
         });
+    }
+
+    function acknowledgeWorkflowAlert(notificationId, options = {}) {
+        const normalizedId = String(notificationId || '').trim();
+        if (!normalizedId) {
+            return Promise.resolve(false);
+        }
+
+        return fetch(`/api/notifications/${encodeURIComponent(normalizedId)}/acknowledge`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+        })
+            .then(response => response.json())
+            .then(data => {
+                if (!data.success) {
+                    return false;
+                }
+                retireWorkflowAlerts([normalizedId]);
+                if (options.broadcast !== false) {
+                    broadcastWorkflowAlertAcknowledgment(normalizedId);
+                }
+                if (options.refreshCurrentPage !== false) {
+                    refreshNotificationsUi();
+                }
+                return true;
+            })
+            .catch(error => {
+                console.error('Error acknowledging workflow alert:', error);
+                return false;
+            });
     }
     
     /**
@@ -1199,7 +1497,14 @@
                 targetWindow.opener = null;
             }
 
-            await markNotificationRead(activeWorkflowAlert.id);
+            if (isMustAcknowledgeWorkflowAlert(activeWorkflowAlert)) {
+                await acknowledgeWorkflowAlert(activeWorkflowAlert.id, {
+                    refreshCurrentPage: false,
+                    broadcast: true,
+                });
+            } else {
+                await markNotificationRead(activeWorkflowAlert.id);
+            }
 
             const groupId = target.link_context?.group_id || '';
             if (groupId && !navigation.nativeGroupDocument) {
@@ -1241,15 +1546,76 @@
             workflowAlertModal.hide();
         });
 
+        workflowAlertAcknowledgeBtn?.addEventListener('click', async function() {
+            if (!activeWorkflowAlert) {
+                return;
+            }
+
+            await acknowledgeWorkflowAlert(activeWorkflowAlert.id, {
+                broadcast: true,
+            });
+            workflowAlertModal.hide();
+        });
+
+        workflowAlertAckBannerReviewBtn?.addEventListener('click', function() {
+            if (!pendingMustAcknowledgeAlerts.size || activeWorkflowAlert) {
+                return;
+            }
+
+            const pendingAlerts = Array.from(pendingMustAcknowledgeAlerts.values());
+            const queuedIds = new Set(workflowAlertQueue.map(notification => notification.id));
+            pendingAlerts.reverse().forEach(notification => {
+                if (!queuedIds.has(notification.id)) {
+                    workflowAlertQueue.unshift(notification);
+                    queuedIds.add(notification.id);
+                }
+            });
+            showNextWorkflowAlert();
+        });
+
+        workflowAlertEnableSoundBtn?.addEventListener('click', function() {
+            getWorkflowAlertSoundManager()?.retryBlockedPlayback?.();
+            updateWorkflowAlertAckBanner();
+        });
+
+        workflowAlertModalEnableSoundBtn?.addEventListener('click', function() {
+            getWorkflowAlertSoundManager()?.retryBlockedPlayback?.();
+            updateWorkflowAlertAckBanner();
+        });
+
         workflowAlertModalEl.addEventListener('hidden.bs.modal', function() {
+            if (
+                activeWorkflowAlert
+                && isMustAcknowledgeWorkflowAlert(activeWorkflowAlert)
+                && !suppressAckBannerOnce
+            ) {
+                showWorkflowAlertAckBanner();
+            }
+            if (activeWorkflowAlert && !isMustAcknowledgeWorkflowAlert(activeWorkflowAlert)) {
+                // A one-off chime the browser refused has nothing left to announce once its alert is closed.
+                stopWorkflowAlertSound(activeWorkflowAlert.id);
+            }
+            suppressAckBannerOnce = false;
             activeWorkflowAlert = null;
             activeWorkflowAlertTargets = [];
             showNextWorkflowAlert();
+            updateWorkflowAlertAckBanner();
         });
+
+        window.addEventListener('workflow-alert-sound-state-changed', updateWorkflowAlertAckBanner);
 
         window.addEventListener('workflow-alert-refresh-requested', function() {
             fetchNotificationCount();
             loadWorkflowAlerts();
+        });
+
+        workflowAlertBroadcastChannel?.addEventListener('message', function(event) {
+            const data = event.data || {};
+            if (data.type !== 'acknowledged' || !Array.isArray(data.ids)) {
+                return;
+            }
+            retireWorkflowAlerts(data.ids);
+            refreshNotificationsUi();
         });
     }
     

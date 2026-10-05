@@ -21,7 +21,14 @@ export type AlertLabScenarioId =
     | 'group'
     | 'dialog'
     | 'notify-only'
-    | 'old';
+    | 'old'
+    | 'must-ack-small'
+    | 'must-ack-medium'
+    | 'must-ack-large'
+    | 'repeat-sound'
+    | 'blocked-audio'
+    | 'team-member'
+    | 'acknowledged-elsewhere';
 
 export interface AlertLabScenario {
     id: AlertLabScenarioId;
@@ -42,6 +49,13 @@ export function alertLabScenarios(): AlertLabScenario[] {
         { id: 'dialog', label: 'While a dialog is open', expect: 'Waits until the dialog closes.' },
         { id: 'notify-only', label: 'Notify-only', expect: 'Never pops up; it waits in the bell.' },
         { id: 'old', label: 'Older than 24 hours', expect: 'Never pops up; it waits in the bell.' },
+        { id: 'must-ack-small', label: 'Must-ack small', expect: 'Persistent notice with Acknowledge instead of Dismiss.' },
+        { id: 'must-ack-medium', label: 'Must-ack medium', expect: 'Card opens directly as a large dialog.' },
+        { id: 'must-ack-large', label: 'Must-ack large', expect: 'Full-screen takeover that minimizes on Escape.' },
+        { id: 'repeat-sound', label: 'Repeating sound', expect: 'Alarm repeats until acknowledged.' },
+        { id: 'blocked-audio', label: 'Blocked audio', expect: 'Shows Enable sound if the browser blocks playback.' },
+        { id: 'team-member', label: 'Team alert as member', expect: 'Lean member content and group audience copy.' },
+        { id: 'acknowledged-elsewhere', label: 'Acknowledged elsewhere', expect: 'Shows the acknowledged state in sample data.' },
     ];
 }
 
@@ -75,6 +89,13 @@ interface AlertSampleInput {
     links?: LinkSample[];
     minutesAgo: number;
     delivery?: 'popup' | 'notify_only';
+    requireAcknowledgment?: boolean;
+    sound?: 'off' | 'once' | 'repeat';
+    size?: 'small' | 'medium' | 'large';
+    audience?: 'owner' | 'group';
+    acknowledged?: boolean;
+    acknowledgedByName?: string;
+    contentScope?: 'full' | 'member';
     /** Leave out the fields an alert written before workflow scope existed would lack. */
     legacy?: boolean;
 }
@@ -114,6 +135,10 @@ function sample(stamp: string, index: number, now: number, input: AlertSampleInp
         priority: input.priority,
         category: input.category,
         delivery,
+        require_acknowledgment: input.requireAcknowledgment === true,
+        sound: input.sound ?? 'off',
+        size: input.size ?? 'small',
+        audience: input.audience ?? 'owner',
         alert_mode: 'rules',
         matched_rules: (input.rules ?? []).map((rule, ruleIndex) => ({
             rule_id: `lab-rule-${ruleIndex}`,
@@ -155,6 +180,14 @@ function sample(stamp: string, index: number, now: number, input: AlertSampleInp
         created_at: new Date(now - input.minutesAgo * 60_000).toISOString(),
         is_read: false,
         is_dismissed: false,
+        require_acknowledgment: input.requireAcknowledgment === true,
+        sound: input.sound ?? 'off',
+        size: input.size ?? 'small',
+        audience: input.audience ?? 'owner',
+        acknowledged: input.acknowledged === true,
+        acknowledged_at: input.acknowledged ? new Date(now - 30_000).toISOString() : null,
+        acknowledged_by_name: input.acknowledgedByName ?? null,
+        content_scope: input.contentScope ?? 'full',
         link_url: links[0]?.url ?? '',
         link_context: links[0]?.context ?? {},
         metadata,
@@ -388,6 +421,79 @@ export function alertLabScenarioAlerts(id: AlertLabScenarioId, stamp: string, no
                 title: 'Yesterday\'s advisory',
                 summary: 'This alert is 26 hours old, so it waits in the bell.',
                 minutesAgo: 26 * 60,
+            })];
+        case 'must-ack-small':
+            return [sample(stamp, 0, now, {
+                workflow: wf.security,
+                priority: 'high',
+                category: 'alert',
+                title: 'Security feed needs an owner',
+                summary: 'The advisory feed reported a production-impacting vulnerability.',
+                minutesAgo: 90 * 24,
+                requireAcknowledgment: true,
+                sound: 'once',
+            })];
+        case 'must-ack-medium':
+            return [sample(stamp, 0, now, {
+                workflow: wf.build,
+                priority: 'high',
+                category: 'failure',
+                title: 'Release validation failed',
+                summary: 'The release validation workflow failed and needs ownership.',
+                error: 'Smoke tests failed in region eastus2.',
+                minutesAgo: 90 * 24,
+                requireAcknowledgment: true,
+                size: 'medium',
+                sound: 'once',
+            })];
+        case 'must-ack-large':
+            return [sample(stamp, 0, now, {
+                workflow: wf.security,
+                priority: 'critical',
+                category: 'alert',
+                title: 'Critical dependency alert',
+                summary: 'A production dependency has a critical advisory and needs immediate acknowledgment.',
+                minutesAgo: 90 * 24,
+                requireAcknowledgment: true,
+                size: 'large',
+                sound: 'repeat',
+            })];
+        case 'repeat-sound':
+        case 'blocked-audio':
+            return [sample(stamp, 0, now, {
+                workflow: wf.security,
+                priority: 'critical',
+                category: 'alert',
+                title: 'Operations alarm',
+                summary: 'Repeats its sound until someone acknowledges it.',
+                minutesAgo: 1,
+                requireAcknowledgment: true,
+                sound: 'repeat',
+            })];
+        case 'team-member':
+            return [sample(stamp, 0, now, {
+                workflow: wf.build,
+                priority: 'high',
+                category: 'alert',
+                title: 'Group workflow needs review',
+                summary: 'Build watcher matched the failed-runs rule.',
+                minutesAgo: 1,
+                requireAcknowledgment: true,
+                audience: 'group',
+                contentScope: 'member',
+            })];
+        case 'acknowledged-elsewhere':
+            return [sample(stamp, 0, now, {
+                workflow: wf.build,
+                priority: 'medium',
+                category: 'alert',
+                title: 'Already acknowledged alert',
+                summary: 'Morgan acknowledged this in another tab.',
+                minutesAgo: 1,
+                requireAcknowledgment: true,
+                audience: 'group',
+                acknowledged: true,
+                acknowledgedByName: 'Morgan Lee',
             })];
         case 'dialog':
         default:

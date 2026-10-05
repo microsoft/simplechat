@@ -37,6 +37,7 @@ import {
 import { resolveNotificationLink, type ResolvedNotificationLink } from '../../lib/notificationLinks';
 import { openNotificationTarget } from '../../lib/notificationNavigation';
 import { formatRelativeTime } from '../../lib/userStats';
+import { workflowAlertServerActions } from '../../lib/workflowAlertActions';
 import {
     refreshNotificationCount,
     subscribeNotificationCount,
@@ -77,6 +78,7 @@ function NotificationRow({
     onOpen,
     onRead,
     onDismiss,
+    onAcknowledge,
 }: {
     notification: AppNotification;
     link: ResolvedNotificationLink;
@@ -84,6 +86,7 @@ function NotificationRow({
     onOpen: () => void;
     onRead: () => void;
     onDismiss: () => void;
+    onAcknowledge: () => void;
 }) {
     const described = describeNotification(notification);
     const Icon = KIND_ICONS[described.kind];
@@ -91,6 +94,12 @@ function NotificationRow({
     const unread = !notification.is_read;
     const created = notification.created_at ? new Date(notification.created_at) : null;
     const createdValid = created !== null && !Number.isNaN(created.getTime());
+    const needsAcknowledgment = notification.notification_type === 'workflow_priority_alert'
+        && notification.require_acknowledgment === true
+        && notification.acknowledged !== true;
+    const acknowledged = notification.notification_type === 'workflow_priority_alert'
+        && notification.require_acknowledgment === true
+        && notification.acknowledged === true;
 
     return (
         <li
@@ -112,6 +121,14 @@ function NotificationRow({
                 <p className="flex items-center gap-1.5 text-[11px] font-medium tracking-wide text-text-3 uppercase">
                     {unread && <span aria-hidden="true" className="h-1.5 w-1.5 shrink-0 rounded-full bg-accent" />}
                     <span className="truncate">{described.label}</span>
+                    {needsAcknowledgment && (
+                        <span
+                            data-notification-ack-tag=""
+                            className="rounded bg-danger-soft px-1.5 py-0.5 text-[10px] font-semibold text-danger"
+                        >
+                            Needs acknowledgment
+                        </span>
+                    )}
                     {unread && <span className="sr-only">(unread)</span>}
                 </p>
                 {link.target ? (
@@ -143,8 +160,29 @@ function NotificationRow({
                         </time>
                     </p>
                 )}
+                {acknowledged && notification.acknowledged_by_name && notification.acknowledged_at && (
+                    <p data-notification-acknowledged="" className="mt-1 text-[11px] text-text-3">
+                        Acknowledged by {notification.acknowledged_by_name} at{' '}
+                        <time dateTime={notification.acknowledged_at}>
+                            {new Date(notification.acknowledged_at).toLocaleString()}
+                        </time>
+                    </p>
+                )}
             </div>
             <div className="flex shrink-0 flex-col gap-0.5">
+                {needsAcknowledgment && (
+                    <button
+                        type="button"
+                        data-notification-action="acknowledge"
+                        disabled={pending}
+                        onClick={onAcknowledge}
+                        aria-label={`Acknowledge: ${title}`}
+                        title="Acknowledge"
+                        className={iconButtonClass}
+                    >
+                        <CheckCheck size={14} />
+                    </button>
+                )}
                 {unread && (
                     <button
                         type="button"
@@ -188,6 +226,7 @@ export function NotificationPanel({
     const { pathname } = useLocation();
     const panelRef = useRef<HTMLDivElement>(null);
     const [position, setPosition] = useState({ top: 0, left: 0, width: PANEL_WIDTH, maxHeight: 560 });
+    const [ackPending, setAckPending] = useState<Record<string, true>>({});
 
     const count = useNotificationStore((state) => state.count);
     const items = useNotificationStore((state) => state.items);
@@ -278,14 +317,41 @@ export function NotificationPanel({
         if (!target) {
             return;
         }
-        const read = notification.is_read ? null : markRead(notification.id);
+        // Opening an alert that needs acknowledgment is a response to it, as on the alert card.
+        const needsAcknowledgment = notification.notification_type === 'workflow_priority_alert'
+            && notification.require_acknowledgment === true
+            && notification.acknowledged !== true;
+        const settle = needsAcknowledgment
+            ? workflowAlertServerActions.acknowledge([notification.id])
+            : notification.is_read ? null : markRead(notification.id);
         // A full page load would cancel a request still on its way, so a notice that leaves
-        // the application is marked read first. Inside it the read carries on regardless.
-        if (target.kind === 'classic' && read) {
-            await read;
+        // the application is settled first. Inside it the request carries on regardless.
+        if (target.kind === 'classic' && settle) {
+            await settle;
         }
         onClose();
         await openNotificationTarget(target, { navigate, pathname });
+    };
+
+    const acknowledge = async (notification: AppNotification) => {
+        if (ackPending[notification.id]) {
+            return;
+        }
+        setAckPending((current) => ({ ...current, [notification.id]: true }));
+        try {
+            // The shared action broadcasts the acknowledgment, which this tab's alert notice and
+            // sound receive too, so the alert stops here and in every other tab straight away.
+            const done = await workflowAlertServerActions.acknowledge([notification.id]);
+            if (done.length) {
+                await loadList();
+            }
+        } finally {
+            setAckPending((current) => {
+                const next = { ...current };
+                delete next[notification.id];
+                return next;
+            });
+        }
     };
 
     const hasUnread = (count ?? 0) > 0 || items.some((item) => !item.is_read);
@@ -372,9 +438,10 @@ export function NotificationPanel({
                                 key={item.id}
                                 notification={item}
                                 link={links.get(item.id) ?? { target: null, error: null }}
-                                pending={Boolean(pendingIds[item.id]) || markingAll}
+                                pending={Boolean(pendingIds[item.id]) || Boolean(ackPending[item.id]) || markingAll}
                                 onOpen={() => void open(item, links.get(item.id) ?? { target: null, error: null })}
                                 onRead={() => void markRead(item.id)}
+                                onAcknowledge={() => void acknowledge(item)}
                                 onDismiss={() => {
                                     void dismiss(item.id);
                                     // The focused button is about to disappear with its row.

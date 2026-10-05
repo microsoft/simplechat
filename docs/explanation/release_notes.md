@@ -2,7 +2,7 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
-### **(v0.261.236)**
+### **(v0.261.237)**
 
 #### Bug Fixes
 
@@ -22,7 +22,7 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
     *   A step that stopped for approval links to Approvals instead.
     *   (Ref: `v2_ui/src/lib/m365Connect.ts`, `OrchestrationM365Notice.tsx`, `OrchestrationRecoveryNotice.tsx`, [Microsoft 365 data and approvals](../guides/microsoft-365-conversation-data.md))
 
-### **(v0.261.235)**
+### **(v0.261.236)**
 
 #### Bug Fixes
 
@@ -31,6 +31,21 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
     *   Orchestration rechecks a kept result's access with the current admin settings, and that check requires exactly a `dict`. Settings read from the shared Redis copy were a `dict`, but settings read from Cosmos DB came back as the SDK's `CosmosDict` type, so the check refused them. Cosmos serves the read while any settings save is in progress, such as the Cosmos throughput autoscale saving its status, when the shared copy is repaired or unreachable, and on every read when Redis is off.
     *   The settings store now returns a plain `dict` from every read and write, whichever backend served it. The orchestration check is unchanged. No setting or deployment change is needed.
     *   (Ref: `app_settings_store.py`, `functions_orchestration_external_sources.py`, `test_app_settings_store_plain_dict_reads.py`, [Orchestration Settings Document Type Fix](fixes/ORCHESTRATION_SETTINGS_DOCUMENT_TYPE_FIX.md))
+
+### **(v0.261.235)**
+
+#### New Features
+
+*   **Must-Acknowledge Workflow Alerts, Alert Sounds, Sizes And Team Delivery**
+    *   Each workflow alert rule can now require acknowledgment. Such an alert keeps coming back after a refresh, in every tab and on every device, whatever its age, until someone selects **Acknowledge** or opens it. It is shown ahead of other alerts. Closing it only shrinks it: V2 keeps its notice under **My Workspace**, in room of its own so it never covers the items below, and classic keeps a banner with **Review** at the bottom of the page. Mark read, Dismiss and **Mark all read** never acknowledge an alert.
+    *   A rule can play a sound once, or repeat it every five seconds until the alert is acknowledged. Three tones, chosen by severity, were synthesized for SimpleChat and are served locally. One tab per browser plays, shared between classic and V2: several repeating alerts sound as one tone, the most urgent one's, and **Play once** chimes once per browser, not once per tab or refresh, with alerts that arrive together chiming once in the most urgent tone. When the browser blocks sound, the alert offers **Enable sound** until a sound plays.
+    *   A rule can choose a size: small (the usual pop-up), medium (the full alert opens straight away) or large (full screen, for wall displays).
+    *   In a group workflow, a rule can alert everyone in the group. The run raises one shared alert, and any current member can acknowledge it for everyone; the bell then shows "Acknowledged by *name* at *time*". Members other than the owner see a simpler alert with the severity, workflow, matched rules and **Open** to what the run created in the group.
+    *   When several rules match, each option takes the strongest value any matched rule asked for. A model-evaluated rule that asks for a stronger option is still evaluated when a deterministic rule matched at a higher severity.
+    *   New admin setting **Enable Workflow Alert Sounds** (`enable_workflow_alert_sounds`, on by default). Each device has its own **Play alert sounds** switch, and V2 **Preferences** adds an **Alert monitor** switch that checks for workflow alerts every 30 seconds, even in a background tab, for operations screens.
+    *   New route `POST /api/notifications/<notification_id>/acknowledge`, open only to the alert's recipients. `GET /api/notifications/workflow-alerts` now also returns pending alerts that need acknowledgment and team alerts from the user's groups, with `complete` and `sounds_enabled`. Read, dismiss and acknowledge writes are now conditional on the stored version, so concurrent writes to a shared alert can't drop each other.
+    *   Both the V2 and classic workflow editors have the new options, and both mirror the server's reviewed validation messages.
+    *   (Ref: #1634, `functions_workflow_alerts.py`, `functions_notifications.py`, `route_backend_notifications.py`, `functions_workflow_runner.py`, `WorkflowAlertEditor.tsx`, `workflowAlertStore.ts`, `workflowAlertSound.ts`, `PreferencesTab.tsx`, `notifications.js`, `workflow-alert-sound.js`, `workspace_workflows.js`, [Workflow Alert Acknowledgment](features/WORKFLOW_ALERT_ACKNOWLEDGMENT.md))
 
 ### **(v0.261.234)**
 

@@ -259,6 +259,44 @@ alert settings is shown with the rule's number.
 Members who can't manage the workflow see a read-only summary. A workflow saved
 in V2 can no longer be opened by the classic editor.
 
+### Make an alert hard to miss
+
+From version **0.261.235**, each rule also has **Pop-up options**. Use them for
+alerts someone must see and act on, such as a failure that an operations team has to
+pick up:
+
+- **Require acknowledgment** keeps the alert coming back after a refresh, in every
+  tab, and on every device, until someone selects **Acknowledge** or opens it.
+  Closing the alert only shrinks it, and **Mark all read** never clears it.
+- **Sound** plays a tone that gets more urgent with the severity. **Play once**
+  sounds when the alert pops up. **Repeat until acknowledged** sounds every five
+  seconds until someone acknowledges the alert, so choosing it also turns on
+  **Require acknowledgment**.
+- **Size** decides how much of the screen the alert takes. **Small** is the usual
+  pop-up. **Medium** opens the full alert straight away. **Large (full screen)**
+  fills the screen, which suits a wall display.
+
+These options only apply to alerts that pop up. A rule that goes to the bell, such
+as an info rule left at **Default for severity**, can't use them until you set its
+delivery to **Pop-up alert**. When several rules match one run, the alert gets the
+strongest option any of them asked for, even if the rule with the highest severity
+didn't ask for it. **On every run** alerts don't have these options. To get them,
+use a rule such as **Run finished with a status: Completed**.
+
+### Alert everyone in the group
+
+In a group workflow, **Who gets it** chooses between the **Workflow owner** and
+**Everyone in the group**. A team alert is a single shared alert. When any member
+acknowledges it, it stops popping up and sounding for everyone, and each member's
+bell shows who acknowledged it and when.
+
+Members other than the owner see a simpler alert: its severity, the workflow, the rules
+that matched, and **Open** to what the run created in the group, such as a group
+conversation. The full alert describes the owner's side of the run, including
+conversations in the owner's own space, so only the owner sees it.
+
+The classic workflow editor has the same options.
+
 ## Choose the Microsoft 365 Run as account
 
 Native V2 **Run as** authoring is implemented in version **0.261.122**. Use
