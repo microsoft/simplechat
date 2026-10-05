@@ -1,11 +1,11 @@
 # test_v2_document_provenance.py
 """
 Production-SPA coverage for where a V2 document came from.
-Version: 0.261.233
+Version: 0.261.234
 Implemented in: 0.261.194
 A workflow alert's Open workflow, followed while that workflows list is already open: 0.261.199
 One more list read, and no more, for a workflow the open list lacks: 0.261.199
-Open run in Open workflow's place, for an alert that names its run: 0.261.233
+Open run in Open workflow's place, for an alert that names its run: 0.261.234
 
 The real SPA runs against closed synthetic document, workflow and chat APIs, with no live data.
 A list row says only which kind of origin a document has (`origin_kind`). The details pane asks

@@ -2,8 +2,8 @@
 # test_v2_workflow_run_tracking_xss_guardrail.py
 """
 Functional test for the V2 chat workflow run tracking passing the XSS sink guardrail.
-Version: 0.261.233
-Implemented in: 0.261.233
+Version: 0.261.234
+Implemented in: 0.261.234
 
 This test ensures that the files behind a chat-started workflow run in V2 pass
 scripts/check_xss_sinks.py in full: the run card under a plan's answer, the
@@ -142,8 +142,8 @@ def describe(module, issues) -> list[str]:
 
 
 def test_version_is_at_least_the_tracking_release() -> None:
-    """The run tracking ships in 0.261.233."""
-    version = assert_app_version_at_least('0.261.233')
+    """The run tracking ships in 0.261.234."""
+    version = assert_app_version_at_least('0.261.234')
     assert version
 
 
