@@ -580,6 +580,8 @@ to show **Next run** and **Last run**. It doesn't keep checking, so open the
 chat again to see a newer run. If that read fails, the card says "Run details
 aren't available right now."
 
+{% include media.html src="reference/chat-controls-workflow-proposal-run-summary.png" alt="A created workflow proposal card showing Next run and Last run, with Open latest results and Follow up." title="Created workflow card" capture="Capture a created workflow proposal card for a scheduled workflow that has run, showing Next run with its time zone, Last run with its status, and the Open latest results and Follow up buttons. Redact the workflow name." %}
+
 ## Workflow runs (V2 interface)
 
 Implemented in **0.261.212** (Refs: microsoft/simplechat#1551). When you ask chat
@@ -587,6 +589,8 @@ orchestration to run one of your saved workflows now, such as "run my weekly dig
 the plan can start it. Only workflows with durable execution on can be started this way,
 and only from a conversation that's private to you. See
 [Run a workflow from chat]({{ '/guides/trigger-a-workflow/' | relative_url }}#run-a-workflow-from-chat).
+
+{% include media.html src="reference/chat-controls-workflow-run-card.png" alt="Started workflows card under a plan answer, showing a running run's step and elapsed time with Cancel run, Open run and Check now, and a running spinner beside the chat in the chat list." title="Workflow run card" capture="Capture a plan answer's Started workflows card with one running run (step, elapsed time, Cancel run, Open run, Check now and its Checked time) and the running spinner beside that chat in the chat list. Redact conversation titles and workflow names." %}
 
 | Control or state | What it does | Why you would use it | Available when |
 | --- | --- | --- | --- |
@@ -631,6 +635,8 @@ you aren't looking at the page. The message starts with a line such as
 the chat was deleted or shared before the run finished, a workflow notification
 opens the run instead. Without that setting, results arrive where the workflow
 already sends them, such as its conversation or alerts.
+
+{% include media.html src="reference/chat-controls-workflow-posted-result.png" alt="A workflow result posted into the chat that started it, with its Results from label and the Follow up and Open run buttons below it." title="Results posted to the chat" capture="Capture a workflow result posted into the chat that started it, showing its Results from label and the Follow up and Open run buttons. Redact the conversation title, workflow name and result content." %}
 
 | Control | What it does | Why you would use it | Available when |
 | --- | --- | --- | --- |
