@@ -351,7 +351,14 @@ test('The resume route takes exactly the two keys V2 sends and answers with the 
     assert.ok(response.includes("return jsonify({'error': 'Durable workflow run not found.'}), 404"));
     assert.ok(response.includes("return jsonify({'error': 'Invalid workflow decision.'}), 400"));
     assert.ok(response.includes("return jsonify({'error': 'Invalid workflow decision or request identifier.'}), 400"));
-    assert.match(response, /except PermissionError:\n\s+return jsonify\(\{'error': '[^']+'\}\), 403/);
+    // Every answer to the outer PermissionError, the saved-record branch included, is a 403, which V2 reads as no access.
+    const permission = response.match(/\n    except PermissionError(?: as \w+)?:\n((?:[ \t]{5,}.*\n|[ \t]*\n)+)/);
+    assert.ok(permission, 'The runtime response no longer handles PermissionError.');
+    const permissionAnswers = permission[1].match(/^[ \t]+return .*$/gm) || [];
+    assert.ok(permissionAnswers.length > 0, 'The PermissionError branch no longer answers.');
+    for (const answer of permissionAnswers) {
+        assert.match(answer, /^[ \t]+return jsonify\(\{'error': .+\}\), 403$/, `A PermissionError answer isn't a 403: ${answer.trim()}`);
+    }
     assert.ok(response.includes("return jsonify({'error': 'Workflow progress is temporarily unavailable.'}), 503"));
 
     // The resume itself refuses with the codes the client names.
