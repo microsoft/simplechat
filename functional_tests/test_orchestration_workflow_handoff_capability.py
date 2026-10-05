@@ -2,8 +2,8 @@
 # test_orchestration_workflow_handoff_capability.py
 """
 Functional test for the workflow_handoff capability's registry entry, gates and plan rules.
-Version: 0.261.238
-Implemented in: 0.261.238
+Version: 0.261.239
+Implemented in: 0.261.239
 
 This test ensures that ``workflow_handoff``:
 
@@ -64,7 +64,7 @@ from test_support.orchestration_harness_execution import input_binding
 from test_support.versioning import assert_app_version_at_least
 
 
-MINIMUM_VERSION = "0.261.238"
+MINIMUM_VERSION = "0.261.239"
 INVALID = "workflow_handoff_invalid"
 FLOOR = {"mode": "manual", "reason": HANDOFF_CAPABILITY}
 INPUTS = {

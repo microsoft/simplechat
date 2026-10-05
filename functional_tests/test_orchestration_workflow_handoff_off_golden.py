@@ -2,8 +2,8 @@
 # test_orchestration_workflow_handoff_off_golden.py
 """
 Functional test for the chat orchestration workflow hand-off setting-off golden.
-Version: 0.261.238
-Implemented in: 0.261.238
+Version: 0.261.239
+Implemented in: 0.261.239
 
 This test ensures that, with ``enable_chat_orchestration_workflow_handoff`` off (absent, False
 or the string "true"), or on while another hand-off gate is off, chat orchestration is
@@ -665,7 +665,7 @@ def _check_no_real_date(golden):
 
 
 def test_version_includes_the_workflow_handoff_off_golden():
-    assert_app_version_at_least("0.261.238")
+    assert_app_version_at_least("0.261.239")
 
 
 def test_the_fixture_covers_the_cases_that_matter():

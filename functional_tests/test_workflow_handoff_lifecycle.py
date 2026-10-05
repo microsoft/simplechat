@@ -2,8 +2,8 @@
 # test_workflow_handoff_lifecycle.py
 """
 Functional test for the one-time workflow hand-off lifecycle.
-Version: 0.261.238
-Implemented in: 0.261.238
+Version: 0.261.239
+Implemented in: 0.261.239
 
 This test ensures that a workflow handed off from chat orchestration:
 
@@ -69,7 +69,7 @@ from test_support.workflow_chat_delivery_fakes import (  # noqa: E402
 from test_workflow_for_each_execution import execute_loop, loop_runtime  # noqa: E402
 
 
-MINIMUM_VERSION = "0.261.238"
+MINIMUM_VERSION = "0.261.239"
 NOW = datetime(2026, 5, 4, 15, 0, tzinfo=timezone.utc)
 NOW_ISO = NOW.isoformat()
 REQUEST_ID = "63e581a5-a430-4821-b1f4-1398e214fa53"

@@ -4,7 +4,7 @@
 Functional test for the chat orchestration workflow_run step adapter.
 Version: 0.261.212
 Implemented in: 0.261.212
-One-time hand-off refusal: 0.261.238
+One-time hand-off refusal: 0.261.239
 
 This test ensures that a plan's workflow_run step starts the requester's saved durable workflow
 through the durable queue at most once. The request id comes from the plan's first attempt and

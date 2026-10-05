@@ -2,8 +2,8 @@
 # test_orchestration_workflow_handoff_adapter.py
 """
 Functional test for the chat orchestration workflow_handoff step.
-Version: 0.261.238
-Implemented in: 0.261.238
+Version: 0.261.239
+Implemented in: 0.261.239
 
 This test ensures that the ``workflow_handoff`` step only dry-runs the one-time workflow it
 describes, and that:
@@ -59,7 +59,7 @@ from test_support.orchestration_harness_execution import (
 from test_support.versioning import assert_app_version_at_least
 
 
-MINIMUM_VERSION = "0.261.238"
+MINIMUM_VERSION = "0.261.239"
 APP_ROOT = Path(__file__).resolve().parents[1] / "application" / "single_app"
 HANDOFFS_MODULE = "functions_orchestration_workflow_handoffs"
 ZONE = "America/New_York"

@@ -13,7 +13,7 @@ Workflow proposal policy coverage: 0.261.207
 Workflow assistant policy coverage: 0.261.208
 Workflow result context policy coverage: 0.261.214
 Workflow run status policy coverage: 0.261.227
-Workflow hand-off policy coverage: 0.261.238
+Workflow hand-off policy coverage: 0.261.239
 
 This test ensures every SimpleChat route is assigned to a Blueprint-based
 security policy or an explicit reviewed route exemption.

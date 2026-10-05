@@ -1,6 +1,6 @@
 # Chat orchestration workflow hand-off
 
-Implemented in version: **0.261.238**.
+Implemented in version: **0.261.239**.
 
 Application version tracking: `application\single_app\config.py`.
 
