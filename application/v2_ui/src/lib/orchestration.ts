@@ -68,6 +68,8 @@ export interface OrchestrationFailure {
     step_id?: string;
     capability_id?: string;
     provider_status?: number;
+    /** The Microsoft 365 sources a sign-in or approval stop needs, when the step reported them. */
+    m365_sources?: string[];
 }
 
 export interface OrchestrationRecovery {
@@ -112,6 +114,9 @@ export function normalizeOrchestrationFailure(value: unknown): OrchestrationFail
         ...(typeof data.step_id === 'string' ? { step_id: data.step_id } : {}),
         ...(typeof data.capability_id === 'string' ? { capability_id: data.capability_id } : {}),
         ...(typeof data.provider_status === 'number' ? { provider_status: data.provider_status } : {}),
+        ...(Array.isArray(data.m365_sources)
+            ? { m365_sources: data.m365_sources.filter((source): source is string => typeof source === 'string') }
+            : {}),
     };
 }
 

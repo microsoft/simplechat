@@ -339,6 +339,40 @@ restrictions and confirmation behavior remain intact. The focused loop can make 
 calls and is bounded by the existing `max_auto_invoke_attempts` setting, step/run timeouts
 and cancellation. No composer action picker is added.
 
+#### Microsoft 365 actions in plans
+
+Since **0.261.238**, a **Use an action** step can run a Microsoft 365 Calendar, Email,
+OneDrive, SharePoint Online or legacy Microsoft Graph action. Earlier versions refused every
+Microsoft 365 call in a plan with `m365_context_required`, before reaching Microsoft Graph,
+and still reported the step as completed.
+
+Each such step gets its own Microsoft 365 request, the same kind chat creates, with these
+limits:
+
+- **The signed-in user's own access.** The step reads as the person who sent the request,
+  never as an action owner, the app, or a workflow Run as account. Their delegated sign-in
+  is checked before the step's model or any Microsoft Graph call. When it is missing or
+  expired, the step stops with "Microsoft 365 needs you to sign in or grant access", and
+  the V2 run details offer **Connect Microsoft 365** for the sources the step needs.
+- **Only the selected action.** The request selects only the step's saved action, read
+  again from storage on each call. Its own capabilities and current governance apply.
+- **Read only.** Send mail, calendar invitations and mark-as-read are removed from a plan
+  step, even when the action enables them. An action that enables only those functions
+  stops with "Plans can only read Microsoft 365 data".
+- **Personal conversations only.** In a shared conversation the step stops before reading
+  anything. Source-sharing approvals resume chat requests, not plan steps.
+- **Approvals don't resume plans.** A step that needs an approval, such as deeper file
+  analysis, stops and links to Approvals. The user decides there and then selects **Retry
+  from failed step**. A retried step reuses its request, so the decision applies while
+  the action is unchanged.
+
+A refused Microsoft 365 call stops the step instead of becoming findings that the model
+reports as data. Ordinary Microsoft Graph outcomes, such as nothing found or throttling,
+are still findings. An answer that used Microsoft 365 keeps the tool calls in its sources,
+so sharing the conversation later asks the user to approve Microsoft 365 history, as it
+does for a chat answer. An **Ask an agent** step doesn't make its agent's Microsoft 365
+actions available.
+
 ### Charts, diagrams, and images in answers
 
 Since **0.261.132**, orchestrated answers can include inline charts, Mermaid diagrams, and
@@ -550,11 +584,16 @@ then report a rejected proposal.
 | A pending plan reports changed conversation context | A referenced message or its visibility changed after planning. | Create a new plan using the current conversation. |
 | A web or research step says it continued in the background, where the user's sign-in is not available | The run continued without the user's browser session, for example after a restart, so their app roles couldn't be confirmed. | Ask the user to send the request again from the chat. The new run uses their signed-in session. |
 | Every web search, linked-page or deep research step says a required retained result is unavailable or changed | Before 0.261.209, orchestration checked each user's roles through Microsoft Graph, which needs `Directory.Read.All`, and refused research whenever query or linked-page planning was on. | Upgrade to 0.261.209 or later; no Graph permission or settings change is needed. If a step still fails, check `sc_authority_reason` on its failure event in [orchestration failure diagnostics](../reference/logging-tags.md#orchestration-failure-diagnostics). |
+| Every step completed, but the run is partially completed with "A required retained result is unavailable or changed" | Before 0.261.237, settings read from Cosmos DB instead of the shared Redis copy came back as an SDK type that the access recheck refused. That happens while any settings save is in progress, for example the Cosmos throughput autoscale saving its status, and on every read when Redis is off. The failure event logs `sc_authority_reason=result_external_context_unavailable`. | Upgrade to 0.261.237 or later. No setting change is needed. See the [settings document type fix]({{ '/explanation/fixes/ORCHESTRATION_SETTINGS_DOCUMENT_TYPE_FIX/' | relative_url }}). |
 | Plans never propose deep research or reading a link | The user does not hold the required app role, or the capability is disabled in its own settings group. | Confirm the user holds `DeepResearchUser` or `UrlAccessUser` where your deployment requires them, and that the capability is enabled outside this page. |
 | Plans never propose an agent | Semantic Kernel is off, the user has turned agents off in their own settings, or the user has no agent they can reach. | Confirm Semantic Kernel is enabled, then check the user's own agent setting and that at least one agent is shared with them. |
 | The planner model shows "not in the current model list" | Its connection or model was removed or disabled, or connections were switched on or off since it was chosen. | Choose a listed model, or **Use the answer model (default)**. Until then planning keeps trying the saved model and fails rather than switching. |
 | Plans never propose Use an action | Action Access is off, Semantic Kernel is off, the capability is excluded, or no eligible action is available to this user. | Check the opt-in and capability selection, then the existing action scope and governance. Call agent actions are not eligible for direct use. |
 | An action step fails after plan approval | The action or its access changed, or its model/tool connection could not run. | Check current action access and configuration. Review the visible step failure; the run does not silently switch to an agent or another action. |
+| Before 0.261.238, a Microsoft 365 action step showed completed, but the answer said it couldn't read mail, calendar or files | The plan step had no Microsoft 365 request, so every call was refused with `m365_context_required` before reaching Microsoft Graph. `[MS_GRAPH_PLUGIN]` failure events show it as `sc_error_code_length` 21. | Upgrade to 0.261.238 or later. See [Microsoft 365 actions in plans](#microsoft-365-actions-in-plans). |
+| A Microsoft 365 step says Microsoft 365 needs the user to sign in or grant access | The user hasn't connected that source for chat, or their sign-in expired or Microsoft Graph rejected it. | The user selects **Connect Microsoft 365** in the run details, or connects in Profile, then **Retry from failed step**. `[ORCHESTRATION_M365] A Microsoft 365 step stopped.` logs the reason as `sc_authority_reason`. |
+| A Microsoft 365 step says plans can only read Microsoft 365 data | The action enables only send, invitation or mark-as-read functions, which plans never run. | Enable a read function on the action, or use it from chat without a plan. |
+| A Microsoft 365 step says plans can't use Microsoft 365 in a shared conversation | Plans don't run Microsoft 365 actions in shared conversations. | Ask from the user's own conversation. |
 | A plan proposed reading a link but found nothing | The link was not available in the eligible user-authored context. | Paste the URL into the current request. Assistant-generated links and omitted historical text do not authorize page reads. |
 | Earlier runs are missing after switching devices | The conversation list has loaded but its run history has not been fetched yet, or the fetch failed. | The orchestration panel shows its own loading and retry states. If retrying keeps failing, check that the user can reach `/api/v2/orchestration/runs` and is the owner of the conversation. |
 | A restored plan will not run | It was already approved on the other device. | This is expected. The conversation reloads to show the answer that run produced. |
