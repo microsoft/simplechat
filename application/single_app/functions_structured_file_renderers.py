@@ -22,6 +22,7 @@ from functions_generated_export_contracts import (
     GeneratedFileExportStream,
 )
 from functions_generated_export_registry import resolve_generated_file_export_format
+from functions_temp_files import scratch_file_dir
 
 
 _CHUNK_CHARACTERS = 16384
@@ -441,7 +442,9 @@ def _render_generated_file_source(source, request, *, max_output_bytes, check=No
     checks = _SourceChecks(source, check)
     checks.run()
     with ExitStack() as resources:
-        stream = resources.enter_context(ClosingExportResource(tempfile.TemporaryFile(mode='w+b', dir='.')))
+        stream = resources.enter_context(ClosingExportResource(
+            tempfile.TemporaryFile(mode='w+b', dir=scratch_file_dir()),
+        ))
         try:
             writer = _OutputWriter(stream, max_output_bytes, checks)
             count = _RENDERERS[entry.renderer_id](writer, source, request, limits, checks)
