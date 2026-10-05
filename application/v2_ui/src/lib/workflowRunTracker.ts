@@ -145,7 +145,7 @@ export function isTrackedRunInFlight(tracked: TrackedWorkflowRun | undefined): b
  * them. Both come from the bootstrap payload's role-aware feature flags. Results posting back to
  * chat is not required, because a run's progress shows on its card either way.
  */
-export function workflowRunTrackerShouldRun(features: Readonly<Record<string, boolean>> | null | undefined): boolean {
+export function workflowRunTrackerShouldRun(features: Readonly<Record<string, boolean | undefined>> | null | undefined): boolean {
     return features?.allow_user_workflows === true && features?.enable_chat_orchestration_workflow_runs === true;
 }
 

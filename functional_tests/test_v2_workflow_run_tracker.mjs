@@ -193,6 +193,7 @@ test('the tracker runs only when the user can use workflows and chats can start 
         { allow_user_workflows: true },
         { enable_chat_orchestration_workflow_runs: true },
         { allow_user_workflows: true, enable_chat_orchestration_workflow_runs: false },
+        { allow_user_workflows: true, enable_chat_orchestration_workflow_runs: undefined },
         { allow_user_workflows: false, enable_chat_orchestration_workflow_runs: true },
         { allow_user_workflows: 'true', enable_chat_orchestration_workflow_runs: true },
         { allow_user_workflows: true, enable_chat_orchestration_workflow_runs: 1 },
