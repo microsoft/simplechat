@@ -15,6 +15,18 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
     *   New requester-only routes under `/api/v2/orchestration/runs/<run_id>/workflow-handoffs` read a plan's hand-offs, accept one as proposed or edited, decline one, and read its editor draft. The V2 hand-off card is a separate change; until it ships, users can't accept a hand-off in the browser, so leave the setting off.
     *   (Ref: #1549, #1543, `functions_orchestration_workflow_handoffs.py`, `functions_orchestration_workflow_handoff_decisions.py`, `functions_workflow_handoff_builder.py`, `functions_workflow_drafts.py`, `functions_workflow_runtime.py`, `functions_workflow_result_reader.py`, `functions_orchestration_registry.py`, `functions_orchestration_planner.py`, `route_backend_orchestration.py`, [Chat Orchestration Workflow Hand-off](features/CHAT_ORCHESTRATION_WORKFLOW_HANDOFF.md))
 
+### **(v0.261.234)**
+
+#### Bug Fixes
+
+*   **Clearer Messages When A Saved Result Can't Be Used**
+    *   Errors about saved and generated results no longer say that source access could not be confirmed. Since saved results stopped re-checking their source documents, most of these errors mean something else, and the message now says which kind of problem it is.
+    *   A source document that can't be read now, or that changed while it was read: "A source document for this analysis is no longer available or has changed." Only reading an uploaded document as an input can raise this.
+    *   A conversation, workflow or run that no longer exists or isn't yours: "The conversation, workflow or run that holds this result no longer exists or isn't available to you."
+    *   A saved result whose earlier result, record or loop and Repeat state is missing or changed: "This saved result can't be used because something it depends on is missing or has changed."
+    *   Workflow task errors, a task result that couldn't be saved, a paused loop item, saved analysis explanations, Analyze saves, the Analyze publication check and the workflow progress view now show the matching message. Placeholders in chat history for an unavailable saved analysis or saved workflow output no longer mention access confirmation.
+    *   Error codes and HTTP statuses are unchanged, apart from two internal codes for a message or workflow binding mismatch (`analysis_message_unavailable` and `analysis_workflow_unavailable`) that map to the same response codes as before.
+    *   (Ref: #1621, `functions_analysis_access.py`, `functions_workflow_runner.py`, `functions_workflow_flow_runner.py`, `route_backend_chats.py`, `route_backend_workflows.py`, `test_analysis_unavailable_message_families.py`,     [Saved-Result Error Messages Fix](fixes/ANALYSIS_RESULT_UNAVAILABLE_MESSAGES_FIX.md))
 ### **(v0.261.233)**
 
 #### Bug Fixes
