@@ -6,6 +6,9 @@
 // running run has got, what a run waiting on the reader needs, where a finished run's results went,
 // and why a run stopped. The tracker owns every request. The card only asks it to read this chat's
 // runs, once on mount and again from Check now, and a run it hasn't read yet keeps its static link.
+// A run the tracker read for this answer that the list doesn't name, as when the list couldn't be
+// read, follows the list's runs, oldest request first. One whose run or step the list already names
+// is left out rather than shown twice.
 //
 // Every control comes from the row's server-computed actions, never from its status alone, and a
 // row this client can't read says "Status unavailable" and offers only Open run. Approving never
@@ -20,7 +23,7 @@ import { ConfirmDialog } from '../ui/ConfirmDialog';
 import { GlassButton } from '../ui/primitives';
 import { RunLink, useWorkflowRunLinkList } from './WorkflowRunLinks';
 import { M365_CONNECT_HREF } from '../../lib/m365Links';
-import { workflowRunDisplayName, type WorkflowRunLinkItem } from '../../lib/orchestrationWorkflowRuns';
+import { workflowRunDisplayName } from '../../lib/orchestrationWorkflowRuns';
 import { useFocusFallback } from '../../lib/useFocusFallback';
 import { useWorkflowRunAction } from '../../lib/useWorkflowRunAction';
 import { kickWorkflowRunTracker, requestWorkflowConversationRuns } from '../../lib/useWorkflowRunTracker';
@@ -52,6 +55,7 @@ import {
     workflowRunConversationRead,
     workflowRunForAnswerStep,
     workflowRunsCheckedAt,
+    workflowRunsForAnswer,
 } from '../../stores/workflowRunTrackerStore';
 
 const STATIC_FOOTNOTE = 'Status when this message loaded. Open the run for its progress and results.';
@@ -125,21 +129,21 @@ function FinishedText({ row, conversationId }: { row: WorkflowRunStatusRow; conv
 
 function LiveRunRow({
     conversationId,
-    item,
+    name,
     run,
     tracked,
     live,
     available,
 }: {
     conversationId: string;
-    item: WorkflowRunLinkItem;
+    /** The workflow's name, rendered as plain text. */
+    name: string;
     run: { workflowId: string; runId: string };
     tracked: TrackedWorkflowRun;
     /** The tracker is running and not halted, so the row's actions reflect a current read. */
     live: boolean;
     available: boolean;
 }) {
-    const name = workflowRunDisplayName(item);
     const { pending, outcome, run: act } = useWorkflowRunAction(conversationId, run.workflowId, run.runId);
     const [confirmingCancel, setConfirmingCancel] = useState(false);
     // A run that dropped out of the tracker's complete read has stopped, and how isn't known yet.
@@ -285,13 +289,6 @@ export function WorkflowRunCard({ conversationId, runId }: { conversationId: str
     const snapshot = useWorkflowRunTrackerStore((state) => state.snapshot);
     const live = snapshot.running && !snapshot.halted;
     const available = snapshot.available === true;
-    const hasRuns = Boolean(items?.some((item) => item.run));
-
-    useEffect(() => {
-        if (live && hasRuns) {
-            void requestWorkflowConversationRuns(conversationId);
-        }
-    }, [live, hasRuns, conversationId]);
 
     const rows = useMemo(() => (items ?? []).map((item) => ({
         item,
@@ -304,10 +301,35 @@ export function WorkflowRunCard({ conversationId, runId }: { conversationId: str
             : undefined,
     })), [items, snapshot, conversationId, runId]);
 
-    if (missing || (!loadError && !items?.length)) return null;
+    // Runs the tracker read for this answer that the list doesn't name, once the list has loaded or
+    // failed to.
+    const extra = useMemo(() => {
+        if (items === null && !loadError) return [];
+        const namedRuns = new Set<string>();
+        const namedSteps = new Set<string>();
+        for (const item of items ?? []) {
+            namedSteps.add(item.step_id);
+            if (item.run) namedRuns.add(item.run.runId);
+        }
+        return workflowRunsForAnswer(snapshot, conversationId, runId).filter((tracked) => (
+            !namedRuns.has(tracked.row.run_id)
+            && (tracked.row.step_id === null || !namedSteps.has(tracked.row.step_id))
+        ));
+    }, [items, loadError, snapshot, conversationId, runId]);
+
+    const hasRuns = Boolean(items?.some((item) => item.run)) || extra.length > 0;
+
+    useEffect(() => {
+        if (live && hasRuns) {
+            void requestWorkflowConversationRuns(conversationId);
+        }
+    }, [live, hasRuns, conversationId]);
+
+    const rowCount = (items?.length ?? 0) + extra.length;
+    if (missing || (!loadError && rowCount === 0)) return null;
 
     const read = workflowRunConversationRead(snapshot, conversationId);
-    const anyJoined = rows.some((entry) => entry.tracked !== undefined);
+    const anyJoined = extra.length > 0 || rows.some((entry) => entry.tracked !== undefined);
     const checkedTime = anyJoined ? formatCheckedTime(workflowRunsCheckedAt(snapshot, conversationId)) : '';
     const problem = snapshot.halted && hasRuns ? WORKFLOW_STATUS_HALTED_TEXT : (live ? read.error ?? '' : '');
 
@@ -325,14 +347,14 @@ export function WorkflowRunCard({ conversationId, runId }: { conversationId: str
                     <GlassButton type="button" size="sm" variant="ghost" onClick={() => void reload()}>Try again</GlassButton>
                 </div>
             ) : null}
-            {items?.length ? (
+            {rowCount > 0 ? (
                 <>
                     <ul className="min-w-0 space-y-2">
                         {rows.map(({ item, tracked }) => (item.run && tracked ? (
                             <LiveRunRow
                                 key={item.step_id}
                                 conversationId={conversationId}
-                                item={item}
+                                name={workflowRunDisplayName(item)}
                                 run={item.run}
                                 tracked={tracked}
                                 live={live}
@@ -341,6 +363,17 @@ export function WorkflowRunCard({ conversationId, runId }: { conversationId: str
                         ) : (
                             <RunLink key={item.step_id} item={item} />
                         )))}
+                        {extra.map((tracked) => (
+                            <LiveRunRow
+                                key={tracked.row.run_id}
+                                conversationId={conversationId}
+                                name={tracked.row.workflow_name}
+                                run={{ workflowId: tracked.row.workflow_id, runId: tracked.row.run_id }}
+                                tracked={tracked}
+                                live={live}
+                                available={available}
+                            />
+                        ))}
                     </ul>
                     <div className="flex flex-wrap items-center gap-2">
                         <p aria-live="polite" className="text-[11px] text-text-3">

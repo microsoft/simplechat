@@ -488,7 +488,15 @@ interface ChatState {
     setDrawerMode: (mode: DrawerMode) => void;
     loadMetadata: (conversationId: string) => Promise<void>;
 
-    reloadMessages: () => Promise<void>;
+    /**
+     * Re-read the open chat's messages and show them.
+     *
+     * `onlyIfUnchanged` is for a re-read the reader didn't ask for, such as a workflow result
+     * landing: it is dropped, resolving 'superseded', if a reply started or the messages changed
+     * while it was out, so it can't replace a question sent in the meantime. Every other re-read
+     * resolves 'done', including one that showed nothing because the chat changed or it failed.
+     */
+    reloadMessages: (options?: { onlyIfUnchanged?: boolean }) => Promise<'done' | 'superseded'>;
     removeMessage: (messageId: string, deleteThread?: boolean) => Promise<void>;
     retryMessage: (messageId: string, options?: ComposerOptions) => Promise<void>;
     editMessage: (messageId: string, content: string) => Promise<void>;
@@ -3563,11 +3571,12 @@ export const useChatStore = create<ChatState>((set, get) => ({
         }
     },
 
-    reloadMessages: async () => {
+    reloadMessages: async (options) => {
         const conversationId = get().activeConversationId;
         const analysisRevision = get().analysisContextRevision;
+        const shownBefore = get().messages;
         if (!conversationId) {
-            return;
+            return 'done';
         }
         try {
             const { messages } =
@@ -3575,7 +3584,11 @@ export const useChatStore = create<ChatState>((set, get) => ({
                     ? await fetchCollaborationMessages(conversationId)
                     : await fetchMessages(conversationId);
             if (get().activeConversationId !== conversationId) {
-                return;
+                return 'done';
+            }
+            // Checked before anything is written, so a dropped re-read changes nothing at all.
+            if (options?.onlyIfUnchanged && (get().streaming || get().messages !== shownBefore)) {
+                return 'superseded';
             }
             set({ messages: messages ?? [] });
             const selected = get().analysisResultContext;
@@ -3608,6 +3621,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
                     error instanceof Error ? error.message : 'Failed to reload messages.',
             });
         }
+        return 'done';
     },
 
     removeMessage: async (messageId, deleteThread = false) => {

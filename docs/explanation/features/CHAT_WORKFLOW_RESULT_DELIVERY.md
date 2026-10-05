@@ -731,8 +731,19 @@ Under an answer whose plan started workflows, each started run shows as a row
 with the workflow's name and a status badge. Until the tracker has read a run,
 its row keeps Phase 5's link and status. While none of the answer's runs has
 been read, the card's footnote says "Status when this message loaded. Open the
-run for its progress and results." Once read, the row follows the status row's
-`phase` and `status`:
+run for its progress and results."
+
+The rows come from Phase 5's list of the runs the plan started. A run the
+tracker has read for the answer that the list doesn't name, for example because
+the list couldn't be read or came back empty, is added after the list's rows,
+oldest first, with the name from its status row. So when the list fails to
+load, the card still shows the error and **Try again**, and the answer's
+tracked runs keep their live status and **Check now**. These rows wait until
+the list has answered, so no link shows while it loads, and a step the list
+says can't be opened stays closed. When the plan's run can't be found (404),
+the card shows nothing, even if the tracker has read runs for it.
+
+Once read, the row follows the status row's `phase` and `status`:
 
 | Status row | Badge | What the row says |
 | --- | --- | --- |
@@ -874,6 +885,9 @@ message id.
 
 - **In the open chat**, V2 waits until no reply or plan is streaming and the
   messages aren't loading, then re-reads the messages through the normal path.
+  If a reply starts or the messages change while that read is under way, for
+  example because the user sent a question, V2 drops what it read instead of
+  replacing the messages, and the result waits for the next quiet moment.
   If the user already chose a source for the composer, it stays chosen. The
   reply is marked read if the user is watching, and otherwise later, as other
   replies are. If the re-read doesn't include the message yet, the chat stays
@@ -1131,12 +1145,12 @@ results for the delivery implementation are recorded in the pull request.
 | Test | What it checks |
 | --- | --- |
 | `functional_tests\test_v2_workflow_run_status.mjs` | Reading the status route: rows dropped for ids that can't be used, rows that fail closed to "Status unavailable", the controls each row allows, the fixed texts, and the closed sets pinned against the server module that writes them. |
-| `functional_tests\test_v2_workflow_run_tracker.mjs` | The tracker against a fake clock: the cadence, the hidden-tab pause and its desktop-notification exception, going quiet and kicks, back-off and halts, an idempotent start, the per-chat baseline, closings and retirements. |
+| `functional_tests\test_v2_workflow_run_tracker.mjs` | The tracker against a fake clock: the cadence, the hidden-tab pause and its desktop-notification exception, going quiet and kicks, back-off and halts, an idempotent start, the per-chat baseline (including a run seen before its result was posted), the per-chat read's 10-second limit, closings and retirements. |
 | `functional_tests\test_v2_workflow_run_action_clients.mjs` | Cancel and Retry: the fresh runtime read, the exact resume body, no request to `/resume-failed` or the workflow-level `/cancel`, and the text for every refusal. |
-| `functional_tests\test_v2_workflow_delivery_messages.mjs` | Recognizing a posted message, reading its metadata, when its footer offers Follow up and Retry, how a result settles and where it lands, the running tag, and the bell's label. |
+| `functional_tests\test_v2_workflow_delivery_messages.mjs` | Recognizing a posted message, reading its metadata, when its footer offers Follow up and Retry, how a result settles and where it lands, that only the result's re-read drops a read overtaken by a reply or a change to the messages, the running tag, and the bell's label. |
 | `functional_tests\test_v2_workflow_run_link_routing.mjs` | The run link in both scopes, where each of 6b-1's notices opens, and the alert card's **Open run**. |
 | `functional_tests\test_v2_workflow_run_tracking_xss_guardrail.py` | The new V2 files pass `scripts\check_xss_sinks.py`, and every link they render comes from a reviewed builder or a fixed path. |
-| `ui_tests\test_v2_workflow_run_card.py` | The card's states and actions, the running tag, how a result settles in the open chat and in another chat, and the footers, with the real stores and tracker in a test harness. |
+| `ui_tests\test_v2_workflow_run_card.py` | The card's states and actions, tracked runs the plan's list doesn't name, the running tag, how a result settles in the open chat and in another chat (including a question sent while the result is being read), and the footers, with the real stores and tracker in a test harness. |
 | `ui_tests\test_v2_workflow_run_tracker_spa.py` | In the built SPA: the tracker starts only after the app has loaded with both flags on, never twice across pages, and one posted result raises one desktop notification. |
 
 Shared fixtures are in `functional_tests\test_support\workflowRunStatusFixtures.mjs`,

@@ -8,9 +8,11 @@
 //
 // A posted result lands as a streamed reply does. In the open chat the messages are re-read through
 // the store's normal path, never while a reply is still streaming, and the unread marker the server
-// set is then settled by the same watched-or-deferred rules. In any other chat the marker shows in
-// the list and the bell's count is refreshed. The server has already marked the chat unread and
-// added the bell notice, so nothing here creates another.
+// set is then settled by the same watched-or-deferred rules. The re-read is dropped if the reader
+// sends a message while it is out, so it can't replace their question, and tried again once the
+// chat is quiet. In any other chat the marker shows in the list and the bell's count is refreshed.
+// The server has already marked the chat unread and added the bell notice, so nothing here creates
+// another.
 
 import { useEffect } from 'react';
 import { desktopNotificationPermission, desktopNotificationsEnabled } from './desktopNotifications';
@@ -33,6 +35,9 @@ let tracker: WorkflowRunTracker | null = null;
 const waitingDeliveries: WorkflowRunStatusRow[] = [];
 let reloadingMessages = false;
 let stopWaitingForChat: (() => void) | null = null;
+// Moves on each time the tracker stops, so a re-read that was out when it stopped doesn't put its
+// results back to wait.
+let deliveryEpoch = 0;
 
 // Runs that dropped out of the read being applied, settled together right after it.
 const retiredRows: WorkflowRunRow[] = [];
@@ -138,18 +143,32 @@ function waitForQuietChat(): void {
     };
 }
 
-/** Re-read the open chat, then settle the results that were waiting for it. */
+/**
+ * Re-read the open chat, then settle the results that were waiting for it.
+ *
+ * The re-read is dropped if a reply started or the messages changed while it was out, such as a
+ * question the reader sent meanwhile. Its results then go back to wait for the next quiet moment.
+ */
 async function reloadAndSettle(rows: WorkflowRunStatusRow[]): Promise<void> {
+    const epoch = deliveryEpoch;
+    let superseded = false;
     try {
-        await useChatStore.getState().reloadMessages();
+        const outcome = await useChatStore.getState().reloadMessages({ onlyIfUnchanged: true });
+        superseded = outcome === 'superseded';
     } finally {
         reloadingMessages = false;
-        const { activeConversationId, messages } = useChatStore.getState();
-        for (const row of rows) {
-            // Only a result now on screen counts as seen; one the re-read missed stays unread.
-            const shown = row.conversation_id === activeConversationId
-                && messages.some((message) => message.id === row.delivery.message_id);
-            settleDelivery(row, shown);
+        if (superseded) {
+            if (epoch === deliveryEpoch) {
+                waitingDeliveries.unshift(...rows);
+            }
+        } else {
+            const { activeConversationId, messages } = useChatStore.getState();
+            for (const row of rows) {
+                // Only a result now on screen counts as seen; one the re-read missed stays unread.
+                const shown = row.conversation_id === activeConversationId
+                    && messages.some((message) => message.id === row.delivery.message_id);
+                settleDelivery(row, shown);
+            }
         }
         landWaitingDeliveries();
     }
@@ -245,6 +264,7 @@ export function useWorkflowRunTracker(ready: boolean): void {
             stopListening();
             instance.stop();
             stopWaiting();
+            deliveryEpoch += 1;
             waitingDeliveries.length = 0;
             retiredRows.length = 0;
         };

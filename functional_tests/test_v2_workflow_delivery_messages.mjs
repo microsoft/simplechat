@@ -477,7 +477,11 @@ test('the open chat is re-read only once it is quiet', () => {
     }
     assert.match(TRACKER_HOOK, /orchestrationActive: hasActiveOrchestration\(conversationId\)/);
     assert.match(TRACKER_HOOK, /planWorkflowDeliveryLanding\(waitingDeliveries, openId, openId !== null && chatIsBusy\(openId\)\)/);
-    assert.match(TRACKER_HOOK, /await useChatStore\.getState\(\)\.reloadMessages\(\);/);
+    // The re-read is guarded where it is applied, and only this path asks for the guard.
+    assert.match(TRACKER_HOOK, /await useChatStore\.getState\(\)\.reloadMessages\(\{ onlyIfUnchanged: true \}\);/);
+    assert.match(CHAT_STORE, /if \(options\?\.onlyIfUnchanged && \(get\(\)\.streaming \|\| get\(\)\.messages !== shownBefore\)\) \{\s*return 'superseded';/);
+    assert.equal(CHAT_STORE.match(/onlyIfUnchanged: true/g)?.length ?? 0, 0, 'No store re-read asks for the guard.');
+    assert.match(TRACKER_HOOK, /if \(superseded\) \{\s*if \(epoch === deliveryEpoch\) \{\s*waitingDeliveries\.unshift\(\.\.\.rows\);/);
 });
 
 test('each posted result lands in its own chat: another chat\'s now, the open chat\'s after one quiet re-read', () => {

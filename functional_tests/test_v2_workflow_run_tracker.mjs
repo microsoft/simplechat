@@ -644,6 +644,35 @@ test('a posting in the same second as the first read, but missing from it, is an
     assert.deepEqual(h.delivered(), ['run-new:1'], 'posted before the first read: already there, so silent');
 });
 
+test('a run seen before its result was posted is announced once, even when the posting time is behind the first read', async () => {
+    // Server instances' clocks can differ, so a posting's time can fall before the read that saw
+    // the run still waiting to post.
+    const h = createHarness();
+    h.tracker.start();
+    await h.respond(0, statusResponse([statusRow('run-a')], { checked_at: at(300) }));
+    assert.deepEqual(h.events.delivered, []);
+    await h.fire();
+    const posted = [deliveredRow('run-a', 1, at(299)), deliveredRow('run-b', 1, at(299))];
+    await h.respond(1, statusResponse(posted, { checked_at: at(330) }));
+    assert.deepEqual(h.delivered(), ['run-a:1'], 'run-b was never seen unposted, so it was posted before the first read');
+    h.tracker.kick({ immediate: true });
+    await h.respond(2, statusResponse(posted, { checked_at: at(360) }));
+    assert.deepEqual(h.delivered(), ['run-a:1'], 'announced exactly once');
+
+    // The same through a chat's own reads, against that chat's first read.
+    const chat = createHarness({ visible: false });
+    chat.tracker.start();
+    const first = chat.tracker.requestConversationRuns('chat-1');
+    await chat.respond(0, statusResponse([statusRow('run-c')], { checked_at: at(300) }));
+    assert.equal(await first, true);
+    chat.advance(WORKFLOW_RUN_CONVERSATION_DEDUPE_MS);
+    const second = chat.tracker.requestConversationRuns('chat-1');
+    assert.equal(chat.requests[1].conversationId, 'chat-1');
+    await chat.respond(1, statusResponse([deliveredRow('run-c', 2, at(299))], { checked_at: at(330) }));
+    assert.equal(await second, true);
+    assert.deepEqual(chat.delivered(), ['run-c:2']);
+});
+
 test("one chat's own read never silences another chat's first listing", async () => {
     const h = createHarness({ visible: false });
     h.tracker.start();
@@ -737,10 +766,14 @@ test("a chat's own read is shared while under way and stands for 10 seconds afte
     await h.respond(0, statusResponse([deliveredRow('run-a', 1, at(200))]));
     assert.equal(await first, true);
 
-    assert.equal(await h.tracker.requestConversationRuns('chat-1'), true);
+    // Counted before awaiting, so a read that went out fails here rather than waiting on an answer.
+    const repeat = h.tracker.requestConversationRuns('chat-1');
+    assert.equal(h.requests.length, 1, 'right after a good answer no second request is sent');
+    assert.equal(await repeat, true);
     h.advance(WORKFLOW_RUN_CONVERSATION_DEDUPE_MS - 1);
-    assert.equal(await h.tracker.requestConversationRuns('chat-1'), true);
+    const stillFresh = h.tracker.requestConversationRuns('chat-1');
     assert.equal(h.requests.length, 1, 'within 10 s the last good read stands');
+    assert.equal(await stillFresh, true);
     h.advance(1);
     const later = h.tracker.requestConversationRuns('chat-1');
     assert.equal(h.requests.length, 2, 'after 10 s it reads again');

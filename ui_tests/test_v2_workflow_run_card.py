@@ -12,10 +12,13 @@ real run tracker, stubs every server route at the network layer, and checks:
   its time, Cancel behind a confirmation, Retry as the durable runtime resume from a fresh
   runtime read with a fresh request id (never /resume-failed), and Review and approve held while
   another action on the same run is under way;
+- that the tracker's runs for the answer still show, live, when the plan's own run list failed to
+  load or names none of them, that they wait for the list to answer, that a step the list says
+  can't be opened stays closed, and that a plan run that is gone shows no card at all;
 - the running tag in the chat list, and how it gives way to the unread dot;
 - how a delivery that lands during the page session is settled: in another chat, and in the open
   chat after any active stream or orchestration turn ends, without overriding the user's choice
-  of source;
+  of source, and without replacing a question the user sent while the chat was being re-read;
 - the footer on each delivered message (Follow up, Retry workflow run, Open run), and that the
   plain chat Retry and Edit are absent on delivered messages;
 - that nothing reads run status when the feature flags are off, that one tracker tick is one
@@ -90,6 +93,8 @@ COMPLETED_AT = "2026-01-05T09:05:00Z"
 UUID = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
 STATIC_FOOTNOTE = "Status when this message loaded. Open the run for its progress and results."
 READ_ERROR = "Couldn't check the run status right now. Try again."
+LOAD_ERROR = "Could not load the workflow runs this plan started."
+QUESTION = "What changed since last week?"
 RETRY_REFUSAL = (
     "A workflow run posted this message, so it can't be retried here. "
     "To run the workflow again, open the run in Workflows."
@@ -238,6 +243,13 @@ class RunHarness(Harness):
         self.cancel_status = 200
         self.cancel_calls = 0
         self.retry_calls = []
+        self.links_status = 200
+        self.hold_links = False
+        self.held_links = []
+        self.hold_messages = False
+        self.held_messages = []
+        # Above the seeded chat's ids, so a question sent here and its reply never reuse them.
+        self.streams = 100
 
     # Routes -----------------------------------------------------------------------------------
 
@@ -252,8 +264,12 @@ class RunHarness(Harness):
 
     def conversation_route(self, route, method, path, query):
         if method == "GET" and path == "/api/get_messages":
-            messages = self.messages_by_chat.get(query.get("conversation_id", ""), [])
-            route.fulfill(json={"messages": copy.deepcopy(messages)})
+            messages = copy.deepcopy(self.messages_by_chat.get(query.get("conversation_id", ""), []))
+            if self.hold_messages:
+                # Read now and answered on release, as a slow server would.
+                self.held_messages.append((route, messages))
+            else:
+                route.fulfill(json={"messages": messages})
             return True
         return super().conversation_route(route, method, path, query)
 
@@ -261,8 +277,10 @@ class RunHarness(Harness):
         if method == "GET" and path == STATUS:
             return self.answer_status(route, path, query)
         if method == "GET" and path == LINKS:
-            route.fulfill(json={"run_id": ORUN, "workflow_runs": copy.deepcopy(self.link_items)})
-            return True
+            if self.hold_links:
+                self.held_links.append(route)
+                return True
+            return self.answer_links(route)
         if method == "GET" and path == PROPOSALS:
             route.fulfill(json={"run_id": ORUN, "proposals": []})
             return True
@@ -302,6 +320,38 @@ class RunHarness(Harness):
         held, self.held_resumes = self.held_resumes, []
         for route in held:
             self.answer(route, f"{RUN_BASE}/runtime/resume", 200, RUNTIME_RESUMED)
+
+    def answer_links(self, route):
+        if self.links_status != 200:
+            return self.answer(route, LINKS, self.links_status, {"error": "Raw server text that must not be shown."})
+        route.fulfill(json={"run_id": ORUN, "workflow_runs": copy.deepcopy(self.link_items)})
+        return True
+
+    def release_links(self):
+        """Answer the held reads of the plan's runs with the list as it is now."""
+        assert self.held_links, "No read of the plan's runs was held."
+        held, self.held_links = self.held_links, []
+        for route in held:
+            self.answer_links(route)
+
+    def release_messages(self):
+        """Answer the held message reads with the messages each one was cut from when it arrived."""
+        assert self.held_messages, "No message read was held."
+        held, self.held_messages = self.held_messages, []
+        for route, messages in held:
+            route.fulfill(json={"messages": messages})
+
+    def answer_stream(self, route, body):
+        """Save the question and its reply, as the server does, then finish the reply."""
+        conversation = body.get("conversation_id") or CHAT
+        number = self.streams + 1
+        self.messages_by_chat.setdefault(conversation, []).extend([
+            {"id": f"user-{number}", "conversation_id": conversation, "role": "user",
+             "content": body.get("message", ""), "metadata": {}},
+            {"id": f"reply-{number}", "conversation_id": conversation, "role": "assistant",
+             "content": "Here is the plan.", "metadata": {}},
+        ])
+        super().answer_stream(route, body)
 
     def answer_status(self, route, path, query):
         if self.status_error:
@@ -393,6 +443,14 @@ class RunHarness(Harness):
     def replies(self):
         return self.js(f"() => {H}.completedReplies.map((reply) => ({{ ...reply }}))")
 
+    def workflow_replies(self):
+        return [reply for reply in self.replies() if reply.get("source") == "workflow"]
+
+    def tracked_runs(self):
+        return self.js(f"""() => Object.values(
+            {H}.stores.workflowRunTracker.useWorkflowRunTrackerStore.getState().snapshot.runs,
+        ).map((tracked) => tracked.row.run_id)""")
+
     def chat_state(self, key):
         return self.js(f"(key) => {H}.stores.chat.useChatStore.getState()[key]", key)
 
@@ -463,6 +521,13 @@ class RunHarness(Harness):
     def hold_stream(self, held):
         self.js(f"(held) => {H}.stores.chat.useChatStore.setState({{ streaming: held }})", held)
 
+    def orchestrate_off(self):
+        """Switch the composer to plain chat, so Send streams a reply rather than starting a plan."""
+        toggle = self.page.get_by_role("button", name="Orchestrate", exact=True)
+        expect(toggle).to_have_attribute("aria-pressed", "true")
+        toggle.click()
+        expect(toggle).to_have_attribute("aria-pressed", "false")
+
     def hold_orchestration(self, held):
         self.js(f"""(held) => {H}.stores.orchestration.useOrchestrationStore.setState({{ inFlight: held ? {{
             'orun-x': {{ conversationId: '{CHAT}', turnId: 't', runId: 'orun-x', planId: 'p',
@@ -487,6 +552,8 @@ def run_assets():
     ensure_bundle(entry=FIXTURE / "harness_entry.tsx", bundle=BUNDLE)
     yield stylesheets
     BUNDLE.unlink(missing_ok=True)
+    # esbuild writes the entry's imported CSS beside the bundle.
+    BUNDLE.with_suffix(".css").unlink(missing_ok=True)
 
 
 @pytest.fixture
@@ -725,6 +792,66 @@ def test_server_names_render_as_text(ui):
     expect(ui.page.locator("img[src='x']")).to_have_count(0)
 
 
+@pytest.mark.parametrize("links_status,link_items", [(500, None), (200, [])], ids=["list-failed", "list-empty"])
+def test_runs_the_plans_list_does_not_name_still_show_live(ui, links_status, link_items):
+    ui.links_status = links_status
+    if link_items is not None:
+        ui.link_items = link_items
+    ui.status_rows = [
+        status_row("running"),
+        status_row("queued", run="wrun-0", step="step-0", name=HOSTILE, requested_at="2026-01-05T08:59:00Z"),
+    ]
+    ui.open()
+    expect(ui.card.get_by_text(LOAD_ERROR, exact=True)).to_have_count(1 if links_status != 200 else 0)
+    expect(ui.card.get_by_role("button", name="Try again", exact=True)).to_have_count(1 if links_status != 200 else 0)
+
+    # Oldest request first, and the name the status row carries renders as text.
+    rows = ui.live_row
+    expect(rows).to_have_count(2)
+    expect(rows.nth(0)).to_contain_text(HOSTILE)
+    expect(rows.nth(0).get_by_role("status").first).to_contain_text("Queued")
+    expect(rows.nth(1).get_by_role("status").first).to_contain_text("Running")
+    expect(rows.nth(1).get_by_role("link", name=f"Open run of {NAME}", exact=True)).to_have_attribute("href", RUN_HREF)
+    expect(ui.card.get_by_text(re.compile(r"^Checked "))).to_be_visible()
+    ui.wait_for(lambda: CHAT in ui.status_queries(), "the card read its chat's runs")
+    ui.check_now()
+
+
+def test_a_plan_run_that_is_gone_shows_nothing_even_with_tracked_runs(ui):
+    ui.links_status = 404
+    ui.status_rows = [status_row("running")]
+    ui.open(wait_card=False)
+    ui.wait_for(lambda: ui.count_requests("GET", LINKS) > 0, "the card read the plan's runs")
+    assert ui.tracked_runs() == [RUN]
+    ui.page.wait_for_timeout(500)
+    expect(ui.card).to_have_count(0)
+    assert CHAT not in ui.status_queries()
+
+
+def test_a_step_the_plans_list_says_cannot_open_stays_closed_with_a_tracked_run(ui):
+    ui.link_items = [{"step_id": STEP, "name": NAME, "state": "unavailable", "reason": "content_review",
+                      "workflow_id": None, "workflow_run_id": None}]
+    ui.status_rows = [status_row("running")]
+    # The tracked run waits for the list rather than showing, with its link, before the list answers.
+    ui.hold_links = True
+    ui.open(wait_card=False)
+    ui.wait_for(lambda: ui.held_links, "the card asked for the plan's runs")
+    assert ui.tracked_runs() == [RUN]
+    ui.page.wait_for_timeout(500)
+    expect(ui.card).to_have_count(0)
+
+    ui.hold_links = False
+    ui.release_links()
+    expect(ui.card.get_by_text(
+        "This response is in content review, so its workflow link is not available.", exact=True,
+    )).to_be_visible()
+    expect(ui.live_row).to_have_count(1)
+    expect(ui.card.get_by_role("link")).to_have_count(0)
+    expect(ui.card.get_by_role("button", name="Check now")).to_have_count(0)
+    ui.page.wait_for_timeout(500)
+    assert CHAT not in ui.status_queries()
+
+
 # Flags and the one tracker ----------------------------------------------------------------------
 
 
@@ -872,6 +999,58 @@ def test_the_open_chat_waits_for_its_reply_to_finish_before_reloading(ui, hold):
     expect(ui.page.get_by_text(NOTE_TEXT["result"])).to_be_visible(timeout=5000)
     assert ui.message_reads() == reads + 1
     ui.wait_for(lambda: len(ui.replies()) == 1, "the delivery was announced after the reply finished")
+
+
+@pytest.mark.parametrize("reply", ["still-coming", "finished"])
+def test_a_question_sent_during_the_re_read_stays_and_the_result_lands_once_after_its_reply(ui, reply):
+    ui.status_rows = [status_row("running")]
+    ui.open()
+    ui.orchestrate_off()
+    message_id = ui.deliver()
+    ui.hold_messages = True
+    reads = ui.message_reads()
+    ui.global_check()
+    ui.wait_for(lambda: ui.held_messages, "the open chat was re-read for the result")
+
+    # The reader sends a question while that re-read is still out.
+    ui.hold_streams = True
+    ui.send(QUESTION)
+    ui.wait_for(lambda: ui.held_streams, "the question was sent")
+    question = ui.page.get_by_text(QUESTION, exact=True)
+    answer = ui.page.get_by_text("Here is the plan.", exact=True)
+    note = ui.page.get_by_text(NOTE_TEXT["result"], exact=True)
+    expect(question).to_have_count(1)
+    ui.hold_messages = False
+
+    if reply == "finished":
+        # A quick reply can finish first. The re-read that comes back after it is older than both.
+        ui.release_stream()
+        expect(answer).to_have_count(1)
+        ui.wait_for(lambda: ui.chat_state("streaming") is False, "the reply finished")
+        assert ui.message_reads() == reads + 1
+
+    # The re-read comes back without the question, so it must not replace what is on screen.
+    ui.release_messages()
+    if reply == "still-coming":
+        ui.page.wait_for_timeout(1000)
+        expect(question).to_have_count(1)
+        expect(note).to_have_count(0)
+        assert ui.chat_state("streaming") is True
+        assert ui.message_reads() == reads + 1, "nothing is re-read again while the reply is still coming"
+        assert ui.workflow_replies() == []
+        ui.release_stream()
+
+    expect(note).to_have_count(1, timeout=5000)
+    ui.wait_for(lambda: len(ui.workflow_replies()) == 1, "the result was announced once the reply finished")
+    expect(question).to_have_count(1)
+    expect(answer).to_have_count(1)
+    assert ui.message_reads() == reads + 2
+    assert ui.workflow_replies()[0]["messageId"] == message_id
+
+    ui.global_check()
+    ui.page.wait_for_timeout(300)
+    assert len(ui.workflow_replies()) == 1
+    expect(note).to_have_count(1)
 
 
 def test_deliveries_already_in_the_first_read_stay_quiet(ui):
