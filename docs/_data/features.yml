@@ -461,6 +461,19 @@ workflow-results-in-chat:
       url: /admin/workflow/
     - title: "Chat interface controls"
       url: /reference/chat-controls/
+workflow-alert-sounds:
+  name: "Workflow alert sounds"
+  area: "Workflow automation"
+  audience: "Admins and end users"
+  summary: "Lets workflow alert rules play a bundled sound once or repeat it until a must-acknowledge alert is acknowledged."
+  why: "Use this when pop-up workflow alerts need an audible cue for urgent runs, but leave it off in open offices, shared screens or environments with strict accessibility policies. Alerts still appear and still require acknowledgment, and each person can also use the per-device Play alert sounds switch in their browser."
+  default_state: "Enabled"
+  admin_tab: workflow
+  setting_keys:
+    - enable_workflow_alert_sounds
+  reference:
+    - title: "Workflow settings"
+      url: /admin/workflow/
 core-actions:
   name: "Core actions"
   area: "Agents and actions"

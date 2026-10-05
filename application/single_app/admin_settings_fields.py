@@ -4129,6 +4129,18 @@ ADMIN_SETTINGS_FIELDS = {
             "depends_on": {"key": "allow_user_workflows", "equals": True},
         },
         {
+            "key": "enable_workflow_alert_sounds",
+            "type": "switch",
+            "label": "Enable Workflow Alert Sounds",
+            "help": (
+                "Workflow alert rules can play a sound once, or repeat it until "
+                "someone acknowledges the alert. Turning this off silences every "
+                "workflow alert sound for everyone, while alerts still pop up and "
+                "still require acknowledgment."
+            ),
+            "default": True,
+        },
+        {
             "key": "allow_group_workflows",
             "type": "switch",
             "label": "Enable Group Workflows",

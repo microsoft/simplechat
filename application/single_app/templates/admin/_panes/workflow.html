@@ -53,6 +53,17 @@
                         </label>
                         <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Let users ask chat about the stored result of one of their own finished workflow runs, in their private chats only. With Chat Orchestration on, a plan can also read such a result when the user asks about it. The workflow is not re-run. It applies only where personal workflows are enabled."></i>
                     </div>
+                    <div class="form-group form-check form-switch mt-3 mb-2">
+                        <input type="checkbox"
+                            class="form-check-input"
+                            id="enable_workflow_alert_sounds"
+                            name="enable_workflow_alert_sounds"
+                            {% if settings.enable_workflow_alert_sounds %}checked{% endif %}>
+                        <label class="form-check-label ms-2" for="enable_workflow_alert_sounds">
+                            Enable Workflow Alert Sounds
+                        </label>
+                        <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Workflow alert rules can play a sound once, or repeat it until someone acknowledges the alert. Turning this off silences every workflow alert sound for everyone, while alerts still pop up and still require acknowledgment."></i>
+                    </div>
 
                     <div class="form-group mt-3 mb-3">
                         <label for="workflow_max_auto_invoke_attempts" class="form-label">

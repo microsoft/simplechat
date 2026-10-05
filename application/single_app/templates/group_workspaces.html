@@ -9006,7 +9006,8 @@ app_settings.app_title }} {% endblock %} {% block head %}
     url_access_max_workflow_urls_per_run: {{ settings.url_access_max_workflow_urls_per_run|default(50, true)|tojson }}
   };
   window.workflowSettings = {
-    workflow_max_tasks: {{ settings.workflow_max_tasks|default(50, true)|tojson }}
+    workflow_max_tasks: {{ settings.workflow_max_tasks|default(50, true)|tojson }},
+    enable_workflow_alert_sounds: {{ settings.get('enable_workflow_alert_sounds', True)|tojson }}
   };
   window.workflowWorkspaceConfig = {
     scope: 'group',

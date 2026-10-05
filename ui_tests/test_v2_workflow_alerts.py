@@ -382,6 +382,126 @@ def test_readers_keep_the_summary(workflow_ui):
 
 
 @pytest.mark.parametrize("scope", SCOPES)
+def test_popup_option_controls_save_only_non_default_keys(workflow_ui, scope):
+    """Pop-up options are always visible, coupled, and only non-default choices are posted."""
+    ui, page = workflow_ui, workflow_ui.page
+    open_workflows(ui, scope)
+    dialog = edit(ui, NAMES[scope])
+    region = alerts_region(page)
+    field(region, "When to alert").select_option("rules")
+    region.get_by_role("button", name="Add alert rule", exact=True).click()
+    row = rule_rows(page).nth(0)
+
+    expect(row.get_by_text("Pop-up options", exact=True)).to_be_visible()
+    expect(row.get_by_text("These apply when the rule pops up.", exact=True)).to_be_visible()
+    expect(field(row, "Require acknowledgment")).not_to_be_checked()
+    expect(row.get_by_text("The alert keeps coming back, on every page and device, until someone acknowledges it.")).to_be_visible()
+    expect(field(row, "Sound")).to_have_value("off")
+    expect(field(row, "Size")).to_have_value("small")
+    if scope == "group":
+        expect(field(row, "Who gets it")).to_have_value("owner")
+    else:
+        expect(field(row, "Who gets it")).to_have_count(0)
+
+    field(row, "Sound").select_option("repeat")
+    expect(field(row, "Require acknowledgment")).to_be_checked()
+    field(row, "Require acknowledgment").uncheck()
+    expect(field(row, "Sound")).to_have_value("once")
+    field(row, "Sound").select_option("off")
+    field(row, "Size").select_option("large")
+    field(row, "Size").select_option("small")
+    field(row, "Require acknowledgment").check()
+    if scope == "group":
+        field(row, "Who gets it").select_option("group")
+
+    body = save(ui, dialog).body
+    sent_rule = body["alert_rules"][0]
+    assert sent_rule["require_acknowledgment"] is True
+    assert "sound" not in sent_rule
+    assert "size" not in sent_rule
+    if scope == "group":
+        assert sent_rule["audience"] == "group"
+    else:
+        assert "audience" not in sent_rule
+
+
+@pytest.mark.parametrize("scope", SCOPES)
+def test_stored_popup_options_load_back_into_the_editor(workflow_ui, scope):
+    ui, page = workflow_ui, workflow_ui.page
+    fields = {"require_acknowledgment": True, "sound": "repeat", "size": "large"}
+    if scope == "group":
+        fields["audience"] = "group"
+    target(ui, scope).update(
+        alert_mode="rules", alert_priority="none", alert_evaluation={"on_error": "skip"},
+        alert_rules=[rule("Escalation", {"type": "no_output"}, severity="high", **fields)],
+    )
+    open_workflows(ui, scope)
+    edit(ui, NAMES[scope])
+    row = rule_rows(page).nth(0)
+    expect(field(row, "Require acknowledgment")).to_be_checked()
+    expect(field(row, "Sound")).to_have_value("repeat")
+    expect(field(row, "Size")).to_have_value("large")
+    if scope == "group":
+        expect(field(row, "Who gets it")).to_have_value("group")
+
+
+def test_sound_admin_note_is_shown_when_sounds_are_disabled(workflow_ui):
+    ui, page = workflow_ui, workflow_ui.page
+    ui.workflow_alert_sounds_enabled = False
+    open_workflows(ui, "personal")
+    edit(ui, NAMES["personal"])
+    region = alerts_region(page)
+    field(region, "When to alert").select_option("rules")
+    region.get_by_role("button", name="Add alert rule", exact=True).click()
+    expect(rule_rows(page).nth(0).get_by_text(
+        "Your administrator has turned off workflow alert sounds. This setting is kept, but no sound plays.",
+        exact=True,
+    )).to_be_visible()
+
+
+@pytest.mark.parametrize("fields,message,scope", [
+    ({"sound": "always"}, "Alert rule 1 sound must be off, once or repeat.", "personal"),
+    ({"size": "giant"}, "Alert rule 1 size must be small, medium or large.", "personal"),
+    ({"audience": "company"}, "Alert rule 1 audience must be owner or group.", "group"),
+    ({"audience": "group"}, "Alert rule 1 can alert the whole group only in a group workflow.", "personal"),
+    ({"require_acknowledgment": True, "severity": "info", "delivery": "default"},
+     "Alert rule 1 must pop up to require acknowledgment, play a sound or change its size.", "personal"),
+    ({"sound": "repeat", "severity": "high"}, "Alert rule 1 can repeat its sound only when it requires acknowledgment.", "personal"),
+])
+def test_popup_option_validation_blocks_invalid_rules_before_saving(workflow_ui, fields, message, scope):
+    ui, page = workflow_ui, workflow_ui.page
+    target(ui, scope).update(
+        alert_mode="rules", alert_priority="none", alert_evaluation={"on_error": "skip"},
+        alert_rules=[rule("Option review", {"type": "no_output"}, **fields)],
+    )
+    open_workflows(ui, scope)
+    dialog = edit(ui, NAMES[scope])
+    row = rule_rows(page).nth(0)
+    expect(row.get_by_role("alert")).to_have_text(message)
+    requests = len(ui.requests)
+    dialog.get_by_role("button", name="Save workflow", exact=True).click()
+    expect(dialog.get_by_role("alert").filter(has_text=message).first).to_be_visible()
+    assert not [entry for entry in ui.requests[requests:] if entry.method == "POST"]
+
+
+def test_read_only_summary_includes_popup_options(workflow_ui):
+    ui, page = workflow_ui, workflow_ui.page
+    ui.group_can_manage = False
+    target(ui, "group").update(
+        alert_mode="rules", alert_priority="none", alert_evaluation={"on_error": "skip"},
+        alert_rules=[rule(
+            "Escalation", {"type": "no_output"}, severity="critical",
+            require_acknowledgment=True, sound="repeat", size="large", audience="group",
+        )],
+    )
+    open_workflows(ui, "group")
+    page.get_by_role("button", name="View Group review workflow", exact=True).click()
+    region = alerts_region(page)
+    expect(region.get_by_text("Must be acknowledged · Repeats sound · Large · Everyone in the group", exact=True)).to_be_visible()
+    expect(region.get_by_role("combobox")).to_have_count(0)
+
+
+@pytest.mark.parametrize("scope", SCOPES)
 def test_version_one_workflows_edit_alerts_natively_without_a_classic_link(workflow_ui, scope):
     """M6B D3: native editing replaces M6's classic alerts link; a V2 save converts the workflow."""
     ui, page = workflow_ui, workflow_ui.page

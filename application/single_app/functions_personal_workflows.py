@@ -987,6 +987,7 @@ def build_personal_workflow_document(user_id, workflow_data, actor_user_id=None,
         workflow_data,
         existing_workflow=existing_workflow,
         task_ids=[task.get('id') for task in tasks],
+        workflow_scope='personal',
     )
     alert_priority = alert_settings['alert_priority']
     error_handling = _normalize_workflow_error_handling(workflow_data, existing_workflow=existing_workflow)
