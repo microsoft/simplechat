@@ -1,8 +1,8 @@
 # test_v2_workflow_merge_task.py
 """
 UI test for the V2 workflow editor Merge files document action.
-Version: 0.261.242
-Implemented in: 0.261.239; PDF merge authoring added in 0.261.240; Word in 0.261.241; PowerPoint in 0.261.242
+Version: 0.261.244
+Implemented in: 0.261.241; PDF merge authoring added in 0.261.242; Word in 0.261.243; PowerPoint in 0.261.244
 
 This test ensures the workflow editor can author a merge task, keep the user's selected file
 order after reordering, and save the backend document_action shape, and that it doesn't offer
@@ -47,7 +47,7 @@ def workflow_post(ui):
 
 
 def test_v2_workflow_merge_task_selected_files_reorder(workflow_ui):
-    assert_app_version_at_least("0.261.239")
+    assert_app_version_at_least("0.261.241")
     ui, page = workflow_ui, workflow_ui.page
     ui.open("/workspace/workflows")
 
@@ -106,7 +106,7 @@ def test_v2_workflow_merge_task_is_not_offered_while_merge_is_off(workflow_ui):
 
 
 def test_v2_workflow_merge_task_assembles_pdfs_without_bookmarks(workflow_ui):
-    assert_app_version_at_least("0.261.240")
+    assert_app_version_at_least("0.261.242")
     ui, page = workflow_ui, workflow_ui.page
     ui.open("/workspace/workflows")
 
@@ -139,7 +139,7 @@ def test_v2_workflow_merge_task_assembles_pdfs_without_bookmarks(workflow_ui):
 
 
 def test_v2_workflow_merge_task_appends_word_documents_with_their_options(workflow_ui):
-    assert_app_version_at_least("0.261.241")
+    assert_app_version_at_least("0.261.243")
     ui, page = workflow_ui, workflow_ui.page
     ui.open("/workspace/workflows")
 
@@ -177,7 +177,7 @@ def test_v2_workflow_merge_task_appends_word_documents_with_their_options(workfl
 
 
 def test_v2_workflow_merge_task_appends_powerpoint_decks_with_their_options(workflow_ui):
-    assert_app_version_at_least("0.261.242")
+    assert_app_version_at_least("0.261.244")
     ui, page = workflow_ui, workflow_ui.page
     ui.open("/workspace/workflows")
 

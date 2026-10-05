@@ -2,8 +2,8 @@
 # test_document_merge_assembly.py
 """
 Functional test for the retained document merge description and its re-assembly.
-Version: 0.261.243
-Implemented in: 0.261.243
+Version: 0.261.245
+Implemented in: 0.261.245
 
 This test ensures that functions_document_merge_assembly accepts only the settings of
 the chosen merge kind, describes a checked merge by its files, options, size and
@@ -146,7 +146,7 @@ def reader_for(kind, overrides=None, reads=None):
 
 
 def test_version_includes_document_merge_assembly():
-    assert_app_version_at_least("0.261.243")
+    assert_app_version_at_least("0.261.245")
 
 
 def test_options_follow_the_kind_and_leave_defaults_to_the_engine():

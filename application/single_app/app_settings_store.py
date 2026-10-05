@@ -33,6 +33,18 @@ return 1
 """
 
 
+def _plain_document(document):
+    """Copy a Cosmos settings response as a plain ``dict``.
+
+    ``read_item`` and ``replace_item`` return ``CosmosDict``, a ``dict`` subclass that
+    carries response headers, and ``copy.deepcopy`` keeps that subclass. Shared reads
+    decode JSON into a plain ``dict``. Every read path returns the same type, so callers
+    that require exactly ``dict`` behave the same whichever store served the read: with
+    Redis disabled, during another worker's save, on cache repair and on Redis fallback.
+    """
+    return copy.deepcopy(dict(document) if isinstance(document, dict) else document)
+
+
 class SettingsConflictError(RuntimeError):
     """The settings changed after the caller's read."""
 
@@ -64,7 +76,7 @@ class AppSettingsStore:
             session_token=session_token,
             response_hook=capture_headers,
         )
-        return copy.deepcopy(document), headers.get("x-ms-session-token", session_token)
+        return _plain_document(document), headers.get("x-ms-session-token", session_token)
 
     @staticmethod
     def _decode(raw):
@@ -218,5 +230,5 @@ class AppSettingsStore:
                     raise SettingsConflictError("Settings changed during the save.")
                 continue
 
-            return copy.deepcopy(stored)
+            return _plain_document(stored)
         raise SettingsConflictError("Settings kept changing; reload and retry.")

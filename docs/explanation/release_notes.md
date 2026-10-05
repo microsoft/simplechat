@@ -2,7 +2,7 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
-### **(v0.261.246)**
+### **(v0.261.248)**
 
 #### Bug Fixes
 
@@ -12,7 +12,7 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
     *   Merges behave exactly as before.
     *   (Ref: #1619, `functions_document_merge.py`, `functions_document_merge_core.py`, `functions_document_merge_workbook.py`, `functions_tabular_merge.py`, `functions_workflow_runner.py`, [Phase 4](features/V2_FILE_MERGE_PHASE_4_PDF_WORKBOOKS.md#document-merge-engine))
 
-### **(v0.261.245)**
+### **(v0.261.247)**
 
 #### Bug Fixes
 
@@ -21,7 +21,7 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
     *   Where `/sc-temp-files` doesn't exist or can't be written, such as on a development machine, merges still use the platform temp directory, and never the working directory. Spilling doesn't change the merged file.
     *   (Ref: #1619, `functions_document_merge.py`, `functions_tabular_merge.py`, `functions_temp_files.py`, `test_file_merge_scratch_dir.py`, [Phase 7](features/V2_FILE_MERGE_PHASE_7_CHAT_DOCUMENTS.md#where-merges-spill-to-disk))
 
-### **(v0.261.244)**
+### **(v0.261.246)**
 
 #### User Interface Enhancements
 
@@ -32,7 +32,7 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
     *   The planner's general rule to prefer a stated assumption over a question now names its exceptions: capability guidance, deliverables facts and workflow instructions that say to ask.
     *   (Ref: #1619, `functions_orchestration_deliverables.py`, `functions_orchestration_planner.py`, [Phase 7](features/V2_FILE_MERGE_PHASE_7_CHAT_DOCUMENTS.md#one-sheet-or-a-sheet-per-file), [Merge files](../guides/merge-files.md#one-sheet-or-a-sheet-per-file))
 
-### **(v0.261.243)**
+### **(v0.261.245)**
 
 #### New Features
 
@@ -57,7 +57,7 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
     *   docxcompose gave every list it copied from a later document a random ID, so a Word merge whose later documents had ordinary bulleted or numbered lists produced different bytes on each run. A retried workflow Word merge could attach a second copy, and a chat merge of such documents could never be delivered. The ID is now derived and unique within the document, so each document's list still restarts and the same documents always give the same file.
     *   (Ref: #1619, `functions_document_merge_docx.py`, [Phase 5](features/V2_FILE_MERGE_PHASE_5_WORD.md))
 
-### **(v0.261.242)**
+### **(v0.261.244)**
 
 #### New Features
 
@@ -69,7 +69,7 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
     *   Chat can propose PowerPoint merges (blueprint `merge.kind` `pptx`, with `formatting` and `sections`).
     *   (Ref: #1619, `functions_document_merge_pptx.py`, `functions_document_merge.py`, `functions_document_actions.py`, `functions_workflow_drafts.py`, `functions_orchestration_planner.py`, [Phase 6](features/V2_FILE_MERGE_PHASE_6_POWERPOINT.md), [Create a workflow](../guides/create-a-workflow.md#merge-files-in-a-workflow))
 
-### **(v0.261.241)**
+### **(v0.261.243)**
 
 #### New Features
 
@@ -81,7 +81,7 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
     *   Adds the `docxcompose` 2.2.0 dependency (MIT).
     *   (Ref: #1619, `functions_document_merge_docx.py`, `functions_document_merge.py`, `functions_document_actions.py`, `functions_workflow_drafts.py`, `functions_orchestration_planner.py`, `requirements.txt`, [Phase 5](features/V2_FILE_MERGE_PHASE_5_WORD.md), [Create a workflow](../guides/create-a-workflow.md#merge-files-in-a-workflow))
 
-### **(v0.261.240)**
+### **(v0.261.242)**
 
 #### New Features
 
@@ -93,7 +93,7 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
     *   Merging PDFs or workbooks directly in a chat turn, without a workflow, is planned with Word and PowerPoint for a later release.
     *   (Ref: #1619, `functions_document_merge.py`, `functions_document_merge_pdf.py`, `functions_document_merge_workbook.py`, `functions_workflow_merge.py`, `functions_document_actions.py`, `functions_workflow_drafts.py`, [Phase 4](features/V2_FILE_MERGE_PHASE_4_PDF_WORKBOOKS.md), [Create a workflow](../guides/create-a-workflow.md#merge-files-in-a-workflow))
 
-### **(v0.261.239)**
+### **(v0.261.241)**
 
 #### New Features
 
@@ -114,7 +114,7 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
     *   The classic workflow editor doesn't open a workflow with a Merge files task, which it can't represent, and points to V2 instead; Run and Cancel still work there.
     *   (Ref: `application/v2_ui/src/lib/workflowEditor.ts`, `WorkflowTaskFields.tsx`, `WorkflowFileSyncFields.tsx`, `workflowProposals.ts`, `WorkflowProposalCard.tsx`, `static/js/workspace/workspace_workflows.js`)
 
-### **(v0.261.238)**
+### **(v0.261.240)**
 
 #### New Features
 
@@ -137,7 +137,7 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
     *   The V2 plan review now states merge and inspection settings in plain words, such as "Keep every column from every file" or "Remove rows with the same Customer ID, keeping the last", leaves out values that only repeat a default, and shows column and sheet names as plain text.
     *   (Ref: `application/v2_ui/src/lib/orchestrationMerge.ts`, `OrchestrationRunView.tsx`)
 
-### **(v0.261.237)**
+### **(v0.261.239)**
 
 #### New Features
 
@@ -152,6 +152,36 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
 *   **Exact-Schema CSV And Excel Exports**
     *   Two new generated-file profiles, `exact_tabular_records_v1` (CSV) and `exact_tabular_workbook_v1` (XLSX, optional sheet name), export every retained column in its retained order. They let a plan deliver a table whose columns are only known when it runs, such as a merge of files a search found, without the planner having to name the columns.
     *   (Ref: `functions_generated_export_registry.py`, `functions_structured_file_renderers.py`, `functions_generated_office_adapters.py`, [Generated File Export Framework](features/GENERATED_FILE_EXPORT_FRAMEWORK.md))
+
+### **(v0.261.238)**
+
+#### Bug Fixes
+
+*   **Microsoft 365 Actions Now Work In Chat Orchestration Plans**
+    *   A plan step that used a Microsoft 365 action, such as "what are my latest emails", never read Microsoft 365 data. The step reported completed, and the answer said the data couldn't be retrieved. No Microsoft Graph request was made.
+    *   Each plan step runs in its own request context, and Microsoft 365 functions require a Microsoft 365 execution context on that request. Classic chat and workflows create one, but orchestration never did, so every call was refused with `m365_context_required`. The plugin returned the refusal as a function result, and the step reported it as findings.
+    *   An action step now gets its own Microsoft 365 request as the signed-in user. It selects only the step's saved action, checks delegated sign-in before the model or Microsoft Graph is called, and records the request so sharing the conversation waits for it. A retried step reuses the request, so an approval given after the first attempt applies.
+    *   Plans only read Microsoft 365 data: send mail, calendar invitation and mark-as-read functions aren't loaded. Shared conversations are refused before any Microsoft 365 work.
+    *   A sign-in, approval or authorization refusal now stops the step with `m365_sign_in_required`, `m365_approval_required`, `m365_unavailable`, `m365_shared_conversation` or `m365_read_only`. Each message says what to do next. Ordinary Microsoft Graph outcomes, such as nothing found, are still reported as findings.
+    *   `[MS_GRAPH_PLUGIN] Microsoft 365 operation could not complete.` now logs the refusal code as `sc_failure_code` and the source as `sc_resource`. A stopped step logs `[ORCHESTRATION_M365] A Microsoft 365 step stopped.`
+    *   (Ref: `functions_orchestration_m365.py`, `functions_m365_runtime.py`, `functions_orchestration_actions.py`, `functions_orchestration_adapters.py`, `functions_orchestration_schema.py`, `functions_m365_transport.py`, `test_orchestration_m365_actions.py`, [Orchestration Microsoft 365 Action Context Fix](fixes/ORCHESTRATION_M365_ACTION_CONTEXT_FIX.md))
+
+#### User Interface Enhancements
+
+*   **Connect Microsoft 365 From A Failed Plan Step**
+    *   When a V2 plan step stops for Microsoft 365 sign-in, the run details show **Connect Microsoft 365** for the sources the step needs. It opens the Profile reconnect sign-in in a pop-up. When it finishes, select **Retry from failed step**.
+    *   A step that stopped for approval links to Approvals instead.
+    *   (Ref: `v2_ui/src/lib/m365Connect.ts`, `OrchestrationM365Notice.tsx`, `OrchestrationRecoveryNotice.tsx`, `test_v2_orchestration_m365_recovery.py`, [Microsoft 365 data and approvals](../guides/microsoft-365-conversation-data.md))
+
+### **(v0.261.237)**
+
+#### Bug Fixes
+
+*   **Orchestration Runs No Longer Fail When Settings Are Read During A Save**
+    *   A chat orchestration run could finish every step and still end as **Partially completed** with "A required retained result is unavailable or changed." It affected runs that kept web search, linked-page, deep research, agent, action or Fact Memory results, and retrying could fail the same way.
+    *   Orchestration rechecks a kept result's access with the current admin settings, and that check requires exactly a `dict`. Settings read from the shared Redis copy were a `dict`, but settings read from Cosmos DB came back as the SDK's `CosmosDict` type, so the check refused them. Cosmos serves the read while any settings save is in progress, such as the Cosmos throughput autoscale saving its status, when the shared copy is repaired or unreachable, and on every read when Redis is off.
+    *   The settings store now returns a plain `dict` from every read and write, whichever backend served it. The orchestration check is unchanged. No setting or deployment change is needed.
+    *   (Ref: `app_settings_store.py`, `functions_orchestration_external_sources.py`, `test_app_settings_store_plain_dict_reads.py`, [Orchestration Settings Document Type Fix](fixes/ORCHESTRATION_SETTINGS_DOCUMENT_TYPE_FIX.md))
 
 ### **(v0.261.236)**
 

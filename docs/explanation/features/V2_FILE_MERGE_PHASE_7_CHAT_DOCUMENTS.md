@@ -1,11 +1,11 @@
 # V2 File Merge — Phase 7: Document Merges in Chat and Hardening
 
-Version: **0.261.246**
+Version: **0.261.248**
 
-Implemented in version: **0.261.243**, recorded in `application/single_app/config.py`.
-The one-sheet or sheet-per-file question was added in **0.261.244**, and merges spill to
-disk in the container's scratch directory since **0.261.245**. The assemblers' shared code
-moved to `functions_document_merge_core.py` in **0.261.246**.
+Implemented in version: **0.261.245**, recorded in `application/single_app/config.py`.
+The one-sheet or sheet-per-file question was added in **0.261.246**, and merges spill to
+disk in the container's scratch directory since **0.261.247**. The assemblers' shared code
+moved to `functions_document_merge_core.py` in **0.261.248**.
 
 GitHub issue: [#1619](https://github.com/microsoft/simplechat/issues/1619). Umbrella document:
 [V2 File Merge](V2_FILE_MERGE.md). Builds on [Phase 4](V2_FILE_MERGE_PHASE_4_PDF_WORKBOOKS.md),
@@ -109,13 +109,13 @@ contract:
 
 ### One sheet or a sheet per file
 
-Added in **0.261.244**.
+Added in **0.261.246**.
 
 Merging several spreadsheets into one Excel file can mean every row on one sheet
 (`tabular_merge`, rendered with `exact_tabular_workbook_v1`) or each file on its own sheet
 (`document_merge` with kind `workbook`, rendered with `assembled_document_v1`). Requests such
 as "merge these files into one Excel file" don't say which, and the planner used to assume
-one sheet. Since **0.261.244** it asks instead:
+one sheet. Since **0.261.246** it asks instead:
 
 - `build_deliverable_availability` adds `MERGE_LAYOUT_FACT` to
   `capability_availability.deliverables.facts` only when `tabular_merge`, `document_merge`
@@ -172,12 +172,12 @@ Workflow merges keep naming the file, because the owner needs to know which one 
 ### Where merges spill to disk
 
 A merge keeps its data in memory until it outgrows a bound: 16 MiB for an assembled
-document and 8 MiB for a spreadsheet merge's rows. Past that, since **0.261.245**, the spool
+document and 8 MiB for a spreadsheet merge's rows. Past that, since **0.261.247**, the spool
 moves to `/sc-temp-files`, the directory the container image creates for its non-root
 user's scratch files, through `scratch_file_dir()` in `functions_temp_files.py`. Where that
 directory doesn't exist or can't be written, as on a development machine, the spool uses
 the platform temp directory. It never uses the working directory, which the container's
-user can't write. Spilling doesn't change the merged result. Before 0.261.245, spools
+user can't write. Spilling doesn't change the merged result. Before 0.261.247, spools
 always used the platform temp directory (`/tmp` in the image), which also works.
 
 openpyxl manages its own temporary files when it writes a workbook merge's sheets. They go
@@ -191,11 +191,11 @@ to the platform temp directory and are removed once the sheet is written.
 | `functions_orchestration_document_merge.py` | New. Chat glue: limits, the authorized manifest check, persistence of `assembly` and `report`, step summaries and failure codes. |
 | `functions_ooxml_package_guard.py` | New. The XML prolog check shared by the document and spreadsheet engines, and the content-type lookup PowerPoint stripping uses. |
 | `functions_orchestration_registry.py`, `functions_orchestration_adapters.py`, `functions_orchestration_executor.py`, `functions_orchestration_result_contracts.py` | The `document_merge` descriptor, adapter and named-source handling. |
-| `functions_orchestration_schema.py`, `functions_orchestration_deliverables.py`, `functions_orchestration_planner.py` | Plan rules, failure messages, recipes and planner guidance, and (0.261.244) the one-sheet or sheet-per-file question. |
+| `functions_orchestration_schema.py`, `functions_orchestration_deliverables.py`, `functions_orchestration_planner.py` | Plan rules, failure messages, recipes and planner guidance, and (0.261.246) the one-sheet or sheet-per-file question. |
 | `functions_generated_export_registry.py`, `functions_generated_office_adapters.py`, `functions_generated_file_exports.py` | The `assembled_document_v1` profile on the PDF, Word, PowerPoint and Excel formats, and the assembled renderer. |
 | `functions_orchestration_rendering.py`, `functions_orchestration_services.py`, `functions_orchestration_bootstrap.py`, `functions_orchestration_results.py` | The lineage-bound document reader, `ResultReader.lineage_sources()`, and one shared translation of source read failures for the reader and every other source Render opens. |
-| `functions_document_merge.py`, `functions_document_merge_docx.py`, `functions_document_merge_pptx.py`, `functions_document_merge_workbook.py`, `functions_tabular_merge.py` | The hardening above, derived Word list IDs, and (0.261.245) spools that spill into the scratch directory. |
-| `functions_document_merge_core.py` | New in 0.261.246. The parts, options, limits, errors, result, merge context, report, output spools and package guard that every assembler shares, moved out of `functions_document_merge.py` so no assembler imports the module that loads it. |
+| `functions_document_merge.py`, `functions_document_merge_docx.py`, `functions_document_merge_pptx.py`, `functions_document_merge_workbook.py`, `functions_tabular_merge.py` | The hardening above, derived Word list IDs, and (0.261.247) spools that spill into the scratch directory. |
+| `functions_document_merge_core.py` | New in 0.261.248. The parts, options, limits, errors, result, merge context, report, output spools and package guard that every assembler shares, moved out of `functions_document_merge.py` so no assembler imports the module that loads it. |
 | `application/v2_ui/src/lib/orchestrationMerge.ts` | The plan card says what a document merge creates and which settings it changes. |
 
 ## Usage
@@ -229,8 +229,8 @@ the default, followed by the file to create. See
 | `functional_tests/test_document_merge_docx.py` | Lists copied from later documents keep restarting and give the same bytes on every run. |
 | `functional_tests/test_workflow_merge_task.py` | 100 files of 1,000 rows in one workflow run, and CSV and Excel output without live formulas. |
 | `functional_tests/test_v2_orchestration_merge_arguments.mjs`, `ui_tests/test_v2_orchestration_merge_arguments.py` | The plan card's wording for document merges. |
-| `functional_tests/test_orchestration_merge_layout_question.py` | The one-sheet or sheet-per-file fact is offered only when both layouts and a file can be delivered; the clarification rule names its exceptions; workflow merge proposals ask the same question; the real planner sees the fact and returns a question the server accepts, with both choices and Decline handled; each answer plans to a valid merge (0.261.244). |
-| `functional_tests/test_file_merge_scratch_dir.py` | Spreadsheet merges and every document kind spill into the scratch directory when it can be written and into the platform temp directory otherwise, with the same result as an in-memory merge (0.261.245). `functional_tests/test_orchestration_file_render_scratch_dir.py` checks that no application code creates temporary files in the working directory. |
+| `functional_tests/test_orchestration_merge_layout_question.py` | The one-sheet or sheet-per-file fact is offered only when both layouts and a file can be delivered; the clarification rule names its exceptions; workflow merge proposals ask the same question; the real planner sees the fact and returns a question the server accepts, with both choices and Decline handled; each answer plans to a valid merge (0.261.246). |
+| `functional_tests/test_file_merge_scratch_dir.py` | Spreadsheet merges and every document kind spill into the scratch directory when it can be written and into the platform temp directory otherwise, with the same result as an in-memory merge (0.261.247). `functional_tests/test_orchestration_file_render_scratch_dir.py` checks that no application code creates temporary files in the working directory. |
 
 ## Known limitations
 

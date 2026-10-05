@@ -1,11 +1,11 @@
 # V2 File Merge
 
-Version: **0.261.246**
+Version: **0.261.248**
 
-Implemented in version: **0.261.237** (Phase 1, same-structure spreadsheets),
-**0.261.238** (Phase 2, reconciling different structures), **0.261.239** (Phase 3,
-workflow merges), **0.261.240** (Phase 4, PDF and workbook merges), **0.261.241**
-(Phase 5, Word merges), **0.261.242** (Phase 6, PowerPoint merges) and **0.261.243**
+Implemented in version: **0.261.239** (Phase 1, same-structure spreadsheets),
+**0.261.240** (Phase 2, reconciling different structures), **0.261.241** (Phase 3,
+workflow merges), **0.261.242** (Phase 4, PDF and workbook merges), **0.261.243**
+(Phase 5, Word merges), **0.261.244** (Phase 6, PowerPoint merges) and **0.261.245**
 (Phase 7, document merges in chat and hardening), recorded in
 `application/single_app/config.py`.
 
@@ -27,13 +27,13 @@ request and the easiest to verify exactly; documents and decks follow.
 
 | Phase | Scope | Status |
 | --- | --- | --- |
-| 1 | Same-structure CSV and Excel merge in V2 chat (`tabular_merge`), Merge limits, exact-schema CSV/XLSX exports | Implemented in **0.261.237** — see [Phase 1](V2_FILE_MERGE_PHASE_1_SPREADSHEETS.md) |
-| 2 | Reconciling different structures: column inspection (`tabular_inspect`), union and mapped policies, aliases, header rows, every-sheet mode, exclusion, duplicate removal, sorting, AI-prepared column mapping | Implemented in **0.261.238** — see [Phase 2](V2_FILE_MERGE_PHASE_2_RECONCILIATION.md) |
-| 3 | Large and recurring merges (100+ files) as V2 workflow tasks: selected files, every matching file, recent files or the files File Sync changed; chat-proposed merge workflows | Implemented in **0.261.239** — see [Phase 3](V2_FILE_MERGE_PHASE_3_WORKFLOWS.md) |
-| 4 | Document merge engine; PDF merges (a bookmark per file) and workbooks with one sheet per file, as workflow merge types | Implemented in **0.261.240** — see [Phase 4](V2_FILE_MERGE_PHASE_4_PDF_WORKBOOKS.md) |
-| 5 | Word merge, keeping each document's styles or the first document's, as a workflow merge type | Implemented in **0.261.241** — see [Phase 5](V2_FILE_MERGE_PHASE_5_WORD.md) |
-| 6 | PowerPoint merge, keeping each deck's look or the first deck's theme, as a workflow merge type | Implemented in **0.261.242** — see [Phase 6](V2_FILE_MERGE_PHASE_6_POWERPOINT.md) |
-| 7 | Document merges directly in chat (`document_merge` with the `assembled_document_v1` Render profile) for every document kind; scale and security hardening, final documentation | Implemented in **0.261.243** — see [Phase 7](V2_FILE_MERGE_PHASE_7_CHAT_DOCUMENTS.md) |
+| 1 | Same-structure CSV and Excel merge in V2 chat (`tabular_merge`), Merge limits, exact-schema CSV/XLSX exports | Implemented in **0.261.239** — see [Phase 1](V2_FILE_MERGE_PHASE_1_SPREADSHEETS.md) |
+| 2 | Reconciling different structures: column inspection (`tabular_inspect`), union and mapped policies, aliases, header rows, every-sheet mode, exclusion, duplicate removal, sorting, AI-prepared column mapping | Implemented in **0.261.240** — see [Phase 2](V2_FILE_MERGE_PHASE_2_RECONCILIATION.md) |
+| 3 | Large and recurring merges (100+ files) as V2 workflow tasks: selected files, every matching file, recent files or the files File Sync changed; chat-proposed merge workflows | Implemented in **0.261.241** — see [Phase 3](V2_FILE_MERGE_PHASE_3_WORKFLOWS.md) |
+| 4 | Document merge engine; PDF merges (a bookmark per file) and workbooks with one sheet per file, as workflow merge types | Implemented in **0.261.242** — see [Phase 4](V2_FILE_MERGE_PHASE_4_PDF_WORKBOOKS.md) |
+| 5 | Word merge, keeping each document's styles or the first document's, as a workflow merge type | Implemented in **0.261.243** — see [Phase 5](V2_FILE_MERGE_PHASE_5_WORD.md) |
+| 6 | PowerPoint merge, keeping each deck's look or the first deck's theme, as a workflow merge type | Implemented in **0.261.244** — see [Phase 6](V2_FILE_MERGE_PHASE_6_POWERPOINT.md) |
+| 7 | Document merges directly in chat (`document_merge` with the `assembled_document_v1` Render profile) for every document kind; scale and security hardening, final documentation | Implemented in **0.261.245** — see [Phase 7](V2_FILE_MERGE_PHASE_7_CHAT_DOCUMENTS.md) |
 
 Document merges reached workflows first, kind by kind, so every file type was usable as soon
 as its phase landed, including from workflows that chat proposes. Merging documents inline
@@ -59,7 +59,7 @@ merge retains a description instead of a second copy of every file, and Render r
 the files that description names, after checking access again.
 
 Spreadsheets merged into one Excel file can share one sheet (`tabular_merge`) or keep a
-sheet each (`document_merge` with kind `workbook`). Since **0.261.244**, when a request
+sheet each (`document_merge` with kind `workbook`). Since **0.261.246**, when a request
 doesn't say which and both are offered, the plan asks first
 ([Phase 7](V2_FILE_MERGE_PHASE_7_CHAT_DOCUMENTS.md#one-sheet-or-a-sheet-per-file)).
 
@@ -72,13 +72,13 @@ A chat turn suits a few files. A workflow task merges up to 100 files and 1,000,
 default, on a schedule or whenever File Sync brings new files, without anyone asking. In
 the V2 workflow editor a task's **Document action** can be **Merge files**: the task runs
 the same engine with code, no model, and attaches the merged CSV or Excel file to the run.
-Since **0.261.240** its **Merge type** can also join PDFs into one PDF or put spreadsheets on
-separate sheets of one workbook, since **0.261.241** append Word documents into one Word
-document, and since **0.261.242** append PowerPoint decks into one deck. Chat can propose
+Since **0.261.242** its **Merge type** can also join PDFs into one PDF or put spreadsheets on
+separate sheets of one workbook, since **0.261.243** append Word documents into one Word
+document, and since **0.261.244** append PowerPoint decks into one deck. Chat can propose
 such a workflow when a user asks for a recurring merge. See
 [Phase 3](V2_FILE_MERGE_PHASE_3_WORKFLOWS.md), [Phase 4](V2_FILE_MERGE_PHASE_4_PDF_WORKBOOKS.md),
 [Phase 5](V2_FILE_MERGE_PHASE_5_WORD.md) and [Phase 6](V2_FILE_MERGE_PHASE_6_POWERPOINT.md).
-Since **0.261.243** a chat turn merges every document kind too, and workflows remain the
+Since **0.261.245** a chat turn merges every document kind too, and workflows remain the
 way to merge on a schedule, on every sync, or more files than chat allows
 ([Phase 7](V2_FILE_MERGE_PHASE_7_CHAT_DOCUMENTS.md)).
 
@@ -96,7 +96,7 @@ way to merge on a schedule, on every sync, or more files than chat allows
 | `functions_orchestration_services.py` | The `tabular_column_mapping_v1` prepared-content profile and its validator. |
 | `functions_document_actions.py` | The `merge` document action: enablement, file limits and row limits for chat and workflows, and the workflow Merge task contract. |
 | `functions_workflow_merge.py`, `functions_workflow_runner.py` | Workflow Merge tasks: finding the files, authorizing them again, merging, rendering and attaching the file to the run. |
-| `functions_document_merge.py`, `functions_document_merge_core.py`, `functions_document_merge_pdf.py`, `functions_document_merge_workbook.py`, `functions_document_merge_docx.py`, `functions_document_merge_pptx.py` | The document merge engine and its PDF, workbook, Word and PowerPoint assemblers. Word composition uses `docxcompose`; decks are merged at the package level. Since 0.261.246, the code every assembler shares is in `functions_document_merge_core.py`, so no assembler imports `functions_document_merge.py`, the module that loads them. |
+| `functions_document_merge.py`, `functions_document_merge_core.py`, `functions_document_merge_pdf.py`, `functions_document_merge_workbook.py`, `functions_document_merge_docx.py`, `functions_document_merge_pptx.py` | The document merge engine and its PDF, workbook, Word and PowerPoint assemblers. Word composition uses `docxcompose`; decks are merged at the package level. Since 0.261.248, the code every assembler shares is in `functions_document_merge_core.py`, so no assembler imports `functions_document_merge.py`, the module that loads them. |
 | `functions_document_merge_assembly.py`, `functions_orchestration_document_merge.py` | The `document_assembly_v1` description and its byte-identical re-assembly, and the chat `document_merge` glue (Phase 7). |
 | `functions_ooxml_package_guard.py` | Refuses Office packages whose XML parts declare a document type or aren't UTF-8 or UTF-16, for the document and spreadsheet engines (Phase 7). |
 | `functions_workflow_drafts.py` | The `merge` field of workflow blueprints proposed from chat. |
@@ -144,7 +144,7 @@ Rendering keeps its own limits: CSV exports hold at most 1,000,000 records, and 
 most 1,048,575 rows, 5,000,000 cells and 32 MiB. CSV suits the largest merges.
 
 Merged rows over 8 MiB and assembled documents over 16 MiB spill from memory to disk, in
-the container's scratch directory `/sc-temp-files` since **0.261.245**. See
+the container's scratch directory `/sc-temp-files` since **0.261.247**. See
 [Phase 7](V2_FILE_MERGE_PHASE_7_CHAT_DOCUMENTS.md#where-merges-spill-to-disk).
 
 ### Security
@@ -191,8 +191,8 @@ and the orchestration Capabilities list
 | `functional_tests/test_document_merge_pptx.py`, `functional_tests/test_workflow_merge_powerpoint.py` | The PowerPoint assembler and PowerPoint workflow merges (Phase 6). |
 | `functional_tests/test_orchestration_document_merge_capability.py`, `functional_tests/test_document_merge_assembly.py`, `functional_tests/test_orchestration_output_lifecycle.py` | Chat document merges, the assembly description and its byte-identical re-assembly, and delivery through the real rendering service (Phase 7). |
 | `functional_tests/test_file_merge_hardening.py`, `functional_tests/test_workflow_merge_task.py` | Hostile Word, PowerPoint and Excel files, ZIP size guards, 100 files in one workflow run, and output without live formulas (Phase 7). |
-| `functional_tests/test_orchestration_merge_layout_question.py` | The question that asks for one sheet or a sheet per file (0.261.244). |
-| `functional_tests/test_file_merge_scratch_dir.py` | Where merges spill to disk (0.261.245). |
+| `functional_tests/test_orchestration_merge_layout_question.py` | The question that asks for one sheet or a sheet per file (0.261.246). |
+| `functional_tests/test_file_merge_scratch_dir.py` | Where merges spill to disk (0.261.247). |
 
 ## Known limitations
 

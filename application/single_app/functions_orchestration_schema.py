@@ -33,8 +33,9 @@ Two contracts live here:
     render through the very same card. Our own paging lives in a sibling ``ui_hints``
     field rather than inside the schema, which keeps the schema itself MCP-clean.
 
-Version: 0.261.209
+Version: 0.261.238
 Missing signed-in session reported as its own step failure in: 0.261.209
+Microsoft 365 step failures, with their sources, added in: 0.261.238
 """
 
 import hashlib
@@ -49,6 +50,7 @@ from jsonschema.exceptions import SchemaError
 from openai import APIConnectionError, APITimeoutError
 
 from agent_execution_context import AgentDelegationTimeout
+from functions_m365_operations import M365_SOURCES
 from functions_model_catalog import ModelCatalogError
 from functions_orchestration_registry import (
     APPROVAL_FLOOR_MANUAL,
@@ -1658,6 +1660,26 @@ FAILURE_MESSAGES = {
         'access to web search, web pages, deep research, agents or actions, or to start a saved '
         'workflow. Send the request again to use them.'
     ),
+    'm365_sign_in_required': (
+        'Microsoft 365 needs you to sign in or grant access before this step can read your data. '
+        'Select Connect Microsoft 365, then Retry from failed step.'
+    ),
+    'm365_approval_required': (
+        'This step needs your approval before it can use Microsoft 365. Review it in Approvals, '
+        'then select Retry from failed step.'
+    ),
+    'm365_unavailable': (
+        'Microsoft 365 access for this step could not be confirmed, so no Microsoft 365 data was '
+        "read. Check the action's settings and your access to it, then retry."
+    ),
+    'm365_shared_conversation': (
+        "Plans can't use Microsoft 365 in a shared conversation. Use Microsoft 365 actions and "
+        'agents from your own conversation.'
+    ),
+    'm365_read_only': (
+        "Plans can only read Microsoft 365 data. This action's enabled functions all send or change "
+        'data, so use it from chat instead.'
+    ),
     'workflow_runtime_unavailable': (
         'Saved workflows were temporarily unavailable, so this workflow may not have started. '
         "Retrying is safe: a workflow this plan already started won't start again."
@@ -1746,8 +1768,18 @@ FAILURE_MESSAGES = {
     LEGACY_PLAN_CODE: LEGACY_PLAN_MESSAGE,
 }
 
+# Microsoft 365 refusals of an action or agent step. Each names what the user does next.
+M365_STEP_FAILURE_CODES = frozenset({
+    'm365_sign_in_required', 'm365_approval_required', 'm365_unavailable',
+    'm365_shared_conversation', 'm365_read_only',
+})
+# Failures an exception may carry by code, through its ``orchestration_failure_code``.
+EXCEPTION_FAILURE_CODES = M365_STEP_FAILURE_CODES | {'external_session_required'}
 
-def build_failure(code='step_failed', *, step_id=None, capability_id=None, provider_status=None):
+
+def build_failure(
+    code='step_failed', *, step_id=None, capability_id=None, provider_status=None, m365_sources=None,
+):
     """Only application-owned text may cross a failure boundary."""
     code = code if code in FAILURE_MESSAGES else 'step_failed'
     result = {'code': code, 'message': FAILURE_MESSAGES[code]}
@@ -1759,6 +1791,11 @@ def build_failure(code='step_failed', *, step_id=None, capability_id=None, provi
         result['provider_status'] = provider_status
         if code == 'provider_http_error':
             result['message'] = f'The service used by this step returned HTTP {provider_status}.'
+    if code in M365_STEP_FAILURE_CODES and isinstance(m365_sources, (list, tuple, set, frozenset)):
+        # The browser connects exactly these sources; anything else is dropped, never echoed.
+        sources = sorted({source for source in m365_sources if source in M365_SOURCES})
+        if sources:
+            result['m365_sources'] = sources
     return result
 
 
@@ -1768,11 +1805,15 @@ def safe_failure(value, *, step_id=None, capability_id=None):
         value.get('code'), step_id=step_id or value.get('step_id'),
         capability_id=capability_id or value.get('capability_id'),
         provider_status=value.get('provider_status'),
+        m365_sources=value.get('m365_sources'),
     )
 
 
 def failure_from_exception(exc, *, answering=False, _depth=0):
     """Use types and structured status, never diagnostic prose or model content."""
+    code = getattr(exc, 'orchestration_failure_code', None)
+    if type(code) is str and code in EXCEPTION_FAILURE_CODES:
+        return build_failure(code, m365_sources=getattr(exc, 'm365_sources', None))
     if isinstance(exc, ModelCatalogError):
         return build_failure('model_routing_changed')
     status = getattr(exc, 'status_code', None)

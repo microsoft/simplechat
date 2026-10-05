@@ -1,6 +1,6 @@
 // test_v2_workflow_proposal_merge.mjs
-// Version: 0.261.242
-// Implemented in: 0.261.239; merge kinds added in 0.261.240; Word in 0.261.241; PowerPoint in 0.261.242
+// Version: 0.261.244
+// Implemented in: 0.261.241; merge kinds added in 0.261.242; Word in 0.261.243; PowerPoint in 0.261.244
 // Checks that the workflow proposal card's response parser accepts a proposed merge task, fails
 // closed on a merge it cannot describe, and words each merge as code that runs no model.
 

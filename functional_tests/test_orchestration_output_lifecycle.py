@@ -1,10 +1,10 @@
 # test_orchestration_output_lifecycle.py
 """
 Real retained-result/render/transport/commit/download lifecycle integration.
-Version: 0.261.243
+Version: 0.261.245
 Implemented in: 0.261.127
 Container-only generated-file access covered in: 0.261.232
-Merged documents rendered from their own lineage added in: 0.261.243
+Merged documents rendered from their own lineage added in: 0.261.245
 
 Production modules (including the complete upload and download modules) run with
 external Azure I/O doubled. No AST-extracted service, model call, or provider is

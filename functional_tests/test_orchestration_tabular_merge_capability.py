@@ -2,8 +2,8 @@
 # test_orchestration_tabular_merge_capability.py
 """
 Functional test for the tabular_merge chat orchestration capability.
-Version: 0.261.237
-Implemented in: 0.261.237
+Version: 0.261.239
+Implemented in: 0.261.239
 
 This test ensures that tabular_merge is a gated Reason capability alongside Analyze
 and Compare: plans name its sources explicitly or bind a search's source set, only
@@ -62,7 +62,7 @@ def tabular_case(runtime, steps, *, settings=None, available=AVAILABLE):
 
 
 def test_version_includes_tabular_merge():
-    assert_app_version_at_least('0.261.237')
+    assert_app_version_at_least('0.261.239')
 
 
 def test_tabular_merge_is_a_gated_reason_capability(runtime):

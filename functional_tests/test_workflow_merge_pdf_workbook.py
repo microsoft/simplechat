@@ -2,8 +2,8 @@
 # test_workflow_merge_pdf_workbook.py
 """
 Functional test for PDF and workbook Merge tasks in workflows.
-Version: 0.261.240
-Implemented in: 0.261.240
+Version: 0.261.242
+Implemented in: 0.261.242
 Refs: microsoft/simplechat#1619
 
 This test ensures that a workflow Merge task can assemble PDFs into one PDF, with a bookmark
@@ -95,7 +95,7 @@ def workbook_action(**changes):
 
 
 def test_version_includes_pdf_and_workbook_merge_tasks():
-    assert_app_version_at_least("0.261.240")
+    assert_app_version_at_least("0.261.242")
 
 
 def test_pdf_and_workbook_tasks_take_only_their_own_options_and_output(app):

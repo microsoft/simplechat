@@ -1,8 +1,8 @@
 # V2 File Merge — Phase 2: Reconciling Different Structures
 
-Version: **0.261.238**
+Version: **0.261.240**
 
-Implemented in version: **0.261.238**, recorded in `application/single_app/config.py`.
+Implemented in version: **0.261.240**, recorded in `application/single_app/config.py`.
 
 GitHub issue: [#1619](https://github.com/microsoft/simplechat/issues/1619). Umbrella document:
 [V2 File Merge](V2_FILE_MERGE.md). Builds on

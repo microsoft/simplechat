@@ -1,7 +1,7 @@
 # functions_document_merge_pptx.py
 """PowerPoint assembly for V2 file merge: slides appended in order into one deck.
 
-Version: 0.261.246
+Version: 0.261.248
 
 The merge works on the Office Open XML package itself, so every slide is copied with
 everything it relates to — pictures, media, charts and their embedded workbooks,

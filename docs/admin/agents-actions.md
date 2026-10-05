@@ -202,13 +202,13 @@ returned; Comparison reads one baseline document against the others, which is
 what answers questions about what changed between versions.
 
 **Merge** combines the rows of several CSV or Excel files into one table. Since
-**0.261.237**, V2 chat orchestration uses it when someone asks to merge, combine
+**0.261.239**, V2 chat orchestration uses it when someone asks to merge, combine
 or append spreadsheets, and the plan delivers the result as a CSV or Excel file.
-Since **0.261.238** it also reconciles files whose columns differ, and the same
+Since **0.261.240** it also reconciles files whose columns differ, and the same
 switch and file limit govern **Inspect spreadsheets**, which reads the files'
-headers and samples first. Since **0.261.239**, a V2 workflow task can merge
+headers and samples first. Since **0.261.241**, a V2 workflow task can merge
 files too, on a schedule or whenever File Sync brings new files, within the
-workflow limits below. Since **0.261.243**, the same switch and chat file limit
+workflow limits below. Since **0.261.245**, the same switch and chat file limit
 also govern **Merge documents**, which joins PDFs, Word documents or PowerPoint
 decks into one file, or puts spreadsheets on separate sheets of one workbook, in
 a chat turn. Code appends the rows and copies the documents; no model reads them, so a

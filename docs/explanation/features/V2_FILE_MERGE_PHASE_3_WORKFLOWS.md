@@ -1,8 +1,8 @@
 # V2 File Merge — Phase 3: Merges as Workflow Tasks
 
-Version: **0.261.239**
+Version: **0.261.241**
 
-Implemented in version: **0.261.239**, recorded in `application/single_app/config.py`.
+Implemented in version: **0.261.241**, recorded in `application/single_app/config.py`.
 
 GitHub issue: [#1619](https://github.com/microsoft/simplechat/issues/1619). Umbrella document:
 [V2 File Merge](V2_FILE_MERGE.md). Builds on
@@ -271,7 +271,7 @@ Open a workflow in the V2 editor, add a task, and choose **Merge files** as its
 
 ## Known limitations
 
-- Phase 3 merges only spreadsheet rows in workflows. From **0.261.240**, PDF and workbook
+- Phase 3 merges only spreadsheet rows in workflows. From **0.261.242**, PDF and workbook
   merges run too ([Phase 4](V2_FILE_MERGE_PHASE_4_PDF_WORKBOOKS.md)); Word and PowerPoint
   arrive in Phases 5 and 6.
 - A resumed run repeats the whole merge rather than continuing from the last file.
