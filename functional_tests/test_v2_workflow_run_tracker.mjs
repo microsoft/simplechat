@@ -9,9 +9,13 @@
 // and retirements, and the 10-second dedupe of a chat's own reads.
 
 import assert from 'node:assert/strict';
-import test from 'node:test';
+import nodeTest from 'node:test';
 import './test_support/tsResolve.mjs';
 import { at, deliveredRow, statusResponse, statusRow } from './test_support/workflowRunStatusFixtures.mjs';
+
+// The fake status route answers only when a test says so, so a change that sends a request a test
+// doesn't expect would leave that test waiting forever. The time limit turns that into a failure.
+const test = (name, fn) => nodeTest(name, { timeout: 10_000 }, fn);
 
 globalThis.fetch = () => {
     throw new Error('The workflow run tracker must not make network requests of its own.');
