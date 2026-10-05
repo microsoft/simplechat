@@ -719,6 +719,7 @@ chat-orchestration:
     - enable_chat_orchestration_actions
     - enable_chat_orchestration_workflows
     - enable_chat_orchestration_workflow_runs
+    - enable_chat_orchestration_workflow_handoff
   reference:
     - title: "Orchestration settings"
       url: /admin/orchestration/

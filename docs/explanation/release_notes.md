@@ -2,6 +2,19 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.238)**
+
+#### New Features
+
+*   **Hand Off Large Chat Requests To A One-Time Workflow**
+    *   When a request is too big for one chat plan, such as "review every contract in the Legal workspace and list the ones that renew this year", the planner can hand it to a one-time durable workflow. The workflow reviews each document with Analyze inside a For each, collects every finding and writes one report.
+    *   The user approves the plan, then accepts, edits or declines a hand-off card. Accepting creates the workflow turned off, so it never runs on a schedule, and queues exactly one durable run. The workflow id and the run's request id come from the hand-off, so a retry, a second tab or a crash finds the same workflow and run instead of making new ones. When the run finishes, workflow result delivery posts the report back into the conversation.
+    *   New admin setting **Hand Off Large Work From Chat** (`enable_chat_orchestration_workflow_handoff`), off by default because a hand-off starts background work that keeps running with the user's access after the chat turn ends. It requires Chat Orchestration, personal workflows, Propose Workflows From Chat, Run Workflows From Chat and Use Workflow Results In Chat, and hand-offs are offered only in the user's own private conversations. New limit **Hand-Offs From Chat Per User Per Day** (`chat_orchestration_max_workflow_handoffs_per_day`), 1 to 100, default 5. Hand-off workflows don't count toward Workflows Created From Chat Per User.
+    *   A hand-off covers at most 25 named documents, or 2,000 documents from a workspace query, lower if the administrator's loop item limit is lower. A query that matches more pauses before reviewing anything.
+    *   When hand-off is offered, the planner prompt lists the plan's limits, and a plan over its step or document budget fails with `plan_budget_exceeded`, whose repair message suggests handing the work off. With the setting off, planning is unchanged.
+    *   New requester-only routes under `/api/v2/orchestration/runs/<run_id>/workflow-handoffs` read a plan's hand-offs, accept one as proposed or edited, decline one, and read its editor draft. The V2 hand-off card is a separate change; until it ships, users can't accept a hand-off in the browser, so leave the setting off.
+    *   (Ref: #1549, #1543, `functions_orchestration_workflow_handoffs.py`, `functions_orchestration_workflow_handoff_decisions.py`, `functions_workflow_handoff_builder.py`, `functions_workflow_drafts.py`, `functions_workflow_runtime.py`, `functions_workflow_result_reader.py`, `functions_orchestration_registry.py`, `functions_orchestration_planner.py`, `route_backend_orchestration.py`, [Chat Orchestration Workflow Hand-off](features/CHAT_ORCHESTRATION_WORKFLOW_HANDOFF.md))
+
 ### **(v0.261.233)**
 
 #### Bug Fixes
