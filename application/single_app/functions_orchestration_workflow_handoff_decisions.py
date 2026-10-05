@@ -1,8 +1,8 @@
 # functions_orchestration_workflow_handoff_decisions.py
 """Accept, deny and read the workflow hand-offs a chat orchestration run offers.
 
-Version: 0.261.233
-Implemented in: 0.261.233
+Version: 0.261.238
+Implemented in: 0.261.238
 
 A ``workflow_handoff`` step only dry-runs a one-time workflow and keeps what it checked in a
 server-side sidecar on its step record. The requester's accept is the second gate. It

@@ -2,8 +2,8 @@
 # test_workflow_handoff_end_to_end.py
 """
 Functional test for one-time workflow hand-off, end to end.
-Version: 0.261.233
-Implemented in: 0.261.233
+Version: 0.261.238
+Implemented in: 0.261.238
 
 This test ensures that an accepted hand-off over a workspace query of 3 and of 200 documents:
 
@@ -60,7 +60,7 @@ from test_support.workflow_chat_delivery_fakes import make_conversation, make_wo
 from test_workflow_for_each_execution import LoopJournalContainer  # noqa: E402
 
 
-MINIMUM_VERSION = "0.261.233"
+MINIMUM_VERSION = "0.261.238"
 # The report contract's bounds, written out so the observed report is checked against the contract
 # rather than against the production constants under test.
 PAGE_RECORDS = 100

@@ -6,7 +6,7 @@ Version: 0.261.227
 Implemented in: 0.242.069
 Workflow result context coverage: 0.261.214
 Workflow run status coverage: 0.261.227
-Workflow hand-off coverage: 0.261.233
+Workflow hand-off coverage: 0.261.238
 
 This test ensures every SimpleChat route has an explicit expected unauthenticated
 access behavior: public, browser-session authenticated, admin-only, or external

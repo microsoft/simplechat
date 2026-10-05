@@ -2,8 +2,8 @@
 # test_orchestration_workflow_handoff_planner.py
 """
 Functional test for the chat orchestration workflow hand-off planner guidance.
-Version: 0.261.231
-Implemented in: 0.261.231
+Version: 0.261.238
+Implemented in: 0.261.238
 
 This test ensures that the planner offers ``workflow_handoff`` only when every hand-off gate
 passes, and that, when it does:
@@ -50,7 +50,7 @@ from test_orchestration_workflow_runs_off_golden import AGENT_ID, DOCUMENT_ID, G
 from test_support.versioning import assert_app_version_at_least
 
 
-MINIMUM_VERSION = "0.261.231"
+MINIMUM_VERSION = "0.261.238"
 HANDOFF_CAPABILITY = "workflow_handoff"
 DOCUMENTS = ["document-record-1"]
 PLAN_LIMITS_HEADER = (

@@ -1,8 +1,8 @@
 # functions_orchestration_workflow_handoffs.py
 """Workflow hand-offs from chat orchestration: plan checks, the hand-off step, degrading and the reply note.
 
-Version: 0.261.232
-Implemented in: 0.261.232
+Version: 0.261.238
+Implemented in: 0.261.238
 
 A request too large for one chat plan is handed to a one-time durable workflow with one
 ``workflow_handoff`` step. Its ``blueprint`` argument is the closed hand-off blueprint from

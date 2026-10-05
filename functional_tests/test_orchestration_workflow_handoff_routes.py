@@ -2,8 +2,8 @@
 # test_orchestration_workflow_handoff_routes.py
 """
 Functional test for the one-time workflow hand-off accept-and-run routes.
-Version: 0.261.233
-Implemented in: 0.261.233
+Version: 0.261.238
+Implemented in: 0.261.238
 
 This test ensures that the requester-only routes under
 ``/api/v2/orchestration/runs/<run_id>/workflow-handoffs``:
@@ -590,7 +590,7 @@ def without_times(record):
 # ---------------------------------------------------------------------------
 
 def test_version_includes_the_workflow_handoff_routes():
-    assert_app_version_at_least("0.261.233")
+    assert_app_version_at_least("0.261.238")
 
 
 def test_accept_creates_the_workflow_disabled_and_queues_exactly_one_durable_run(hw):

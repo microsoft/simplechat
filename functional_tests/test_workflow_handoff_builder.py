@@ -2,8 +2,8 @@
 # test_workflow_handoff_builder.py
 """
 Functional test for the workflow hand-off builder and hand-off drafts.
-Version: 0.261.231
-Implemented in: 0.261.231
+Version: 0.261.238
+Implemented in: 0.261.238
 
 This test ensures that a one-time workflow handed off from chat orchestration:
 
@@ -59,7 +59,7 @@ from test_workflow_draft_service import (  # noqa: E402
 )
 
 
-MINIMUM_VERSION = "0.261.231"
+MINIMUM_VERSION = "0.261.238"
 HANDOFF_ID = "handoff-1"
 HANDOFF_ORIGIN = {**ORIGIN, "proposal_id": HANDOFF_ID}
 HANDOFF_WORKFLOW_ID = "481a936e-5e1d-5cc8-a4c9-d8165ded91bf"
