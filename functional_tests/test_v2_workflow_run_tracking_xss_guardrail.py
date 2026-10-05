@@ -24,6 +24,8 @@ import re
 import sys
 from pathlib import Path
 
+import pytest
+
 sys.path.append(str(Path(__file__).resolve().parent))
 
 from test_support.versioning import assert_app_version_at_least
@@ -233,22 +235,5 @@ def test_checker_still_flags_links_and_html_from_a_status_row() -> None:
 
 
 if __name__ == '__main__':
-    tests = [
-        test_version_is_at_least_the_tracking_release,
-        test_run_tracking_files_pass_xss_guardrail,
-        test_run_tracking_files_render_no_raw_html,
-        test_run_tracking_links_use_reviewed_builders,
-        test_fixed_link_values_stay_same_origin,
-        test_checker_still_flags_links_and_html_from_a_status_row,
-    ]
-    failures = 0
-    for test in tests:
-        print(f'Running {test.__name__}...')
-        try:
-            test()
-            print('  passed')
-        except AssertionError as error:
-            failures += 1
-            print(f'  failed: {error}')
-    print(f'Results: {len(tests) - failures}/{len(tests)} tests passed')
-    sys.exit(1 if failures else 0)
+    # Run through pytest, which rewrites these asserts so they still run under python -O.
+    raise SystemExit(pytest.main([__file__, '-q']))

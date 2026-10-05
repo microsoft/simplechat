@@ -18,6 +18,8 @@ import importlib.util
 import sys
 from pathlib import Path
 
+import pytest
+
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
 V2_SRC_DIR = ROOT_DIR / 'application' / 'v2_ui' / 'src'
@@ -122,20 +124,5 @@ def test_builder_returns_only_the_fixed_workflows_path() -> None:
 
 
 if __name__ == '__main__':
-    tests = [
-        test_run_link_files_pass_xss_guardrail,
-        test_run_link_uses_the_reviewed_builder_in_the_link,
-        test_checker_still_flags_a_link_from_a_property,
-        test_builder_returns_only_the_fixed_workflows_path,
-    ]
-    failures = 0
-    for test in tests:
-        print(f'Running {test.__name__}...')
-        try:
-            test()
-            print('  passed')
-        except AssertionError as error:
-            failures += 1
-            print(f'  failed: {error}')
-    print(f'Results: {len(tests) - failures}/{len(tests)} tests passed')
-    sys.exit(1 if failures else 0)
+    # Run through pytest, which rewrites these asserts so they still run under python -O.
+    raise SystemExit(pytest.main([__file__, '-q']))
