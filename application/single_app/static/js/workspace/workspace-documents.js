@@ -802,6 +802,29 @@ function renderWorkspaceDocumentView() {
 
 window.renderWorkspaceDocumentView = renderWorkspaceDocumentView;
 
+async function patchDocumentMetadata(documentId, payload) {
+    let chunkSync = null;
+    do {
+        const requestPayload = { ...payload };
+        if (chunkSync && !chunkSync.complete) {
+            requestPayload._metadata_chunk_sync = chunkSync;
+        }
+
+        const response = await fetch(`/api/documents/${documentId}`, {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(requestPayload),
+        });
+
+        const responseData = await response.json().catch(() => ({}));
+        if (!response.ok) {
+            throw responseData.error ? responseData : { error: `Server responded with status ${response.status}` };
+        }
+
+        chunkSync = responseData.metadata_chunk_sync || null;
+    } while (chunkSync && !chunkSync.complete);
+}
+
 function getDocumentDeleteModalContent(documentCount) {
     if (documentCount === 1) {
         return {
@@ -1428,13 +1451,8 @@ if (docMetadataForm && docMetadataModalEl) { // Check both exist
              payload.document_classification = selectedClassification;
         }
 
-        fetch(`/api/documents/${docId}`, {
-            method: "PATCH",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(payload),
-        })
-            .then(r => r.ok ? r.json() : r.json().then(err => Promise.reject(err)))
-            .then(updatedDoc => {
+        patchDocumentMetadata(docId, payload)
+            .then(() => {
                 if (docMetadataModalEl) docMetadataModalEl.hide();
                 fetchUserDocuments(); // Refresh the table
                 loadWorkspaceTags(); // Refresh tag counts and grid view

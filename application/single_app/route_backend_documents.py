@@ -1044,82 +1044,58 @@ def register_route_backend_documents(bp):
         if not user_id:
             return jsonify({'error': 'User not authenticated'}), 401
 
-        data = request.get_json()  # new metadata values from the client
+        data = request.get_json() or {}  # new metadata values from the client
+        chunk_sync_state = data.get('_metadata_chunk_sync') if isinstance(data.get('_metadata_chunk_sync'), dict) else {}
+        try:
+            chunk_sync_offset = max(int(chunk_sync_state.get('next_offset', 0) or 0), 0)
+        except (TypeError, ValueError):
+            return jsonify({'error': 'Invalid metadata chunk sync state'}), 400
+        chunk_sync_fields = chunk_sync_state.get('fields') if isinstance(chunk_sync_state.get('fields'), list) else []
+        is_chunk_sync_continuation = chunk_sync_offset > 0 and bool(chunk_sync_fields)
 
         # Track which fields were updated
         updated_fields = {}
+        document_updates = {}
 
         # Update allowed fields
         # You can decide which fields can be updated from the client
         if 'title' in data:
-            update_document(
-                document_id=document_id,
-                user_id=user_id,
-                title=data['title']
-            )
+            document_updates['title'] = data['title']
             updated_fields['title'] = data['title']
         if 'abstract' in data:
-            update_document(
-                document_id=document_id,
-                user_id=user_id,
-                abstract=data['abstract']
-            )
+            document_updates['abstract'] = data['abstract']
             updated_fields['abstract'] = data['abstract']
         if 'keywords' in data:
             # Expect a list or a comma-delimited string
             if isinstance(data['keywords'], list):
-                update_document(
-                    document_id=document_id,
-                    user_id=user_id,
-                    keywords=data['keywords']
-                )
+                document_updates['keywords'] = data['keywords']
                 updated_fields['keywords'] = data['keywords']
             else:
                 # if client sends a comma-separated string of keywords
                 keywords_list = [kw.strip() for kw in data['keywords'].split(',')]
-                update_document(
-                    document_id=document_id,
-                    user_id=user_id,
-                    keywords=keywords_list
-                )
+                document_updates['keywords'] = keywords_list
                 updated_fields['keywords'] = keywords_list
         if 'publication_date' in data:
-            update_document(
-                document_id=document_id,
-                user_id=user_id,
-                publication_date=data['publication_date']
-            )
+            document_updates['publication_date'] = data['publication_date']
             updated_fields['publication_date'] = data['publication_date']
         if 'document_classification' in data:
-            update_document(
-                document_id=document_id,
-                user_id=user_id,
-                document_classification=data['document_classification']
-            )
+            document_updates['document_classification'] = data['document_classification']
             updated_fields['document_classification'] = data['document_classification']
         # Add authors if you want to allow editing that
         if 'authors' in data:
             # if you want a list, or just store a string
             # here is one approach:
             if isinstance(data['authors'], list):
-                update_document(
-                    document_id=document_id,
-                    user_id=user_id,
-                    authors=data['authors']
-                )
+                document_updates['authors'] = data['authors']
                 updated_fields['authors'] = data['authors']
             else:
                 authors_list = [data['authors']]
-                update_document(
-                    document_id=document_id,
-                    user_id=user_id,
-                    authors=authors_list
-                )
+                document_updates['authors'] = authors_list
                 updated_fields['authors'] = authors_list
 
         # Handle tags with validation and chunk propagation
         if 'tags' in data:
-            from functions_documents import validate_tags, propagate_tags_to_chunks, get_or_create_tag_definition
+            from functions_documents import validate_tags, get_or_create_tag_definition
             
             # Validate and normalize tags
             tags_input = data['tags'] if isinstance(data['tags'], list) else []
@@ -1133,24 +1109,30 @@ def register_route_backend_documents(bp):
                 get_or_create_tag_definition(user_id, tag, workspace_type='personal')
             
             # Update document with normalized tags
-            update_document(
-                document_id=document_id,
-                user_id=user_id,
-                tags=normalized_tags
-            )
+            document_updates['tags'] = normalized_tags
             updated_fields['tags'] = normalized_tags
-            
-            # Propagate tags to all chunks immediately
-            try:
-                propagate_tags_to_chunks(document_id, normalized_tags, user_id)
-            except Exception as propagate_error:
-                debug_print(f"Warning: Failed to propagate tags to chunks: {propagate_error}")
-                # Continue - document tags are updated, chunk sync will be retried later
 
         # Save updates back to Cosmos
         try:
+            update_result = {'chunk_sync': {'complete': True}}
+            if document_updates:
+                update_result = update_document(
+                    document_id=document_id,
+                    user_id=user_id,
+                    chunk_sync_limit=75,
+                    chunk_sync_offset=chunk_sync_offset,
+                    chunk_sync_fields=chunk_sync_fields,
+                    **document_updates,
+                ) or update_result
+
+            if 'tags' in updated_fields and not is_chunk_sync_continuation:
+                try:
+                    propagate_tags_to_blob_metadata(document_id, updated_fields['tags'], user_id)
+                except Exception as blob_metadata_error:
+                    debug_print(f"Warning: Failed to propagate tags to blob metadata: {blob_metadata_error}")
+
             # Log the metadata update transaction if any fields were updated
-            if updated_fields:
+            if updated_fields and not is_chunk_sync_continuation:
                 # Get document details for logging
                 doc_response = get_document(user_id, document_id)
                 doc = None
@@ -1172,10 +1154,20 @@ def register_route_backend_documents(bp):
                         updated_fields=updated_fields,
                         file_type=doc.get('file_type')
                     )
-            
-            return jsonify({'message': 'Document metadata updated successfully'}), 200
+
+            chunk_sync = update_result.get('chunk_sync', {}) if isinstance(update_result, dict) else {}
+            response_payload = {'message': 'Document metadata updated successfully'}
+            if chunk_sync.get('required'):
+                response_payload['metadata_chunk_sync'] = chunk_sync
+
+            return jsonify(response_payload), 200
         except Exception as e:
-            return jsonify({'error': str(e)}), 500
+            log_event(
+                '[DOCUMENT_METADATA] Failed to update personal document metadata',
+                {'document_id': document_id, 'error_type': type(e).__name__},
+                debug_only=True,
+            )
+            return jsonify({'error': 'Unable to update document metadata'}), 500
 
     @bp.route('/api/documents/<document_id>', methods=['DELETE'])
     @swagger_route(security=get_auth_security())
