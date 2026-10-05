@@ -20,7 +20,7 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
 *   **Connect Microsoft 365 From A Failed Plan Step**
     *   When a V2 plan step stops for Microsoft 365 sign-in, the run details show **Connect Microsoft 365** for the sources the step needs. It opens the Profile reconnect sign-in in a pop-up. When it finishes, select **Retry from failed step**.
     *   A step that stopped for approval links to Approvals instead.
-    *   (Ref: `v2_ui/src/lib/m365Connect.ts`, `OrchestrationM365Notice.tsx`, `OrchestrationRecoveryNotice.tsx`, [Microsoft 365 data and approvals](../guides/microsoft-365-conversation-data.md))
+    *   (Ref: `v2_ui/src/lib/m365Connect.ts`, `OrchestrationM365Notice.tsx`, `OrchestrationRecoveryNotice.tsx`, `test_v2_orchestration_m365_recovery.py`, [Microsoft 365 data and approvals](../guides/microsoft-365-conversation-data.md))
 
 ### **(v0.261.236)**
 

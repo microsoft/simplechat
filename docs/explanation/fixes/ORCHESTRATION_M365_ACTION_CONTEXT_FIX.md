@@ -168,7 +168,23 @@ recorded, sources dropped from failures, no sign-in check before the model, no
 outcome reported on the approval, and an outcome reported while the step stops
 for another approval.
 
-The V2 UI type-checks with `npm run typecheck`.
+`ui_tests/test_v2_orchestration_m365_recovery.py` runs the real V2 recovery
+notice and connect flow in Chromium, with HTTP responses doubled:
+
+- A sign-in stop connects only the step's known sources and sends the Microsoft
+  365 CSRF header. The sign-in window closes when Profile reports the
+  connection, and retrying stays the user's choice.
+- A window closed without a saved sign-in says sign-in wasn't completed, and
+  the user can connect again.
+- A window that can't report, as when the API is on another origin, is
+  confirmed by the saved connection.
+- A sign-in stop without sources links to Profile, an approval stop links to
+  Approvals, and other failures show neither.
+
+Removing the notice from the recovery view, or dropping `m365_sources` when a
+failure is read, makes these tests fail.
+
+The V2 UI type-checks and builds with `npm run typecheck` and `npm run build`.
 
 ### Before and after
 
