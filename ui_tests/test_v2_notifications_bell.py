@@ -316,12 +316,12 @@ def stream_body(frames):
 class NotificationApi:
     """The routes the frame calls, answered the way route_backend_* answers, with their state."""
 
-    def __init__(self, page):
+    def __init__(self, page, titles=None):
         self.page = page
         self.notices = []
         self.conversations = {
             conversation_id: {"id": conversation_id, "title": title, "unread": False}
-            for conversation_id, title in CONVERSATIONS.items()
+            for conversation_id, title in (CONVERSATIONS if titles is None else titles).items()
         }
         self.requests = []
         self.list_queries = []
@@ -687,8 +687,8 @@ LIST_SETTLED = r"""
 class Harness(NotificationApi):
     """The frame in a browser page, driven the way a reader drives it."""
 
-    def __init__(self, page, stylesheets):
-        super().__init__(page)
+    def __init__(self, page, stylesheets, titles=None):
+        super().__init__(page, titles)
         self.stylesheets = stylesheets
 
     def open(self, path="/chat", *, browser=None, features=None, settings=None, settings_loading=False,

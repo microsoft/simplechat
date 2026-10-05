@@ -218,11 +218,7 @@ class RunHarness(Harness):
     """The bell harness's network stubs, with the run status, run links and run action routes."""
 
     def __init__(self, page, stylesheets):
-        super().__init__(page, stylesheets)
-        self.conversations = {
-            CHAT: {"id": CHAT, "title": CHAT_TITLE, "unread": False},
-            OTHER: {"id": OTHER, "title": OTHER_TITLE, "unread": False},
-        }
+        super().__init__(page, stylesheets, {CHAT: CHAT_TITLE, OTHER: OTHER_TITLE})
         self.messages_by_chat = {CHAT: answer_messages(), OTHER: []}
         self.link_items = [{"step_id": STEP, "name": NAME, "state": "running", "reason": None,
                             "workflow_id": WORKFLOW, "workflow_run_id": RUN}]

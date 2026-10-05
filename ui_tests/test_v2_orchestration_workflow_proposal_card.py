@@ -258,9 +258,9 @@ def editor_options():
 class ProposalApi:
     """The proposal routes for one run, answered from `self.proposal` the way the server decides."""
 
-    def __init__(self, assets):
+    def __init__(self, assets, record=None):
         self.assets = assets
-        self.proposal = proposal()
+        self.proposal = proposal() if record is None else record
         self.draft = copy.deepcopy(DRAFT)
         self.requests = []
         self.unexpected = []
@@ -902,8 +902,7 @@ class RecurringApi(ProposalApi):
     """The proposal routes for a created proposal, plus its workflow, the workflow's runs and a result."""
 
     def __init__(self, assets):
-        super().__init__(assets)
-        self.proposal = proposal("created_enabled")
+        super().__init__(assets, proposal("created_enabled"))
         self.workflows = [workflow_record()]
         self.runs = weekly_runs()
         self.read_errors = {}
