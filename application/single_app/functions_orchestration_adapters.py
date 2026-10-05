@@ -456,6 +456,23 @@ def _failed_result(summary, error, replan_hint=None):
     )
 
 
+def _m365_step_identity(step, context):
+    """The Microsoft 365 request key one plan step keeps across retries, and its record origin.
+
+    Every retry of a plan shares its first attempt's run id, so a retried step reuses its
+    request, including an approval the user gave after the earlier attempt stopped.
+    """
+    step_id = _text((step or {}).get('step_id'))
+    root = _ctx(context, 'attempt_root_run_id', None) or _ctx(context, 'run_id', None)
+    origin = {
+        'run_id': _ctx(context, 'run_id', None), 'attempt_index': _ctx(context, 'attempt_index', None),
+        'step_id': step_id or None,
+    }
+    if not isinstance(root, str) or not root or not step_id:
+        return None, origin
+    return f'{root}\x00{step_id}', origin
+
+
 def _progress(step, capability_id, label, status='running'):
     step = step or {}
     return {
@@ -1658,6 +1675,7 @@ def run_action_invoke(step, context, *, settings, user_id, emit, cancel_requeste
         invocation_kwargs['invocation_capture']('action', settings=settings, selector=action_ref)
         if visual_request:
             invocation_kwargs['visual_request'] = visual_request
+        invocation_kwargs['m365_request_key'], invocation_kwargs['m365_origin'] = _m365_step_identity(step, context)
         from functions_orchestration_actions import invoke_action
         from semantic_kernel_plugins.plugin_invocation_logger import sanitize_plugin_invocation_value
 

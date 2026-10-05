@@ -1,10 +1,11 @@
 # test_v2_orchestration_recovery.py
 """
 Real-component browser coverage for orchestration failure and checkpoint recovery.
-Version: 0.261.141
+Version: 0.261.238
 Implemented in: 0.261.105
 Earlier-version run refusals covered in: 0.261.139
 Settled runs whose stored plan still reads running covered in: 0.261.141
+Configurable step failure, reused by Microsoft 365 recovery coverage, in: 0.261.238
 
 The production controller, SSE reader, stores, message list, and Run drawer execute
 in the existing local/Azure Playwright harness. Only API responses are deterministic.
@@ -55,6 +56,8 @@ class RecoveryApi:
         self.prepare_mode = "success"
         self.stream_mode = "failure"
         self.waiting = []
+        # The failed step's failure; Microsoft 365 recovery tests replace it.
+        self.failure = {"code": "step_timeout", "message": FAILURE}
         # Runs the server refuses as an earlier orchestration version: every by-id request
         # answers 409 legacy_plan and the run list leaves them out.
         self.legacy = set()
@@ -92,7 +95,7 @@ class RecoveryApi:
         )
         record["plan"]["status"] = status
         record["plan_summary"]["status"] = status
-        failure = {"code": "step_timeout", "message": FAILURE, "step_id": "research"}
+        failure = {**copy.deepcopy(self.failure), "step_id": "research"}
         record["failure"] = failure if status == "failed" else None
         record["failures"] = [failure] if status == "failed" else []
         record["recovery"] = self.recovery(run_id)
@@ -109,7 +112,7 @@ class RecoveryApi:
              "status": "completed" if status == "completed" else "skipped", "summary": ""},
         ]
         content = "Comparison from saved reports and the recovered agent." if status == "completed" else (
-            "This run was stopped. Available partial results were kept." if status == "cancelled" else FAILURE)
+            "This run was stopped. Available partial results were kept." if status == "cancelled" else failure["message"])
         metadata = {"orchestration": {
             key: record[key] for key in ("run_id", "turn_id", "attempt_index", "retry_of_run_id",
                                         "outcome", "failure", "failures", "recovery",

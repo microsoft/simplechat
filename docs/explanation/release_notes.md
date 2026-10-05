@@ -15,6 +15,36 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
     *   New requester-only routes under `/api/v2/orchestration/runs/<run_id>/workflow-handoffs` read a plan's hand-offs, accept one as proposed or edited, decline one, and read its editor draft. The V2 hand-off card is a separate change; until it ships, users can't accept a hand-off in the browser, so leave the setting off.
     *   (Ref: #1549, #1543, `functions_orchestration_workflow_handoffs.py`, `functions_orchestration_workflow_handoff_decisions.py`, `functions_workflow_handoff_builder.py`, `functions_workflow_drafts.py`, `functions_workflow_runtime.py`, `functions_workflow_result_reader.py`, `functions_orchestration_registry.py`, `functions_orchestration_planner.py`, `route_backend_orchestration.py`, [Chat Orchestration Workflow Hand-off](features/CHAT_ORCHESTRATION_WORKFLOW_HANDOFF.md))
 
+### **(v0.261.238)**
+
+#### Bug Fixes
+
+*   **Microsoft 365 Actions Now Work In Chat Orchestration Plans**
+    *   A plan step that used a Microsoft 365 action, such as "what are my latest emails", never read Microsoft 365 data. The step reported completed, and the answer said the data couldn't be retrieved. No Microsoft Graph request was made.
+    *   Each plan step runs in its own request context, and Microsoft 365 functions require a Microsoft 365 execution context on that request. Classic chat and workflows create one, but orchestration never did, so every call was refused with `m365_context_required`. The plugin returned the refusal as a function result, and the step reported it as findings.
+    *   An action step now gets its own Microsoft 365 request as the signed-in user. It selects only the step's saved action, checks delegated sign-in before the model or Microsoft Graph is called, and records the request so sharing the conversation waits for it. A retried step reuses the request, so an approval given after the first attempt applies.
+    *   Plans only read Microsoft 365 data: send mail, calendar invitation and mark-as-read functions aren't loaded. Shared conversations are refused before any Microsoft 365 work.
+    *   A sign-in, approval or authorization refusal now stops the step with `m365_sign_in_required`, `m365_approval_required`, `m365_unavailable`, `m365_shared_conversation` or `m365_read_only`. Each message says what to do next. Ordinary Microsoft Graph outcomes, such as nothing found, are still reported as findings.
+    *   `[MS_GRAPH_PLUGIN] Microsoft 365 operation could not complete.` now logs the refusal code as `sc_failure_code` and the source as `sc_resource`. A stopped step logs `[ORCHESTRATION_M365] A Microsoft 365 step stopped.`
+    *   (Ref: `functions_orchestration_m365.py`, `functions_m365_runtime.py`, `functions_orchestration_actions.py`, `functions_orchestration_adapters.py`, `functions_orchestration_schema.py`, `functions_m365_transport.py`, `test_orchestration_m365_actions.py`, [Orchestration Microsoft 365 Action Context Fix](fixes/ORCHESTRATION_M365_ACTION_CONTEXT_FIX.md))
+
+#### User Interface Enhancements
+
+*   **Connect Microsoft 365 From A Failed Plan Step**
+    *   When a V2 plan step stops for Microsoft 365 sign-in, the run details show **Connect Microsoft 365** for the sources the step needs. It opens the Profile reconnect sign-in in a pop-up. When it finishes, select **Retry from failed step**.
+    *   A step that stopped for approval links to Approvals instead.
+    *   (Ref: `v2_ui/src/lib/m365Connect.ts`, `OrchestrationM365Notice.tsx`, `OrchestrationRecoveryNotice.tsx`, `test_v2_orchestration_m365_recovery.py`, [Microsoft 365 data and approvals](../guides/microsoft-365-conversation-data.md))
+
+### **(v0.261.237)**
+
+#### Bug Fixes
+
+*   **Orchestration Runs No Longer Fail When Settings Are Read During A Save**
+    *   A chat orchestration run could finish every step and still end as **Partially completed** with "A required retained result is unavailable or changed." It affected runs that kept web search, linked-page, deep research, agent, action or Fact Memory results, and retrying could fail the same way.
+    *   Orchestration rechecks a kept result's access with the current admin settings, and that check requires exactly a `dict`. Settings read from the shared Redis copy were a `dict`, but settings read from Cosmos DB came back as the SDK's `CosmosDict` type, so the check refused them. Cosmos serves the read while any settings save is in progress, such as the Cosmos throughput autoscale saving its status, when the shared copy is repaired or unreachable, and on every read when Redis is off.
+    *   The settings store now returns a plain `dict` from every read and write, whichever backend served it. The orchestration check is unchanged. No setting or deployment change is needed.
+    *   (Ref: `app_settings_store.py`, `functions_orchestration_external_sources.py`, `test_app_settings_store_plain_dict_reads.py`, [Orchestration Settings Document Type Fix](fixes/ORCHESTRATION_SETTINGS_DOCUMENT_TYPE_FIX.md))
+
 ### **(v0.261.236)**
 
 #### User Interface Enhancements
