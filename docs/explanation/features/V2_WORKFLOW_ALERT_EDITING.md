@@ -34,6 +34,11 @@ Each rule has:
 - a severity: `info`, `low`, `medium`, `high` or `critical`;
 - a delivery: `default`, `notify_only` or `popup`. By default, info and low go to
   the notification bell, and medium and above open the pop-up alert;
+- from 0.261.235, pop-up options: whether it must be acknowledged, a sound
+  (`off`, `once` or `repeat`) and a size (`small`, `medium` or `large`), and in a
+  group workflow who gets it (`owner` or `group`). The editor shows them under
+  **Pop-up options** and **Who gets it**, and stores each one only when it isn't the
+  default. See [Workflow Alert Acknowledgment](WORKFLOW_ALERT_ACKNOWLEDGMENT.md);
 - a scope: the final output, any task's output, or one task. Only conditions
   that read output use it: task status, output text, no output, and a model's
   judgement. Run status, File Sync result and agent alerts apply to the whole
@@ -115,6 +120,7 @@ They never echo text you entered:
 |---|---|
 | Settings | "Alert priority must be none, low, medium or high." · "Alert mode must be off, every_run or rules." · "Add at least one alert rule, or choose a different alert mode." · "Choose a pop-up priority for alerts on every run, or choose a different alert mode." · "Choose skip or alert for model-evaluated conditions that cannot be judged." · "Alert rules must be a list." · "A workflow can have up to 20 alert rules." |
 | Rule | "Alert rule {n} is invalid." · "… name must be 120 characters or fewer." · "… delivery must be default, notify_only or popup." · "… severity must be info, low, medium, high or critical." |
+| Pop-up options (0.261.235) | "… sound must be off, once or repeat." · "… size must be small, medium or large." · "… audience must be owner or group." · "… can alert the whole group only in a group workflow." · "… must pop up to require acknowledgment, play a sound or change its size." · "… can repeat its sound only when it requires acknowledgment." |
 | Scope | "Alert rule {n} must look at the final output, any task output, or a specific task." · "… needs a task to watch." · "… watches a task that is no longer in this workflow." |
 | Condition | "… has an unsupported condition type." · "… run statuses must be a list." · "… has an unsupported run status." · "… needs at least one run status." · the same three for task statuses · "… text match must be contains_any, contains_all, not_contains or regex." · "… needs a regex pattern." · "… regex pattern must be 200 characters or fewer." · "… regex pattern uses nested quantifiers, which are not allowed." · "… regex pattern is not a valid regular expression." · "… match values must be a list of text." · "… match values must each be 400 characters or fewer." · "… needs at least one match value." · "… can match up to 25 values." · "… File Sync result must be changes_found, no_changes or sync_failed." · "… needs a condition for the model to judge." · "… model condition must be 2000 characters or fewer." · "… signal name must be 120 characters or fewer." |
 

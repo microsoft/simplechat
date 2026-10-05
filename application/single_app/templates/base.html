@@ -316,6 +316,24 @@
       max-width: 860px;
     }
 
+    .workflow-alert-modal-dialog.workflow-alert-size-medium {
+      max-width: 1040px;
+    }
+
+    .workflow-alert-modal-dialog.workflow-alert-size-medium .workflow-alert-title,
+    .workflow-alert-modal-dialog.modal-fullscreen .workflow-alert-title {
+      font-size: clamp(2.4rem, 4vw, 3.5rem);
+    }
+
+    .workflow-alert-modal-dialog.workflow-alert-size-medium .workflow-alert-message,
+    .workflow-alert-modal-dialog.modal-fullscreen .workflow-alert-message {
+      font-size: 1.55rem;
+    }
+
+    .workflow-alert-modal-dialog.modal-fullscreen .workflow-alert-modal-content {
+      border-radius: 0;
+    }
+
     .workflow-alert-modal-content {
       position: relative;
       border: 0;
@@ -575,6 +593,12 @@
       font-weight: 700;
     }
 
+    .workflow-alert-ack-banner {
+      z-index: 1080;
+      max-width: min(720px, calc(100vw - 2rem));
+      box-shadow: 0 1rem 2rem rgba(15, 23, 42, 0.2);
+    }
+
     @media (max-width: 767.98px) {
       .workflow-alert-modal-header,
       .workflow-alert-modal-body {
@@ -646,9 +670,31 @@
             <div class="workflow-alert-secondary-actions">
               <button type="button" class="btn btn-light border" id="workflow-alert-dismiss-btn">Dismiss</button>
               <button type="button" class="btn btn-light border" id="workflow-alert-mark-read-btn">Mark as read</button>
+              <button type="button" class="btn btn-outline-secondary d-none" id="workflow-alert-modal-enable-sound-btn">Enable sound</button>
+              <button type="button" class="btn btn-primary d-none" id="workflow-alert-acknowledge-btn">Acknowledge</button>
             </div>
           </div>
         </div>
+      </div>
+    </div>
+  </div>
+  <div
+    id="workflowAlertAckBanner"
+    class="workflow-alert-ack-banner alert alert-warning d-none position-fixed bottom-0 start-50 translate-middle-x mb-3"
+    role="status"
+    aria-live="polite"
+  >
+    <div class="d-flex flex-column flex-sm-row align-items-sm-center gap-3">
+      <div class="flex-grow-1">
+        <strong id="workflow-alert-ack-banner-count">0 workflow alerts need acknowledgment</strong>
+      </div>
+      <div class="d-flex flex-wrap gap-2">
+        <button type="button" class="btn btn-sm btn-warning" id="workflow-alert-ack-banner-review-btn">
+          Review
+        </button>
+        <button type="button" class="btn btn-sm btn-outline-dark d-none" id="workflow-alert-enable-sound-btn">
+          Enable sound
+        </button>
       </div>
     </div>
   </div>
@@ -759,6 +805,7 @@
   <script src="{{ url_for('static', filename='js/profile-image.js') }}"></script>
   {% if session.get('user') %}
   <script src="{{ url_for('static', filename='js/completion-audio-cues.js') }}?v={{ config['VERSION'] }}"></script>
+  <script src="{{ url_for('static', filename='js/workflow-alert-sound.js') }}?v={{ config['VERSION'] }}"></script>
   <!-- Notifications JavaScript (for badge polling on authenticated pages) -->
   <script src="{{ url_for('static', filename='js/notifications.js') }}?v={{ config['VERSION'] }}"></script>
   {% endif %}

@@ -142,6 +142,65 @@ Press Enter on it to open the full alert. Focus moves into the alert, and return
 where you were when it closes. Screen readers announce each notice once, after what
 they are reading; a critical alert is announced straight away.
 
+## Alerts that need acknowledgment
+
+Since **0.261.235**, a workflow's owner can make an alert rule require
+acknowledgment, play a sound, take more of the screen, or reach everyone in a group
+workflow's group. These alerts are for things someone has to act on, such as a failure
+an operations team must pick up, so they stay in front of you until someone responds.
+See [Make an alert hard to miss]({{ '/guides/create-a-workflow/#make-an-alert-hard-to-miss' | relative_url }}).
+
+An alert that needs acknowledgment is marked **Needs acknowledgment**, and:
+
+- **It keeps coming back.** It pops up again after you refresh, in every tab, and on
+  every device, however old it is, until someone acknowledges it. Closing it, or
+  pressing Escape, only shrinks it: V2 keeps its notice under **My Workspace**, where
+  it takes its own room rather than covering the items below it, and classic keeps a
+  banner at the bottom of the page with **Review**. It never tucks into the bell,
+  and **Mark all read** doesn't clear it. Alerts that need acknowledgment are shown
+  before any others, whatever their severity.
+- **Select Acknowledge to clear it.** **Acknowledge** replaces **Dismiss**. Selecting
+  **Open** acknowledges the alert too, because you're responding to it. Any other alert
+  that needs acknowledgment stays up. The alert then
+  disappears from your other tabs straight away, and from other devices when they next
+  check. In the bell, the alert has its own **Acknowledge** button, and opening it from
+  the bell acknowledges it too. Marking it read or dismissing it there leaves it waiting.
+- **It may sound.** The tone gets more urgent with the severity, and may repeat every
+  five seconds until someone acknowledges the alert. Only one tab in your browser plays
+  it, and when several alerts repeat you hear one tone, the most urgent one's. An alert
+  set to **Play once** chimes once in your browser, not again in another tab or after a
+  refresh, and alerts that arrive together chime once, in the most urgent tone.
+- **It may be larger.** A medium alert opens in full straight away. A large alert fills
+  the screen.
+
+A team alert reaches everyone in the group and says so. When any member acknowledges
+it, it stops for everyone, and the bell shows "Acknowledged by *name* at *time*". If
+you aren't the workflow's owner, the alert is simpler: its severity, the workflow, the
+rules that matched, and **Open** to what the run created in the group.
+
+### Sound on this device
+
+Browsers don't play sound on a page nobody has clicked or typed in since it loaded.
+If that stops an alert's sound, the alert shows **Enable sound**. Select it, or click
+anywhere on the page, and the sound starts. **Enable sound** goes away once a sound
+has played.
+
+To silence workflow alert sounds on one device, turn off **Play alert sounds** under
+**Workflow alerts on this device** in V2 **Preferences**, or **Play workflow alert
+sounds on this device** in the classic Profile settings. It applies to this browser
+only, in both interfaces. Administrators can turn workflow alert sounds off for
+everyone.
+
+### Keep an operations screen watching
+
+On a screen that has to notice alerts within seconds, turn on **Alert monitor** under
+**Workflow alerts on this device** in V2 **Preferences**. V2 then checks for workflow
+alerts every 30 seconds, even when the tab is in the background, rather than slowing
+down while nothing changes. For a display that reloads unattended, ask your browser
+administrator to add SimpleChat to **Allow media autoplay on specific sites**
+(`AutoplayAllowlist` in Microsoft Edge and Google Chrome). Sound can then play without
+anyone clicking first.
+
 ## Verify it worked
 
 Unread notifications lose unread styling after being marked read. Filters and search update the list without changing unrelated notifications.
@@ -158,6 +217,10 @@ Unread notifications lose unread styling after being marked read. Filters and se
 | A workflow alert pops up later than expected | V2 checks for new notifications every 30 seconds, less often while nothing changes, and holds the notice while a dialog is open | Return to the tab or close the dialog. Switching back to the tab checks straight away. |
 | The notice tucked away before I read it | Info, low and medium notices tuck into the bell after about eight seconds | Open the bell; the alert is still unread there. Point at a notice to keep it open. |
 | The full alert has no **Open workflow** | The alert was raised before 0.261.199 and doesn't say which workspace its workflow belongs to | Open the workflow from its workspace's workflows list. |
+| A workflow alert keeps coming back | Its rule requires acknowledgment | Select **Acknowledge** or **Open**. Mark read, Dismiss and Mark all read don't clear it. |
+| A workflow alert shows **Enable sound** | The browser blocks sound until you click or type on the page | Select **Enable sound**, or click anywhere on the page. |
+| A workflow alert makes no sound | Sound is off on this device, an administrator turned workflow alert sounds off, or another tab in this browser is playing it | Check **Play alert sounds** in V2 **Preferences**, or ask an administrator about **Enable Workflow Alert Sounds**. |
+| An operations screen shows alerts late | V2 slows down while nothing changes and doesn't check in a background tab | Turn on **Alert monitor** in V2 **Preferences** on that screen. |
 
 ## Related
 

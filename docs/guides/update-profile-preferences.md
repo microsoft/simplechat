@@ -45,6 +45,7 @@ Profile preferences are for personal comfort and control: font size, navigation 
                       capture="Capture the update profile preferences task at this step in SimpleChat with realistic sample data and redact secrets." %}
 
 6. If shown, configure **Desktop Conversation Notifications**, **Fact Memory**, retention settings, microphone permission, or text-to-speech settings.
+7. In **Workflow Alert Sounds**, choose whether workflow alerts can play sounds in this browser. The switch takes effect at once and applies only to this browser, so a shared operations screen and your own laptop can differ. See [Alerts that need acknowledgment]({{ '/guides/manage-notifications/#alerts-that-need-acknowledgment' | relative_url }}).
 
 ## Microsoft 365 data preferences
 

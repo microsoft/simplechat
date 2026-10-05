@@ -936,6 +936,46 @@
     </div>
     {% endif %}
 
+    <div class="section-card" id="workflow-alert-sound-device-preferences">
+        <div class="d-flex flex-column flex-lg-row align-items-lg-start justify-content-between gap-3">
+            <div class="d-flex gap-3 align-items-start">
+                <span class="preference-card-icon" aria-hidden="true">
+                    <i class="bi bi-broadcast-pin"></i>
+                </span>
+                <div>
+                    <h5 class="mb-2"><i class="bi bi-volume-up-fill me-2"></i>Workflow Alert Sounds</h5>
+                    <p class="text-muted mb-2">Control whether workflow alerts can play sounds on this device.</p>
+                    <p class="small text-muted mb-0" id="workflow-alert-sound-device-help">
+                        This preference is stored in this browser. Administrators can still turn workflow alert sounds off for everyone.
+                    </p>
+                </div>
+            </div>
+        </div>
+
+        <div class="row g-3 align-items-center mt-1">
+            <div class="col-lg-8">
+                <div class="form-check form-switch mt-3">
+                    <input
+                        class="form-check-input"
+                        type="checkbox"
+                        id="workflow-alert-sound-device-toggle"
+                        aria-describedby="workflow-alert-sound-device-help"
+                    />
+                    <label class="form-check-label fw-semibold" for="workflow-alert-sound-device-toggle">
+                        Play workflow alert sounds on this device
+                    </label>
+                </div>
+            </div>
+        </div>
+
+        <div
+            id="workflow-alert-sound-device-status"
+            class="preference-status small mt-3 text-muted"
+            role="status"
+            aria-live="polite"
+        ></div>
+    </div>
+
     {% set sidebar_toggle_style = user_settings.get('settings', {}).get('sidebarToggleStyle', 'large') %}
     {% set latest_features_hidden_version = user_settings.get('settings', {}).get('latestFeaturesHiddenVersion') %}
     {% set latest_features_hidden_for_current_version = latest_features_hidden_version == config['VERSION'] %}

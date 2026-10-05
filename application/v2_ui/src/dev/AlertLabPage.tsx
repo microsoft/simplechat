@@ -161,6 +161,13 @@ export function AlertLabPage() {
                 note(`Dismissed: ${ids.length} alert${ids.length === 1 ? '' : 's'}.`);
                 return ids;
             },
+            acknowledge: async (ids) => {
+                if (failRef.current) {
+                    return refuse('acknowledge');
+                }
+                note(`Acknowledged: ${ids.length} alert${ids.length === 1 ? '' : 's'}.`);
+                return ids;
+            },
             open: async (target) => {
                 const where = describeTarget(target);
                 note(`Would open ${where}.`);
